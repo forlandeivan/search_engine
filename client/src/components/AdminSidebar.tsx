@@ -1,0 +1,178 @@
+import { useState } from "react";
+import { Link, useLocation } from "wouter";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarHeader
+} from "@/components/ui/sidebar";
+import { Badge } from "@/components/ui/badge";
+import { 
+  Search, 
+  Settings, 
+  Globe, 
+  Database, 
+  Activity,
+  Webhook,
+  Calendar
+} from "lucide-react";
+
+interface SidebarItem {
+  title: string;
+  url: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: string;
+  badgeVariant?: "default" | "secondary" | "destructive" | "outline";
+}
+
+const menuItems: SidebarItem[] = [
+  {
+    title: "Поиск",
+    url: "/",
+    icon: Search,
+  },
+  {
+    title: "Сайты для краулинга", 
+    url: "/admin/sites",
+    icon: Globe,
+    badge: "3",
+    badgeVariant: "secondary"
+  },
+  {
+    title: "Индексированные страницы",
+    url: "/admin/pages", 
+    icon: Database,
+    badge: "142",
+    badgeVariant: "default"
+  },
+  {
+    title: "Статистика краулинга",
+    url: "/admin/stats",
+    icon: Activity
+  },
+  {
+    title: "Расписание",
+    url: "/admin/schedule",
+    icon: Calendar
+  },
+  {
+    title: "Вебхуки",
+    url: "/admin/webhooks",
+    icon: Webhook
+  },
+  {
+    title: "Настройки",
+    url: "/admin/settings",
+    icon: Settings
+  }
+];
+
+export default function AdminSidebar() {
+  const [location] = useLocation();
+
+  return (
+    <Sidebar>
+      <SidebarHeader className="p-4 border-b">
+        <h2 className="text-lg font-semibold">Поисковый движок</h2>
+        <p className="text-sm text-muted-foreground">Админ-панель</p>
+      </SidebarHeader>
+      
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>Основное</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {menuItems.slice(0, 2).map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton 
+                    asChild 
+                    isActive={location === item.url}
+                    data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-')}`}
+                  >
+                    <Link href={item.url}>
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                      {item.badge && (
+                        <Badge 
+                          variant={item.badgeVariant || "default"} 
+                          className="ml-auto text-xs"
+                        >
+                          {item.badge}
+                        </Badge>
+                      )}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Управление</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {menuItems.slice(2, 6).map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton 
+                    asChild 
+                    isActive={location === item.url}
+                    data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-').replace(/ё/g, 'е')}`}
+                  >
+                    <Link href={item.url}>
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                      {item.badge && (
+                        <Badge 
+                          variant={item.badgeVariant || "default"} 
+                          className="ml-auto text-xs"
+                        >
+                          {item.badge}
+                        </Badge>
+                      )}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Система</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {menuItems.slice(6).map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton 
+                    asChild 
+                    isActive={location === item.url}
+                    data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-')}`}
+                  >
+                    <Link href={item.url}>
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                      {item.badge && (
+                        <Badge 
+                          variant={item.badgeVariant || "default"} 
+                          className="ml-auto text-xs"
+                        >
+                          {item.badge}
+                        </Badge>
+                      )}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
+  );
+}
