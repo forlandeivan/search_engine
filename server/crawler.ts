@@ -146,7 +146,6 @@ export class WebCrawler {
   private async crawlPage(url: string): Promise<CrawlResult | null> {
     try {
       const response = await fetch(url, {
-        timeout: 30000,
         headers: {
           'User-Agent': 'SearchEngine-Crawler/1.0 (+https://example.com/crawler)'
         }
@@ -226,7 +225,7 @@ export class WebCrawler {
         content,
         metaDescription,
         statusCode: response.status,
-        links: [...new Set(links)] // Remove duplicates
+        links: Array.from(new Set(links)) // Remove duplicates
       };
 
     } catch (error) {
