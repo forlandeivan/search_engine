@@ -9,6 +9,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import SearchPage from "@/pages/SearchPage";
 import AdminPage from "@/pages/AdminPageSimple";
 import PagesPage from "@/pages/PagesPage";
+import ApiDocsPage from "@/pages/ApiDocsPage";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -18,6 +19,7 @@ function Router() {
       <Route path="/admin" component={AdminPage} />
       <Route path="/admin/sites" component={AdminPage} />
       <Route path="/admin/pages" component={PagesPage} />
+      <Route path="/admin/api-docs" component={ApiDocsPage} />
       <Route path="/admin/:tab" component={AdminPage} />
       <Route component={NotFound} />
     </Switch>
