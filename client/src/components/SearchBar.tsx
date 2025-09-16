@@ -41,7 +41,7 @@ export default function SearchBar({ onSearch, placeholder = "Поиск", defaul
         <Button 
           type="submit"
           disabled={!query.trim()}
-          className="absolute right-2 top-1/2 transform -translate-y-1/2 rounded-full px-6"
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full px-6"
           data-testid="button-search"
         >
           Найти
