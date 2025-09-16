@@ -211,6 +211,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get all pages
+  app.get("/api/pages", async (req, res) => {
+    try {
+      const allPages = await storage.getAllPages();
+      res.json(allPages);
+    } catch (error) {
+      console.error('Error fetching pages:', error);
+      res.status(500).json({ error: 'Failed to fetch pages' });
+    }
+  });
+
   // Statistics endpoint
   app.get("/api/stats", async (req, res) => {
     try {

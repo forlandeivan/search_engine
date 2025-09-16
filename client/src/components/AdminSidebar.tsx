@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sidebar,
   SidebarContent,
@@ -30,50 +31,72 @@ interface SidebarItem {
   badgeVariant?: "default" | "secondary" | "destructive" | "outline";
 }
 
-const menuItems: SidebarItem[] = [
-  {
-    title: "Поиск",
-    url: "/",
-    icon: Search,
-  },
-  {
-    title: "Сайты для краулинга", 
-    url: "/admin/sites",
-    icon: Globe,
-    badge: "3",
-    badgeVariant: "secondary"
-  },
-  {
-    title: "Индексированные страницы",
-    url: "/admin/pages", 
-    icon: Database,
-    badge: "142",
-    badgeVariant: "default"
-  },
-  {
-    title: "Статистика краулинга",
-    url: "/admin/stats",
-    icon: Activity
-  },
-  {
-    title: "Расписание",
-    url: "/admin/schedule",
-    icon: Calendar
-  },
-  {
-    title: "Вебхуки",
-    url: "/admin/webhooks",
-    icon: Webhook
-  },
-  {
-    title: "Настройки",
-    url: "/admin/settings",
-    icon: Settings
-  }
-];
+interface Stats {
+  sites: { total: number; crawling: number; completed: number; failed: number; };
+  pages: { total: number; };
+}
+
+interface Site {
+  id: string;
+  url: string;
+  status: string;
+}
 
 export default function AdminSidebar() {
   const [location] = useLocation();
+  
+  // Fetch live statistics
+  const { data: stats } = useQuery<Stats>({
+    queryKey: ['/api/stats'],
+    refetchInterval: 10000, // Update every 10 seconds
+  });
+
+  const { data: sites } = useQuery<Site[]>({
+    queryKey: ['/api/sites'],
+    refetchInterval: 10000,
+  });
+
+  const menuItems: SidebarItem[] = [
+    {
+      title: "Поиск",
+      url: "/",
+      icon: Search,
+    },
+    {
+      title: "Сайты для краулинга", 
+      url: "/admin/sites",
+      icon: Globe,
+      badge: sites ? sites.length.toString() : "0",
+      badgeVariant: "secondary"
+    },
+    {
+      title: "Индексированные страницы",
+      url: "/admin/pages", 
+      icon: Database,
+      badge: stats?.pages ? stats.pages.total.toString() : "0",
+      badgeVariant: "default"
+    },
+    {
+      title: "Статистика краулинга",
+      url: "/admin/stats",
+      icon: Activity
+    },
+    {
+      title: "Расписание",
+      url: "/admin/schedule",
+      icon: Calendar
+    },
+    {
+      title: "Вебхуки",
+      url: "/admin/webhooks",
+      icon: Webhook
+    },
+    {
+      title: "Настройки",
+      url: "/admin/settings",
+      icon: Settings
+    }
+  ];
 
   return (
     <Sidebar>

@@ -8,6 +8,7 @@ import AdminSidebar from "@/components/AdminSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
 import SearchPage from "@/pages/SearchPage";
 import AdminPage from "@/pages/AdminPageSimple";
+import PagesPage from "@/pages/PagesPage";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -15,6 +16,8 @@ function Router() {
     <Switch>
       <Route path="/" component={SearchPage} />
       <Route path="/admin" component={AdminPage} />
+      <Route path="/admin/sites" component={AdminPage} />
+      <Route path="/admin/pages" component={PagesPage} />
       <Route path="/admin/:tab" component={AdminPage} />
       <Route component={NotFound} />
     </Switch>

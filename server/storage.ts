@@ -25,6 +25,7 @@ export interface IStorage {
   // Pages management  
   createPage(page: InsertPage): Promise<Page>;
   getPage(id: string): Promise<Page | undefined>;
+  getAllPages(): Promise<Page[]>;
   getPagesByUrl(url: string): Promise<Page[]>;
   getPagesBySiteId(siteId: string): Promise<Page[]>;
   updatePage(id: string, updates: Partial<Page>): Promise<Page | undefined>;
@@ -87,6 +88,10 @@ export class DatabaseStorage implements IStorage {
   async getPage(id: string): Promise<Page | undefined> {
     const [page] = await db.select().from(pages).where(eq(pages.id, id));
     return page || undefined;
+  }
+
+  async getAllPages(): Promise<Page[]> {
+    return await db.select().from(pages).orderBy(desc(pages.createdAt));
   }
 
   async getPagesByUrl(url: string): Promise<Page[]> {
