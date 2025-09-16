@@ -162,11 +162,18 @@ export class WebCrawler {
 
   private async crawlPage(url: string): Promise<CrawlResult | null> {
     try {
+      // Add timeout to prevent hanging on slow sites
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
       const response = await fetch(url, {
         headers: {
           'User-Agent': 'SearchEngine-Crawler/1.0 (+https://example.com/crawler)'
-        }
+        },
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -246,13 +253,22 @@ export class WebCrawler {
       };
 
     } catch (error) {
-      console.error(`Error crawling page ${url}:`, error);
+      let errorMessage = 'Unknown error';
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          errorMessage = 'Request timeout (30s) - site may be slow or blocking crawlers';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      console.error(`Error crawling page ${url}:`, errorMessage);
       return {
         url,
         content: '',
         statusCode: 0,
         links: [],
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: errorMessage
       };
     }
   }
