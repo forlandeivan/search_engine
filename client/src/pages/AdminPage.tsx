@@ -29,10 +29,10 @@ export default function AdminPage() {
 
   // Add site mutation
   const addSiteMutation = useMutation({
-    mutationFn: (siteData: SiteConfig) => apiRequest('/api/sites', {
-      method: 'POST',
-      body: JSON.stringify(siteData),
-    }),
+    mutationFn: async (siteData: SiteConfig) => {
+      const response = await apiRequest('POST', '/api/sites', siteData);
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
@@ -53,9 +53,10 @@ export default function AdminPage() {
 
   // Start crawl mutation
   const startCrawlMutation = useMutation({
-    mutationFn: (siteId: string) => apiRequest(`/api/sites/${siteId}/crawl`, {
-      method: 'POST',
-    }),
+    mutationFn: async (siteId: string) => {
+      const response = await apiRequest('POST', `/api/sites/${siteId}/crawl`);
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
       toast({
@@ -67,9 +68,10 @@ export default function AdminPage() {
 
   // Stop crawl mutation
   const stopCrawlMutation = useMutation({
-    mutationFn: (siteId: string) => apiRequest(`/api/sites/${siteId}/stop-crawl`, {
-      method: 'POST',
-    }),
+    mutationFn: async (siteId: string) => {
+      const response = await apiRequest('POST', `/api/sites/${siteId}/stop-crawl`);
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
       toast({
@@ -79,39 +81,6 @@ export default function AdminPage() {
     },
   });
 
-  //todo: remove mock functionality - keep for fallback demo
-  const mockCrawlStatuses: CrawlStatus[] = [
-    {
-      id: "1",
-      url: "https://example.com",
-      status: "crawling",
-      progress: 65,
-      pagesFound: 24,
-      pagesIndexed: 18,
-      lastCrawled: new Date("2024-01-15T10:30:00"),
-      nextCrawl: new Date("2024-01-16T10:30:00")
-    },
-    {
-      id: "2", 
-      url: "https://docs.example.com",
-      status: "completed",
-      progress: 100,
-      pagesFound: 45,
-      pagesIndexed: 45,
-      lastCrawled: new Date("2024-01-15T09:15:00"),
-      nextCrawl: new Date("2024-01-16T09:15:00")
-    },
-    {
-      id: "3",
-      url: "https://blog.example.com",
-      status: "failed",
-      progress: 0,
-      pagesFound: 0,
-      pagesIndexed: 0,
-      lastCrawled: new Date("2024-01-14T15:45:00"),
-      error: "Connection timeout"
-    }
-  ]);
 
   const handleAddSite = (config: SiteConfig) => {
     addSiteMutation.mutate(config);
@@ -129,8 +98,7 @@ export default function AdminPage() {
     startCrawlMutation.mutate(id);
   };
 
-  // Use real data or fallback to mock for demo
-  const displaySites = sites.length > 0 ? sites : mockCrawlStatuses;
+  const displaySites = sites || [];
   
   const filteredStatuses = displaySites.filter((status: any) => {
     const matchesSearch = status.url.toLowerCase().includes(searchFilter.toLowerCase());
@@ -174,7 +142,7 @@ export default function AdminPage() {
         <div className="flex items-center justify-between">
           <TabsList>
             <TabsTrigger value="all" data-testid="tab-all">
-              Все ({crawlStatuses.length})
+              Все ({displaySites.length})
             </TabsTrigger>
             <TabsTrigger value="crawling" data-testid="tab-crawling">
               Краулинг ({getStatusCount("crawling")})
@@ -283,7 +251,7 @@ export default function AdminPage() {
             <CardTitle className="text-sm font-medium">Всего сайтов</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.sites?.total || displaySites.length}</div>
+            <div className="text-2xl font-bold">{(stats as any)?.sites?.total || displaySites.length}</div>
           </CardContent>
         </Card>
 
@@ -293,7 +261,7 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {stats?.pages?.total || displaySites.reduce((sum: number, status: any) => sum + (status.pagesFound || 0), 0)}
+              {(stats as any)?.pages?.total || displaySites.reduce((sum: number, status: any) => sum + (status.pagesFound || 0), 0)}
             </div>
           </CardContent>
         </Card>
@@ -315,7 +283,7 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {stats?.sites?.crawling || getStatusCount("crawling")}
+              {(stats as any)?.sites?.crawling || getStatusCount("crawling")}
             </div>
           </CardContent>
         </Card>

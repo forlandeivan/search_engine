@@ -13,70 +13,10 @@ export default function SearchPage() {
   
   // Real search API call
   const { data: searchData, isLoading, error } = useQuery({
-    queryKey: ['/api/search', searchQuery, currentPage],
+    queryKey: ['/api/search', { q: searchQuery, page: currentPage }],
     enabled: !!searchQuery.trim(),
   });
   
-  // For demo purposes, show mock results when no real data
-  const mockResults: SearchResult[] = [
-    {
-      id: "1",
-      title: "DateTime",
-      description: "Работа со временем, datami и планировщиком. Библиотека для удобной работы с датами, временными зонами и форматирования временных данных.",
-      url: "https://example.com/datetime",
-      lastCrawled: new Date("2024-01-15"),
-      isFavorite: favorites.has("1")
-    },
-    {
-      id: "2", 
-      title: "ConvertFromUnixTimeMilliseconds",
-      description: "Работа со временем, datami и планировщиком. Конвертация временных меток Unix в удобочитаемый формат с поддержкой миллисекунд.",
-      url: "https://example.com/convert-unix-time",
-      lastCrawled: new Date("2024-01-14"),
-      isFavorite: favorites.has("2")
-    },
-    {
-      id: "3",
-      title: "Бизнес-процессы",
-      description: "Управление бизнес-процессами и автоматизация рабочих процессов. Создание, настройка и мониторинг бизнес-процессов в корпоративной среде.",
-      url: "https://example.com/business-processes",
-      lastCrawled: new Date("2024-01-13"),
-      isFavorite: favorites.has("3")
-    },
-    {
-      id: "4",
-      title: "Работа со временем, datami и планировщиком",
-      description: "Подробное руководство по работе с временными данными, календарями и планировщиками задач в различных системах и языках программирования.",
-      url: "https://example.com/time-management",
-      lastCrawled: new Date("2024-01-12"),
-      isFavorite: favorites.has("4")
-    },
-    {
-      id: "5",
-      title: "HTTPRequest",
-      description: "Внешние взаимодействия и интеграции. HTTP клиент для выполнения запросов к внешним API и сервисам с поддержкой различных методов.",
-      url: "https://example.com/http-request",
-      lastCrawled: new Date("2024-01-11"),
-      isFavorite: favorites.has("5")
-    },
-    {
-      id: "6",
-      title: "AutomatonHTTPRequest",
-      description: "Внешние взаимодействия и интеграции. Автоматизированные HTTP запросы с поддержкой retry логики и обработки ошибок.",
-      url: "https://example.com/automaton-http",
-      lastCrawled: new Date("2024-01-10"),
-      isFavorite: favorites.has("6")
-    },
-    {
-      id: "7",
-      title: "Функции управления глобальными переменными",
-      description: "Система управления глобальными переменными и конфигурацией приложения. Централизованное хранение и доступ к настройкам.",
-      url: "https://example.com/global-variables",
-      lastCrawled: new Date("2024-01-09"),
-      isFavorite: favorites.has("7")
-    }
-  ];
-
   const handleSearch = (query: string) => {
     setSearchQuery(query);
     setCurrentPage(1);
@@ -99,14 +39,11 @@ export default function SearchPage() {
     console.log('Remove result:', id);
   };
 
-  // Use real search results or fallback to mock data for demo
   const searchResults = searchData?.results || [];
   const totalResults = searchData?.total || 0;
   const totalPages = searchData?.totalPages || 0;
   
-  // Show mock data when no real search is performed
-  const currentResults = searchQuery && searchResults.length > 0 ? searchResults : 
-    (!searchQuery ? [] : mockResults.slice(0, 5)); // Show a few mock results when search returns empty
+  const currentResults = searchResults;
 
   return (
     <div className="min-h-screen bg-background">
@@ -167,11 +104,6 @@ export default function SearchPage() {
             <p className="text-sm text-muted-foreground">
               {error ? 'Попробуйте позже' : 'Попробуйте использовать другие ключевые слова'}
             </p>
-            {error && (
-              <p className="text-xs text-destructive mt-2">
-                Для демо показаны примеры данных выше
-              </p>
-            )}
           </div>
         ) : (
           <div className="text-center py-12">

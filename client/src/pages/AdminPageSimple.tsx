@@ -24,10 +24,10 @@ export default function AdminPage() {
 
   // Add site mutation
   const addSiteMutation = useMutation({
-    mutationFn: (siteData: SiteConfig) => apiRequest('/api/sites', {
-      method: 'POST',
-      body: JSON.stringify(siteData),
-    }),
+    mutationFn: async (siteData: SiteConfig) => {
+      const response = await apiRequest('POST', '/api/sites', siteData);
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
       setShowAddForm(false);
@@ -47,9 +47,10 @@ export default function AdminPage() {
 
   // Start crawl mutation
   const startCrawlMutation = useMutation({
-    mutationFn: (siteId: string) => apiRequest(`/api/sites/${siteId}/crawl`, {
-      method: 'POST',
-    }),
+    mutationFn: async (siteId: string) => {
+      const response = await apiRequest('POST', `/api/sites/${siteId}/crawl`);
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
       toast({
@@ -59,31 +60,7 @@ export default function AdminPage() {
     },
   });
 
-  //todo: remove mock functionality
-  const mockSites = [
-    {
-      id: "1",
-      url: "https://example.com",
-      status: "crawling",
-      progress: 65,
-      pagesFound: 24,
-      pagesIndexed: 18,
-      lastCrawled: new Date("2024-01-15T10:30:00"),
-      nextCrawl: new Date("2024-01-16T10:30:00")
-    },
-    {
-      id: "2",
-      url: "https://docs.example.com", 
-      status: "completed",
-      progress: 100,
-      pagesFound: 45,
-      pagesIndexed: 45,
-      lastCrawled: new Date("2024-01-15T09:15:00"),
-      nextCrawl: new Date("2024-01-16T09:15:00")
-    }
-  ];
-
-  const displaySites = sites.length > 0 ? sites : mockSites;
+  const displaySites = sites || [];
 
   const handleAddSite = (config: SiteConfig) => {
     addSiteMutation.mutate(config);
@@ -152,7 +129,7 @@ export default function AdminPage() {
         </div>
       ) : error ? (
         <div className="text-center py-8">
-          <p className="text-muted-foreground">Ошибка загрузки. Показаны демо-данные.</p>
+          <p className="text-muted-foreground">Ошибка загрузки данных.</p>
         </div>
       ) : null}
 
