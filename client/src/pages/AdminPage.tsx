@@ -3,6 +3,12 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import AddSiteForm, { type SiteConfig } from "@/components/AddSiteForm";
 import CrawlStatusCard, { type CrawlStatus } from "@/components/CrawlStatusCard";
+import { type Site } from "@shared/schema";
+
+interface Stats {
+  sites: { total: number; crawling: number; completed: number; failed: number; };
+  pages: { total: number; };
+}
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,14 +23,21 @@ export default function AdminPage() {
   const [searchFilter, setSearchFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "crawling" | "completed" | "failed">("all");
 
-  // Fetch sites data
-  const { data: sites = [], isLoading, refetch } = useQuery({
+  // Fetch sites data with auto-refresh if any site is crawling
+  const { data: sites = [], isLoading, refetch } = useQuery<Site[]>({
     queryKey: ['/api/sites'],
+    refetchInterval: (query) => {
+      const sitesData = query.state.data as Site[] || [];
+      return sitesData.some((site) => site.status === 'crawling') ? 3000 : false;
+    },
   });
 
-  // Fetch stats
-  const { data: stats } = useQuery({
+  // Fetch stats with auto-refresh if any site is crawling  
+  const { data: stats } = useQuery<Stats>({
     queryKey: ['/api/stats'],
+    refetchInterval: () => {
+      return sites.some((site) => site.status === 'crawling') ? 3000 : false;
+    },
   });
 
   // Add site mutation
@@ -177,7 +190,16 @@ export default function AdminPage() {
               {filteredStatuses.map((status) => (
                 <CrawlStatusCard
                   key={status.id}
-                  crawlStatus={status}
+                  crawlStatus={{
+                    ...status,
+                    status: status.status as "idle" | "crawling" | "completed" | "failed",
+                    progress: 0,
+                    pagesFound: 0,
+                    pagesIndexed: 0,
+                    lastCrawled: status.lastCrawled || undefined,
+                    nextCrawl: status.nextCrawl || undefined,
+                    error: status.error || undefined,
+                  }}
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
                   onRetry={handleRetryCrawl}
@@ -208,7 +230,16 @@ export default function AdminPage() {
             {filteredStatuses.filter(s => s.status === "crawling").map((status) => (
               <CrawlStatusCard
                 key={status.id}
-                crawlStatus={status}
+                crawlStatus={{
+                  ...status,
+                  status: status.status as "idle" | "crawling" | "completed" | "failed",
+                  progress: 0,
+                  pagesFound: 0,
+                  pagesIndexed: 0,
+                  lastCrawled: status.lastCrawled || undefined,
+                  nextCrawl: status.nextCrawl || undefined,
+                  error: status.error || undefined,
+                }}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
@@ -222,7 +253,16 @@ export default function AdminPage() {
             {filteredStatuses.filter(s => s.status === "completed").map((status) => (
               <CrawlStatusCard
                 key={status.id}
-                crawlStatus={status}
+                crawlStatus={{
+                  ...status,
+                  status: status.status as "idle" | "crawling" | "completed" | "failed",
+                  progress: 0,
+                  pagesFound: 0,
+                  pagesIndexed: 0,
+                  lastCrawled: status.lastCrawled || undefined,
+                  nextCrawl: status.nextCrawl || undefined,
+                  error: status.error || undefined,
+                }}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
@@ -236,7 +276,16 @@ export default function AdminPage() {
             {filteredStatuses.filter(s => s.status === "failed").map((status) => (
               <CrawlStatusCard
                 key={status.id}
-                crawlStatus={status}
+                crawlStatus={{
+                  ...status,
+                  status: status.status as "idle" | "crawling" | "completed" | "failed",
+                  progress: 0,
+                  pagesFound: 0,
+                  pagesIndexed: 0,
+                  lastCrawled: status.lastCrawled || undefined,
+                  nextCrawl: status.nextCrawl || undefined,
+                  error: status.error || undefined,
+                }}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
