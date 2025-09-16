@@ -5,6 +5,40 @@ import { crawler } from "./crawler";
 import { insertSiteSchema } from "@shared/schema";
 import { z } from "zod";
 
+// Public search API request/response schemas
+const publicSearchRequestSchema = z.object({
+  query: z.string().min(1),
+  hitsPerPage: z.number().int().positive().max(100).default(10),
+  page: z.number().int().min(0).default(0),
+  facetFilters: z.array(z.string()).optional(),
+  attributesToRetrieve: z.array(z.string()).optional(),
+});
+
+interface PublicSearchResponse {
+  hits: Array<{
+    objectID: string;
+    url: string;
+    title?: string;
+    content?: string;
+    hierarchy?: {
+      lvl0?: string;
+      lvl1?: string;
+      lvl2?: string;
+    };
+    excerpt?: string;
+    _highlightResult?: {
+      title?: { value: string; matchLevel: string };
+      content?: { value: string; matchLevel: string };
+    };
+  }>;
+  nbHits: number;
+  page: number;
+  nbPages: number;
+  hitsPerPage: number;
+  query: string;
+  params: string;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Sites management
   app.get("/api/sites", async (req, res) => {

@@ -48,7 +48,7 @@ export class DatabaseStorage implements IStorage {
   async createSite(site: InsertSite): Promise<Site> {
     const [newSite] = await db
       .insert(sites)
-      .values([site])
+      .values(site)
       .returning();
     return newSite;
   }
@@ -135,6 +135,41 @@ export class DatabaseStorage implements IStorage {
   async deleteSearchIndexByPageId(pageId: string): Promise<number> {
     const result = await db.delete(searchIndex).where(eq(searchIndex.pageId, pageId));
     return result.rowCount ?? 0;
+  }
+
+  // Public search by collection (siteId)
+  async searchPagesByCollection(query: string, siteId: string, limit: number = 10, offset: number = 0): Promise<{ results: Page[], total: number }> {
+    const searchTerms = query.toLowerCase().split(' ').filter(term => term.length > 0);
+    
+    if (searchTerms.length === 0) {
+      return { results: [], total: 0 };
+    }
+
+    // Build search conditions for title and content within specific site
+    const searchConditions = searchTerms.map(term => 
+      sql`(LOWER(${pages.title}) LIKE ${`%${term}%`} OR LOWER(${pages.content}) LIKE ${`%${term}%`})`
+    );
+
+    const whereClause = searchConditions.reduce((acc, condition, index) => 
+      index === 0 ? sql`${condition} AND ${pages.siteId} = ${siteId}` : sql`${acc} AND ${condition}`
+    );
+
+    // Get results with pagination
+    const results = await db
+      .select()
+      .from(pages)
+      .where(whereClause)
+      .orderBy(desc(pages.lastCrawled))
+      .limit(limit)
+      .offset(offset);
+
+    // Get total count
+    const [{ count }] = await db
+      .select({ count: sql`COUNT(*)`.mapWith(Number) })
+      .from(pages)
+      .where(whereClause);
+
+    return { results, total: count };
   }
 
   async searchPages(query: string, limit: number = 10, offset: number = 0): Promise<{ results: Page[], total: number }> {
