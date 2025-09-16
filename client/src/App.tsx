@@ -7,7 +7,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import AdminSidebar from "@/components/AdminSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
 import SearchPage from "@/pages/SearchPage";
-import AdminPage from "@/pages/AdminPage";
+import AdminPage from "@/pages/AdminPageSimple";
 import NotFound from "@/pages/not-found";
 
 function Router() {

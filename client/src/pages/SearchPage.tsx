@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import SearchBar from "@/components/SearchBar";
 import SearchResultComponent, { type SearchResult } from "@/components/SearchResult";
 import { Button } from "@/components/ui/button";
@@ -8,9 +9,15 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 export default function SearchPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const [favorites, setFavorites] = useState(new Set(["1", "3"]));
+  const [favorites, setFavorites] = useState(new Set<string>());
   
-  //todo: remove mock functionality
+  // Real search API call
+  const { data: searchData, isLoading, error } = useQuery({
+    queryKey: ['/api/search', searchQuery, currentPage],
+    enabled: !!searchQuery.trim(),
+  });
+  
+  // For demo purposes, show mock results when no real data
   const mockResults: SearchResult[] = [
     {
       id: "1",
@@ -92,20 +99,14 @@ export default function SearchPage() {
     console.log('Remove result:', id);
   };
 
-  const filteredResults = searchQuery 
-    ? mockResults.filter(result => 
-        result.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        result.description.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : mockResults;
-
-  const totalResults = filteredResults.length;
-  const resultsPerPage = 10;
-  const totalPages = Math.ceil(totalResults / resultsPerPage);
+  // Use real search results or fallback to mock data for demo
+  const searchResults = searchData?.results || [];
+  const totalResults = searchData?.total || 0;
+  const totalPages = searchData?.totalPages || 0;
   
-  const startIndex = (currentPage - 1) * resultsPerPage;
-  const endIndex = startIndex + resultsPerPage;
-  const currentResults = filteredResults.slice(startIndex, endIndex);
+  // Show mock data when no real search is performed
+  const currentResults = searchQuery && searchResults.length > 0 ? searchResults : 
+    (!searchQuery ? [] : mockResults.slice(0, 5)); // Show a few mock results when search returns empty
 
   return (
     <div className="min-h-screen bg-background">
@@ -140,7 +141,13 @@ export default function SearchPage() {
           </div>
         )}
 
-        {currentResults.length > 0 ? (
+        {isLoading ? (
+          <div className="text-center py-12">
+            <p className="text-muted-foreground text-lg">
+              Поиск...
+            </p>
+          </div>
+        ) : currentResults.length > 0 ? (
           <div className="space-y-4 mb-8">
             {currentResults.map((result) => (
               <SearchResultComponent
@@ -155,11 +162,16 @@ export default function SearchPage() {
         ) : searchQuery ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground text-lg mb-4">
-              Ничего не найдено по запросу "{searchQuery}"
+              {error ? 'Ошибка поиска' : 'Ничего не найдено по запросу "' + searchQuery + '"'}
             </p>
             <p className="text-sm text-muted-foreground">
-              Попробуйте использовать другие ключевые слова
+              {error ? 'Попробуйте позже' : 'Попробуйте использовать другие ключевые слова'}
             </p>
+            {error && (
+              <p className="text-xs text-destructive mt-2">
+                Для демо показаны примеры данных выше
+              </p>
+            )}
           </div>
         ) : (
           <div className="text-center py-12">

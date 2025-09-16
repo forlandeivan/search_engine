@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import AddSiteForm, { type SiteConfig } from "@/components/AddSiteForm";
 import CrawlStatusCard, { type CrawlStatus } from "@/components/CrawlStatusCard";
 import { Button } from "@/components/ui/button";
@@ -7,14 +9,78 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Plus, Search, Filter } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function AdminPage() {
+  const { toast } = useToast();
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchFilter, setSearchFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "crawling" | "completed" | "failed">("all");
 
-  //todo: remove mock functionality
-  const [crawlStatuses, setCrawlStatuses] = useState<CrawlStatus[]>([
+  // Fetch sites data
+  const { data: sites = [], isLoading, refetch } = useQuery({
+    queryKey: ['/api/sites'],
+  });
+
+  // Fetch stats
+  const { data: stats } = useQuery({
+    queryKey: ['/api/stats'],
+  });
+
+  // Add site mutation
+  const addSiteMutation = useMutation({
+    mutationFn: (siteData: SiteConfig) => apiRequest('/api/sites', {
+      method: 'POST',
+      body: JSON.stringify(siteData),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+      setShowAddForm(false);
+      toast({
+        title: "Сайт добавлен",
+        description: "Сайт успешно добавлен для краулинга",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Ошибка",
+        description: "Не удалось добавить сайт",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Start crawl mutation
+  const startCrawlMutation = useMutation({
+    mutationFn: (siteId: string) => apiRequest(`/api/sites/${siteId}/crawl`, {
+      method: 'POST',
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      toast({
+        title: "Краулинг запущен",
+        description: "Краулинг сайта успешно запущен",
+      });
+    },
+  });
+
+  // Stop crawl mutation
+  const stopCrawlMutation = useMutation({
+    mutationFn: (siteId: string) => apiRequest(`/api/sites/${siteId}/stop-crawl`, {
+      method: 'POST',
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      toast({
+        title: "Краулинг остановлен",
+        description: "Краулинг сайта остановлен",
+      });
+    },
+  });
+
+  //todo: remove mock functionality - keep for fallback demo
+  const mockCrawlStatuses: CrawlStatus[] = [
     {
       id: "1",
       url: "https://example.com",
@@ -48,54 +114,32 @@ export default function AdminPage() {
   ]);
 
   const handleAddSite = (config: SiteConfig) => {
-    const newCrawlStatus: CrawlStatus = {
-      id: Date.now().toString(),
-      url: config.url,
-      status: "idle",
-      progress: 0,
-      pagesFound: 0,
-      pagesIndexed: 0
-    };
-    setCrawlStatuses(prev => [...prev, newCrawlStatus]);
-    setShowAddForm(false);
-    console.log('Site added:', config);
+    addSiteMutation.mutate(config);
   };
 
   const handleStartCrawl = (id: string) => {
-    setCrawlStatuses(prev => prev.map(status => 
-      status.id === id 
-        ? { ...status, status: "crawling" as const, progress: 0 }
-        : status
-    ));
-    console.log('Start crawl:', id);
+    startCrawlMutation.mutate(id);
   };
 
   const handleStopCrawl = (id: string) => {
-    setCrawlStatuses(prev => prev.map(status => 
-      status.id === id 
-        ? { ...status, status: "idle" as const }
-        : status
-    ));
-    console.log('Stop crawl:', id);
+    stopCrawlMutation.mutate(id);
   };
 
   const handleRetryCrawl = (id: string) => {
-    setCrawlStatuses(prev => prev.map(status => 
-      status.id === id 
-        ? { ...status, status: "crawling" as const, progress: 0, error: undefined }
-        : status
-    ));
-    console.log('Retry crawl:', id);
+    startCrawlMutation.mutate(id);
   };
 
-  const filteredStatuses = crawlStatuses.filter(status => {
+  // Use real data or fallback to mock for demo
+  const displaySites = sites.length > 0 ? sites : mockCrawlStatuses;
+  
+  const filteredStatuses = displaySites.filter((status: any) => {
     const matchesSearch = status.url.toLowerCase().includes(searchFilter.toLowerCase());
     const matchesStatus = statusFilter === "all" || status.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
-  const getStatusCount = (status: CrawlStatus['status']) => {
-    return crawlStatuses.filter(s => s.status === status).length;
+  const getStatusCount = (status: string) => {
+    return displaySites.filter((s: any) => s.status === status).length;
   };
 
   return (
@@ -239,7 +283,7 @@ export default function AdminPage() {
             <CardTitle className="text-sm font-medium">Всего сайтов</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{crawlStatuses.length}</div>
+            <div className="text-2xl font-bold">{stats?.sites?.total || displaySites.length}</div>
           </CardContent>
         </Card>
 
@@ -249,7 +293,7 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {crawlStatuses.reduce((sum, status) => sum + status.pagesFound, 0)}
+              {stats?.pages?.total || displaySites.reduce((sum: number, status: any) => sum + (status.pagesFound || 0), 0)}
             </div>
           </CardContent>
         </Card>
@@ -260,7 +304,7 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {crawlStatuses.reduce((sum, status) => sum + status.pagesIndexed, 0)}
+              {displaySites.reduce((sum: number, status: any) => sum + (status.pagesIndexed || 0), 0)}
             </div>
           </CardContent>
         </Card>
@@ -271,7 +315,7 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {getStatusCount("crawling")}
+              {stats?.sites?.crawling || getStatusCount("crawling")}
             </div>
           </CardContent>
         </Card>
