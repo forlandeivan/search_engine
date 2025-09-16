@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { storage } from "./storage";
 import fs from "fs";
 import path from "path";
 
@@ -39,6 +40,18 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Reset any stuck crawling sites on server startup
+  try {
+    const sites = await storage.getAllSites();
+    const stuckSites = sites.filter(site => site.status === 'crawling');
+    for (const site of stuckSites) {
+      await storage.updateSite(site.id, { status: 'idle' });
+      log(`Reset stuck crawling status for site: ${site.url}`);
+    }
+  } catch (error) {
+    log(`Warning: Failed to reset stuck crawling sites: ${error}`);
+  }
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

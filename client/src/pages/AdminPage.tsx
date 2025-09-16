@@ -59,6 +59,7 @@ export default function AdminPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       toast({
         title: "Краулинг запущен",
         description: "Краулинг сайта успешно запущен",
@@ -74,6 +75,7 @@ export default function AdminPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       toast({
         title: "Краулинг остановлен",
         description: "Краулинг сайта остановлен",
@@ -251,7 +253,7 @@ export default function AdminPage() {
             <CardTitle className="text-sm font-medium">Всего сайтов</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{(stats as any)?.sites?.total || displaySites.length}</div>
+            <div className="text-2xl font-bold">{stats?.sites?.total || 0}</div>
           </CardContent>
         </Card>
 
@@ -261,18 +263,18 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {(stats as any)?.pages?.total || displaySites.reduce((sum: number, status: any) => sum + (status.pagesFound || 0), 0)}
+              {stats?.pages?.total || 0}
             </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Проиндексировано</CardTitle>
+            <CardTitle className="text-sm font-medium">Общий размер индекса</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {displaySites.reduce((sum: number, status: any) => sum + (status.pagesIndexed || 0), 0)}
+              {stats?.pages?.total || 0}
             </div>
           </CardContent>
         </Card>
@@ -283,7 +285,7 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {(stats as any)?.sites?.crawling || getStatusCount("crawling")}
+              {stats?.sites?.crawling || 0}
             </div>
           </CardContent>
         </Card>
