@@ -1,6 +1,8 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import fs from "fs";
+import path from "path";
 
 const app = express();
 app.use(express.json());
@@ -53,7 +55,23 @@ app.use((req, res, next) => {
   if (app.get("env") === "development") {
     await setupVite(app, server);
   } else {
-    serveStatic(app);
+    // Production: serve static files with fallback from dist/public to server/public
+    const distPublic = path.resolve(import.meta.dirname, "..", "dist", "public");
+    const serverPublic = path.resolve(import.meta.dirname, "public");
+    
+    const staticDir = fs.existsSync(serverPublic) ? serverPublic : 
+                     (fs.existsSync(distPublic) ? distPublic : null);
+    
+    if (!staticDir) {
+      throw new Error("No static assets found. Run 'npm run build' to build the client first.");
+    }
+    
+    app.use(express.static(staticDir));
+    
+    // Fallback to index.html for client-side routing
+    app.use("*", (_req, res) => {
+      res.sendFile(path.resolve(staticDir, "index.html"));
+    });
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
