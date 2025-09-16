@@ -102,6 +102,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Emergency stop all crawls - simple database solution
+  app.post("/api/emergency/stop-all-crawls", async (req, res) => {
+    try {
+      // Basic security check
+      const adminToken = req.headers['x-admin-token'];
+      if (!adminToken || adminToken !== process.env.ADMIN_TOKEN) {
+        console.warn(`Unauthorized emergency stop attempt from ${req.ip}`);
+        return res.status(401).json({ error: "Unauthorized - admin token required" });
+      }
+
+      // Log the emergency action
+      console.log(`Emergency stop initiated by admin from ${req.ip}`);
+      
+      // Simple but effective: directly reset all crawling statuses in database
+      const sites = await storage.getAllSites();
+      const stuckSites = sites.filter(site => site.status === 'crawling');
+      
+      for (const site of stuckSites) {
+        await storage.updateSite(site.id, { 
+          status: 'idle',
+          error: 'Emergency stop - crawl terminated by admin'
+        });
+        console.log(`Emergency stopped crawling for site: ${site.url}`);
+      }
+      
+      res.json({ 
+        message: "All crawls stopped", 
+        stoppedCount: stuckSites.length,
+        stoppedSites: stuckSites.map(s => s.url),
+        timestamp: new Date().toISOString() 
+      });
+    } catch (error) {
+      console.error("Error stopping all crawls:", error);
+      res.status(500).json({ error: "Failed to stop all crawls" });
+    }
+  });
+
   // Pages management
   app.get("/api/sites/:id/pages", async (req, res) => {
     try {

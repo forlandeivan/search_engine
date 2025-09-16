@@ -25,6 +25,8 @@ export class WebCrawler {
   private crawledUrls = new Set<string>();
   private pendingUrls: { url: string; depth: number }[] = [];
   private currentSiteId: string | null = null;
+  private shouldStop = false;
+  private activeCrawls = new Map<string, boolean>();
   private options: CrawlOptions = {
     maxDepth: 3,
     followExternalLinks: false,
@@ -45,6 +47,8 @@ export class WebCrawler {
       }
 
       this.currentSiteId = siteId;
+      this.shouldStop = false;
+      this.activeCrawls.set(siteId, true);
       this.crawledUrls.clear();
       this.pendingUrls = [{ url: site.url, depth: 0 }];
       this.options = {
@@ -56,7 +60,13 @@ export class WebCrawler {
       let totalPages = 0;
       let indexedPages = 0;
 
-      while (this.pendingUrls.length > 0) {
+      while (this.pendingUrls.length > 0 && !this.shouldStop) {
+        // Check if crawl was stopped
+        if (!this.activeCrawls.get(siteId)) {
+          console.log(`Crawl was stopped for site ${siteId}`);
+          break;
+        }
+
         const { url, depth } = this.pendingUrls.shift()!;
         
         if (this.shouldSkipUrl(url, depth)) {
@@ -140,6 +150,13 @@ export class WebCrawler {
         error: error instanceof Error ? error.message : 'Unknown error'
       });
       throw error;
+    } finally {
+      // Always clean up crawl state
+      this.activeCrawls.delete(siteId);
+      this.shouldStop = false;
+      if (this.currentSiteId === siteId) {
+        this.currentSiteId = null;
+      }
     }
   }
 
@@ -291,9 +308,47 @@ export class WebCrawler {
   }
 
   async stopCrawl(siteId: string): Promise<void> {
-    await storage.updateSite(siteId, { status: 'idle' });
+    console.log(`Stopping crawl for site ${siteId}`);
+    
+    // Set stop flags immediately
+    this.shouldStop = true;
+    this.activeCrawls.set(siteId, false);
+    
+    // Clear pending URLs
     this.pendingUrls = [];
-    console.log(`Crawl stopped for site ${siteId}`);
+    
+    // Update database status
+    await storage.updateSite(siteId, { 
+      status: 'idle',
+      error: 'Crawl manually stopped'
+    });
+    
+    // Clean up if this is the current site
+    if (this.currentSiteId === siteId) {
+      this.currentSiteId = null;
+    }
+    
+    console.log(`Crawl forcefully stopped for site ${siteId}`);
+  }
+
+  // Emergency stop all crawls
+  async stopAllCrawls(): Promise<void> {
+    console.log('Emergency stop: stopping all active crawls');
+    this.shouldStop = true;
+    this.pendingUrls = [];
+    this.currentSiteId = null;
+    
+    // Stop all active crawls
+    for (const siteId of Array.from(this.activeCrawls.keys())) {
+      this.activeCrawls.set(siteId, false);
+      await storage.updateSite(siteId, { 
+        status: 'idle',
+        error: 'Emergency stop - all crawls terminated'
+      });
+    }
+    
+    this.activeCrawls.clear();
+    console.log('All crawls stopped');
   }
 }
 
