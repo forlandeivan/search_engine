@@ -48,7 +48,7 @@ export class DatabaseStorage implements IStorage {
   async createSite(site: InsertSite): Promise<Site> {
     const [newSite] = await db
       .insert(sites)
-      .values([site])
+      .values(site as any)
       .returning();
     return newSite;
   }
