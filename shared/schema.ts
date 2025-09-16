@@ -10,7 +10,7 @@ export const sites = pgTable("sites", {
   crawlDepth: integer("crawl_depth").notNull().default(3),
   followExternalLinks: boolean("follow_external_links").notNull().default(false),
   crawlFrequency: text("crawl_frequency").notNull().default("daily"), // "manual" | "hourly" | "daily" | "weekly"
-  excludePatterns: jsonb("exclude_patterns").$type<string[]>().notNull().default([]),
+  excludePatterns: jsonb("exclude_patterns").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   status: text("status").notNull().default("idle"), // "idle" | "crawling" | "completed" | "failed"
   lastCrawled: timestamp("last_crawled"),
   nextCrawl: timestamp("next_crawl"),

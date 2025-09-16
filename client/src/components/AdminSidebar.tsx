@@ -20,7 +20,8 @@ import {
   Database, 
   Activity,
   Webhook,
-  Calendar
+  Calendar,
+  BookOpen
 } from "lucide-react";
 
 interface SidebarItem {
@@ -90,6 +91,11 @@ export default function AdminSidebar() {
       title: "Вебхуки",
       url: "/admin/webhooks",
       icon: Webhook
+    },
+    {
+      title: "API для Тильды",
+      url: "/admin/api",
+      icon: BookOpen
     },
     {
       title: "Настройки",
