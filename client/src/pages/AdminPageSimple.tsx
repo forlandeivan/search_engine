@@ -45,6 +45,28 @@ export default function AdminPage() {
     },
   });
 
+  // Delete site mutation
+  const deleteSiteMutation = useMutation({
+    mutationFn: async (siteId: string) => {
+      const response = await apiRequest('DELETE', `/api/sites/${siteId}`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      toast({
+        title: "Сайт удален",
+        description: "Сайт и все его страницы успешно удалены",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Ошибка",
+        description: "Не удалось удалить сайт",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Start crawl mutation
   const startCrawlMutation = useMutation({
     mutationFn: async (siteId: string) => {
@@ -60,7 +82,7 @@ export default function AdminPage() {
     },
   });
 
-  const displaySites = sites || [];
+  const displaySites = Array.isArray(sites) ? sites : [];
 
   const handleAddSite = (config: SiteConfig) => {
     addSiteMutation.mutate(config);
@@ -76,6 +98,10 @@ export default function AdminPage() {
 
   const handleRetryCrawl = (id: string) => {
     startCrawlMutation.mutate(id);
+  };
+
+  const handleDeleteSite = (id: string) => {
+    deleteSiteMutation.mutate(id);
   };
 
   const filteredSites = displaySites.filter((site: any) => {
@@ -141,6 +167,7 @@ export default function AdminPage() {
             onStart={handleStartCrawl}
             onStop={handleStopCrawl}
             onRetry={handleRetryCrawl}
+            onDelete={handleDeleteSite}
           />
         ))}
       </div>
