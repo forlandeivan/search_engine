@@ -14,6 +14,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Plus, Search, Filter } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -22,6 +23,7 @@ export default function AdminPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchFilter, setSearchFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "crawling" | "completed" | "failed">("all");
+  const [siteToDelete, setSiteToDelete] = useState<{ id: string; url: string; pageCount?: number } | null>(null);
 
   // Fetch sites data with auto-refresh if any site is crawling
   const { data: sites = [], isLoading, refetch } = useQuery<Site[]>({

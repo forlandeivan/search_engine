@@ -9,7 +9,8 @@ import {
   Loader2, 
   Play, 
   Square,
-  RefreshCw
+  RefreshCw,
+  Trash2
 } from "lucide-react";
 
 interface CrawlStatus {
@@ -29,6 +30,7 @@ interface CrawlStatusCardProps {
   onStart?: (id: string) => void;
   onStop?: (id: string) => void;
   onRetry?: (id: string) => void;
+  onDelete?: (id: string) => void;
 }
 
 const statusIcons = {
@@ -56,7 +58,8 @@ export default function CrawlStatusCard({
   crawlStatus, 
   onStart, 
   onStop, 
-  onRetry 
+  onRetry,
+  onDelete 
 }: CrawlStatusCardProps) {
   const StatusIcon = statusIcons[crawlStatus.status];
   const isCrawling = crawlStatus.status === "crawling";
@@ -105,6 +108,17 @@ export default function CrawlStatusCard({
               data-testid={`button-retry-${crawlStatus.id}`}
             >
               <RefreshCw className="h-3 w-3" />
+            </Button>
+          )}
+          {onDelete && crawlStatus.status !== "crawling" && (
+            <Button 
+              size="sm" 
+              variant="outline"
+              onClick={() => onDelete(crawlStatus.id)}
+              data-testid={`button-delete-${crawlStatus.id}`}
+              className="text-destructive hover:text-destructive-foreground hover:bg-destructive"
+            >
+              <Trash2 className="h-3 w-3" />
             </Button>
           )}
         </div>
