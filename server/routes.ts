@@ -205,27 +205,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Search API
   app.get("/api/search", async (req, res) => {
     try {
+      console.log("🔍 Search API called with query:", req.query);
+      
       const query = req.query.q as string;
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const offset = (page - 1) * limit;
 
+      console.log("📊 Search parameters:", { query, page, limit, offset });
+
       if (!query || query.trim().length === 0) {
+        console.log("❌ Empty query provided");
         return res.json({ results: [], total: 0, page, limit });
       }
 
+      console.log("🚀 Calling storage.searchPages...");
       const { results, total } = await storage.searchPages(query, limit, offset);
+      console.log("✅ Search completed:", { resultsCount: results.length, total });
       
-      res.json({
+      const response = {
         results,
         total,
         page,
         limit,
         totalPages: Math.ceil(total / limit)
-      });
+      };
+      
+      console.log("📤 Sending response:", JSON.stringify(response, null, 2));
+      res.json(response);
     } catch (error) {
-      console.error("Error performing search:", error);
-      res.status(500).json({ error: "Failed to perform search" });
+      console.error("❌ Error performing search:", error);
+      console.error("❌ Stack trace:", error.stack);
+      res.status(500).json({ error: "Failed to perform search", details: error.message });
     }
   });
 

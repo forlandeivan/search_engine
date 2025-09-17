@@ -21,7 +21,7 @@ export interface IStorage {
   getAllSites(): Promise<Site[]>;
   updateSite(id: string, updates: Partial<Site>): Promise<Site | undefined>;
   deleteSite(id: string): Promise<boolean>;
-  
+
   // Pages management  
   createPage(page: InsertPage): Promise<Page>;
   getPage(id: string): Promise<Page | undefined>;
@@ -31,12 +31,12 @@ export interface IStorage {
   updatePage(id: string, updates: Partial<Page>): Promise<Page | undefined>;
   deletePage(id: string): Promise<boolean>;
   deletePagesBySiteId(siteId: string): Promise<number>;
-  
+
   // Search index management
   createSearchIndexEntry(entry: InsertSearchIndexEntry): Promise<SearchIndexEntry>;
   deleteSearchIndexByPageId(pageId: string): Promise<number>;
   searchPages(query: string, limit?: number, offset?: number): Promise<{ results: Page[], total: number }>;
-  
+
   // Database health diagnostics
   getDatabaseHealthInfo(): Promise<{
     schema_name: string;
@@ -46,7 +46,7 @@ export interface IStorage {
     search_vector_columns_exist: boolean;
     relevance_column_exists: boolean;
   }>;
-  
+
   // Keep user methods for future admin features  
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -150,14 +150,14 @@ export class DatabaseStorage implements IStorage {
   // Public search by collection (siteId) with Full-Text Search and fuzzy matching
   async searchPagesByCollection(query: string, siteId: string, limit: number = 10, offset: number = 0): Promise<{ results: Page[], total: number }> {
     const searchQuery = query.trim();
-    
+
     if (searchQuery.length === 0) {
       return { results: [], total: 0 };
     }
 
     // Prepare the search query for FTS (plainto_tsquery handles multiple words automatically)
     const tsQuery = sql`plainto_tsquery('english', ${searchQuery})`;
-    
+
     // Get results with FTS ranking and fuzzy matching fallback
     const results = await db
       .select()
@@ -200,89 +200,90 @@ export class DatabaseStorage implements IStorage {
     return { results, total: count };
   }
 
-  async searchPages(query: string, limit: number = 10, offset: number = 0): Promise<{ results: Page[], total: number }> {
-    const searchQuery = query.trim();
-    
-    if (searchQuery.length === 0) {
-      return { results: [], total: 0 };
-    }
-
-    console.log(`🔍 Search starting: query="${searchQuery}", limit=${limit}, offset=${offset}`);
-
+  async searchPages(query: string, limit: number = 10, offset: number = 0): Promise<{ results: any[], total: number }> {
     try {
-      // Prepare the search query for FTS (plainto_tsquery handles multiple words automatically)
-      let tsQuery;
-      try {
-        tsQuery = sql`plainto_tsquery('english', ${searchQuery})`;
-        console.log(`✅ tsQuery prepared successfully for: "${searchQuery}"`);
-      } catch (tsError: any) {
-        console.error(`❌ Error preparing tsQuery for "${searchQuery}":`, tsError.message);
-        throw tsError;
-      }
-      
-      // Get results with FTS ranking and fuzzy matching fallback
-      let results;
-      try {
-        console.log(`🔍 Executing results query...`);
-        results = await db
-          .select()
-          .from(pages)
-          .where(
-            sql`(
-              ${pages.searchVectorCombined} @@ ${tsQuery} OR
-              similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
-              similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
-            )`
-          )
-          .orderBy(
-            sql`(
-              COALESCE(ts_rank_cd(${pages.searchVectorCombined}, ${tsQuery}), 0) + 
-              CASE 
-                WHEN ${pages.searchVectorCombined} @@ ${tsQuery} THEN 0.5
-                ELSE GREATEST(
-                  similarity(COALESCE(${pages.title}, ''), ${searchQuery}),
-                  similarity(COALESCE(${pages.content}, ''), ${searchQuery})
-                ) * 0.3
-              END
-            ) DESC`,
-            sql`${pages.lastCrawled} DESC`
-          )
-          .limit(limit)
-          .offset(offset);
-        console.log(`✅ Results query succeeded, found ${results.length} results`);
-      } catch (resultsError: any) {
-        console.error(`❌ Error executing results query for "${searchQuery}":`, resultsError.message);
-        console.error(`Full error:`, resultsError);
-        throw resultsError;
-      }
+      // Prepare search query with word boundaries for better matching
+      const searchQuery = query.trim().replace(/\s+/g, ' & ');
+      console.log(`🔍 Searching for: "${query}" -> "${searchQuery}"`);
+      console.log(`📋 Search params: limit=${limit}, offset=${offset}`);
 
-      // Get total count using the same conditions
-      let count;
-      try {
-        console.log(`🔍 Executing count query...`);
-        const countResult = await db
-          .select({ count: sql`COUNT(*)`.mapWith(Number) })
-          .from(pages)
-          .where(
-            sql`(
-              ${pages.searchVectorCombined} @@ ${tsQuery} OR
-              similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
-              similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
-            )`
-          );
-        count = countResult[0].count;
-        console.log(`✅ Count query succeeded, total: ${count}`);
-      } catch (countError: any) {
-        console.error(`❌ Error executing count query for "${searchQuery}":`, countError.message);
-        console.error(`Full error:`, countError);
-        throw countError;
-      }
+      // First check if we have any pages at all
+      const totalPagesResult = await db.execute(sql`SELECT COUNT(*) as count FROM pages`);
+      console.log(`📊 Total pages in database: ${totalPagesResult.rows[0]?.count || 0}`);
 
-      console.log(`✅ Search completed successfully: query="${searchQuery}", results=${results.length}, total=${count}`);
-      return { results, total: count };
-    } catch (error: any) {
-      console.error(`❌ Search failed for query "${searchQuery}":`, error.message);
-      console.error(`Full error:`, error);
+      // Check database extensions
+      console.log(`🔧 Checking database extensions...`);
+      const extensionsResult = await db.execute(sql`
+        SELECT extname FROM pg_extension WHERE extname IN ('pg_trgm', 'unaccent')
+      `);
+      console.log(`📦 Available extensions:`, extensionsResult.rows.map(r => r.extname));
+
+      // Use both full-text search and similarity search for comprehensive results
+      console.log(`🚀 Executing search query...`);
+      const searchResults = await db.execute(sql`
+        WITH search_results AS (
+          SELECT 
+            p.*,
+            s.url as site_url,
+            -- Full-text search scores
+            CASE 
+              WHEN p.search_vector_title @@ plainto_tsquery('english', ${query}) THEN 
+                ts_rank(p.search_vector_title, plainto_tsquery('english', ${query})) * 2
+              ELSE 0 
+            END as title_score,
+            CASE 
+              WHEN p.search_vector_content @@ plainto_tsquery('english', ${query}) THEN 
+                ts_rank(p.search_vector_content, plainto_tsquery('english', ${query}))
+              ELSE 0 
+            END as content_score,
+            -- Similarity scores (fuzzy matching)
+            similarity(COALESCE(p.title, ''), ${query}) as title_similarity,
+            similarity(COALESCE(p.content, ''), ${query}) as content_similarity
+          FROM pages p
+          JOIN sites s ON p.site_id = s.id
+          WHERE 
+            -- Full-text search conditions
+            (p.search_vector_title @@ plainto_tsquery('english', ${query})
+            OR p.search_vector_content @@ plainto_tsquery('english', ${query}))
+            OR
+            -- Similarity search conditions (for typos and partial matches)
+            (similarity(COALESCE(p.title, ''), ${query}) > 0.2
+            OR similarity(COALESCE(p.content, ''), ${query}) > 0.1)
+        )
+        SELECT 
+          *,
+          (title_score + content_score + title_similarity + content_similarity) as final_score
+        FROM search_results
+        ORDER BY final_score DESC, last_crawled DESC
+        LIMIT ${limit} OFFSET ${offset}
+      `);
+
+      console.log(`✅ Search query executed, got ${searchResults.rows.length} results`);
+
+      // Get total count for pagination
+      console.log(`📊 Getting total count...`);
+      const countResult = await db.execute(sql`
+        SELECT COUNT(*) as count
+        FROM pages p
+        WHERE 
+          (p.search_vector_title @@ plainto_tsquery('english', ${query})
+          OR p.search_vector_content @@ plainto_tsquery('english', ${query}))
+          OR
+          (similarity(COALESCE(p.title, ''), ${query}) > 0.2
+          OR similarity(COALESCE(p.content, ''), ${query}) > 0.1)
+      `);
+
+      const total = parseInt(countResult.rows[0]?.count || '0');
+      console.log(`✅ Found ${searchResults.rows.length} results out of ${total} total matches`);
+
+      return {
+        results: searchResults.rows,
+        total
+      };
+    } catch (error) {
+      console.error('❌ Search error:', error);
+      console.error('❌ Error details:', error.message);
+      console.error('❌ Stack trace:', error.stack);
       throw error;
     }
   }
