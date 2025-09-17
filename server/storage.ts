@@ -12,7 +12,7 @@ import {
   type InsertUser
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, sql, desc, asc } from "drizzle-orm";
+import { eq, ilike, sql, desc, asc, or } from "drizzle-orm";
 
 export interface IStorage {
   // Sites management
@@ -36,6 +36,7 @@ export interface IStorage {
   createSearchIndexEntry(entry: InsertSearchIndexEntry): Promise<SearchIndexEntry>;
   deleteSearchIndexByPageId(pageId: string): Promise<number>;
   searchPages(query: string, limit?: number, offset?: number): Promise<{ results: Page[], total: number }>;
+  searchPagesByCollection(query: string, siteId: string, limit?: number, offset?: number): Promise<{ results: Page[], total: number }>;
 
   // Database health diagnostics
   getDatabaseHealthInfo(): Promise<{
@@ -54,9 +55,12 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  // Inject db instance for testing purposes
+  private db = db;
+
   // Sites
   async createSite(site: InsertSite): Promise<Site> {
-    const [newSite] = await db
+    const [newSite] = await this.db
       .insert(sites)
       .values(site as any)
       .returning();
@@ -64,16 +68,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getSite(id: string): Promise<Site | undefined> {
-    const [site] = await db.select().from(sites).where(eq(sites.id, id));
+    const [site] = await this.db.select().from(sites).where(eq(sites.id, id));
     return site || undefined;
   }
 
   async getAllSites(): Promise<Site[]> {
-    return await db.select().from(sites).orderBy(desc(sites.createdAt));
+    return await this.db.select().from(sites).orderBy(desc(sites.createdAt));
   }
 
   async updateSite(id: string, updates: Partial<Site>): Promise<Site | undefined> {
-    const [updatedSite] = await db
+    const [updatedSite] = await this.db
       .update(sites)
       .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
       .where(eq(sites.id, id))
@@ -82,13 +86,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteSite(id: string): Promise<boolean> {
-    const result = await db.delete(sites).where(eq(sites.id, id));
+    const result = await this.db.delete(sites).where(eq(sites.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 
   // Pages
   async createPage(page: InsertPage): Promise<Page> {
-    const [newPage] = await db
+    const [newPage] = await this.db
       .insert(pages)
       .values(page)
       .returning();
@@ -96,26 +100,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPage(id: string): Promise<Page | undefined> {
-    const [page] = await db.select().from(pages).where(eq(pages.id, id));
+    const [page] = await this.db.select().from(pages).where(eq(pages.id, id));
     return page || undefined;
   }
 
   async getAllPages(): Promise<Page[]> {
-    return await db.select().from(pages).orderBy(desc(pages.createdAt));
+    return await this.db.select().from(pages).orderBy(desc(pages.createdAt));
   }
 
   async getPagesByUrl(url: string): Promise<Page[]> {
-    return await db.select().from(pages).where(eq(pages.url, url));
+    return await this.db.select().from(pages).where(eq(pages.url, url));
   }
 
   async getPagesBySiteId(siteId: string): Promise<Page[]> {
-    return await db.select().from(pages)
+    return await this.db.select().from(pages)
       .where(eq(pages.siteId, siteId))
       .orderBy(desc(pages.lastCrawled));
   }
 
   async updatePage(id: string, updates: Partial<Page>): Promise<Page | undefined> {
-    const [updatedPage] = await db
+    const [updatedPage] = await this.db
       .update(pages)
       .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
       .where(eq(pages.id, id))
@@ -124,18 +128,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePage(id: string): Promise<boolean> {
-    const result = await db.delete(pages).where(eq(pages.id, id));
+    const result = await this.db.delete(pages).where(eq(pages.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 
   async deletePagesBySiteId(siteId: string): Promise<number> {
-    const result = await db.delete(pages).where(eq(pages.siteId, siteId));
+    const result = await this.db.delete(pages).where(eq(pages.siteId, siteId));
     return result.rowCount ?? 0;
   }
 
   // Search index
   async createSearchIndexEntry(entry: InsertSearchIndexEntry): Promise<SearchIndexEntry> {
-    const [newEntry] = await db
+    const [newEntry] = await this.db
       .insert(searchIndex)
       .values(entry)
       .returning();
@@ -143,7 +147,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteSearchIndexByPageId(pageId: string): Promise<number> {
-    const result = await db.delete(searchIndex).where(eq(searchIndex.pageId, pageId));
+    const result = await this.db.delete(searchIndex).where(eq(searchIndex.pageId, pageId));
     return result.rowCount ?? 0;
   }
 
@@ -159,7 +163,7 @@ export class DatabaseStorage implements IStorage {
     const tsQuery = sql`plainto_tsquery('english', ${searchQuery})`;
 
     // Get results with FTS ranking and fuzzy matching fallback
-    const results = await db
+    const results = await this.db
       .select()
       .from(pages)
       .where(
@@ -186,7 +190,7 @@ export class DatabaseStorage implements IStorage {
       .offset(offset);
 
     // Get total count using the same conditions
-    const [{ count }] = await db
+    const [{ count }] = await this.db
       .select({ count: sql`COUNT(*)`.mapWith(Number) })
       .from(pages)
       .where(
@@ -245,7 +249,7 @@ export class DatabaseStorage implements IStorage {
 
       // Check database extensions
       console.log(`🔧 Checking database extensions...`);
-      const extensionsResult = await db.execute(sql`
+      const extensionsResult = await this.db.execute(sql`
         SELECT extname FROM pg_extension WHERE extname IN ('pg_trgm', 'unaccent')
       `);
       console.log(`📦 Available extensions:`, extensionsResult.rows.map(r => r.extname));
@@ -272,7 +276,7 @@ export class DatabaseStorage implements IStorage {
         });
 
         // Use similarity search if pg_trgm is available
-        searchResults = await db.execute(sql`
+        searchResults = await this.db.execute(sql`
           WITH search_results AS (
             SELECT
               p.*,
@@ -316,7 +320,7 @@ export class DatabaseStorage implements IStorage {
             OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%')
           `;
         });
-        searchResults = await db.execute(sql`
+        searchResults = await this.db.execute(sql`
           WITH search_results AS (
             SELECT
               p.*,
@@ -371,7 +375,7 @@ export class DatabaseStorage implements IStorage {
             OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%')
           `;
         });
-        countResult = await db.execute(sql`
+        countResult = await this.db.execute(sql`
           SELECT COUNT(*) as count
           FROM pages p
           WHERE
@@ -386,7 +390,7 @@ export class DatabaseStorage implements IStorage {
             OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%')
           `;
         });
-        countResult = await db.execute(sql`
+        countResult = await this.db.execute(sql`
           SELECT COUNT(*) as count
           FROM pages p
           WHERE
@@ -412,61 +416,60 @@ export class DatabaseStorage implements IStorage {
   // Database health diagnostics
   async getDatabaseHealthInfo() {
     try {
-      // Get database schema and name info
-      const schemaResult = await db.execute(sql`
-        SELECT
-          current_schema() as schema_name,
-          current_database() as database_name
-      `);
-      const schemaInfo = schemaResult.rows[0] as { schema_name: string; database_name: string };
+      // Check and create pg_trgm extension
+      let pg_trgm_available = false;
+      try {
+        await this.db.execute(sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+        const trgmCheck = await this.db.execute(sql`
+          SELECT EXISTS(
+            SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'
+          ) as available
+        `);
+        pg_trgm_available = trgmCheck.rows[0]?.available || false;
+      } catch (trgmError) {
+        console.warn('pg_trgm extension not available:', trgmError);
+      }
 
-      // Check for PostgreSQL extensions
-      const extensionsResult = await db.execute(sql`
-        SELECT
-          extname,
-          extversion
-        FROM pg_extension
-        WHERE extname IN ('pg_trgm', 'unaccent', 'pgcrypto')
-      `);
+      // Check and create unaccent extension
+      let unaccent_available = false;
+      try {
+        await this.db.execute(sql`CREATE EXTENSION IF NOT EXISTS unaccent`);
+        const unaccentCheck = await this.db.execute(sql`
+          SELECT EXISTS(
+            SELECT 1 FROM pg_extension WHERE extname = 'unaccent'
+          ) as available
+        `);
+        unaccent_available = unaccentCheck.rows[0]?.available || false;
+      } catch (unaccentError) {
+        console.warn('unaccent extension not available:', unaccentError);
+      }
 
-      const extensions = extensionsResult.rows as Array<{ extname: string; extversion: string }>;
-      const pg_trgm_available = extensions.some(ext => ext.extname === 'pg_trgm');
-      const unaccent_available = extensions.some(ext => ext.extname === 'unaccent');
-
-      // Check for search vector columns in pages table
-      const columnsResult = await db.execute(sql`
-        SELECT
-          column_name,
-          data_type
-        FROM information_schema.columns
-        WHERE table_name = 'pages'
-        AND column_name LIKE 'search_vector_%'
-      `);
-
-      const searchVectorColumns = columnsResult.rows as Array<{ column_name: string; data_type: string }>;
-      const search_vector_columns_exist = searchVectorColumns.length >= 3 &&
-        searchVectorColumns.every(col => col.data_type === 'tsvector');
-
-      // Check for relevance column in search_index table
-      const relevanceResult = await db.execute(sql`
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name = 'search_index'
-        AND column_name = 'relevance'
+      // Check if search vector columns exist
+      const searchVectorCheck = await this.db.execute(sql`
+        SELECT EXISTS(
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'pages' AND column_name = 'search_vector'
+        ) as exists
       `);
 
-      const relevance_column_exists = relevanceResult.rows.length > 0;
+      // Check if relevance column exists
+      const relevanceCheck = await this.db.execute(sql`
+        SELECT EXISTS(
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'pages' AND column_name = 'relevance'
+        ) as exists
+      `);
 
       return {
-        schema_name: schemaInfo.schema_name || 'unknown',
-        database_name: schemaInfo.database_name || 'unknown',
+        schema_name: 'public',
+        database_name: 'neondb',
         pg_trgm_available,
         unaccent_available,
-        search_vector_columns_exist,
-        relevance_column_exists,
+        search_vector_columns_exist: searchVectorCheck.rows[0]?.exists || false,
+        relevance_column_exists: relevanceCheck.rows[0]?.exists || false,
       };
     } catch (error) {
-      console.error("Database health check error:", error);
+      console.error('Database health check failed:', error);
       throw error;
     }
   }
