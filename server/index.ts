@@ -120,6 +120,11 @@ app.use((req, res, next) => {
 
   const server = await registerRoutes(app);
 
+  // Add explicit 404 JSON fallback for unknown API paths
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "API endpoint not found" });
+  });
+
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
@@ -147,8 +152,8 @@ app.use((req, res, next) => {
     
     app.use(express.static(staticDir));
     
-    // Fallback to index.html for client-side routing
-    app.use("*", (_req, res) => {
+    // Fallback to index.html for client-side routing (exclude API routes)
+    app.get(/^(?!\/api).*/, (_req, res) => {
       res.sendFile(path.resolve(staticDir, "index.html"));
     });
   }
