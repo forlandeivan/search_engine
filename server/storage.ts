@@ -207,49 +207,84 @@ export class DatabaseStorage implements IStorage {
       return { results: [], total: 0 };
     }
 
-    // Prepare the search query for FTS (plainto_tsquery handles multiple words automatically)
-    const tsQuery = sql`plainto_tsquery('english', ${searchQuery})`;
-    
-    // Get results with FTS ranking and fuzzy matching fallback
-    const results = await db
-      .select()
-      .from(pages)
-      .where(
-        sql`(
-          ${pages.searchVectorCombined} @@ ${tsQuery} OR
-          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
-          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
-        )`
-      )
-      .orderBy(
-        sql`(
-          COALESCE(ts_rank_cd(${pages.searchVectorCombined}, ${tsQuery}), 0) + 
-          CASE 
-            WHEN ${pages.searchVectorCombined} @@ ${tsQuery} THEN 0.5
-            ELSE GREATEST(
-              similarity(COALESCE(${pages.title}, ''), ${searchQuery}),
-              similarity(COALESCE(${pages.content}, ''), ${searchQuery})
-            ) * 0.3
-          END
-        ) DESC`,
-        sql`${pages.lastCrawled} DESC`
-      )
-      .limit(limit)
-      .offset(offset);
+    console.log(`🔍 Search starting: query="${searchQuery}", limit=${limit}, offset=${offset}`);
 
-    // Get total count using the same conditions
-    const [{ count }] = await db
-      .select({ count: sql`COUNT(*)`.mapWith(Number) })
-      .from(pages)
-      .where(
-        sql`(
-          ${pages.searchVectorCombined} @@ ${tsQuery} OR
-          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
-          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
-        )`
-      );
+    try {
+      // Prepare the search query for FTS (plainto_tsquery handles multiple words automatically)
+      let tsQuery;
+      try {
+        tsQuery = sql`plainto_tsquery('english', ${searchQuery})`;
+        console.log(`✅ tsQuery prepared successfully for: "${searchQuery}"`);
+      } catch (tsError) {
+        console.error(`❌ Error preparing tsQuery for "${searchQuery}":`, tsError.message);
+        throw tsError;
+      }
+      
+      // Get results with FTS ranking and fuzzy matching fallback
+      let results;
+      try {
+        console.log(`🔍 Executing results query...`);
+        results = await db
+          .select()
+          .from(pages)
+          .where(
+            sql`(
+              ${pages.searchVectorCombined} @@ ${tsQuery} OR
+              similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
+              similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
+            )`
+          )
+          .orderBy(
+            sql`(
+              COALESCE(ts_rank_cd(${pages.searchVectorCombined}, ${tsQuery}), 0) + 
+              CASE 
+                WHEN ${pages.searchVectorCombined} @@ ${tsQuery} THEN 0.5
+                ELSE GREATEST(
+                  similarity(COALESCE(${pages.title}, ''), ${searchQuery}),
+                  similarity(COALESCE(${pages.content}, ''), ${searchQuery})
+                ) * 0.3
+              END
+            ) DESC`,
+            sql`${pages.lastCrawled} DESC`
+          )
+          .limit(limit)
+          .offset(offset);
+        console.log(`✅ Results query succeeded, found ${results.length} results`);
+      } catch (resultsError) {
+        console.error(`❌ Error executing results query for "${searchQuery}":`, resultsError.message);
+        console.error(`Full error:`, resultsError);
+        throw resultsError;
+      }
 
-    return { results, total: count };
+      // Get total count using the same conditions
+      let count;
+      try {
+        console.log(`🔍 Executing count query...`);
+        const countResult = await db
+          .select({ count: sql`COUNT(*)`.mapWith(Number) })
+          .from(pages)
+          .where(
+            sql`(
+              ${pages.searchVectorCombined} @@ ${tsQuery} OR
+              similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
+              similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
+            )`
+          );
+        count = countResult[0].count;
+        console.log(`✅ Count query succeeded, total: ${count}`);
+      } catch (countError) {
+        console.error(`❌ Error executing count query for "${searchQuery}":`, countError.message);
+        console.error(`Full error:`, countError);
+        throw countError;
+      }
+
+      console.log(`✅ Search completed successfully: query="${searchQuery}", results=${results.length}, total=${count}`);
+      return { results, total: count };
+    } catch (error) {
+      console.error(`❌ Search failed for query "${searchQuery}":`, error.message);
+      console.error(`Full error:`, error);
+      throw error;
+    }
   }
 
   // Database health diagnostics
