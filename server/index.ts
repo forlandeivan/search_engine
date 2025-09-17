@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
@@ -8,6 +9,106 @@ import path from "path";
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// CORS hostname cache with TTL
+interface HostnameCache {
+  hostnames: Set<string>;
+  timestamp: number;
+}
+
+let corsCache: HostnameCache | null = null;
+const CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+// Function to refresh the CORS hostname cache
+async function refreshCorsCache(): Promise<Set<string>> {
+  try {
+    const sites = await storage.getAllSites();
+    const hostnames = new Set<string>();
+    
+    // Add Tilda domains
+    hostnames.add('tilda.ws');
+    
+    // Process database sites and extract hostnames
+    for (const site of sites) {
+      try {
+        const url = new URL(site.url);
+        hostnames.add(url.hostname);
+      } catch (urlError) {
+        log(`CORS cache: Invalid URL in database: ${site.url} - ${urlError}`);
+        // Skip invalid URLs instead of breaking the entire cache
+      }
+    }
+    
+    // Update cache
+    corsCache = {
+      hostnames,
+      timestamp: Date.now()
+    };
+    
+    log(`CORS cache refreshed with ${hostnames.size} hostnames`);
+    return hostnames;
+  } catch (error) {
+    log(`CORS cache refresh error: ${error}`);
+    // Return empty set on error to fail safely
+    return new Set();
+  }
+}
+
+// Function to get current allowed hostnames (with cache)
+async function getAllowedHostnames(): Promise<Set<string>> {
+  const now = Date.now();
+  
+  // Check if cache is valid
+  if (corsCache && (now - corsCache.timestamp) < CACHE_TTL_MS) {
+    return corsCache.hostnames;
+  }
+  
+  // Cache is stale or doesn't exist, refresh it
+  return await refreshCorsCache();
+}
+
+// Dynamic CORS configuration based on database sites with caching
+app.use(cors({
+  origin: async (origin, callback) => {
+    try {
+      // Allow same-origin and Replit preview domain requests
+      if (!origin || origin.includes('replit.dev') || origin.includes('replit.app')) {
+        return callback(null, true);
+      }
+
+      // Parse hostname from origin
+      let originHostname: string;
+      try {
+        const originUrl = new URL(origin);
+        originHostname = originUrl.hostname;
+      } catch (urlError) {
+        log(`CORS: Invalid origin URL: ${origin}`);
+        return callback(new Error('Invalid origin'));
+      }
+
+      // Get allowed hostnames from cache
+      const allowedHostnames = await getAllowedHostnames();
+
+      // Check if origin hostname is allowed
+      // Support Tilda subdomains: hostname === 'tilda.ws' || hostname.endsWith('.tilda.ws')
+      const isAllowed = allowedHostnames.has(originHostname) || 
+                       originHostname === 'tilda.ws' || 
+                       originHostname.endsWith('.tilda.ws');
+
+      if (isAllowed) {
+        callback(null, true);
+      } else {
+        log(`CORS blocked origin: ${origin} (hostname: ${originHostname})`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    } catch (error) {
+      log(`CORS error: ${error}`);
+      callback(error instanceof Error ? error : new Error(String(error)));
+    }
+  },
+  credentials: true,
+  optionsSuccessStatus: 200
+}));
 
 app.use((req, res, next) => {
   const start = Date.now();
