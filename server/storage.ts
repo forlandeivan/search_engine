@@ -218,60 +218,128 @@ export class DatabaseStorage implements IStorage {
       `);
       console.log(`📦 Available extensions:`, extensionsResult.rows.map(r => r.extname));
 
-      // Use both full-text search and similarity search for comprehensive results
+      // Check if pg_trgm is available for similarity search
+      const hasPgTrgm = extensionsResult.rows.some(row => row.extname === 'pg_trgm');
+      console.log(`🔍 pg_trgm available: ${hasPgTrgm}`);
+
+      // Use full-text search with optional similarity fallback
       console.log(`🚀 Executing search query...`);
-      const searchResults = await db.execute(sql`
-        WITH search_results AS (
+      
+      let searchResults;
+      if (hasPgTrgm) {
+        // Use similarity search if pg_trgm is available
+        searchResults = await db.execute(sql`
+          WITH search_results AS (
+            SELECT 
+              p.*,
+              s.url as site_url,
+              -- Full-text search scores
+              CASE 
+                WHEN p.search_vector_title @@ plainto_tsquery('english', ${query}) THEN 
+                  ts_rank(p.search_vector_title, plainto_tsquery('english', ${query})) * 2
+                ELSE 0 
+              END as title_score,
+              CASE 
+                WHEN p.search_vector_content @@ plainto_tsquery('english', ${query}) THEN 
+                  ts_rank(p.search_vector_content, plainto_tsquery('english', ${query}))
+                ELSE 0 
+              END as content_score,
+              -- Similarity scores (fuzzy matching)
+              similarity(COALESCE(p.title, ''), ${query}) as title_similarity,
+              similarity(COALESCE(p.content, ''), ${query}) as content_similarity
+            FROM pages p
+            JOIN sites s ON p.site_id = s.id
+            WHERE 
+              -- Full-text search conditions
+              (p.search_vector_title @@ plainto_tsquery('english', ${query})
+              OR p.search_vector_content @@ plainto_tsquery('english', ${query}))
+              OR
+              -- Similarity search conditions (for typos and partial matches)
+              (similarity(COALESCE(p.title, ''), ${query}) > 0.2
+              OR similarity(COALESCE(p.content, ''), ${query}) > 0.1)
+          )
           SELECT 
-            p.*,
-            s.url as site_url,
-            -- Full-text search scores
-            CASE 
-              WHEN p.search_vector_title @@ plainto_tsquery('english', ${query}) THEN 
-                ts_rank(p.search_vector_title, plainto_tsquery('english', ${query})) * 2
-              ELSE 0 
-            END as title_score,
-            CASE 
-              WHEN p.search_vector_content @@ plainto_tsquery('english', ${query}) THEN 
-                ts_rank(p.search_vector_content, plainto_tsquery('english', ${query}))
-              ELSE 0 
-            END as content_score,
-            -- Similarity scores (fuzzy matching)
-            similarity(COALESCE(p.title, ''), ${query}) as title_similarity,
-            similarity(COALESCE(p.content, ''), ${query}) as content_similarity
-          FROM pages p
-          JOIN sites s ON p.site_id = s.id
-          WHERE 
-            -- Full-text search conditions
-            (p.search_vector_title @@ plainto_tsquery('english', ${query})
-            OR p.search_vector_content @@ plainto_tsquery('english', ${query}))
-            OR
-            -- Similarity search conditions (for typos and partial matches)
-            (similarity(COALESCE(p.title, ''), ${query}) > 0.2
-            OR similarity(COALESCE(p.content, ''), ${query}) > 0.1)
-        )
-        SELECT 
-          *,
-          (title_score + content_score + title_similarity + content_similarity) as final_score
-        FROM search_results
-        ORDER BY final_score DESC, last_crawled DESC
-        LIMIT ${limit} OFFSET ${offset}
-      `);
+            *,
+            (title_score + content_score + title_similarity + content_similarity) as final_score
+          FROM search_results
+          ORDER BY final_score DESC, last_crawled DESC
+          LIMIT ${limit} OFFSET ${offset}
+        `);
+      } else {
+        // Fallback to full-text search only + ILIKE for basic fuzzy matching
+        searchResults = await db.execute(sql`
+          WITH search_results AS (
+            SELECT 
+              p.*,
+              s.url as site_url,
+              -- Full-text search scores
+              CASE 
+                WHEN p.search_vector_title @@ plainto_tsquery('english', ${query}) THEN 
+                  ts_rank(p.search_vector_title, plainto_tsquery('english', ${query})) * 2
+                ELSE 0 
+              END as title_score,
+              CASE 
+                WHEN p.search_vector_content @@ plainto_tsquery('english', ${query}) THEN 
+                  ts_rank(p.search_vector_content, plainto_tsquery('english', ${query}))
+                ELSE 0 
+              END as content_score,
+              -- Basic fuzzy matching with ILIKE
+              CASE 
+                WHEN COALESCE(p.title, '') ILIKE '%' || ${query} || '%' THEN 0.5
+                ELSE 0 
+              END as title_similarity,
+              CASE 
+                WHEN COALESCE(p.content, '') ILIKE '%' || ${query} || '%' THEN 0.3
+                ELSE 0 
+              END as content_similarity
+            FROM pages p
+            JOIN sites s ON p.site_id = s.id
+            WHERE 
+              -- Full-text search conditions
+              (p.search_vector_title @@ plainto_tsquery('english', ${query})
+              OR p.search_vector_content @@ plainto_tsquery('english', ${query}))
+              OR
+              -- Basic pattern matching (case-insensitive)
+              (COALESCE(p.title, '') ILIKE '%' || ${query} || '%'
+              OR COALESCE(p.content, '') ILIKE '%' || ${query} || '%')
+          )
+          SELECT 
+            *,
+            (title_score + content_score + title_similarity + content_similarity) as final_score
+          FROM search_results
+          ORDER BY final_score DESC, last_crawled DESC
+          LIMIT ${limit} OFFSET ${offset}
+        `);
+      }
 
       console.log(`✅ Search query executed, got ${searchResults.rows.length} results`);
 
       // Get total count for pagination
       console.log(`📊 Getting total count...`);
-      const countResult = await db.execute(sql`
-        SELECT COUNT(*) as count
-        FROM pages p
-        WHERE 
-          (p.search_vector_title @@ plainto_tsquery('english', ${query})
-          OR p.search_vector_content @@ plainto_tsquery('english', ${query}))
-          OR
-          (similarity(COALESCE(p.title, ''), ${query}) > 0.2
-          OR similarity(COALESCE(p.content, ''), ${query}) > 0.1)
-      `);
+      let countResult;
+      if (hasPgTrgm) {
+        countResult = await db.execute(sql`
+          SELECT COUNT(*) as count
+          FROM pages p
+          WHERE 
+            (p.search_vector_title @@ plainto_tsquery('english', ${query})
+            OR p.search_vector_content @@ plainto_tsquery('english', ${query}))
+            OR
+            (similarity(COALESCE(p.title, ''), ${query}) > 0.2
+            OR similarity(COALESCE(p.content, ''), ${query}) > 0.1)
+        `);
+      } else {
+        countResult = await db.execute(sql`
+          SELECT COUNT(*) as count
+          FROM pages p
+          WHERE 
+            (p.search_vector_title @@ plainto_tsquery('english', ${query})
+            OR p.search_vector_content @@ plainto_tsquery('english', ${query}))
+            OR
+            (COALESCE(p.title, '') ILIKE '%' || ${query} || '%'
+            OR COALESCE(p.content, '') ILIKE '%' || ${query} || '%')
+        `);
+      }
 
       const total = parseInt(countResult.rows[0]?.count || '0');
       console.log(`✅ Found ${searchResults.rows.length} results out of ${total} total matches`);
