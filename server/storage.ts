@@ -215,7 +215,7 @@ export class DatabaseStorage implements IStorage {
       try {
         tsQuery = sql`plainto_tsquery('english', ${searchQuery})`;
         console.log(`✅ tsQuery prepared successfully for: "${searchQuery}"`);
-      } catch (tsError) {
+      } catch (tsError: any) {
         console.error(`❌ Error preparing tsQuery for "${searchQuery}":`, tsError.message);
         throw tsError;
       }
@@ -250,7 +250,7 @@ export class DatabaseStorage implements IStorage {
           .limit(limit)
           .offset(offset);
         console.log(`✅ Results query succeeded, found ${results.length} results`);
-      } catch (resultsError) {
+      } catch (resultsError: any) {
         console.error(`❌ Error executing results query for "${searchQuery}":`, resultsError.message);
         console.error(`Full error:`, resultsError);
         throw resultsError;
@@ -272,7 +272,7 @@ export class DatabaseStorage implements IStorage {
           );
         count = countResult[0].count;
         console.log(`✅ Count query succeeded, total: ${count}`);
-      } catch (countError) {
+      } catch (countError: any) {
         console.error(`❌ Error executing count query for "${searchQuery}":`, countError.message);
         console.error(`Full error:`, countError);
         throw countError;
@@ -280,7 +280,7 @@ export class DatabaseStorage implements IStorage {
 
       console.log(`✅ Search completed successfully: query="${searchQuery}", results=${results.length}, total=${count}`);
       return { results, total: count };
-    } catch (error) {
+    } catch (error: any) {
       console.error(`❌ Search failed for query "${searchQuery}":`, error.message);
       console.error(`Full error:`, error);
       throw error;
