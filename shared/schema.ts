@@ -30,6 +30,10 @@ export const pages = pgTable("pages", {
   statusCode: integer("status_code"),
   lastCrawled: timestamp("last_crawled").notNull(),
   contentHash: text("content_hash"), // For detecting content changes
+  // Full-Text Search vectors with weights (A=highest, D=lowest)
+  searchVectorTitle: text("search_vector_title"), // tsvector for title (weight A)
+  searchVectorContent: text("search_vector_content"), // tsvector for content+meta (weight C+B)
+  searchVectorCombined: text("search_vector_combined"), // combined tsvector with weights
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
