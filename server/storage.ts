@@ -137,71 +137,107 @@ export class DatabaseStorage implements IStorage {
     return result.rowCount ?? 0;
   }
 
-  // Public search by collection (siteId)
+  // Public search by collection (siteId) with Full-Text Search and fuzzy matching
   async searchPagesByCollection(query: string, siteId: string, limit: number = 10, offset: number = 0): Promise<{ results: Page[], total: number }> {
-    const searchTerms = query.toLowerCase().split(' ').filter(term => term.length > 0);
+    const searchQuery = query.trim();
     
-    if (searchTerms.length === 0) {
+    if (searchQuery.length === 0) {
       return { results: [], total: 0 };
     }
 
-    // Build search conditions for title and content within specific site
-    const searchConditions = searchTerms.map(term => 
-      sql`(LOWER(${pages.title}) LIKE ${`%${term}%`} OR LOWER(${pages.content}) LIKE ${`%${term}%`})`
-    );
-
-    const whereClause = searchConditions.reduce((acc, condition, index) => 
-      index === 0 ? sql`${condition} AND ${pages.siteId} = ${siteId}` : sql`${acc} AND ${condition}`
-    );
-
-    // Get results with pagination
+    // Prepare the search query for FTS (plainto_tsquery handles multiple words automatically)
+    const tsQuery = sql`plainto_tsquery('english', ${searchQuery})`;
+    
+    // Get results with FTS ranking and fuzzy matching fallback
     const results = await db
       .select()
       .from(pages)
-      .where(whereClause)
-      .orderBy(desc(pages.lastCrawled))
+      .where(
+        sql`${pages.siteId} = ${siteId} AND (
+          ${pages.searchVectorCombined} @@ ${tsQuery} OR
+          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
+          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
+        )`
+      )
+      .orderBy(
+        sql`(
+          COALESCE(ts_rank_cd(${pages.searchVectorCombined}, ${tsQuery}), 0) + 
+          CASE 
+            WHEN ${pages.searchVectorCombined} @@ ${tsQuery} THEN 0.5
+            ELSE GREATEST(
+              similarity(COALESCE(${pages.title}, ''), ${searchQuery}),
+              similarity(COALESCE(${pages.content}, ''), ${searchQuery})
+            ) * 0.3
+          END
+        ) DESC`,
+        sql`${pages.lastCrawled} DESC`
+      )
       .limit(limit)
       .offset(offset);
 
-    // Get total count
+    // Get total count using the same conditions
     const [{ count }] = await db
       .select({ count: sql`COUNT(*)`.mapWith(Number) })
       .from(pages)
-      .where(whereClause);
+      .where(
+        sql`${pages.siteId} = ${siteId} AND (
+          ${pages.searchVectorCombined} @@ ${tsQuery} OR
+          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
+          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
+        )`
+      );
 
     return { results, total: count };
   }
 
   async searchPages(query: string, limit: number = 10, offset: number = 0): Promise<{ results: Page[], total: number }> {
-    const searchTerms = query.toLowerCase().split(' ').filter(term => term.length > 0);
+    const searchQuery = query.trim();
     
-    if (searchTerms.length === 0) {
+    if (searchQuery.length === 0) {
       return { results: [], total: 0 };
     }
 
-    // Build search conditions for title and content
-    const searchConditions = searchTerms.map(term => 
-      sql`(LOWER(${pages.title}) LIKE ${`%${term}%`} OR LOWER(${pages.content}) LIKE ${`%${term}%`})`
-    );
-
-    const whereClause = searchConditions.reduce((acc, condition, index) => 
-      index === 0 ? condition : sql`${acc} AND ${condition}`
-    );
-
-    // Get results with pagination
+    // Prepare the search query for FTS (plainto_tsquery handles multiple words automatically)
+    const tsQuery = sql`plainto_tsquery('english', ${searchQuery})`;
+    
+    // Get results with FTS ranking and fuzzy matching fallback
     const results = await db
       .select()
       .from(pages)
-      .where(whereClause)
-      .orderBy(desc(pages.lastCrawled))
+      .where(
+        sql`(
+          ${pages.searchVectorCombined} @@ ${tsQuery} OR
+          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
+          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
+        )`
+      )
+      .orderBy(
+        sql`(
+          COALESCE(ts_rank_cd(${pages.searchVectorCombined}, ${tsQuery}), 0) + 
+          CASE 
+            WHEN ${pages.searchVectorCombined} @@ ${tsQuery} THEN 0.5
+            ELSE GREATEST(
+              similarity(COALESCE(${pages.title}, ''), ${searchQuery}),
+              similarity(COALESCE(${pages.content}, ''), ${searchQuery})
+            ) * 0.3
+          END
+        ) DESC`,
+        sql`${pages.lastCrawled} DESC`
+      )
       .limit(limit)
       .offset(offset);
 
-    // Get total count
+    // Get total count using the same conditions
     const [{ count }] = await db
       .select({ count: sql`COUNT(*)`.mapWith(Number) })
       .from(pages)
-      .where(whereClause);
+      .where(
+        sql`(
+          ${pages.searchVectorCombined} @@ ${tsQuery} OR
+          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
+          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
+        )`
+      );
 
     return { results, total: count };
   }

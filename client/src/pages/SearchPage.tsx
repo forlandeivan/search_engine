@@ -11,9 +11,21 @@ export default function SearchPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [favorites, setFavorites] = useState(new Set<string>());
   
-  // Real search API call
+  // Real search API call with proper query parameters
   const { data: searchData, isLoading, error } = useQuery({
-    queryKey: ['/api/search', { q: searchQuery, page: currentPage }],
+    queryKey: ['search', searchQuery, currentPage],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        q: searchQuery,
+        page: currentPage.toString(),
+        limit: '10'
+      });
+      const response = await fetch(`/api/search?${params}`);
+      if (!response.ok) {
+        throw new Error(`Search failed: ${response.status}`);
+      }
+      return response.json();
+    },
     enabled: !!searchQuery.trim(),
   });
   
