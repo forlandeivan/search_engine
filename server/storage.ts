@@ -12,7 +12,7 @@ import {
   type InsertUser
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, sql, desc, asc, or } from "drizzle-orm";
+import { eq, ilike, sql, desc, asc, or, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // Sites management
@@ -30,6 +30,7 @@ export interface IStorage {
   getPagesBySiteId(siteId: string): Promise<Page[]>;
   updatePage(id: string, updates: Partial<Page>): Promise<Page | undefined>;
   deletePage(id: string): Promise<boolean>;
+  bulkDeletePages(pageIds: string[]): Promise<{ deletedCount: number; notFoundCount: number }>;
   deletePagesBySiteId(siteId: string): Promise<number>;
 
   // Search index management
@@ -130,6 +131,47 @@ export class DatabaseStorage implements IStorage {
   async deletePage(id: string): Promise<boolean> {
     const result = await this.db.delete(pages).where(eq(pages.id, id));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async bulkDeletePages(pageIds: string[]): Promise<{ deletedCount: number; notFoundCount: number }> {
+    if (pageIds.length === 0) {
+      return { deletedCount: 0, notFoundCount: 0 };
+    }
+
+    try {
+      // First, get existing pages to count not found
+      const existingPages = await this.db
+        .select({ id: pages.id })
+        .from(pages)
+        .where(inArray(pages.id, pageIds));
+      
+      const existingPageIds = new Set(existingPages.map(p => p.id));
+      const notFoundCount = pageIds.length - existingPageIds.size;
+
+      // Delete pages and related search index entries in a transaction
+      if (existingPageIds.size > 0) {
+        const pageIdsArray = Array.from(existingPageIds);
+        
+        // Delete search index entries first (foreign key dependency)
+        await this.db.delete(searchIndex).where(inArray(searchIndex.pageId, pageIdsArray));
+        
+        // Then delete pages
+        const result = await this.db.delete(pages).where(inArray(pages.id, pageIdsArray));
+        const deletedCount = result.rowCount ?? 0;
+        
+        console.log(`🗑️ Bulk deleted ${deletedCount} pages and their search index entries`);
+        
+        return { 
+          deletedCount,
+          notFoundCount 
+        };
+      }
+
+      return { deletedCount: 0, notFoundCount };
+    } catch (error) {
+      console.error('Error in bulkDeletePages:', error);
+      throw error;
+    }
   }
 
   async deletePagesBySiteId(siteId: string): Promise<number> {
@@ -313,7 +355,7 @@ export class DatabaseStorage implements IStorage {
       variations.push(cleanQuery.substring(0, Math.floor(cleanQuery.length * 0.9)));
     }
 
-    return [...new Set(variations)]; // Remove duplicates
+    return Array.from(new Set(variations)); // Remove duplicates
   }
 
   async searchPages(query: string, limit: number = 10, offset: number = 0): Promise<{ results: any[], total: number }> {
@@ -518,7 +560,7 @@ export class DatabaseStorage implements IStorage {
         `);
       }
 
-      const total = parseInt(countResult.rows[0]?.count || '0');
+      const total = parseInt(String(countResult.rows[0]?.count || '0'));
       console.log(`✅ Found ${searchResults.rows.length} results out of ${total} total matches`);
 
       return {
@@ -527,8 +569,8 @@ export class DatabaseStorage implements IStorage {
       };
     } catch (error) {
       console.error('❌ Search error:', error);
-      console.error('❌ Error details:', error.message);
-      console.error('❌ Stack trace:', error.stack);
+      console.error('❌ Error details:', error instanceof Error ? error.message : 'Unknown error');
+      console.error('❌ Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
       throw error;
     }
   }
@@ -545,7 +587,7 @@ export class DatabaseStorage implements IStorage {
             SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'
           ) as available
         `);
-        pg_trgm_available = trgmCheck.rows[0]?.available || false;
+        pg_trgm_available = Boolean(trgmCheck.rows[0]?.available) || false;
       } catch (trgmError) {
         console.warn('pg_trgm extension not available:', trgmError);
       }
@@ -559,7 +601,7 @@ export class DatabaseStorage implements IStorage {
             SELECT 1 FROM pg_extension WHERE extname = 'unaccent'
           ) as available
         `);
-        unaccent_available = unaccentCheck.rows[0]?.available || false;
+        unaccent_available = Boolean(unaccentCheck.rows[0]?.available) || false;
       } catch (unaccentError) {
         console.warn('unaccent extension not available:', unaccentError);
       }
@@ -585,8 +627,8 @@ export class DatabaseStorage implements IStorage {
         database_name: 'neondb',
         pg_trgm_available,
         unaccent_available,
-        search_vector_columns_exist: searchVectorCheck.rows[0]?.exists || false,
-        relevance_column_exists: relevanceCheck.rows[0]?.exists || false,
+        search_vector_columns_exist: Boolean(searchVectorCheck.rows[0]?.exists) || false,
+        relevance_column_exists: Boolean(relevanceCheck.rows[0]?.exists) || false,
       };
     } catch (error) {
       console.error('Database health check failed:', error);

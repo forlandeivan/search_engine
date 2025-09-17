@@ -1,13 +1,17 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, ExternalLink, FileText, Calendar, Hash } from "lucide-react";
+import { Search, ExternalLink, FileText, Calendar, Hash, Trash2 } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -37,6 +41,9 @@ interface PagesBySite {
 export default function PagesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSite, setSelectedSite] = useState<string>("all");
+  const [selectedPages, setSelectedPages] = useState<Set<string>>(new Set());
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const { toast } = useToast();
 
   // Fetch all pages
   const { data: pages = [], isLoading: pagesLoading } = useQuery<Page[]>({
@@ -73,6 +80,59 @@ export default function PagesPage() {
   const totalPages = pages.length;
   const totalSites = pagesBySite.length;
 
+  // Get all visible pages for bulk actions
+  const allVisiblePages = filteredPagesBySite.flatMap(group => group.pages);
+  const allVisiblePageIds = new Set(allVisiblePages.map(p => p.id));
+  
+  // Bulk delete mutation
+  const deleteBulkMutation = useMutation({
+    mutationFn: async (pageIds: string[]) => {
+      return apiRequest('DELETE', '/api/pages/bulk-delete', { pageIds });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/pages'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+      setSelectedPages(new Set());
+      toast({ title: "Страницы успешно удалены" });
+      setIsDeleteDialogOpen(false);
+    },
+    onError: (error: any) => {
+      toast({ 
+        variant: "destructive",
+        title: "Ошибка при удалении страниц", 
+        description: error.message || "Произошла ошибка" 
+      });
+    }
+  });
+
+  // Selection handlers
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedPages(new Set(allVisiblePageIds));
+    } else {
+      setSelectedPages(new Set());
+    }
+  };
+
+  const handleSelectPage = (pageId: string, checked: boolean) => {
+    const newSelected = new Set(selectedPages);
+    if (checked) {
+      newSelected.add(pageId);
+    } else {
+      newSelected.delete(pageId);
+    }
+    setSelectedPages(newSelected);
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedPages.size > 0) {
+      deleteBulkMutation.mutate(Array.from(selectedPages));
+    }
+  };
+
+  const isAllSelected = allVisiblePages.length > 0 && allVisiblePages.every(page => selectedPages.has(page.id));
+  const isPartiallySelected = allVisiblePages.some(page => selectedPages.has(page.id)) && !isAllSelected;
+
   if (pagesLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -96,6 +156,63 @@ export default function PagesPage() {
       </div>
 
       {/* Filters */}
+      {/* Bulk Actions Bar */}
+      {selectedPages.size > 0 && (
+        <Card className="bg-muted/50">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Badge variant="secondary" data-testid="text-selected-count">
+                  Выбрано: {selectedPages.size}
+                </Badge>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setSelectedPages(new Set())}
+                  data-testid="button-clear-selection"
+                >
+                  Очистить выбор
+                </Button>
+              </div>
+              <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+                <AlertDialogTrigger asChild>
+                  <Button 
+                    variant="destructive" 
+                    size="sm"
+                    disabled={selectedPages.size === 0 || deleteBulkMutation.isPending}
+                    data-testid="button-bulk-delete"
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    {deleteBulkMutation.isPending ? 'Удаление...' : `Удалить (${selectedPages.size})`}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Подтвердите удаление</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Вы действительно хотите удалить {selectedPages.size} {selectedPages.size === 1 ? 'страницу' : selectedPages.size < 5 ? 'страницы' : 'страниц'}?
+                      <br />
+                      Это действие нельзя отменить.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel data-testid="button-cancel-delete">Отмена</AlertDialogCancel>
+                    <AlertDialogAction 
+                      onClick={handleBulkDelete}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      data-testid="button-confirm-delete"
+                    >
+                      Удалить
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Filters and Selection */}
       <div className="flex gap-4 items-center">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
@@ -107,6 +224,19 @@ export default function PagesPage() {
             data-testid="input-search-pages"
           />
         </div>
+        
+        {allVisiblePages.length > 0 && (
+          <div className="flex items-center gap-2">
+            <Checkbox
+              checked={isAllSelected}
+              onCheckedChange={handleSelectAll}
+              data-testid="checkbox-select-all"
+            />
+            <label className="text-sm font-medium cursor-pointer" onClick={() => handleSelectAll(!isAllSelected)}>
+              Выбрать все ({allVisiblePages.length})
+            </label>
+          </div>
+        )}
         
         <Tabs value={selectedSite} onValueChange={setSelectedSite}>
           <TabsList>
@@ -155,7 +285,13 @@ export default function PagesPage() {
                       key={page.id}
                       className="p-4 border rounded-lg hover-elevate transition-colors"
                     >
-                      <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-4">
+                        <Checkbox
+                          checked={selectedPages.has(page.id)}
+                          onCheckedChange={(checked) => handleSelectPage(page.id, checked as boolean)}
+                          className="mt-1"
+                          data-testid={`checkbox-page-${page.id}`}
+                        />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-2">
                             <h3 className="font-medium truncate">

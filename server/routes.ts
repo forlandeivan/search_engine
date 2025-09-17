@@ -6,6 +6,11 @@ import { insertSiteSchema } from "@shared/schema";
 import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
 
+// Bulk delete schema
+const bulkDeletePagesSchema = z.object({
+  pageIds: z.array(z.string()).min(1).max(1000)
+});
+
 // Public search API request/response schemas
 const publicSearchRequestSchema = z.object({
   query: z.string().min(1),
@@ -260,8 +265,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("❌ Error performing search:", error);
       console.error("❌ Error type:", typeof error);
-      console.error("❌ Error message:", error?.message);
-      console.error("❌ Stack trace:", error?.stack);
+      console.error("❌ Error message:", error instanceof Error ? error.message : 'Unknown error');
+      console.error("❌ Stack trace:", error instanceof Error ? error.stack : 'No stack trace');
       res.status(500).json({ 
         error: "Failed to perform search", 
         details: error instanceof Error ? error.message : String(error)
@@ -311,6 +316,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching pages:', error);
       res.status(500).json({ error: 'Failed to fetch pages' });
+    }
+  });
+
+  // Bulk delete pages
+  app.delete("/api/pages/bulk-delete", async (req, res) => {
+    try {
+      const validatedData = bulkDeletePagesSchema.parse(req.body);
+      const { pageIds } = validatedData;
+      
+      console.log(`🗑️ Bulk delete requested for ${pageIds.length} pages`);
+      
+      const deleteResults = await storage.bulkDeletePages(pageIds);
+      
+      console.log(`✅ Bulk delete completed: ${deleteResults.deletedCount} pages deleted`);
+      
+      res.json({ 
+        message: "Pages deleted successfully",
+        deletedCount: deleteResults.deletedCount,
+        notFoundCount: deleteResults.notFoundCount,
+        requestedCount: pageIds.length
+      });
+    } catch (error) {
+      console.error("❌ Error in bulk delete:", error);
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid input", details: error.errors });
+      } else {
+        res.status(500).json({ 
+          error: "Failed to delete pages", 
+          details: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
   });
 
