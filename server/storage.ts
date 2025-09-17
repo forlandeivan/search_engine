@@ -209,19 +209,34 @@ export class DatabaseStorage implements IStorage {
     const variations = [query];
     const cleanQuery = query.toLowerCase().trim();
 
-    // Common Russian typo patterns
+    // Common Russian typo patterns (расширенный список)
     const typoMappings = [
       // Missing letters
       ['мониторинг', 'маниторинг'],
+      ['мониторинг', 'мониторнг'],
       ['тестирование', 'тистирование'],
+      ['тестирование', 'тестрование'],
       ['разработка', 'разробка'],
       ['администрирование', 'админстрирование'],
-      ['конфигурация', 'конфигурация'],
+      ['конфигурация', 'конфигурция'],
+      ['документация', 'докуметация'],
+      ['программирование', 'програмирование'],
+      
       // Swapped letters
       ['система', 'сситема'],
       ['процесс', 'процеcс'],
+      ['сервис', 'серсив'],
+      ['сервер', 'серевр'],
+      
       // Extra letters
       ['сервер', 'серввер'],
+      ['процесс', 'проццесс'],
+      
+      // Common keyboard layout mistakes (eng -> rus)
+      ['monitoring', 'мониторинг'],
+      ['server', 'сервер'],
+      ['service', 'сервис'],
+      ['test', 'тест'],
     ];
 
     // Check if query matches any known typos and add correct version
@@ -232,6 +247,29 @@ export class DatabaseStorage implements IStorage {
       if (cleanQuery.includes(correct)) {
         variations.push(query.replace(correct, typo));
       }
+    }
+
+    // Generate phonetic variations for common Russian sounds
+    const phoneticMappings = [
+      // о/а confusion
+      ['мониторинг', 'манитаринг'],
+      // и/е confusion  
+      ['мониторинг', 'монеторенг'],
+      // т/д confusion
+      ['мониторинг', 'монидоринг'],
+    ];
+
+    for (const [original, phonetic] of phoneticMappings) {
+      if (cleanQuery.includes(original)) {
+        variations.push(query.replace(original, phonetic));
+      }
+    }
+
+    // Add partial words (for incomplete typing)
+    if (cleanQuery.length > 3) {
+      // Add shortened versions
+      variations.push(cleanQuery.substring(0, Math.floor(cleanQuery.length * 0.8)));
+      variations.push(cleanQuery.substring(0, Math.floor(cleanQuery.length * 0.9)));
     }
 
     return [...new Set(variations)]; // Remove duplicates
@@ -246,6 +284,7 @@ export class DatabaseStorage implements IStorage {
 
       // Generate search variations for better typo handling
       const searchVariations = this.generateSearchVariations(cleanQuery);
+      console.log(`🔍 Search variations:`, searchVariations);
 
       // Check database extensions
       console.log(`🔧 Checking database extensions...`);
@@ -262,41 +301,130 @@ export class DatabaseStorage implements IStorage {
 
       let searchResults;
       if (hasPgTrgm) {
-        // Build OR conditions for all search variations
-        const variationConditions = searchVariations.map((variation, index) => {
-          return sql`
-            -- Variation ${index + 1}: "${variation}"
-            (p.search_vector_title @@ plainto_tsquery('english', ${variation})
-            OR p.search_vector_content @@ plainto_tsquery('english', ${variation})
-            OR similarity(COALESCE(p.title, ''), ${variation}) > 0.15
-            OR similarity(COALESCE(p.content, ''), ${variation}) > 0.08
-            OR COALESCE(p.title, '') ILIKE '%' || ${variation} || '%'
-            OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%')
-          `;
-        });
-
-        // Use similarity search if pg_trgm is available
+        // Enhanced search with multiple similarity algorithms and lower thresholds
         searchResults = await this.db.execute(sql`
           WITH search_results AS (
             SELECT
               p.*,
               s.url as site_url,
-              -- Calculate best scores across all variations
+              -- Full-text search scores (высший приоритет)
               GREATEST(${sql.join(searchVariations.map(v => sql`
                 CASE
                   WHEN p.search_vector_title @@ plainto_tsquery('english', ${v}) THEN
-                    ts_rank(p.search_vector_title, plainto_tsquery('english', ${v})) * 2
+                    ts_rank(p.search_vector_title, plainto_tsquery('english', ${v})) * 10.0
+                  ELSE 0
+                END`), sql` , `)}) as title_fts_score,
+              GREATEST(${sql.join(searchVariations.map(v => sql`
+                CASE
+                  WHEN p.search_vector_content @@ plainto_tsquery('english', ${v}) THEN
+                    ts_rank(p.search_vector_content, plainto_tsquery('english', ${v})) * 5.0
+                  ELSE 0
+                END`), sql` , `)}) as content_fts_score,
+              
+              -- Similarity scores (снижены пороги для русского языка)
+              GREATEST(${sql.join(searchVariations.map(v => sql`similarity(COALESCE(p.title, ''), ${v})`), sql` , `)}) as title_similarity,
+              GREATEST(${sql.join(searchVariations.map(v => sql`similarity(COALESCE(p.content, ''), ${v})`), sql` , `)}) as content_similarity,
+              
+              -- Exact substring match (ILIKE) - дополнительные баллы за точные совпадения
+              GREATEST(${sql.join(searchVariations.map(v => sql`
+                CASE
+                  WHEN COALESCE(p.title, '') ILIKE '%' || ${v} || '%' THEN 3.0
+                  ELSE 0
+                END`), sql` , `)}) as title_ilike_score,
+              GREATEST(${sql.join(searchVariations.map(v => sql`
+                CASE
+                  WHEN COALESCE(p.content, '') ILIKE '%' || ${v} || '%' THEN 1.5
+                  ELSE 0
+                END`), sql` , `)}) as content_ilike_score,
+              
+              -- Word distance (for typos) - только если pg_trgm доступен
+              GREATEST(${sql.join(searchVariations.map(v => sql`
+                CASE
+                  WHEN word_similarity(COALESCE(p.title, ''), ${v}) > 0.3 THEN 
+                    word_similarity(COALESCE(p.title, ''), ${v}) * 4.0
+                  ELSE 0
+                END`), sql` , `)}) as title_word_score,
+              GREATEST(${sql.join(searchVariations.map(v => sql`
+                CASE
+                  WHEN word_similarity(COALESCE(p.content, ''), ${v}) > 0.2 THEN 
+                    word_similarity(COALESCE(p.content, ''), ${v}) * 2.0
+                  ELSE 0
+                END`), sql` , `)}) as content_word_score
+            FROM pages p
+            JOIN sites s ON p.site_id = s.id
+            WHERE
+              -- Множественные условия поиска с низкими порогами
+              ${sql.join(searchVariations.map(variation => sql`(
+                -- FTS поиск
+                p.search_vector_title @@ plainto_tsquery('english', ${variation})
+                OR p.search_vector_content @@ plainto_tsquery('english', ${variation})
+                -- Similarity поиск с низкими порогами
+                OR similarity(COALESCE(p.title, ''), ${variation}) > 0.05
+                OR similarity(COALESCE(p.content, ''), ${variation}) > 0.03
+                -- Word similarity для опечаток
+                OR word_similarity(COALESCE(p.title, ''), ${variation}) > 0.3
+                OR word_similarity(COALESCE(p.content, ''), ${variation}) > 0.2
+                -- ILIKE для частичных совпадений
+                OR COALESCE(p.title, '') ILIKE '%' || ${variation} || '%'
+                OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%'
+              )`), sql` OR `)}
+          )
+          SELECT
+            *,
+            -- Взвешенная финальная оценка с приоритетами
+            (
+              title_fts_score + content_fts_score +
+              (title_similarity * 6.0) + (content_similarity * 3.0) +
+              title_ilike_score + content_ilike_score +
+              title_word_score + content_word_score
+            ) as final_score
+          FROM search_results
+          WHERE 
+            -- Исключаем совсем слабые результаты
+            (title_fts_score > 0 OR content_fts_score > 0 OR 
+             title_similarity > 0.05 OR content_similarity > 0.03 OR
+             title_word_score > 0 OR content_word_score > 0 OR
+             title_ilike_score > 0 OR content_ilike_score > 0)
+          ORDER BY final_score DESC, last_crawled DESC
+          LIMIT ${limit} OFFSET ${offset}
+        `);
+      } else {
+        // Fallback без pg_trgm - только FTS и ILIKE
+        const variationConditions = searchVariations.map((variation) => {
+          return sql`
+            (p.search_vector_title @@ plainto_tsquery('english', ${variation})
+            OR p.search_vector_content @@ plainto_tsquery('english', ${variation})
+            OR COALESCE(p.title, '') ILIKE '%' || ${variation} || '%'
+            OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%')
+          `;
+        });
+        searchResults = await this.db.execute(sql`
+          WITH search_results AS (
+            SELECT
+              p.*,
+              s.url as site_url,
+              GREATEST(${sql.join(searchVariations.map(v => sql`
+                CASE
+                  WHEN p.search_vector_title @@ plainto_tsquery('english', ${v}) THEN
+                    ts_rank(p.search_vector_title, plainto_tsquery('english', ${v})) * 10.0
                   ELSE 0
                 END`), sql` , `)}) as title_score,
               GREATEST(${sql.join(searchVariations.map(v => sql`
                 CASE
                   WHEN p.search_vector_content @@ plainto_tsquery('english', ${v}) THEN
-                    ts_rank(p.search_vector_content, plainto_tsquery('english', ${v}))
+                    ts_rank(p.search_vector_content, plainto_tsquery('english', ${v})) * 5.0
                   ELSE 0
                 END`), sql` , `)}) as content_score,
-              -- Similarity scores (fuzzy matching) - take best match
-              GREATEST(${sql.join(searchVariations.map(v => sql`similarity(COALESCE(p.title, ''), ${v})`), sql` , `)}) as title_similarity,
-              GREATEST(${sql.join(searchVariations.map(v => sql`similarity(COALESCE(p.content, ''), ${v})`), sql` , `)}) as content_similarity
+              GREATEST(${sql.join(searchVariations.map(v => sql`
+                CASE
+                  WHEN COALESCE(p.title, '') ILIKE '%' || ${v} || '%' THEN 3.0
+                  ELSE 0
+                END`), sql` , `)}) as title_ilike,
+              GREATEST(${sql.join(searchVariations.map(v => sql`
+                CASE
+                  WHEN COALESCE(p.content, '') ILIKE '%' || ${v} || '%' THEN 1.5
+                  ELSE 0
+                END`), sql` , `)}) as content_ilike
             FROM pages p
             JOIN sites s ON p.site_id = s.id
             WHERE
@@ -304,55 +432,7 @@ export class DatabaseStorage implements IStorage {
           )
           SELECT
             *,
-            (title_score + content_score + title_similarity + content_similarity) as final_score
-          FROM search_results
-          ORDER BY final_score DESC, last_crawled DESC
-          LIMIT ${limit} OFFSET ${offset}
-        `);
-      } else {
-        // Fallback to full-text search only + ILIKE for basic fuzzy matching
-        const variationConditions = searchVariations.map((variation, index) => {
-          return sql`
-            -- Variation ${index + 1}: "${variation}"
-            (p.search_vector_title @@ plainto_tsquery('english', ${variation})
-            OR p.search_vector_content @@ plainto_tsquery('english', ${variation})
-            OR COALESCE(p.title, '') ILIKE '%' || ${variation} || '%'
-            OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%')
-          `;
-        });
-        searchResults = await this.db.execute(sql`
-          WITH search_results AS (
-            SELECT
-              p.*,
-              s.url as site_url,
-              -- Full-text search scores
-              CASE
-                WHEN p.search_vector_title @@ plainto_tsquery('english', ${query}) THEN
-                  ts_rank(p.search_vector_title, plainto_tsquery('english', ${query})) * 2
-                ELSE 0
-              END as title_score,
-              CASE
-                WHEN p.search_vector_content @@ plainto_tsquery('english', ${query}) THEN
-                  ts_rank(p.search_vector_content, plainto_tsquery('english', ${query}))
-                ELSE 0
-              END as content_score,
-              -- Basic fuzzy matching with ILIKE
-              CASE
-                WHEN COALESCE(p.title, '') ILIKE '%' || ${query} || '%' THEN 0.5
-                ELSE 0
-              END as title_similarity,
-              CASE
-                WHEN COALESCE(p.content, '') ILIKE '%' || ${query} || '%' THEN 0.3
-                ELSE 0
-              END as content_similarity
-            FROM pages p
-            JOIN sites s ON p.site_id = s.id
-            WHERE
-              ${sql.join(variationConditions, sql` OR `)}
-          )
-          SELECT
-            *,
-            (title_score + content_score + title_similarity + content_similarity) as final_score
+            (title_score + content_score + title_ilike + content_ilike) as final_score
           FROM search_results
           ORDER BY final_score DESC, last_crawled DESC
           LIMIT ${limit} OFFSET ${offset}
@@ -365,21 +445,20 @@ export class DatabaseStorage implements IStorage {
       console.log(`📊 Getting total count...`);
       let countResult;
       if (hasPgTrgm) {
-        const variationConditions = searchVariations.map((variation) => {
-          return sql`
-            (p.search_vector_title @@ plainto_tsquery('english', ${variation})
-            OR p.search_vector_content @@ plainto_tsquery('english', ${variation})
-            OR similarity(COALESCE(p.title, ''), ${variation}) > 0.15
-            OR similarity(COALESCE(p.content, ''), ${variation}) > 0.08
-            OR COALESCE(p.title, '') ILIKE '%' || ${variation} || '%'
-            OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%')
-          `;
-        });
         countResult = await this.db.execute(sql`
           SELECT COUNT(*) as count
           FROM pages p
           WHERE
-            ${sql.join(variationConditions, sql` OR `)}
+            ${sql.join(searchVariations.map(variation => sql`(
+              p.search_vector_title @@ plainto_tsquery('english', ${variation})
+              OR p.search_vector_content @@ plainto_tsquery('english', ${variation})
+              OR similarity(COALESCE(p.title, ''), ${variation}) > 0.05
+              OR similarity(COALESCE(p.content, ''), ${variation}) > 0.03
+              OR word_similarity(COALESCE(p.title, ''), ${variation}) > 0.3
+              OR word_similarity(COALESCE(p.content, ''), ${variation}) > 0.2
+              OR COALESCE(p.title, '') ILIKE '%' || ${variation} || '%'
+              OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%'
+            )`), sql` OR `)}
         `);
       } else {
         const variationConditions = searchVariations.map((variation) => {
