@@ -37,6 +37,16 @@ export interface IStorage {
   deleteSearchIndexByPageId(pageId: string): Promise<number>;
   searchPages(query: string, limit?: number, offset?: number): Promise<{ results: Page[], total: number }>;
   
+  // Database health diagnostics
+  getDatabaseHealthInfo(): Promise<{
+    schema_name: string;
+    database_name: string;
+    pg_trgm_available: boolean;
+    unaccent_available: boolean;
+    search_vector_columns_exist: boolean;
+    relevance_column_exists: boolean;
+  }>;
+  
   // Keep user methods for future admin features  
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -240,6 +250,68 @@ export class DatabaseStorage implements IStorage {
       );
 
     return { results, total: count };
+  }
+
+  // Database health diagnostics
+  async getDatabaseHealthInfo() {
+    try {
+      // Get database schema and name info
+      const schemaResult = await db.execute(sql`
+        SELECT 
+          current_schema() as schema_name,
+          current_database() as database_name
+      `);
+      const schemaInfo = schemaResult.rows[0] as { schema_name: string; database_name: string };
+
+      // Check for PostgreSQL extensions
+      const extensionsResult = await db.execute(sql`
+        SELECT 
+          extname,
+          extversion
+        FROM pg_extension 
+        WHERE extname IN ('pg_trgm', 'unaccent', 'pgcrypto')
+      `);
+
+      const extensions = extensionsResult.rows as Array<{ extname: string; extversion: string }>;
+      const pg_trgm_available = extensions.some(ext => ext.extname === 'pg_trgm');
+      const unaccent_available = extensions.some(ext => ext.extname === 'unaccent');
+
+      // Check for search vector columns in pages table
+      const columnsResult = await db.execute(sql`
+        SELECT 
+          column_name,
+          data_type
+        FROM information_schema.columns 
+        WHERE table_name = 'pages' 
+        AND column_name LIKE 'search_vector_%'
+      `);
+
+      const searchVectorColumns = columnsResult.rows as Array<{ column_name: string; data_type: string }>;
+      const search_vector_columns_exist = searchVectorColumns.length >= 3 && 
+        searchVectorColumns.every(col => col.data_type === 'tsvector');
+
+      // Check for relevance column in search_index table
+      const relevanceResult = await db.execute(sql`
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = 'search_index' 
+        AND column_name = 'relevance'
+      `);
+
+      const relevance_column_exists = relevanceResult.rows.length > 0;
+
+      return {
+        schema_name: schemaInfo.schema_name || 'unknown',
+        database_name: schemaInfo.database_name || 'unknown',
+        pg_trgm_available,
+        unaccent_available,
+        search_vector_columns_exist,
+        relevance_column_exists,
+      };
+    } catch (error) {
+      console.error("Database health check error:", error);
+      throw error;
+    }
   }
 
   // Users (for future admin features)

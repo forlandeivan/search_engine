@@ -306,6 +306,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Health check endpoint for database diagnostics
+  app.get("/api/health/db", async (req, res) => {
+    try {
+      console.log("🔍 Database health check requested");
+      
+      // Get database connection info (masked for security)
+      const dbUrl = process.env.DATABASE_URL || 'not_set';
+      const maskedUrl = dbUrl.replace(/:[^:]*@/, ':***@');
+      
+      // Check database connectivity and schema
+      const dbInfo = await storage.getDatabaseHealthInfo();
+      
+      const healthInfo = {
+        database: {
+          url_masked: maskedUrl,
+          connected: true,
+          ...dbInfo
+        },
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'unknown'
+      };
+      
+      console.log("✅ Database health check:", JSON.stringify(healthInfo, null, 2));
+      res.json(healthInfo);
+    } catch (error) {
+      console.error("❌ Database health check failed:", error);
+      res.status(500).json({ 
+        error: "Database health check failed",
+        message: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;
