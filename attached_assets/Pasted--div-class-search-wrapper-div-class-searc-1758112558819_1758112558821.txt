@@ -1,0 +1,184 @@
+<!-- Поиск с подсказками и сжатыми результатами -->
+<div class="search-wrapper">
+  <div class="search-bar">
+    <span class="search-icon">????</span>
+    <input id="search-input" type="text" placeholder="Введите запрос...">
+    <button id="clear-btn" class="clear-btn" title="Очистить">&times;</button>
+    <button id="search-btn" class="search-btn">Найти ↵</button>
+  </div>
+
+  <div class="search-suggestions">
+    <button class="suggestion">Оплатить</button>
+    <button class="suggestion">Электронная квитанция</button>
+    <button class="suggestion">Проблемы со счётчиком</button>
+    <button class="suggestion">Проверка</button>
+  </div>
+
+  <div id="search-loading" class="search-loading hidden">Поиск...</div>
+  <div id="search-results" class="search-results"></div>
+  <div id="search-error" class="search-error hidden"></div>
+</div>
+
+<style>
+.search-wrapper {
+  max-width: 720px;
+  margin: 40px auto;
+  font-family: system-ui, sans-serif;
+  padding: 0 16px;
+}
+.search-bar {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  padding: 10px 12px;
+  position: relative;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.04);
+}
+.search-icon {
+  margin-right: 8px;
+  color: #6b7280;
+}
+.search-bar input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 16px;
+}
+.search-btn {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  margin-left: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.clear-btn {
+  position: absolute;
+  right: 85px;
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: #9ca3af;
+  cursor: pointer;
+  display: none;
+}
+.search-suggestions {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.suggestion {
+  background: #f3f4f6;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  font-size: 14px;
+  cursor: pointer;
+  color: #374151;
+}
+.search-loading {
+  margin-top: 12px;
+  color: #6b7280;
+  font-size: 14px;
+}
+.search-results {
+  margin-top: 20px;
+}
+.result-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 15px;
+  color: #1f2937;
+  cursor: pointer;
+}
+.result-item:hover {
+  background: #f9fafb;
+}
+.search-error {
+  margin-top: 16px;
+  background: #fee2e2;
+  color: #b91c1c;
+  padding: 12px;
+  border-radius: 6px;
+}
+.hidden { display: none; }
+</style>
+
+<script>
+const input = document.getElementById('search-input');
+const btn = document.getElementById('search-btn');
+const clear = document.getElementById('clear-btn');
+const results = document.getElementById('search-results');
+const loading = document.getElementById('search-loading');
+const errorEl = document.getElementById('search-error');
+const API = 'https://https://tilda-search-bot-forlandeivan.replit.app/api';
+let timer = null;
+
+function show(el, visible) { el.classList.toggle('hidden', !visible); }
+function escapeHTML(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function renderResults(data, q) {
+  results.innerHTML = '';
+  if (!data.results || data.results.length === 0) {
+    results.innerHTML = `<div class="result-item">Ничего не найдено по запросу "${escapeHTML(q)}"</div>`;
+    return;
+  }
+  data.results.forEach(r => {
+    const t = escapeHTML(r.title || r.content || '').slice(0, 80);
+    const div = document.createElement('div');
+    div.className = 'result-item';
+    div.innerHTML = t;
+    div.onclick = () => window.open(r.url, '_blank');
+    results.appendChild(div);
+  });
+}
+
+async function doSearch(query) {
+  show(loading, true);
+  show(errorEl, false);
+  results.innerHTML = '';
+  try {
+    const res = await fetch(`${API}?q=${encodeURIComponent(query)}&limit=10`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderResults(data, query);
+  } catch (err) {
+    show(errorEl, true);
+    errorEl.textContent = 'Ошибка запроса. Попробуйте позже.';
+  } finally {
+    show(loading, false);
+  }
+}
+
+function triggerSearch() {
+  const q = input.value.trim();
+  if (q.length < 2) return;
+  doSearch(q);
+}
+
+input.addEventListener('input', () => {
+  clear.style.display = input.value ? 'block' : 'none';
+  clearTimeout(timer);
+  timer = setTimeout(triggerSearch, 300);
+});
+
+btn.addEventListener('click', triggerSearch);
+clear.addEventListener('click', () => {
+  input.value = '';
+  clear.style.display = 'none';
+  results.innerHTML = '';
+});
+
+document.querySelectorAll('.suggestion').forEach(btn => {
+  btn.addEventListener('click', () => {
+    input.value = btn.textContent;
+    triggerSearch();
+  });
+});
+</script>
