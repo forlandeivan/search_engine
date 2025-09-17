@@ -1,7 +1,14 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, jsonb, doublePrecision, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// Custom type for PostgreSQL tsvector
+const tsvector = customType<{ data: unknown; driverData: unknown }>({
+  dataType() {
+    return 'tsvector';
+  },
+});
 
 // Sites table for storing crawl configurations
 export const sites = pgTable("sites", {
@@ -31,9 +38,9 @@ export const pages = pgTable("pages", {
   lastCrawled: timestamp("last_crawled").notNull(),
   contentHash: text("content_hash"), // For detecting content changes
   // Full-Text Search vectors with weights (A=highest, D=lowest)
-  searchVectorTitle: text("search_vector_title"), // tsvector for title (weight A)
-  searchVectorContent: text("search_vector_content"), // tsvector for content+meta (weight C+B)
-  searchVectorCombined: text("search_vector_combined"), // combined tsvector with weights
+  searchVectorTitle: tsvector("search_vector_title"), // tsvector for title (weight A)
+  searchVectorContent: tsvector("search_vector_content"), // tsvector for content+meta (weight C+B)
+  searchVectorCombined: tsvector("search_vector_combined"), // combined tsvector with weights
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -45,6 +52,7 @@ export const searchIndex = pgTable("search_index", {
   term: text("term").notNull(),
   frequency: integer("frequency").notNull().default(1),
   position: integer("position").notNull(),
+  relevance: doublePrecision("relevance"), // Add missing relevance column
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
