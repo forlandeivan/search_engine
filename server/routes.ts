@@ -205,23 +205,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Search API
   app.get("/api/search", async (req, res) => {
     try {
-      console.log("🔍 Search API called with query:", req.query);
+      console.log("🔍 Search API called");
+      console.log("📨 Raw query params:", req.query);
+      console.log("📨 Request URL:", req.url);
+      console.log("📨 User-Agent:", req.get('User-Agent'));
       
       const query = req.query.q as string;
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const offset = (page - 1) * limit;
 
-      console.log("📊 Search parameters:", { query, page, limit, offset });
+      console.log("📊 Parsed parameters:", { 
+        query: query, 
+        queryLength: query?.length,
+        queryBytes: Buffer.byteLength(query || '', 'utf8'),
+        page, 
+        limit, 
+        offset 
+      });
 
       if (!query || query.trim().length === 0) {
         console.log("❌ Empty query provided");
         return res.json({ results: [], total: 0, page, limit });
       }
 
-      console.log("🚀 Calling storage.searchPages...");
-      const { results, total } = await storage.searchPages(query, limit, offset);
-      console.log("✅ Search completed:", { resultsCount: results.length, total });
+      // Decode the query if it's URL encoded
+      let decodedQuery = query;
+      try {
+        decodedQuery = decodeURIComponent(query);
+        console.log("✅ Decoded query:", decodedQuery);
+      } catch (decodeError) {
+        console.log("⚠️ Query decode failed, using original:", query);
+        decodedQuery = query;
+      }
+
+      console.log("🚀 Calling storage.searchPages with query:", decodedQuery);
+      const { results, total } = await storage.searchPages(decodedQuery, limit, offset);
+      console.log("✅ Search completed:", { 
+        resultsCount: results.length, 
+        total,
+        sampleResults: results.slice(0, 2).map(r => ({ title: r.title, url: r.url }))
+      });
       
       const response = {
         results,
@@ -231,12 +255,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalPages: Math.ceil(total / limit)
       };
       
-      console.log("📤 Sending response:", JSON.stringify(response, null, 2));
+      console.log("📤 Sending response with", results.length, "results");
       res.json(response);
     } catch (error) {
       console.error("❌ Error performing search:", error);
-      console.error("❌ Stack trace:", error.stack);
-      res.status(500).json({ error: "Failed to perform search", details: error.message });
+      console.error("❌ Error type:", typeof error);
+      console.error("❌ Error message:", error?.message);
+      console.error("❌ Stack trace:", error?.stack);
+      res.status(500).json({ 
+        error: "Failed to perform search", 
+        details: error instanceof Error ? error.message : String(error)
+      });
     }
   });
 
