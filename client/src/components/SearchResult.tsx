@@ -3,12 +3,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Star, X, Clock } from "lucide-react";
 
-interface SearchResult {
+export interface SearchResult {
   id: string;
   title: string;
   description: string;
   url: string;
-  lastCrawled?: Date;
+  lastCrawled?: string;
   isFavorite?: boolean;
 }
 
@@ -78,7 +78,7 @@ export default function SearchResult({
               <div className="flex items-center gap-1">
                 <Clock className="h-3 w-3" />
                 <span data-testid={`text-crawled-${result.id}`}>
-                  {result.lastCrawled.toLocaleDateString('ru')}
+                  {new Date(result.lastCrawled).toLocaleDateString('ru')}
                 </span>
               </div>
             )}

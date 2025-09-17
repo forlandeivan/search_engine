@@ -98,7 +98,7 @@ export default function SearchPage() {
           </div>
         ) : currentResults.length > 0 ? (
           <div className="space-y-4 mb-8">
-            {currentResults.map((result) => (
+            {currentResults.map((result: SearchResult) => (
               <SearchResultComponent
                 key={result.id}
                 result={{ ...result, isFavorite: favorites.has(result.id) }}
