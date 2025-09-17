@@ -3,6 +3,7 @@ import cors from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
+import { getAllowedHostnames } from "./cors-cache";
 import fs from "fs";
 import path from "path";
 
@@ -10,73 +11,17 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// CORS hostname cache with TTL
-interface HostnameCache {
-  hostnames: Set<string>;
-  timestamp: number;
-}
-
-let corsCache: HostnameCache | null = null;
-const CACHE_TTL_MS = 60 * 1000; // 60 seconds
-
-// Function to refresh the CORS hostname cache
-async function refreshCorsCache(): Promise<Set<string>> {
-  try {
-    const sites = await storage.getAllSites();
-    const hostnames = new Set<string>();
-    
-    // Add Tilda domains
-    hostnames.add('tilda.ws');
-    
-    // Process database sites and extract hostnames
-    for (const site of sites) {
-      try {
-        const url = new URL(site.url);
-        hostnames.add(url.hostname);
-      } catch (urlError) {
-        log(`CORS cache: Invalid URL in database: ${site.url} - ${urlError}`);
-        // Skip invalid URLs instead of breaking the entire cache
-      }
-    }
-    
-    // Update cache
-    corsCache = {
-      hostnames,
-      timestamp: Date.now()
-    };
-    
-    log(`CORS cache refreshed with ${hostnames.size} hostnames`);
-    return hostnames;
-  } catch (error) {
-    log(`CORS cache refresh error: ${error}`);
-    // Return empty set on error to fail safely
-    return new Set();
-  }
-}
-
-// Function to get current allowed hostnames (with cache)
-async function getAllowedHostnames(): Promise<Set<string>> {
-  const now = Date.now();
-  
-  // Check if cache is valid
-  if (corsCache && (now - corsCache.timestamp) < CACHE_TTL_MS) {
-    return corsCache.hostnames;
-  }
-  
-  // Cache is stale or doesn't exist, refresh it
-  return await refreshCorsCache();
-}
 
 // Dynamic CORS configuration based on database sites with caching
 app.use(cors({
   origin: async (origin, callback) => {
     try {
-      // Allow same-origin and Replit preview domain requests
-      if (!origin || origin.includes('replit.dev') || origin.includes('replit.app')) {
+      // Allow same-origin requests
+      if (!origin) {
         return callback(null, true);
       }
 
-      // Parse hostname from origin
+      // Parse hostname from origin for secure checking
       let originHostname: string;
       try {
         const originUrl = new URL(origin);
@@ -84,6 +29,25 @@ app.use(cors({
       } catch (urlError) {
         log(`CORS: Invalid origin URL: ${origin}`);
         return callback(new Error('Invalid origin'));
+      }
+
+      // SECURITY FIX: Use proper hostname checking instead of vulnerable includes()
+      // Allow Replit preview domains with secure hostname parsing
+      const isReplitDomain = originHostname === 'replit.dev' || originHostname.endsWith('.replit.dev') ||
+                            originHostname === 'replit.app' || originHostname.endsWith('.replit.app');
+
+      // Allow localhost for development
+      const isLocalhost = originHostname === 'localhost' || originHostname === '127.0.0.1' || 
+                         originHostname === '0.0.0.0';
+
+      if (isReplitDomain) {
+        log(`CORS: Allowed Replit domain: ${origin} (hostname: ${originHostname})`);
+        return callback(null, true);
+      }
+
+      if (isLocalhost) {
+        log(`CORS: Allowed localhost for development: ${origin} (hostname: ${originHostname})`);
+        return callback(null, true);
       }
 
       // Get allowed hostnames from cache
@@ -96,9 +60,10 @@ app.use(cors({
                        originHostname.endsWith('.tilda.ws');
 
       if (isAllowed) {
+        log(`CORS: Allowed configured domain: ${origin} (hostname: ${originHostname})`);
         callback(null, true);
       } else {
-        log(`CORS blocked origin: ${origin} (hostname: ${originHostname})`);
+        log(`CORS: Blocked unauthorized origin: ${origin} (hostname: ${originHostname})`);
         callback(new Error('Not allowed by CORS'));
       }
     } catch (error) {

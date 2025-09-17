@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { crawler } from "./crawler";
 import { insertSiteSchema } from "@shared/schema";
 import { z } from "zod";
+import { invalidateCorsCache } from "./cors-cache";
 
 // Public search API request/response schemas
 const publicSearchRequestSchema = z.object({
@@ -55,6 +56,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertSiteSchema.parse(req.body);
       const newSite = await storage.createSite(validatedData);
+      
+      // Invalidate CORS cache since a new site was added
+      invalidateCorsCache();
+      console.log(`CORS cache invalidated after creating site: ${newSite.url}`);
+      
       res.status(201).json(newSite);
     } catch (error) {
       console.error("Error creating site:", error);
@@ -86,6 +92,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updatedSite) {
         return res.status(404).json({ error: "Site not found" });
       }
+      
+      // Invalidate CORS cache since site was updated (URL might have changed)
+      invalidateCorsCache();
+      console.log(`CORS cache invalidated after updating site: ${updatedSite.url}`);
+      
       res.json(updatedSite);
     } catch (error) {
       console.error("Error updating site:", error);
@@ -95,10 +106,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/sites/:id", async (req, res) => {
     try {
+      // Get site info before deletion for logging
+      const siteToDelete = await storage.getSite(req.params.id);
       const success = await storage.deleteSite(req.params.id);
       if (!success) {
         return res.status(404).json({ error: "Site not found" });
       }
+      
+      // Invalidate CORS cache since a site was deleted
+      invalidateCorsCache();
+      console.log(`CORS cache invalidated after deleting site: ${siteToDelete?.url || req.params.id}`);
+      
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting site:", error);
