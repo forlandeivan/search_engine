@@ -1,14 +1,16 @@
+import type { ReactNode } from "react";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Star, X, Clock } from "lucide-react";
 
 export interface SearchResult {
   id: string;
-  title: string;
-  description: string;
+  title?: string | null;
+  description?: string | null;
+  content?: string | null;
+  metaDescription?: string | null;
   url: string;
-  lastCrawled?: string;
+  lastCrawled?: string | null;
   isFavorite?: boolean;
 }
 
@@ -27,7 +29,11 @@ export default function SearchResult({
   searchQuery,
   showTitle = true
 }: SearchResultProps) {
-  const highlightText = (text: string, query?: string) => {
+  const highlightText = (text?: string | null, query?: string): ReactNode => {
+    if (!text) {
+      return "";
+    }
+
     if (!query) return text;
 
     const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -48,6 +54,14 @@ export default function SearchResult({
     );
   };
 
+  const descriptionText =
+    result.description?.trim() ||
+    result.metaDescription?.trim() ||
+    result.content?.trim() ||
+    "";
+
+  const hasDescription = descriptionText.length > 0;
+
   return (
     <Card className="p-4 hover-elevate transition-all duration-200" data-testid={`card-result-${result.id}`}>
       <div className="flex items-start justify-between gap-4">
@@ -67,13 +81,14 @@ export default function SearchResult({
             </div>
           )}
 
-          <p
-            className="text-muted-foreground text-sm mb-3 line-clamp-2"
-            data-testid={`text-description-${result.id}`}
-          >
-            {highlightText(result.description, searchQuery)}
+          <p className="text-muted-foreground text-sm mb-3 line-clamp-2" data-testid={`text-description-${result.id}`}>
+            {hasDescription ? (
+              highlightText(descriptionText, searchQuery)
+            ) : (
+              <span className="italic text-muted-foreground/80">Описание отсутствует</span>
+            )}
           </p>
-          
+
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <a
               href={result.url}
