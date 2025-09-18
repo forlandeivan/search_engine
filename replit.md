@@ -4,6 +4,15 @@
 
 This is a lightweight search engine application designed for crawling and indexing websites to provide fast, localized search functionality. The system consists of a React-based admin interface for managing crawl configurations and a public search interface for end users. Built with TypeScript, Express.js backend, and PostgreSQL database, it provides comprehensive web crawling capabilities with real-time status monitoring and search result delivery.
 
+## Recent Changes
+
+### September 2025
+- **Re-crawl functionality implemented**: Complete system for re-crawling existing sites without creating duplicates
+- **Database flexibility**: Configurable PostgreSQL connection with automatic fallback to Neon
+- **Enhanced admin interface**: Improved AdminPageSimple.tsx with re-crawl capabilities
+- **Duplicate prevention**: Crawler now checks existing pages before adding new ones
+- **Real-time status updates**: Live progress tracking during crawling operations
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
@@ -20,16 +29,18 @@ Preferred communication style: Simple, everyday language.
 ### Backend Architecture
 - **Runtime**: Node.js with Express.js framework
 - **Language**: TypeScript with ES modules
-- **API Design**: RESTful API endpoints for sites, pages, crawling, and search operations
-- **Web Crawler**: Custom crawler using Cheerio for HTML parsing and node-fetch for HTTP requests
+- **API Design**: RESTful API endpoints for sites, pages, crawling, search operations, and re-crawling functionality
+- **Web Crawler**: Custom crawler using Cheerio for HTML parsing and node-fetch for HTTP requests with duplicate detection
+- **Re-crawl System**: Comprehensive re-crawling capability that resets site status and adds only new pages
 - **Build System**: ESBuild for production bundling
 
 ### Data Storage Solutions
-- **Database**: PostgreSQL with Neon serverless hosting
+- **Database**: Flexible PostgreSQL connection with automatic fallback (External → Neon)
+- **Connection Logic**: Configurable external PostgreSQL server with Neon serverless as backup
 - **ORM**: Drizzle ORM for type-safe database operations
 - **Schema Design**: 
-  - Sites table for crawl configurations and status
-  - Pages table for crawled content with full-text indexing
+  - Sites table for crawl configurations, status tracking, and re-crawl capabilities
+  - Pages table for crawled content with full-text indexing and duplicate prevention
   - Search index table for optimized text search performance
   - Relational design with foreign key constraints and cascading deletes
 
@@ -48,9 +59,10 @@ Preferred communication style: Simple, everyday language.
 ## External Dependencies
 
 ### Core Dependencies
-- **@neondatabase/serverless**: Serverless PostgreSQL client for database connectivity
-- **drizzle-orm**: Type-safe ORM for database operations and migrations
-- **@tanstack/react-query**: Server state management and caching
+- **@neondatabase/serverless**: Serverless PostgreSQL client for Neon database connectivity
+- **pg**: Standard PostgreSQL client for external database connections
+- **drizzle-orm**: Type-safe ORM for database operations and migrations (supports both Neon and standard PostgreSQL)
+- **@tanstack/react-query**: Server state management and caching with real-time updates
 - **cheerio**: Server-side HTML parsing for web crawling
 - **node-fetch**: HTTP client for web crawling requests
 
