@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,15 @@ interface PagesBySite {
   pages: Page[];
 }
 
+interface StatsData {
+  sites: {
+    total: number;
+    crawling: number;
+    completed: number;
+    failed: number;
+  };
+}
+
 export default function PagesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSite, setSelectedSite] = useState<string>("all");
@@ -48,11 +57,18 @@ export default function PagesPage() {
   // Fetch all pages
   const { data: pages = [], isLoading: pagesLoading } = useQuery<Page[]>({
     queryKey: ['/api/pages'],
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
   });
 
   // Fetch sites for grouping
   const { data: sites = [] } = useQuery<Site[]>({
     queryKey: ['/api/sites'],
+  });
+
+  // Fetch crawl statistics to track active crawls
+  const { data: stats } = useQuery<StatsData>({
+    queryKey: ['/api/stats'],
   });
 
   // Group pages by site
@@ -79,6 +95,20 @@ export default function PagesPage() {
 
   const totalPages = pages.length;
   const totalSites = pagesBySite.length;
+  
+  // Auto-refresh pages when there are active crawls
+  useEffect(() => {
+    const hasActiveCrawls = stats?.sites?.crawling && stats.sites.crawling > 0;
+    
+    if (hasActiveCrawls) {
+      const interval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ['/api/pages'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+      }, 3000); // Refresh every 3 seconds
+      
+      return () => clearInterval(interval);
+    }
+  }, [stats?.sites?.crawling]);
 
   // Get all visible pages for bulk actions
   const allVisiblePages = filteredPagesBySite.flatMap(group => group.pages);
@@ -148,9 +178,19 @@ export default function PagesPage() {
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Индексированные страницы</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">Индексированные страницы</h1>
+            {stats?.sites?.crawling && stats.sites.crawling > 0 && (
+              <Badge variant="secondary" className="animate-pulse">
+                Автообновление: {stats.sites.crawling} активн{stats.sites.crawling === 1 ? 'ый' : 'ых'}
+              </Badge>
+            )}
+          </div>
           <p className="text-muted-foreground">
             Всего проиндексировано {totalPages} страниц с {totalSites} сайтов
+            {stats?.sites?.crawling && stats.sites.crawling > 0 && (
+              <span className="ml-2 text-primary">• Обновляется каждые 3 сек</span>
+            )}
           </p>
         </div>
       </div>
