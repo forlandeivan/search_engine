@@ -80,9 +80,9 @@ export class WebCrawler {
           if (result) {
             totalPages++;
             
-            // Save page to database
+            // Save page to database using normalized URL
             const contentHash = crypto.createHash('md5').update(result.content).digest('hex');
-            const existingPages = await storage.getPagesByUrl(url);
+            const existingPages = await storage.getPagesByUrl(result.url);
             
             if (existingPages.length > 0) {
               // Update existing page
@@ -97,13 +97,15 @@ export class WebCrawler {
                   contentHash
                 });
                 indexedPages++;
-                console.log(`Updated page: ${url}`);
+                console.log(`Updated page: ${result.url}`);
+              } else {
+                console.log(`Page unchanged, skipping: ${result.url}`);
               }
             } else {
               // Create new page
               const newPage: InsertPage = {
                 siteId: this.currentSiteId!,
-                url: url,
+                url: result.url,
                 title: result.title || '',
                 content: result.content,
                 metaDescription: result.metaDescription,
@@ -113,7 +115,7 @@ export class WebCrawler {
               };
               await storage.createPage(newPage);
               indexedPages++;
-              console.log(`Indexed new page: ${url}`);
+              console.log(`Indexed new page: ${result.url}`);
             }
 
             // Add discovered links for further crawling
@@ -160,13 +162,35 @@ export class WebCrawler {
     }
   }
 
+  private normalizeUrl(url: string): string {
+    try {
+      const parsedUrl = new URL(url);
+      // Remove fragment (hash) to avoid duplicate pages
+      parsedUrl.hash = '';
+      // Remove trailing slash for consistency
+      const normalizedUrl = parsedUrl.toString();
+      return normalizedUrl.endsWith('/') ? normalizedUrl.slice(0, -1) : normalizedUrl;
+    } catch {
+      return url;
+    }
+  }
+
   private async crawlPage(url: string): Promise<CrawlResult | null> {
     try {
+      // Normalize URL to remove fragments and trailing slashes
+      const normalizedUrl = this.normalizeUrl(url);
+      
+      // Check if we already crawled this page (without fragment)
+      if (this.crawledUrls.has(normalizedUrl)) {
+        console.log(`Skipping duplicate page (fragment removed): ${url} -> ${normalizedUrl}`);
+        return null;
+      }
+      
       // Add timeout to prevent hanging on slow sites
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
       
-      const response = await fetch(url, {
+      const response = await fetch(normalizedUrl, {
         headers: {
           'User-Agent': 'SearchEngine-Crawler/1.0 (+https://example.com/crawler)'
         },
@@ -226,13 +250,14 @@ export class WebCrawler {
         const href = $(element).attr('href');
         if (href) {
           try {
-            const linkUrl = new URL(href, url);
+            const linkUrl = new URL(href, normalizedUrl);
             const linkStr = linkUrl.toString();
+            const normalizedLinkStr = this.normalizeUrl(linkStr);
             
             // Filter links based on options
             if (this.options.followExternalLinks || linkUrl.hostname === baseUrl.hostname) {
-              if (!this.crawledUrls.has(linkStr) && this.isValidUrl(linkStr)) {
-                links.push(linkStr);
+              if (!this.crawledUrls.has(normalizedLinkStr) && this.isValidUrl(normalizedLinkStr)) {
+                links.push(normalizedLinkStr);
               }
             }
           } catch (e) {
@@ -241,10 +266,11 @@ export class WebCrawler {
         }
       });
 
-      this.crawledUrls.add(url);
+      // Mark normalized URL as crawled to prevent duplicates
+      this.crawledUrls.add(normalizedUrl);
 
       return {
-        url,
+        url: normalizedUrl, // Use normalized URL for storage
         title,
         content,
         metaDescription,
@@ -274,7 +300,8 @@ export class WebCrawler {
   }
 
   private shouldSkipUrl(url: string, depth: number): boolean {
-    if (this.crawledUrls.has(url)) {
+    const normalizedUrl = this.normalizeUrl(url);
+    if (this.crawledUrls.has(normalizedUrl)) {
       return true;
     }
 
@@ -312,8 +339,9 @@ export class WebCrawler {
         return false;
       }
 
-      // Skip fragments and certain query parameters
-      if (parsedUrl.hash.includes('#comment') || parsedUrl.search.includes('print=')) {
+      // Skip URLs that are only different by fragment (already normalized)
+      // Skip certain query parameters that indicate non-content pages
+      if (parsedUrl.search.includes('print=') || parsedUrl.search.includes('download=')) {
         return false;
       }
 
