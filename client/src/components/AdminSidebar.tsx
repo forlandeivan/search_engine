@@ -53,7 +53,7 @@ export default function AdminSidebar() {
   });
 
   const { data: sites } = useQuery<Site[]>({
-    queryKey: ['/api/sites'],
+    queryKey: ['/api/sites/extended'],
     refetchInterval: 10000,
   });
 

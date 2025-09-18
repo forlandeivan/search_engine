@@ -26,9 +26,9 @@ export default function AdminPage() {
   const [siteToDelete, setSiteToDelete] = useState<{ id: string; url: string; pageCount?: number } | null>(null);
   const [isLoading, setIsLoading] = useState(false); // Added for potential future use, though mutations handle their own loading states
 
-  // Fetch sites data with auto-refresh if any site is crawling
+  // Fetch sites data with extended stats and auto-refresh if any site is crawling
   const { data: sites = [], isLoading: isSitesLoading, refetch } = useQuery<Site[]>({
-    queryKey: ['/api/sites'],
+    queryKey: ['/api/sites/extended'],
     refetchInterval: (query) => {
       const sitesData = query.state.data as Site[] || [];
       return sitesData.some((site) => site.status === 'crawling') ? 3000 : false;
@@ -50,7 +50,7 @@ export default function AdminPage() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sites/extended'] });
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       setShowAddForm(false);
       toast({
@@ -74,7 +74,7 @@ export default function AdminPage() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sites/extended'] });
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       toast({
         title: "Краулинг запущен",
@@ -90,7 +90,7 @@ export default function AdminPage() {
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sites/extended'] });
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       toast({
         title: "Краулинг остановлен",
@@ -124,7 +124,7 @@ export default function AdminPage() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sites/extended'] });
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       toast({
         title: "Экстренная остановка выполнена",
@@ -148,7 +148,7 @@ export default function AdminPage() {
   const handleDeleteSite = async (siteId: string) => {
     try {
       await apiRequest('DELETE', `/api/sites/${siteId}`);
-      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sites/extended'] });
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       toast({
         title: "Сайт удален",
@@ -288,8 +288,8 @@ export default function AdminPage() {
                     ...status,
                     status: status.status as "idle" | "crawling" | "completed" | "failed",
                     progress: 0, // Placeholder, actual progress might come from elsewhere
-                    pagesFound: 0, // Placeholder
-                    pagesIndexed: 0, // Placeholder
+                    pagesFound: (status as any).pagesFound || 0, // Real data from extended endpoint
+                    pagesIndexed: (status as any).pagesIndexed || 0, // Real data from extended endpoint
                     lastCrawled: status.lastCrawled || undefined,
                     nextCrawl: status.nextCrawl || undefined,
                     error: status.error || undefined,
@@ -297,7 +297,7 @@ export default function AdminPage() {
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
                   onRetry={handleRetryCrawl}
-                  onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: 0 })}
+                  onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: (status as any).pagesIndexed || 0 })}
                 />
               ))}
             </div>
@@ -329,8 +329,8 @@ export default function AdminPage() {
                   ...status,
                   status: status.status as "idle" | "crawling" | "completed" | "failed",
                   progress: 0, // Placeholder
-                  pagesFound: 0, // Placeholder
-                  pagesIndexed: 0, // Placeholder
+                  pagesFound: (status as any).pagesFound || 0, // Real data from extended endpoint
+                  pagesIndexed: (status as any).pagesIndexed || 0, // Real data from extended endpoint
                   lastCrawled: status.lastCrawled || undefined,
                   nextCrawl: status.nextCrawl || undefined,
                   error: status.error || undefined,
@@ -352,8 +352,8 @@ export default function AdminPage() {
                   ...status,
                   status: status.status as "idle" | "crawling" | "completed" | "failed",
                   progress: 0, // Placeholder
-                  pagesFound: 0, // Placeholder
-                  pagesIndexed: 0, // Placeholder
+                  pagesFound: (status as any).pagesFound || 0, // Real data from extended endpoint
+                  pagesIndexed: (status as any).pagesIndexed || 0, // Real data from extended endpoint
                   lastCrawled: status.lastCrawled || undefined,
                   nextCrawl: status.nextCrawl || undefined,
                   error: status.error || undefined,
@@ -375,8 +375,8 @@ export default function AdminPage() {
                   ...status,
                   status: status.status as "idle" | "crawling" | "completed" | "failed",
                   progress: 0, // Placeholder
-                  pagesFound: 0, // Placeholder
-                  pagesIndexed: 0, // Placeholder
+                  pagesFound: (status as any).pagesFound || 0, // Real data from extended endpoint
+                  pagesIndexed: (status as any).pagesIndexed || 0, // Real data from extended endpoint
                   lastCrawled: status.lastCrawled || undefined,
                   nextCrawl: status.nextCrawl || undefined,
                   error: status.error || undefined,

@@ -77,6 +77,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Extended sites with pages count - must come before /api/sites/:id
+  app.get("/api/sites/extended", async (req, res) => {
+    try {
+      const sites = await storage.getAllSites();
+      const sitesWithStats = await Promise.all(
+        sites.map(async (site) => {
+          const pages = await storage.getPagesBySiteId(site.id);
+          return {
+            ...site,
+            pagesFound: pages.length,
+            pagesIndexed: pages.length, // For now, all found pages are indexed
+          };
+        })
+      );
+
+      res.json(sitesWithStats);
+    } catch (error) {
+      console.error("Error fetching sites with stats:", error);
+      res.status(500).json({ error: "Failed to fetch sites with statistics" });
+    }
+  });
+
   app.get("/api/sites/:id", async (req, res) => {
     try {
       const site = await storage.getSite(req.params.id);
@@ -381,6 +403,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to fetch statistics" });
     }
   });
+
 
   // Health check endpoint for database diagnostics
   app.get("/api/health/db", async (req, res) => {
