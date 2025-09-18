@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,8 @@ import {
   Play,
   Square,
   RefreshCw,
-  Trash2
+  Trash2,
+  ArrowRight
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -229,6 +231,15 @@ export default function CrawlStatusCard({
             Следующее сканирование: {crawlStatus.nextCrawl.toLocaleString('ru')}
           </p>
         )}
+
+        <div className="flex justify-end">
+          <Link href={`/admin/sites/${crawlStatus.id}`}>
+            <Button variant="secondary" size="sm" className="gap-1" data-testid={`button-manage-${crawlStatus.id}`}>
+              Управление
+              <ArrowRight className="h-3 w-3" />
+            </Button>
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );

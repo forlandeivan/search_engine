@@ -57,6 +57,13 @@ export default function AdminSidebar() {
     refetchInterval: 10000,
   });
 
+  const isItemActive = (item: SidebarItem) => {
+    if (item.url === "/admin/sites") {
+      return location === item.url || location.startsWith("/admin/sites/");
+    }
+    return location === item.url;
+  };
+
   const menuItems: SidebarItem[] = [
     {
       title: "Поиск",
@@ -118,9 +125,9 @@ export default function AdminSidebar() {
             <SidebarMenu>
               {menuItems.slice(0, 2).map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton 
-                    asChild 
-                    isActive={location === item.url}
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isItemActive(item)}
                     data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-')}`}
                   >
                     <Link href={item.url}>
@@ -148,9 +155,9 @@ export default function AdminSidebar() {
             <SidebarMenu>
               {menuItems.slice(2, 6).map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton 
-                    asChild 
-                    isActive={location === item.url}
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isItemActive(item)}
                     data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-').replace(/ё/g, 'е')}`}
                   >
                     <Link href={item.url}>
@@ -178,9 +185,9 @@ export default function AdminSidebar() {
             <SidebarMenu>
               {menuItems.slice(6).map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton 
-                    asChild 
-                    isActive={location === item.url}
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isItemActive(item)}
                     data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-')}`}
                   >
                     <Link href={item.url}>

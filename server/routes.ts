@@ -275,6 +275,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
       const offset = (page - 1) * limit;
+      const siteId = typeof req.query.siteId === "string" ? req.query.siteId.trim() : undefined;
 
       console.log("📊 Parsed parameters:", { 
         query: query, 
@@ -301,7 +302,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       console.log("🚀 Calling storage.searchPages with query:", decodedQuery);
-      const { results, total } = await storage.searchPages(decodedQuery, limit, offset);
+      let results;
+      let total;
+
+      if (siteId) {
+        console.log("📁 Filtering search by site:", siteId);
+        ({ results, total } = await storage.searchPagesByCollection(decodedQuery, siteId, limit, offset));
+      } else {
+        ({ results, total } = await storage.searchPages(decodedQuery, limit, offset));
+      }
       console.log("✅ Search completed:", { 
         resultsCount: results.length, 
         total,
