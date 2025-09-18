@@ -83,6 +83,28 @@ export default function AdminPage() {
     },
   });
 
+  // Re-crawl mutation
+  const recrawlMutation = useMutation({
+    mutationFn: async (siteId: string) => {
+      const response = await apiRequest('POST', `/api/sites/${siteId}/recrawl`);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      toast({
+        title: "Повторный краулинг запущен",
+        description: `Повторный краулинг запущен. Текущих страниц: ${data.existingPages}`,
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Ошибка",
+        description: "Не удалось запустить повторный краулинг",
+        variant: "destructive",
+      });
+    },
+  });
+
   const displaySites = Array.isArray(sites) ? sites : [];
 
   const handleAddSite = (config: SiteConfig) => {
@@ -99,6 +121,10 @@ export default function AdminPage() {
 
   const handleRetryCrawl = (id: string) => {
     startCrawlMutation.mutate(id);
+  };
+
+  const handleRecrawl = (id: string) => {
+    recrawlMutation.mutate(id);
   };
 
   const handleDeleteSite = (id: string) => {
@@ -168,6 +194,7 @@ export default function AdminPage() {
             onStart={handleStartCrawl}
             onStop={handleStopCrawl}
             onRetry={handleRetryCrawl}
+            onRecrawl={handleRecrawl}
             onDelete={handleDeleteSite}
           />
         ))}

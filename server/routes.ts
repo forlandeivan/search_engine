@@ -171,6 +171,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Re-crawl existing site to find new pages
+  app.post("/api/sites/:id/recrawl", async (req, res) => {
+    try {
+      const site = await storage.getSite(req.params.id);
+      if (!site) {
+        return res.status(404).json({ error: "Site not found" });
+      }
+
+      // Check if site is already being crawled
+      if (site.status === 'crawling') {
+        return res.status(400).json({ error: "Site is already being crawled" });
+      }
+
+      // Get current page count before recrawling for logging
+      const existingPages = await storage.getPagesBySiteId(req.params.id);
+      console.log(`Starting recrawl for site ${site.url} - currently has ${existingPages.length} pages`);
+
+      // Start re-crawling in background (uses same logic as regular crawl)
+      // The crawler already handles duplicates by checking existing URLs
+      crawler.crawlSite(req.params.id).catch(error => {
+        console.error(`Background re-crawl failed for site ${req.params.id}:`, error);
+      });
+
+      res.json({ 
+        message: "Re-crawling started", 
+        siteId: req.params.id,
+        existingPages: existingPages.length
+      });
+    } catch (error) {
+      console.error("Error starting re-crawl:", error);
+      res.status(500).json({ error: "Failed to start re-crawling" });
+    }
+  });
+
   app.post("/api/sites/:id/stop-crawl", async (req, res) => {
     try {
       await crawler.stopCrawl(req.params.id);

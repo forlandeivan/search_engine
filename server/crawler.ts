@@ -101,12 +101,12 @@ export class WebCrawler {
                   contentHash
                 });
                 indexedPages++;
-                console.log(`Updated page: ${result.url}`);
+                console.log(`✏️  Updated existing page (content changed): ${result.url}`);
               } else {
-                console.log(`Page unchanged, skipping: ${result.url}`);
+                console.log(`⏭️  Page unchanged, skipping: ${result.url}`);
               }
             } else {
-              // Create new page
+              // Create new page - this handles both first crawl and re-crawl scenarios
               const newPage: InsertPage = {
                 siteId: this.currentSiteId!,
                 url: result.url,
@@ -119,7 +119,7 @@ export class WebCrawler {
               };
               await storage.createPage(newPage);
               indexedPages++;
-              console.log(`Indexed new page: ${result.url}`);
+              console.log(`🆕 Indexed new page: ${result.url}`);
             }
 
             // Add discovered links for further crawling

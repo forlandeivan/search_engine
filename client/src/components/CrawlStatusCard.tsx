@@ -30,6 +30,7 @@ interface CrawlStatusCardProps {
   onStart?: (id: string) => void;
   onStop?: (id: string) => void;
   onRetry?: (id: string) => void;
+  onRecrawl?: (id: string) => void;
   onDelete?: (id: string) => void;
 }
 
@@ -59,10 +60,12 @@ export default function CrawlStatusCard({
   onStart, 
   onStop, 
   onRetry,
+  onRecrawl,
   onDelete 
 }: CrawlStatusCardProps) {
   const StatusIcon = statusIcons[crawlStatus.status];
   const isCrawling = crawlStatus.status === "crawling";
+  
   
   return (
     <Card className="hover-elevate" data-testid={`card-crawl-${crawlStatus.id}`}>
@@ -106,6 +109,17 @@ export default function CrawlStatusCard({
               variant="outline"
               onClick={() => onRetry(crawlStatus.id)}
               data-testid={`button-retry-${crawlStatus.id}`}
+            >
+              <RefreshCw className="h-3 w-3" />
+            </Button>
+          )}
+          {crawlStatus.status === "completed" && onRecrawl && (
+            <Button 
+              size="sm" 
+              variant="outline"
+              onClick={() => onRecrawl(crawlStatus.id)}
+              data-testid={`button-recrawl-${crawlStatus.id}`}
+              title="Повторный краулинг для поиска новых страниц"
             >
               <RefreshCw className="h-3 w-3" />
             </Button>

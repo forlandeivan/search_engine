@@ -99,6 +99,29 @@ export default function AdminPage() {
     },
   });
 
+  // Re-crawl mutation
+  const recrawlMutation = useMutation({
+    mutationFn: async (siteId: string) => {
+      const response = await apiRequest('POST', `/api/sites/${siteId}/recrawl`);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sites/extended'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+      toast({
+        title: "Повторный краулинг запущен",
+        description: `Повторный краулинг запущен. Текущих страниц: ${data.existingPages}`,
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Ошибка",
+        description: "Не удалось запустить повторный краулинг",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleAddSite = (config: SiteConfig) => {
     addSiteMutation.mutate(config);
   };
@@ -113,6 +136,11 @@ export default function AdminPage() {
 
   const handleRetryCrawl = (siteId: string) => {
     startCrawlMutation.mutate(siteId);
+  };
+
+  const handleRecrawl = (siteId: string) => {
+    console.log('[DEBUG] handleRecrawl called with:', siteId);
+    recrawlMutation.mutate(siteId);
   };
 
   // Emergency stop all crawls mutation
@@ -297,6 +325,7 @@ export default function AdminPage() {
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
                   onRetry={handleRetryCrawl}
+                  onRecrawl={handleRecrawl}
                   onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: (status as any).pagesIndexed || 0 })}
                 />
               ))}
@@ -338,6 +367,8 @@ export default function AdminPage() {
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
+                onRecrawl={handleRecrawl}
+                onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: (status as any).pagesIndexed || 0 })}
               />
             ))}
           </div>
@@ -361,6 +392,8 @@ export default function AdminPage() {
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
+                onRecrawl={handleRecrawl}
+                onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: (status as any).pagesIndexed || 0 })}
               />
             ))}
           </div>
@@ -384,6 +417,8 @@ export default function AdminPage() {
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
+                onRecrawl={handleRecrawl}
+                onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: (status as any).pagesIndexed || 0 })}
               />
             ))}
           </div>
