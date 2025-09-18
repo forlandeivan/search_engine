@@ -12,7 +12,7 @@ interface Stats {
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Plus, Search, Filter } from "lucide-react";
@@ -24,9 +24,10 @@ export default function AdminPage() {
   const [searchFilter, setSearchFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "crawling" | "completed" | "failed">("all");
   const [siteToDelete, setSiteToDelete] = useState<{ id: string; url: string; pageCount?: number } | null>(null);
+  const [isLoading, setIsLoading] = useState(false); // Added for potential future use, though mutations handle their own loading states
 
   // Fetch sites data with auto-refresh if any site is crawling
-  const { data: sites = [], isLoading, refetch } = useQuery<Site[]>({
+  const { data: sites = [], isLoading: isSitesLoading, refetch } = useQuery<Site[]>({
     queryKey: ['/api/sites'],
     refetchInterval: (query) => {
       const sitesData = query.state.data as Site[] || [];
@@ -98,25 +99,49 @@ export default function AdminPage() {
     },
   });
 
-
   const handleAddSite = (config: SiteConfig) => {
     addSiteMutation.mutate(config);
   };
 
-  const handleStartCrawl = (id: string) => {
-    startCrawlMutation.mutate(id);
+  const handleStartCrawl = (siteId: string) => {
+    startCrawlMutation.mutate(siteId);
   };
 
-  const handleStopCrawl = (id: string) => {
-    stopCrawlMutation.mutate(id);
+  const handleStopCrawl = (siteId: string) => {
+    stopCrawlMutation.mutate(siteId);
   };
 
-  const handleRetryCrawl = (id: string) => {
-    startCrawlMutation.mutate(id);
+  const handleRetryCrawl = (siteId: string) => {
+    startCrawlMutation.mutate(siteId);
+  };
+
+  // Mock refetchSites for now, replace with actual refetch if needed
+  const refetchSites = async () => {
+    await refetch();
+  };
+
+  const handleDeleteSite = async (siteId: string) => {
+    try {
+      await apiRequest('DELETE', `/api/sites/${siteId}`);
+      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+      toast({
+        title: "Сайт удален",
+        description: "Сайт успешно удален",
+      });
+      setSiteToDelete(null);
+    } catch (error) {
+      console.error('Error deleting site:', error);
+      toast({
+        title: "Ошибка",
+        description: "Не удалось удалить сайт",
+        variant: "destructive",
+      });
+    }
   };
 
   const displaySites = sites || [];
-  
+
   const filteredStatuses = displaySites.filter((status: any) => {
     const matchesSearch = status.url.toLowerCase().includes(searchFilter.toLowerCase());
     const matchesStatus = statusFilter === "all" || status.status === statusFilter;
@@ -195,9 +220,9 @@ export default function AdminPage() {
                   crawlStatus={{
                     ...status,
                     status: status.status as "idle" | "crawling" | "completed" | "failed",
-                    progress: 0,
-                    pagesFound: 0,
-                    pagesIndexed: 0,
+                    progress: 0, // Placeholder, actual progress might come from elsewhere
+                    pagesFound: 0, // Placeholder
+                    pagesIndexed: 0, // Placeholder
                     lastCrawled: status.lastCrawled || undefined,
                     nextCrawl: status.nextCrawl || undefined,
                     error: status.error || undefined,
@@ -205,6 +230,7 @@ export default function AdminPage() {
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
                   onRetry={handleRetryCrawl}
+                  onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: status.pagesCrawled })}
                 />
               ))}
             </div>
@@ -235,9 +261,9 @@ export default function AdminPage() {
                 crawlStatus={{
                   ...status,
                   status: status.status as "idle" | "crawling" | "completed" | "failed",
-                  progress: 0,
-                  pagesFound: 0,
-                  pagesIndexed: 0,
+                  progress: 0, // Placeholder
+                  pagesFound: 0, // Placeholder
+                  pagesIndexed: 0, // Placeholder
                   lastCrawled: status.lastCrawled || undefined,
                   nextCrawl: status.nextCrawl || undefined,
                   error: status.error || undefined,
@@ -258,9 +284,9 @@ export default function AdminPage() {
                 crawlStatus={{
                   ...status,
                   status: status.status as "idle" | "crawling" | "completed" | "failed",
-                  progress: 0,
-                  pagesFound: 0,
-                  pagesIndexed: 0,
+                  progress: 0, // Placeholder
+                  pagesFound: 0, // Placeholder
+                  pagesIndexed: 0, // Placeholder
                   lastCrawled: status.lastCrawled || undefined,
                   nextCrawl: status.nextCrawl || undefined,
                   error: status.error || undefined,
@@ -281,9 +307,9 @@ export default function AdminPage() {
                 crawlStatus={{
                   ...status,
                   status: status.status as "idle" | "crawling" | "completed" | "failed",
-                  progress: 0,
-                  pagesFound: 0,
-                  pagesIndexed: 0,
+                  progress: 0, // Placeholder
+                  pagesFound: 0, // Placeholder
+                  pagesIndexed: 0, // Placeholder
                   lastCrawled: status.lastCrawled || undefined,
                   nextCrawl: status.nextCrawl || undefined,
                   error: status.error || undefined,
@@ -341,6 +367,21 @@ export default function AdminPage() {
           </CardContent>
         </Card>
       </div>
+
+      <AlertDialog open={!!siteToDelete} onOpenChange={(isOpen) => setSiteToDelete(isOpen ? siteToDelete : null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить сайт?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Вы уверены, что хотите удалить сайт "{siteToDelete?.url}"? Это действие необратимо. Будет удалено {siteToDelete?.pageCount} страниц.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={() => siteToDelete?.id && handleDeleteSite(siteToDelete.id)}>Удалить</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
