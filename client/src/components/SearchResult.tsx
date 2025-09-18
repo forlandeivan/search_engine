@@ -17,13 +17,15 @@ interface SearchResultProps {
   onToggleFavorite?: (id: string) => void;
   onRemove?: (id: string) => void;
   searchQuery?: string;
+  showTitle?: boolean;
 }
 
-export default function SearchResult({ 
-  result, 
-  onToggleFavorite, 
+export default function SearchResult({
+  result,
+  onToggleFavorite,
   onRemove,
-  searchQuery 
+  searchQuery,
+  showTitle = true
 }: SearchResultProps) {
   const highlightText = (text: string, query?: string) => {
     if (!query) return text;
@@ -44,20 +46,22 @@ export default function SearchResult({
     <Card className="p-4 hover-elevate transition-all duration-200" data-testid={`card-result-${result.id}`}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2">
-            <h3 
-              className="text-lg font-semibold text-primary hover:underline cursor-pointer truncate"
-              data-testid={`text-title-${result.id}`}
-              onClick={() => window.open(result.url, '_blank')}
-            >
-              {highlightText(result.title, searchQuery)}
-            </h3>
-            {result.isFavorite && (
-              <Star className="h-4 w-4 fill-yellow-400 text-yellow-400 flex-shrink-0" />
-            )}
-          </div>
-          
-          <p 
+          {showTitle && (
+            <div className="flex items-center gap-2 mb-2">
+              <h3
+                className="text-lg font-semibold text-primary hover:underline cursor-pointer truncate"
+                data-testid={`text-title-${result.id}`}
+                onClick={() => window.open(result.url, '_blank')}
+              >
+                {highlightText(result.title, searchQuery)}
+              </h3>
+              {result.isFavorite && (
+                <Star className="h-4 w-4 fill-yellow-400 text-yellow-400 flex-shrink-0" />
+              )}
+            </div>
+          )}
+
+          <p
             className="text-muted-foreground text-sm mb-3 line-clamp-2"
             data-testid={`text-description-${result.id}`}
           >
@@ -65,15 +69,18 @@ export default function SearchResult({
           </p>
           
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <a 
-              href={result.url} 
-              target="_blank" 
+            <a
+              href={result.url}
+              target="_blank"
               rel="noopener noreferrer"
               className="hover:text-primary font-mono truncate max-w-xs"
               data-testid={`link-url-${result.id}`}
             >
               {result.url}
             </a>
+            {result.isFavorite && !showTitle && (
+              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+            )}
             {result.lastCrawled && (
               <div className="flex items-center gap-1">
                 <Clock className="h-3 w-3" />
