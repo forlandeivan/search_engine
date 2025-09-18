@@ -2,16 +2,18 @@ import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { 
-  CheckCircle, 
-  AlertCircle, 
-  Clock, 
-  Loader2, 
-  Play, 
+import {
+  CheckCircle,
+  AlertCircle,
+  Clock,
+  Loader2,
+  Play,
   Square,
   RefreshCw,
   Trash2
 } from "lucide-react";
+import { format, formatDistanceToNow } from "date-fns";
+import { ru } from "date-fns/locale";
 
 interface CrawlStatus {
   id: string;
@@ -55,18 +57,60 @@ const statusLabels = {
   failed: "Ошибка"
 };
 
-export default function CrawlStatusCard({ 
-  crawlStatus, 
-  onStart, 
-  onStop, 
+const LESS_THAN_MINUTE_THRESHOLD = 60 * 1000;
+const WEEK_IN_MS = 7 * 24 * 60 * 60 * 1000;
+
+function formatLastCrawled(date: Date) {
+  const lastCrawledDate = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(lastCrawledDate.getTime())) {
+    return null;
+  }
+
+  const now = new Date();
+  const diff = now.getTime() - lastCrawledDate.getTime();
+  const absolute = format(lastCrawledDate, "d MMMM yyyy, HH:mm", { locale: ru });
+
+  if (diff < 0) {
+    return {
+      label: formatDistanceToNow(lastCrawledDate, { addSuffix: true, locale: ru }),
+      title: absolute
+    };
+  }
+
+  if (diff < LESS_THAN_MINUTE_THRESHOLD) {
+    return {
+      label: "меньше минуты назад",
+      title: absolute
+    };
+  }
+
+  if (diff < WEEK_IN_MS) {
+    return {
+      label: formatDistanceToNow(lastCrawledDate, { addSuffix: true, locale: ru }),
+      title: absolute
+    };
+  }
+
+  return {
+    label: absolute,
+    title: absolute
+  };
+}
+
+export default function CrawlStatusCard({
+  crawlStatus,
+  onStart,
+  onStop,
   onRetry,
   onRecrawl,
-  onDelete 
+  onDelete
 }: CrawlStatusCardProps) {
   const StatusIcon = statusIcons[crawlStatus.status];
   const isCrawling = crawlStatus.status === "crawling";
-  
-  
+  const lastCrawledInfo = crawlStatus.lastCrawled
+    ? formatLastCrawled(crawlStatus.lastCrawled)
+    : null;
+
   return (
     <Card className="hover-elevate" data-testid={`card-crawl-${crawlStatus.id}`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -174,9 +218,9 @@ export default function CrawlStatusCard({
           </div>
         </div>
         
-        {crawlStatus.lastCrawled && (
-          <p className="text-xs text-muted-foreground">
-            Последнее сканирование: {crawlStatus.lastCrawled.toLocaleString('ru')}
+        {lastCrawledInfo && (
+          <p className="text-xs text-muted-foreground" title={lastCrawledInfo.title}>
+            Последнее сканирование: {lastCrawledInfo.label}
           </p>
         )}
         
