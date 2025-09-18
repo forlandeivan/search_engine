@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Plus, Search, Filter } from "lucide-react";
+import { Plus, Search, Filter, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function AdminPage() {
@@ -115,6 +115,31 @@ export default function AdminPage() {
     startCrawlMutation.mutate(siteId);
   };
 
+  // Emergency stop all crawls mutation
+  const emergencyStopMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/emergency/stop-all-crawls', {}, {
+        'x-admin-token': 'your_admin_token_here' // Замените на реальный токен из переменных окружения
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+      toast({
+        title: "Экстренная остановка выполнена",
+        description: `Остановлено ${data.stoppedCount} краулингов: ${data.stoppedSites?.join(', ')}`,
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Ошибка",
+        description: "Не удалось выполнить экстренную остановку",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Mock refetchSites for now, replace with actual refetch if needed
   const refetchSites = async () => {
     await refetch();
@@ -156,19 +181,61 @@ export default function AdminPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Управление краулингом</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">Управление краулингом</h1>
+            {stats?.sites?.crawling && stats.sites.crawling > 0 && (
+              <Badge variant="secondary" className="animate-pulse">
+                {stats.sites.crawling} активн{stats.sites.crawling === 1 ? 'ый' : 'ых'}
+              </Badge>
+            )}
+          </div>
           <p className="text-muted-foreground">
             Настройте сайты для индексации и отслеживайте процесс краулинга
           </p>
         </div>
-        <Button 
-          onClick={() => setShowAddForm(true)}
-          data-testid="button-add-site"
-          className="gap-2"
-        >
-          <Plus className="h-4 w-4" />
-          Добавить сайт
-        </Button>
+        <div className="flex gap-2">
+          {stats?.sites?.crawling && stats.sites.crawling > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button 
+                  variant="destructive"
+                  data-testid="button-emergency-stop"
+                  className="gap-2"
+                  disabled={emergencyStopMutation.isPending}
+                >
+                  <AlertTriangle className="h-4 w-4" />
+                  {emergencyStopMutation.isPending ? 'Останавливаем...' : 'Экстренная остановка'}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Экстренная остановка всех краулингов</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Вы уверены, что хотите принудительно остановить все активные краулинги? 
+                    Это действие немедленно прервёт {stats?.sites?.crawling} активных процесс(ов).
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Отмена</AlertDialogCancel>
+                  <AlertDialogAction 
+                    onClick={() => emergencyStopMutation.mutate()}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    Остановить все
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+          <Button 
+            onClick={() => setShowAddForm(true)}
+            data-testid="button-add-site"
+            className="gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            Добавить сайт
+          </Button>
+        </div>
       </div>
 
       {showAddForm && (
