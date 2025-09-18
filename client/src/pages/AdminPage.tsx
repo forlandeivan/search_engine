@@ -297,7 +297,7 @@ export default function AdminPage() {
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
                   onRetry={handleRetryCrawl}
-                  onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: status.pagesCrawled })}
+                  onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: 0 })}
                 />
               ))}
             </div>
