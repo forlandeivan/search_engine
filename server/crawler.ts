@@ -62,9 +62,13 @@ export class WebCrawler {
 
       while (this.pendingUrls.length > 0 && !this.shouldStop) {
         // Check if crawl was stopped
-        if (!this.activeCrawls.get(siteId)) {
+        if (!this.activeCrawls.get(siteId) || this.shouldStop) {
           console.log(`Crawl was stopped for site ${siteId}`);
-          break;
+          await storage.updateSite(siteId, { 
+            status: 'idle',
+            error: 'Crawl manually stopped'
+          });
+          return;
         }
 
         const { url, depth } = this.pendingUrls.shift()!;
@@ -167,9 +171,12 @@ export class WebCrawler {
       const parsedUrl = new URL(url);
       // Remove fragment (hash) to avoid duplicate pages
       parsedUrl.hash = '';
-      // Remove trailing slash for consistency
-      const normalizedUrl = parsedUrl.toString();
-      return normalizedUrl.endsWith('/') ? normalizedUrl.slice(0, -1) : normalizedUrl;
+      // Remove trailing slash for consistency, but keep it for root paths
+      let normalizedUrl = parsedUrl.toString();
+      if (normalizedUrl.endsWith('/') && parsedUrl.pathname !== '/') {
+        normalizedUrl = normalizedUrl.slice(0, -1);
+      }
+      return normalizedUrl;
     } catch {
       return url;
     }
@@ -355,11 +362,11 @@ export class WebCrawler {
     console.log(`Stopping crawl for site ${siteId}`);
     
     // Set stop flags immediately
-    this.shouldStop = true;
+    if (this.currentSiteId === siteId) {
+      this.shouldStop = true;
+      this.pendingUrls = [];
+    }
     this.activeCrawls.set(siteId, false);
-    
-    // Clear pending URLs
-    this.pendingUrls = [];
     
     // Update database status
     await storage.updateSite(siteId, { 
@@ -370,6 +377,7 @@ export class WebCrawler {
     // Clean up if this is the current site
     if (this.currentSiteId === siteId) {
       this.currentSiteId = null;
+      this.shouldStop = false;
     }
     
     console.log(`Crawl forcefully stopped for site ${siteId}`);
