@@ -17,6 +17,7 @@ export default function AdminPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchFilter, setSearchFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "crawling" | "completed" | "failed">("all");
+  const [siteToDelete, setSiteToDelete] = useState<Pick<CrawlStatus, "id" | "url"> | null>(null);
 
   // Fetch sites data
   const { data: sites = [], isLoading, error } = useQuery({
@@ -50,10 +51,14 @@ export default function AdminPage() {
   const deleteSiteMutation = useMutation({
     mutationFn: async (siteId: string) => {
       const response = await apiRequest('DELETE', `/api/sites/${siteId}`);
+      if (response.status === 204) {
+        return null;
+      }
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      setSiteToDelete(null);
       toast({
         title: "Сайт удален",
         description: "Сайт и все его страницы успешно удалены",
@@ -127,8 +132,21 @@ export default function AdminPage() {
     recrawlMutation.mutate(id);
   };
 
-  const handleDeleteSite = (id: string) => {
-    deleteSiteMutation.mutate(id);
+  const handleDeleteSiteRequest = (site: CrawlStatus) => {
+    setSiteToDelete({ id: site.id, url: site.url });
+  };
+
+  const handleConfirmDeleteSite = () => {
+    if (!siteToDelete) {
+      return;
+    }
+    deleteSiteMutation.mutate(siteToDelete.id);
+  };
+
+  const handleDeleteDialogChange = (open: boolean) => {
+    if (!open && !deleteSiteMutation.isPending) {
+      setSiteToDelete(null);
+    }
   };
 
   const filteredSites = displaySites.filter((site: any) => {
@@ -195,7 +213,7 @@ export default function AdminPage() {
             onStop={handleStopCrawl}
             onRetry={handleRetryCrawl}
             onRecrawl={handleRecrawl}
-            onDelete={handleDeleteSite}
+            onDelete={(_id) => handleDeleteSiteRequest(site)}
           />
         ))}
       </div>
@@ -262,6 +280,30 @@ export default function AdminPage() {
           </CardContent>
         </Card>
       </div>
+
+      <AlertDialog open={!!siteToDelete} onOpenChange={handleDeleteDialogChange}>
+        <AlertDialogContent data-testid="dialog-confirm-delete-site">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить сайт?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие навсегда удалит сайт {siteToDelete?.url ?? 'выбранный сайт'} и все связанные страницы. Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteSiteMutation.isPending} data-testid="button-cancel-delete-site">
+              Отмена
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDeleteSite}
+              disabled={deleteSiteMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="button-confirm-delete-site"
+            >
+              {deleteSiteMutation.isPending ? 'Удаление...' : 'Удалить'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
