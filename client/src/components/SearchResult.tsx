@@ -29,16 +29,22 @@ export default function SearchResult({
 }: SearchResultProps) {
   const highlightText = (text: string, query?: string) => {
     if (!query) return text;
-    
-    const regex = new RegExp(`(${query})`, 'gi');
+
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    if (!escapedQuery) return text;
+
+    const regex = new RegExp(`(${escapedQuery})`, "gi");
     const parts = text.split(regex);
-    
-    return parts.map((part, index) => 
-      regex.test(part) ? (
+
+    return parts.map((part, index) =>
+      index % 2 === 1 ? (
         <mark key={index} className="bg-primary/20 text-primary-foreground px-1 rounded">
           {part}
         </mark>
-      ) : part
+      ) : (
+        part
+      )
     );
   };
 
