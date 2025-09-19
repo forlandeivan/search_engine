@@ -14,7 +14,16 @@ import {
   type SearchSettings
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, sql, desc, asc, or, inArray } from "drizzle-orm";
+import {
+  eq,
+  ilike,
+  sql,
+  desc,
+  asc,
+  or,
+  inArray,
+  type SQL
+} from "drizzle-orm";
 
 export interface IStorage {
   // Sites management
@@ -60,36 +69,238 @@ export interface IStorage {
 export class DatabaseStorage implements IStorage {
   // Inject db instance for testing purposes
   private db = db;
+  private searchSettingsColumnExists: boolean | null = null;
+
+  private async hasSearchSettingsColumn(): Promise<boolean> {
+    if (this.searchSettingsColumnExists !== null) {
+      return this.searchSettingsColumnExists;
+    }
+
+    try {
+      const result = await this.db.execute(sql`
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'sites'
+          AND table_schema = 'public'
+          AND column_name = 'search_settings'
+        LIMIT 1
+      `);
+      this.searchSettingsColumnExists = result.rows.length > 0;
+    } catch (error) {
+      console.error("Failed to detect search_settings column:", error);
+      this.searchSettingsColumnExists = false;
+    }
+
+    return this.searchSettingsColumnExists;
+  }
+
+  private cloneSearchSettings(settings?: SearchSettings | null): SearchSettings {
+    return JSON.parse(JSON.stringify(settings ?? defaultSearchSettings)) as SearchSettings;
+  }
+
+  private mapSiteWithSettings(site: Partial<Site> & { id: string }): Site {
+    return {
+      ...(site as Site),
+      searchSettings: this.cloneSearchSettings(site.searchSettings),
+    };
+  }
+
+  private async fetchLegacySiteById(id: string): Promise<Site | undefined> {
+    const result = await this.db.execute(sql`
+      SELECT
+        "id",
+        "url",
+        "crawl_depth" AS "crawlDepth",
+        "follow_external_links" AS "followExternalLinks",
+        "crawl_frequency" AS "crawlFrequency",
+        "exclude_patterns" AS "excludePatterns",
+        "status",
+        "last_crawled" AS "lastCrawled",
+        "next_crawl" AS "nextCrawl",
+        "error",
+        "created_at" AS "createdAt",
+        "updated_at" AS "updatedAt"
+      FROM "sites"
+      WHERE "id" = ${id}
+      LIMIT 1
+    `);
+
+    const [site] = result.rows as Array<Partial<Site> & { id: string }>;
+    if (!site) {
+      return undefined;
+    }
+
+    return this.mapSiteWithSettings(site);
+  }
+
+  private async fetchLegacySites(): Promise<Site[]> {
+    const result = await this.db.execute(sql`
+      SELECT
+        "id",
+        "url",
+        "crawl_depth" AS "crawlDepth",
+        "follow_external_links" AS "followExternalLinks",
+        "crawl_frequency" AS "crawlFrequency",
+        "exclude_patterns" AS "excludePatterns",
+        "status",
+        "last_crawled" AS "lastCrawled",
+        "next_crawl" AS "nextCrawl",
+        "error",
+        "created_at" AS "createdAt",
+        "updated_at" AS "updatedAt"
+      FROM "sites"
+      ORDER BY "created_at" DESC
+    `);
+
+    return (result.rows as Array<Partial<Site> & { id: string }>).map(site =>
+      this.mapSiteWithSettings(site)
+    );
+  }
 
   // Sites
   async createSite(site: InsertSite): Promise<Site> {
-    const searchSettings = site.searchSettings ?? defaultSearchSettings;
-    const [newSite] = await this.db
-      .insert(sites)
-      .values({
-        ...site,
-        searchSettings,
-      } as any)
-      .returning();
-    return newSite;
+    const siteData = site as InsertSite & Partial<Site>;
+    const searchSettings = this.cloneSearchSettings(siteData.searchSettings);
+
+    if (await this.hasSearchSettingsColumn()) {
+      const [newSite] = await this.db
+        .insert(sites)
+        .values({
+          ...site,
+          searchSettings,
+        } as any)
+        .returning();
+
+      return this.mapSiteWithSettings(newSite);
+    }
+
+    const result = await this.db.execute(sql`
+      INSERT INTO "sites" (
+        "url",
+        "crawl_depth",
+        "follow_external_links",
+        "crawl_frequency",
+        "exclude_patterns",
+        "status",
+        "last_crawled",
+        "next_crawl",
+        "error"
+      ) VALUES (
+        ${site.url},
+        ${siteData.crawlDepth ?? 3},
+        ${siteData.followExternalLinks ?? false},
+        ${siteData.crawlFrequency ?? "daily"},
+        ${sql`${JSON.stringify(siteData.excludePatterns ?? [])}::jsonb`},
+        ${siteData.status ?? "idle"},
+        ${siteData.lastCrawled ?? null},
+        ${siteData.nextCrawl ?? null},
+        ${siteData.error ?? null}
+      )
+      RETURNING
+        "id",
+        "url",
+        "crawl_depth" AS "crawlDepth",
+        "follow_external_links" AS "followExternalLinks",
+        "crawl_frequency" AS "crawlFrequency",
+        "exclude_patterns" AS "excludePatterns",
+        "status",
+        "last_crawled" AS "lastCrawled",
+        "next_crawl" AS "nextCrawl",
+        "error",
+        "created_at" AS "createdAt",
+        "updated_at" AS "updatedAt"
+    `);
+
+    const [newSite] = result.rows as Array<Partial<Site> & { id: string }>;
+    return this.mapSiteWithSettings({ ...newSite, searchSettings });
   }
 
   async getSite(id: string): Promise<Site | undefined> {
-    const [site] = await this.db.select().from(sites).where(eq(sites.id, id));
-    return site || undefined;
+    if (await this.hasSearchSettingsColumn()) {
+      const [site] = await this.db.select().from(sites).where(eq(sites.id, id));
+      return site ? this.mapSiteWithSettings(site) : undefined;
+    }
+
+    return this.fetchLegacySiteById(id);
   }
 
   async getAllSites(): Promise<Site[]> {
-    return await this.db.select().from(sites).orderBy(desc(sites.createdAt));
+    if (await this.hasSearchSettingsColumn()) {
+      const allSites = await this.db.select().from(sites).orderBy(desc(sites.createdAt));
+      return (allSites as Site[]).map((site: Site) => this.mapSiteWithSettings(site));
+    }
+
+    return this.fetchLegacySites();
   }
 
   async updateSite(id: string, updates: Partial<Site>): Promise<Site | undefined> {
-    const [updatedSite] = await this.db
-      .update(sites)
-      .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
-      .where(eq(sites.id, id))
-      .returning();
-    return updatedSite || undefined;
+    if (await this.hasSearchSettingsColumn()) {
+      const [updatedSite] = await this.db
+        .update(sites)
+        .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(eq(sites.id, id))
+        .returning();
+      return updatedSite ? this.mapSiteWithSettings(updatedSite) : undefined;
+    }
+
+    const { searchSettings: _ignored, ...legacyUpdates } = updates;
+    const setFragments = [] as SQL[];
+
+    if (legacyUpdates.url !== undefined) {
+      setFragments.push(sql`"url" = ${legacyUpdates.url}`);
+    }
+    if (legacyUpdates.crawlDepth !== undefined) {
+      setFragments.push(sql`"crawl_depth" = ${legacyUpdates.crawlDepth}`);
+    }
+    if (legacyUpdates.followExternalLinks !== undefined) {
+      setFragments.push(sql`"follow_external_links" = ${legacyUpdates.followExternalLinks}`);
+    }
+    if (legacyUpdates.crawlFrequency !== undefined) {
+      setFragments.push(sql`"crawl_frequency" = ${legacyUpdates.crawlFrequency}`);
+    }
+    if (legacyUpdates.excludePatterns !== undefined) {
+      setFragments.push(sql`"exclude_patterns" = ${sql`${JSON.stringify(legacyUpdates.excludePatterns)}::jsonb`}`);
+    }
+    if (legacyUpdates.status !== undefined) {
+      setFragments.push(sql`"status" = ${legacyUpdates.status}`);
+    }
+    if (legacyUpdates.lastCrawled !== undefined) {
+      setFragments.push(sql`"last_crawled" = ${legacyUpdates.lastCrawled}`);
+    }
+    if (legacyUpdates.nextCrawl !== undefined) {
+      setFragments.push(sql`"next_crawl" = ${legacyUpdates.nextCrawl}`);
+    }
+    if (legacyUpdates.error !== undefined) {
+      setFragments.push(sql`"error" = ${legacyUpdates.error}`);
+    }
+
+    if (setFragments.length === 0) {
+      return this.fetchLegacySiteById(id);
+    }
+
+    setFragments.push(sql`"updated_at" = CURRENT_TIMESTAMP`);
+
+    const result = await this.db.execute(sql`
+      UPDATE "sites"
+      SET ${sql.join(setFragments, sql`, `)}
+      WHERE "id" = ${id}
+      RETURNING
+        "id",
+        "url",
+        "crawl_depth" AS "crawlDepth",
+        "follow_external_links" AS "followExternalLinks",
+        "crawl_frequency" AS "crawlFrequency",
+        "exclude_patterns" AS "excludePatterns",
+        "status",
+        "last_crawled" AS "lastCrawled",
+        "next_crawl" AS "nextCrawl",
+        "error",
+        "created_at" AS "createdAt",
+        "updated_at" AS "updatedAt"
+    `);
+
+    const [updatedSite] = result.rows as Array<Partial<Site> & { id: string }>;
+    return updatedSite ? this.mapSiteWithSettings(updatedSite) : undefined;
   }
 
   async deleteSite(id: string): Promise<boolean> {
