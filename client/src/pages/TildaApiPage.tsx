@@ -7,7 +7,388 @@ import { Copy, ExternalLink, Search, Globe, Code2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function TildaApiPage() {
-  const currentDomain = window.location.origin;
+  const currentDomain =
+    typeof window !== "undefined" ? window.location.origin : "https://ваш-домен.replit.dev";
+  const apiEndpoint = `${currentDomain}/api`;
+
+  const zeroBlockHtml = `<div id="search-widget" class="search-container">
+  <div class="search-box">
+    <input type="text" id="search-input" placeholder="Поиск по сайту..." class="search-input">
+    <button id="search-button" class="search-button">
+      <svg class="search-icon" viewBox="0 0 24 24">
+        <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+    </button>
+  </div>
+  <div id="search-loading" class="search-loading hidden">
+    <div class="loading-spinner"></div>
+    <span>Поиск...</span>
+  </div>
+  <div id="search-results" class="search-results"></div>
+  <div id="search-stats" class="search-stats hidden"></div>
+  <div id="search-error" class="search-error hidden"></div>
+</div>`;
+
+  const zeroBlockCss = `<style>
+.search-container {
+  max-width: 600px;
+  margin: 0 auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+}
+
+.search-box:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 12px rgba(59,130,246,0.15);
+}
+
+.search-input {
+  flex: 1;
+  padding: 16px 20px;
+  border: none;
+  outline: none;
+  font-size: 16px;
+  background: transparent;
+  color: #1f2937;
+}
+
+.search-input::placeholder {
+  color: #9ca3af;
+}
+
+.search-button {
+  padding: 12px;
+  margin: 4px;
+  background: #3b82f6;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-button:hover {
+  background: #2563eb;
+}
+
+.search-icon {
+  width: 20px;
+  height: 20px;
+  stroke: white;
+  stroke-width: 2;
+  fill: none;
+}
+
+.search-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  color: #6b7280;
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #e5e7eb;
+  border-top: 2px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.search-results {
+  margin-top: 24px;
+}
+
+.result-item {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.result-item:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 12px rgba(59,130,246,0.1);
+}
+
+.result-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 8px;
+  text-decoration: none;
+}
+
+.result-title:hover {
+  color: #3b82f6;
+}
+
+.result-url {
+  font-size: 14px;
+  color: #059669;
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.result-description {
+  color: #4b5563;
+  line-height: 1.5;
+}
+
+.search-stats {
+  text-align: center;
+  padding: 16px;
+  color: #6b7280;
+  font-size: 14px;
+  background: #f9fafb;
+  border-radius: 8px;
+  margin-top: 16px;
+}
+
+.search-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  padding: 16px;
+  border-radius: 8px;
+  margin-top: 16px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.no-results {
+  text-align: center;
+  padding: 40px 20px;
+  color: #6b7280;
+}
+
+@media (max-width: 768px) {
+  .search-container { margin: 0 16px; }
+  .search-input { font-size: 16px; }
+  .result-item { padding: 16px; }
+}
+</style>`;
+
+  const zeroBlockJsLines = [
+    "<script>",
+    "const API_ENDPOINT = '__API_ENDPOINT__';",
+    "",
+    "class TildaSearchWidget {",
+    "  constructor(apiEndpoint) {",
+    "    this.apiEndpoint = apiEndpoint;",
+    "    this.debounceTimeout = null;",
+    "    this.currentQuery = '';",
+    "    this.controller = null;",
+    "    this.init();",
+    "  }",
+    "",
+    "  init() {",
+    "    this.searchInput = document.getElementById('search-input');",
+    "    this.searchButton = document.getElementById('search-button');",
+    "    this.loadingEl = document.getElementById('search-loading');",
+    "    this.resultsEl = document.getElementById('search-results');",
+    "    this.statsEl = document.getElementById('search-stats');",
+    "    this.errorEl = document.getElementById('search-error');",
+    "",
+    "    if (!this.searchInput || !this.searchButton) {",
+    "      console.error('Поисковый виджет не найден в DOM');",
+    "      return;",
+    "    }",
+    "",
+    "    this.searchInput.addEventListener('input', (event) => this.handleInput(event));",
+    "    this.searchInput.addEventListener('keypress', (event) => {",
+    "      if (event.key === 'Enter') {",
+    "        event.preventDefault();",
+    "        this.performSearch(event.target.value.trim());",
+    "      }",
+    "    });",
+    "    this.searchButton.addEventListener('click', () => {",
+    "      this.performSearch(this.searchInput.value.trim());",
+    "    });",
+    "  }",
+    "",
+    "  handleInput(event) {",
+    "    const query = event.target.value.trim();",
+    "    clearTimeout(this.debounceTimeout);",
+    "",
+    "    if (query.length === 0) {",
+    "      this.clearResults();",
+    "      return;",
+    "    }",
+    "",
+    "    this.debounceTimeout = setTimeout(() => {",
+    "      if (query.length >= 2) {",
+    "        this.performSearch(query);",
+    "      }",
+    "    }, 300);",
+    "  }",
+    "",
+    "  async performSearch(query) {",
+    "    if (!query || query.length < 2) {",
+    "      this.showError('Введите минимум 2 символа для поиска');",
+    "      return;",
+    "    }",
+    "",
+    "    this.currentQuery = query;",
+    "    this.showLoading();",
+    "    this.hideError();",
+    "",
+    "    if (this.controller) {",
+    "      this.controller.abort();",
+    "    }",
+    "    this.controller = new AbortController();",
+    "",
+    "    try {",
+    "      const response = await fetch(",
+    "        this.apiEndpoint + '/search?q=' + encodeURIComponent(query) + '&limit=10',",
+    "        { signal: this.controller.signal }",
+    "      );",
+    "",
+    "      if (!response.ok) {",
+    "        throw new Error('HTTP ' + response.status);",
+    "      }",
+    "",
+    "      const data = await response.json();",
+    "      this.displayResults(data, query);",
+    "    } catch (error) {",
+    "      if (error.name !== 'AbortError') {",
+    "        this.showError('Ошибка поиска. Попробуйте позже.');",
+    "        console.error('Search error:', error);",
+    "      }",
+    "    } finally {",
+    "      this.hideLoading();",
+    "    }",
+    "  }",
+    "",
+    "  displayResults(data, query) {",
+    "    const results = data.results || [];",
+    "    const total = data.total || 0;",
+    "",
+    "    if (!results.length) {",
+    "      this.resultsEl.innerHTML = `",
+    "        <div class=\"no-results\">",
+    "          <p>По запросу <strong>\"\\${this.escapeHtml(query)}\"</strong> ничего не найдено</p>",
+    "        </div>",
+    "      `;",
+    "      this.hideStats();",
+    "      return;",
+    "    }",
+    "",
+    "    this.resultsEl.innerHTML = results.map((result) => this.renderResult(result, query)).join('');",
+    "    this.showStats(total, query);",
+    "  }",
+    "",
+    "  renderResult(result, query) {",
+    "    const title = result.title || 'Без названия';",
+    "    const description = this.truncateText(result.metaDescription || result.content || '', 200);",
+    "",
+    "    return `",
+    "      <div class=\"result-item\" onclick=\"window.open('\\${result.url}', '_blank')\">",
+    "        <a href=\"\\${result.url}\" target=\"_blank\" class=\"result-title\" onclick=\"event.stopPropagation()\">",
+    "          \\${this.highlight(this.escapeHtml(title), query)}",
+    "        </a>",
+    "        <div class=\"result-url\">\\${this.escapeHtml(result.url)}</div>",
+    "        <div class=\"result-description\">\\${this.highlight(this.escapeHtml(description), query)}</div>",
+    "      </div>",
+    "    `;",
+    "  }",
+    "",
+    "  highlight(text, query) {",
+    "    const words = query.split(/\\s+/).filter((word) => word.length > 1);",
+    "    let highlighted = text;",
+    "",
+    "    words.forEach((word) => {",
+    "      const regexp = new RegExp('(' + this.escapeRegex(word) + ')', 'gi');",
+    "      highlighted = highlighted.replace(regexp, '<mark>$1</mark>');",
+    "    });",
+    "",
+    "    return highlighted;",
+    "  }",
+    "",
+    "  truncateText(text, max) {",
+    "    return text.length <= max ? text : text.slice(0, max).replace(/\\s+\\S*$/, '') + '...';",
+    "  }",
+    "",
+    "  escapeHtml(text) {",
+    "    const helper = document.createElement('div');",
+    "    helper.textContent = text;",
+    "    return helper.innerHTML;",
+    "  }",
+    "",
+    "  escapeRegex(text) {",
+    "    return text.replace(/[.*+?^\\${}()|[\\]\\\\]/g, '\\\\$&');",
+    "  }",
+    "",
+    "  showLoading() {",
+    "    this.loadingEl.classList.remove('hidden');",
+    "    this.resultsEl.innerHTML = '';",
+    "    this.hideStats();",
+    "  }",
+    "",
+    "  hideLoading() {",
+    "    this.loadingEl.classList.add('hidden');",
+    "  }",
+    "",
+    "  showStats(total, query) {",
+    "    this.statsEl.innerHTML = 'Найдено <strong>' + total + '</strong> по запросу <strong>\"' + this.escapeHtml(query) + '\"</strong>';",
+    "    this.statsEl.classList.remove('hidden');",
+    "  }",
+    "",
+    "  hideStats() {",
+    "    this.statsEl.classList.add('hidden');",
+    "  }",
+    "",
+    "  showError(message) {",
+    "    this.errorEl.innerHTML = message;",
+    "    this.errorEl.classList.remove('hidden');",
+    "    this.resultsEl.innerHTML = '';",
+    "    this.hideStats();",
+    "  }",
+    "",
+    "  hideError() {",
+    "    this.errorEl.classList.add('hidden');",
+    "  }",
+    "",
+    "  clearResults() {",
+    "    this.resultsEl.innerHTML = '';",
+    "    this.hideStats();",
+    "    this.hideError();",
+    "  }",
+    "}",
+    "",
+    "document.addEventListener('DOMContentLoaded', function () {",
+    "  const searchWidget = new TildaSearchWidget(API_ENDPOINT);",
+    "  window.searchWidget = searchWidget;",
+    "});",
+    "</script>"
+  ];
+  let zeroBlockJs = zeroBlockJsLines.join("\n");
+  zeroBlockJs = zeroBlockJs.replace('__API_ENDPOINT__', apiEndpoint);
+
+  const zeroBlockFull = [zeroBlockHtml, '', zeroBlockCss, '', zeroBlockJs].join('\n');
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -186,28 +567,37 @@ export default function TildaApiPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <h4 className="font-semibold text-lg">Zero блок с современным поисковым виджетом</h4>
+                <p className="text-sm text-muted-foreground">
+                  Скопируйте и вставьте HTML, CSS и JavaScript ниже в один блок T123 (HTML) на Тильде. Код
+                  адаптирован под Zero блок и содержит все необходимые обработчики, чтобы поиск работал стабильно.
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Текущий endpoint API уже подставлен: {" "}
+                  <code className="bg-muted px-2 py-1 rounded text-xs">{apiEndpoint}</code>
+                </p>
+              </div>
+
+              <Separator />
+
               <div>
-                <h4 className="font-semibold mb-3">Шаг 1: Добавьте HTML для поиска</h4>
+                <h4 className="font-semibold mb-3">Шаг 1: HTML структура</h4>
                 <p className="text-sm text-muted-foreground mb-3">
-                  Добавьте это в блок T123 (HTML) на Тильде:
+                  Разместите HTML-каркас виджета внутри Zero блока. Он отвечает за поля ввода, кнопку и зоны вывода
+                  результатов.
                 </p>
                 <div className="relative">
-                  <pre className="bg-muted p-4 rounded-lg text-sm overflow-x-auto">
-                    <code>{`<div id="search-container">
-  <input type="text" id="search-input" placeholder="Поиск по сайту..." />
-  <button id="search-button">Найти</button>
-  <div id="search-results"></div>
-</div>`}</code>
-                  </pre>
+                  <ScrollArea className="h-80">
+                    <pre className="bg-muted p-4 rounded-lg text-sm">
+                      <code>{zeroBlockHtml}</code>
+                    </pre>
+                  </ScrollArea>
                   <Button
                     variant="ghost"
                     size="sm"
                     className="absolute top-2 right-2"
-                    onClick={() => copyToClipboard(`<div id="search-container">
-  <input type="text" id="search-input" placeholder="Поиск по сайту..." />
-  <button id="search-button">Найти</button>
-  <div id="search-results"></div>
-</div>`)}
+                    onClick={() => copyToClipboard(zeroBlockHtml)}
                     data-testid="button-copy-html"
                   >
                     <Copy className="h-4 w-4" />
@@ -216,125 +606,45 @@ export default function TildaApiPage() {
               </div>
 
               <div>
-                <h4 className="font-semibold mb-3">Шаг 2: Добавьте JavaScript</h4>
+                <h4 className="font-semibold mb-3">Шаг 2: Стилизация (CSS)</h4>
                 <p className="text-sm text-muted-foreground mb-3">
-                  Добавьте этот код в область &lt;head&gt; или перед &lt;/body&gt;:
+                  Добавьте стили внутри того же блока. Они отвечают за адаптивность, подсветку и общий вид результата.
                 </p>
                 <div className="relative">
-                  <ScrollArea className="h-96">
+                  <ScrollArea className="h-80">
                     <pre className="bg-muted p-4 rounded-lg text-sm">
-                      <code>{`<script>
-async function searchSite() {
-  const query = document.getElementById('search-input').value;
-  const resultsDiv = document.getElementById('search-results');
-  
-  if (!query.trim()) {
-    resultsDiv.innerHTML = '';
-    return;
-  }
-  
-  try {
-    const response = await fetch(\`${currentDomain}/api/search?q=\${encodeURIComponent(query)}&limit=10\`);
-    const data = await response.json();
-    
-    if (data.results && data.results.length > 0) {
-      resultsDiv.innerHTML = \`
-        <div style="margin-top: 20px;">
-          <h3>Найдено: \${data.total} результатов</h3>
-          \${data.results.map(result => \`
-            <div style="border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 8px;">
-              <h4><a href="\${result.url}" target="_blank">\${result.title}</a></h4>
-              <p style="color: #666; font-size: 14px;">\${result.metaDescription || ''}</p>
-              <p style="color: #999; font-size: 12px;">\${result.url}</p>
-            </div>
-          \`).join('')}
-        </div>
-      \`;
-    } else {
-      resultsDiv.innerHTML = '<p>Ничего не найдено</p>';
-    }
-  } catch (error) {
-    resultsDiv.innerHTML = '<p>Ошибка поиска</p>';
-    console.error('Search error:', error);
-  }
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-  const searchButton = document.getElementById('search-button');
-  const searchInput = document.getElementById('search-input');
-  
-  if (searchButton) {
-    searchButton.addEventListener('click', searchSite);
-  }
-  
-  if (searchInput) {
-    searchInput.addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
-        searchSite();
-      }
-    });
-  }
-});
-</script>`}</code>
+                      <code>{zeroBlockCss}</code>
                     </pre>
                   </ScrollArea>
                   <Button
                     variant="ghost"
                     size="sm"
                     className="absolute top-2 right-2"
-                    onClick={() => copyToClipboard(`<script>
-async function searchSite() {
-  const query = document.getElementById('search-input').value;
-  const resultsDiv = document.getElementById('search-results');
-  
-  if (!query.trim()) {
-    resultsDiv.innerHTML = '';
-    return;
-  }
-  
-  try {
-    const response = await fetch(\`${currentDomain}/api/search?q=\${encodeURIComponent(query)}&limit=10\`);
-    const data = await response.json();
-    
-    if (data.results && data.results.length > 0) {
-      resultsDiv.innerHTML = \`
-        <div style="margin-top: 20px;">
-          <h3>Найдено: \${data.total} результатов</h3>
-          \${data.results.map(result => \`
-            <div style="border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 8px;">
-              <h4><a href="\${result.url}" target="_blank">\${result.title}</a></h4>
-              <p style="color: #666; font-size: 14px;">\${result.metaDescription || ''}</p>
-              <p style="color: #999; font-size: 12px;">\${result.url}</p>
-            </div>
-          \`).join('')}
-        </div>
-      \`;
-    } else {
-      resultsDiv.innerHTML = '<p>Ничего не найдено</p>';
-    }
-  } catch (error) {
-    resultsDiv.innerHTML = '<p>Ошибка поиска</p>';
-    console.error('Search error:', error);
-  }
-}
+                    onClick={() => copyToClipboard(zeroBlockCss)}
+                    data-testid="button-copy-css"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
 
-document.addEventListener('DOMContentLoaded', function() {
-  const searchButton = document.getElementById('search-button');
-  const searchInput = document.getElementById('search-input');
-  
-  if (searchButton) {
-    searchButton.addEventListener('click', searchSite);
-  }
-  
-  if (searchInput) {
-    searchInput.addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
-        searchSite();
-      }
-    });
-  }
-});
-</script>`)}
+              <div>
+                <h4 className="font-semibold mb-3">Шаг 3: Логика поиска (JavaScript)</h4>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Скрипт добавляет живой поиск с задержкой, подсветкой найденных фраз и обработкой ошибок. Вставьте код
+                  в тот же блок сразу после HTML и CSS.
+                </p>
+                <div className="relative">
+                  <ScrollArea className="h-[420px]">
+                    <pre className="bg-muted p-4 rounded-lg text-sm">
+                      <code>{zeroBlockJs}</code>
+                    </pre>
+                  </ScrollArea>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="absolute top-2 right-2"
+                    onClick={() => copyToClipboard(zeroBlockJs)}
                     data-testid="button-copy-javascript"
                   >
                     <Copy className="h-4 w-4" />
@@ -343,93 +653,44 @@ document.addEventListener('DOMContentLoaded', function() {
               </div>
 
               <div>
-                <h4 className="font-semibold mb-3">Шаг 3: Добавьте CSS (опционально)</h4>
+                <h4 className="font-semibold mb-3">Шаг 4: Полный блок одним куском</h4>
                 <p className="text-sm text-muted-foreground mb-3">
-                  Стилизуйте поиск под дизайн вашего сайта:
+                  Если удобнее, скопируйте готовый комплект из HTML, CSS и JavaScript. Вставьте код целиком в Zero блок —
+                  он сразу начнёт работать.
                 </p>
                 <div className="relative">
-                  <pre className="bg-muted p-4 rounded-lg text-sm overflow-x-auto">
-                    <code>{`<style>
-#search-container {
-  max-width: 600px;
-  margin: 20px auto;
-}
-
-#search-input {
-  width: 70%;
-  padding: 10px;
-  border: 2px solid #ddd;
-  border-radius: 8px 0 0 8px;
-  font-size: 16px;
-}
-
-#search-button {
-  width: 30%;
-  padding: 10px;
-  background: #007bff;
-  color: white;
-  border: none;
-  border-radius: 0 8px 8px 0;
-  cursor: pointer;
-  font-size: 16px;
-}
-
-#search-button:hover {
-  background: #0056b3;
-}
-
-#search-results {
-  margin-top: 20px;
-}
-</style>`}</code>
-                  </pre>
+                  <ScrollArea className="h-[500px]">
+                    <pre className="bg-muted p-4 rounded-lg text-sm">
+                      <code>{zeroBlockFull}</code>
+                    </pre>
+                  </ScrollArea>
                   <Button
                     variant="ghost"
                     size="sm"
                     className="absolute top-2 right-2"
-                    onClick={() => copyToClipboard(`<style>
-#search-container {
-  max-width: 600px;
-  margin: 20px auto;
-}
-
-#search-input {
-  width: 70%;
-  padding: 10px;
-  border: 2px solid #ddd;
-  border-radius: 8px 0 0 8px;
-  font-size: 16px;
-}
-
-#search-button {
-  width: 30%;
-  padding: 10px;
-  background: #007bff;
-  color: white;
-  border: none;
-  border-radius: 0 8px 8px 0;
-  cursor: pointer;
-  font-size: 16px;
-}
-
-#search-button:hover {
-  background: #0056b3;
-}
-
-#search-results {
-  margin-top: 20px;
-}
-</style>`)}
-                    data-testid="button-copy-css"
+                    onClick={() => copyToClipboard(zeroBlockFull)}
+                    data-testid="button-copy-full-widget"
                   >
                     <Copy className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
+
+              <Separator />
+
+              <div>
+                <h4 className="font-semibold mb-3">Особенности и улучшения</h4>
+                <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+                  <li>Живой поиск с задержкой 300 мс и отменой предыдущих запросов.</li>
+                  <li>Индикатор загрузки, информативные сообщения об ошибках и статистика найденных страниц.</li>
+                  <li>Подсветка совпадений и аккуратные карточки результатов в стиле современного поиска.</li>
+                  <li>Адаптивная вёрстка, корректно отображается на мобильных устройствах.</li>
+                  <li>Скрипт автоматически использует endpoint {apiEndpoint} и готов к работе сразу после вставки.</li>
+                </ul>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
-
         <TabsContent value="examples" className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card>
