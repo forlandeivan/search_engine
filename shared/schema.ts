@@ -3,6 +3,112 @@ import { pgTable, text, varchar, timestamp, integer, boolean, jsonb, doublePreci
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Shared search settings configuration for tuning fuzzy search weights and thresholds
+export interface SearchSettings {
+  fts: {
+    titleBoost: number;
+    contentBoost: number;
+  };
+  similarity: {
+    titleThreshold: number;
+    contentThreshold: number;
+    titleWeight: number;
+    contentWeight: number;
+  };
+  wordSimilarity: {
+    titleThreshold: number;
+    contentThreshold: number;
+    titleWeight: number;
+    contentWeight: number;
+  };
+  ilike: {
+    titleBoost: number;
+    contentBoost: number;
+  };
+  collectionSearch: {
+    similarityTitleThreshold: number;
+    similarityContentThreshold: number;
+    ftsMatchBonus: number;
+    similarityWeight: number;
+  };
+  fallback: {
+    ftsTitleBoost: number;
+    ftsContentBoost: number;
+    ilikeTitleBoost: number;
+    ilikeContentBoost: number;
+  };
+}
+
+export const defaultSearchSettings: SearchSettings = {
+  fts: {
+    titleBoost: 15,
+    contentBoost: 8,
+  },
+  similarity: {
+    titleThreshold: 0.02,
+    contentThreshold: 0.015,
+    titleWeight: 10,
+    contentWeight: 5,
+  },
+  wordSimilarity: {
+    titleThreshold: 0.15,
+    contentThreshold: 0.1,
+    titleWeight: 8,
+    contentWeight: 4,
+  },
+  ilike: {
+    titleBoost: 5,
+    contentBoost: 2.5,
+  },
+  collectionSearch: {
+    similarityTitleThreshold: 0.2,
+    similarityContentThreshold: 0.1,
+    ftsMatchBonus: 0.5,
+    similarityWeight: 0.3,
+  },
+  fallback: {
+    ftsTitleBoost: 10,
+    ftsContentBoost: 5,
+    ilikeTitleBoost: 3,
+    ilikeContentBoost: 1.5,
+  },
+};
+
+export const searchSettingsSchema = z.object({
+  fts: z.object({
+    titleBoost: z.number(),
+    contentBoost: z.number(),
+  }),
+  similarity: z.object({
+    titleThreshold: z.number(),
+    contentThreshold: z.number(),
+    titleWeight: z.number(),
+    contentWeight: z.number(),
+  }),
+  wordSimilarity: z.object({
+    titleThreshold: z.number(),
+    contentThreshold: z.number(),
+    titleWeight: z.number(),
+    contentWeight: z.number(),
+  }),
+  ilike: z.object({
+    titleBoost: z.number(),
+    contentBoost: z.number(),
+  }),
+  collectionSearch: z.object({
+    similarityTitleThreshold: z.number(),
+    similarityContentThreshold: z.number(),
+    ftsMatchBonus: z.number(),
+    similarityWeight: z.number(),
+  }),
+  fallback: z.object({
+    ftsTitleBoost: z.number(),
+    ftsContentBoost: z.number(),
+    ilikeTitleBoost: z.number(),
+    ilikeContentBoost: z.number(),
+  }),
+});
+
 // Custom type for PostgreSQL tsvector
 const tsvector = customType<{ data: unknown; driverData: unknown }>({
   dataType() {
@@ -22,6 +128,7 @@ export const sites = pgTable("sites", {
   lastCrawled: timestamp("last_crawled"),
   nextCrawl: timestamp("next_crawl"),
   error: text("error"),
+  searchSettings: jsonb("search_settings").$type<SearchSettings>().notNull().default(sql`${JSON.stringify(defaultSearchSettings)}::jsonb`),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -85,6 +192,8 @@ export const insertSiteSchema = createInsertSchema(sites).omit({
   lastCrawled: true,
   nextCrawl: true,
   error: true,
+}).extend({
+  searchSettings: searchSettingsSchema.optional(),
 });
 
 export const insertPageSchema = createInsertSchema(pages).omit({

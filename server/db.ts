@@ -40,7 +40,8 @@ if (process.env.PG_HOST && process.env.PG_USER && process.env.PG_PASSWORD && pro
     console.log(`[db] ✅ Successfully connected to custom PostgreSQL server`);
     
   } catch (error) {
-    console.warn(`[db] ❌ Failed to connect to custom PostgreSQL server: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[db] ❌ Failed to connect to custom PostgreSQL server: ${message}`);
     console.log(`[db] 🔄 Falling back to Replit Neon PostgreSQL`);
     
     // Fallback to Neon
