@@ -155,6 +155,7 @@ curl "http://localhost:5000/api/search?q=example"
 - **Full-Text Search**: PostgreSQL tsvector для быстрого поиска
 - **Typo Tolerance**: pg_trgm расширение для поиска с опечатками
 - **Weighted Search**: Веса A (title), B (meta), C (content), D (partial matches)
+- **Configurable Fuzzy Weights**: jsonb-колонка `search_settings` в таблице `sites` позволяет менять пороги `pg_trgm`, вес ts_rank и бонусы для ILIKE через админку
 - **Automatic Triggers**: Автоматическое обновление search vectors при изменении контента
 - **Multi-language Support**: Поддержка английского и других языков
 - **Performance Optimized**: Индексы для быстрого поиска и сортировки

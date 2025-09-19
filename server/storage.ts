@@ -9,7 +9,9 @@ import {
   type SearchIndexEntry,
   type InsertSearchIndexEntry,
   type User,
-  type InsertUser
+  type InsertUser,
+  defaultSearchSettings,
+  type SearchSettings
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ilike, sql, desc, asc, or, inArray } from "drizzle-orm";
@@ -61,9 +63,13 @@ export class DatabaseStorage implements IStorage {
 
   // Sites
   async createSite(site: InsertSite): Promise<Site> {
+    const searchSettings = site.searchSettings ?? defaultSearchSettings;
     const [newSite] = await this.db
       .insert(sites)
-      .values(site as any)
+      .values({
+        ...site,
+        searchSettings,
+      } as any)
       .returning();
     return newSite;
   }
@@ -140,17 +146,17 @@ export class DatabaseStorage implements IStorage {
 
     try {
       // First, get existing pages to count not found
-      const existingPages = await this.db
+      const existingPages: Array<{ id: string }> = await this.db
         .select({ id: pages.id })
         .from(pages)
         .where(inArray(pages.id, pageIds));
-      
-      const existingPageIds = new Set(existingPages.map(p => p.id));
+
+      const existingPageIds = new Set<string>(existingPages.map(p => p.id));
       const notFoundCount = pageIds.length - existingPageIds.size;
 
       // Delete pages and related search index entries in a transaction
       if (existingPageIds.size > 0) {
-        const pageIdsArray = Array.from(existingPageIds);
+        const pageIdsArray: string[] = Array.from(existingPageIds);
         
         // Delete search index entries first (foreign key dependency)
         await this.db.delete(searchIndex).where(inArray(searchIndex.pageId, pageIdsArray));
@@ -201,6 +207,10 @@ export class DatabaseStorage implements IStorage {
       return { results: [], total: 0 };
     }
 
+    const siteRecord = await this.getSite(siteId);
+    const searchSettings: SearchSettings = siteRecord?.searchSettings ?? defaultSearchSettings;
+    const collectionSettings = searchSettings.collectionSearch;
+
     // Prepare the search query for FTS (plainto_tsquery handles multiple words automatically)
     const tsQuery = sql`plainto_tsquery('english', ${searchQuery})`;
 
@@ -211,19 +221,19 @@ export class DatabaseStorage implements IStorage {
       .where(
         sql`${pages.siteId} = ${siteId} AND (
           ${pages.searchVectorCombined} @@ ${tsQuery} OR
-          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
-          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
+          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > ${collectionSettings.similarityTitleThreshold} OR
+          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > ${collectionSettings.similarityContentThreshold}
         )`
       )
       .orderBy(
         sql`(
           COALESCE(ts_rank_cd(${pages.searchVectorCombined}, ${tsQuery}), 0) +
           CASE
-            WHEN ${pages.searchVectorCombined} @@ ${tsQuery} THEN 0.5
+            WHEN ${pages.searchVectorCombined} @@ ${tsQuery} THEN ${collectionSettings.ftsMatchBonus}
             ELSE GREATEST(
               similarity(COALESCE(${pages.title}, ''), ${searchQuery}),
               similarity(COALESCE(${pages.content}, ''), ${searchQuery})
-            ) * 0.3
+            ) * ${collectionSettings.similarityWeight}
           END
         ) DESC`,
         sql`${pages.lastCrawled} DESC`
@@ -238,8 +248,8 @@ export class DatabaseStorage implements IStorage {
       .where(
         sql`${pages.siteId} = ${siteId} AND (
           ${pages.searchVectorCombined} @@ ${tsQuery} OR
-          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > 0.2 OR
-          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > 0.1
+          similarity(COALESCE(${pages.title}, ''), ${searchQuery}) > ${collectionSettings.similarityTitleThreshold} OR
+          similarity(COALESCE(${pages.content}, ''), ${searchQuery}) > ${collectionSettings.similarityContentThreshold}
         )`
       );
 
@@ -374,16 +384,30 @@ export class DatabaseStorage implements IStorage {
       const extensionsResult = await this.db.execute(sql`
         SELECT extname FROM pg_extension WHERE extname IN ('pg_trgm', 'unaccent')
       `);
-      console.log(`📦 Available extensions:`, extensionsResult.rows.map(r => r.extname));
+      const extensionRows = extensionsResult.rows as Array<{ extname: string }>;
+      console.log(`📦 Available extensions:`, extensionRows.map(r => r.extname));
 
       // Check if pg_trgm is available for similarity search
-      const hasPgTrgm = extensionsResult.rows.some(row => row.extname === 'pg_trgm');
+      const hasPgTrgm = extensionRows.some(row => row.extname === 'pg_trgm');
       console.log(`🔍 pg_trgm available: ${hasPgTrgm}`);
 
       console.log(`🚀 Executing search query...`);
 
       let searchResults;
       if (hasPgTrgm) {
+        const titleFtsBoost = sql`COALESCE((s.search_settings->'fts'->>'titleBoost')::float, ${defaultSearchSettings.fts.titleBoost})`;
+        const contentFtsBoost = sql`COALESCE((s.search_settings->'fts'->>'contentBoost')::float, ${defaultSearchSettings.fts.contentBoost})`;
+        const titleSimilarityThreshold = sql`COALESCE((s.search_settings->'similarity'->>'titleThreshold')::float, ${defaultSearchSettings.similarity.titleThreshold})`;
+        const contentSimilarityThreshold = sql`COALESCE((s.search_settings->'similarity'->>'contentThreshold')::float, ${defaultSearchSettings.similarity.contentThreshold})`;
+        const titleSimilarityWeight = sql`COALESCE((s.search_settings->'similarity'->>'titleWeight')::float, ${defaultSearchSettings.similarity.titleWeight})`;
+        const contentSimilarityWeight = sql`COALESCE((s.search_settings->'similarity'->>'contentWeight')::float, ${defaultSearchSettings.similarity.contentWeight})`;
+        const titleIlikeBoost = sql`COALESCE((s.search_settings->'ilike'->>'titleBoost')::float, ${defaultSearchSettings.ilike.titleBoost})`;
+        const contentIlikeBoost = sql`COALESCE((s.search_settings->'ilike'->>'contentBoost')::float, ${defaultSearchSettings.ilike.contentBoost})`;
+        const titleWordThreshold = sql`COALESCE((s.search_settings->'wordSimilarity'->>'titleThreshold')::float, ${defaultSearchSettings.wordSimilarity.titleThreshold})`;
+        const contentWordThreshold = sql`COALESCE((s.search_settings->'wordSimilarity'->>'contentThreshold')::float, ${defaultSearchSettings.wordSimilarity.contentThreshold})`;
+        const titleWordWeight = sql`COALESCE((s.search_settings->'wordSimilarity'->>'titleWeight')::float, ${defaultSearchSettings.wordSimilarity.titleWeight})`;
+        const contentWordWeight = sql`COALESCE((s.search_settings->'wordSimilarity'->>'contentWeight')::float, ${defaultSearchSettings.wordSimilarity.contentWeight})`;
+
         // Enhanced search with multiple similarity algorithms and very low thresholds for Russian typos
         searchResults = await this.db.execute(sql`
           WITH search_results AS (
@@ -394,43 +418,43 @@ export class DatabaseStorage implements IStorage {
               GREATEST(${sql.join(searchVariations.map(v => sql`
                 CASE
                   WHEN p.search_vector_title @@ plainto_tsquery('english', ${v}) THEN
-                    ts_rank(p.search_vector_title, plainto_tsquery('english', ${v})) * 15.0
+                    ts_rank(p.search_vector_title, plainto_tsquery('english', ${v})) * ${titleFtsBoost}
                   ELSE 0
                 END`), sql` , `)}) as title_fts_score,
               GREATEST(${sql.join(searchVariations.map(v => sql`
                 CASE
                   WHEN p.search_vector_content @@ plainto_tsquery('english', ${v}) THEN
-                    ts_rank(p.search_vector_content, plainto_tsquery('english', ${v})) * 8.0
+                    ts_rank(p.search_vector_content, plainto_tsquery('english', ${v})) * ${contentFtsBoost}
                   ELSE 0
                 END`), sql` , `)}) as content_fts_score,
-              
+
               -- Similarity scores (очень низкие пороги для русских опечаток)
               GREATEST(${sql.join(searchVariations.map(v => sql`similarity(COALESCE(p.title, ''), ${v})`), sql` , `)}) as title_similarity,
               GREATEST(${sql.join(searchVariations.map(v => sql`similarity(COALESCE(p.content, ''), ${v})`), sql` , `)}) as content_similarity,
-              
+
               -- Exact substring match (ILIKE) - дополнительные баллы за точные совпадения
               GREATEST(${sql.join(searchVariations.map(v => sql`
                 CASE
-                  WHEN COALESCE(p.title, '') ILIKE '%' || ${v} || '%' THEN 5.0
+                  WHEN COALESCE(p.title, '') ILIKE '%' || ${v} || '%' THEN ${titleIlikeBoost}
                   ELSE 0
                 END`), sql` , `)}) as title_ilike_score,
               GREATEST(${sql.join(searchVariations.map(v => sql`
                 CASE
-                  WHEN COALESCE(p.content, '') ILIKE '%' || ${v} || '%' THEN 2.5
+                  WHEN COALESCE(p.content, '') ILIKE '%' || ${v} || '%' THEN ${contentIlikeBoost}
                   ELSE 0
                 END`), sql` , `)}) as content_ilike_score,
-              
+
               -- Word distance (for typos) - очень низкие пороги для русских опечаток
               GREATEST(${sql.join(searchVariations.map(v => sql`
                 CASE
-                  WHEN word_similarity(COALESCE(p.title, ''), ${v}) > 0.15 THEN 
-                    word_similarity(COALESCE(p.title, ''), ${v}) * 8.0
+                  WHEN word_similarity(COALESCE(p.title, ''), ${v}) > ${titleWordThreshold} THEN
+                    word_similarity(COALESCE(p.title, ''), ${v}) * ${titleWordWeight}
                   ELSE 0
                 END`), sql` , `)}) as title_word_score,
               GREATEST(${sql.join(searchVariations.map(v => sql`
                 CASE
-                  WHEN word_similarity(COALESCE(p.content, ''), ${v}) > 0.1 THEN 
-                    word_similarity(COALESCE(p.content, ''), ${v}) * 4.0
+                  WHEN word_similarity(COALESCE(p.content, ''), ${v}) > ${contentWordThreshold} THEN
+                    word_similarity(COALESCE(p.content, ''), ${v}) * ${contentWordWeight}
                   ELSE 0
                 END`), sql` , `)}) as content_word_score
             FROM pages p
@@ -442,11 +466,11 @@ export class DatabaseStorage implements IStorage {
                 p.search_vector_title @@ plainto_tsquery('english', ${variation})
                 OR p.search_vector_content @@ plainto_tsquery('english', ${variation})
                 -- Similarity поиск с очень низкими порогами (0.02 для русских опечаток)
-                OR similarity(COALESCE(p.title, ''), ${variation}) > 0.02
-                OR similarity(COALESCE(p.content, ''), ${variation}) > 0.015
+                OR similarity(COALESCE(p.title, ''), ${variation}) > ${titleSimilarityThreshold}
+                OR similarity(COALESCE(p.content, ''), ${variation}) > ${contentSimilarityThreshold}
                 -- Word similarity для опечаток (снижено до 0.15 и 0.1)
-                OR word_similarity(COALESCE(p.title, ''), ${variation}) > 0.15
-                OR word_similarity(COALESCE(p.content, ''), ${variation}) > 0.1
+                OR word_similarity(COALESCE(p.title, ''), ${variation}) > ${titleWordThreshold}
+                OR word_similarity(COALESCE(p.content, ''), ${variation}) > ${contentWordThreshold}
                 -- ILIKE для частичных совпадений
                 OR COALESCE(p.title, '') ILIKE '%' || ${variation} || '%'
                 OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%'
@@ -457,7 +481,7 @@ export class DatabaseStorage implements IStorage {
             -- Взвешенная финальная оценка с повышенными приоритетами для точных совпадений
             (
               title_fts_score + content_fts_score +
-              (title_similarity * 10.0) + (content_similarity * 5.0) +
+              (title_similarity * ${titleSimilarityWeight}) + (content_similarity * ${contentSimilarityWeight}) +
               title_ilike_score + content_ilike_score +
               title_word_score + content_word_score
             ) as final_score
@@ -473,6 +497,11 @@ export class DatabaseStorage implements IStorage {
         `);
       } else {
         // Fallback без pg_trgm - только FTS и ILIKE
+        const fallbackTitleFtsBoost = sql`COALESCE((s.search_settings->'fallback'->>'ftsTitleBoost')::float, ${defaultSearchSettings.fallback.ftsTitleBoost})`;
+        const fallbackContentFtsBoost = sql`COALESCE((s.search_settings->'fallback'->>'ftsContentBoost')::float, ${defaultSearchSettings.fallback.ftsContentBoost})`;
+        const fallbackTitleIlikeBoost = sql`COALESCE((s.search_settings->'fallback'->>'ilikeTitleBoost')::float, ${defaultSearchSettings.fallback.ilikeTitleBoost})`;
+        const fallbackContentIlikeBoost = sql`COALESCE((s.search_settings->'fallback'->>'ilikeContentBoost')::float, ${defaultSearchSettings.fallback.ilikeContentBoost})`;
+
         const variationConditions = searchVariations.map((variation) => {
           return sql`
             (p.search_vector_title @@ plainto_tsquery('english', ${variation})
@@ -486,31 +515,31 @@ export class DatabaseStorage implements IStorage {
             SELECT
               p.*,
               s.url as site_url,
-              GREATEST(${sql.join(searchVariations.map(v => sql`
-                CASE
-                  WHEN p.search_vector_title @@ plainto_tsquery('english', ${v}) THEN
-                    ts_rank(p.search_vector_title, plainto_tsquery('english', ${v})) * 10.0
-                  ELSE 0
-                END`), sql` , `)}) as title_score,
-              GREATEST(${sql.join(searchVariations.map(v => sql`
-                CASE
-                  WHEN p.search_vector_content @@ plainto_tsquery('english', ${v}) THEN
-                    ts_rank(p.search_vector_content, plainto_tsquery('english', ${v})) * 5.0
-                  ELSE 0
-                END`), sql` , `)}) as content_score,
-              GREATEST(${sql.join(searchVariations.map(v => sql`
-                CASE
-                  WHEN COALESCE(p.title, '') ILIKE '%' || ${v} || '%' THEN 3.0
-                  ELSE 0
-                END`), sql` , `)}) as title_ilike,
-              GREATEST(${sql.join(searchVariations.map(v => sql`
-                CASE
-                  WHEN COALESCE(p.content, '') ILIKE '%' || ${v} || '%' THEN 1.5
-                  ELSE 0
-                END`), sql` , `)}) as content_ilike
-            FROM pages p
-            JOIN sites s ON p.site_id = s.id
-            WHERE
+            GREATEST(${sql.join(searchVariations.map(v => sql`
+              CASE
+                WHEN p.search_vector_title @@ plainto_tsquery('english', ${v}) THEN
+                  ts_rank(p.search_vector_title, plainto_tsquery('english', ${v})) * ${fallbackTitleFtsBoost}
+                ELSE 0
+              END`), sql` , `)}) as title_score,
+            GREATEST(${sql.join(searchVariations.map(v => sql`
+              CASE
+                WHEN p.search_vector_content @@ plainto_tsquery('english', ${v}) THEN
+                  ts_rank(p.search_vector_content, plainto_tsquery('english', ${v})) * ${fallbackContentFtsBoost}
+                ELSE 0
+              END`), sql` , `)}) as content_score,
+            GREATEST(${sql.join(searchVariations.map(v => sql`
+              CASE
+                WHEN COALESCE(p.title, '') ILIKE '%' || ${v} || '%' THEN ${fallbackTitleIlikeBoost}
+                ELSE 0
+              END`), sql` , `)}) as title_ilike,
+            GREATEST(${sql.join(searchVariations.map(v => sql`
+              CASE
+                WHEN COALESCE(p.content, '') ILIKE '%' || ${v} || '%' THEN ${fallbackContentIlikeBoost}
+                ELSE 0
+              END`), sql` , `)}) as content_ilike
+          FROM pages p
+          JOIN sites s ON p.site_id = s.id
+          WHERE
               ${sql.join(variationConditions, sql` OR `)}
           )
           SELECT
@@ -528,17 +557,23 @@ export class DatabaseStorage implements IStorage {
       console.log(`📊 Getting total count...`);
       let countResult;
       if (hasPgTrgm) {
+        const titleSimilarityThreshold = sql`COALESCE((s.search_settings->'similarity'->>'titleThreshold')::float, ${defaultSearchSettings.similarity.titleThreshold})`;
+        const contentSimilarityThreshold = sql`COALESCE((s.search_settings->'similarity'->>'contentThreshold')::float, ${defaultSearchSettings.similarity.contentThreshold})`;
+        const titleWordThreshold = sql`COALESCE((s.search_settings->'wordSimilarity'->>'titleThreshold')::float, ${defaultSearchSettings.wordSimilarity.titleThreshold})`;
+        const contentWordThreshold = sql`COALESCE((s.search_settings->'wordSimilarity'->>'contentThreshold')::float, ${defaultSearchSettings.wordSimilarity.contentThreshold})`;
+
         countResult = await this.db.execute(sql`
           SELECT COUNT(*) as count
           FROM pages p
+          JOIN sites s ON p.site_id = s.id
           WHERE
             ${sql.join(searchVariations.map(variation => sql`(
               p.search_vector_title @@ plainto_tsquery('english', ${variation})
               OR p.search_vector_content @@ plainto_tsquery('english', ${variation})
-              OR similarity(COALESCE(p.title, ''), ${variation}) > 0.02
-              OR similarity(COALESCE(p.content, ''), ${variation}) > 0.015
-              OR word_similarity(COALESCE(p.title, ''), ${variation}) > 0.15
-              OR word_similarity(COALESCE(p.content, ''), ${variation}) > 0.1
+              OR similarity(COALESCE(p.title, ''), ${variation}) > ${titleSimilarityThreshold}
+              OR similarity(COALESCE(p.content, ''), ${variation}) > ${contentSimilarityThreshold}
+              OR word_similarity(COALESCE(p.title, ''), ${variation}) > ${titleWordThreshold}
+              OR word_similarity(COALESCE(p.content, ''), ${variation}) > ${contentWordThreshold}
               OR COALESCE(p.title, '') ILIKE '%' || ${variation} || '%'
               OR COALESCE(p.content, '') ILIKE '%' || ${variation} || '%'
             )`), sql` OR `)}
