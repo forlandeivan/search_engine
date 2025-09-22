@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import CrawlStatusCard, { type CrawlStatus } from "@/components/CrawlStatusCard";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -27,9 +27,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { projectTypeLabels, type ProjectType, type Site } from "@shared/schema";
+import { projectTypeLabels, type InsertSite, type ProjectType, type Site } from "@shared/schema";
 
 interface ProjectWithStats extends Site {
   pagesFound?: number;
@@ -40,6 +40,14 @@ interface ProjectWithStats extends Site {
 interface ProjectForDeletion {
   id: string;
   name: string;
+}
+
+interface VectorProjectCardProps {
+  id: string;
+  name: string;
+  description?: string | null;
+  href: string;
+  onDelete: () => void;
 }
 
 export default function AdminPage() {
@@ -61,7 +69,9 @@ export default function AdminPage() {
   });
 
   const createProjectMutation = useMutation({
-    mutationFn: async (payload: { name: string; description?: string; projectType: ProjectType }) => {
+    mutationFn: async (
+      payload: Pick<InsertSite, "name" | "description" | "projectType">,
+    ) => {
       const response = await apiRequest("POST", "/api/sites", payload);
       return response.json();
     },
@@ -185,11 +195,13 @@ export default function AdminPage() {
       return;
     }
 
-    createProjectMutation.mutate({
+    const payload: Pick<InsertSite, "name" | "description" | "projectType"> = {
       name: trimmedName,
-      description: trimmedDescription ? trimmedDescription : undefined,
+      description: trimmedDescription ? trimmedDescription : null,
       projectType,
-    });
+    };
+
+    createProjectMutation.mutate(payload);
   };
 
   const handleDeleteRequest = (project: ProjectWithStats) => {
@@ -319,30 +331,41 @@ export default function AdminPage() {
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {filteredProjects.map((project) => (
-          <CrawlStatusCard
-            key={project.id}
-            crawlStatus={{
-              id: project.id,
-              url: project.url ?? "URL не задан",
-              status: (project.status ?? "idle") as CrawlStatus["status"],
-              progress: project.progress ?? 0,
-              pagesFound: project.pagesFound ?? 0,
-              pagesIndexed: project.pagesIndexed ?? project.pagesFound ?? 0,
-              lastCrawled: project.lastCrawled ?? undefined,
-              nextCrawl: project.nextCrawl ?? undefined,
-              error: project.error ?? undefined,
-            }}
-            projectName={project.name ?? project.url ?? "Без названия"}
-            projectDescription={project.description}
-            projectTypeLabel={projectTypeLabels[project.projectType] ?? projectTypeLabels.search_engine}
-            href={`/admin/sites/${project.id}`}
-            onStart={(id) => startCrawlMutation.mutate(id)}
-            onRetry={(id) => startCrawlMutation.mutate(id)}
-            onRecrawl={(id) => recrawlMutation.mutate(id)}
-            onDelete={() => handleDeleteRequest(project)}
-          />
-        ))}
+        {filteredProjects.map((project) =>
+          project.projectType === "vector_search" ? (
+            <VectorProjectCard
+              key={project.id}
+              id={project.id}
+              name={project.name ?? project.url ?? "Без названия"}
+              description={project.description}
+              href={`/admin/sites/${project.id}`}
+              onDelete={() => handleDeleteRequest(project)}
+            />
+          ) : (
+            <CrawlStatusCard
+              key={project.id}
+              crawlStatus={{
+                id: project.id,
+                url: project.url ?? "URL не задан",
+                status: (project.status ?? "idle") as CrawlStatus["status"],
+                progress: project.progress ?? 0,
+                pagesFound: project.pagesFound ?? 0,
+                pagesIndexed: project.pagesIndexed ?? project.pagesFound ?? 0,
+                lastCrawled: project.lastCrawled ?? undefined,
+                nextCrawl: project.nextCrawl ?? undefined,
+                error: project.error ?? undefined,
+              }}
+              projectName={project.name ?? project.url ?? "Без названия"}
+              projectDescription={project.description}
+              projectTypeLabel={projectTypeLabels[project.projectType] ?? projectTypeLabels.search_engine}
+              href={`/admin/sites/${project.id}`}
+              onStart={(id) => startCrawlMutation.mutate(id)}
+              onRetry={(id) => startCrawlMutation.mutate(id)}
+              onRecrawl={(id) => recrawlMutation.mutate(id)}
+              onDelete={() => handleDeleteRequest(project)}
+            />
+          ),
+        )}
       </div>
 
       {!isLoading && !error && filteredProjects.length === 0 && (
@@ -394,5 +417,49 @@ export default function AdminPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function VectorProjectCard({ id, name, description, href, onDelete }: VectorProjectCardProps) {
+  const card = (
+    <Card className="hover-elevate transition-shadow hover:shadow-lg" data-testid={`card-vector-${id}`}>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-2">
+          <div className="space-y-2">
+            <h4 className="text-lg font-semibold leading-tight" data-testid={`text-project-${id}`}>
+              {name}
+            </h4>
+            {description ? (
+              <p className="text-sm text-muted-foreground" data-testid={`text-description-${id}`}>
+                {description}
+              </p>
+            ) : null}
+          </div>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="text-destructive hover:text-destructive-foreground hover:bg-destructive/10"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onDelete();
+            }}
+            data-testid={`button-delete-${id}`}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </CardHeader>
+    </Card>
+  );
+
+  return (
+    <Link
+      href={href}
+      className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+    >
+      {card}
+    </Link>
   );
 }
