@@ -6,9 +6,24 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Plus, X } from "lucide-react";
+import { projectTypeLabels, type ProjectType } from "@shared/schema";
+
+const PROJECT_TYPE_OPTIONS: Array<{ value: ProjectType; label: string; description: string }> = [
+  {
+    value: "search_engine",
+    label: projectTypeLabels.search_engine,
+    description: "Классический краулер сайтов с полнотекстовым поиском и настройкой ранжирования.",
+  },
+  {
+    value: "vector_search",
+    label: projectTypeLabels.vector_search,
+    description: "Проекты для семантического поиска по эмбеддингам. Настройка модели появится позже.",
+  },
+];
 
 interface SiteConfig {
   url: string;
+  projectType: ProjectType;
   crawlDepth: number;
   followExternalLinks: boolean;
   crawlFrequency: "manual" | "hourly" | "daily" | "weekly";
@@ -23,6 +38,7 @@ interface AddSiteFormProps {
 export default function AddSiteForm({ onSubmit, onCancel }: AddSiteFormProps) {
   const [config, setConfig] = useState<SiteConfig>({
     url: "",
+    projectType: "search_engine",
     crawlDepth: 3,
     followExternalLinks: false,
     crawlFrequency: "daily",
@@ -66,6 +82,28 @@ export default function AddSiteForm({ onSubmit, onCancel }: AddSiteFormProps) {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label htmlFor="project-type">Тип проекта</Label>
+            <Select
+              value={config.projectType}
+              onValueChange={(value) => setConfig(prev => ({ ...prev, projectType: value as ProjectType }))}
+            >
+              <SelectTrigger id="project-type" data-testid="select-project-type">
+                <SelectValue placeholder="Выберите тип проекта" />
+              </SelectTrigger>
+              <SelectContent>
+                {PROJECT_TYPE_OPTIONS.map(option => (
+                  <SelectItem key={option.value} value={option.value}>
+                    <div className="flex flex-col text-left">
+                      <span className="font-medium">{option.label}</span>
+                      <span className="text-xs text-muted-foreground">{option.description}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div>
             <Label htmlFor="url">URL сайта</Label>
             <Input

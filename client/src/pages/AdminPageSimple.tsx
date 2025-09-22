@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Plus, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { type Site } from "@shared/schema";
+import { projectTypeLabels, type ProjectType, type Site } from "@shared/schema";
 
 interface ProjectWithStats extends Site {
   pagesFound?: number;
@@ -48,6 +49,7 @@ export default function AdminPage() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
+  const [projectType, setProjectType] = useState<ProjectType>("search_engine");
   const [projectToDelete, setProjectToDelete] = useState<ProjectForDeletion | null>(null);
 
   const {
@@ -59,7 +61,7 @@ export default function AdminPage() {
   });
 
   const createProjectMutation = useMutation({
-    mutationFn: async (payload: { name: string; description?: string }) => {
+    mutationFn: async (payload: { name: string; description?: string; projectType: ProjectType }) => {
       const response = await apiRequest("POST", "/api/sites", payload);
       return response.json();
     },
@@ -68,6 +70,7 @@ export default function AdminPage() {
       setIsCreateDialogOpen(false);
       setProjectName("");
       setProjectDescription("");
+      setProjectType("search_engine");
       toast({
         title: "Проект создан",
         description: "Добавьте знания и настройте краулинг в карточке проекта.",
@@ -185,6 +188,7 @@ export default function AdminPage() {
     createProjectMutation.mutate({
       name: trimmedName,
       description: trimmedDescription ? trimmedDescription : undefined,
+      projectType,
     });
   };
 
@@ -247,6 +251,37 @@ export default function AdminPage() {
                   rows={4}
                 />
               </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="project-type">
+                  Тип проекта
+                </label>
+                <Select
+                  value={projectType}
+                  onValueChange={(value) => setProjectType(value as ProjectType)}
+                >
+                  <SelectTrigger id="project-type" data-testid="select-project-type-simple">
+                    <SelectValue placeholder="Выберите тип" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="search_engine">
+                      <div className="flex flex-col text-left">
+                        <span className="font-medium">{projectTypeLabels.search_engine}</span>
+                        <span className="text-xs text-muted-foreground">
+                          Полнотекстовый поиск и краулинг веб-страниц.
+                        </span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="vector_search">
+                      <div className="flex flex-col text-left">
+                        <span className="font-medium">{projectTypeLabels.vector_search}</span>
+                        <span className="text-xs text-muted-foreground">
+                          Семантический поиск по эмбеддингам (настройки скоро).
+                        </span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <DialogFooter className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                   Отмена
@@ -285,21 +320,22 @@ export default function AdminPage() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {filteredProjects.map((project) => (
-            <CrawlStatusCard
-              key={project.id}
-              crawlStatus={{
-                id: project.id,
-                url: project.url ?? "URL не задан",
-                status: (project.status ?? "idle") as CrawlStatus["status"],
-                progress: project.progress ?? 0,
-                pagesFound: project.pagesFound ?? 0,
-                pagesIndexed: project.pagesIndexed ?? project.pagesFound ?? 0,
-                lastCrawled: project.lastCrawled ?? undefined,
+          <CrawlStatusCard
+            key={project.id}
+            crawlStatus={{
+              id: project.id,
+              url: project.url ?? "URL не задан",
+              status: (project.status ?? "idle") as CrawlStatus["status"],
+              progress: project.progress ?? 0,
+              pagesFound: project.pagesFound ?? 0,
+              pagesIndexed: project.pagesIndexed ?? project.pagesFound ?? 0,
+              lastCrawled: project.lastCrawled ?? undefined,
               nextCrawl: project.nextCrawl ?? undefined,
               error: project.error ?? undefined,
             }}
             projectName={project.name ?? project.url ?? "Без названия"}
             projectDescription={project.description}
+            projectTypeLabel={projectTypeLabels[project.projectType] ?? projectTypeLabels.search_engine}
             href={`/admin/sites/${project.id}`}
             onStart={(id) => startCrawlMutation.mutate(id)}
             onRetry={(id) => startCrawlMutation.mutate(id)}

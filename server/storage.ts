@@ -11,7 +11,9 @@ import {
   type User,
   type InsertUser,
   defaultSearchSettings,
-  type SearchSettings
+  type SearchSettings,
+  defaultVectorSearchSettings,
+  type VectorSearchSettings
 } from "@shared/schema";
 import { db } from "./db";
 import {
@@ -103,7 +105,11 @@ export class DatabaseStorage implements IStorage {
     }
 
     const columns = await this.getSiteColumns();
-    this.modernSitesSchemaDetected = columns.has('search_settings') && columns.has('name');
+    this.modernSitesSchemaDetected =
+      columns.has('search_settings') &&
+      columns.has('name') &&
+      columns.has('project_type') &&
+      columns.has('vector_settings');
 
     return this.modernSitesSchemaDetected;
   }
@@ -162,12 +168,34 @@ export class DatabaseStorage implements IStorage {
     return this.cloneSearchSettings();
   }
 
+  private parseVectorSettings(value: unknown): VectorSearchSettings {
+    if (!value) {
+      return this.cloneVectorSettings();
+    }
+
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value) as VectorSearchSettings;
+      } catch (error) {
+        console.warn('Failed to parse vector settings JSON:', error);
+        return this.cloneVectorSettings();
+      }
+    }
+
+    if (typeof value === 'object') {
+      return this.cloneVectorSettings(value as VectorSearchSettings);
+    }
+
+    return this.cloneVectorSettings();
+  }
+
   private mapLegacySiteRow(row: Record<string, any>): Site {
     const name = typeof row.name === 'string' && row.name.trim() !== ''
       ? row.name
       : (typeof row.url === 'string' && row.url.trim() !== '' ? row.url : 'Новый проект');
 
     const searchSettings = this.parseSearchSettings(row.search_settings ?? row.searchSettings);
+    const vectorSettings = this.parseVectorSettings(row.vector_settings ?? row.vectorSettings);
     const excludePatterns = this.parseJsonArray<string[]>(row.exclude_patterns ?? row.excludePatterns, []);
 
     const mapped: Partial<Site> & { id: string } = {
@@ -186,6 +214,8 @@ export class DatabaseStorage implements IStorage {
       nextCrawl: this.parseDate(row.next_crawl ?? row.nextCrawl) ?? undefined,
       error: row.error ?? null,
       searchSettings,
+      vectorSettings,
+      projectType: (row.project_type ?? row.projectType ?? 'search_engine') as Site['projectType'],
       createdAt: this.parseDate(row.created_at ?? row.createdAt) ?? new Date(),
       updatedAt: this.parseDate(row.updated_at ?? row.updatedAt) ?? new Date(),
     };
@@ -197,10 +227,15 @@ export class DatabaseStorage implements IStorage {
     return JSON.parse(JSON.stringify(settings ?? defaultSearchSettings)) as SearchSettings;
   }
 
+  private cloneVectorSettings(settings?: VectorSearchSettings | null): VectorSearchSettings {
+    return JSON.parse(JSON.stringify(settings ?? defaultVectorSearchSettings)) as VectorSearchSettings;
+  }
+
   private mapSiteWithSettings(site: Partial<Site> & { id: string }): Site {
     return {
       ...(site as Site),
       searchSettings: this.cloneSearchSettings(site.searchSettings),
+      vectorSettings: this.cloneVectorSettings(site.vectorSettings),
     };
   }
 
@@ -234,14 +269,18 @@ export class DatabaseStorage implements IStorage {
   async createSite(site: InsertSite): Promise<Site> {
     const siteData = site as InsertSite & Partial<Site>;
     const searchSettings = this.cloneSearchSettings(siteData.searchSettings);
+    const vectorSettings = this.cloneVectorSettings(siteData.vectorSettings);
+    const projectType = siteData.projectType ?? 'search_engine';
 
     if (await this.hasModernSitesSchema()) {
       const [newSite] = await this.db
         .insert(sites)
         .values({
-          ...site,
+          ...siteData,
+          projectType,
           searchSettings,
-        } as any)
+          vectorSettings,
+        })
         .returning();
 
       return this.mapSiteWithSettings(newSite);
@@ -262,6 +301,10 @@ export class DatabaseStorage implements IStorage {
     if (columns.has('url')) {
       insertColumns.push(sql`"url"`);
       insertValues.push(sql`${siteData.url ?? null}`);
+    }
+    if (columns.has('project_type')) {
+      insertColumns.push(sql`"project_type"`);
+      insertValues.push(sql`${projectType}`);
     }
     if (columns.has('crawl_depth')) {
       insertColumns.push(sql`"crawl_depth"`);
@@ -295,6 +338,10 @@ export class DatabaseStorage implements IStorage {
       insertColumns.push(sql`"error"`);
       insertValues.push(sql`${siteData.error ?? null}`);
     }
+    if (columns.has('vector_settings')) {
+      insertColumns.push(sql`"vector_settings"`);
+      insertValues.push(sql`${JSON.stringify(vectorSettings)}::jsonb`);
+    }
 
     if (insertColumns.length === 0) {
       throw new Error('Unable to insert site: no compatible columns found');
@@ -307,7 +354,12 @@ export class DatabaseStorage implements IStorage {
     `);
 
     const [newSite] = result.rows as Array<Record<string, any>>;
-    return this.mapLegacySiteRow({ ...newSite, search_settings: newSite?.search_settings ?? searchSettings });
+    return this.mapLegacySiteRow({
+      ...newSite,
+      search_settings: newSite?.search_settings ?? searchSettings,
+      vector_settings: newSite?.vector_settings ?? vectorSettings,
+      project_type: newSite?.project_type ?? projectType,
+    });
   }
 
   async getSite(id: string): Promise<Site | undefined> {
@@ -330,16 +382,28 @@ export class DatabaseStorage implements IStorage {
 
   async updateSite(id: string, updates: Partial<Site>): Promise<Site | undefined> {
     if (await this.hasModernSitesSchema()) {
+      const updatesWithClones = {
+        ...updates,
+        ...(updates.searchSettings
+          ? { searchSettings: this.cloneSearchSettings(updates.searchSettings) }
+          : {}),
+        ...(updates.vectorSettings
+          ? { vectorSettings: this.cloneVectorSettings(updates.vectorSettings) }
+          : {}),
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      };
+
       const [updatedSite] = await this.db
         .update(sites)
-        .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .set(updatesWithClones)
         .where(eq(sites.id, id))
         .returning();
       return updatedSite ? this.mapSiteWithSettings(updatedSite) : undefined;
     }
 
     const columns = await this.getSiteColumns();
-    const { searchSettings: _ignored, ...legacyUpdates } = updates;
+    const { searchSettings: _ignoredSearchSettings, vectorSettings: legacyVectorSettings, ...legacyUpdates } = updates;
+    void _ignoredSearchSettings;
     const setFragments = [] as SQL[];
 
     if (legacyUpdates.name !== undefined && columns.has('name')) {
@@ -362,6 +426,12 @@ export class DatabaseStorage implements IStorage {
     }
     if (legacyUpdates.excludePatterns !== undefined && columns.has('exclude_patterns')) {
       setFragments.push(sql`"exclude_patterns" = ${sql`${JSON.stringify(legacyUpdates.excludePatterns)}::jsonb`}`);
+    }
+    if (legacyUpdates.projectType !== undefined && columns.has('project_type')) {
+      setFragments.push(sql`"project_type" = ${legacyUpdates.projectType}`);
+    }
+    if (legacyVectorSettings !== undefined && columns.has('vector_settings')) {
+      setFragments.push(sql`"vector_settings" = ${sql`${JSON.stringify(legacyVectorSettings)}::jsonb`}`);
     }
     if (legacyUpdates.status !== undefined && columns.has('status')) {
       setFragments.push(sql`"status" = ${legacyUpdates.status}`);
@@ -395,6 +465,8 @@ export class DatabaseStorage implements IStorage {
         "follow_external_links" AS "followExternalLinks",
         "crawl_frequency" AS "crawlFrequency",
         "exclude_patterns" AS "excludePatterns",
+        "project_type" AS "projectType",
+        "vector_settings" AS "vectorSettings",
         "status",
         "last_crawled" AS "lastCrawled",
         "next_crawl" AS "nextCrawl",
