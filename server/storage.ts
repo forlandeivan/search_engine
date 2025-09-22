@@ -69,29 +69,128 @@ export interface IStorage {
 export class DatabaseStorage implements IStorage {
   // Inject db instance for testing purposes
   private db = db;
-  private searchSettingsColumnExists: boolean | null = null;
+  private modernSitesSchemaDetected: boolean | null = null;
+  private siteColumns: Set<string> | null = null;
 
-  private async hasSearchSettingsColumn(): Promise<boolean> {
-    if (this.searchSettingsColumnExists !== null) {
-      return this.searchSettingsColumnExists;
+  private async getSiteColumns(): Promise<Set<string>> {
+    if (this.siteColumns) {
+      return this.siteColumns;
     }
 
     try {
       const result = await this.db.execute(sql`
-        SELECT 1
+        SELECT column_name
         FROM information_schema.columns
         WHERE table_name = 'sites'
           AND table_schema = 'public'
-          AND column_name = 'search_settings'
-        LIMIT 1
       `);
-      this.searchSettingsColumnExists = result.rows.length > 0;
+
+      this.siteColumns = new Set(
+        (result.rows as Array<{ column_name?: string; columnName?: string }>).
+          map((row) => row.column_name ?? row.columnName ?? "")
+      );
     } catch (error) {
-      console.error("Failed to detect search_settings column:", error);
-      this.searchSettingsColumnExists = false;
+      console.error("Failed to fetch sites table columns:", error);
+      this.siteColumns = new Set();
     }
 
-    return this.searchSettingsColumnExists;
+    return this.siteColumns;
+  }
+
+  private async hasModernSitesSchema(): Promise<boolean> {
+    if (this.modernSitesSchemaDetected !== null) {
+      return this.modernSitesSchemaDetected;
+    }
+
+    const columns = await this.getSiteColumns();
+    this.modernSitesSchemaDetected = columns.has('search_settings') && columns.has('name');
+
+    return this.modernSitesSchemaDetected;
+  }
+
+  private parseDate(value: unknown): Date | null {
+    if (!value) {
+      return null;
+    }
+
+    if (value instanceof Date) {
+      return value;
+    }
+
+    const parsed = new Date(value as string);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  private parseJsonArray<T>(value: unknown, fallback: T): T {
+    if (Array.isArray(value)) {
+      return value as T;
+    }
+
+    if (typeof value === 'string' && value.trim() !== '') {
+      try {
+        return JSON.parse(value) as T;
+      } catch (error) {
+        console.warn('Failed to parse JSON array column:', error);
+      }
+    }
+
+    if (value && typeof value === 'object') {
+      return value as T;
+    }
+
+    return fallback;
+  }
+
+  private parseSearchSettings(value: unknown): SearchSettings {
+    if (!value) {
+      return this.cloneSearchSettings();
+    }
+
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value) as SearchSettings;
+      } catch (error) {
+        console.warn('Failed to parse search settings JSON:', error);
+        return this.cloneSearchSettings();
+      }
+    }
+
+    if (typeof value === 'object') {
+      return this.cloneSearchSettings(value as SearchSettings);
+    }
+
+    return this.cloneSearchSettings();
+  }
+
+  private mapLegacySiteRow(row: Record<string, any>): Site {
+    const name = typeof row.name === 'string' && row.name.trim() !== ''
+      ? row.name
+      : (typeof row.url === 'string' && row.url.trim() !== '' ? row.url : 'Новый проект');
+
+    const searchSettings = this.parseSearchSettings(row.search_settings ?? row.searchSettings);
+    const excludePatterns = this.parseJsonArray<string[]>(row.exclude_patterns ?? row.excludePatterns, []);
+
+    const mapped: Partial<Site> & { id: string } = {
+      id: String(row.id),
+      name,
+      description: row.description ?? null,
+      url: row.url ?? null,
+      crawlDepth: typeof row.crawl_depth === 'number' ? row.crawl_depth : row.crawlDepth ?? 3,
+      followExternalLinks: typeof row.follow_external_links === 'boolean'
+        ? row.follow_external_links
+        : Boolean(row.followExternalLinks),
+      crawlFrequency: row.crawl_frequency ?? row.crawlFrequency ?? 'daily',
+      excludePatterns,
+      status: row.status ?? 'idle',
+      lastCrawled: this.parseDate(row.last_crawled ?? row.lastCrawled) ?? undefined,
+      nextCrawl: this.parseDate(row.next_crawl ?? row.nextCrawl) ?? undefined,
+      error: row.error ?? null,
+      searchSettings,
+      createdAt: this.parseDate(row.created_at ?? row.createdAt) ?? new Date(),
+      updatedAt: this.parseDate(row.updated_at ?? row.updatedAt) ?? new Date(),
+    };
+
+    return this.mapSiteWithSettings(mapped);
   }
 
   private cloneSearchSettings(settings?: SearchSettings | null): SearchSettings {
@@ -107,58 +206,28 @@ export class DatabaseStorage implements IStorage {
 
   private async fetchLegacySiteById(id: string): Promise<Site | undefined> {
     const result = await this.db.execute(sql`
-      SELECT
-        "id",
-        "name" AS "name",
-        "description" AS "description",
-        "url",
-        "crawl_depth" AS "crawlDepth",
-        "follow_external_links" AS "followExternalLinks",
-        "crawl_frequency" AS "crawlFrequency",
-        "exclude_patterns" AS "excludePatterns",
-        "status",
-        "last_crawled" AS "lastCrawled",
-        "next_crawl" AS "nextCrawl",
-        "error",
-        "created_at" AS "createdAt",
-        "updated_at" AS "updatedAt"
+      SELECT *
       FROM "sites"
       WHERE "id" = ${id}
       LIMIT 1
     `);
 
-    const [site] = result.rows as Array<Partial<Site> & { id: string }>;
-    if (!site) {
+    const [row] = result.rows as Array<Record<string, any>>;
+    if (!row) {
       return undefined;
     }
 
-    return this.mapSiteWithSettings(site);
+    return this.mapLegacySiteRow(row);
   }
 
   private async fetchLegacySites(): Promise<Site[]> {
     const result = await this.db.execute(sql`
-      SELECT
-        "id",
-        "name" AS "name",
-        "description" AS "description",
-        "url",
-        "crawl_depth" AS "crawlDepth",
-        "follow_external_links" AS "followExternalLinks",
-        "crawl_frequency" AS "crawlFrequency",
-        "exclude_patterns" AS "excludePatterns",
-        "status",
-        "last_crawled" AS "lastCrawled",
-        "next_crawl" AS "nextCrawl",
-        "error",
-        "created_at" AS "createdAt",
-        "updated_at" AS "updatedAt"
+      SELECT *
       FROM "sites"
       ORDER BY "created_at" DESC
     `);
 
-    return (result.rows as Array<Partial<Site> & { id: string }>).map(site =>
-      this.mapSiteWithSettings(site)
-    );
+    return (result.rows as Array<Record<string, any>>).map(row => this.mapLegacySiteRow(row));
   }
 
   // Sites
@@ -166,7 +235,7 @@ export class DatabaseStorage implements IStorage {
     const siteData = site as InsertSite & Partial<Site>;
     const searchSettings = this.cloneSearchSettings(siteData.searchSettings);
 
-    if (await this.hasSearchSettingsColumn()) {
+    if (await this.hasModernSitesSchema()) {
       const [newSite] = await this.db
         .insert(sites)
         .values({
@@ -178,55 +247,71 @@ export class DatabaseStorage implements IStorage {
       return this.mapSiteWithSettings(newSite);
     }
 
+    const columns = await this.getSiteColumns();
+    const insertColumns: SQL[] = [];
+    const insertValues: SQL[] = [];
+
+    if (columns.has('name')) {
+      insertColumns.push(sql`"name"`);
+      insertValues.push(sql`${siteData.name ?? 'Новый проект'}`);
+    }
+    if (columns.has('description')) {
+      insertColumns.push(sql`"description"`);
+      insertValues.push(sql`${siteData.description ?? null}`);
+    }
+    if (columns.has('url')) {
+      insertColumns.push(sql`"url"`);
+      insertValues.push(sql`${siteData.url ?? null}`);
+    }
+    if (columns.has('crawl_depth')) {
+      insertColumns.push(sql`"crawl_depth"`);
+      insertValues.push(sql`${siteData.crawlDepth ?? 3}`);
+    }
+    if (columns.has('follow_external_links')) {
+      insertColumns.push(sql`"follow_external_links"`);
+      insertValues.push(sql`${siteData.followExternalLinks ?? false}`);
+    }
+    if (columns.has('crawl_frequency')) {
+      insertColumns.push(sql`"crawl_frequency"`);
+      insertValues.push(sql`${siteData.crawlFrequency ?? 'daily'}`);
+    }
+    if (columns.has('exclude_patterns')) {
+      insertColumns.push(sql`"exclude_patterns"`);
+      insertValues.push(sql`${JSON.stringify(siteData.excludePatterns ?? [])}::jsonb`);
+    }
+    if (columns.has('status')) {
+      insertColumns.push(sql`"status"`);
+      insertValues.push(sql`${siteData.status ?? 'idle'}`);
+    }
+    if (columns.has('last_crawled')) {
+      insertColumns.push(sql`"last_crawled"`);
+      insertValues.push(sql`${siteData.lastCrawled ?? null}`);
+    }
+    if (columns.has('next_crawl')) {
+      insertColumns.push(sql`"next_crawl"`);
+      insertValues.push(sql`${siteData.nextCrawl ?? null}`);
+    }
+    if (columns.has('error')) {
+      insertColumns.push(sql`"error"`);
+      insertValues.push(sql`${siteData.error ?? null}`);
+    }
+
+    if (insertColumns.length === 0) {
+      throw new Error('Unable to insert site: no compatible columns found');
+    }
+
     const result = await this.db.execute(sql`
-      INSERT INTO "sites" (
-        "name",
-        "description",
-        "url",
-        "crawl_depth",
-        "follow_external_links",
-        "crawl_frequency",
-        "exclude_patterns",
-        "status",
-        "last_crawled",
-        "next_crawl",
-        "error"
-      ) VALUES (
-        ${siteData.name ?? "Новый проект"},
-        ${siteData.description ?? null},
-        ${siteData.url ?? null},
-        ${siteData.crawlDepth ?? 3},
-        ${siteData.followExternalLinks ?? false},
-        ${siteData.crawlFrequency ?? "daily"},
-        ${sql`${JSON.stringify(siteData.excludePatterns ?? [])}::jsonb`},
-        ${siteData.status ?? "idle"},
-        ${siteData.lastCrawled ?? null},
-        ${siteData.nextCrawl ?? null},
-        ${siteData.error ?? null}
-      )
-      RETURNING
-        "id",
-        "name",
-        "description",
-        "url",
-        "crawl_depth" AS "crawlDepth",
-        "follow_external_links" AS "followExternalLinks",
-        "crawl_frequency" AS "crawlFrequency",
-        "exclude_patterns" AS "excludePatterns",
-        "status",
-        "last_crawled" AS "lastCrawled",
-        "next_crawl" AS "nextCrawl",
-        "error",
-        "created_at" AS "createdAt",
-        "updated_at" AS "updatedAt"
+      INSERT INTO "sites" (${sql.join(insertColumns, sql`, `)})
+      VALUES (${sql.join(insertValues, sql`, `)})
+      RETURNING *
     `);
 
-    const [newSite] = result.rows as Array<Partial<Site> & { id: string }>;
-    return this.mapSiteWithSettings({ ...newSite, searchSettings });
+    const [newSite] = result.rows as Array<Record<string, any>>;
+    return this.mapLegacySiteRow({ ...newSite, search_settings: newSite?.search_settings ?? searchSettings });
   }
 
   async getSite(id: string): Promise<Site | undefined> {
-    if (await this.hasSearchSettingsColumn()) {
+    if (await this.hasModernSitesSchema()) {
       const [site] = await this.db.select().from(sites).where(eq(sites.id, id));
       return site ? this.mapSiteWithSettings(site) : undefined;
     }
@@ -235,7 +320,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllSites(): Promise<Site[]> {
-    if (await this.hasSearchSettingsColumn()) {
+    if (await this.hasModernSitesSchema()) {
       const allSites = await this.db.select().from(sites).orderBy(desc(sites.createdAt));
       return (allSites as Site[]).map((site: Site) => this.mapSiteWithSettings(site));
     }
@@ -244,7 +329,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateSite(id: string, updates: Partial<Site>): Promise<Site | undefined> {
-    if (await this.hasSearchSettingsColumn()) {
+    if (await this.hasModernSitesSchema()) {
       const [updatedSite] = await this.db
         .update(sites)
         .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
@@ -253,40 +338,41 @@ export class DatabaseStorage implements IStorage {
       return updatedSite ? this.mapSiteWithSettings(updatedSite) : undefined;
     }
 
+    const columns = await this.getSiteColumns();
     const { searchSettings: _ignored, ...legacyUpdates } = updates;
     const setFragments = [] as SQL[];
 
-    if (legacyUpdates.name !== undefined) {
+    if (legacyUpdates.name !== undefined && columns.has('name')) {
       setFragments.push(sql`"name" = ${legacyUpdates.name}`);
     }
-    if (legacyUpdates.description !== undefined) {
+    if (legacyUpdates.description !== undefined && columns.has('description')) {
       setFragments.push(sql`"description" = ${legacyUpdates.description}`);
     }
-    if (legacyUpdates.url !== undefined) {
+    if (legacyUpdates.url !== undefined && columns.has('url')) {
       setFragments.push(sql`"url" = ${legacyUpdates.url}`);
     }
-    if (legacyUpdates.crawlDepth !== undefined) {
+    if (legacyUpdates.crawlDepth !== undefined && columns.has('crawl_depth')) {
       setFragments.push(sql`"crawl_depth" = ${legacyUpdates.crawlDepth}`);
     }
-    if (legacyUpdates.followExternalLinks !== undefined) {
+    if (legacyUpdates.followExternalLinks !== undefined && columns.has('follow_external_links')) {
       setFragments.push(sql`"follow_external_links" = ${legacyUpdates.followExternalLinks}`);
     }
-    if (legacyUpdates.crawlFrequency !== undefined) {
+    if (legacyUpdates.crawlFrequency !== undefined && columns.has('crawl_frequency')) {
       setFragments.push(sql`"crawl_frequency" = ${legacyUpdates.crawlFrequency}`);
     }
-    if (legacyUpdates.excludePatterns !== undefined) {
+    if (legacyUpdates.excludePatterns !== undefined && columns.has('exclude_patterns')) {
       setFragments.push(sql`"exclude_patterns" = ${sql`${JSON.stringify(legacyUpdates.excludePatterns)}::jsonb`}`);
     }
-    if (legacyUpdates.status !== undefined) {
+    if (legacyUpdates.status !== undefined && columns.has('status')) {
       setFragments.push(sql`"status" = ${legacyUpdates.status}`);
     }
-    if (legacyUpdates.lastCrawled !== undefined) {
+    if (legacyUpdates.lastCrawled !== undefined && columns.has('last_crawled')) {
       setFragments.push(sql`"last_crawled" = ${legacyUpdates.lastCrawled}`);
     }
-    if (legacyUpdates.nextCrawl !== undefined) {
+    if (legacyUpdates.nextCrawl !== undefined && columns.has('next_crawl')) {
       setFragments.push(sql`"next_crawl" = ${legacyUpdates.nextCrawl}`);
     }
-    if (legacyUpdates.error !== undefined) {
+    if (legacyUpdates.error !== undefined && columns.has('error')) {
       setFragments.push(sql`"error" = ${legacyUpdates.error}`);
     }
 
