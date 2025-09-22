@@ -75,8 +75,8 @@ export class DatabaseStorage implements IStorage {
   private modernSitesSchemaDetected: boolean | null = null;
   private siteColumns: Set<string> | null = null;
 
-  private async getSiteColumns(): Promise<Set<string>> {
-    if (this.siteColumns) {
+  private async getSiteColumns(forceRefresh = false): Promise<Set<string>> {
+    if (this.siteColumns && !forceRefresh) {
       return this.siteColumns;
     }
 
@@ -101,18 +101,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   private async hasModernSitesSchema(): Promise<boolean> {
-    if (this.modernSitesSchemaDetected !== null) {
-      return this.modernSitesSchemaDetected;
+    if (this.modernSitesSchemaDetected === true) {
+      return true;
     }
 
-    const columns = await this.getSiteColumns();
-    this.modernSitesSchemaDetected =
+    const columns = await this.getSiteColumns(this.modernSitesSchemaDetected === false);
+    const detected =
       columns.has('search_settings') &&
       columns.has('name') &&
       columns.has('project_type') &&
       columns.has('vector_settings');
 
-    return this.modernSitesSchemaDetected;
+    if (detected) {
+      this.modernSitesSchemaDetected = true;
+      return true;
+    }
+
+    this.modernSitesSchemaDetected = false;
+    return false;
   }
 
   private parseDate(value: unknown): Date | null {
