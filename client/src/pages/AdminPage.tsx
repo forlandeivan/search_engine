@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import AddSiteForm, { type SiteConfig } from "@/components/AddSiteForm";
 import CrawlStatusCard, { type CrawlStatus } from "@/components/CrawlStatusCard";
-import { projectTypeLabels, type Site } from "@shared/schema";
+import { type Site } from "@shared/schema";
 
 interface Stats {
   sites: { total: number; crawling: number; completed: number; failed: number; };
@@ -333,7 +333,6 @@ export default function AdminPage() {
                   crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
                   projectName={getProjectName(status)}
                   projectDescription={getProjectDescription(status)}
-                  projectTypeLabel={projectTypeLabels[(status as Site).projectType] ?? projectTypeLabels.search_engine}
                   href={`/admin/sites/${status.id}`}
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
@@ -376,7 +375,6 @@ export default function AdminPage() {
                 crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
                 projectName={getProjectName(status)}
                 projectDescription={getProjectDescription(status)}
-                projectTypeLabel={projectTypeLabels[(status as Site).projectType] ?? projectTypeLabels.search_engine}
                 href={`/admin/sites/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
@@ -402,7 +400,6 @@ export default function AdminPage() {
                 crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
                 projectName={getProjectName(status)}
                 projectDescription={getProjectDescription(status)}
-                projectTypeLabel={projectTypeLabels[(status as Site).projectType] ?? projectTypeLabels.search_engine}
                 href={`/admin/sites/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
@@ -428,7 +425,6 @@ export default function AdminPage() {
                 crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
                 projectName={getProjectName(status)}
                 projectDescription={getProjectDescription(status)}
-                projectTypeLabel={projectTypeLabels[(status as Site).projectType] ?? projectTypeLabels.search_engine}
                 href={`/admin/sites/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}

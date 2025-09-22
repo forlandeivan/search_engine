@@ -1,13 +1,12 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import CrawlStatusCard, { type CrawlStatus } from "@/components/CrawlStatusCard";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -27,9 +26,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { projectTypeLabels, type InsertSite, type ProjectType, type Site } from "@shared/schema";
+import { type Site } from "@shared/schema";
 
 interface ProjectWithStats extends Site {
   pagesFound?: number;
@@ -42,14 +41,6 @@ interface ProjectForDeletion {
   name: string;
 }
 
-interface VectorProjectCardProps {
-  id: string;
-  name: string;
-  description?: string | null;
-  href: string;
-  onDelete: () => void;
-}
-
 export default function AdminPage() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -57,7 +48,6 @@ export default function AdminPage() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
-  const [projectType, setProjectType] = useState<ProjectType>("search_engine");
   const [projectToDelete, setProjectToDelete] = useState<ProjectForDeletion | null>(null);
 
   const {
@@ -69,9 +59,7 @@ export default function AdminPage() {
   });
 
   const createProjectMutation = useMutation({
-    mutationFn: async (
-      payload: Pick<InsertSite, "name" | "description" | "projectType">,
-    ) => {
+    mutationFn: async (payload: { name: string; description?: string }) => {
       const response = await apiRequest("POST", "/api/sites", payload);
       return response.json();
     },
@@ -80,7 +68,6 @@ export default function AdminPage() {
       setIsCreateDialogOpen(false);
       setProjectName("");
       setProjectDescription("");
-      setProjectType("search_engine");
       toast({
         title: "Проект создан",
         description: "Добавьте знания и настройте краулинг в карточке проекта.",
@@ -195,13 +182,10 @@ export default function AdminPage() {
       return;
     }
 
-    const payload: Pick<InsertSite, "name" | "description" | "projectType"> = {
+    createProjectMutation.mutate({
       name: trimmedName,
-      description: trimmedDescription ? trimmedDescription : null,
-      projectType,
-    };
-
-    createProjectMutation.mutate(payload);
+      description: trimmedDescription ? trimmedDescription : undefined,
+    });
   };
 
   const handleDeleteRequest = (project: ProjectWithStats) => {
@@ -263,37 +247,6 @@ export default function AdminPage() {
                   rows={4}
                 />
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium" htmlFor="project-type">
-                  Тип проекта
-                </label>
-                <Select
-                  value={projectType}
-                  onValueChange={(value) => setProjectType(value as ProjectType)}
-                >
-                  <SelectTrigger id="project-type" data-testid="select-project-type-simple">
-                    <SelectValue placeholder="Выберите тип" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="search_engine">
-                      <div className="flex flex-col text-left">
-                        <span className="font-medium">{projectTypeLabels.search_engine}</span>
-                        <span className="text-xs text-muted-foreground">
-                          Полнотекстовый поиск и краулинг веб-страниц.
-                        </span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="vector_search">
-                      <div className="flex flex-col text-left">
-                        <span className="font-medium">{projectTypeLabels.vector_search}</span>
-                        <span className="text-xs text-muted-foreground">
-                          Семантический поиск по эмбеддингам (настройки скоро).
-                        </span>
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
               <DialogFooter className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                   Отмена
@@ -331,17 +284,7 @@ export default function AdminPage() {
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {filteredProjects.map((project) =>
-          project.projectType === "vector_search" ? (
-            <VectorProjectCard
-              key={project.id}
-              id={project.id}
-              name={project.name ?? project.url ?? "Без названия"}
-              description={project.description}
-              href={`/admin/sites/${project.id}`}
-              onDelete={() => handleDeleteRequest(project)}
-            />
-          ) : (
+        {filteredProjects.map((project) => (
             <CrawlStatusCard
               key={project.id}
               crawlStatus={{
@@ -352,20 +295,18 @@ export default function AdminPage() {
                 pagesFound: project.pagesFound ?? 0,
                 pagesIndexed: project.pagesIndexed ?? project.pagesFound ?? 0,
                 lastCrawled: project.lastCrawled ?? undefined,
-                nextCrawl: project.nextCrawl ?? undefined,
-                error: project.error ?? undefined,
-              }}
-              projectName={project.name ?? project.url ?? "Без названия"}
-              projectDescription={project.description}
-              projectTypeLabel={projectTypeLabels[project.projectType] ?? projectTypeLabels.search_engine}
-              href={`/admin/sites/${project.id}`}
-              onStart={(id) => startCrawlMutation.mutate(id)}
-              onRetry={(id) => startCrawlMutation.mutate(id)}
-              onRecrawl={(id) => recrawlMutation.mutate(id)}
-              onDelete={() => handleDeleteRequest(project)}
-            />
-          ),
-        )}
+              nextCrawl: project.nextCrawl ?? undefined,
+              error: project.error ?? undefined,
+            }}
+            projectName={project.name ?? project.url ?? "Без названия"}
+            projectDescription={project.description}
+            href={`/admin/sites/${project.id}`}
+            onStart={(id) => startCrawlMutation.mutate(id)}
+            onRetry={(id) => startCrawlMutation.mutate(id)}
+            onRecrawl={(id) => recrawlMutation.mutate(id)}
+            onDelete={() => handleDeleteRequest(project)}
+          />
+        ))}
       </div>
 
       {!isLoading && !error && filteredProjects.length === 0 && (
@@ -417,49 +358,5 @@ export default function AdminPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-function VectorProjectCard({ id, name, description, href, onDelete }: VectorProjectCardProps) {
-  const card = (
-    <Card className="hover-elevate transition-shadow hover:shadow-lg" data-testid={`card-vector-${id}`}>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-2">
-          <div className="space-y-2">
-            <h4 className="text-lg font-semibold leading-tight" data-testid={`text-project-${id}`}>
-              {name}
-            </h4>
-            {description ? (
-              <p className="text-sm text-muted-foreground" data-testid={`text-description-${id}`}>
-                {description}
-              </p>
-            ) : null}
-          </div>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="text-destructive hover:text-destructive-foreground hover:bg-destructive/10"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onDelete();
-            }}
-            data-testid={`button-delete-${id}`}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      </CardHeader>
-    </Card>
-  );
-
-  return (
-    <Link
-      href={href}
-      className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-    >
-      {card}
-    </Link>
   );
 }

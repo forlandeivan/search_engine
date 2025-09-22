@@ -33,7 +33,6 @@ interface CrawlStatusCardProps {
   crawlStatus: CrawlStatus;
   projectName?: string;
   projectDescription?: string | null;
-  projectTypeLabel?: string;
   href?: string;
   onStart?: (id: string) => void;
   onStop?: (id: string) => void;
@@ -107,7 +106,6 @@ export default function CrawlStatusCard({
   crawlStatus,
   projectName,
   projectDescription,
-  projectTypeLabel,
   href,
   onStart,
   onStop,
@@ -152,11 +150,6 @@ export default function CrawlStatusCard({
             <Badge variant={statusColors[crawlStatus.status]}>
               {statusLabels[crawlStatus.status]}
             </Badge>
-            {projectTypeLabel && (
-              <Badge variant="outline" className="hidden sm:inline-flex">
-                {projectTypeLabel}
-              </Badge>
-            )}
           </div>
 
           <div className="flex gap-1">
@@ -214,12 +207,6 @@ export default function CrawlStatusCard({
             )}
           </div>
         </div>
-
-        {projectTypeLabel && (
-          <div className="sm:hidden">
-            <Badge variant="outline">{projectTypeLabel}</Badge>
-          </div>
-        )}
 
         <div className="space-y-1">
           <h4 className="text-lg font-semibold leading-tight" data-testid={`text-project-${crawlStatus.id}`}>
