@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -7,6 +8,16 @@ import { Copy, ExternalLink, Search, Globe, Code2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function TildaApiPage() {
+  const sections = [
+    {
+      id: "tilda",
+      title: "Tilda",
+      description: "Готовая интеграция для сайтов на Tilda.",
+      icon: Globe,
+    },
+  ];
+  const [activeSection, setActiveSection] = useState(sections[0].id);
+
   const currentDomain =
     typeof window !== "undefined" ? window.location.origin : "https://ваш-домен.replit.dev";
   const apiEndpoint = `${currentDomain}/api`;
@@ -399,14 +410,53 @@ export default function TildaApiPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
           <Code2 className="h-8 w-8" />
-          API для интеграции с Тильдой
+          Документация API
         </h1>
         <p className="text-lg text-muted-foreground">
-          Подключите поисковый движок к вашему сайту на Тильде для обеспечения быстрого и релевантного поиска
+          Выберите платформу, чтобы подключить поисковый движок и настроить интеграцию под свои задачи.
         </p>
       </div>
 
-      <Tabs defaultValue="overview" className="space-y-6">
+      <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+        <Card className="h-fit">
+          <CardHeader>
+            <CardTitle>Разделы документации</CardTitle>
+            <CardDescription>Инструкции по интеграциям и виджетам</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {sections.map((section) => {
+              const Icon = section.icon;
+              return (
+                <Button
+                  key={section.id}
+                  variant={activeSection === section.id ? "secondary" : "ghost"}
+                  className="w-full justify-start gap-3"
+                  onClick={() => setActiveSection(section.id)}
+                >
+                  <Icon className="h-4 w-4" />
+                  <div className="flex flex-col items-start">
+                    <span className="font-semibold leading-tight">{section.title}</span>
+                    <span className="text-xs text-muted-foreground">{section.description}</span>
+                  </div>
+                </Button>
+              );
+            })}
+          </CardContent>
+        </Card>
+
+        {activeSection === "tilda" && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-3xl font-bold mb-2 flex items-center gap-2">
+                <Globe className="h-8 w-8" />
+                API для интеграции с Тильдой
+              </h2>
+              <p className="text-lg text-muted-foreground">
+                Подключите поисковый движок к вашему сайту на Тильде для обеспечения быстрого и релевантного поиска
+              </p>
+            </div>
+
+            <Tabs defaultValue="overview" className="space-y-6">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="overview">Обзор</TabsTrigger>
           <TabsTrigger value="search">Поиск</TabsTrigger>
@@ -792,6 +842,9 @@ export default function TildaApiPage() {
           </div>
         </TabsContent>
       </Tabs>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

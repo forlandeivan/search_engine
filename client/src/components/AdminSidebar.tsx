@@ -30,6 +30,7 @@ interface SidebarItem {
   icon: React.ComponentType<{ className?: string }>;
   badge?: string;
   badgeVariant?: "default" | "secondary" | "destructive" | "outline";
+  locked?: boolean;
 }
 
 interface Stats {
@@ -64,6 +65,56 @@ export default function AdminSidebar() {
     return location === item.url;
   };
 
+  const getTestId = (item: SidebarItem) =>
+    `link-${item.title
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/ё/g, "е")}`;
+
+  const renderMenuButton = (item: SidebarItem) => {
+    const content = (
+      <>
+        <item.icon className="h-4 w-4" />
+        <span>{item.title}</span>
+        {item.locked ? (
+          <Badge variant="outline" className="ml-auto text-xs border-dashed text-muted-foreground">
+            PRO
+          </Badge>
+        ) : (
+          item.badge && (
+            <Badge variant={item.badgeVariant || "default"} className="ml-auto text-xs">
+              {item.badge}
+            </Badge>
+          )
+        )}
+      </>
+    );
+
+    if (item.locked) {
+      return (
+        <SidebarMenuButton
+          className="justify-start opacity-60 cursor-not-allowed"
+          disabled
+          tooltip="Доступно в платной версии"
+          data-testid={getTestId(item)}
+        >
+          {content}
+        </SidebarMenuButton>
+      );
+    }
+
+    return (
+      <SidebarMenuButton
+        asChild
+        isActive={isItemActive(item)}
+        className="justify-start"
+        data-testid={getTestId(item)}
+      >
+        <Link href={item.url}>{content}</Link>
+      </SidebarMenuButton>
+    );
+  };
+
   const menuItems: SidebarItem[] = [
     {
       title: "Поиск",
@@ -71,7 +122,7 @@ export default function AdminSidebar() {
       icon: Search,
     },
     {
-      title: "Сайты для краулинга", 
+      title: "Проекты",
       url: "/admin/sites",
       icon: Globe,
       badge: sites ? sites.length.toString() : "0",
@@ -87,20 +138,23 @@ export default function AdminSidebar() {
     {
       title: "Статистика краулинга",
       url: "/admin/stats",
-      icon: Activity
+      icon: Activity,
+      locked: true
     },
     {
       title: "Расписание",
       url: "/admin/schedule",
-      icon: Calendar
+      icon: Calendar,
+      locked: true
     },
     {
       title: "Вебхуки",
       url: "/admin/webhooks",
-      icon: Webhook
+      icon: Webhook,
+      locked: true
     },
     {
-      title: "API для Тильды",
+      title: "Документация API",
       url: "/admin/api",
       icon: BookOpen
     },
@@ -125,24 +179,7 @@ export default function AdminSidebar() {
             <SidebarMenu>
               {menuItems.slice(0, 2).map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isItemActive(item)}
-                    data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-')}`}
-                  >
-                    <Link href={item.url}>
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                      {item.badge && (
-                        <Badge 
-                          variant={item.badgeVariant || "default"} 
-                          className="ml-auto text-xs"
-                        >
-                          {item.badge}
-                        </Badge>
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
+                  {renderMenuButton(item)}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
@@ -155,24 +192,7 @@ export default function AdminSidebar() {
             <SidebarMenu>
               {menuItems.slice(2, 6).map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isItemActive(item)}
-                    data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-').replace(/ё/g, 'е')}`}
-                  >
-                    <Link href={item.url}>
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                      {item.badge && (
-                        <Badge 
-                          variant={item.badgeVariant || "default"} 
-                          className="ml-auto text-xs"
-                        >
-                          {item.badge}
-                        </Badge>
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
+                  {renderMenuButton(item)}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
@@ -185,24 +205,7 @@ export default function AdminSidebar() {
             <SidebarMenu>
               {menuItems.slice(6).map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isItemActive(item)}
-                    data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, '-')}`}
-                  >
-                    <Link href={item.url}>
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                      {item.badge && (
-                        <Badge 
-                          variant={item.badgeVariant || "default"} 
-                          className="ml-auto text-xs"
-                        >
-                          {item.badge}
-                        </Badge>
-                      )}
-                    </Link>
-                  </SidebarMenuButton>
+                  {renderMenuButton(item)}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
