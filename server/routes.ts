@@ -61,10 +61,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertSiteSchema.parse(req.body);
       const newSite = await storage.createSite(validatedData);
-      
+
       // Invalidate CORS cache since a new site was added
       invalidateCorsCache();
-      console.log(`CORS cache invalidated after creating site: ${newSite.url}`);
+      console.log(`CORS cache invalidated after creating site: ${newSite.url ?? 'без URL'}`);
       
       res.status(201).json(newSite);
     } catch (error) {
@@ -119,10 +119,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updatedSite) {
         return res.status(404).json({ error: "Site not found" });
       }
-      
+
       // Invalidate CORS cache since site was updated (URL might have changed)
       invalidateCorsCache();
-      console.log(`CORS cache invalidated after updating site: ${updatedSite.url}`);
+      console.log(`CORS cache invalidated after updating site: ${updatedSite.url ?? 'без URL'}`);
       
       res.json(updatedSite);
     } catch (error) {
@@ -159,6 +159,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Site not found" });
       }
 
+      if (!site.url) {
+        return res.status(400).json({ error: "Site URL is not configured" });
+      }
+
       // Start crawling in background
       crawler.crawlSite(req.params.id).catch(error => {
         console.error(`Background crawl failed for site ${req.params.id}:`, error);
@@ -179,6 +183,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Site not found" });
       }
 
+      if (!site.url) {
+        return res.status(400).json({ error: "Site URL is not configured" });
+      }
+
       // Check if site is already being crawled
       if (site.status === 'crawling') {
         return res.status(400).json({ error: "Site is already being crawled" });
@@ -186,7 +194,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get current page count before recrawling for logging
       const existingPages = await storage.getPagesBySiteId(req.params.id);
-      console.log(`Starting recrawl for site ${site.url} - currently has ${existingPages.length} pages`);
+      console.log(`Starting recrawl for site ${site.url ?? 'без URL'} - currently has ${existingPages.length} pages`);
 
       // Start re-crawling in background (uses same logic as regular crawl)
       // The crawler already handles duplicates by checking existing URLs

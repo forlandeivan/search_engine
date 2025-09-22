@@ -109,6 +109,8 @@ export class DatabaseStorage implements IStorage {
     const result = await this.db.execute(sql`
       SELECT
         "id",
+        "name" AS "name",
+        "description" AS "description",
         "url",
         "crawl_depth" AS "crawlDepth",
         "follow_external_links" AS "followExternalLinks",
@@ -137,6 +139,8 @@ export class DatabaseStorage implements IStorage {
     const result = await this.db.execute(sql`
       SELECT
         "id",
+        "name" AS "name",
+        "description" AS "description",
         "url",
         "crawl_depth" AS "crawlDepth",
         "follow_external_links" AS "followExternalLinks",
@@ -176,6 +180,8 @@ export class DatabaseStorage implements IStorage {
 
     const result = await this.db.execute(sql`
       INSERT INTO "sites" (
+        "name",
+        "description",
         "url",
         "crawl_depth",
         "follow_external_links",
@@ -186,7 +192,9 @@ export class DatabaseStorage implements IStorage {
         "next_crawl",
         "error"
       ) VALUES (
-        ${site.url},
+        ${siteData.name ?? "Новый проект"},
+        ${siteData.description ?? null},
+        ${siteData.url ?? null},
         ${siteData.crawlDepth ?? 3},
         ${siteData.followExternalLinks ?? false},
         ${siteData.crawlFrequency ?? "daily"},
@@ -198,6 +206,8 @@ export class DatabaseStorage implements IStorage {
       )
       RETURNING
         "id",
+        "name",
+        "description",
         "url",
         "crawl_depth" AS "crawlDepth",
         "follow_external_links" AS "followExternalLinks",
@@ -246,6 +256,12 @@ export class DatabaseStorage implements IStorage {
     const { searchSettings: _ignored, ...legacyUpdates } = updates;
     const setFragments = [] as SQL[];
 
+    if (legacyUpdates.name !== undefined) {
+      setFragments.push(sql`"name" = ${legacyUpdates.name}`);
+    }
+    if (legacyUpdates.description !== undefined) {
+      setFragments.push(sql`"description" = ${legacyUpdates.description}`);
+    }
     if (legacyUpdates.url !== undefined) {
       setFragments.push(sql`"url" = ${legacyUpdates.url}`);
     }
@@ -286,6 +302,8 @@ export class DatabaseStorage implements IStorage {
       WHERE "id" = ${id}
       RETURNING
         "id",
+        "name",
+        "description",
         "url",
         "crawl_depth" AS "crawlDepth",
         "follow_external_links" AS "followExternalLinks",

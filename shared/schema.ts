@@ -119,7 +119,9 @@ const tsvector = customType<{ data: unknown; driverData: unknown }>({
 // Sites table for storing crawl configurations
 export const sites = pgTable("sites", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  url: text("url").notNull().unique(),
+  name: text("name").notNull().default("Новый проект"),
+  description: text("description"),
+  url: text("url").unique(),
   crawlDepth: integer("crawl_depth").notNull().default(3),
   followExternalLinks: boolean("follow_external_links").notNull().default(false),
   crawlFrequency: text("crawl_frequency").notNull().default("daily"), // "manual" | "hourly" | "daily" | "weekly"

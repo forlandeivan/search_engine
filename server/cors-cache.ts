@@ -21,6 +21,9 @@ export async function refreshCorsCache(): Promise<Set<string>> {
     
     // Process database sites and extract hostnames
     for (const site of sites) {
+      if (!site.url) {
+        continue;
+      }
       try {
         const url = new URL(site.url);
         hostnames.add(url.hostname);
