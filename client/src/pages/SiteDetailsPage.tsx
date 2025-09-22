@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "wouter";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import SearchBar from "@/components/SearchBar";
 import SearchResultComponent, { type SearchResult } from "@/components/SearchResult";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AlertCircle, ArrowLeft, Globe, Info, Loader2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
@@ -18,7 +20,9 @@ import { defaultSearchSettings, type SearchSettings } from "@shared/schema";
 
 interface Site {
   id: string;
-  url: string;
+  name?: string;
+  description?: string | null;
+  url?: string | null;
   status: string;
   crawlDepth?: number;
   followExternalLinks?: boolean;
@@ -180,19 +184,19 @@ const searchSettingsSections: Array<{
   },
   {
     title: "Поиск внутри коллекции",
-    description: "Настройки выдачи на вкладке \"Поисковая строка\" для выбранного сайта",
+    description: "Настройки выдачи на вкладке \"Поисковая строка\" для выбранного проекта",
     fields: [
       {
         path: ["collectionSearch", "similarityTitleThreshold"],
         label: "Порог similarity (заголовок)",
-        tooltip: "Минимальное значение similarity(title, запрос) для отображения результата в поиске по сайту.",
+        tooltip: "Минимальное значение similarity(title, запрос) для отображения результата в поиске по проекту.",
         min: 0,
         step: 0.01,
       },
       {
         path: ["collectionSearch", "similarityContentThreshold"],
         label: "Порог similarity (контент)",
-        tooltip: "Минимальное значение similarity(content, запрос) в поиске по сайту.",
+        tooltip: "Минимальное значение similarity(content, запрос) в поиске по проекту.",
         min: 0,
         step: 0.01,
       },
@@ -248,6 +252,30 @@ const searchSettingsSections: Array<{
   },
 ];
 
+const cronPresets = [
+  { label: "Каждый час", value: "0 * * * *" },
+  { label: "Каждый день в 03:00", value: "0 3 * * *" },
+  { label: "Каждый понедельник в 10:00", value: "0 10 * * 1" },
+];
+
+const frequencyAliases: Record<string, string> = {
+  hourly: "0 * * * *",
+  daily: "0 3 * * *",
+  weekly: "0 3 * * 1",
+};
+
+const resolveFrequency = (value?: string | null): { mode: "manual" | "cron"; expression: string } => {
+  if (!value || value === "manual") {
+    return { mode: "manual", expression: "" };
+  }
+
+  if (value.startsWith("cron:")) {
+    return { mode: "cron", expression: value.slice("cron:".length) };
+  }
+
+  return { mode: "cron", expression: frequencyAliases[value] ?? "" };
+};
+
 export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
   const normalizedSiteId = siteId;
   const [activeTab, setActiveTab] = useState("search");
@@ -258,6 +286,11 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
   const { toast } = useToast();
   const [settingsForm, setSettingsForm] = useState<SearchSettings>(cloneSearchSettings());
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
+  const [projectUrl, setProjectUrl] = useState("");
+  const [crawlMode, setCrawlMode] = useState<"manual" | "cron">("manual");
+  const [cronExpression, setCronExpression] = useState("");
 
   const {
     data: site,
@@ -269,7 +302,7 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
     queryFn: async () => {
       const response = await fetch(`/api/sites/${normalizedSiteId}`);
       if (!response.ok) {
-        throw new Error("Не удалось загрузить информацию о сайте");
+        throw new Error("Не удалось загрузить информацию о проекте");
       }
       return response.json();
     }
@@ -285,7 +318,7 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
     queryFn: async () => {
       const response = await fetch(`/api/sites/${normalizedSiteId}/pages`);
       if (!response.ok) {
-        throw new Error("Не удалось загрузить страницы сайта");
+        throw new Error("Не удалось загрузить страницы проекта");
       }
       return response.json();
     }
@@ -308,15 +341,68 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
 
       const response = await fetch(`/api/search?${params.toString()}`);
       if (!response.ok) {
-        throw new Error("Поиск по сайту завершился ошибкой");
+        throw new Error("Поиск по проекту завершился ошибкой");
       }
       return response.json();
     }
   });
 
+  const updateProjectInfoMutation = useMutation({
+    mutationFn: async (payload: { name: string; description?: string | null; url?: string | null }) => {
+      const response = await apiRequest("PUT", `/api/sites/${normalizedSiteId}`, payload);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["site", normalizedSiteId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sites/extended"] });
+      toast({
+        title: "Данные проекта обновлены",
+        description: "Название, описание и URL успешно сохранены.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Не удалось сохранить проект",
+        description: "Проверьте соединение и попробуйте снова.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateScheduleMutation = useMutation({
+    mutationFn: async (payload: { crawlFrequency: string }) => {
+      const response = await apiRequest("PUT", `/api/sites/${normalizedSiteId}`, payload);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["site", normalizedSiteId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sites/extended"] });
+      toast({
+        title: "Расписание обновлено",
+        description: "Новая стратегия краулинга сохранена.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Не удалось сохранить расписание",
+        description: "Попробуйте указать корректное выражение или повторите позже.",
+        variant: "destructive",
+      });
+    },
+  });
+
   useEffect(() => {
     setSettingsForm(cloneSearchSettings(site?.searchSettings));
   }, [site?.searchSettings]);
+
+  useEffect(() => {
+    setProjectName(site?.name ?? "");
+    setProjectDescription(site?.description ?? "");
+    setProjectUrl(site?.url ?? "");
+    const { mode, expression } = resolveFrequency(site?.crawlFrequency);
+    setCrawlMode(mode);
+    setCronExpression(expression);
+  }, [site?.name, site?.description, site?.url, site?.crawlFrequency]);
 
   const searchResults = searchData?.results ?? [];
   const totalResults = searchData?.total ?? 0;
@@ -349,6 +435,46 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
         next.add(id);
       }
       return next;
+    });
+  };
+
+  const handleSaveProjectInfo = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedName = projectName.trim();
+    const trimmedDescription = projectDescription.trim();
+    const trimmedUrl = projectUrl.trim();
+
+    if (!trimmedName) {
+      toast({
+        title: "Введите название проекта",
+        description: "Название не может быть пустым.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    updateProjectInfoMutation.mutate({
+      name: trimmedName,
+      description: trimmedDescription ? trimmedDescription : null,
+      url: trimmedUrl ? trimmedUrl : null,
+    });
+  };
+
+  const handleSaveSchedule = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedExpression = cronExpression.trim();
+
+    if (crawlMode === "cron" && !trimmedExpression) {
+      toast({
+        title: "Укажите cron выражение",
+        description: "Без расписания проект останется в ручном режиме.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    updateScheduleMutation.mutate({
+      crawlFrequency: crawlMode === "cron" ? `cron:${trimmedExpression}` : "manual",
     });
   };
 
@@ -411,7 +537,7 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
         <Link href="/admin/sites">
           <Button variant="ghost" className="gap-2" data-testid="button-back-sites">
             <ArrowLeft className="h-4 w-4" />
-            Назад к списку сайтов
+            Назад к проектам
           </Button>
         </Link>
         {site?.status && (
@@ -431,22 +557,29 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
         <Card>
           <CardContent className="flex flex-col items-center justify-center gap-4 py-12 text-center text-muted-foreground">
             <AlertCircle className="h-6 w-6 text-destructive" />
-            <p>Не удалось загрузить информацию о сайте.</p>
+            <p>Не удалось загрузить информацию о проекте.</p>
           </CardContent>
         </Card>
       ) : site ? (
         <>
           <Card>
-            <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <div className="flex items-center gap-3">
+            <CardHeader className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div className="flex items-start gap-3">
                 <Globe className="h-5 w-5 text-primary" />
-                <div>
-                  <CardTitle className="text-xl" data-testid="text-site-url">
-                    {site.url}
+                <div className="space-y-2">
+                  <CardTitle className="text-2xl font-semibold" data-testid="text-project-name">
+                    {site.name || "Без названия"}
                   </CardTitle>
-                  <CardDescription>
-                    Управление краулингом и поиском для выбранного сайта
-                  </CardDescription>
+                  {site.description ? (
+                    <CardDescription className="max-w-2xl leading-relaxed">{site.description}</CardDescription>
+                  ) : (
+                    <CardDescription>
+                      Управление знаниями, краулингом и поиском внутри выбранного проекта
+                    </CardDescription>
+                  )}
+                  <p className="text-sm text-muted-foreground break-all" data-testid="text-site-url">
+                    {site.url ?? "URL не указан"}
+                  </p>
                 </div>
               </div>
               <div className="text-sm text-muted-foreground">
@@ -485,15 +618,15 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
             <TabsContent value="search" className="mt-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Поиск по сайту</CardTitle>
+                  <CardTitle>Поиск по проекту</CardTitle>
                   <CardDescription>
-                    Проверьте, как работает поисковый движок для выбранного сайта
+                    Проверьте, как работает поисковый движок внутри выбранного проекта
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <SearchBar
                     onSearch={handleSearch}
-                    placeholder="Введите запрос для поиска по сайту"
+                    placeholder="Введите запрос для поиска по проекту"
                     defaultValue={searchQuery}
                   />
 
@@ -517,7 +650,7 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
                   ) : searchError ? (
                     <div className="flex flex-col items-center gap-2 py-12 text-center text-muted-foreground">
                       <AlertCircle className="h-6 w-6 text-destructive" />
-                      <p>Не удалось выполнить поиск по сайту. Попробуйте позже.</p>
+                      <p>Не удалось выполнить поиск по проекту. Попробуйте позже.</p>
                     </div>
                   ) : searchResults.length > 0 ? (
                     <div className="space-y-4">
@@ -558,7 +691,7 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
                     </div>
                   ) : (
                     <div className="py-12 text-center text-muted-foreground">
-                      Введите запрос, чтобы выполнить поиск по этому сайту
+                      Введите запрос, чтобы выполнить поиск по этому проекту
                     </div>
                   )}
                 </CardContent>
@@ -568,9 +701,9 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
             <TabsContent value="pages" className="mt-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Страницы сайта</CardTitle>
+                  <CardTitle>Страницы проекта</CardTitle>
                   <CardDescription>
-                    Последние проиндексированные страницы для выбранного сайта
+                    Последние проиндексированные страницы для выбранного проекта
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -581,7 +714,7 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
                   ) : pagesError ? (
                     <div className="flex flex-col items-center gap-2 py-12 text-center text-muted-foreground">
                       <AlertCircle className="h-6 w-6 text-destructive" />
-                      <p>Не удалось загрузить страницы сайта.</p>
+                      <p>Не удалось загрузить страницы проекта.</p>
                     </div>
                   ) : pages && pages.length > 0 ? (
                     <div className="space-y-4">
@@ -612,7 +745,7 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
                     </div>
                   ) : (
                     <div className="py-12 text-center text-muted-foreground">
-                      Для этого сайта еще нет проиндексированных страниц
+                      Для этого проекта еще нет проиндексированных страниц
                     </div>
                   )}
                 </CardContent>
@@ -622,9 +755,175 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
             <TabsContent value="settings" className="mt-4 space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle>Настройки краулинга</CardTitle>
+                  <CardTitle>Паспорт проекта</CardTitle>
                   <CardDescription>
-                    Текущие настройки и ограничения для краулинга сайта
+                    Обновите название, описание и основной адрес проекта.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSaveProjectInfo}>
+                    <div className="space-y-2">
+                      <Label htmlFor="project-name">Название</Label>
+                      <Input
+                        id="project-name"
+                        value={projectName}
+                        onChange={(event) => setProjectName(event.target.value)}
+                        placeholder="Название проекта"
+                        data-testid="input-project-name-details"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="project-url">Основной URL</Label>
+                      <Input
+                        id="project-url"
+                        value={projectUrl}
+                        onChange={(event) => setProjectUrl(event.target.value)}
+                        placeholder="https://example.com"
+                        data-testid="input-project-url-details"
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="project-description">Описание</Label>
+                      <Textarea
+                        id="project-description"
+                        value={projectDescription}
+                        onChange={(event) => setProjectDescription(event.target.value)}
+                        placeholder="Кратко опишите, какие знания хранит проект"
+                        rows={4}
+                        data-testid="textarea-project-description-details"
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2 md:col-span-2">
+                      <Button
+                        type="submit"
+                        disabled={updateProjectInfoMutation.isPending || !projectName.trim()}
+                        data-testid="button-save-project-details"
+                      >
+                        {updateProjectInfoMutation.isPending ? "Сохранение..." : "Сохранить изменения"}
+                      </Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Планировщик краулинга</CardTitle>
+                  <CardDescription>
+                    Выберите ручной запуск или автоматическое расписание по cron.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form className="space-y-4" onSubmit={handleSaveSchedule}>
+                    <RadioGroup
+                      value={crawlMode}
+                      onValueChange={(value) => setCrawlMode(value as "manual" | "cron")}
+                      className="grid gap-4 sm:grid-cols-2"
+                    >
+                      <div
+                        className={`rounded-lg border p-4 transition ${
+                          crawlMode === "manual" ? "border-primary shadow-sm" : "border-border"
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <RadioGroupItem id="crawl-mode-manual" value="manual" className="mt-1" />
+                          <div className="space-y-1">
+                            <Label htmlFor="crawl-mode-manual" className="font-medium">
+                              Запуск вручную
+                            </Label>
+                            <p className="text-sm text-muted-foreground">
+                              Подходит для разовых обновлений. Вы сами решаете, когда запускать обход.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div
+                        className={`rounded-lg border p-4 transition ${
+                          crawlMode === "cron" ? "border-primary shadow-sm" : "border-border"
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <RadioGroupItem id="crawl-mode-cron" value="cron" className="mt-1" />
+                          <div className="space-y-1">
+                            <Label htmlFor="crawl-mode-cron" className="font-medium">
+                              Автоматический cron
+                            </Label>
+                            <p className="text-sm text-muted-foreground">
+                              Настройте расписание в формате cron. Система запустит обход автоматически.
+                            </p>
+                          </div>
+                        </div>
+                        {crawlMode === "cron" && (
+                          <div className="mt-4 space-y-2">
+                            <Label htmlFor="cron-expression">Cron выражение</Label>
+                            <Input
+                              id="cron-expression"
+                              value={cronExpression}
+                              onChange={(event) => setCronExpression(event.target.value)}
+                              placeholder="0 3 * * *"
+                              data-testid="input-cron-expression"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Формат: минуту, час, день месяца, месяц, день недели. Например, "0 3 * * *" — каждый день в 03:00.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </RadioGroup>
+
+                    {crawlMode === "cron" && (
+                      <div className="flex flex-wrap gap-2" data-testid="cron-presets">
+                        {cronPresets.map((preset) => (
+                          <Button
+                            key={preset.value}
+                            type="button"
+                            variant="outline"
+                            onClick={() => setCronExpression(preset.value)}
+                          >
+                            {preset.label}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        type="submit"
+                        disabled={
+                          updateScheduleMutation.isPending || (crawlMode === "cron" && !cronExpression.trim())
+                        }
+                        data-testid="button-save-schedule"
+                      >
+                        {updateScheduleMutation.isPending ? "Сохранение..." : "Сохранить расписание"}
+                      </Button>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <Card className="border-dashed">
+                <CardHeader>
+                  <CardTitle>Знания проекта</CardTitle>
+                  <CardDescription>
+                    Раздел для ручной загрузки документов появится в ближайших обновлениях.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col items-start gap-3 text-sm text-muted-foreground">
+                  <p>
+                    Подготовьте инструкции, PDF и ссылки заранее — скоро их можно будет загрузить сюда и связать с поиском.
+                  </p>
+                  <Button variant="outline" disabled data-testid="button-add-knowledge-disabled">
+                    Добавить знания вручную (скоро)
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Текущие параметры обхода</CardTitle>
+                  <CardDescription>
+                    Сводка по исключениям и статусу последнего запуска краулинга
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">

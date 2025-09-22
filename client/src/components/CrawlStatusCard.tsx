@@ -12,10 +12,10 @@ import {
   Square,
   RefreshCw,
   Trash2,
-  ArrowRight
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
+import type { MouseEvent } from "react";
 
 interface CrawlStatus {
   id: string;
@@ -31,6 +31,9 @@ interface CrawlStatus {
 
 interface CrawlStatusCardProps {
   crawlStatus: CrawlStatus;
+  projectName?: string;
+  projectDescription?: string | null;
+  href?: string;
   onStart?: (id: string) => void;
   onStop?: (id: string) => void;
   onRetry?: (id: string) => void;
@@ -42,21 +45,21 @@ const statusIcons = {
   idle: Clock,
   crawling: Loader2,
   completed: CheckCircle,
-  failed: AlertCircle
+  failed: AlertCircle,
 };
 
 const statusColors = {
   idle: "secondary",
   crawling: "default",
-  completed: "default", 
-  failed: "destructive"
+  completed: "default",
+  failed: "destructive",
 } as const;
 
 const statusLabels = {
   idle: "Ожидает",
   crawling: "Краулится",
   completed: "Завершено",
-  failed: "Ошибка"
+  failed: "Ошибка",
 };
 
 const LESS_THAN_MINUTE_THRESHOLD = 60 * 1000;
@@ -75,37 +78,40 @@ function formatLastCrawled(date: Date) {
   if (diff < 0) {
     return {
       label: formatDistanceToNow(lastCrawledDate, { addSuffix: true, locale: ru }),
-      title: absolute
+      title: absolute,
     };
   }
 
   if (diff < LESS_THAN_MINUTE_THRESHOLD) {
     return {
       label: "меньше минуты назад",
-      title: absolute
+      title: absolute,
     };
   }
 
   if (diff < WEEK_IN_MS) {
     return {
       label: formatDistanceToNow(lastCrawledDate, { addSuffix: true, locale: ru }),
-      title: absolute
+      title: absolute,
     };
   }
 
   return {
     label: absolute,
-    title: absolute
+    title: absolute,
   };
 }
 
 export default function CrawlStatusCard({
   crawlStatus,
+  projectName,
+  projectDescription,
+  href,
   onStart,
   onStop,
   onRetry,
   onRecrawl,
-  onDelete
+  onDelete,
 }: CrawlStatusCardProps) {
   const StatusIcon = statusIcons[crawlStatus.status];
   const isCrawling = crawlStatus.status === "crawling";
@@ -113,98 +119,124 @@ export default function CrawlStatusCard({
     ? formatLastCrawled(crawlStatus.lastCrawled)
     : null;
 
-  return (
-    <Card className="hover-elevate" data-testid={`card-crawl-${crawlStatus.id}`}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <div className="flex items-center gap-2">
-          <StatusIcon 
-            className={`h-4 w-4 ${isCrawling ? 'animate-spin' : ''} ${
-              crawlStatus.status === 'failed' ? 'text-destructive' : 
-              crawlStatus.status === 'completed' ? 'text-green-500' : ''
-            }`} 
-          />
-          <Badge variant={statusColors[crawlStatus.status]}>
-            {statusLabels[crawlStatus.status]}
-          </Badge>
+  const handleActionClick = (
+    event: MouseEvent<HTMLButtonElement>,
+    action?: (id: string) => void,
+  ) => {
+    event.stopPropagation();
+    if (href) {
+      event.preventDefault();
+    }
+    action?.(crawlStatus.id);
+  };
+
+  const card = (
+    <Card
+      className={`hover-elevate ${href ? "transition-shadow hover:shadow-lg" : ""}`}
+      data-testid={`card-crawl-${crawlStatus.id}`}
+    >
+      <CardHeader className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <StatusIcon
+              className={`h-4 w-4 ${isCrawling ? "animate-spin" : ""} ${
+                crawlStatus.status === "failed"
+                  ? "text-destructive"
+                  : crawlStatus.status === "completed"
+                  ? "text-green-500"
+                  : ""
+              }`}
+            />
+            <Badge variant={statusColors[crawlStatus.status]}>
+              {statusLabels[crawlStatus.status]}
+            </Badge>
+          </div>
+
+          <div className="flex gap-1">
+            {crawlStatus.status === "idle" && onStart && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={(event) => handleActionClick(event, onStart)}
+                data-testid={`button-start-${crawlStatus.id}`}
+              >
+                <Play className="h-3 w-3" />
+              </Button>
+            )}
+            {crawlStatus.status === "crawling" && onStop && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={(event) => handleActionClick(event, onStop)}
+                data-testid={`button-stop-${crawlStatus.id}`}
+              >
+                <Square className="h-3 w-3" />
+              </Button>
+            )}
+            {crawlStatus.status === "failed" && onRetry && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={(event) => handleActionClick(event, onRetry)}
+                data-testid={`button-retry-${crawlStatus.id}`}
+              >
+                <RefreshCw className="h-3 w-3" />
+              </Button>
+            )}
+            {crawlStatus.status === "completed" && onRecrawl && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={(event) => handleActionClick(event, onRecrawl)}
+                data-testid={`button-recrawl-${crawlStatus.id}`}
+                title="Повторный краулинг для поиска новых страниц"
+              >
+                <RefreshCw className="h-3 w-3" />
+              </Button>
+            )}
+            {onDelete && crawlStatus.status !== "crawling" && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={(event) => handleActionClick(event, onDelete)}
+                data-testid={`button-delete-${crawlStatus.id}`}
+                className="text-destructive hover:text-destructive-foreground hover:bg-destructive"
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            )}
+          </div>
         </div>
-        
-        <div className="flex gap-1">
-          {crawlStatus.status === "idle" && onStart && (
-            <Button 
-              size="sm" 
-              variant="outline"
-              onClick={() => onStart(crawlStatus.id)}
-              data-testid={`button-start-${crawlStatus.id}`}
-            >
-              <Play className="h-3 w-3" />
-            </Button>
+
+        <div className="space-y-1">
+          <h4 className="text-lg font-semibold leading-tight" data-testid={`text-project-${crawlStatus.id}`}>
+            {projectName ?? crawlStatus.url}
+          </h4>
+          {projectDescription && (
+            <p className="line-clamp-2 text-sm text-muted-foreground">{projectDescription}</p>
           )}
-          {crawlStatus.status === "crawling" && onStop && (
-            <Button 
-              size="sm" 
-              variant="outline"
-              onClick={() => onStop(crawlStatus.id)}
-              data-testid={`button-stop-${crawlStatus.id}`}
-            >
-              <Square className="h-3 w-3" />
-            </Button>
-          )}
-          {crawlStatus.status === "failed" && onRetry && (
-            <Button 
-              size="sm" 
-              variant="outline"
-              onClick={() => onRetry(crawlStatus.id)}
-              data-testid={`button-retry-${crawlStatus.id}`}
-            >
-              <RefreshCw className="h-3 w-3" />
-            </Button>
-          )}
-          {crawlStatus.status === "completed" && onRecrawl && (
-            <Button 
-              size="sm" 
-              variant="outline"
-              onClick={() => onRecrawl(crawlStatus.id)}
-              data-testid={`button-recrawl-${crawlStatus.id}`}
-              title="Повторный краулинг для поиска новых страниц"
-            >
-              <RefreshCw className="h-3 w-3" />
-            </Button>
-          )}
-          {onDelete && crawlStatus.status !== "crawling" && (
-            <Button 
-              size="sm" 
-              variant="outline"
-              onClick={() => onDelete(crawlStatus.id)}
-              data-testid={`button-delete-${crawlStatus.id}`}
-              className="text-destructive hover:text-destructive-foreground hover:bg-destructive"
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
+          {crawlStatus.url && (
+            <p className="break-all text-xs text-muted-foreground" data-testid={`text-url-${crawlStatus.id}`}>
+              {crawlStatus.url}
+            </p>
           )}
         </div>
       </CardHeader>
-      
+
       <CardContent className="space-y-3">
-        <div>
-          <h4 className="font-medium text-sm mb-1" data-testid={`text-url-${crawlStatus.id}`}>
-            {crawlStatus.url}
-          </h4>
-          {crawlStatus.error && (
-            <p className="text-destructive text-xs" data-testid={`text-error-${crawlStatus.id}`}>
-              {crawlStatus.error}
-            </p>
-          )}
-        </div>
-        
+        {crawlStatus.error && (
+          <p className="text-xs text-destructive" data-testid={`text-error-${crawlStatus.id}`}>
+            {crawlStatus.error}
+          </p>
+        )}
+
         {isCrawling && (
           <div className="space-y-2">
             <Progress value={crawlStatus.progress} className="h-2" />
-            <p className="text-xs text-muted-foreground">
-              Прогресс: {crawlStatus.progress}%
-            </p>
+            <p className="text-xs text-muted-foreground">Прогресс: {crawlStatus.progress}%</p>
           </div>
         )}
-        
+
         <div className="grid grid-cols-2 gap-4 text-xs">
           <div>
             <span className="text-muted-foreground">Найдено страниц:</span>
@@ -219,29 +251,31 @@ export default function CrawlStatusCard({
             </p>
           </div>
         </div>
-        
+
         {lastCrawledInfo && (
           <p className="text-xs text-muted-foreground" title={lastCrawledInfo.title}>
             Последнее сканирование: {lastCrawledInfo.label}
           </p>
         )}
-        
+
         {crawlStatus.nextCrawl && (
           <p className="text-xs text-muted-foreground">
-            Следующее сканирование: {crawlStatus.nextCrawl.toLocaleString('ru')}
+            Следующее сканирование: {crawlStatus.nextCrawl.toLocaleString("ru")}
           </p>
         )}
-
-        <div className="flex justify-end">
-          <Link href={`/admin/sites/${crawlStatus.id}`}>
-            <Button variant="secondary" size="sm" className="gap-1" data-testid={`button-manage-${crawlStatus.id}`}>
-              Управление
-              <ArrowRight className="h-3 w-3" />
-            </Button>
-          </Link>
-        </div>
       </CardContent>
     </Card>
+  );
+
+  return href ? (
+    <Link
+      href={href}
+      className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+    >
+      {card}
+    </Link>
+  ) : (
+    card
   );
 }
 

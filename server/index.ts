@@ -112,7 +112,7 @@ app.use((req, res, next) => {
     const stuckSites = sites.filter(site => site.status === 'crawling');
     for (const site of stuckSites) {
       await storage.updateSite(site.id, { status: 'idle' });
-      log(`Reset stuck crawling status for site: ${site.url}`);
+      log(`Reset stuck crawling status for site: ${site.url ?? 'без URL'}`);
     }
   } catch (error) {
     log(`Warning: Failed to reset stuck crawling sites: ${error}`);

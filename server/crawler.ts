@@ -46,6 +46,14 @@ export class WebCrawler {
         throw new Error(`Site with ID ${siteId} not found`);
       }
 
+      if (!site.url) {
+        await storage.updateSite(siteId, {
+          status: 'idle',
+          error: 'URL не задан для проекта'
+        });
+        throw new Error(`Site with ID ${siteId} does not have a configured URL`);
+      }
+
       this.currentSiteId = siteId;
       this.shouldStop = false;
       this.activeCrawls.set(siteId, true);

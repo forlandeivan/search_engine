@@ -54,14 +54,14 @@ export default function AdminPage() {
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       setShowAddForm(false);
       toast({
-        title: "Сайт добавлен",
-        description: "Сайт успешно добавлен для краулинга",
+        title: "Проект добавлен",
+        description: "Проект успешно добавлен для краулинга",
       });
     },
     onError: () => {
       toast({
         title: "Ошибка",
-        description: "Не удалось добавить сайт",
+        description: "Не удалось добавить проект",
         variant: "destructive",
       });
     },
@@ -78,7 +78,7 @@ export default function AdminPage() {
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       toast({
         title: "Краулинг запущен",
-        description: "Краулинг сайта успешно запущен",
+        description: "Краулинг проекта успешно запущен",
       });
     },
   });
@@ -94,7 +94,7 @@ export default function AdminPage() {
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       toast({
         title: "Краулинг остановлен",
-        description: "Краулинг сайта остановлен",
+        description: "Краулинг проекта остановлен",
       });
     },
   });
@@ -143,6 +143,24 @@ export default function AdminPage() {
     recrawlMutation.mutate(siteId);
   };
 
+  const mapCrawlStatus = (status: Site & { pagesFound?: number; pagesIndexed?: number }): CrawlStatus => ({
+    id: status.id,
+    url: status.url ?? "URL не задан",
+    status: (status.status ?? "idle") as CrawlStatus["status"],
+    progress: 0,
+    pagesFound: status.pagesFound ?? 0,
+    pagesIndexed: status.pagesIndexed ?? status.pagesFound ?? 0,
+    lastCrawled: status.lastCrawled ? new Date(status.lastCrawled) : undefined,
+    nextCrawl: status.nextCrawl ? new Date(status.nextCrawl) : undefined,
+    error: status.error ?? undefined,
+  });
+
+  const getProjectName = (status: Site & { name?: string | null }) =>
+    status.name || status.url || "Без названия";
+
+  const getProjectDescription = (status: Site & { description?: string | null }) =>
+    status.description ?? undefined;
+
   // Emergency stop all crawls mutation
   const emergencyStopMutation = useMutation({
     mutationFn: async () => {
@@ -179,15 +197,15 @@ export default function AdminPage() {
       queryClient.invalidateQueries({ queryKey: ['/api/sites/extended'] });
       queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
       toast({
-        title: "Сайт удален",
-        description: "Сайт успешно удален",
+        title: "Проект удален",
+        description: "Проект успешно удален",
       });
       setSiteToDelete(null);
     } catch (error) {
       console.error('Error deleting site:', error);
       toast({
         title: "Ошибка",
-        description: "Не удалось удалить сайт",
+        description: "Не удалось удалить проект",
         variant: "destructive",
       });
     }
@@ -210,7 +228,7 @@ export default function AdminPage() {
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Управление краулингом</h1>
+            <h1 className="text-2xl font-bold">Управление проектами</h1>
             {stats?.sites?.crawling && stats.sites.crawling > 0 && (
               <Badge variant="secondary" className="animate-pulse">
                 {stats.sites.crawling} активн{stats.sites.crawling === 1 ? 'ый' : 'ых'}
@@ -218,7 +236,7 @@ export default function AdminPage() {
             )}
           </div>
           <p className="text-muted-foreground">
-            Настройте сайты для индексации и отслеживайте процесс краулинга
+            Управляйте знаниями ваших проектов. Настраивайте автоматический краулинг сайтов или загружайте вручную
           </p>
         </div>
         <div className="flex gap-2">
@@ -255,13 +273,13 @@ export default function AdminPage() {
               </AlertDialogContent>
             </AlertDialog>
           )}
-          <Button 
+          <Button
             onClick={() => setShowAddForm(true)}
-            data-testid="button-add-site"
+            data-testid="button-add-project"
             className="gap-2"
           >
             <Plus className="h-4 w-4" />
-            Добавить сайт
+            Добавить проект
           </Button>
         </div>
       </div>
@@ -312,21 +330,21 @@ export default function AdminPage() {
               {filteredStatuses.map((status) => (
                 <CrawlStatusCard
                   key={status.id}
-                  crawlStatus={{
-                    ...status,
-                    status: status.status as "idle" | "crawling" | "completed" | "failed",
-                    progress: 0, // Placeholder, actual progress might come from elsewhere
-                    pagesFound: (status as any).pagesFound || 0, // Real data from extended endpoint
-                    pagesIndexed: (status as any).pagesIndexed || 0, // Real data from extended endpoint
-                    lastCrawled: status.lastCrawled || undefined,
-                    nextCrawl: status.nextCrawl || undefined,
-                    error: status.error || undefined,
-                  }}
+                  crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
+                  projectName={getProjectName(status)}
+                  projectDescription={getProjectDescription(status)}
+                  href={`/admin/sites/${status.id}`}
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
                   onRetry={handleRetryCrawl}
                   onRecrawl={handleRecrawl}
-                  onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: (status as any).pagesIndexed || 0 })}
+                  onDelete={() =>
+                    setSiteToDelete({
+                      id: status.id,
+                      url: status.url ?? getProjectName(status),
+                      pageCount: ((status as any).pagesIndexed ?? (status as any).pagesFound) || 0,
+                    })
+                  }
                 />
               ))}
             </div>
@@ -335,12 +353,12 @@ export default function AdminPage() {
               <CardContent className="flex items-center justify-center py-12">
                 <div className="text-center">
                   <p className="text-muted-foreground mb-4">
-                    {searchFilter ? "Сайты не найдены" : "Нет добавленных сайтов"}
+                    {searchFilter ? "Проекты не найдены" : "Нет добавленных проектов"}
                   </p>
                   {!searchFilter && (
                     <Button onClick={() => setShowAddForm(true)} variant="outline">
                       <Plus className="h-4 w-4 mr-2" />
-                      Добавить первый сайт
+                      Добавить первый проект
                     </Button>
                   )}
                 </div>
@@ -354,21 +372,21 @@ export default function AdminPage() {
             {filteredStatuses.filter(s => s.status === "crawling").map((status) => (
               <CrawlStatusCard
                 key={status.id}
-                crawlStatus={{
-                  ...status,
-                  status: status.status as "idle" | "crawling" | "completed" | "failed",
-                  progress: 0, // Placeholder
-                  pagesFound: (status as any).pagesFound || 0, // Real data from extended endpoint
-                  pagesIndexed: (status as any).pagesIndexed || 0, // Real data from extended endpoint
-                  lastCrawled: status.lastCrawled || undefined,
-                  nextCrawl: status.nextCrawl || undefined,
-                  error: status.error || undefined,
-                }}
+                crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
+                projectName={getProjectName(status)}
+                projectDescription={getProjectDescription(status)}
+                href={`/admin/sites/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
                 onRecrawl={handleRecrawl}
-                onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: (status as any).pagesIndexed || 0 })}
+                onDelete={() =>
+                  setSiteToDelete({
+                    id: status.id,
+                    url: status.url ?? getProjectName(status),
+                    pageCount: ((status as any).pagesIndexed ?? (status as any).pagesFound) || 0,
+                  })
+                }
               />
             ))}
           </div>
@@ -379,21 +397,21 @@ export default function AdminPage() {
             {filteredStatuses.filter(s => s.status === "completed").map((status) => (
               <CrawlStatusCard
                 key={status.id}
-                crawlStatus={{
-                  ...status,
-                  status: status.status as "idle" | "crawling" | "completed" | "failed",
-                  progress: 0, // Placeholder
-                  pagesFound: (status as any).pagesFound || 0, // Real data from extended endpoint
-                  pagesIndexed: (status as any).pagesIndexed || 0, // Real data from extended endpoint
-                  lastCrawled: status.lastCrawled || undefined,
-                  nextCrawl: status.nextCrawl || undefined,
-                  error: status.error || undefined,
-                }}
+                crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
+                projectName={getProjectName(status)}
+                projectDescription={getProjectDescription(status)}
+                href={`/admin/sites/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
                 onRecrawl={handleRecrawl}
-                onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: (status as any).pagesIndexed || 0 })}
+                onDelete={() =>
+                  setSiteToDelete({
+                    id: status.id,
+                    url: status.url ?? getProjectName(status),
+                    pageCount: ((status as any).pagesIndexed ?? (status as any).pagesFound) || 0,
+                  })
+                }
               />
             ))}
           </div>
@@ -404,21 +422,21 @@ export default function AdminPage() {
             {filteredStatuses.filter(s => s.status === "failed").map((status) => (
               <CrawlStatusCard
                 key={status.id}
-                crawlStatus={{
-                  ...status,
-                  status: status.status as "idle" | "crawling" | "completed" | "failed",
-                  progress: 0, // Placeholder
-                  pagesFound: (status as any).pagesFound || 0, // Real data from extended endpoint
-                  pagesIndexed: (status as any).pagesIndexed || 0, // Real data from extended endpoint
-                  lastCrawled: status.lastCrawled || undefined,
-                  nextCrawl: status.nextCrawl || undefined,
-                  error: status.error || undefined,
-                }}
+                crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
+                projectName={getProjectName(status)}
+                projectDescription={getProjectDescription(status)}
+                href={`/admin/sites/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
                 onRecrawl={handleRecrawl}
-                onDelete={() => setSiteToDelete({ id: status.id, url: status.url, pageCount: (status as any).pagesIndexed || 0 })}
+                onDelete={() =>
+                  setSiteToDelete({
+                    id: status.id,
+                    url: status.url ?? getProjectName(status),
+                    pageCount: ((status as any).pagesIndexed ?? (status as any).pagesFound) || 0,
+                  })
+                }
               />
             ))}
           </div>
@@ -428,9 +446,9 @@ export default function AdminPage() {
       <AlertDialog open={!!siteToDelete} onOpenChange={(isOpen) => setSiteToDelete(isOpen ? siteToDelete : null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить сайт?</AlertDialogTitle>
+            <AlertDialogTitle>Удалить проект?</AlertDialogTitle>
             <AlertDialogDescription>
-              Вы уверены, что хотите удалить сайт "{siteToDelete?.url}"? Это действие необратимо. Будет удалено {siteToDelete?.pageCount} страниц.
+              Вы уверены, что хотите удалить проект "{siteToDelete?.url}"? Это действие необратимо. Будет удалено {siteToDelete?.pageCount} страниц.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

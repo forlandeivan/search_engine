@@ -1,260 +1,358 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import AddSiteForm, { type SiteConfig } from "@/components/AddSiteForm";
 import CrawlStatusCard, { type CrawlStatus } from "@/components/CrawlStatusCard";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Plus, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { type Site } from "@shared/schema";
+
+interface ProjectWithStats extends Site {
+  pagesFound?: number;
+  pagesIndexed?: number;
+  progress?: number;
+}
+
+interface ProjectForDeletion {
+  id: string;
+  name: string;
+}
 
 export default function AdminPage() {
   const { toast } = useToast();
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [, navigate] = useLocation();
   const [searchFilter, setSearchFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "crawling" | "completed" | "failed">("all");
-  const [siteToDelete, setSiteToDelete] = useState<Pick<CrawlStatus, "id" | "url"> | null>(null);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
+  const [projectToDelete, setProjectToDelete] = useState<ProjectForDeletion | null>(null);
 
-  // Fetch sites data
-  const { data: sites = [], isLoading, error } = useQuery({
-    queryKey: ['/api/sites'],
+  const {
+    data: projects = [],
+    isLoading,
+    error,
+  } = useQuery<ProjectWithStats[]>({
+    queryKey: ["/api/sites/extended"],
   });
 
-  // Add site mutation
-  const addSiteMutation = useMutation({
-    mutationFn: async (siteData: SiteConfig) => {
-      const response = await apiRequest('POST', '/api/sites', siteData);
+  const createProjectMutation = useMutation({
+    mutationFn: async (payload: { name: string; description?: string }) => {
+      const response = await apiRequest("POST", "/api/sites", payload);
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
-      setShowAddForm(false);
+    onSuccess: (created: Site) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sites/extended"] });
+      setIsCreateDialogOpen(false);
+      setProjectName("");
+      setProjectDescription("");
       toast({
-        title: "Сайт добавлен",
-        description: "Сайт успешно добавлен для краулинга",
+        title: "Проект создан",
+        description: "Добавьте знания и настройте краулинг в карточке проекта.",
       });
+      navigate(`/admin/sites/${created.id}`);
     },
-    onError: () => {
+    onError: (mutationError: unknown) => {
+      console.error("Failed to create project", mutationError);
       toast({
-        title: "Ошибка",
-        description: "Не удалось добавить сайт",
+        title: "Не удалось создать проект",
+        description: "Проверьте подключение и попробуйте ещё раз.",
         variant: "destructive",
       });
     },
   });
 
-  // Delete site mutation
-  const deleteSiteMutation = useMutation({
-    mutationFn: async (siteId: string) => {
-      const response = await apiRequest('DELETE', `/api/sites/${siteId}`);
+  const deleteProjectMutation = useMutation({
+    mutationFn: async (projectId: string) => {
+      const response = await apiRequest("DELETE", `/api/sites/${projectId}`);
       if (response.status === 204) {
         return null;
       }
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
-      setSiteToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/sites/extended"] });
+      setProjectToDelete(null);
       toast({
-        title: "Сайт удален",
-        description: "Сайт и все его страницы успешно удалены",
+        title: "Проект удалён",
+        description: "Карточка проекта и связанные страницы удалены.",
       });
     },
-    onError: () => {
+    onError: (mutationError: unknown) => {
+      console.error("Failed to delete project", mutationError);
       toast({
-        title: "Ошибка",
-        description: "Не удалось удалить сайт",
+        title: "Не удалось удалить проект",
+        description: "Повторите попытку позже.",
         variant: "destructive",
       });
     },
   });
 
-  // Start crawl mutation
   const startCrawlMutation = useMutation({
-    mutationFn: async (siteId: string) => {
-      const response = await apiRequest('POST', `/api/sites/${siteId}/crawl`);
+    mutationFn: async (projectId: string) => {
+      const response = await apiRequest("POST", `/api/sites/${projectId}/crawl`);
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sites/extended"] });
       toast({
         title: "Краулинг запущен",
-        description: "Краулинг сайта успешно запущен",
+        description: "Проект поставлен в очередь на обход страниц.",
       });
     },
-  });
-
-  // Re-crawl mutation
-  const recrawlMutation = useMutation({
-    mutationFn: async (siteId: string) => {
-      const response = await apiRequest('POST', `/api/sites/${siteId}/recrawl`);
-      return response.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/sites'] });
+    onError: (mutationError: unknown) => {
+      console.error("Failed to start crawl", mutationError);
       toast({
-        title: "Повторный краулинг запущен",
-        description: `Повторный краулинг запущен. Текущих страниц: ${data.existingPages}`,
-      });
-    },
-    onError: () => {
-      toast({
-        title: "Ошибка",
-        description: "Не удалось запустить повторный краулинг",
+        title: "Не удалось запустить краулинг",
+        description: "Проверьте настройки проекта и наличие URL.",
         variant: "destructive",
       });
     },
   });
 
-  const displaySites = Array.isArray(sites) ? sites : [];
+  const recrawlMutation = useMutation({
+    mutationFn: async (projectId: string) => {
+      const response = await apiRequest("POST", `/api/sites/${projectId}/recrawl`);
+      return response.json();
+    },
+    onSuccess: (data: { existingPages: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sites/extended"] });
+      toast({
+        title: "Повторный краулинг запущен",
+        description: `Найдено страниц до запуска: ${data.existingPages}`,
+      });
+    },
+    onError: (mutationError: unknown) => {
+      console.error("Failed to recrawl", mutationError);
+      toast({
+        title: "Не удалось перезапустить краулинг",
+        description: "Попробуйте обновить настройки проекта.",
+        variant: "destructive",
+      });
+    },
+  });
 
-  const handleAddSite = (config: SiteConfig) => {
-    addSiteMutation.mutate(config);
-  };
+  const normalizedProjects = useMemo(
+    () => (Array.isArray(projects) ? projects : []),
+    [projects],
+  );
 
-  const handleStartCrawl = (id: string) => {
-    startCrawlMutation.mutate(id);
-  };
+  const filteredProjects = useMemo(() => {
+    const query = searchFilter.trim().toLowerCase();
+    if (!query) {
+      return normalizedProjects;
+    }
 
-  const handleStopCrawl = (id: string) => {
-    console.log('Stop crawl:', id);
-  };
+    return normalizedProjects.filter((project) => {
+      const nameMatches = project.name?.toLowerCase().includes(query);
+      const descriptionMatches = project.description?.toLowerCase().includes(query) ?? false;
+      const urlMatches = project.url?.toLowerCase().includes(query) ?? false;
+      return Boolean(nameMatches || descriptionMatches || urlMatches);
+    });
+  }, [normalizedProjects, searchFilter]);
 
-  const handleRetryCrawl = (id: string) => {
-    startCrawlMutation.mutate(id);
-  };
+  const handleCreateProject = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedName = projectName.trim();
+    const trimmedDescription = projectDescription.trim();
 
-  const handleRecrawl = (id: string) => {
-    recrawlMutation.mutate(id);
-  };
-
-  const handleDeleteSiteRequest = (site: CrawlStatus) => {
-    setSiteToDelete({ id: site.id, url: site.url });
-  };
-
-  const handleConfirmDeleteSite = () => {
-    if (!siteToDelete) {
+    if (!trimmedName) {
       return;
     }
-    deleteSiteMutation.mutate(siteToDelete.id);
+
+    createProjectMutation.mutate({
+      name: trimmedName,
+      description: trimmedDescription ? trimmedDescription : undefined,
+    });
   };
 
-  const handleDeleteDialogChange = (open: boolean) => {
-    if (!open && !deleteSiteMutation.isPending) {
-      setSiteToDelete(null);
-    }
+  const handleDeleteRequest = (project: ProjectWithStats) => {
+    setProjectToDelete({
+      id: project.id,
+      name: project.name || project.url || "Без названия",
+    });
   };
 
-  const filteredSites = displaySites.filter((site: any) => {
-    const matchesSearch = site.url.toLowerCase().includes(searchFilter.toLowerCase());
-    const matchesStatus = statusFilter === "all" || site.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const isCreatePending = createProjectMutation.isPending;
 
   return (
     <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Управление краулингом</h1>
+          <h1 className="text-2xl font-bold">Управление проектами</h1>
           <p className="text-muted-foreground">
-            Настройте сайты для индексации и отслеживайте процесс краулинга
+            Управляйте знаниями ваших проектов. Настраивайте автоматический краулинг сайтов или загружайте вручную.
           </p>
         </div>
-        <Button 
-          onClick={() => setShowAddForm(true)}
-          data-testid="button-add-site"
-          className="gap-2"
-        >
-          <Plus className="h-4 w-4" />
-          Добавить сайт
-        </Button>
+        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <DialogTrigger asChild>
+            <Button className="gap-2" data-testid="button-add-project">
+              <Plus className="h-4 w-4" />
+              Добавить проект
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Новый проект</DialogTitle>
+              <DialogDescription>
+                Задайте имя и описание. После создания вы сможете настроить краулинг и загрузить знания.
+              </DialogDescription>
+            </DialogHeader>
+            <form className="space-y-4" onSubmit={handleCreateProject}>
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="project-name">
+                  Название проекта
+                </label>
+                <Input
+                  id="project-name"
+                  value={projectName}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  placeholder="Например, Корпоративный портал"
+                  required
+                  data-testid="input-project-name"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="project-description">
+                  Описание
+                </label>
+                <Textarea
+                  id="project-description"
+                  value={projectDescription}
+                  onChange={(event) => setProjectDescription(event.target.value)}
+                  placeholder="Кратко опишите назначение проекта"
+                  data-testid="input-project-description"
+                  rows={4}
+                />
+              </div>
+              <DialogFooter className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                  Отмена
+                </Button>
+                <Button type="submit" disabled={isCreatePending} data-testid="submit-create-project">
+                  {isCreatePending ? "Создание..." : "Создать"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
-      {showAddForm && (
-        <AddSiteForm 
-          onSubmit={handleAddSite}
-          onCancel={() => setShowAddForm(false)}
-        />
-      )}
-
       <div className="flex items-center gap-4">
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <div className="relative w-full max-w-sm">
+          <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 transform text-muted-foreground" />
           <Input
-            placeholder="Поиск по URL..."
+            placeholder="Поиск по названию, описанию или URL"
             value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            className="pl-8 w-64"
+            onChange={(event) => setSearchFilter(event.target.value)}
+            className="pl-8"
             data-testid="input-filter-search"
           />
         </div>
       </div>
 
       {isLoading ? (
-        <div className="text-center py-8">
-          <p className="text-muted-foreground">Загрузка...</p>
+        <div className="py-12 text-center">
+          <p className="text-muted-foreground">Загрузка проектов...</p>
         </div>
       ) : error ? (
-        <div className="text-center py-8">
-          <p className="text-muted-foreground">Ошибка загрузки данных.</p>
+        <div className="py-12 text-center">
+          <p className="text-muted-foreground">Не удалось загрузить список проектов.</p>
         </div>
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {filteredSites.map((site: any) => (
-          <CrawlStatusCard
-            key={site.id}
-            crawlStatus={site}
-            onStart={handleStartCrawl}
-            onStop={handleStopCrawl}
-            onRetry={handleRetryCrawl}
-            onRecrawl={handleRecrawl}
-            onDelete={(_id) => handleDeleteSiteRequest(site)}
+        {filteredProjects.map((project) => (
+            <CrawlStatusCard
+              key={project.id}
+              crawlStatus={{
+                id: project.id,
+                url: project.url ?? "URL не задан",
+                status: (project.status ?? "idle") as CrawlStatus["status"],
+                progress: project.progress ?? 0,
+                pagesFound: project.pagesFound ?? 0,
+                pagesIndexed: project.pagesIndexed ?? project.pagesFound ?? 0,
+                lastCrawled: project.lastCrawled ?? undefined,
+              nextCrawl: project.nextCrawl ?? undefined,
+              error: project.error ?? undefined,
+            }}
+            projectName={project.name ?? project.url ?? "Без названия"}
+            projectDescription={project.description}
+            href={`/admin/sites/${project.id}`}
+            onStart={(id) => startCrawlMutation.mutate(id)}
+            onRetry={(id) => startCrawlMutation.mutate(id)}
+            onRecrawl={(id) => recrawlMutation.mutate(id)}
+            onDelete={() => handleDeleteRequest(project)}
           />
         ))}
       </div>
 
-      {filteredSites.length === 0 && (
+      {!isLoading && !error && filteredProjects.length === 0 && (
         <Card>
-          <CardContent className="flex items-center justify-center py-12">
-            <div className="text-center">
-              <p className="text-muted-foreground mb-4">
-                {searchFilter ? "Сайты не найдены" : "Нет добавленных сайтов"}
+          <CardContent className="flex flex-col items-center justify-center gap-4 py-12 text-center">
+            <div>
+              <p className="text-muted-foreground">
+                {searchFilter ? "Проекты не найдены" : "Проекты пока не созданы"}
               </p>
-              {!searchFilter && (
-                <Button onClick={() => setShowAddForm(true)} variant="outline">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Добавить первый сайт
-                </Button>
-              )}
             </div>
+            {!searchFilter && (
+              <Button variant="outline" onClick={() => setIsCreateDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Добавить первый проект
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
 
-      <AlertDialog open={!!siteToDelete} onOpenChange={handleDeleteDialogChange}>
-        <AlertDialogContent data-testid="dialog-confirm-delete-site">
+      <AlertDialog
+        open={Boolean(projectToDelete)}
+        onOpenChange={(open) => {
+          if (!open && !deleteProjectMutation.isPending) {
+            setProjectToDelete(null);
+          }
+        }}
+      >
+        <AlertDialogContent data-testid="dialog-confirm-delete-project">
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить сайт?</AlertDialogTitle>
+            <AlertDialogTitle>Удалить проект?</AlertDialogTitle>
             <AlertDialogDescription>
-              Это действие навсегда удалит сайт {siteToDelete?.url ?? 'выбранный сайт'} и все связанные страницы. Это действие нельзя отменить.
+              Это действие навсегда удалит проект «{projectToDelete?.name}» и все связанные страницы. Отменить его не получится.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteSiteMutation.isPending} data-testid="button-cancel-delete-site">
+            <AlertDialogCancel disabled={deleteProjectMutation.isPending} data-testid="button-cancel-delete-project">
               Отмена
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleConfirmDeleteSite}
-              disabled={deleteSiteMutation.isPending}
+              onClick={() => projectToDelete && deleteProjectMutation.mutate(projectToDelete.id)}
+              disabled={deleteProjectMutation.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              data-testid="button-confirm-delete-site"
+              data-testid="button-confirm-delete-project"
             >
-              {deleteSiteMutation.isPending ? 'Удаление...' : 'Удалить'}
+              {deleteProjectMutation.isPending ? "Удаление..." : "Удалить"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
