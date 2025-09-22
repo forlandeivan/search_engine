@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, jsonb, doublePrecision, customType, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, jsonb, doublePrecision, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -39,30 +39,6 @@ export interface SearchSettings {
   };
 }
 
-export const projectTypes = ["search_engine", "vector_search"] as const;
-export type ProjectType = (typeof projectTypes)[number];
-
-export const projectTypeEnum = pgEnum("project_type", projectTypes);
-
-export const projectTypeLabels: Record<ProjectType, string> = {
-  search_engine: "Поисковый движок",
-  vector_search: "Векторный поиск",
-};
-
-export interface VectorSearchSettings {
-  embeddingModel: string;
-  embeddingDimensions: number;
-  chunkSize: number;
-  chunkOverlap: number;
-}
-
-export const defaultVectorSearchSettings: VectorSearchSettings = {
-  embeddingModel: "text-embedding-3-large",
-  embeddingDimensions: 3072,
-  chunkSize: 512,
-  chunkOverlap: 64,
-};
-
 export const defaultSearchSettings: SearchSettings = {
   fts: {
     titleBoost: 15,
@@ -97,13 +73,6 @@ export const defaultSearchSettings: SearchSettings = {
     ilikeContentBoost: 1.5,
   },
 };
-
-export const vectorSearchSettingsSchema = z.object({
-  embeddingModel: z.string().min(1),
-  embeddingDimensions: z.number().positive(),
-  chunkSize: z.number().positive(),
-  chunkOverlap: z.number().min(0),
-});
 
 export const searchSettingsSchema = z.object({
   fts: z.object({
@@ -153,7 +122,6 @@ export const sites = pgTable("sites", {
   name: text("name").notNull().default("Новый проект"),
   description: text("description"),
   url: text("url").unique(),
-  projectType: projectTypeEnum("project_type").notNull().default("search_engine"),
   crawlDepth: integer("crawl_depth").notNull().default(3),
   followExternalLinks: boolean("follow_external_links").notNull().default(false),
   crawlFrequency: text("crawl_frequency").notNull().default("daily"), // "manual" | "hourly" | "daily" | "weekly"
@@ -163,7 +131,6 @@ export const sites = pgTable("sites", {
   nextCrawl: timestamp("next_crawl"),
   error: text("error"),
   searchSettings: jsonb("search_settings").$type<SearchSettings>().notNull().default(sql`${JSON.stringify(defaultSearchSettings)}::jsonb`),
-  vectorSettings: jsonb("vector_settings").$type<VectorSearchSettings>().notNull().default(sql`${JSON.stringify(defaultVectorSearchSettings)}::jsonb`),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -228,9 +195,7 @@ export const insertSiteSchema = createInsertSchema(sites).omit({
   nextCrawl: true,
   error: true,
 }).extend({
-  projectType: z.enum(projectTypes),
   searchSettings: searchSettingsSchema.optional(),
-  vectorSettings: vectorSearchSettingsSchema.optional(),
 });
 
 export const insertPageSchema = createInsertSchema(pages).omit({
@@ -246,7 +211,6 @@ export const insertSearchIndexSchema = createInsertSchema(searchIndex).omit({
 
 // Types
 export type Site = typeof sites.$inferSelect;
-export type VectorSearchSettingsInput = z.infer<typeof vectorSearchSettingsSchema>;
 export type InsertSite = z.infer<typeof insertSiteSchema>;
 export type Page = typeof pages.$inferSelect;
 export type InsertPage = z.infer<typeof insertPageSchema>;

@@ -12,19 +12,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AlertCircle, ArrowLeft, Globe, Info, Loader2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import {
-  defaultSearchSettings,
-  defaultVectorSearchSettings,
-  projectTypeLabels,
-  type ProjectType,
-  type SearchSettings,
-  type VectorSearchSettings,
-} from "@shared/schema";
+import { defaultSearchSettings, type SearchSettings } from "@shared/schema";
 
 interface Site {
   id: string;
@@ -42,8 +34,6 @@ interface Site {
   createdAt?: string;
   updatedAt?: string;
   searchSettings?: SearchSettings;
-  projectType: ProjectType;
-  vectorSettings?: VectorSearchSettings | null;
 }
 
 interface PageSummary {
@@ -72,9 +62,6 @@ type SearchSettingPath = {
 
 const cloneSearchSettings = (settings?: SearchSettings | null): SearchSettings =>
   JSON.parse(JSON.stringify(settings ?? defaultSearchSettings)) as SearchSettings;
-
-const cloneVectorSettings = (settings?: VectorSearchSettings | null): VectorSearchSettings =>
-  JSON.parse(JSON.stringify(settings ?? defaultVectorSearchSettings)) as VectorSearchSettings;
 
 const searchSettingsSections: Array<{
   title: string;
@@ -265,19 +252,6 @@ const searchSettingsSections: Array<{
   },
 ];
 
-const PROJECT_TYPE_OPTIONS: Array<{ value: ProjectType; label: string; description: string }> = [
-  {
-    value: "search_engine",
-    label: projectTypeLabels.search_engine,
-    description: "Классический краулер с настройкой полнотекстового поиска.",
-  },
-  {
-    value: "vector_search",
-    label: projectTypeLabels.vector_search,
-    description: "Семантический поиск по эмбеддингам. Ручная настройка параметров доступна ниже.",
-  },
-];
-
 const cronPresets = [
   { label: "Каждый час", value: "0 * * * *" },
   { label: "Каждый день в 03:00", value: "0 3 * * *" },
@@ -315,8 +289,6 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
   const [projectUrl, setProjectUrl] = useState("");
-  const [projectType, setProjectType] = useState<ProjectType>("search_engine");
-  const [vectorSettingsForm, setVectorSettingsForm] = useState<VectorSearchSettings>(cloneVectorSettings());
   const [crawlMode, setCrawlMode] = useState<"manual" | "cron">("manual");
   const [cronExpression, setCronExpression] = useState("");
 
@@ -376,13 +348,7 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
   });
 
   const updateProjectInfoMutation = useMutation({
-    mutationFn: async (payload: {
-      name: string;
-      description?: string | null;
-      url?: string | null;
-      projectType: ProjectType;
-      vectorSettings?: VectorSearchSettings;
-    }) => {
+    mutationFn: async (payload: { name: string; description?: string | null; url?: string | null }) => {
       const response = await apiRequest("PUT", `/api/sites/${normalizedSiteId}`, payload);
       return response.json();
     },
@@ -398,29 +364,6 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
       toast({
         title: "Не удалось сохранить проект",
         description: "Проверьте соединение и попробуйте снова.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const updateVectorSettingsMutation = useMutation({
-    mutationFn: async (payload: VectorSearchSettings) => {
-      const response = await apiRequest("PUT", `/api/sites/${normalizedSiteId}`, {
-        vectorSettings: payload,
-      });
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["site", normalizedSiteId] });
-      toast({
-        title: "Параметры векторного поиска обновлены",
-        description: "Настройки эмбеддингов успешно сохранены.",
-      });
-    },
-    onError: () => {
-      toast({
-        title: "Не удалось сохранить векторные настройки",
-        description: "Проверьте значения и повторите попытку.",
         variant: "destructive",
       });
     },
@@ -450,18 +393,16 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
 
   useEffect(() => {
     setSettingsForm(cloneSearchSettings(site?.searchSettings));
-    setVectorSettingsForm(cloneVectorSettings(site?.vectorSettings));
-  }, [site?.searchSettings, site?.vectorSettings]);
+  }, [site?.searchSettings]);
 
   useEffect(() => {
     setProjectName(site?.name ?? "");
     setProjectDescription(site?.description ?? "");
     setProjectUrl(site?.url ?? "");
-    setProjectType(site?.projectType ?? "search_engine");
     const { mode, expression } = resolveFrequency(site?.crawlFrequency);
     setCrawlMode(mode);
     setCronExpression(expression);
-  }, [site?.name, site?.description, site?.url, site?.crawlFrequency, site?.projectType]);
+  }, [site?.name, site?.description, site?.url, site?.crawlFrequency]);
 
   const searchResults = searchData?.results ?? [];
   const totalResults = searchData?.total ?? 0;
@@ -516,14 +457,7 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
       name: trimmedName,
       description: trimmedDescription ? trimmedDescription : null,
       url: trimmedUrl ? trimmedUrl : null,
-      projectType,
-      vectorSettings: projectType === "vector_search" ? vectorSettingsForm : undefined,
     });
-  };
-
-  const handleSaveVectorSettings = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    updateVectorSettingsMutation.mutate(vectorSettingsForm);
   };
 
   const handleSaveSchedule = (event: FormEvent<HTMLFormElement>) => {
@@ -859,27 +793,6 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
                         data-testid="textarea-project-description-details"
                       />
                     </div>
-                    <div className="space-y-2 md:col-span-2 md:max-w-sm">
-                      <Label htmlFor="project-type">Тип проекта</Label>
-                      <Select
-                        value={projectType}
-                        onValueChange={(value) => setProjectType(value as ProjectType)}
-                      >
-                        <SelectTrigger id="project-type" data-testid="select-project-type-details">
-                          <SelectValue placeholder="Выберите тип" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PROJECT_TYPE_OPTIONS.map(option => (
-                            <SelectItem key={option.value} value={option.value}>
-                              <div className="flex flex-col text-left">
-                                <span className="font-medium">{option.label}</span>
-                                <span className="text-xs text-muted-foreground">{option.description}</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
                     <div className="flex justify-end gap-2 md:col-span-2">
                       <Button
                         type="submit"
@@ -892,94 +805,6 @@ export default function SiteDetailsPage({ siteId }: SiteDetailsPageProps) {
                   </form>
                 </CardContent>
               </Card>
-
-              {projectType === "vector_search" && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Настройки векторного поиска</CardTitle>
-                    <CardDescription>
-                      Укажите параметры подготовки эмбеддингов для семантического поиска по проекту.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSaveVectorSettings}>
-                      <div className="space-y-2 md:col-span-2">
-                        <Label htmlFor="embedding-model">Модель эмбеддингов</Label>
-                        <Input
-                          id="embedding-model"
-                          value={vectorSettingsForm.embeddingModel}
-                          onChange={(event) =>
-                            setVectorSettingsForm(prev => ({
-                              ...prev,
-                              embeddingModel: event.target.value,
-                            }))
-                          }
-                          placeholder="Например, text-embedding-3-large"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="embedding-dimensions">Размерность вектора</Label>
-                        <Input
-                          id="embedding-dimensions"
-                          type="number"
-                          min={1}
-                          value={vectorSettingsForm.embeddingDimensions}
-                          onChange={(event) => {
-                            const parsed = Number(event.target.value);
-                            setVectorSettingsForm(prev => ({
-                              ...prev,
-                              embeddingDimensions: Number.isNaN(parsed)
-                                ? prev.embeddingDimensions
-                                : parsed,
-                            }));
-                          }}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="chunk-size">Размер чанка</Label>
-                        <Input
-                          id="chunk-size"
-                          type="number"
-                          min={64}
-                          value={vectorSettingsForm.chunkSize}
-                          onChange={(event) => {
-                            const parsed = Number(event.target.value);
-                            setVectorSettingsForm(prev => ({
-                              ...prev,
-                              chunkSize: Number.isNaN(parsed) ? prev.chunkSize : parsed,
-                            }));
-                          }}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="chunk-overlap">Перекрытие чанков</Label>
-                        <Input
-                          id="chunk-overlap"
-                          type="number"
-                          min={0}
-                          value={vectorSettingsForm.chunkOverlap}
-                          onChange={(event) => {
-                            const parsed = Number(event.target.value);
-                            setVectorSettingsForm(prev => ({
-                              ...prev,
-                              chunkOverlap: Number.isNaN(parsed) ? prev.chunkOverlap : parsed,
-                            }));
-                          }}
-                        />
-                      </div>
-                      <p className="md:col-span-2 text-sm text-muted-foreground">
-                        Эти параметры используются для подготовки текстов к семантическому поиску. Настройте их под размеры
-                        документов и используемую модель.
-                      </p>
-                      <div className="flex justify-end gap-2 md:col-span-2">
-                        <Button type="submit" disabled={updateVectorSettingsMutation.isPending}>
-                          {updateVectorSettingsMutation.isPending ? "Сохранение..." : "Сохранить векторные настройки"}
-                        </Button>
-                      </div>
-                    </form>
-                  </CardContent>
-                </Card>
-              )}
 
               <Card>
                 <CardHeader>
