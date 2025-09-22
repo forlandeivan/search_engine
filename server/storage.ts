@@ -206,6 +206,10 @@ export class DatabaseStorage implements IStorage {
     const vectorSettings = this.parseVectorSettings(row.vector_settings ?? row.vectorSettings);
     const excludePatterns = this.parseJsonArray<string[]>(row.exclude_patterns ?? row.excludePatterns, []);
 
+    const projectType = (row.project_type ?? row.projectType ?? (
+      isLegacyVectorPlaceholderUrl ? "vector_search" : "search_engine"
+    )) as Site["projectType"];
+
     const mapped: Partial<Site> & { id: string } = {
       id: String(row.id),
       name,
@@ -223,7 +227,7 @@ export class DatabaseStorage implements IStorage {
       error: row.error ?? null,
       searchSettings,
       vectorSettings,
-      projectType: (row.project_type ?? row.projectType ?? 'search_engine') as Site['projectType'],
+      projectType,
       createdAt: this.parseDate(row.created_at ?? row.createdAt) ?? new Date(),
       updatedAt: this.parseDate(row.updated_at ?? row.updatedAt) ?? new Date(),
     };
