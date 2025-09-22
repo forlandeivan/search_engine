@@ -279,6 +279,10 @@ export class DatabaseStorage implements IStorage {
       insertColumns.push(sql`"exclude_patterns"`);
       insertValues.push(sql`${JSON.stringify(siteData.excludePatterns ?? [])}::jsonb`);
     }
+    if (columns.has('search_settings')) {
+      insertColumns.push(sql`"search_settings"`);
+      insertValues.push(sql`${JSON.stringify(searchSettings)}::jsonb`);
+    }
     if (columns.has('status')) {
       insertColumns.push(sql`"status"`);
       insertValues.push(sql`${siteData.status ?? 'idle'}`);
