@@ -26,6 +26,7 @@ import {
   inArray,
   type SQL
 } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 
 export interface IStorage {
   // Sites management
@@ -190,9 +191,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   private mapLegacySiteRow(row: Record<string, any>): Site {
+    const isLegacyVectorPlaceholderUrl = typeof row.url === 'string'
+      && row.url.startsWith('vector://project-');
+
+    const fallbackNameFromUrl = typeof row.url === 'string' && row.url.trim() !== '' && !isLegacyVectorPlaceholderUrl
+      ? row.url
+      : 'Новый проект';
+
     const name = typeof row.name === 'string' && row.name.trim() !== ''
       ? row.name
-      : (typeof row.url === 'string' && row.url.trim() !== '' ? row.url : 'Новый проект');
+      : fallbackNameFromUrl;
 
     const searchSettings = this.parseSearchSettings(row.search_settings ?? row.searchSettings);
     const vectorSettings = this.parseVectorSettings(row.vector_settings ?? row.vectorSettings);
@@ -202,7 +210,7 @@ export class DatabaseStorage implements IStorage {
       id: String(row.id),
       name,
       description: row.description ?? null,
-      url: row.url ?? null,
+      url: isLegacyVectorPlaceholderUrl ? null : row.url ?? null,
       crawlDepth: typeof row.crawl_depth === 'number' ? row.crawl_depth : row.crawlDepth ?? 3,
       followExternalLinks: typeof row.follow_external_links === 'boolean'
         ? row.follow_external_links
@@ -271,6 +279,16 @@ export class DatabaseStorage implements IStorage {
     const searchSettings = this.cloneSearchSettings(siteData.searchSettings);
     const vectorSettings = this.cloneVectorSettings(siteData.vectorSettings);
     const projectType = siteData.projectType ?? 'search_engine';
+    const isVectorSearchProject = projectType === 'vector_search';
+
+    const normalizedUrl = siteData.url && typeof siteData.url === 'string'
+      ? siteData.url.trim() || null
+      : siteData.url ?? null;
+    let legacyUrlForInsert = normalizedUrl;
+
+    if (!legacyUrlForInsert && isVectorSearchProject) {
+      legacyUrlForInsert = null;
+    }
 
     if (await this.hasModernSitesSchema()) {
       const [newSite] = await this.db
@@ -280,6 +298,7 @@ export class DatabaseStorage implements IStorage {
           projectType,
           searchSettings,
           vectorSettings,
+          url: normalizedUrl,
         })
         .returning();
 
@@ -298,9 +317,17 @@ export class DatabaseStorage implements IStorage {
       insertColumns.push(sql`"description"`);
       insertValues.push(sql`${siteData.description ?? null}`);
     }
+    let vectorPlaceholderUrl: string | null = null;
     if (columns.has('url')) {
+      let urlValue = legacyUrlForInsert;
+
+      if (!urlValue && isVectorSearchProject) {
+        vectorPlaceholderUrl = `vector://project-${randomUUID()}`;
+        urlValue = vectorPlaceholderUrl;
+      }
+
       insertColumns.push(sql`"url"`);
-      insertValues.push(sql`${siteData.url ?? null}`);
+      insertValues.push(sql`${urlValue}`);
     }
     if (columns.has('project_type')) {
       insertColumns.push(sql`"project_type"`);
@@ -359,6 +386,7 @@ export class DatabaseStorage implements IStorage {
       search_settings: newSite?.search_settings ?? searchSettings,
       vector_settings: newSite?.vector_settings ?? vectorSettings,
       project_type: newSite?.project_type ?? projectType,
+      url: newSite?.url ?? vectorPlaceholderUrl ?? legacyUrlForInsert,
     });
   }
 
