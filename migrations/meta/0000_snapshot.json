@@ -294,6 +294,20 @@
           "primaryKey": false,
           "notNull": true,
           "default": "CURRENT_TIMESTAMP"
+        },
+        "project_type": {
+          "name": "project_type",
+          "type": "project_type",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'search_engine'"
+        },
+        "vector_settings": {
+          "name": "vector_settings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{\"embeddingModel\":\"text-embedding-3-large\",\"embeddingDimensions\":3072,\"chunkSize\":512,\"chunkOverlap\":64}'::jsonb"
         }
       },
       "indexes": {},
@@ -353,7 +367,16 @@
       "isRLSEnabled": false
     }
   },
-  "enums": {},
+  "enums": {
+    "public.project_type": {
+      "name": "project_type",
+      "schema": "public",
+      "values": [
+        "search_engine",
+        "vector_search"
+      ]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "roles": {},
