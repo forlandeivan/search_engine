@@ -236,51 +236,6 @@ export default function AdminPage() {
         </Card>
       )}
 
-      {/* Statistics */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Всего сайтов</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{displaySites.length}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Активных краулингов</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {displaySites.filter((s: any) => s.status === 'crawling').length}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Завершено</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {displaySites.filter((s: any) => s.status === 'completed').length}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Проиндексировано страниц</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {displaySites.reduce((sum: number, s: any) => sum + (s.pagesIndexed || 0), 0)}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
       <AlertDialog open={!!siteToDelete} onOpenChange={handleDeleteDialogChange}>
         <AlertDialogContent data-testid="dialog-confirm-delete-site">
           <AlertDialogHeader>
