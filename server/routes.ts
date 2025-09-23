@@ -9,6 +9,18 @@ import { invalidateCorsCache } from "./cors-cache";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
 
+function getErrorDetails(error: unknown): string {
+  if (error instanceof Error) {
+    const causeMessage = error.cause instanceof Error ? error.cause.message : undefined;
+    if (causeMessage) {
+      return `${error.message}: ${causeMessage}`;
+    }
+    return error.message;
+  }
+
+  return String(error);
+}
+
 // Bulk delete schema
 const bulkDeletePagesSchema = z.object({
   pageIds: z.array(z.string()).min(1).max(1000)
@@ -158,10 +170,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      const details = getErrorDetails(error);
       console.error("Ошибка при получении коллекций Qdrant:", error);
       res.status(500).json({
         error: "Не удалось загрузить список коллекций",
-        details: error instanceof Error ? error.message : String(error),
+        details,
       });
     }
   });
@@ -187,10 +200,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      const details = getErrorDetails(error);
       console.error(`Ошибка при получении коллекции ${req.params.name}:`, error);
       res.status(500).json({
         error: "Не удалось получить информацию о коллекции",
-        details: error instanceof Error ? error.message : String(error),
+        details,
       });
     }
   });
