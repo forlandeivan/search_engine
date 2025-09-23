@@ -16,7 +16,23 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { RefreshCcw, DatabaseZap } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { RefreshCcw, DatabaseZap, MoreVertical } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -49,14 +65,27 @@ const distanceOptions: Array<{ value: CreateCollectionPayload["distance"]; label
   { value: "Manhattan", label: "Manhattan" },
 ];
 
+const vectorSizeOptions = [
+  { value: "384", label: "384" },
+  { value: "512", label: "512" },
+  { value: "768", label: "768" },
+  { value: "1024", label: "1024" },
+  { value: "1536", label: "1536" },
+  { value: "2048", label: "2048" },
+  { value: "4096", label: "4096" },
+  { value: "custom", label: "Указать свой размер" },
+];
+
 export default function VectorCollectionsPage() {
   const { toast } = useToast();
   const [formState, setFormState] = useState({
     name: "",
-    vectorSize: "1536",
+    vectorSizeOption: "1536",
+    customVectorSize: "",
     distance: "Cosine" as CreateCollectionPayload["distance"],
   });
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null);
 
   const { data, isLoading, isFetching, error } = useQuery<CollectionsResponse>({
     queryKey: ["/api/vector/collections"],
@@ -74,7 +103,8 @@ export default function VectorCollectionsPage() {
       });
       setFormState({
         name: "",
-        vectorSize: "1536",
+        vectorSizeOption: "1536",
+        customVectorSize: "",
         distance: "Cosine",
       });
       setIsCreateDialogOpen(false);
@@ -83,6 +113,27 @@ export default function VectorCollectionsPage() {
     onError: (mutationError: any) => {
       toast({
         title: "Не удалось создать коллекцию",
+        description: mutationError?.message || "Попробуйте ещё раз",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteCollectionMutation = useMutation({
+    mutationFn: async (name: string) => {
+      await apiRequest("DELETE", `/api/vector/collections/${encodeURIComponent(name)}`);
+    },
+    onSuccess: (_, name) => {
+      toast({
+        title: "Коллекция удалена",
+        description: `Коллекция «${name}» удалена из Qdrant`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/vector/collections"] });
+      setCollectionToDelete(null);
+    },
+    onError: (mutationError: any) => {
+      toast({
+        title: "Не удалось удалить коллекцию",
         description: mutationError?.message || "Попробуйте ещё раз",
         variant: "destructive",
       });
@@ -102,7 +153,18 @@ export default function VectorCollectionsPage() {
       return;
     }
 
-    const vectorSizeNumber = Number(formState.vectorSize);
+    const vectorSizeString =
+      formState.vectorSizeOption === "custom" ? formState.customVectorSize : formState.vectorSizeOption;
+
+    if (!vectorSizeString.trim()) {
+      toast({
+        title: "Укажите размер вектора",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const vectorSizeNumber = Number(vectorSizeString);
 
     if (!Number.isInteger(vectorSizeNumber) || vectorSizeNumber <= 0) {
       toast({
@@ -175,9 +237,10 @@ export default function VectorCollectionsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Название</TableHead>
+                    <TableHead>Количество записей</TableHead>
                     <TableHead>Размер вектора</TableHead>
                     <TableHead>Метрика</TableHead>
-                    <TableHead>Количество записей</TableHead>
+                    <TableHead className="w-0" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -191,9 +254,29 @@ export default function VectorCollectionsPage() {
                           )}
                         </div>
                       </TableCell>
+                      <TableCell>{collection.pointsCount ?? "—"}</TableCell>
                       <TableCell>{collection.vectorSize ?? "—"}</TableCell>
                       <TableCell>{collection.distance ?? "—"}</TableCell>
-                      <TableCell>{collection.pointsCount ?? "—"}</TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreVertical className="h-4 w-4" />
+                              <span className="sr-only">Открыть действия</span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onSelect={(event) => {
+                                event.preventDefault();
+                                setCollectionToDelete(collection.name);
+                              }}
+                            >
+                              Удалить коллекцию
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -224,14 +307,44 @@ export default function VectorCollectionsPage() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="collection-vector-size">Размер вектора</Label>
-            <Input
-              id="collection-vector-size"
-              type="number"
-              min={1}
-              value={formState.vectorSize}
-              onChange={(event) => setFormState((prev) => ({ ...prev, vectorSize: event.target.value }))}
+            <Select
+              value={formState.vectorSizeOption}
+              onValueChange={(value) =>
+                setFormState((prev) => ({
+                  ...prev,
+                  vectorSizeOption: value,
+                  customVectorSize: value === "custom" ? prev.customVectorSize : "",
+                }))
+              }
               disabled={createCollectionMutation.isPending}
-            />
+            >
+              <SelectTrigger id="collection-vector-size">
+                <SelectValue placeholder="Выберите размер вектора" />
+              </SelectTrigger>
+              <SelectContent>
+                {vectorSizeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {formState.vectorSizeOption === "custom" && (
+              <Input
+                id="collection-custom-vector-size"
+                type="number"
+                min={1}
+                placeholder="Введите своё значение"
+                value={formState.customVectorSize}
+                onChange={(event) =>
+                  setFormState((prev) => ({
+                    ...prev,
+                    customVectorSize: event.target.value,
+                  }))
+                }
+                disabled={createCollectionMutation.isPending}
+              />
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="collection-distance">Метрика</Label>
@@ -259,6 +372,38 @@ export default function VectorCollectionsPage() {
           </DialogFooter>
         </form>
       </DialogContent>
+      <AlertDialog
+        open={collectionToDelete !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setCollectionToDelete(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить коллекцию?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {collectionToDelete
+                ? `Коллекция «${collectionToDelete}» будет безвозвратно удалена вместе со всеми точками.`
+                : "Коллекция будет безвозвратно удалена вместе со всеми точками."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteCollectionMutation.isPending}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (collectionToDelete) {
+                  deleteCollectionMutation.mutate(collectionToDelete);
+                }
+              }}
+              disabled={deleteCollectionMutation.isPending}
+            >
+              {deleteCollectionMutation.isPending ? "Удаляем..." : "Удалить"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

@@ -261,6 +261,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete("/api/vector/collections/:name", async (req, res) => {
+    try {
+      const client = getQdrantClient();
+      await client.deleteCollection(req.params.name);
+
+      res.json({
+        message: "Коллекция удалена",
+        name: req.params.name,
+      });
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      const details = getErrorDetails(error);
+      console.error(`Ошибка при удалении коллекции ${req.params.name}:`, error);
+      res.status(500).json({
+        error: "Не удалось удалить коллекцию",
+        details,
+      });
+    }
+  });
+
   app.post("/api/vector/collections/:name/points", async (req, res) => {
     try {
       const body = upsertPointsSchema.parse(req.body);
