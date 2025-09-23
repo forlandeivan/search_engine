@@ -9,7 +9,7 @@ This is a lightweight search engine application designed for crawling and indexi
 ### September 2025
 - **Re-crawl functionality implemented**: Complete system for re-crawling existing sites without creating duplicates
 - **Database flexibility**: Configurable PostgreSQL connection with automatic fallback to Neon
-- **Enhanced admin interface**: Improved AdminPageSimple.tsx with re-crawl capabilities
+- **Упрощённая админ-панель**: основной AdminPage с управлением краулингом и повторными обходами
 - **Duplicate prevention**: Crawler now checks existing pages before adding new ones
 - **Real-time status updates**: Live progress tracking during crawling operations
 

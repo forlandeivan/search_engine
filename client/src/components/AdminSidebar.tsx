@@ -58,12 +58,7 @@ export default function AdminSidebar() {
     refetchInterval: 10000,
   });
 
-  const isItemActive = (item: SidebarItem) => {
-    if (item.url === "/admin/sites") {
-      return location === item.url || location.startsWith("/admin/sites/");
-    }
-    return location === item.url;
-  };
+  const isItemActive = (item: SidebarItem) => location === item.url;
 
   const getTestId = (item: SidebarItem) =>
     `link-${item.title
