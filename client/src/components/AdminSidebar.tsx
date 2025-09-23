@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -21,7 +20,8 @@ import {
   Activity,
   Webhook,
   Calendar,
-  BookOpen
+  BookOpen,
+  Boxes
 } from "lucide-react";
 
 interface SidebarItem {
@@ -110,54 +110,79 @@ export default function AdminSidebar() {
     );
   };
 
-  const menuItems: SidebarItem[] = [
+  const sections: Array<{ label: string; items: SidebarItem[] }> = [
     {
-      title: "Поиск",
-      url: "/",
-      icon: Search,
+      label: "Основное",
+      items: [
+        {
+          title: "Поиск",
+          url: "/",
+          icon: Search,
+        },
+        {
+          title: "Проекты",
+          url: "/admin/sites",
+          icon: Globe,
+          badge: sites ? sites.length.toString() : "0",
+          badgeVariant: "secondary"
+        },
+      ],
     },
     {
-      title: "Проекты",
-      url: "/admin/sites",
-      icon: Globe,
-      badge: sites ? sites.length.toString() : "0",
-      badgeVariant: "secondary"
+      label: "Управление",
+      items: [
+        {
+          title: "Индексированные страницы",
+          url: "/admin/pages",
+          icon: Database,
+          badge: stats?.pages ? stats.pages.total.toString() : "0",
+          badgeVariant: "default"
+        },
+        {
+          title: "Статистика краулинга",
+          url: "/admin/stats",
+          icon: Activity,
+          locked: true
+        },
+        {
+          title: "Расписание",
+          url: "/admin/schedule",
+          icon: Calendar,
+          locked: true
+        },
+        {
+          title: "Вебхуки",
+          url: "/admin/webhooks",
+          icon: Webhook,
+          locked: true
+        },
+      ],
     },
     {
-      title: "Индексированные страницы",
-      url: "/admin/pages", 
-      icon: Database,
-      badge: stats?.pages ? stats.pages.total.toString() : "0",
-      badgeVariant: "default"
+      label: "Векторный поиск",
+      items: [
+        {
+          title: "Коллекции",
+          url: "/admin/vector/collections",
+          icon: Boxes,
+        },
+      ],
     },
     {
-      title: "Статистика краулинга",
-      url: "/admin/stats",
-      icon: Activity,
-      locked: true
+      label: "Система",
+      items: [
+        {
+          title: "Документация API",
+          url: "/admin/api",
+          icon: BookOpen
+        },
+        {
+          title: "Настройки",
+          url: "/admin/settings",
+          icon: Settings
+        }
+      ],
     },
-    {
-      title: "Расписание",
-      url: "/admin/schedule",
-      icon: Calendar,
-      locked: true
-    },
-    {
-      title: "Вебхуки",
-      url: "/admin/webhooks",
-      icon: Webhook,
-      locked: true
-    },
-    {
-      title: "Документация API",
-      url: "/admin/api",
-      icon: BookOpen
-    },
-    {
-      title: "Настройки",
-      url: "/admin/settings",
-      icon: Settings
-    }
   ];
 
   return (
@@ -168,44 +193,20 @@ export default function AdminSidebar() {
       </SidebarHeader>
       
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Основное</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {menuItems.slice(0, 2).map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  {renderMenuButton(item)}
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Управление</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {menuItems.slice(2, 6).map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  {renderMenuButton(item)}
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Система</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {menuItems.slice(6).map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  {renderMenuButton(item)}
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {sections.map((section) => (
+          <SidebarGroup key={section.label}>
+            <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {section.items.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    {renderMenuButton(item)}
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
     </Sidebar>
   );

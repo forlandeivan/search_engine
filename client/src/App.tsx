@@ -10,6 +10,7 @@ import SearchPage from "@/pages/SearchPage";
 import AdminPage from "@/pages/AdminPage";
 import PagesPage from "@/pages/PagesPage";
 import TildaApiPage from "@/pages/TildaApiPage";
+import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
 import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import NotFound from "@/pages/not-found";
 
@@ -21,6 +22,7 @@ function Router() {
       <Route path="/admin/sites" component={AdminPage} />
       <Route path="/admin/projects/:siteId" component={ProjectDetailPage} />
       <Route path="/admin/pages" component={PagesPage} />
+      <Route path="/admin/vector/collections" component={VectorCollectionsPage} />
       <Route path="/admin/api" component={TildaApiPage} />
       <Route path="/admin/:tab" component={AdminPage} />
       <Route component={NotFound} />
