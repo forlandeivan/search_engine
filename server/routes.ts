@@ -6,10 +6,78 @@ import { crawler, type CrawlLogEvent } from "./crawler";
 import { insertSiteSchema } from "@shared/schema";
 import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
+import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
+import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
 
 // Bulk delete schema
 const bulkDeletePagesSchema = z.object({
   pageIds: z.array(z.string()).min(1).max(1000)
+});
+
+const distanceEnum = z.enum(["Cosine", "Euclid", "Dot", "Manhattan"]);
+
+const sparseVectorSchema = z.object({
+  indices: z.array(z.number()),
+  values: z.array(z.number()),
+});
+
+const pointVectorSchema = z.union([
+  z.array(z.number()),
+  z.array(z.array(z.number())),
+  z.record(z.any()),
+  sparseVectorSchema,
+]);
+
+const namedVectorSchema = z.object({
+  name: z.string(),
+  vector: z.array(z.number()),
+});
+
+const namedSparseVectorSchema = z.object({
+  name: z.string(),
+  vector: sparseVectorSchema,
+});
+
+const searchVectorSchema = z.union([
+  z.array(z.number()),
+  namedVectorSchema,
+  namedSparseVectorSchema,
+]);
+
+const createVectorCollectionSchema = z.object({
+  name: z.string().min(1).max(128),
+  vectorSize: z.number().int().positive(),
+  distance: distanceEnum.default("Cosine"),
+  onDiskPayload: z.boolean().optional(),
+});
+
+const upsertPointsSchema = z.object({
+  wait: z.boolean().optional(),
+  ordering: z.enum(["weak", "medium", "strong"]).optional(),
+  points: z.array(z.object({
+    id: z.union([z.string(), z.number()]),
+    vector: pointVectorSchema,
+    payload: z.record(z.any()).optional(),
+  })).min(1),
+});
+
+const searchPointsSchema = z.object({
+  vector: searchVectorSchema,
+  limit: z.number().int().positive().max(100).default(10),
+  offset: z.number().int().min(0).optional(),
+  filter: z.unknown().optional(),
+  params: z.unknown().optional(),
+  withPayload: z.unknown().optional(),
+  withVector: z.unknown().optional(),
+  scoreThreshold: z.number().optional(),
+  shardKey: z.unknown().optional(),
+  consistency: z.union([
+    z.number().int().positive(),
+    z.literal("majority"),
+    z.literal("quorum"),
+    z.literal("all")
+  ]).optional(),
+  timeout: z.number().positive().optional(),
 });
 
 // Public search API request/response schemas
@@ -47,6 +115,247 @@ interface PublicSearchResponse {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Vector search endpoints
+  app.get("/api/vector/collections", async (_req, res) => {
+    try {
+      const client = getQdrantClient();
+      const { collections } = await client.getCollections();
+
+      const detailedCollections = await Promise.all(
+        collections.map(async ({ name }) => {
+          try {
+            const info = await client.getCollection(name);
+            const vectorsConfig = info.config?.params?.vectors as
+              | { size?: number | null; distance?: string | null }
+              | undefined;
+
+            return {
+              name,
+              status: info.status,
+              optimizerStatus: info.optimizer_status,
+              pointsCount: info.points_count ?? info.vectors_count ?? 0,
+              vectorsCount: info.vectors_count ?? null,
+              vectorSize: vectorsConfig?.size ?? null,
+              distance: vectorsConfig?.distance ?? null,
+              segmentsCount: info.segments_count,
+            };
+          } catch (error) {
+            return {
+              name,
+              status: "unknown" as const,
+              error: error instanceof Error ? error.message : "Не удалось получить сведения о коллекции",
+            };
+          }
+        })
+      );
+
+      res.json({ collections: detailedCollections });
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      console.error("Ошибка при получении коллекций Qdrant:", error);
+      res.status(500).json({
+        error: "Не удалось загрузить список коллекций",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/vector/collections/:name", async (req, res) => {
+    try {
+      const client = getQdrantClient();
+      const info = await client.getCollection(req.params.name);
+      res.json({
+        name: req.params.name,
+        status: info.status,
+        optimizerStatus: info.optimizer_status,
+        pointsCount: info.points_count ?? info.vectors_count ?? 0,
+        vectorsCount: info.vectors_count ?? null,
+        segmentsCount: info.segments_count,
+        config: info.config,
+      });
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      console.error(`Ошибка при получении коллекции ${req.params.name}:`, error);
+      res.status(500).json({
+        error: "Не удалось получить информацию о коллекции",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/vector/collections", async (req, res) => {
+    try {
+      const body = createVectorCollectionSchema.parse(req.body);
+      const client = getQdrantClient();
+
+      const { name, vectorSize, distance, onDiskPayload } = body;
+      const result = await client.createCollection(name, {
+        vectors: {
+          size: vectorSize,
+          distance,
+        },
+        on_disk_payload: onDiskPayload,
+      });
+
+      const info = await client.getCollection(name);
+
+      res.status(201).json({
+        operation: result,
+        collection: {
+          name,
+          status: info.status,
+          optimizerStatus: info.optimizer_status,
+          pointsCount: info.points_count ?? info.vectors_count ?? 0,
+          vectorsCount: info.vectors_count ?? null,
+          vectorSize,
+          distance,
+          segmentsCount: info.segments_count,
+        },
+      });
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные параметры коллекции",
+          details: error.errors,
+        });
+      }
+
+      console.error("Ошибка при создании коллекции Qdrant:", error);
+      res.status(500).json({
+        error: "Не удалось создать коллекцию",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/vector/collections/:name/points", async (req, res) => {
+    try {
+      const body = upsertPointsSchema.parse(req.body);
+      const client = getQdrantClient();
+
+      const upsertPayload: Parameters<QdrantClient["upsert"]>[1] = {
+        wait: body.wait,
+        ordering: body.ordering,
+        points: body.points as Schemas["PointStruct"][],
+      };
+
+      const result = await client.upsert(req.params.name, upsertPayload);
+
+      res.status(202).json(result);
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные данные точек",
+          details: error.errors,
+        });
+      }
+
+      console.error(`Ошибка при загрузке точек в коллекцию ${req.params.name}:`, error);
+      res.status(500).json({
+        error: "Не удалось загрузить данные в коллекцию",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/vector/collections/:name/search", async (req, res) => {
+    try {
+      const body = searchPointsSchema.parse(req.body);
+      const client = getQdrantClient();
+
+      const searchPayload = {
+        vector: body.vector as Schemas["NamedVectorStruct"],
+        limit: body.limit,
+      } as Parameters<QdrantClient["search"]>[1];
+
+      if (body.offset !== undefined) {
+        searchPayload.offset = body.offset;
+      }
+
+      if (body.filter !== undefined) {
+        searchPayload.filter = body.filter as Parameters<QdrantClient["search"]>[1]["filter"];
+      }
+
+      if (body.params !== undefined) {
+        searchPayload.params = body.params as Parameters<QdrantClient["search"]>[1]["params"];
+      }
+
+      if (body.withPayload !== undefined) {
+        searchPayload.with_payload = body.withPayload as Parameters<QdrantClient["search"]>[1]["with_payload"];
+      }
+
+      if (body.withVector !== undefined) {
+        searchPayload.with_vector = body.withVector as Parameters<QdrantClient["search"]>[1]["with_vector"];
+      }
+
+      if (body.scoreThreshold !== undefined) {
+        searchPayload.score_threshold = body.scoreThreshold;
+      }
+
+      if (body.shardKey !== undefined) {
+        searchPayload.shard_key = body.shardKey as Parameters<QdrantClient["search"]>[1]["shard_key"];
+      }
+
+      if (body.consistency !== undefined) {
+        searchPayload.consistency = body.consistency;
+      }
+
+      if (body.timeout !== undefined) {
+        searchPayload.timeout = body.timeout;
+      }
+
+      const results = await client.search(req.params.name, searchPayload);
+
+      res.json({ results });
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные параметры поиска",
+          details: error.errors,
+        });
+      }
+
+      console.error(`Ошибка при поиске в коллекции ${req.params.name}:`, error);
+      res.status(500).json({
+        error: "Не удалось выполнить поиск",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   // Sites management
   app.get("/api/sites", async (req, res) => {
     try {
