@@ -1,7 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
-import { crawler } from "./crawler";
+import { crawler, type CrawlLogEvent } from "./crawler";
 import { insertSiteSchema } from "@shared/schema";
 import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
@@ -491,6 +492,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
+
+  const wss = new WebSocketServer({
+    server: httpServer,
+    path: "/ws/crawler-logs",
+  });
+
+  type LogClient = {
+    ws: WebSocket;
+    siteId?: string | null;
+  };
+
+  const clients = new Set<LogClient>();
+
+  wss.on("connection", (ws, req) => {
+    let siteId: string | null | undefined;
+
+    try {
+      const host = req.headers.host ?? "localhost";
+      const url = new URL(req.url ?? "", `http://${host}`);
+      siteId = url.searchParams.get("siteId");
+    } catch (error) {
+      console.warn("Crawler logs websocket: invalid connection attempt", error);
+      ws.close(1008, "Invalid connection");
+      return;
+    }
+
+    const client: LogClient = {
+      ws,
+      siteId,
+    };
+    clients.add(client);
+
+    ws.send(
+      JSON.stringify({
+        type: "connected",
+        siteId: siteId ?? null,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    ws.on("close", () => {
+      clients.delete(client);
+    });
+
+    ws.on("error", () => {
+      clients.delete(client);
+    });
+  });
+
+  const broadcastLog = (event: CrawlLogEvent) => {
+    const payload = JSON.stringify({ type: "log", data: event });
+
+    for (const client of clients) {
+      const shouldReceive = !client.siteId || client.siteId === event.siteId;
+      if (!shouldReceive) {
+        continue;
+      }
+
+      if (client.ws.readyState !== WebSocket.OPEN) {
+        clients.delete(client);
+        continue;
+      }
+
+      try {
+        client.ws.send(payload);
+      } catch (error) {
+        console.warn("Failed to send crawler log to client", error);
+        client.ws.terminate();
+        clients.delete(client);
+      }
+    }
+  };
+
+  crawler.onLog(broadcastLog);
 
   return httpServer;
 }

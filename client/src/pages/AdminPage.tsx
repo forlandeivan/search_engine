@@ -329,6 +329,7 @@ export default function AdminPage() {
                 <CrawlStatusCard
                   key={status.id}
                   crawlStatus={mapCrawlStatus(status)}
+                  href={`/admin/projects/${status.id}`}
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
                   onRetry={handleRetryCrawl}
@@ -368,6 +369,7 @@ export default function AdminPage() {
               <CrawlStatusCard
                 key={status.id}
                 crawlStatus={mapCrawlStatus(status)}
+                href={`/admin/projects/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
@@ -390,6 +392,7 @@ export default function AdminPage() {
               <CrawlStatusCard
                 key={status.id}
                 crawlStatus={mapCrawlStatus(status)}
+                href={`/admin/projects/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
@@ -412,6 +415,7 @@ export default function AdminPage() {
               <CrawlStatusCard
                 key={status.id}
                 crawlStatus={mapCrawlStatus(status)}
+                href={`/admin/projects/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}

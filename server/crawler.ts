@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import fetch from 'node-fetch';
 import { URL } from 'url';
 import crypto from 'crypto';
+import { EventEmitter } from 'events';
 import { storage } from './storage';
 import { type Site, type InsertPage } from '@shared/schema';
 
@@ -21,17 +22,82 @@ interface CrawlResult {
   error?: string;
 }
 
+export type CrawlLogLevel = 'info' | 'warning' | 'error' | 'debug';
+
+export interface CrawlLogEvent {
+  siteId: string;
+  level: CrawlLogLevel;
+  message: string;
+  timestamp: string;
+  context?: Record<string, unknown>;
+}
+
 export class WebCrawler {
   private crawledUrls = new Set<string>();
   private pendingUrls: { url: string; depth: number }[] = [];
   private currentSiteId: string | null = null;
   private shouldStop = false;
   private activeCrawls = new Map<string, boolean>();
+  private logEmitter = new EventEmitter();
   private options: CrawlOptions = {
     maxDepth: 3,
     followExternalLinks: false,
     excludePatterns: []
   };
+
+  constructor() {
+    this.logEmitter.setMaxListeners(0);
+  }
+
+  onLog(listener: (event: CrawlLogEvent) => void): () => void {
+    this.logEmitter.on('log', listener);
+    return () => {
+      this.logEmitter.off('log', listener);
+    };
+  }
+
+  private log(siteId: string, level: CrawlLogLevel, message: string, context?: Record<string, unknown>): void {
+    const timestamp = new Date().toISOString();
+    const prefix = `[Crawler][${siteId}]`;
+    const args: unknown[] = [`${prefix} ${message}`];
+
+    if (context && Object.keys(context).length > 0) {
+      args.push(context);
+    }
+
+    switch (level) {
+      case 'error':
+        console.error(...args);
+        break;
+      case 'warning':
+        console.warn(...args);
+        break;
+      case 'debug':
+        console.debug(...args);
+        break;
+      default:
+        console.log(...args);
+        break;
+    }
+
+    const event: CrawlLogEvent = {
+      siteId,
+      level,
+      message,
+      timestamp,
+      context,
+    };
+
+    this.logEmitter.emit('log', event);
+  }
+
+  private logForCurrentSite(level: CrawlLogLevel, message: string, context?: Record<string, unknown>): void {
+    if (!this.currentSiteId) {
+      return;
+    }
+
+    this.log(this.currentSiteId, level, message, context);
+  }
 
   async crawlSite(siteId: string): Promise<void> {
     try {
@@ -65,14 +131,21 @@ export class WebCrawler {
         excludePatterns: site.excludePatterns
       };
 
+      this.log(siteId, 'info', 'Запуск краулинга проекта', {
+        url: site.url,
+        maxDepth: this.options.maxDepth,
+        followExternalLinks: this.options.followExternalLinks,
+        excludePatterns: this.options.excludePatterns,
+      });
+
       let totalPages = 0;
       let indexedPages = 0;
 
       while (this.pendingUrls.length > 0 && !this.shouldStop) {
         // Check if crawl was stopped
         if (!this.activeCrawls.get(siteId) || this.shouldStop) {
-          console.log(`Crawl was stopped for site ${siteId}`);
-          await storage.updateSite(siteId, { 
+          this.log(siteId, 'warning', 'Краулинг остановлен пользователем');
+          await storage.updateSite(siteId, {
             status: 'idle',
             error: 'Crawl manually stopped'
           });
@@ -80,15 +153,15 @@ export class WebCrawler {
         }
 
         const { url, depth } = this.pendingUrls.shift()!;
-        
-        if (this.shouldSkipUrl(url, depth)) {
+
+        if (this.shouldSkipUrl(url, depth, siteId)) {
           continue;
         }
 
         try {
-          console.log(`Crawling: ${url} (depth: ${depth})`);
+          this.log(siteId, 'info', 'Сканируем страницу', { url, depth });
           const result = await this.crawlPage(url);
-          
+
           if (result) {
             totalPages++;
             
@@ -109,9 +182,14 @@ export class WebCrawler {
                   contentHash
                 });
                 indexedPages++;
-                console.log(`✏️  Updated existing page (content changed): ${result.url}`);
+                this.log(siteId, 'info', 'Обновлено содержимое страницы', {
+                  url: result.url,
+                  statusCode: result.statusCode,
+                });
               } else {
-                console.log(`⏭️  Page unchanged, skipping: ${result.url}`);
+                this.log(siteId, 'debug', 'Страница не изменилась, пропускаем', {
+                  url: result.url,
+                });
               }
             } else {
               // Create new page - this handles both first crawl and re-crawl scenarios
@@ -127,7 +205,10 @@ export class WebCrawler {
               };
               await storage.createPage(newPage);
               indexedPages++;
-              console.log(`🆕 Indexed new page: ${result.url}`);
+              this.log(siteId, 'info', 'Проиндексирована новая страница', {
+                url: result.url,
+                statusCode: result.statusCode,
+              });
             }
 
             // Add discovered links for further crawling
@@ -135,15 +216,25 @@ export class WebCrawler {
               result.links.forEach(link => {
                 this.pendingUrls.push({ url: link, depth: depth + 1 });
               });
+              if (result.links.length > 0) {
+                this.log(siteId, 'debug', 'Найдены ссылки для дальнейшего сканирования', {
+                  sourceUrl: result.url,
+                  discoveredLinks: result.links.length,
+                });
+              }
             }
           }
         } catch (error) {
-          console.error(`Error crawling ${url}:`, error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.log(siteId, 'error', 'Ошибка при сканировании страницы', {
+            url,
+            error: errorMessage,
+          });
         }
 
         // Update progress
         const progress = Math.min(100, Math.round((totalPages / Math.max(1, this.pendingUrls.length + totalPages)) * 100));
-        await storage.updateSite(siteId, { 
+        await storage.updateSite(siteId, {
           status: 'crawling'
         });
       }
@@ -155,10 +246,16 @@ export class WebCrawler {
         error: null
       });
 
-      console.log(`Crawl completed for site ${siteId}. Total pages: ${totalPages}, Indexed: ${indexedPages}`);
+      this.log(siteId, 'info', 'Краулинг завершён', {
+        totalPages,
+        indexedPages,
+      });
 
     } catch (error) {
-      console.error(`Crawl failed for site ${siteId}:`, error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log(siteId, 'error', 'Краулинг завершился с ошибкой', {
+        error: errorMessage,
+      });
       await storage.updateSite(siteId, {
         status: 'failed',
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -197,7 +294,10 @@ export class WebCrawler {
       
       // Check if we already crawled this page (without fragment)
       if (this.crawledUrls.has(normalizedUrl)) {
-        console.log(`Skipping duplicate page (fragment removed): ${url} -> ${normalizedUrl}`);
+        this.logForCurrentSite('debug', 'Пропуск дублирующей страницы', {
+          originalUrl: url,
+          normalizedUrl,
+        });
         return null;
       }
       
@@ -303,7 +403,10 @@ export class WebCrawler {
         }
       }
       
-      console.error(`Error crawling page ${url}:`, errorMessage);
+      this.logForCurrentSite('error', 'Ошибка загрузки страницы', {
+        url,
+        error: errorMessage,
+      });
       return {
         url,
         content: '',
@@ -314,13 +417,15 @@ export class WebCrawler {
     }
   }
 
-  private shouldSkipUrl(url: string, depth: number): boolean {
+  private shouldSkipUrl(url: string, depth: number, siteId: string): boolean {
     const normalizedUrl = this.normalizeUrl(url);
     if (this.crawledUrls.has(normalizedUrl)) {
+      this.log(siteId, 'debug', 'URL уже был обработан, пропускаем', { url: normalizedUrl });
       return true;
     }
 
     if (depth > this.options.maxDepth) {
+      this.log(siteId, 'debug', 'Достигнута максимальная глубина', { url: normalizedUrl, depth });
       return true;
     }
 
@@ -329,10 +434,14 @@ export class WebCrawler {
       try {
         const regex = new RegExp(pattern, 'i');
         if (regex.test(url)) {
+          this.log(siteId, 'debug', 'URL исключён по шаблону', { url: normalizedUrl, pattern });
           return true;
         }
       } catch (e) {
-        console.warn(`Invalid regex pattern: ${pattern}`);
+        this.log(siteId, 'warning', 'Некорректное регулярное выражение в исключениях', {
+          pattern,
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 
@@ -346,29 +455,44 @@ export class WebCrawler {
       // Skip certain file types
       const skipExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.gif', '.zip', '.rar'];
       if (skipExtensions.some(ext => parsedUrl.pathname.toLowerCase().endsWith(ext))) {
+        this.logForCurrentSite('debug', 'Пропуск ссылки из-за расширения файла', {
+          url,
+          extension: parsedUrl.pathname.split('.').pop(),
+        });
         return false;
       }
 
       // Skip certain protocols
       if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        this.logForCurrentSite('debug', 'Пропуск ссылки с неподдерживаемым протоколом', {
+          url,
+          protocol: parsedUrl.protocol,
+        });
         return false;
       }
 
       // Skip URLs that are only different by fragment (already normalized)
       // Skip certain query parameters that indicate non-content pages
       if (parsedUrl.search.includes('print=') || parsedUrl.search.includes('download=')) {
+        this.logForCurrentSite('debug', 'Пропуск ссылки с нежелательными параметрами', {
+          url,
+        });
         return false;
       }
 
       return true;
-    } catch {
+    } catch (error) {
+      this.logForCurrentSite('warning', 'Не удалось разобрать URL, пропускаем', {
+        url,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
 
   async stopCrawl(siteId: string): Promise<void> {
-    console.log(`Stopping crawl for site ${siteId}`);
-    
+    this.log(siteId, 'warning', 'Инициирована остановка краулинга пользователем');
+
     // Set stop flags immediately
     if (this.currentSiteId === siteId) {
       this.shouldStop = true;
@@ -387,26 +511,27 @@ export class WebCrawler {
       this.currentSiteId = null;
       this.shouldStop = false;
     }
-    
-    console.log(`Crawl forcefully stopped for site ${siteId}`);
+
+    this.log(siteId, 'warning', 'Краулинг был принудительно остановлен');
   }
 
   // Emergency stop all crawls
   async stopAllCrawls(): Promise<void> {
-    console.log('Emergency stop: stopping all active crawls');
+    this.logForCurrentSite('warning', 'Экстренная остановка всех краулингов');
     this.shouldStop = true;
     this.pendingUrls = [];
     this.currentSiteId = null;
-    
+
     // Stop all active crawls
     for (const siteId of Array.from(this.activeCrawls.keys())) {
       this.activeCrawls.set(siteId, false);
-      await storage.updateSite(siteId, { 
+      await storage.updateSite(siteId, {
         status: 'idle',
         error: 'Emergency stop - all crawls terminated'
       });
+      this.log(siteId, 'warning', 'Краулинг остановлен в экстренном режиме');
     }
-    
+
     this.activeCrawls.clear();
     console.log('All crawls stopped');
   }
