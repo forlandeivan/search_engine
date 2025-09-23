@@ -21,9 +21,21 @@ export function getQdrantClient(customParams: QdrantClientParams = {}): QdrantCl
 
   const apiKey = process.env.QDRANT_API_KEY;
 
+  const parsedUrl = new URL(url);
+  let defaultPort: number | undefined;
+
+  if (!parsedUrl.port) {
+    if (parsedUrl.protocol === "https:") {
+      defaultPort = 443;
+    } else if (parsedUrl.protocol === "http:") {
+      defaultPort = 80;
+    }
+  }
+
   qdrantClient = new QdrantClient({
     url,
     apiKey: apiKey || undefined,
+    ...(defaultPort !== undefined ? { port: defaultPort } : {}),
     ...customParams,
   });
 
