@@ -6,8 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { RefreshCcw, DatabaseZap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -32,7 +40,6 @@ interface CreateCollectionPayload {
   name: string;
   vectorSize: number;
   distance: "Cosine" | "Euclid" | "Dot" | "Manhattan";
-  onDiskPayload?: boolean;
 }
 
 const distanceOptions: Array<{ value: CreateCollectionPayload["distance"]; label: string }> = [
@@ -48,8 +55,8 @@ export default function VectorCollectionsPage() {
     name: "",
     vectorSize: "1536",
     distance: "Cosine" as CreateCollectionPayload["distance"],
-    onDiskPayload: false,
   });
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
   const { data, isLoading, isFetching, error } = useQuery<CollectionsResponse>({
     queryKey: ["/api/vector/collections"],
@@ -69,8 +76,8 @@ export default function VectorCollectionsPage() {
         name: "",
         vectorSize: "1536",
         distance: "Cosine",
-        onDiskPayload: false,
       });
+      setIsCreateDialogOpen(false);
       queryClient.invalidateQueries({ queryKey: ["/api/vector/collections"] });
     },
     onError: (mutationError: any) => {
@@ -109,7 +116,6 @@ export default function VectorCollectionsPage() {
       name: formState.name.trim(),
       vectorSize: vectorSizeNumber,
       distance: formState.distance,
-      onDiskPayload: formState.onDiskPayload || undefined,
     };
 
     createCollectionMutation.mutate(payload);
@@ -120,7 +126,8 @@ export default function VectorCollectionsPage() {
   };
 
   return (
-    <div className="space-y-6 p-6">
+    <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+      <div className="space-y-6 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -139,90 +146,22 @@ export default function VectorCollectionsPage() {
             </p>
           )}
         </div>
-        <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-          <RefreshCcw className="mr-2 h-4 w-4" />
-          Обновить
-        </Button>
+        <div className="flex items-center gap-2">
+          <DialogTrigger asChild>
+            <Button>Создать коллекцию</Button>
+          </DialogTrigger>
+          <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
+            <RefreshCcw className="mr-2 h-4 w-4" />
+            Обновить
+          </Button>
+        </div>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Новая коллекция</CardTitle>
-          <CardDescription>
-            Задайте параметры коллекции и загрузите знания через API /api/vector/collections/&lt;name&gt;/points
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="grid gap-4 md:grid-cols-2" onSubmit={handleSubmit}>
-            <div className="space-y-2">
-              <Label htmlFor="collection-name">Название</Label>
-              <Input
-                id="collection-name"
-                placeholder="Например, knowledge-base"
-                value={formState.name}
-                onChange={(event) => setFormState((prev) => ({ ...prev, name: event.target.value }))}
-                disabled={createCollectionMutation.isPending}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="collection-vector-size">Размер вектора</Label>
-              <Input
-                id="collection-vector-size"
-                type="number"
-                min={1}
-                value={formState.vectorSize}
-                onChange={(event) => setFormState((prev) => ({ ...prev, vectorSize: event.target.value }))}
-                disabled={createCollectionMutation.isPending}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Метрика</Label>
-              <Select
-                value={formState.distance}
-                onValueChange={(value) => setFormState((prev) => ({ ...prev, distance: value as CreateCollectionPayload["distance"] }))}
-                disabled={createCollectionMutation.isPending}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Выберите метрику" />
-                </SelectTrigger>
-                <SelectContent>
-                  {distanceOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <Checkbox
-                  checked={formState.onDiskPayload}
-                  onCheckedChange={(checked) =>
-                    setFormState((prev) => ({ ...prev, onDiskPayload: checked === true }))
-                  }
-                  disabled={createCollectionMutation.isPending}
-                />
-                Хранить payload на диске
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                Включите, если хотите экономить память при больших объёмах данных
-              </p>
-            </div>
-            <div className="md:col-span-2">
-              <Button type="submit" disabled={createCollectionMutation.isPending}>
-                Создать коллекцию
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>Список коллекций</CardTitle>
           <CardDescription>
-            Получайте знания через /api/vector/collections/&lt;name&gt;/points и ищите их через /api/vector/collections/&lt;name&gt;/search
+            Отслеживайте параметры каждой коллекции и объём загруженных данных
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -236,11 +175,9 @@ export default function VectorCollectionsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Название</TableHead>
-                    <TableHead>Статус</TableHead>
                     <TableHead>Размер вектора</TableHead>
                     <TableHead>Метрика</TableHead>
-                    <TableHead>Точек</TableHead>
-                    <TableHead>Сегменты</TableHead>
+                    <TableHead>Количество записей</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -254,17 +191,9 @@ export default function VectorCollectionsPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={collection.status === "green" ? "default" : collection.status === "yellow" ? "secondary" : "outline"}
-                        >
-                          {collection.status}
-                        </Badge>
-                      </TableCell>
                       <TableCell>{collection.vectorSize ?? "—"}</TableCell>
                       <TableCell>{collection.distance ?? "—"}</TableCell>
                       <TableCell>{collection.pointsCount ?? "—"}</TableCell>
-                      <TableCell>{collection.segmentsCount ?? "—"}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -273,6 +202,63 @@ export default function VectorCollectionsPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+      </div>
+
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Создать коллекцию</DialogTitle>
+          <DialogDescription>
+            Задайте базовые параметры коллекции. Изменить их после создания будет нельзя.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="grid gap-4" onSubmit={handleSubmit}>
+          <div className="space-y-2">
+            <Label htmlFor="collection-name">Название</Label>
+            <Input
+              id="collection-name"
+              placeholder="Например, knowledge-base"
+              value={formState.name}
+              onChange={(event) => setFormState((prev) => ({ ...prev, name: event.target.value }))}
+              disabled={createCollectionMutation.isPending}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="collection-vector-size">Размер вектора</Label>
+            <Input
+              id="collection-vector-size"
+              type="number"
+              min={1}
+              value={formState.vectorSize}
+              onChange={(event) => setFormState((prev) => ({ ...prev, vectorSize: event.target.value }))}
+              disabled={createCollectionMutation.isPending}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="collection-distance">Метрика</Label>
+            <Select
+              value={formState.distance}
+              onValueChange={(value) => setFormState((prev) => ({ ...prev, distance: value as CreateCollectionPayload["distance"] }))}
+              disabled={createCollectionMutation.isPending}
+            >
+              <SelectTrigger id="collection-distance">
+                <SelectValue placeholder="Выберите метрику" />
+              </SelectTrigger>
+              <SelectContent>
+                {distanceOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={createCollectionMutation.isPending}>
+              {createCollectionMutation.isPending ? "Создание..." : "Создать"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
