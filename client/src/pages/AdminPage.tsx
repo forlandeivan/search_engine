@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Plus, Search, Filter, AlertTriangle } from "lucide-react";
+import { Plus, Search, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function AdminPage() {
@@ -24,13 +24,14 @@ export default function AdminPage() {
   const [searchFilter, setSearchFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "crawling" | "completed" | "failed">("all");
   const [siteToDelete, setSiteToDelete] = useState<{ id: string; url: string; pageCount?: number } | null>(null);
-  const [isLoading, setIsLoading] = useState(false); // Added for potential future use, though mutations handle their own loading states
 
   // Fetch sites data with extended stats and auto-refresh if any site is crawling
-  const { data: sites = [], isLoading: isSitesLoading, refetch } = useQuery<Site[]>({
+  type SiteWithStats = Site & { pagesFound?: number; pagesIndexed?: number };
+
+  const { data: sites = [], refetch } = useQuery<SiteWithStats[]>({
     queryKey: ['/api/sites/extended'],
     refetchInterval: (query) => {
-      const sitesData = query.state.data as Site[] || [];
+      const sitesData = (query.state.data as SiteWithStats[] | undefined) ?? [];
       return sitesData.some((site) => site.status === 'crawling') ? 3000 : false;
     },
   });
@@ -143,7 +144,7 @@ export default function AdminPage() {
     recrawlMutation.mutate(siteId);
   };
 
-  const mapCrawlStatus = (status: Site & { pagesFound?: number; pagesIndexed?: number }): CrawlStatus => ({
+  const mapCrawlStatus = (status: SiteWithStats): CrawlStatus => ({
     id: status.id,
     url: status.url ?? "URL не задан",
     status: (status.status ?? "idle") as CrawlStatus["status"],
@@ -154,12 +155,6 @@ export default function AdminPage() {
     nextCrawl: status.nextCrawl ? new Date(status.nextCrawl) : undefined,
     error: status.error ?? undefined,
   });
-
-  const getProjectName = (status: Site & { name?: string | null }) =>
-    status.name || status.url || "Без названия";
-
-  const getProjectDescription = (status: Site & { description?: string | null }) =>
-    status.description ?? undefined;
 
   // Emergency stop all crawls mutation
   const emergencyStopMutation = useMutation({
@@ -212,9 +207,12 @@ export default function AdminPage() {
   };
 
   const displaySites = sites || [];
+  const normalizedSearch = searchFilter.trim().toLowerCase();
 
-  const filteredStatuses = displaySites.filter((status: any) => {
-    const matchesSearch = status.url.toLowerCase().includes(searchFilter.toLowerCase());
+  const filteredStatuses = displaySites.filter((status) => {
+    const matchesSearch = normalizedSearch.length === 0
+      ? true
+      : status.url.toLowerCase().includes(normalizedSearch);
     const matchesStatus = statusFilter === "all" || status.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -330,10 +328,7 @@ export default function AdminPage() {
               {filteredStatuses.map((status) => (
                 <CrawlStatusCard
                   key={status.id}
-                  crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
-                  projectName={getProjectName(status)}
-                  projectDescription={getProjectDescription(status)}
-                  href={`/admin/sites/${status.id}`}
+                  crawlStatus={mapCrawlStatus(status)}
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
                   onRetry={handleRetryCrawl}
@@ -341,8 +336,8 @@ export default function AdminPage() {
                   onDelete={() =>
                     setSiteToDelete({
                       id: status.id,
-                      url: status.url ?? getProjectName(status),
-                      pageCount: ((status as any).pagesIndexed ?? (status as any).pagesFound) || 0,
+                      url: status.url ?? "Без URL",
+                      pageCount: (status.pagesIndexed ?? status.pagesFound) ?? 0,
                     })
                   }
                 />
@@ -369,13 +364,10 @@ export default function AdminPage() {
 
         <TabsContent value="crawling" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredStatuses.filter(s => s.status === "crawling").map((status) => (
+            {filteredStatuses.filter((s) => s.status === "crawling").map((status) => (
               <CrawlStatusCard
                 key={status.id}
-                crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
-                projectName={getProjectName(status)}
-                projectDescription={getProjectDescription(status)}
-                href={`/admin/sites/${status.id}`}
+                crawlStatus={mapCrawlStatus(status)}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
@@ -383,8 +375,8 @@ export default function AdminPage() {
                 onDelete={() =>
                   setSiteToDelete({
                     id: status.id,
-                    url: status.url ?? getProjectName(status),
-                    pageCount: ((status as any).pagesIndexed ?? (status as any).pagesFound) || 0,
+                    url: status.url ?? "Без URL",
+                    pageCount: (status.pagesIndexed ?? status.pagesFound) ?? 0,
                   })
                 }
               />
@@ -394,13 +386,10 @@ export default function AdminPage() {
 
         <TabsContent value="completed" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredStatuses.filter(s => s.status === "completed").map((status) => (
+            {filteredStatuses.filter((s) => s.status === "completed").map((status) => (
               <CrawlStatusCard
                 key={status.id}
-                crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
-                projectName={getProjectName(status)}
-                projectDescription={getProjectDescription(status)}
-                href={`/admin/sites/${status.id}`}
+                crawlStatus={mapCrawlStatus(status)}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
@@ -408,8 +397,8 @@ export default function AdminPage() {
                 onDelete={() =>
                   setSiteToDelete({
                     id: status.id,
-                    url: status.url ?? getProjectName(status),
-                    pageCount: ((status as any).pagesIndexed ?? (status as any).pagesFound) || 0,
+                    url: status.url ?? "Без URL",
+                    pageCount: (status.pagesIndexed ?? status.pagesFound) ?? 0,
                   })
                 }
               />
@@ -419,13 +408,10 @@ export default function AdminPage() {
 
         <TabsContent value="failed" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredStatuses.filter(s => s.status === "failed").map((status) => (
+            {filteredStatuses.filter((s) => s.status === "failed").map((status) => (
               <CrawlStatusCard
                 key={status.id}
-                crawlStatus={mapCrawlStatus(status as Site & { pagesFound?: number; pagesIndexed?: number })}
-                projectName={getProjectName(status)}
-                projectDescription={getProjectDescription(status)}
-                href={`/admin/sites/${status.id}`}
+                crawlStatus={mapCrawlStatus(status)}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
@@ -433,8 +419,8 @@ export default function AdminPage() {
                 onDelete={() =>
                   setSiteToDelete({
                     id: status.id,
-                    url: status.url ?? getProjectName(status),
-                    pageCount: ((status as any).pagesIndexed ?? (status as any).pagesFound) || 0,
+                    url: status.url ?? "Без URL",
+                    pageCount: (status.pagesIndexed ?? status.pagesFound) ?? 0,
                   })
                 }
               />

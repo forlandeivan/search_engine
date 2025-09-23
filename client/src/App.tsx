@@ -7,11 +7,10 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import AdminSidebar from "@/components/AdminSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
 import SearchPage from "@/pages/SearchPage";
-import AdminPage from "@/pages/AdminPageSimple";
+import AdminPage from "@/pages/AdminPage";
 import PagesPage from "@/pages/PagesPage";
 import TildaApiPage from "@/pages/TildaApiPage";
 import NotFound from "@/pages/not-found";
-import SiteDetailsPage from "@/pages/SiteDetailsPage";
 
 function Router() {
   return (
@@ -19,9 +18,6 @@ function Router() {
       <Route path="/" component={SearchPage} />
       <Route path="/admin" component={AdminPage} />
       <Route path="/admin/sites" component={AdminPage} />
-      <Route path="/admin/sites/:id">
-        {(params) => <SiteDetailsPage siteId={params.id} />}
-      </Route>
       <Route path="/admin/pages" component={PagesPage} />
       <Route path="/admin/api" component={TildaApiPage} />
       <Route path="/admin/:tab" component={AdminPage} />

@@ -1,0 +1,4 @@
+ALTER TABLE "sites" DROP COLUMN IF EXISTS "name";
+ALTER TABLE "sites" DROP COLUMN IF EXISTS "description";
+ALTER TABLE "sites" DROP COLUMN IF EXISTS "search_settings";
+ALTER TABLE "sites" ALTER COLUMN "url" SET NOT NULL;
