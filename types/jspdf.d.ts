@@ -1,4 +1,4 @@
-codex/find-pdf-export-tools-for-cyrillic
+// codex/find-pdf-export-tools-for-cyrillic
 declare module "jspdf" {
   export interface JsPDFOptions {
     unit?: string;
@@ -24,4 +24,4 @@ declare module "jspdf" {
   }
 }
 declare module "jspdf";
-main
+// main

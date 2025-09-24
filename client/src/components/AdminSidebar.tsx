@@ -21,7 +21,8 @@ import {
   Webhook,
   Calendar,
   BookOpen,
-  Boxes
+  Boxes,
+  Brain
 } from "lucide-react";
 
 interface SidebarItem {
@@ -125,6 +126,11 @@ export default function AdminSidebar() {
           icon: Globe,
           badge: sites ? sites.length.toString() : "0",
           badgeVariant: "secondary"
+        },
+        {
+          title: "Загрузка знаний",
+          url: "/admin/knowledge",
+          icon: Brain,
         },
       ],
     },
