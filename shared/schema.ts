@@ -49,10 +49,13 @@ export interface PageMetadata {
 // Sites table for storing crawl configurations
 export const sites = pgTable("sites", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().default("Новый проект"),
   url: text("url").notNull().unique(),
+  startUrls: jsonb("start_urls").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   crawlDepth: integer("crawl_depth").notNull().default(3),
+  maxChunkSize: integer("max_chunk_size").notNull().default(1200),
   followExternalLinks: boolean("follow_external_links").notNull().default(false),
-  crawlFrequency: text("crawl_frequency").notNull().default("daily"), // "manual" | "hourly" | "daily" | "weekly"
+  crawlFrequency: text("crawl_frequency").notNull().default("manual"), // "manual" | "hourly" | "daily" | "weekly"
   excludePatterns: jsonb("exclude_patterns").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   status: text("status").notNull().default("idle"), // "idle" | "crawling" | "completed" | "failed"
   lastCrawled: timestamp("last_crawled"),
@@ -115,15 +118,36 @@ export const searchIndexRelations = relations(searchIndex, ({ one }) => ({
 }));
 
 // Zod schemas for validation
-export const insertSiteSchema = createInsertSchema(sites).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-  status: true,
-  lastCrawled: true,
-  nextCrawl: true,
-  error: true,
-});
+export const insertSiteSchema = createInsertSchema(sites)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+    status: true,
+    lastCrawled: true,
+    nextCrawl: true,
+    error: true,
+  })
+  .extend({
+    name: z.string().trim().min(1, "Название проекта обязательно").max(200, "Слишком длинное название"),
+    url: z.string().trim().url("Некорректный URL"),
+    startUrls: z
+      .array(z.string().trim().url("Некорректный URL"))
+      .min(1, "Укажите хотя бы один URL"),
+    crawlDepth: z.number().int().min(1, "Минимальная глубина 1").max(10, "Слишком большая глубина"),
+    maxChunkSize: z
+      .number()
+      .int("Размер чанка должен быть целым числом")
+      .min(200, "Минимальный размер чанка 200 символов")
+      .max(8000, "Максимальный размер чанка 8000 символов"),
+    crawlFrequency: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => value ?? "manual"),
+    followExternalLinks: z.boolean().optional(),
+    excludePatterns: z.array(z.string()).optional(),
+  });
 
 export const insertPageSchema = createInsertSchema(pages).omit({
   id: true,

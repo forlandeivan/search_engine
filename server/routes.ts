@@ -3,7 +3,6 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
-import { insertSiteSchema } from "@shared/schema";
 import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
@@ -24,6 +23,14 @@ function getErrorDetails(error: unknown): string {
 // Bulk delete schema
 const bulkDeletePagesSchema = z.object({
   pageIds: z.array(z.string()).min(1).max(1000)
+});
+
+const createProjectSchema = z.object({
+  name: z.string().trim().min(1, "Название проекта обязательно").max(200, "Слишком длинное название"),
+  startUrls: z.array(z.string().trim().url("Некорректный URL"))
+    .min(1, "Укажите хотя бы один URL"),
+  crawlDepth: z.coerce.number().int().min(1).max(10),
+  maxChunkSize: z.coerce.number().int().min(200).max(8000),
 });
 
 const distanceEnum = z.enum(["Cosine", "Euclid", "Dot", "Manhattan"]);
@@ -465,13 +472,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/sites", async (req, res) => {
     try {
-      const validatedData = insertSiteSchema.parse(req.body);
-      const newSite = await storage.createSite(validatedData);
+      const validatedData = createProjectSchema.parse(req.body);
+      const normalizedStartUrls = Array.from(
+        new Set(
+          validatedData.startUrls
+            .map((url) => url.trim())
+            .filter(Boolean)
+        )
+      );
+
+      if (normalizedStartUrls.length === 0) {
+        return res.status(400).json({ error: "Укажите хотя бы один URL" });
+      }
+
+      const primaryUrl = normalizedStartUrls[0];
+
+      const newSite = await storage.createSite({
+        name: validatedData.name.trim(),
+        url: primaryUrl,
+        startUrls: normalizedStartUrls,
+        crawlDepth: validatedData.crawlDepth,
+        maxChunkSize: validatedData.maxChunkSize,
+        followExternalLinks: false,
+        crawlFrequency: "manual",
+        excludePatterns: [],
+      });
 
       // Invalidate CORS cache since a new site was added
       invalidateCorsCache();
-      console.log(`CORS cache invalidated after creating site: ${newSite.url ?? 'без URL'}`);
-      
+      console.log(`CORS cache invalidated after creating site: ${newSite.name} (${newSite.url ?? 'без URL'})`);
+
       res.status(201).json(newSite);
     } catch (error) {
       console.error("Error creating site:", error);
@@ -528,7 +558,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Invalidate CORS cache since site was updated (URL might have changed)
       invalidateCorsCache();
-      console.log(`CORS cache invalidated after updating site: ${updatedSite.url ?? 'без URL'}`);
+      console.log(`CORS cache invalidated after updating site: ${updatedSite?.name ?? updatedSite?.url ?? 'без названия'}`);
       
       res.json(updatedSite);
     } catch (error) {
@@ -548,7 +578,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Invalidate CORS cache since a site was deleted
       invalidateCorsCache();
-      console.log(`CORS cache invalidated after deleting site: ${siteToDelete?.url || req.params.id}`);
+      console.log(`CORS cache invalidated after deleting site: ${siteToDelete?.name ?? siteToDelete?.url ?? req.params.id}`);
       
       res.status(204).send();
     } catch (error) {
@@ -565,8 +595,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Site not found" });
       }
 
-      if (!site.url) {
-        return res.status(400).json({ error: "Site URL is not configured" });
+      const configuredStartUrls = (site.startUrls ?? []).filter(Boolean);
+      const fallbackUrls = site.url ? [site.url] : [];
+      const availableStartUrls = configuredStartUrls.length > 0 ? configuredStartUrls : fallbackUrls;
+
+      if (availableStartUrls.length === 0) {
+        return res.status(400).json({ error: "Start URLs are not configured" });
       }
 
       // Start crawling in background
@@ -589,8 +623,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Site not found" });
       }
 
-      if (!site.url) {
-        return res.status(400).json({ error: "Site URL is not configured" });
+      const configuredStartUrls = (site.startUrls ?? []).filter(Boolean);
+      const fallbackUrls = site.url ? [site.url] : [];
+      const availableStartUrls = configuredStartUrls.length > 0 ? configuredStartUrls : fallbackUrls;
+
+      if (availableStartUrls.length === 0) {
+        return res.status(400).json({ error: "Start URLs are not configured" });
       }
 
       // Check if site is already being crawled
@@ -600,7 +638,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get current page count before recrawling for logging
       const existingPages = await storage.getPagesBySiteId(req.params.id);
-      console.log(`Starting recrawl for site ${site.url ?? 'без URL'} - currently has ${existingPages.length} pages`);
+      console.log(
+        `Starting recrawl for site ${site.name ?? site.url ?? 'без названия'} - currently has ${existingPages.length} pages`
+      );
 
       // Start re-crawling in background (uses same logic as regular crawl)
       // The crawler already handles duplicates by checking existing URLs
@@ -651,13 +691,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: 'idle',
           error: 'Emergency stop - crawl terminated by admin'
         });
-        console.log(`Emergency stopped crawling for site: ${site.url}`);
+        console.log(`Emergency stopped crawling for site: ${site.name ?? site.url}`);
       }
       
       res.json({ 
         message: "All crawls stopped", 
         stoppedCount: stuckSites.length,
-        stoppedSites: stuckSites.map(s => s.url),
+        stoppedSites: stuckSites.map(s => s.name ?? s.url),
         timestamp: new Date().toISOString() 
       });
     } catch (error) {
@@ -763,9 +803,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "URL is required" });
       }
 
-      // Find site by URL
+      // Find site by URL among all start URLs
       const sites = await storage.getAllSites();
-      const site = sites.find(s => s.url === url);
+      const normalizedUrl = url.toString().trim();
+      const site = sites.find((s) => {
+        if (!normalizedUrl) {
+          return false;
+        }
+
+        if (s.url === normalizedUrl) {
+          return true;
+        }
+
+        return (s.startUrls ?? []).some((startUrl) => startUrl === normalizedUrl);
+      });
       
       if (!site) {
         return res.status(404).json({ error: "Site not found for URL" });
@@ -779,7 +830,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ 
         message: "Crawling started via webhook", 
         siteId: site.id,
-        url: site.url
+        url: site.url,
+        startUrls: site.startUrls,
       });
     } catch (error) {
       console.error("Error processing webhook:", error);
