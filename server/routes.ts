@@ -31,6 +31,8 @@ const createProjectSchema = z.object({
     .min(1, "Укажите хотя бы один URL"),
   crawlDepth: z.coerce.number().int().min(1).max(10),
   maxChunkSize: z.coerce.number().int().min(200).max(8000),
+  chunkOverlap: z.boolean().optional().default(false),
+  chunkOverlapSize: z.coerce.number().int().min(0).max(4000).optional().default(0),
 });
 
 const distanceEnum = z.enum(["Cosine", "Euclid", "Dot", "Manhattan"]);
@@ -487,12 +489,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const primaryUrl = normalizedStartUrls[0];
 
+      const chunkOverlapEnabled = validatedData.chunkOverlap ?? false;
+      const chunkOverlapSize = chunkOverlapEnabled ? validatedData.chunkOverlapSize ?? 0 : 0;
+
       const newSite = await storage.createSite({
         name: validatedData.name.trim(),
         url: primaryUrl,
         startUrls: normalizedStartUrls,
         crawlDepth: validatedData.crawlDepth,
         maxChunkSize: validatedData.maxChunkSize,
+        chunkOverlap: chunkOverlapEnabled,
+        chunkOverlapSize,
         followExternalLinks: false,
         crawlFrequency: "manual",
         excludePatterns: [],
