@@ -1,16 +1,21 @@
 import { useMemo, useState } from "react";
 import { useRoute, Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Calendar,
   ChevronLeft,
   ExternalLink,
+  FileDown,
   FileText,
   Gauge,
   Hash,
+  Loader2,
   ListOrdered,
+  MoreVertical,
   RefreshCw,
   ScrollText,
+  Send,
+  Trash2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -23,7 +28,35 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import CrawlerLogPanel from "@/components/CrawlerLogPanel";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
 
 const statusLabels: Record<Site["status"], string> = {
   idle: "Ожидает",
@@ -65,9 +98,29 @@ function formatDistance(value?: string | Date | null) {
   return formatDistanceToNow(date, { addSuffix: true, locale: ru });
 }
 
+interface JsonDialogState {
+  open: boolean;
+  page: Page | null;
+  jsonText: string;
+  webhookUrl: string;
+}
+
+function calculateWordCount(text?: string | null): number {
+  if (!text) {
+    return 0;
+  }
+
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
 export default function ProjectDetailPage() {
   const [match, params] = useRoute("/admin/projects/:siteId");
   const siteId = params?.siteId ?? null;
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const {
     data: site,
@@ -90,6 +143,252 @@ export default function ProjectDetailPage() {
 
   const isCrawling = site?.status === "crawling";
   const [isLogDialogOpen, setIsLogDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [pageToDelete, setPageToDelete] = useState<Page | null>(null);
+  const [exportingPageId, setExportingPageId] = useState<string | null>(null);
+  const [jsonDialogState, setJsonDialogState] = useState<JsonDialogState>({
+    open: false,
+    page: null,
+    jsonText: "",
+    webhookUrl: "",
+  });
+  const [isSendingJson, setIsSendingJson] = useState(false);
+
+  const deletePageMutation = useMutation({
+    mutationFn: async (pageId: string) => {
+      const response = await fetch(`/api/pages/${pageId}`, { method: "DELETE" });
+
+      if (!response.ok) {
+        let errorMessage = "Не удалось удалить страницу";
+        try {
+          const data = await response.json();
+          if (data?.error) {
+            errorMessage = data.error;
+          }
+        } catch (error) {
+          console.warn("Не удалось разобрать ответ удаления страницы", error);
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      return response.json().catch(() => null);
+    },
+  });
+
+  const resetJsonDialogState = () => {
+    setJsonDialogState({ open: false, page: null, jsonText: "", webhookUrl: "" });
+    setIsSendingJson(false);
+  };
+
+  const buildJsonPayloadForPage = (page: Page) => {
+    const chunks = Array.isArray(page.chunks) ? page.chunks : [];
+    const chunkCharLimit = site?.maxChunkSize
+      ?? chunks.reduce((max, chunk) => {
+        const charCount = chunk.metadata?.charCount ?? chunk.content.length;
+        return Math.max(max, charCount);
+      }, 0);
+    const totalChunks = chunks.length;
+
+    const payload = chunks.map((chunk, index) => {
+      const charCount = chunk.metadata?.charCount ?? chunk.content.length;
+      const wordCount = chunk.metadata?.wordCount ?? calculateWordCount(chunk.content);
+      const chunkIndex = chunk.metadata?.position !== undefined ? chunk.metadata.position + 1 : index + 1;
+
+      return {
+        pageTitle: page.title ?? "Без названия",
+        totalChunks,
+        chunkCharLimit,
+        chunk: {
+          heading: chunk.heading || `Чанк ${index + 1}`,
+          index: chunkIndex,
+          text: chunk.content,
+          charCount,
+          wordCount,
+        },
+      };
+    });
+
+    return JSON.stringify(payload, null, 2);
+  };
+
+  const openJsonDialogForPage = (page: Page) => {
+    const payload = buildJsonPayloadForPage(page);
+    setJsonDialogState({ open: true, page, jsonText: payload, webhookUrl: "" });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!pageToDelete) {
+      return;
+    }
+
+    try {
+      await deletePageMutation.mutateAsync(pageToDelete.id);
+      await queryClient.invalidateQueries({ queryKey: ["/api/sites", siteId ?? "", "pages"] });
+
+      toast({
+        title: "Страница удалена",
+        description: `«${pageToDelete.title || pageToDelete.url || "Без названия"}» успешно удалена`,
+      });
+
+      setIsDeleteDialogOpen(false);
+      setPageToDelete(null);
+    } catch (error) {
+      toast({
+        title: "Ошибка удаления",
+        description: error instanceof Error ? error.message : "Не удалось удалить страницу",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleExportPdf = async (page: Page) => {
+    try {
+      setExportingPageId(page.id);
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+      const margin = 40;
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      let cursor = margin;
+
+      const ensureSpace = (lineHeight: number) => {
+        if (cursor + lineHeight > pageHeight - margin) {
+          doc.addPage();
+          cursor = margin;
+        }
+      };
+
+      const addParagraph = (text: string, fontSize = 12, options?: { bold?: boolean; spacingAfter?: number }) => {
+        if (!text) {
+          cursor += options?.spacingAfter ?? fontSize * 0.2;
+          return;
+        }
+
+        doc.setFont("helvetica", options?.bold ? "bold" : "normal");
+        doc.setFontSize(fontSize);
+        const lines = doc.splitTextToSize(text, pageWidth - margin * 2);
+        const lineHeight = fontSize * 1.4;
+
+        lines.forEach((line: string) => {
+          ensureSpace(lineHeight);
+          doc.text(line, margin, cursor);
+          cursor += lineHeight;
+        });
+
+        cursor += options?.spacingAfter ?? fontSize * 0.6;
+      };
+
+      const chunks = Array.isArray(page.chunks) ? page.chunks : [];
+      const chunkCharLimit = site?.maxChunkSize
+        ?? chunks.reduce((max, chunk) => {
+          const charCount = chunk.metadata?.charCount ?? chunk.content.length;
+          return Math.max(max, charCount);
+        }, 0);
+      const totalChunks = chunks.length;
+      const aggregatedContent = page.content ?? "";
+      const aggregatedCharCount = aggregatedContent.length;
+      const aggregatedWordCount = page.metadata?.wordCount ?? calculateWordCount(aggregatedContent);
+
+      addParagraph(page.title || "Без названия", 18, { bold: true, spacingAfter: 6 });
+      addParagraph(page.url ?? "", 11, { spacingAfter: 10 });
+      addParagraph(`Всего чанков: ${totalChunks}`, 12, { spacingAfter: 2 });
+      addParagraph(`Лимит символов чанка: ${chunkCharLimit}`, 12, { spacingAfter: 2 });
+      addParagraph(`Символов (агрегировано): ${aggregatedCharCount}`, 12, { spacingAfter: 2 });
+      addParagraph(`Слов (агрегировано): ${aggregatedWordCount}`, 12, { spacingAfter: 10 });
+
+      chunks.forEach((chunk, index) => {
+        const charCount = chunk.metadata?.charCount ?? chunk.content.length;
+        const wordCount = chunk.metadata?.wordCount ?? calculateWordCount(chunk.content);
+        const chunkIndex = chunk.metadata?.position !== undefined ? chunk.metadata.position + 1 : index + 1;
+
+        addParagraph(`Чанк ${index + 1}: ${chunk.heading || "Без названия"}`, 14, { bold: true, spacingAfter: 4 });
+        addParagraph(`Номер в странице: ${chunkIndex}`, 11, { spacingAfter: 2 });
+        addParagraph(`Символов: ${charCount} · Слов: ${wordCount}`, 11, { spacingAfter: 6 });
+        addParagraph(chunk.content, 11, { spacingAfter: 12 });
+      });
+
+      const fileNameBase = (page.title || page.url || "page")
+        .toLowerCase()
+        .replace(/[^a-z0-9а-яё]+/gi, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60)
+        || "page";
+
+      doc.save(`${fileNameBase}.pdf`);
+
+      toast({
+        title: "PDF создан",
+        description: "Файл успешно подготовлен и сохранён.",
+      });
+    } catch (error) {
+      toast({
+        title: "Ошибка выгрузки",
+        description: error instanceof Error ? error.message : "Не удалось сформировать PDF",
+        variant: "destructive",
+      });
+    } finally {
+      setExportingPageId(null);
+    }
+  };
+
+  const handleSendJson = async () => {
+    const webhookUrl = jsonDialogState.webhookUrl.trim();
+
+    if (!webhookUrl) {
+      toast({
+        title: "Укажите webhook URL",
+        description: "Введите адрес, на который нужно отправить JSON.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(jsonDialogState.jsonText);
+
+      if (!Array.isArray(parsed)) {
+        throw new Error("JSON должен быть массивом чанков");
+      }
+    } catch (error) {
+      toast({
+        title: "Некорректный JSON",
+        description: error instanceof Error ? error.message : "Проверьте синтаксис JSON и повторите попытку.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSendingJson(true);
+
+    try {
+      const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: jsonDialogState.jsonText,
+      });
+
+      if (!response.ok) {
+        const details = await response.text();
+        throw new Error(details || "Сервер вернул ошибку");
+      }
+
+      toast({
+        title: "JSON отправлен",
+        description: "Данные успешно переданы на указанный вебхук.",
+      });
+
+      resetJsonDialogState();
+    } catch (error) {
+      toast({
+        title: "Ошибка отправки",
+        description: error instanceof Error ? error.message : "Не удалось отправить JSON",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingJson(false);
+    }
+  };
 
   const sortedPages = useMemo(() => {
     return pages
@@ -245,12 +544,10 @@ export default function ProjectDetailPage() {
                       const siteConfig = site ?? null;
                       const aggregatedContent = page.content ?? "";
                       const contentLength = aggregatedContent.length;
-                      const aggregatedWordCount = page.metadata?.wordCount ??
-                        (aggregatedContent ? aggregatedContent.trim().split(/\s+/).filter(Boolean).length : 0);
+                      const aggregatedWordCount = page.metadata?.wordCount ?? calculateWordCount(aggregatedContent);
                       const chunks = Array.isArray(page.chunks) ? page.chunks : [];
                       const chunkCharCounts = chunks.map((chunk) => chunk.metadata?.charCount ?? chunk.content.length);
-                      const chunkWordCounts = chunks.map((chunk) => chunk.metadata?.wordCount ??
-                        chunk.content.trim().split(/\s+/).filter(Boolean).length);
+                      const chunkWordCounts = chunks.map((chunk) => chunk.metadata?.wordCount ?? calculateWordCount(chunk.content));
                       const chunkCount = chunks.length;
                       const totalChunkChars = chunkCharCounts.reduce((sum, value) => sum + value, 0);
                       const maxChunkLength = chunkCharCounts.reduce((max, value) => Math.max(max, value), 0);
@@ -262,6 +559,9 @@ export default function ProjectDetailPage() {
                         : 0;
                       const lastCrawledRelative = formatDistance(page.lastCrawled);
                       const hasStatusCode = typeof page.statusCode === "number";
+                      const isCurrentPageDeleting = deletePageMutation.isPending && pageToDelete?.id === page.id;
+                      const isCurrentPageExporting = exportingPageId === page.id;
+                      const isCurrentPageSendingJson = isSendingJson && jsonDialogState.page?.id === page.id;
 
                       return (
                         <div
@@ -297,95 +597,162 @@ export default function ProjectDetailPage() {
                                 )}
                               </div>
 
-                              <Dialog>
-                                <DialogTrigger asChild>
-                                  <Button variant="outline" size="sm" className="gap-2">
-                                    <FileText className="h-4 w-4" />
-                                    Содержимое
-                                  </Button>
-                                </DialogTrigger>
-                                <DialogContent className="max-w-4xl max-h-[80vh]">
-                                  <DialogHeader>
-                                    <DialogTitle className="flex items-center gap-2">
-                                      <span className="truncate">{page.title || "Без названия"}</span>
-                                      <Button variant="ghost" size="sm" asChild>
-                                        <a href={page.url} target="_blank" rel="noopener noreferrer">
-                                          <ExternalLink className="h-3 w-3" />
-                                        </a>
-                                      </Button>
-                                    </DialogTitle>
-                                    <p className="text-sm text-muted-foreground truncate">{page.url}</p>
-                                  </DialogHeader>
-                                  <ScrollArea className="h-96 w-full">
-                                    <div className="space-y-4">
-                                      {page.metaDescription && (
-                                        <div>
-                                          <h4 className="font-medium mb-2">Описание:</h4>
-                                          <p className="text-sm text-muted-foreground">{page.metaDescription}</p>
-                                        </div>
-                                      )}
-                                      <div>
-                                        <h4 className="font-medium mb-2">Содержимое:</h4>
-                                        <div className="mb-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
-                                          <span>Символов (агрегировано): {contentLength.toLocaleString("ru-RU")}</span>
-                                          <span>Слов (агрегировано): {aggregatedWordCount.toLocaleString("ru-RU")}</span>
-                                          {chunkCount > 0 && (
-                                            <>
-                                              <span>Чанков: {chunkCount.toLocaleString("ru-RU")}</span>
-                                              <span>Макс. чанк: {maxChunkLength.toLocaleString("ru-RU")} символов</span>
-                                              <span>Сред. чанк: {avgChunkLength.toLocaleString("ru-RU")} символов</span>
-                                              <span>Макс. слов в чанке: {maxChunkWordCount.toLocaleString("ru-RU")}</span>
-                                              {configuredChunkSize && (
-                                                <span>Лимит проекта: {configuredChunkSize.toLocaleString("ru-RU")} символов</span>
-                                              )}
-                                              {chunksOverLimit > 0 && (
-                                                <span className="text-destructive">
-                                                  {chunksOverLimit.toLocaleString("ru-RU")} чанков превышают лимит
-                                                </span>
-                                              )}
-                                            </>
-                                          )}
-                                        </div>
-                                        {chunkCount > 0 && (
-                                          <div className="mb-6 space-y-3">
-                                            <h5 className="text-sm font-medium">Разбивка по чанкам:</h5>
-                                            {chunks.map((chunk, index) => {
-                                              const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
-                                              const chunkWordCount = chunk.metadata?.wordCount ??
-                                                chunk.content.trim().split(/\s+/).filter(Boolean).length;
-                                              return (
-                                                <div
-                                                  key={chunk.id || `${page.id}-chunk-${index}`}
-                                                  className="rounded-lg border bg-muted/30 p-3"
-                                                >
-                                                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                                                    <div className="truncate text-sm font-medium">
-                                                      {chunk.heading || `Чанк ${index + 1}`}
-                                                    </div>
-                                                    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                                                      <span>Символов: {chunkCharCount.toLocaleString("ru-RU")}</span>
-                                                      <span>Слов: {chunkWordCount.toLocaleString("ru-RU")}</span>
-                                                      {chunk.metadata?.position !== undefined && (
-                                                        <span>Позиция: {chunk.metadata.position + 1}</span>
-                                                      )}
-                                                    </div>
-                                                  </div>
-                                                  <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">
-                                                    {chunk.content}
-                                                  </p>
-                                                </div>
-                                              );
-                                            })}
+                              <div className="flex items-center gap-2 self-start">
+                                <Dialog>
+                                  <DialogTrigger asChild>
+                                    <Button variant="outline" size="sm" className="gap-2">
+                                      <FileText className="h-4 w-4" />
+                                      Содержимое
+                                    </Button>
+                                  </DialogTrigger>
+                                  <DialogContent className="max-w-4xl max-h-[80vh]">
+                                    <DialogHeader>
+                                      <DialogTitle className="flex items-center gap-2">
+                                        <span className="truncate">{page.title || "Без названия"}</span>
+                                        <Button variant="ghost" size="sm" asChild>
+                                          <a href={page.url} target="_blank" rel="noopener noreferrer">
+                                            <ExternalLink className="h-3 w-3" />
+                                          </a>
+                                        </Button>
+                                      </DialogTitle>
+                                      <p className="text-sm text-muted-foreground truncate">{page.url}</p>
+                                    </DialogHeader>
+                                    <ScrollArea className="h-96 w-full">
+                                      <div className="space-y-4">
+                                        {page.metaDescription && (
+                                          <div>
+                                            <h4 className="font-medium mb-2">Описание:</h4>
+                                            <p className="text-sm text-muted-foreground">{page.metaDescription}</p>
                                           </div>
                                         )}
-                                        <pre className="whitespace-pre-wrap rounded-lg bg-muted p-4 text-sm">
-                                          {aggregatedContent}
-                                        </pre>
+                                        <div>
+                                          <h4 className="font-medium mb-2">Содержимое:</h4>
+                                          <div className="mb-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                                            <span>Символов (агрегировано): {contentLength.toLocaleString("ru-RU")}</span>
+                                            <span>Слов (агрегировано): {aggregatedWordCount.toLocaleString("ru-RU")}</span>
+                                            {chunkCount > 0 && (
+                                              <>
+                                                <span>Чанков: {chunkCount.toLocaleString("ru-RU")}</span>
+                                                <span>Макс. чанк: {maxChunkLength.toLocaleString("ru-RU")} символов</span>
+                                                <span>Сред. чанк: {avgChunkLength.toLocaleString("ru-RU")} символов</span>
+                                                <span>Макс. слов в чанке: {maxChunkWordCount.toLocaleString("ru-RU")}</span>
+                                                {configuredChunkSize && (
+                                                  <span>Лимит проекта: {configuredChunkSize.toLocaleString("ru-RU")} символов</span>
+                                                )}
+                                                {chunksOverLimit > 0 && (
+                                                  <span className="text-destructive">
+                                                    {chunksOverLimit.toLocaleString("ru-RU")} чанков превышают лимит
+                                                  </span>
+                                                )}
+                                              </>
+                                            )}
+                                          </div>
+                                          {chunkCount > 0 && (
+                                            <div className="mb-6 space-y-3">
+                                              <h5 className="text-sm font-medium">Разбивка по чанкам:</h5>
+                                              {chunks.map((chunk, index) => {
+                                                const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
+                                                const chunkWordCount = chunk.metadata?.wordCount ?? calculateWordCount(chunk.content);
+                                                return (
+                                                  <div
+                                                    key={chunk.id || `${page.id}-chunk-${index}`}
+                                                    className="rounded-lg border bg-muted/30 p-3"
+                                                  >
+                                                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                                      <div className="truncate text-sm font-medium">
+                                                        {chunk.heading || `Чанк ${index + 1}`}
+                                                      </div>
+                                                      <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                                                        <span>Символов: {chunkCharCount.toLocaleString("ru-RU")}</span>
+                                                        <span>Слов: {chunkWordCount.toLocaleString("ru-RU")}</span>
+                                                        {chunk.metadata?.position !== undefined && (
+                                                          <span>Позиция: {chunk.metadata.position + 1}</span>
+                                                        )}
+                                                      </div>
+                                                    </div>
+                                                    <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                                                      {chunk.content}
+                                                    </p>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                          <pre className="whitespace-pre-wrap rounded-lg bg-muted p-4 text-sm">
+                                            {aggregatedContent}
+                                          </pre>
+                                        </div>
                                       </div>
-                                    </div>
-                                  </ScrollArea>
-                                </DialogContent>
-                              </Dialog>
+                                    </ScrollArea>
+                                  </DialogContent>
+                                </Dialog>
+
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-muted-foreground"
+                                      aria-label="Дополнительные действия"
+                                      disabled={isCurrentPageDeleting || isCurrentPageSendingJson}
+                                    >
+                                      {isCurrentPageExporting || isCurrentPageDeleting || isCurrentPageSendingJson ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <MoreVertical className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-64">
+                                    <DropdownMenuItem
+                                      className="gap-2"
+                                      disabled={isCurrentPageExporting}
+                                      onSelect={(event) => {
+                                        event.preventDefault();
+                                        void handleExportPdf(page);
+                                      }}
+                                    >
+                                      {isCurrentPageExporting ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <FileDown className="h-4 w-4" />
+                                      )}
+                                      {isCurrentPageExporting ? "Подготовка PDF..." : "Выгрузить как PDF"}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="gap-2"
+                                      disabled={isCurrentPageSendingJson}
+                                      onSelect={(event) => {
+                                        event.preventDefault();
+                                        openJsonDialogForPage(page);
+                                      }}
+                                    >
+                                      {isCurrentPageSendingJson ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Send className="h-4 w-4" />
+                                      )}
+                                      {isCurrentPageSendingJson ? "Отправка..." : "Отправить как JSON"}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="gap-2 text-destructive focus:text-destructive"
+                                      disabled={isCurrentPageDeleting}
+                                      onSelect={(event) => {
+                                        event.preventDefault();
+                                        setPageToDelete(page);
+                                        setIsDeleteDialogOpen(true);
+                                      }}
+                                    >
+                                      {isCurrentPageDeleting ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-4 w-4" />
+                                      )}
+                                      {isCurrentPageDeleting ? "Удаление..." : "Удалить страницу"}
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
                             </div>
 
                             <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
@@ -455,6 +822,116 @@ export default function ProjectDetailPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setIsDeleteDialogOpen(open);
+          if (!open && !deletePageMutation.isPending) {
+            setPageToDelete(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить страницу?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pageToDelete
+                ? `Вы действительно хотите удалить страницу «${pageToDelete.title || pageToDelete.url || "Без названия"}»? Действие необратимо.`
+                : "Вы действительно хотите удалить страницу? Действие необратимо."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              type="button"
+              onClick={() => {
+                if (!deletePageMutation.isPending) {
+                  setPageToDelete(null);
+                }
+                setIsDeleteDialogOpen(false);
+              }}
+            >
+              Отмена
+            </AlertDialogCancel>
+            <AlertDialogAction
+              type="button"
+              disabled={deletePageMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDeleteConfirm();
+              }}
+            >
+              {deletePageMutation.isPending ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Удаление...
+                </span>
+              ) : (
+                "Удалить"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog
+        open={jsonDialogState.open}
+        onOpenChange={(open) => {
+          if (!open) {
+            resetJsonDialogState();
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              Отправка JSON: {jsonDialogState.page?.title || jsonDialogState.page?.url || "Страница"}
+            </DialogTitle>
+            <DialogDescription>
+              Предпросмотр данных можно редактировать перед отправкой на указанный вебхук.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="webhook-url">Webhook URL</Label>
+              <Input
+                id="webhook-url"
+                placeholder="https://example.com/webhook"
+                value={jsonDialogState.webhookUrl}
+                onChange={(event) =>
+                  setJsonDialogState((prev) => ({ ...prev, webhookUrl: event.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="json-preview">JSON предпросмотр</Label>
+              <Textarea
+                id="json-preview"
+                className="min-h-[280px] font-mono text-xs"
+                value={jsonDialogState.jsonText}
+                onChange={(event) =>
+                  setJsonDialogState((prev) => ({ ...prev, jsonText: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={resetJsonDialogState}>
+              Отмена
+            </Button>
+            <Button type="button" onClick={handleSendJson} disabled={isSendingJson}>
+              {isSendingJson ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Отправка...
+                </span>
+              ) : (
+                "Отправить JSON"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
