@@ -51,6 +51,8 @@ export class WebCrawler {
   private browserLaunchPromise: Promise<any> | null = null;
   private browserUnavailable = false;
   private browserExecutablePath: string | null = null;
+  private proxyCredentials: { username: string; password: string } | null = null;
+  private browserProxyConfig: { server: string; credentials: { username: string; password: string } | null } | null = null;
   private readonly defaultMaxChunkSize = 1200;
   private options: CrawlOptions = {
     maxDepth: 3,
@@ -122,6 +124,40 @@ export class WebCrawler {
     return null;
   }
 
+  private getLaunchProxySettings(): { server: string; credentials: { username: string; password: string } | null } | null {
+    const proxyValue =
+      process.env.PUPPETEER_PROXY_SERVER ??
+      process.env.PUPPETEER_PROXY ??
+      process.env.CHROMIUM_PROXY ??
+      process.env.HTTPS_PROXY ??
+      process.env.https_proxy ??
+      process.env.HTTP_PROXY ??
+      process.env.http_proxy ??
+      process.env.ALL_PROXY ??
+      process.env.all_proxy ??
+      null;
+
+    if (!proxyValue) {
+      return null;
+    }
+
+    try {
+      const parsed = new URL(proxyValue);
+      const credentials =
+        parsed.username || parsed.password
+          ? {
+              username: decodeURIComponent(parsed.username),
+              password: decodeURIComponent(parsed.password),
+            }
+          : null;
+      const server = `${parsed.protocol}//${parsed.host}`;
+
+      return { server, credentials };
+    } catch {
+      return { server: proxyValue, credentials: null };
+    }
+  }
+
   private async launchBrowser(puppeteer: any): Promise<any> {
     const executablePath = this.resolveExecutablePath(puppeteer);
     const baseProfiles = [
@@ -142,6 +178,22 @@ export class WebCrawler {
         ignoreHTTPSErrors: true,
       },
     ];
+
+    const proxySettings = this.getLaunchProxySettings();
+    if (proxySettings) {
+      this.browserProxyConfig = proxySettings;
+      this.proxyCredentials = proxySettings.credentials;
+      for (const profile of baseProfiles) {
+        profile.args = [...profile.args, `--proxy-server=${proxySettings.server}`];
+      }
+      this.logForCurrentSite('debug', 'Запуск Chromium с прокси-сервером', {
+        proxyServer: this.maskProxyValue(proxySettings.server),
+        hasCredentials: Boolean(proxySettings.credentials),
+      });
+    } else {
+      this.browserProxyConfig = null;
+      this.proxyCredentials = null;
+    }
 
     const launchProfiles: Array<Record<string, unknown>> = [];
 
@@ -584,6 +636,10 @@ export class WebCrawler {
         page = await browser.newPage();
         await page.setUserAgent('SearchEngine-Crawler/1.0 (+https://example.com/crawler)');
 
+        if (this.proxyCredentials && typeof page.authenticate === 'function') {
+          await page.authenticate(this.proxyCredentials);
+        }
+
         if (typeof page.setRequestInterception === 'function') {
           await page.setRequestInterception(true);
           page.on('request', (request: any) => {
@@ -623,6 +679,13 @@ export class WebCrawler {
 
         await page.close();
 
+        this.logForCurrentSite('debug', 'Страница успешно загружена через Chromium', {
+          url,
+          statusCode,
+          finalUrl,
+          proxy: this.browserProxyConfig ? this.maskProxyValue(this.browserProxyConfig.server) : undefined,
+        });
+
         return {
           html,
           statusCode,
@@ -650,12 +713,41 @@ export class WebCrawler {
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
-      const response = await fetch(url, {
+      const proxyUrl = this.getProxyUrlForRequest(url);
+      const maskedProxy = proxyUrl ? this.maskProxyValue(proxyUrl) : undefined;
+      let proxyAgent: any | null = null;
+
+      if (proxyUrl) {
+        proxyAgent = await this.createProxyAgent(proxyUrl, url);
+        if (proxyAgent) {
+          this.logForCurrentSite('debug', 'Загрузка страницы через node-fetch с использованием прокси', {
+            url,
+            proxy: maskedProxy,
+          });
+        } else {
+          this.logForCurrentSite('warning', 'Не удалось создать прокси-агент, пробуем загрузить страницу без прокси', {
+            url,
+            proxy: maskedProxy,
+          });
+        }
+      } else {
+        this.logForCurrentSite('debug', 'Загрузка страницы через node-fetch без прокси', {
+          url,
+        });
+      }
+
+      const fetchOptions: any = {
         headers: {
           'User-Agent': 'SearchEngine-Crawler/1.0 (+https://example.com/crawler)',
         },
         signal: controller.signal,
-      });
+      };
+
+      if (proxyAgent) {
+        fetchOptions.agent = proxyAgent;
+      }
+
+      const response = await fetch(url, fetchOptions);
 
       clearTimeout(timeoutId);
 
@@ -670,6 +762,13 @@ export class WebCrawler {
 
       const html = await response.text();
 
+      this.logForCurrentSite('debug', 'Страница успешно загружена через node-fetch', {
+        url,
+        statusCode: response.status,
+        finalUrl: response.url ?? url,
+        proxy: maskedProxy,
+      });
+
       return {
         html,
         statusCode: response.status,
@@ -682,6 +781,114 @@ export class WebCrawler {
       throw error;
     } finally {
       clearTimeout(timeoutId);
+    }
+  }
+
+  private maskProxyValue(proxyUrl: string): string {
+    try {
+      const parsed = new URL(proxyUrl);
+      if (parsed.username) {
+        parsed.username = '***';
+      }
+      if (parsed.password) {
+        parsed.password = '***';
+      }
+      return parsed.toString();
+    } catch {
+      return proxyUrl;
+    }
+  }
+
+  private shouldBypassProxy(url: URL): boolean {
+    const noProxy = process.env.NO_PROXY ?? process.env.no_proxy;
+    if (!noProxy) {
+      return false;
+    }
+
+    const hostname = url.hostname.toLowerCase();
+    const port = url.port || (url.protocol === 'https:' ? '443' : '80');
+
+    return noProxy
+      .split(',')
+      .map(pattern => pattern.trim())
+      .filter(Boolean)
+      .some(pattern => {
+        if (pattern === '*') {
+          return true;
+        }
+
+        let hostPattern = pattern;
+        let portPattern: string | null = null;
+
+        if (pattern.includes(':')) {
+          const [hostPart, portPart] = pattern.split(':');
+          hostPattern = hostPart;
+          portPattern = portPart;
+        }
+
+        if (portPattern && portPattern !== port) {
+          return false;
+        }
+
+        hostPattern = hostPattern.replace(/^[*.]+/, '').toLowerCase();
+        if (!hostPattern) {
+          return false;
+        }
+
+        if (hostname === hostPattern) {
+          return true;
+        }
+
+        return hostname.endsWith(`.${hostPattern}`);
+      });
+  }
+
+  private getProxyUrlForRequest(targetUrl: string): string | null {
+    try {
+      const parsed = new URL(targetUrl);
+
+      if (this.shouldBypassProxy(parsed)) {
+        this.logForCurrentSite('debug', 'URL исключён из прокси согласно NO_PROXY', {
+          url: targetUrl,
+        });
+        return null;
+      }
+
+      const protocol = parsed.protocol;
+      const httpsProxy = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? null;
+      const httpProxy = process.env.HTTP_PROXY ?? process.env.http_proxy ?? null;
+      const allProxy = process.env.ALL_PROXY ?? process.env.all_proxy ?? null;
+
+      if (protocol === 'https:') {
+        return httpsProxy ?? allProxy ?? httpProxy;
+      }
+
+      if (protocol === 'http:') {
+        return httpProxy ?? allProxy ?? httpsProxy;
+      }
+
+      return allProxy ?? httpsProxy ?? httpProxy;
+    } catch {
+      return null;
+    }
+  }
+
+  private async createProxyAgent(proxyUrl: string, targetUrl: string): Promise<any | null> {
+    try {
+      const parsedTarget = new URL(targetUrl);
+      if (parsedTarget.protocol === 'http:') {
+        const { HttpProxyAgent } = await import('http-proxy-agent');
+        return new HttpProxyAgent(proxyUrl);
+      }
+
+      const { HttpsProxyAgent } = await import('https-proxy-agent');
+      return new HttpsProxyAgent(proxyUrl);
+    } catch (error) {
+      this.logForCurrentSite('warning', 'Не удалось инициализировать прокси-агент', {
+        proxy: this.maskProxyValue(proxyUrl),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
     }
   }
 
