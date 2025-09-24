@@ -9,11 +9,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, ExternalLink, FileText, Calendar, Hash, Trash2 } from "lucide-react";
+import {
+  Search,
+  ExternalLink,
+  FileText,
+  Calendar,
+  Hash,
+  Trash2,
+  ListOrdered,
+  Gauge,
+} from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
+import type { ContentChunk, PageMetadata } from "@shared/schema";
 
 interface Page {
   id: string;
@@ -25,12 +35,18 @@ interface Page {
   createdAt: string;
   lastModified?: string;
   siteId: string;
+  metadata?: PageMetadata;
+  chunks?: ContentChunk[];
 }
 
 interface Site {
   id: string;
   url: string;
   status: string;
+  name?: string;
+  maxChunkSize?: number;
+  chunkOverlap?: boolean;
+  chunkOverlapSize?: number;
 }
 
 interface PagesBySite {
@@ -321,9 +337,23 @@ export default function PagesPage() {
               <CardContent>
                 <div className="grid gap-3">
                   {pages.map((page) => {
-                    const contentLength = page.content?.length ?? 0;
-                    const wordCount = page.content
-                      ? page.content.trim().split(/\s+/).filter(Boolean).length
+                    const siteConfig = sites.find(site => site.id === page.siteId);
+                    const aggregatedContent = page.content ?? "";
+                    const contentLength = aggregatedContent.length;
+                    const aggregatedWordCount = page.metadata?.wordCount ??
+                      (aggregatedContent ? aggregatedContent.trim().split(/\s+/).filter(Boolean).length : 0);
+                    const chunks = page.chunks ?? [];
+                    const chunkCharCounts = chunks.map(chunk => chunk.metadata?.charCount ?? chunk.content.length);
+                    const chunkWordCounts = chunks.map(chunk => chunk.metadata?.wordCount ??
+                      chunk.content.trim().split(/\s+/).filter(Boolean).length);
+                    const chunkCount = chunks.length;
+                    const totalChunkChars = chunkCharCounts.reduce((sum, value) => sum + value, 0);
+                    const maxChunkLength = chunkCharCounts.reduce((max, value) => Math.max(max, value), 0);
+                    const avgChunkLength = chunkCount > 0 ? Math.round(totalChunkChars / chunkCount) : 0;
+                    const maxChunkWordCount = chunkWordCounts.reduce((max, value) => Math.max(max, value), 0);
+                    const configuredChunkSize = siteConfig?.maxChunkSize ?? null;
+                    const chunksOverLimit = configuredChunkSize
+                      ? chunkCharCounts.filter(length => length > configuredChunkSize).length
                       : 0;
 
                     return (
@@ -382,6 +412,29 @@ export default function PagesPage() {
                                 <Hash className="h-3 w-3" />
                                 {page.contentHash.substring(0, 8)}
                               </span>
+                              {chunkCount > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <ListOrdered className="h-3 w-3" />
+                                  {chunkCount.toLocaleString("ru-RU")} чанков
+                                </span>
+                              )}
+                              {chunkCount > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <Gauge className="h-3 w-3" />
+                                  макс {maxChunkLength.toLocaleString("ru-RU")} симв.
+                                </span>
+                              )}
+                              {configuredChunkSize && (
+                                <span className="flex items-center gap-1">
+                                  <Gauge className="h-3 w-3" />
+                                  настройка {configuredChunkSize.toLocaleString("ru-RU")} симв.
+                                </span>
+                              )}
+                              {chunksOverLimit > 0 && (
+                                <span className="text-destructive">
+                                  {chunksOverLimit.toLocaleString("ru-RU")} чанков превышают лимит
+                                </span>
+                              )}
                             </div>
                           </div>
 
@@ -431,9 +484,57 @@ export default function PagesPage() {
                                   <div>
                                     <h4 className="font-medium mb-2">Содержимое:</h4>
                                     <div className="flex flex-wrap gap-4 text-xs text-muted-foreground mb-3">
-                                      <span>Символов: {contentLength}</span>
-                                      <span>Слов: {wordCount}</span>
+                                      <span>Символов (агрегировано): {contentLength.toLocaleString("ru-RU")}</span>
+                                      <span>Слов (агрегировано): {aggregatedWordCount.toLocaleString("ru-RU")}</span>
+                                      {chunkCount > 0 && (
+                                        <>
+                                          <span>Чанков: {chunkCount.toLocaleString("ru-RU")}</span>
+                                          <span>Макс. чанк: {maxChunkLength.toLocaleString("ru-RU")} символов</span>
+                                          <span>Сред. чанк: {avgChunkLength.toLocaleString("ru-RU")} символов</span>
+                                          <span>Макс. слов в чанке: {maxChunkWordCount.toLocaleString("ru-RU")}</span>
+                                          {configuredChunkSize && (
+                                            <span>Лимит проекта: {configuredChunkSize.toLocaleString("ru-RU")} символов</span>
+                                          )}
+                                          {chunksOverLimit > 0 && (
+                                            <span className="text-destructive">
+                                              {chunksOverLimit.toLocaleString("ru-RU")} чанков превышают лимит
+                                            </span>
+                                          )}
+                                        </>
+                                      )}
                                     </div>
+                                    {chunkCount > 0 && (
+                                      <div className="space-y-3 mb-6">
+                                        <h5 className="text-sm font-medium">Разбивка по чанкам:</h5>
+                                        {chunks.map((chunk, index) => {
+                                          const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
+                                          const chunkWordCount = chunk.metadata?.wordCount ??
+                                            chunk.content.trim().split(/\s+/).filter(Boolean).length;
+                                          return (
+                                            <div
+                                              key={chunk.id || `${page.id}-chunk-${index}`}
+                                              className="rounded-lg border bg-muted/30 p-3"
+                                            >
+                                              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                                <div className="text-sm font-medium truncate">
+                                                  {chunk.heading || `Чанк ${index + 1}`}
+                                                </div>
+                                                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                                                  <span>Символов: {chunkCharCount.toLocaleString("ru-RU")}</span>
+                                                  <span>Слов: {chunkWordCount.toLocaleString("ru-RU")}</span>
+                                                  {chunk.metadata?.position !== undefined && (
+                                                    <span>Позиция: {chunk.metadata.position + 1}</span>
+                                                  )}
+                                                </div>
+                                              </div>
+                                              <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                                                {chunk.content}
+                                              </p>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
                                     <pre className="text-sm bg-muted p-4 rounded-lg whitespace-pre-wrap">
                                       {page.content}
                                     </pre>
