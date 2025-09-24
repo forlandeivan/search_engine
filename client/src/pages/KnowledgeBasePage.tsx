@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,6 +9,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import DOMPurify from "dompurify";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +35,7 @@ import {
   PlusCircle,
   SquarePen,
 } from "lucide-react";
+import { DocumentEditor } from "@/components/knowledge-base/DocumentEditor";
 
 type TreeNode = {
   id: string;
@@ -66,6 +66,51 @@ const createId = () => {
   }
 
   return Math.random().toString(36).slice(2, 10);
+};
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const getSanitizedContent = (html: string) => {
+  if (!html) {
+    return "";
+  }
+
+  if (typeof window === "undefined") {
+    return html;
+  }
+
+  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+};
+
+const extractTitleFromContent = (html: string) => {
+  if (!html) {
+    return "Без названия";
+  }
+
+  if (typeof window === "undefined") {
+    return "Без названия";
+  }
+
+  const container = window.document.createElement("div");
+  container.innerHTML = html;
+
+  const heading = container.querySelector("h1, h2, h3, h4, h5, h6");
+  const headingText = heading?.textContent?.trim();
+  if (headingText) {
+    return headingText;
+  }
+
+  const textContent = container
+    .textContent?.split(/\n+/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return textContent || "Без названия";
 };
 
 const addChildNode = (
@@ -253,7 +298,6 @@ export default function KnowledgeBasePage() {
   const [isNodeDialogOpen, setIsNodeDialogOpen] = useState(false);
   const [nodeTitle, setNodeTitle] = useState("");
   const [isEditing, setIsEditing] = useState(false);
-  const [draftTitle, setDraftTitle] = useState("");
   const [draftContent, setDraftContent] = useState("");
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
 
@@ -304,11 +348,9 @@ export default function KnowledgeBasePage() {
 
   useEffect(() => {
     if (currentDocument) {
-      setDraftTitle(currentDocument.title);
       setDraftContent(currentDocument.content);
       setIsEditing(false);
     } else {
-      setDraftTitle("");
       setDraftContent("");
       setIsEditing(false);
     }
@@ -380,6 +422,8 @@ export default function KnowledgeBasePage() {
       const now = new Date().toISOString();
       const documentTitle = nodeTitle.trim();
 
+      const initialContent = `<h1>${escapeHtml(documentTitle)}</h1>`;
+
       const documentNode: TreeNode = {
         id: documentId,
         title: documentTitle,
@@ -390,7 +434,7 @@ export default function KnowledgeBasePage() {
       const knowledgeDocument: KnowledgeDocument = {
         id: documentId,
         title: documentTitle,
-        content: "",
+        content: initialContent,
         updatedAt: now,
       };
 
@@ -436,6 +480,9 @@ export default function KnowledgeBasePage() {
       return;
     }
 
+    const sanitizedContent = getSanitizedContent(draftContent);
+    const nextTitle = extractTitleFromContent(sanitizedContent);
+
     setKnowledgeBases((prev) =>
       prev.map((base) => {
         if (base.id !== selectedBase.id) {
@@ -444,8 +491,8 @@ export default function KnowledgeBasePage() {
 
         const updatedDocument: KnowledgeDocument = {
           ...currentDocument,
-          title: draftTitle.trim() || "Без названия",
-          content: draftContent,
+          title: nextTitle,
+          content: sanitizedContent,
           updatedAt: new Date().toISOString(),
         };
 
@@ -455,13 +502,21 @@ export default function KnowledgeBasePage() {
             ...base.documents,
             [currentDocument.id]: updatedDocument,
           },
-          structure: updateNodeTitle(base.structure, currentDocument.id, updatedDocument.title),
+          structure: updateNodeTitle(
+            base.structure,
+            currentDocument.id,
+            updatedDocument.title
+          ),
         };
       })
     );
 
     setIsEditing(false);
   };
+
+  const computedTitle = isEditing
+    ? extractTitleFromContent(getSanitizedContent(draftContent))
+    : extractTitleFromContent(getSanitizedContent(currentDocument?.content ?? ""));
 
   const totalDocuments = selectedBase
     ? Object.values(selectedBase.documents).length
@@ -649,22 +704,16 @@ export default function KnowledgeBasePage() {
             <CardHeader>
               <CardTitle className="text-lg">Документ</CardTitle>
               <CardDescription>
-                Создавайте и редактируйте материалы в формате Markdown, переключаясь между режимами.
+                Создавайте и редактируйте материалы через визуальный редактор с заголовком внутри документа.
               </CardDescription>
             </CardHeader>
             <Separator />
             <CardContent className="h-full">
               {currentDocument ? (
                 <div className="flex h-full flex-col gap-4">
-                  {isEditing ? (
-                    <Input
-                      value={draftTitle}
-                      onChange={(event) => setDraftTitle(event.target.value)}
-                      placeholder="Название документа"
-                    />
-                  ) : (
-                    <h2 className="text-xl font-semibold">{currentDocument.title}</h2>
-                  )}
+                  <h2 className="text-xl font-semibold">
+                    {computedTitle || "Без названия"}
+                  </h2>
 
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span>
@@ -681,7 +730,6 @@ export default function KnowledgeBasePage() {
                             variant="outline"
                             onClick={() => {
                               setIsEditing(false);
-                              setDraftTitle(currentDocument.title);
                               setDraftContent(currentDocument.content);
                             }}
                           >
@@ -698,19 +746,15 @@ export default function KnowledgeBasePage() {
 
                   <div className="min-h-[20rem] flex-1 rounded-lg border bg-muted/30 p-4">
                     {isEditing ? (
-                      <Textarea
-                        className="h-full min-h-[18rem]"
-                        value={draftContent}
-                        onChange={(event) => setDraftContent(event.target.value)}
-                        placeholder="Введите содержимое в формате Markdown"
-                      />
+                      <DocumentEditor value={draftContent} onChange={setDraftContent} />
                     ) : draftContent ? (
                       <ScrollArea className="h-full pr-4">
-                        <div className="prose prose-sm max-w-none dark:prose-invert">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {currentDocument.content || ""}
-                          </ReactMarkdown>
-                        </div>
+                        <div
+                          className="prose prose-sm max-w-none dark:prose-invert"
+                          dangerouslySetInnerHTML={{
+                            __html: getSanitizedContent(currentDocument.content)
+                          }}
+                        />
                       </ScrollArea>
                     ) : (
                       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -739,7 +783,7 @@ export default function KnowledgeBasePage() {
           <DialogDescription>
             {nodeCreation?.type === "folder"
               ? "Создайте раздел, чтобы сгруппировать документы или подкатегории."
-              : "Создайте документ с пустым содержимым и начните работу в редакторе Markdown."}
+              : "Создайте документ с пустым содержимым и начните работу в визуальном редакторе."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
