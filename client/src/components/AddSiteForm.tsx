@@ -5,12 +5,15 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Plus, Trash2, HelpCircle } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 export interface SiteConfig {
   name: string;
   startUrls: string[];
   crawlDepth: number;
   maxChunkSize: number;
+  chunkOverlap: boolean;
+  chunkOverlapSize: number;
 }
 
 interface AddSiteFormProps {
@@ -19,11 +22,16 @@ interface AddSiteFormProps {
   isSubmitting?: boolean;
 }
 
+const DEFAULT_CHUNK_SIZE = 1200;
+const DEFAULT_CHUNK_OVERLAP = Math.round(DEFAULT_CHUNK_SIZE * 0.1);
+
 export default function AddSiteForm({ onSubmit, onCancel, isSubmitting = false }: AddSiteFormProps) {
   const [projectName, setProjectName] = useState("");
   const [urls, setUrls] = useState<string[]>([""]);
   const [crawlDepth, setCrawlDepth] = useState<number>(3);
-  const [maxChunkSize, setMaxChunkSize] = useState<number>(1200);
+  const [maxChunkSize, setMaxChunkSize] = useState<number>(DEFAULT_CHUNK_SIZE);
+  const [chunkOverlap, setChunkOverlap] = useState<boolean>(false);
+  const [chunkOverlapSize, setChunkOverlapSize] = useState<number>(DEFAULT_CHUNK_OVERLAP);
 
   const updateUrl = (index: number, value: string) => {
     setUrls((prev) => prev.map((url, idx) => (idx === index ? value : url)));
@@ -39,9 +47,11 @@ export default function AddSiteForm({ onSubmit, onCancel, isSubmitting = false }
 
   const resetForm = () => {
     setProjectName("");
-    setUrls([""]);
+    setUrls([""]); 
     setCrawlDepth(3);
-    setMaxChunkSize(1200);
+    setMaxChunkSize(DEFAULT_CHUNK_SIZE);
+    setChunkOverlap(false);
+    setChunkOverlapSize(DEFAULT_CHUNK_OVERLAP);
   };
 
   const handleCancel = () => {
@@ -69,13 +79,20 @@ export default function AddSiteForm({ onSubmit, onCancel, isSubmitting = false }
       startUrls: normalizedUrls,
       crawlDepth,
       maxChunkSize,
+      chunkOverlap,
+      chunkOverlapSize: chunkOverlap ? chunkOverlapSize : 0,
     });
     resetForm();
   };
 
   const canRemoveUrl = urls.length > 1;
   const isSubmitDisabled =
-    !projectName.trim() || urls.every((url) => url.trim().length === 0) || isSubmitting;
+    !projectName.trim() ||
+    urls.every((url) => url.trim().length === 0) ||
+    isSubmitting ||
+    (chunkOverlap && chunkOverlapSize <= 0);
+
+  const recommendedOverlap = Math.max(0, Math.round(maxChunkSize * 0.1));
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6" data-testid="form-add-project">
@@ -190,6 +207,57 @@ export default function AddSiteForm({ onSubmit, onCancel, isSubmitting = false }
           <p className="text-sm text-muted-foreground">
             Если текст длиннее указанного значения, он будет разбит на части 1/2, 2/2 и т.д.
           </p>
+        </div>
+
+        <div className="space-y-3 md:col-span-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <Label htmlFor="chunk-overlap-size">Перехлест чанков</Label>
+              <p className="text-sm text-muted-foreground">
+                Добавляет часть предыдущего чанка в следующий для сохранения контекста.
+              </p>
+            </div>
+            <Switch
+              id="chunk-overlap-toggle"
+              checked={chunkOverlap}
+              onCheckedChange={(checked) => {
+                setChunkOverlap(checked);
+                if (checked) {
+                  setChunkOverlapSize((current) => {
+                    if (current > 0) {
+                      return Math.min(4000, maxChunkSize, current);
+                    }
+                    return Math.max(0, Math.min(4000, maxChunkSize, recommendedOverlap));
+                  });
+                }
+              }}
+              data-testid="switch-chunk-overlap"
+            />
+          </div>
+          <div className="space-y-2 md:w-1/2">
+            <Label htmlFor="chunk-overlap-size">Количество символов для перехлеста</Label>
+            <Input
+              id="chunk-overlap-size"
+              type="number"
+              min={0}
+              max={4000}
+              step={10}
+              value={chunkOverlapSize}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (Number.isNaN(value)) {
+                  setChunkOverlapSize(0);
+                  return;
+                }
+                setChunkOverlapSize(Math.max(0, Math.min(4000, maxChunkSize, value)));
+              }}
+              disabled={!chunkOverlap}
+              data-testid="input-chunk-overlap-size"
+            />
+            <p className="text-sm text-muted-foreground">
+              Рекомендуемое значение — около 10% от размера чанка (≈{recommendedOverlap} символов).
+            </p>
+          </div>
         </div>
       </div>
 

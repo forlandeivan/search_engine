@@ -54,6 +54,8 @@ export const sites = pgTable("sites", {
   startUrls: jsonb("start_urls").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   crawlDepth: integer("crawl_depth").notNull().default(3),
   maxChunkSize: integer("max_chunk_size").notNull().default(1200),
+  chunkOverlap: boolean("chunk_overlap").notNull().default(false),
+  chunkOverlapSize: integer("chunk_overlap_size").notNull().default(0),
   followExternalLinks: boolean("follow_external_links").notNull().default(false),
   crawlFrequency: text("crawl_frequency").notNull().default("manual"), // "manual" | "hourly" | "daily" | "weekly"
   excludePatterns: jsonb("exclude_patterns").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
@@ -140,6 +142,13 @@ export const insertSiteSchema = createInsertSchema(sites)
       .int("Размер чанка должен быть целым числом")
       .min(200, "Минимальный размер чанка 200 символов")
       .max(8000, "Максимальный размер чанка 8000 символов"),
+    chunkOverlap: z.boolean().default(false),
+    chunkOverlapSize: z
+      .number()
+      .int("Перехлест должен быть целым числом")
+      .min(0, "Перехлест не может быть отрицательным")
+      .max(4000, "Максимальный перехлест 4000 символов")
+      .default(0),
     crawlFrequency: z
       .string()
       .trim()

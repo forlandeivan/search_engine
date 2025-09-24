@@ -385,6 +385,38 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
     await db.execute(sql`
       ALTER TABLE "sites"
+      ADD COLUMN IF NOT EXISTS "chunk_overlap" boolean DEFAULT FALSE
+    `);
+
+    await db.execute(sql`
+      UPDATE "sites"
+      SET "chunk_overlap" = COALESCE("chunk_overlap", FALSE)
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ALTER COLUMN "chunk_overlap" SET NOT NULL,
+      ALTER COLUMN "chunk_overlap" SET DEFAULT FALSE
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ADD COLUMN IF NOT EXISTS "chunk_overlap_size" integer DEFAULT 0
+    `);
+
+    await db.execute(sql`
+      UPDATE "sites"
+      SET "chunk_overlap_size" = COALESCE("chunk_overlap_size", 0)
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ALTER COLUMN "chunk_overlap_size" SET NOT NULL,
+      ALTER COLUMN "chunk_overlap_size" SET DEFAULT 0
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
       ALTER COLUMN "crawl_frequency" SET DEFAULT 'manual'
     `);
 

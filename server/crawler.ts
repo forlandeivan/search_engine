@@ -14,6 +14,8 @@ interface CrawlOptions {
   followExternalLinks: boolean;
   excludePatterns: string[];
   maxChunkSize: number;
+  chunkOverlap: boolean;
+  chunkOverlapSize: number;
 }
 
 interface CrawlResult {
@@ -59,6 +61,8 @@ export class WebCrawler {
     followExternalLinks: false,
     excludePatterns: [],
     maxChunkSize: this.defaultMaxChunkSize,
+    chunkOverlap: false,
+    chunkOverlapSize: 0,
   };
 
   constructor() {
@@ -366,6 +370,8 @@ export class WebCrawler {
         followExternalLinks: site.followExternalLinks,
         excludePatterns: site.excludePatterns,
         maxChunkSize: site.maxChunkSize ?? this.defaultMaxChunkSize,
+        chunkOverlap: site.chunkOverlap ?? false,
+        chunkOverlapSize: site.chunkOverlapSize ?? 0,
       };
 
       this.log(siteId, 'info', 'Запуск краулинга проекта', {
@@ -375,6 +381,8 @@ export class WebCrawler {
         followExternalLinks: this.options.followExternalLinks,
         excludePatterns: this.options.excludePatterns,
         maxChunkSize: this.options.maxChunkSize,
+        chunkOverlap: this.options.chunkOverlap,
+        chunkOverlapSize: this.options.chunkOverlapSize,
       });
 
       let totalPages = 0;
@@ -1153,6 +1161,10 @@ export class WebCrawler {
   }
 
   private subdivideChunksBySize(chunk: ContentChunk, maxSize: number): ContentChunk[] {
+    const overlapEnabled = this.options.chunkOverlap;
+    const configuredOverlap = Math.max(0, this.options.chunkOverlapSize ?? 0);
+    const maxAllowedOverlap = overlapEnabled ? Math.min(configuredOverlap, maxSize) : 0;
+
     if (chunk.content.length <= maxSize) {
       return [
         {
@@ -1168,27 +1180,50 @@ export class WebCrawler {
 
     const parts = this.splitTextIntoChunks(chunk.content, maxSize);
     if (parts.length <= 1) {
-      return [chunk];
+      return [
+        {
+          ...chunk,
+          metadata: {
+            ...chunk.metadata,
+            images: chunk.metadata.images.map(image => ({ ...image })),
+            links: [...chunk.metadata.links],
+          },
+        },
+      ];
     }
 
-    return parts.map((text, index) => {
-      const wordCount = this.countWords(text);
-      return {
+    const subdividedChunks: ContentChunk[] = [];
+    let previousCombinedContent: string | null = null;
+
+    parts.forEach((text, index) => {
+      const baseOverlapSource = previousCombinedContent ?? '';
+      const possibleOverlap = Math.min(maxAllowedOverlap, baseOverlapSource.length);
+      const availableSpaceForOverlap = Math.max(0, maxSize - text.length);
+      const effectiveOverlap = index === 0 ? 0 : Math.min(possibleOverlap, availableSpaceForOverlap);
+      const overlapPrefix = effectiveOverlap > 0 ? baseOverlapSource.slice(-effectiveOverlap) : '';
+      const combinedContent = `${overlapPrefix}${text}`;
+      const wordCount = this.countWords(combinedContent);
+
+      const combinedChunk: ContentChunk = {
         ...chunk,
         id: `${chunk.id}-part-${index + 1}`,
         heading: index === 0 ? chunk.heading : `${chunk.heading} (часть ${index + 1})`,
-        content: text,
+        content: combinedContent,
         metadata: {
           ...chunk.metadata,
           wordCount,
-          charCount: text.length,
+          charCount: combinedContent.length,
           estimatedReadingTimeSec: this.calculateReadingTimeSec(wordCount),
-          excerpt: this.buildExcerpt(text),
+          excerpt: this.buildExcerpt(combinedContent),
           images: chunk.metadata.images.map(image => ({ ...image })),
           links: [...chunk.metadata.links],
         },
       };
+      subdividedChunks.push(combinedChunk);
+      previousCombinedContent = combinedContent;
     });
+
+    return subdividedChunks;
   }
 
   private splitTextIntoChunks(text: string, maxSize: number): string[] {

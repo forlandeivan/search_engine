@@ -36,6 +36,8 @@ interface CrawlStatusCardProps {
   startUrls?: string[];
   crawlDepth?: number;
   maxChunkSize?: number;
+  chunkOverlap?: boolean;
+  chunkOverlapSize?: number;
   href?: string;
   onStart?: (id: string) => void;
   onStop?: (id: string) => void;
@@ -112,6 +114,8 @@ export default function CrawlStatusCard({
   startUrls,
   crawlDepth,
   maxChunkSize,
+  chunkOverlap,
+  chunkOverlapSize,
   href,
   onStart,
   onStop,
@@ -300,6 +304,16 @@ export default function CrawlStatusCard({
                 <span className="text-muted-foreground">Размер чанка:</span>
                 <p className="font-medium">
                   {maxChunkSize.toLocaleString("ru-RU")} символов
+                </p>
+              </div>
+            )}
+            {chunkOverlap !== undefined && (
+              <div>
+                <span className="text-muted-foreground">Перехлест:</span>
+                <p className="font-medium">
+                  {chunkOverlap
+                    ? `${(chunkOverlapSize ?? 0).toLocaleString("ru-RU")} символов`
+                    : "Выключен"}
                 </p>
               </div>
             )}
