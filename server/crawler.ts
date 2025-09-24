@@ -50,6 +50,7 @@ export class WebCrawler {
   private browser: any | null = null;
   private browserLaunchPromise: Promise<any> | null = null;
   private browserUnavailable = false;
+  private browserExecutablePath: string | null = null;
   private readonly defaultMaxChunkSize = 1200;
   private options: CrawlOptions = {
     maxDepth: 3,
@@ -80,8 +81,50 @@ export class WebCrawler {
     }
   }
 
+  private resolveExecutablePath(puppeteer: any): string | null {
+    if (this.browserExecutablePath !== null) {
+      return this.browserExecutablePath;
+    }
+
+    const envPath =
+      process.env.PUPPETEER_EXECUTABLE_PATH ??
+      process.env.CHROMIUM_PATH ??
+      process.env.CHROME_PATH ??
+      process.env.CHROME_EXECUTABLE_PATH ??
+      null;
+
+    if (envPath) {
+      this.browserExecutablePath = envPath;
+      this.logForCurrentSite('debug', 'Используем Chromium из переменной окружения', {
+        executablePath: envPath,
+      });
+      return envPath;
+    }
+
+    if (typeof puppeteer?.executablePath === 'function') {
+      try {
+        const detectedPath = puppeteer.executablePath();
+        if (detectedPath && detectedPath !== 'undefined') {
+          this.browserExecutablePath = detectedPath;
+          this.logForCurrentSite('debug', 'Puppeteer предоставил путь к Chromium', {
+            executablePath: detectedPath,
+          });
+          return detectedPath;
+        }
+      } catch (error) {
+        this.logForCurrentSite('debug', 'Не удалось определить путь к Chromium через Puppeteer', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    this.browserExecutablePath = null;
+    return null;
+  }
+
   private async launchBrowser(puppeteer: any): Promise<any> {
-    const launchProfiles = [
+    const executablePath = this.resolveExecutablePath(puppeteer);
+    const baseProfiles = [
       {
         headless: 'new',
         args: [
@@ -99,6 +142,18 @@ export class WebCrawler {
         ignoreHTTPSErrors: true,
       },
     ];
+
+    const launchProfiles: Array<Record<string, unknown>> = [];
+
+    if (executablePath) {
+      for (const profile of baseProfiles) {
+        launchProfiles.push({ ...profile, executablePath });
+      }
+    }
+
+    for (const profile of baseProfiles) {
+      launchProfiles.push({ ...profile });
+    }
 
     let lastError: unknown = null;
     for (const profile of launchProfiles) {
@@ -452,6 +507,7 @@ export class WebCrawler {
       const { html, statusCode, finalUrl } = await this.fetchPageContent(normalizedUrl);
       const resolvedUrl = this.normalizeUrl(finalUrl || normalizedUrl);
 
+      const originalDom = cheerio.load(html);
       const $ = cheerio.load(html);
       this.cleanDocument($);
 
@@ -461,9 +517,17 @@ export class WebCrawler {
       const { chunks, aggregatedText, wordCount } = this.parseContentIntoChunks($, contentRoot, resolvedUrl);
 
       const metaDescription = this.extractMetaDescription($);
-      const pageMetadata = this.extractPageMetadata($, resolvedUrl, aggregatedText, chunks, wordCount, metaDescription);
+      const pageMetadata = this.extractPageMetadata(
+        $,
+        resolvedUrl,
+        aggregatedText,
+        chunks,
+        wordCount,
+        metaDescription,
+        originalDom
+      );
 
-      const discoveredLinks = this.extractLinksForCrawl($, resolvedUrl);
+      const discoveredLinks = this.extractLinksForCrawl(originalDom, resolvedUrl);
 
       this.crawledUrls.add(resolvedUrl);
 
@@ -626,31 +690,23 @@ export class WebCrawler {
       'script',
       'style',
       'noscript',
+      'template',
       'iframe',
-      'form',
-      'input',
-      'button',
-      'select',
-      'textarea',
-      'header',
-      'footer',
-      'nav',
-      'aside',
-      'svg',
       'canvas',
-      '.sidebar',
-      '.navigation',
-      '.nav',
-      '.menu',
+      'svg',
+      'slot',
       '.advertisement',
       '.ads',
-      '.ad',
+      '.ads-banner',
       '.ad-banner',
-      '.breadcrumbs',
-      '.cookie',
-      '.modal',
-      '[role="navigation"]',
-      '[aria-hidden="true"]',
+      '.adsbygoogle',
+      '.cookie-banner',
+      '.cookie-consent',
+      '.cookie-modal',
+      '.gdpr-consent',
+      '[data-testid="cookie-banner"]',
+      '[data-component="cookie-consent"]',
+      '[aria-hidden="true"][role="dialog"]',
     ];
 
     for (const selector of removalSelectors) {
@@ -820,8 +876,10 @@ export class WebCrawler {
     aggregatedText: string,
     chunks: ContentChunk[],
     wordCount: number,
-    metaDescription?: string
+    metaDescription?: string,
+    linkSourceDom?: CheerioRoot
   ): PageMetadata {
+    const linksDom = linkSourceDom ?? $;
     const metadata: PageMetadata = {
       description: metaDescription,
       keywords: this.normalizeText($('meta[name="keywords"]').attr('content')) || undefined,
@@ -835,7 +893,7 @@ export class WebCrawler {
         this.normalizeText($('time[datetime]').first().attr('datetime')) ||
         undefined,
       images: this.collectPageImages($, pageUrl),
-      links: this.collectPageLinks($, pageUrl),
+      links: this.collectPageLinks(linksDom, pageUrl),
       language: (this.normalizeText($('html').attr('lang')) || undefined)?.toLowerCase(),
       extractedAt: new Date().toISOString(),
       totalChunks: chunks.length,
