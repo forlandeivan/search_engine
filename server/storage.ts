@@ -329,6 +329,71 @@ export const storage = new DatabaseStorage();
 export async function ensureDatabaseSchema(): Promise<void> {
   try {
     await db.execute(sql`
+      ALTER TABLE "sites"
+      ADD COLUMN IF NOT EXISTS "name" text DEFAULT 'Новый проект'
+    `);
+
+    await db.execute(sql`
+      UPDATE "sites"
+      SET "name" = COALESCE(NULLIF("name", ''), CASE
+        WHEN "url" IS NOT NULL AND "url" <> '' THEN 'Проект ' || split_part("url", '://', 2)
+        ELSE 'Новый проект'
+      END)
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ALTER COLUMN "name" SET NOT NULL,
+      ALTER COLUMN "name" SET DEFAULT 'Новый проект'
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ADD COLUMN IF NOT EXISTS "start_urls" jsonb DEFAULT '[]'::jsonb
+    `);
+
+    await db.execute(sql`
+      UPDATE "sites"
+      SET "start_urls" = CASE
+        WHEN jsonb_typeof("start_urls") = 'array' AND jsonb_array_length("start_urls") > 0 THEN "start_urls"
+        WHEN "url" IS NOT NULL AND "url" <> '' THEN jsonb_build_array("url")
+        ELSE '[]'::jsonb
+      END
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ALTER COLUMN "start_urls" SET NOT NULL,
+      ALTER COLUMN "start_urls" SET DEFAULT '[]'::jsonb
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ADD COLUMN IF NOT EXISTS "max_chunk_size" integer DEFAULT 1200
+    `);
+
+    await db.execute(sql`
+      UPDATE "sites"
+      SET "max_chunk_size" = COALESCE("max_chunk_size", 1200)
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ALTER COLUMN "max_chunk_size" SET NOT NULL,
+      ALTER COLUMN "max_chunk_size" SET DEFAULT 1200
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ALTER COLUMN "crawl_frequency" SET DEFAULT 'manual'
+    `);
+
+    await db.execute(sql`
+      UPDATE "sites"
+      SET "crawl_frequency" = COALESCE(NULLIF("crawl_frequency", ''), 'manual')
+    `);
+
+    await db.execute(sql`
       ALTER TABLE "pages"
       ADD COLUMN IF NOT EXISTS "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL
     `);
