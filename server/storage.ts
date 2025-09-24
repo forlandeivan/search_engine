@@ -65,44 +65,83 @@ function buildWhereClause(conditions: SQL[]): SQL {
 
 export class DatabaseStorage implements IStorage {
   private db = db;
-  private userFullNameColumnEnsured = false;
-  private ensuringUserFullNameColumn: Promise<void> | null = null;
+  private userAuthColumnsEnsured = false;
+  private ensuringUserAuthColumns: Promise<void> | null = null;
 
-  private async ensureUserFullNameColumnExists(): Promise<void> {
-    if (this.userFullNameColumnEnsured) {
+  private async ensureUserAuthColumns(): Promise<void> {
+    if (this.userAuthColumnsEnsured) {
       return;
     }
 
-    if (this.ensuringUserFullNameColumn) {
-      return this.ensuringUserFullNameColumn;
+    if (this.ensuringUserAuthColumns) {
+      return this.ensuringUserAuthColumns;
     }
 
-    this.ensuringUserFullNameColumn = (async () => {
-      const columnCheck = await this.db.execute(sql`
-        SELECT EXISTS(
-          SELECT 1
+    this.ensuringUserAuthColumns = (async () => {
+      const emailColumnCheck = await this.db.execute(sql`
+        SELECT COUNT(*)::int AS "emailColumnCount"
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+          AND column_name = 'email'
+      `);
+      const emailColumnCount = Number(emailColumnCheck.rows[0]?.emailColumnCount ?? 0);
+
+      if (emailColumnCount === 0) {
+        const usernameColumnCheck = await this.db.execute(sql`
+          SELECT COUNT(*)::int AS "usernameColumnCount"
           FROM information_schema.columns
           WHERE table_schema = 'public'
             AND table_name = 'users'
-            AND column_name = 'full_name'
-        ) AS exists
-      `);
+            AND column_name = 'username'
+        `);
+        const usernameColumnCount = Number(usernameColumnCheck.rows[0]?.usernameColumnCount ?? 0);
 
-      const columnExists = Boolean(columnCheck.rows?.[0]?.exists);
-
-      if (!columnExists) {
-        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
-        await this.db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
-        await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
+        if (usernameColumnCount > 0) {
+          await this.db.execute(sql`ALTER TABLE "users" RENAME COLUMN "username" TO "email"`);
+        } else {
+          await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "email" text`);
+        }
       }
 
-      this.userFullNameColumnEnsured = true;
+      const passwordColumnCheck = await this.db.execute(sql`
+        SELECT COUNT(*)::int AS "passwordColumnCount"
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+          AND column_name = 'password'
+      `);
+      const passwordColumnCount = Number(passwordColumnCheck.rows[0]?.passwordColumnCount ?? 0);
+
+      if (passwordColumnCount > 0) {
+        await this.db.execute(sql`ALTER TABLE "users" RENAME COLUMN "password" TO "password_hash"`);
+      }
+
+      await this.db.execute(sql`ALTER TABLE "users" DROP CONSTRAINT IF EXISTS "users_username_unique"`);
+      await this.db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT IF NOT EXISTS "users_email_unique" UNIQUE ("email")`);
+
+      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
+      await this.db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
+
+      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "created_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+      await this.db.execute(sql`
+        UPDATE "users"
+        SET
+          "created_at" = COALESCE("created_at", CURRENT_TIMESTAMP),
+          "updated_at" = COALESCE("updated_at", CURRENT_TIMESTAMP)
+      `);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "created_at" SET NOT NULL`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "updated_at" SET NOT NULL`);
+
+      this.userAuthColumnsEnsured = true;
     })();
 
     try {
-      await this.ensuringUserFullNameColumn;
+      await this.ensuringUserAuthColumns;
     } finally {
-      this.ensuringUserFullNameColumn = null;
+      this.ensuringUserAuthColumns = null;
     }
   }
 
@@ -464,19 +503,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUser(id: string): Promise<User | undefined> {
-    await this.ensureUserFullNameColumnExists();
+    await this.ensureUserAuthColumns();
     const [user] = await this.db.select().from(users).where(eq(users.id, id));
     return user ?? undefined;
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    await this.ensureUserFullNameColumnExists();
+    await this.ensureUserAuthColumns();
     const [user] = await this.db.select().from(users).where(eq(users.email, email));
     return user ?? undefined;
   }
 
   async createUser(user: InsertUser): Promise<User> {
-    await this.ensureUserFullNameColumnExists();
+    await this.ensureUserAuthColumns();
     const [newUser] = await this.db.insert(users).values(user).returning();
     return newUser;
   }
