@@ -38,6 +38,8 @@ CREATE TABLE "pages" (
     "title" text,
     "content" text,
     "meta_description" text,
+    "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+    "chunks" jsonb DEFAULT '[]'::jsonb NOT NULL,
     "status_code" integer,
     "last_crawled" timestamp NOT NULL,
     "content_hash" text,

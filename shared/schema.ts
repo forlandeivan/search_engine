@@ -10,6 +10,42 @@ const tsvector = customType<{ data: unknown; driverData: unknown }>({
   },
 });
 
+export interface ChunkMedia {
+  src: string;
+  alt?: string;
+}
+
+export interface ContentChunk {
+  id: string;
+  heading: string;
+  level: number;
+  content: string;
+  deepLink: string;
+  metadata: {
+    images: ChunkMedia[];
+    links: string[];
+    position: number;
+    wordCount: number;
+    charCount: number;
+    estimatedReadingTimeSec: number;
+    excerpt: string;
+  };
+}
+
+export interface PageMetadata {
+  description?: string;
+  keywords?: string;
+  author?: string;
+  publishDate?: string;
+  images?: string[];
+  links?: string[];
+  language?: string;
+  extractedAt: string;
+  totalChunks: number;
+  wordCount: number;
+  estimatedReadingTimeSec: number;
+}
+
 // Sites table for storing crawl configurations
 export const sites = pgTable("sites", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -34,6 +70,8 @@ export const pages = pgTable("pages", {
   title: text("title"),
   content: text("content"), // Extracted text content
   metaDescription: text("meta_description"),
+  metadata: jsonb("metadata").$type<PageMetadata>().default(sql`'{}'::jsonb`).notNull(),
+  chunks: jsonb("chunks").$type<ContentChunk[]>().default(sql`'[]'::jsonb`).notNull(),
   statusCode: integer("status_code"),
   lastCrawled: timestamp("last_crawled").notNull(),
   contentHash: text("content_hash"), // For detecting content changes
