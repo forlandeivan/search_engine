@@ -246,7 +246,12 @@ export default function ProjectDetailPage() {
     try {
       setExportingPageId(page.id);
       const { jsPDF } = await import("jspdf");
+      const { notoSansRegularBase64, notoSansBoldBase64 } = await import("../pdfFonts/notoSans");
       const doc = new jsPDF({ unit: "pt", format: "a4" });
+      doc.addFileToVFS("NotoSans-Regular.ttf", notoSansRegularBase64);
+      doc.addFont("NotoSans-Regular.ttf", "NotoSans", "normal");
+      doc.addFileToVFS("NotoSans-Bold.ttf", notoSansBoldBase64);
+      doc.addFont("NotoSans-Bold.ttf", "NotoSans", "bold");
       const margin = 40;
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
@@ -265,7 +270,7 @@ export default function ProjectDetailPage() {
           return;
         }
 
-        doc.setFont("helvetica", options?.bold ? "bold" : "normal");
+        doc.setFont("NotoSans", options?.bold ? "bold" : "normal");
         doc.setFontSize(fontSize);
         const lines = doc.splitTextToSize(text, pageWidth - margin * 2);
         const lineHeight = fontSize * 1.4;
