@@ -123,25 +123,53 @@ export default function VectorCollectionsPage() {
     mutationFn: async (name: string) => {
       await apiRequest("DELETE", `/api/vector/collections/${encodeURIComponent(name)}`);
     },
+    onMutate: async (name: string) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/vector/collections"] });
+
+      const previousData = queryClient.getQueryData<CollectionsResponse>(["/api/vector/collections"]);
+
+      queryClient.setQueryData<CollectionsResponse | undefined>(
+        ["/api/vector/collections"],
+        (oldData) => {
+          if (!oldData) {
+            return oldData;
+          }
+
+          return {
+            collections: oldData.collections.filter((collection) => collection.name !== name),
+          };
+        },
+      );
+
+      setCollectionToDelete(null);
+
+      return { previousData };
+    },
     onSuccess: (_, name) => {
       toast({
         title: "Коллекция удалена",
         description: `Коллекция «${name}» удалена из Qdrant`,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/vector/collections"] });
-      setCollectionToDelete(null);
     },
-    onError: (mutationError: any) => {
+    onError: (mutationError: any, _name, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(["/api/vector/collections"], context.previousData);
+      }
+
       toast({
         title: "Не удалось удалить коллекцию",
         description: mutationError?.message || "Попробуйте ещё раз",
         variant: "destructive",
       });
     },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/vector/collections"] });
+    },
   });
 
   const collections = data?.collections ?? [];
-  const isRefreshing = isLoading || isFetching;
+  const isInitialLoading = isLoading && !data;
+  const isRefreshing = isFetching || isLoading;
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -227,7 +255,7 @@ export default function VectorCollectionsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {isRefreshing ? (
+          {isInitialLoading ? (
             <p className="text-muted-foreground">Загрузка коллекций...</p>
           ) : collections.length === 0 ? (
             <p className="text-muted-foreground">Коллекции ещё не созданы.</p>
