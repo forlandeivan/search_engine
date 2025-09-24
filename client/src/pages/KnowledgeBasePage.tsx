@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,6 +36,77 @@ import {
   SquarePen,
 } from "lucide-react";
 import { DocumentEditor } from "@/components/knowledge-base/DocumentEditor";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
+import type { PDFTextItem } from "pdfjs-dist/legacy/build/pdf";
+import mammoth from "mammoth/mammoth.browser";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  "pdf.worker.min.mjs",
+  import.meta.url
+).toString();
+
+const normalizeTitleFromFilename = (filename: string) => {
+  const baseName = filename.replace(/\.[^./\\]+$/u, "");
+  const cleaned = baseName.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned) {
+    return "Новый документ";
+  }
+
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+};
+
+const buildHtmlFromPlainText = (text: string, title: string) => {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const paragraphs = normalized
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+  const paragraphsHtml = paragraphs
+    .map((paragraph) => `<p>${escapeHtml(paragraph.replace(/\n/g, " "))}</p>`)
+    .join("");
+
+  return `<h1>${escapeHtml(title)}</h1>${paragraphsHtml}`;
+};
+
+const decodeDocBinaryToText = (buffer: ArrayBuffer) => {
+  const view = new Uint8Array(buffer);
+  const encodings: string[] = ["utf-16le", "windows-1251", "utf-8"];
+
+  for (const encoding of encodings) {
+    try {
+      const decoder = new TextDecoder(encoding, { fatal: false });
+      const decoded = decoder.decode(view);
+      const cleaned = decoded
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "\n")
+        .replace(/[\r\f]+/g, "\n")
+        .split(/\n+/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join("\n");
+      if (cleaned.length > 0) {
+        return cleaned;
+      }
+    } catch (error) {
+      // Переходим к следующей кодировке, если текущая недоступна.
+      continue;
+    }
+  }
+
+  return "";
+};
+
+const ensureHeadingInHtml = (html: string, title: string) => {
+  if (!html.trim()) {
+    return `<h1>${escapeHtml(title)}</h1>`;
+  }
+
+  if (/<h[1-6][^>]*>/i.test(html)) {
+    return html;
+  }
+
+  return `<h1>${escapeHtml(title)}</h1>${html}`;
+};
 
 type TreeNode = {
   id: string;
@@ -300,6 +371,9 @@ export default function KnowledgeBasePage() {
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState("");
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isImportingDocument, setIsImportingDocument] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const selectedBase = useMemo(
     () => knowledgeBases.find((base) => base.id === selectedBaseId) ?? null,
@@ -386,15 +460,86 @@ export default function KnowledgeBasePage() {
 
     setNodeCreation({ type, parentId });
     setNodeTitle("");
+    setImportError(null);
+    setIsImportingDocument(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
     setIsNodeDialogOpen(true);
   };
 
+  const finalizeNodeDialog = () => {
+    setNodeCreation(null);
+    setNodeTitle("");
+    setIsNodeDialogOpen(false);
+    setImportError(null);
+    setIsImportingDocument(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const createDocumentEntry = (
+    title: string,
+    content: string,
+    parentId: string | null
+  ) => {
+    if (!selectedBase) {
+      return;
+    }
+
+    const documentId = createId();
+    const now = new Date().toISOString();
+    const sanitizedContent = getSanitizedContent(content);
+    const resolvedTitle = extractTitleFromContent(sanitizedContent) || title;
+
+    const documentNode: TreeNode = {
+      id: documentId,
+      title: resolvedTitle,
+      type: "document",
+      documentId,
+    };
+
+    const knowledgeDocument: KnowledgeDocument = {
+      id: documentId,
+      title: resolvedTitle,
+      content: sanitizedContent,
+      updatedAt: now,
+    };
+
+    setKnowledgeBases((prev) =>
+      prev.map((base) =>
+        base.id === selectedBase.id
+          ? {
+              ...base,
+              structure: addChildNode(base.structure, parentId, documentNode),
+              documents: {
+                ...base.documents,
+                [documentId]: knowledgeDocument,
+              },
+            }
+          : base
+      )
+    );
+
+    setSelectedDocument({ baseId: selectedBase.id, documentId });
+    if (parentId) {
+      setExpandedNodes((prev) => ({
+        ...prev,
+        [parentId]: true,
+      }));
+    }
+  };
+
   const handleCreateNode = () => {
-    if (!selectedBase || !nodeCreation || !nodeTitle.trim()) {
+    if (!selectedBase || !nodeCreation) {
       return;
     }
 
     if (nodeCreation.type === "folder") {
+      if (!nodeTitle.trim()) {
+        return;
+      }
       const folderNode: TreeNode = {
         id: createId(),
         title: nodeTitle.trim(),
@@ -418,53 +563,122 @@ export default function KnowledgeBasePage() {
     }
 
     if (nodeCreation.type === "document") {
-      const documentId = createId();
-      const now = new Date().toISOString();
+      if (!nodeTitle.trim()) {
+        return;
+      }
+
       const documentTitle = nodeTitle.trim();
-
       const initialContent = `<h1>${escapeHtml(documentTitle)}</h1>`;
+      createDocumentEntry(documentTitle, initialContent, nodeCreation.parentId);
+    }
 
-      const documentNode: TreeNode = {
-        id: documentId,
-        title: documentTitle,
-        type: "document",
-        documentId,
-      };
+    finalizeNodeDialog();
+  };
 
-      const knowledgeDocument: KnowledgeDocument = {
-        id: documentId,
-        title: documentTitle,
-        content: initialContent,
-        updatedAt: now,
-      };
+  const convertPdfToHtml = async (file: File, title: string) => {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const textChunks: string[] = [];
 
-      setKnowledgeBases((prev) =>
-        prev.map((base) =>
-          base.id === selectedBase.id
-            ? {
-                ...base,
-                structure: addChildNode(base.structure, nodeCreation.parentId, documentNode),
-                documents: {
-                  ...base.documents,
-                  [documentId]: knowledgeDocument,
-                },
-              }
-            : base
-        )
-      );
-
-      setSelectedDocument({ baseId: selectedBase.id, documentId });
-      if (nodeCreation.parentId) {
-        setExpandedNodes((prev) => ({
-          ...prev,
-          [nodeCreation.parentId as string]: true,
-        }));
+    for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
+      const page = await pdf.getPage(pageIndex);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item: PDFTextItem) => (typeof item.str === "string" ? item.str : ""))
+        .join(" ");
+      if (pageText.trim()) {
+        textChunks.push(pageText.trim());
       }
     }
 
-    setNodeCreation(null);
-    setNodeTitle("");
-    setIsNodeDialogOpen(false);
+    const plainText = textChunks.join("\n\n");
+    if (!plainText.trim()) {
+      return `<h1>${escapeHtml(title)}</h1>`;
+    }
+
+    return buildHtmlFromPlainText(plainText, title);
+  };
+
+  const convertDocFileToHtml = async (file: File, title: string) => {
+    const arrayBuffer = await file.arrayBuffer();
+
+    try {
+      const result = await mammoth.convertToHtml({ arrayBuffer });
+      const html = ensureHeadingInHtml(result.value || "", title);
+      if (html.trim()) {
+        return html;
+      }
+    } catch (error) {
+      // Переходим к эвристическому извлечению текста ниже.
+    }
+
+    const extractedText = decodeDocBinaryToText(arrayBuffer);
+    if (!extractedText) {
+      throw new Error("Не удалось прочитать содержимое документа.");
+    }
+
+    return buildHtmlFromPlainText(extractedText, title);
+  };
+
+  const convertFileToHtml = async (file: File) => {
+    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const title = normalizeTitleFromFilename(file.name);
+
+    if (extension === "txt") {
+      const text = await file.text();
+      return { title, html: buildHtmlFromPlainText(text, title) };
+    }
+
+    if (extension === "pdf") {
+      return { title, html: await convertPdfToHtml(file, title) };
+    }
+
+    if (extension === "doc" || extension === "docx") {
+      return { title, html: await convertDocFileToHtml(file, title) };
+    }
+
+    throw new Error("Поддерживаются только файлы PDF, DOC/DOCX и TXT.");
+  };
+
+  const handleImportDocumentClick = () => {
+    if (isImportingDocument) {
+      return;
+    }
+
+    setImportError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileInputChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    if (!selectedBase || !nodeCreation || nodeCreation.type !== "document") {
+      event.target.value = "";
+      setImportError("Сначала выберите, где создать документ.");
+      return;
+    }
+
+    setIsImportingDocument(true);
+    setImportError(null);
+
+    try {
+      const { title, html } = await convertFileToHtml(file);
+      createDocumentEntry(title, html, nodeCreation.parentId);
+      finalizeNodeDialog();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Не удалось импортировать файл. Попробуйте снова.";
+      setImportError(message);
+    } finally {
+      setIsImportingDocument(false);
+      event.target.value = "";
+    }
   };
 
   const handleSelectDocument = (documentId: string) => {
@@ -783,7 +997,7 @@ export default function KnowledgeBasePage() {
           <DialogDescription>
             {nodeCreation?.type === "folder"
               ? "Создайте раздел, чтобы сгруппировать документы или подкатегории."
-              : "Создайте документ с пустым содержимым и начните работу в визуальном редакторе."}
+              : "Создайте документ с пустым содержимым или импортируйте материал из файла и начните работу в визуальном редакторе."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
@@ -802,8 +1016,35 @@ export default function KnowledgeBasePage() {
             }
           />
         </div>
-        <DialogFooter>
-          <Button onClick={handleCreateNode}>Создать</Button>
+        {nodeCreation?.type === "document" && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.pdf,.doc,.docx"
+            className="hidden"
+            onChange={handleFileInputChange}
+          />
+        )}
+        {importError && (
+          <p className="text-sm text-destructive">{importError}</p>
+        )}
+        <DialogFooter className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          {nodeCreation?.type === "document" && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleImportDocumentClick}
+              disabled={isImportingDocument}
+            >
+              {isImportingDocument ? "Импортируем..." : "Импортировать из файла"}
+            </Button>
+          )}
+          <Button
+            onClick={handleCreateNode}
+            disabled={isImportingDocument || !nodeTitle.trim()}
+          >
+            {isImportingDocument ? "Подождите..." : "Создать"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
