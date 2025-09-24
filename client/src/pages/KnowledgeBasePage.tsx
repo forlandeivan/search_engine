@@ -37,13 +37,13 @@ import {
 } from "lucide-react";
 import { DocumentEditor } from "@/components/knowledge-base/DocumentEditor";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
+import pdfWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import type { PDFTextItem } from "pdfjs-dist/legacy/build/pdf";
 import mammoth from "mammoth/mammoth.browser";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  "pdf.worker.min.mjs",
-  import.meta.url
-).toString();
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+
+const KNOWLEDGE_BASE_STORAGE_KEY = "knowledge-base-state";
 
 const normalizeTitleFromFilename = (filename: string) => {
   const baseName = filename.replace(/\.[^./\\]+$/u, "");
@@ -357,6 +357,7 @@ function TreeView({
 }
 
 export default function KnowledgeBasePage() {
+  const hasHydratedFromStorageRef = useRef(false);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [selectedBaseId, setSelectedBaseId] = useState<string | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<SelectedDocumentState | null>(
@@ -391,6 +392,88 @@ export default function KnowledgeBasePage() {
 
     return selectedBase.documents[selectedDocument.documentId] ?? null;
   }, [selectedBase, selectedDocument]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      hasHydratedFromStorageRef.current = true;
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(KNOWLEDGE_BASE_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return;
+      }
+
+      const { knowledgeBases: storedBases, selectedBaseId: storedBaseId, selectedDocument: storedDocument } =
+        parsed as {
+          knowledgeBases?: KnowledgeBase[];
+          selectedBaseId?: string | null;
+          selectedDocument?: SelectedDocumentState | null;
+        };
+
+      if (Array.isArray(storedBases)) {
+        setKnowledgeBases(storedBases);
+      }
+
+      if (typeof storedBaseId === "string" && storedBaseId) {
+        setSelectedBaseId(storedBaseId);
+      }
+
+      if (
+        storedDocument &&
+        typeof storedDocument === "object" &&
+        typeof storedDocument.baseId === "string" &&
+        typeof storedDocument.documentId === "string"
+      ) {
+        setSelectedDocument(storedDocument);
+      }
+    } catch (error) {
+      console.error("Не удалось загрузить базы знаний из localStorage", error);
+    } finally {
+      hasHydratedFromStorageRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !hasHydratedFromStorageRef.current) {
+      return;
+    }
+
+    try {
+      const persistedSelectedDocument = selectedDocument
+        ? (() => {
+            const relatedBase = knowledgeBases.find(
+              (base) => base.id === selectedDocument.baseId
+            );
+            if (!relatedBase) {
+              return null;
+            }
+
+            if (!(selectedDocument.documentId in relatedBase.documents)) {
+              return null;
+            }
+
+            return selectedDocument;
+          })()
+        : null;
+
+      const payload = {
+        knowledgeBases,
+        selectedBaseId,
+        selectedDocument: persistedSelectedDocument,
+      };
+
+      window.localStorage.setItem(KNOWLEDGE_BASE_STORAGE_KEY, JSON.stringify(payload));
+    } catch (error) {
+      console.error("Не удалось сохранить базы знаний в localStorage", error);
+    }
+  }, [knowledgeBases, selectedBaseId, selectedDocument]);
 
   useEffect(() => {
     if (!selectedBase) {
