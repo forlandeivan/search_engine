@@ -135,6 +135,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePage(id: string): Promise<boolean> {
+    await this.db.delete(searchIndex).where(eq(searchIndex.pageId, id));
     const result = await this.db.delete(pages).where(eq(pages.id, id));
     return (result.rowCount ?? 0) > 0;
   }

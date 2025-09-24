@@ -857,6 +857,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete("/api/pages/:id", async (req, res) => {
+    try {
+      const pageId = req.params.id;
+
+      if (!pageId) {
+        return res.status(400).json({ error: "Требуется идентификатор страницы" });
+      }
+
+      const deleted = await storage.deletePage(pageId);
+
+      if (!deleted) {
+        return res.status(404).json({ error: "Страница не найдена" });
+      }
+
+      res.json({ message: "Страница успешно удалена" });
+    } catch (error) {
+      console.error("❌ Error deleting page:", error);
+      res.status(500).json({ error: "Не удалось удалить страницу" });
+    }
+  });
+
   // Bulk delete pages
   app.delete("/api/pages/bulk-delete", async (req, res) => {
     try {
