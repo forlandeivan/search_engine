@@ -1,13 +1,14 @@
-import { useMemo } from "react";
+import { ReactNode, useMemo } from "react";
 import { Link, useRoute } from "wouter";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { ChevronLeft, RefreshCw } from "lucide-react";
+import { ChevronLeft, HelpCircle, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest } from "@/lib/queryClient";
 
 interface VectorCollectionDetail {
@@ -173,14 +174,32 @@ export default function VectorCollectionDetailPage() {
     void refetchPoints();
   };
 
-  const infoRows: Array<{ label: string; value: string }> = [
-    { label: "Статус", value: statusLabels[collection?.status ?? ""] ?? collection?.status ?? "—" },
-    { label: "Оптимизатор", value: formatOptimizerStatus(collection?.optimizerStatus) },
+  const infoItems: Array<{ label: string; value: ReactNode; tooltip?: string }> = [
+    {
+      label: "Статус",
+      value: collection?.status ? (
+        <Badge variant={statusVariants[collection.status] ?? "secondary"}>
+          {statusLabels[collection.status] ?? collection.status}
+        </Badge>
+      ) : (
+        "—"
+      ),
+    },
+    {
+      label: "Оптимизатор",
+      tooltip:
+        "Фоновый процесс Qdrant, который поддерживает коллекцию в оптимальном состоянии, перераспределяя данные и ресурсы.",
+      value: formatOptimizerStatus(collection?.optimizerStatus),
+    },
     { label: "Записей", value: formatNumber(collection?.pointsCount) },
-    { label: "Векторов", value: formatNumber(collection?.vectorsCount) },
     { label: "Размер вектора", value: formatNumber(collection?.vectorSize) },
     { label: "Метрика", value: collection?.distance ?? "—" },
-    { label: "Сегментов", value: formatNumber(collection?.segmentsCount) },
+    {
+      label: "Сегментов",
+      tooltip:
+        "Логические части коллекции, на которые Qdrant делит данные. Количество сегментов влияет на скорость поиска и обновлений.",
+      value: formatNumber(collection?.segmentsCount),
+    },
   ];
 
   return (
@@ -229,18 +248,33 @@ export default function VectorCollectionDetailPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableBody>
-                {infoRows.map((row) => (
-                  <TableRow key={row.label}>
-                    <TableCell className="w-48 font-medium">{row.label}</TableCell>
-                    <TableCell>{row.value}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <dl className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {infoItems.map((item) => (
+              <div
+                key={item.label}
+                className="rounded-lg border border-border/60 bg-muted/30 p-4 shadow-sm backdrop-blur-sm"
+              >
+                <dt className="flex items-start gap-2 text-sm font-medium text-muted-foreground">
+                  <span className="leading-tight">{item.label}</span>
+                  {item.tooltip && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="cursor-help text-muted-foreground transition-colors hover:text-foreground">
+                          <HelpCircle className="h-4 w-4" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs text-balance text-sm leading-relaxed">
+                        {item.tooltip}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </dt>
+                <dd className="mt-3 text-lg font-semibold text-foreground">
+                  {collectionLoading ? <Skeleton className="h-6 w-24" /> : item.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
         </CardContent>
       </Card>
 
