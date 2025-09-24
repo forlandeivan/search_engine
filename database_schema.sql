@@ -7,27 +7,36 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 
--- Create users table (for future admin features)
+-- Create users table for platform authentication
 CREATE TABLE "users" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
-    "username" text NOT NULL UNIQUE,
-    "password" text NOT NULL
+    "email" text NOT NULL UNIQUE,
+    "full_name" text NOT NULL,
+    "password_hash" text NOT NULL,
+    "created_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 -- Create sites table for storing crawl configurations
 CREATE TABLE "sites" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    "name" text DEFAULT 'Новый проект' NOT NULL,
     "url" text NOT NULL UNIQUE,
+    "start_urls" jsonb DEFAULT '[]'::jsonb NOT NULL,
     "crawl_depth" integer DEFAULT 3 NOT NULL,
+    "max_chunk_size" integer DEFAULT 1200 NOT NULL,
+    "chunk_overlap" boolean DEFAULT false NOT NULL,
+    "chunk_overlap_size" integer DEFAULT 0 NOT NULL,
     "follow_external_links" boolean DEFAULT false NOT NULL,
-    "crawl_frequency" text DEFAULT 'daily' NOT NULL,
+    "crawl_frequency" text DEFAULT 'manual' NOT NULL,
     "exclude_patterns" jsonb DEFAULT '[]'::jsonb NOT NULL,
     "status" text DEFAULT 'idle' NOT NULL,
     "last_crawled" timestamp,
     "next_crawl" timestamp,
     "error" text,
     "created_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL
+    "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "owner_id" varchar NOT NULL REFERENCES "users"("id") ON DELETE CASCADE
 );
 
 -- Create pages table for storing crawled page content
@@ -141,7 +150,7 @@ SET default_text_search_config = 'english';
 COMMENT ON TABLE sites IS 'Stores website crawl configurations and status';
 COMMENT ON TABLE pages IS 'Stores crawled page content with full-text search vectors';
 COMMENT ON TABLE search_index IS 'Optimized search index for fast text search';
-COMMENT ON TABLE users IS 'User accounts for future admin authentication';
+COMMENT ON TABLE users IS 'User accounts for платформенный слой и аутентификацию';
 
 COMMENT ON COLUMN sites.status IS 'Crawl status: idle, crawling, completed, failed';
 COMMENT ON COLUMN sites.crawl_frequency IS 'Crawl frequency: manual, hourly, daily, weekly';
