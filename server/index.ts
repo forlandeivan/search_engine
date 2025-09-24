@@ -6,8 +6,10 @@ import { storage, ensureDatabaseSchema } from "./storage";
 import { getAllowedHostnames } from "./cors-cache";
 import fs from "fs";
 import path from "path";
+import { configureAuth } from "./auth";
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -74,6 +76,8 @@ app.use(cors({
   credentials: true,
   optionsSuccessStatus: 200
 }));
+
+configureAuth(app);
 
 app.use((req, res, next) => {
   const start = Date.now();

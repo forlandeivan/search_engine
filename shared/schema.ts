@@ -1,5 +1,15 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, jsonb, doublePrecision, customType } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  varchar,
+  timestamp,
+  integer,
+  boolean,
+  jsonb,
+  doublePrecision,
+  customType,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -46,6 +56,37 @@ export interface PageMetadata {
   estimatedReadingTimeSec: number;
 }
 
+// Users table for platform authentication
+export const users = pgTable("users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  fullName: text("full_name").notNull(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertUserSchema = createInsertSchema(users).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const registerUserSchema = z
+  .object({
+    fullName: z
+      .string()
+      .trim()
+      .min(1, "Введите имя")
+      .max(200, "Слишком длинное имя"),
+    email: z.string().trim().email("Некорректный email"),
+    password: z
+      .string()
+      .min(8, "Минимальная длина пароля 8 символов")
+      .max(100, "Слишком длинный пароль"),
+  })
+  .strict();
+
 // Sites table for storing crawl configurations
 export const sites = pgTable("sites", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -65,6 +106,9 @@ export const sites = pgTable("sites", {
   error: text("error"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  ownerId: varchar("owner_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
 });
 
 // Pages table for storing crawled page content
@@ -125,6 +169,7 @@ export const insertSiteSchema = createInsertSchema(sites)
     id: true,
     createdAt: true,
     updatedAt: true,
+    ownerId: true,
     status: true,
     lastCrawled: true,
     nextCrawl: true,
@@ -172,22 +217,11 @@ export const insertSearchIndexSchema = createInsertSchema(searchIndex).omit({
 // Types
 export type Site = typeof sites.$inferSelect;
 export type InsertSite = z.infer<typeof insertSiteSchema>;
+export type SiteInsert = typeof sites.$inferInsert;
 export type Page = typeof pages.$inferSelect;
 export type InsertPage = z.infer<typeof insertPageSchema>;
 export type SearchIndexEntry = typeof searchIndex.$inferSelect;
 export type InsertSearchIndexEntry = z.infer<typeof insertSearchIndexSchema>;
-
-// Keep existing user types for potential future admin features
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-});
-
-export const insertUserSchema = createInsertSchema(users).pick({
-  username: true,
-  password: true,
-});
-
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+export type PublicUser = Omit<User, "passwordHash">;

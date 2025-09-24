@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
@@ -7,6 +7,10 @@ import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
+import passport from "passport";
+import bcrypt from "bcryptjs";
+import { registerUserSchema, type PublicUser } from "@shared/schema";
+import { requireAuth, getSessionUser, toPublicUser } from "./auth";
 
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
@@ -18,6 +22,16 @@ function getErrorDetails(error: unknown): string {
   }
 
   return String(error);
+}
+
+function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined {
+  const user = getSessionUser(req);
+  if (!user) {
+    res.status(401).json({ message: "Требуется авторизация" });
+    return undefined;
+  }
+
+  return user;
 }
 
 // Bulk delete schema
@@ -141,6 +155,82 @@ interface PublicSearchResponse {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  app.get("/api/auth/session", (req, res) => {
+    const user = getSessionUser(req);
+    if (!user) {
+      return res.status(401).json({ message: "Нет активной сессии" });
+    }
+
+    res.json({ user });
+  });
+
+  app.post("/api/auth/register", async (req, res, next) => {
+    try {
+      const payload = registerUserSchema.parse(req.body);
+      const email = payload.email.trim().toLowerCase();
+      const fullName = payload.fullName.trim();
+
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(409).json({ message: "Пользователь с таким email уже зарегистрирован" });
+      }
+
+      const passwordHash = await bcrypt.hash(payload.password, 12);
+      const user = await storage.createUser({
+        email,
+        fullName,
+        passwordHash,
+      });
+
+      const safeUser = toPublicUser(user);
+      req.logIn(safeUser, (error) => {
+        if (error) {
+          return next(error);
+        }
+
+        res.status(201).json({ user: safeUser });
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      next(error);
+    }
+  });
+
+  app.post("/api/auth/login", (req, res, next) => {
+    passport.authenticate("local", (err: unknown, user: PublicUser | false, info?: { message?: string }) => {
+      if (err) {
+        return next(err);
+      }
+
+      if (!user) {
+        return res.status(401).json({ message: info?.message ?? "Неверный email или пароль" });
+      }
+
+      req.logIn(user, (loginError) => {
+        if (loginError) {
+          return next(loginError);
+        }
+
+        res.json({ user });
+      });
+    })(req, res, next);
+  });
+
+  app.post("/api/auth/logout", (req, res, next) => {
+    req.logout((error) => {
+      if (error) {
+        return next(error);
+      }
+
+      res.json({ success: true });
+    });
+  });
+
+  app.use("/api", requireAuth);
+
   // Vector search endpoints
   app.get("/api/vector/collections", async (_req, res) => {
     try {
@@ -468,8 +558,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Sites management
   app.get("/api/sites", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
-      const sites = await storage.getAllSites();
+      const sites = await storage.getAllSites(user.id);
       res.json(sites);
     } catch (error) {
       console.error("Error fetching sites:", error);
@@ -478,6 +572,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/sites", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
       const validatedData = createProjectSchema.parse(req.body);
       const normalizedStartUrls = Array.from(
@@ -498,6 +596,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const chunkOverlapSize = chunkOverlapEnabled ? validatedData.chunkOverlapSize ?? 0 : 0;
 
       const newSite = await storage.createSite({
+        ownerId: user.id,
         name: validatedData.name.trim(),
         url: primaryUrl,
         startUrls: normalizedStartUrls,
@@ -527,11 +626,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Extended sites with pages count - must come before /api/sites/:id
   app.get("/api/sites/extended", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
-      const sites = await storage.getAllSites();
+      const sites = await storage.getAllSites(user.id);
       const sitesWithStats = await Promise.all(
         sites.map(async (site) => {
-          const pages = await storage.getPagesBySiteId(site.id);
+          const pages = await storage.getPagesBySiteId(site.id, user.id);
           return {
             ...site,
             pagesFound: pages.length,
@@ -548,8 +651,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/sites/:id", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
-      const site = await storage.getSite(req.params.id);
+      const site = await storage.getSite(req.params.id, user.id);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -561,9 +668,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.put("/api/sites/:id", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
       const updates = req.body;
-      const updatedSite = await storage.updateSite(req.params.id, updates);
+      const updatedSite = await storage.updateSite(req.params.id, updates, user.id);
       if (!updatedSite) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -580,10 +691,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/sites/:id", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
       // Get site info before deletion for logging
-      const siteToDelete = await storage.getSite(req.params.id);
-      const success = await storage.deleteSite(req.params.id);
+      const siteToDelete = await storage.getSite(req.params.id, user.id);
+      const success = await storage.deleteSite(req.params.id, user.id);
       if (!success) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -601,8 +716,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Crawling operations
   app.post("/api/sites/:id/crawl", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
-      const site = await storage.getSite(req.params.id);
+      const site = await storage.getSite(req.params.id, user.id);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -629,8 +748,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Re-crawl existing site to find new pages
   app.post("/api/sites/:id/recrawl", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
-      const site = await storage.getSite(req.params.id);
+      const site = await storage.getSite(req.params.id, user.id);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -649,7 +772,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get current page count before recrawling for logging
-      const existingPages = await storage.getPagesBySiteId(req.params.id);
+      const existingPages = await storage.getPagesBySiteId(req.params.id, user.id);
       console.log(
         `Starting recrawl for site ${site.name ?? site.url ?? 'без названия'} - currently has ${existingPages.length} pages`
       );
@@ -672,7 +795,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/sites/:id/stop-crawl", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
+      const site = await storage.getSite(req.params.id, user.id);
+      if (!site) {
+        return res.status(404).json({ error: "Site not found" });
+      }
+
       await crawler.stopCrawl(req.params.id);
       res.json({ message: "Crawling stopped", siteId: req.params.id });
     } catch (error) {
@@ -720,8 +852,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Pages management
   app.get("/api/sites/:id/pages", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
-      const pages = await storage.getPagesBySiteId(req.params.id);
+      const pages = await storage.getPagesBySiteId(req.params.id, user.id);
       res.json(pages);
     } catch (error) {
       console.error("Error fetching pages:", error);
@@ -731,6 +867,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Search API
   app.get("/api/search", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
       console.log("🔍 Search API called");
       console.log("📨 Raw query params:", req.query);
@@ -773,9 +913,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (siteId) {
         console.log("📁 Filtering search by site:", siteId);
-        ({ results, total } = await storage.searchPagesByCollection(decodedQuery, siteId, limit, offset));
+        const site = await storage.getSite(siteId, user.id);
+        if (!site) {
+          return res.status(404).json({ error: "Проект не найден" });
+        }
+        ({ results, total } = await storage.searchPagesByCollection(decodedQuery, siteId, limit, offset, user.id));
       } else {
-        ({ results, total } = await storage.searchPages(decodedQuery, limit, offset));
+        ({ results, total } = await storage.searchPages(decodedQuery, limit, offset, user.id));
       }
       console.log("✅ Search completed:", { 
         resultsCount: results.length, 
@@ -807,6 +951,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Webhook endpoint for automated crawling (e.g., from Tilda)
   app.post("/api/webhook/crawl", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
       const { url, secret } = req.body;
 
@@ -816,7 +964,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Find site by URL among all start URLs
-      const sites = await storage.getAllSites();
+      const sites = await storage.getAllSites(user.id);
       const normalizedUrl = url.toString().trim();
       const site = sites.find((s) => {
         if (!normalizedUrl) {
@@ -907,8 +1055,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Get all pages
   app.get("/api/pages", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
-      const allPages = await storage.getAllPages();
+      const allPages = await storage.getAllPages(user.id);
       res.json(allPages);
     } catch (error) {
       console.error('Error fetching pages:', error);
@@ -917,6 +1069,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/pages/:id", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
       const pageId = req.params.id;
 
@@ -924,7 +1080,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Требуется идентификатор страницы" });
       }
 
-      const deleted = await storage.deletePage(pageId);
+      const deleted = await storage.deletePage(pageId, user.id);
 
       if (!deleted) {
         return res.status(404).json({ error: "Страница не найдена" });
@@ -939,13 +1095,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Bulk delete pages
   app.delete("/api/pages/bulk-delete", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
       const validatedData = bulkDeletePagesSchema.parse(req.body);
       const { pageIds } = validatedData;
-      
+
       console.log(`🗑️ Bulk delete requested for ${pageIds.length} pages`);
-      
-      const deleteResults = await storage.bulkDeletePages(pageIds);
+
+      const deleteResults = await storage.bulkDeletePages(pageIds, user.id);
       
       console.log(`✅ Bulk delete completed: ${deleteResults.deletedCount} pages deleted`);
       
@@ -970,16 +1130,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Statistics endpoint
   app.get("/api/stats", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     try {
-      const sites = await storage.getAllSites();
+      const sites = await storage.getAllSites(user.id);
       const totalSites = sites.length;
       const activeCrawls = sites.filter(s => s.status === 'crawling').length;
       const completedCrawls = sites.filter(s => s.status === 'completed').length;
       const failedCrawls = sites.filter(s => s.status === 'failed').length;
-      
+
       let totalPages = 0;
       for (const site of sites) {
-        const pages = await storage.getPagesBySiteId(site.id);
+        const pages = await storage.getPagesBySiteId(site.id, user.id);
         totalPages += pages.length;
       }
 

@@ -2,8 +2,9 @@ import {
   sites,
   pages,
   searchIndex,
+  users,
   type Site,
-  type InsertSite,
+  type SiteInsert,
   type Page,
   type InsertPage,
   type SearchIndexEntry,
@@ -12,38 +13,32 @@ import {
   type InsertUser,
 } from "@shared/schema";
 import { db } from "./db";
-import {
-  desc,
-  eq,
-  inArray,
-  sql,
-  type SQL,
-} from "drizzle-orm";
+import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 
 export interface IStorage {
   // Sites management
-  createSite(site: InsertSite): Promise<Site>;
-  getSite(id: string): Promise<Site | undefined>;
-  getAllSites(): Promise<Site[]>;
-  updateSite(id: string, updates: Partial<Site>): Promise<Site | undefined>;
-  deleteSite(id: string): Promise<boolean>;
+  createSite(site: SiteInsert): Promise<Site>;
+  getSite(id: string, ownerId?: string): Promise<Site | undefined>;
+  getAllSites(ownerId?: string): Promise<Site[]>;
+  updateSite(id: string, updates: Partial<Site>, ownerId?: string): Promise<Site | undefined>;
+  deleteSite(id: string, ownerId?: string): Promise<boolean>;
 
   // Pages management
   createPage(page: InsertPage): Promise<Page>;
-  getPage(id: string): Promise<Page | undefined>;
-  getAllPages(): Promise<Page[]>;
+  getPage(id: string, ownerId?: string): Promise<Page | undefined>;
+  getAllPages(ownerId?: string): Promise<Page[]>;
   getPagesByUrl(url: string): Promise<Page[]>;
-  getPagesBySiteId(siteId: string): Promise<Page[]>;
-  updatePage(id: string, updates: Partial<Page>): Promise<Page | undefined>;
-  deletePage(id: string): Promise<boolean>;
-  bulkDeletePages(pageIds: string[]): Promise<{ deletedCount: number; notFoundCount: number }>;
-  deletePagesBySiteId(siteId: string): Promise<number>;
+  getPagesBySiteId(siteId: string, ownerId?: string): Promise<Page[]>;
+  updatePage(id: string, updates: Partial<Page>, ownerId?: string): Promise<Page | undefined>;
+  deletePage(id: string, ownerId?: string): Promise<boolean>;
+  bulkDeletePages(pageIds: string[], ownerId?: string): Promise<{ deletedCount: number; notFoundCount: number }>;
+  deletePagesBySiteId(siteId: string, ownerId?: string): Promise<number>;
 
   // Search index management
   createSearchIndexEntry(entry: InsertSearchIndexEntry): Promise<SearchIndexEntry>;
   deleteSearchIndexByPageId(pageId: string): Promise<number>;
-  searchPages(query: string, limit?: number, offset?: number): Promise<{ results: Page[]; total: number }>;
-  searchPagesByCollection(query: string, siteId: string, limit?: number, offset?: number): Promise<{ results: Page[]; total: number }>;
+  searchPages(query: string, limit?: number, offset?: number, ownerId?: string): Promise<{ results: Page[]; total: number }>;
+  searchPagesByCollection(query: string, siteId: string, limit?: number, offset?: number, ownerId?: string): Promise<{ results: Page[]; total: number }>;
 
   // Database health diagnostics
   getDatabaseHealthInfo(): Promise<{
@@ -57,7 +52,7 @@ export interface IStorage {
 
   // User management (reserved for future admin features)
   getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
 }
 
@@ -71,31 +66,44 @@ function buildWhereClause(conditions: SQL[]): SQL {
 export class DatabaseStorage implements IStorage {
   private db = db;
 
-  async createSite(site: InsertSite): Promise<Site> {
+  async createSite(site: SiteInsert): Promise<Site> {
     const [newSite] = await this.db.insert(sites).values(site).returning();
     return newSite;
   }
 
-  async getSite(id: string): Promise<Site | undefined> {
-    const [site] = await this.db.select().from(sites).where(eq(sites.id, id));
+  async getSite(id: string, ownerId?: string): Promise<Site | undefined> {
+    const condition = ownerId
+      ? and(eq(sites.id, id), eq(sites.ownerId, ownerId))
+      : eq(sites.id, id);
+    const [site] = await this.db.select().from(sites).where(condition);
     return site ?? undefined;
   }
 
-  async getAllSites(): Promise<Site[]> {
-    return await this.db.select().from(sites).orderBy(desc(sites.createdAt));
+  async getAllSites(ownerId?: string): Promise<Site[]> {
+    let query = this.db.select().from(sites);
+    if (ownerId) {
+      query = query.where(eq(sites.ownerId, ownerId));
+    }
+    return await query.orderBy(desc(sites.createdAt));
   }
 
-  async updateSite(id: string, updates: Partial<Site>): Promise<Site | undefined> {
+  async updateSite(id: string, updates: Partial<Site>, ownerId?: string): Promise<Site | undefined> {
+    const condition = ownerId
+      ? and(eq(sites.id, id), eq(sites.ownerId, ownerId))
+      : eq(sites.id, id);
     const [updatedSite] = await this.db
       .update(sites)
       .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
-      .where(eq(sites.id, id))
+      .where(condition)
       .returning();
     return updatedSite ?? undefined;
   }
 
-  async deleteSite(id: string): Promise<boolean> {
-    const result = await this.db.delete(sites).where(eq(sites.id, id));
+  async deleteSite(id: string, ownerId?: string): Promise<boolean> {
+    const condition = ownerId
+      ? and(eq(sites.id, id), eq(sites.ownerId, ownerId))
+      : eq(sites.id, id);
+    const result = await this.db.delete(sites).where(condition);
     return (result.rowCount ?? 0) > 0;
   }
 
@@ -104,20 +112,48 @@ export class DatabaseStorage implements IStorage {
     return newPage;
   }
 
-  async getPage(id: string): Promise<Page | undefined> {
+  async getPage(id: string, ownerId?: string): Promise<Page | undefined> {
+    if (ownerId) {
+      const rows = await this.db
+        .select({ page: pages })
+        .from(pages)
+        .innerJoin(sites, eq(pages.siteId, sites.id))
+        .where(and(eq(pages.id, id), eq(sites.ownerId, ownerId)));
+
+      return rows[0]?.page;
+    }
+
     const [page] = await this.db.select().from(pages).where(eq(pages.id, id));
     return page ?? undefined;
   }
 
-  async getAllPages(): Promise<Page[]> {
-    return await this.db.select().from(pages).orderBy(desc(pages.createdAt));
+  async getAllPages(ownerId?: string): Promise<Page[]> {
+    if (!ownerId) {
+      return await this.db.select().from(pages).orderBy(desc(pages.createdAt));
+    }
+
+    const rows: Array<{ page: Page }> = await this.db
+      .select({ page: pages })
+      .from(pages)
+      .innerJoin(sites, eq(pages.siteId, sites.id))
+      .where(eq(sites.ownerId, ownerId))
+      .orderBy(desc(pages.createdAt));
+
+    return rows.map(({ page }) => page);
   }
 
   async getPagesByUrl(url: string): Promise<Page[]> {
     return await this.db.select().from(pages).where(eq(pages.url, url));
   }
 
-  async getPagesBySiteId(siteId: string): Promise<Page[]> {
+  async getPagesBySiteId(siteId: string, ownerId?: string): Promise<Page[]> {
+    if (ownerId) {
+      const site = await this.getSite(siteId, ownerId);
+      if (!site) {
+        return [];
+      }
+    }
+
     return await this.db
       .select()
       .from(pages)
@@ -125,7 +161,14 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(pages.lastCrawled));
   }
 
-  async updatePage(id: string, updates: Partial<Page>): Promise<Page | undefined> {
+  async updatePage(id: string, updates: Partial<Page>, ownerId?: string): Promise<Page | undefined> {
+    if (ownerId) {
+      const page = await this.getPage(id, ownerId);
+      if (!page) {
+        return undefined;
+      }
+    }
+
     const [updatedPage] = await this.db
       .update(pages)
       .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
@@ -134,23 +177,45 @@ export class DatabaseStorage implements IStorage {
     return updatedPage ?? undefined;
   }
 
-  async deletePage(id: string): Promise<boolean> {
+  async deletePage(id: string, ownerId?: string): Promise<boolean> {
+    if (ownerId) {
+      const page = await this.getPage(id, ownerId);
+      if (!page) {
+        return false;
+      }
+    }
+
     await this.db.delete(searchIndex).where(eq(searchIndex.pageId, id));
     const result = await this.db.delete(pages).where(eq(pages.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 
-  async bulkDeletePages(pageIds: string[]): Promise<{ deletedCount: number; notFoundCount: number }> {
+  async bulkDeletePages(pageIds: string[], ownerId?: string): Promise<{ deletedCount: number; notFoundCount: number }> {
     if (pageIds.length === 0) {
       return { deletedCount: 0, notFoundCount: 0 };
     }
 
-    const existingPages: Array<{ id: string }> = await this.db
-      .select({ id: pages.id })
-      .from(pages)
-      .where(inArray(pages.id, pageIds));
+    let accessibleIds: string[];
 
-    const existingPageIds = new Set<string>(existingPages.map((page) => page.id));
+    if (ownerId) {
+      const rows: Array<{ id: string }> = await this.db
+        .select({ id: pages.id })
+        .from(pages)
+        .innerJoin(sites, eq(pages.siteId, sites.id))
+        .where(and(inArray(pages.id, pageIds), eq(sites.ownerId, ownerId)));
+
+      accessibleIds = rows.map((row) => row.id);
+    } else {
+      const rows: Array<{ id: string }> = await this.db
+        .select({ id: pages.id })
+        .from(pages)
+        .where(inArray(pages.id, pageIds));
+
+      accessibleIds = rows.map((row) => row.id);
+    }
+
+    const existingPageIds = new Set<string>(accessibleIds);
+
     const notFoundCount = pageIds.length - existingPageIds.size;
 
     if (existingPageIds.size === 0) {
@@ -167,7 +232,14 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async deletePagesBySiteId(siteId: string): Promise<number> {
+  async deletePagesBySiteId(siteId: string, ownerId?: string): Promise<number> {
+    if (ownerId) {
+      const site = await this.getSite(siteId, ownerId);
+      if (!site) {
+        return 0;
+      }
+    }
+
     const result = await this.db.delete(pages).where(eq(pages.siteId, siteId));
     return result.rowCount ?? 0;
   }
@@ -182,9 +254,27 @@ export class DatabaseStorage implements IStorage {
     return result.rowCount ?? 0;
   }
 
-  private async runFullTextSearch(query: string, limit: number, offset: number, additionalConditions: SQL[]): Promise<{ rows: Page[]; total: number }> {
+  private buildOwnerCondition(ownerId?: string): SQL | undefined {
+    if (!ownerId) {
+      return undefined;
+    }
+
+    return sql`EXISTS (SELECT 1 FROM sites s WHERE s.id = p.site_id AND s.owner_id = ${ownerId})`;
+  }
+
+  private async runFullTextSearch(
+    query: string,
+    limit: number,
+    offset: number,
+    additionalConditions: SQL[],
+    ownerId?: string,
+  ): Promise<{ rows: Page[]; total: number }> {
     const tsQuery = sql`plainto_tsquery('english', ${query})`;
+    const ownerCondition = this.buildOwnerCondition(ownerId);
     const conditions = [sql`p.search_vector_combined @@ ${tsQuery}`, ...additionalConditions];
+    if (ownerCondition) {
+      conditions.push(ownerCondition);
+    }
     const whereClause = buildWhereClause(conditions);
 
     const results = await this.db.execute(sql`
@@ -205,12 +295,22 @@ export class DatabaseStorage implements IStorage {
     return { rows: results.rows as Page[], total };
   }
 
-  private async runFallbackSearch(query: string, limit: number, offset: number, additionalConditions: SQL[]): Promise<{ results: Page[]; total: number }> {
+  private async runFallbackSearch(
+    query: string,
+    limit: number,
+    offset: number,
+    additionalConditions: SQL[],
+    ownerId?: string,
+  ): Promise<{ results: Page[]; total: number }> {
     const likeCondition = sql`(
       COALESCE(p.title, '') ILIKE '%' || ${query} || '%'
       OR COALESCE(p.content, '') ILIKE '%' || ${query} || '%'
     )`;
+    const ownerCondition = this.buildOwnerCondition(ownerId);
     const conditions = [...additionalConditions, likeCondition];
+    if (ownerCondition) {
+      conditions.push(ownerCondition);
+    }
     const whereClause = buildWhereClause(conditions);
 
     const results = await this.db.execute(sql`
@@ -231,33 +331,44 @@ export class DatabaseStorage implements IStorage {
     return { results: results.rows as Page[], total };
   }
 
-  async searchPages(query: string, limit: number = 10, offset: number = 0): Promise<{ results: Page[]; total: number }> {
+  async searchPages(
+    query: string,
+    limit: number = 10,
+    offset: number = 0,
+    ownerId?: string,
+  ): Promise<{ results: Page[]; total: number }> {
     const cleanQuery = query.trim();
     if (!cleanQuery) {
       return { results: [], total: 0 };
     }
 
-    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, []);
+    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, [], ownerId);
     if (total > 0) {
       return { results: rows, total };
     }
 
-    return await this.runFallbackSearch(cleanQuery, limit, offset, []);
+    return await this.runFallbackSearch(cleanQuery, limit, offset, [], ownerId);
   }
 
-  async searchPagesByCollection(query: string, siteId: string, limit: number = 10, offset: number = 0): Promise<{ results: Page[]; total: number }> {
+  async searchPagesByCollection(
+    query: string,
+    siteId: string,
+    limit: number = 10,
+    offset: number = 0,
+    ownerId?: string,
+  ): Promise<{ results: Page[]; total: number }> {
     const cleanQuery = query.trim();
     if (!cleanQuery) {
       return { results: [], total: 0 };
     }
 
     const additionalConditions = [sql`p.site_id = ${siteId}`];
-    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, additionalConditions);
+    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, additionalConditions, ownerId);
     if (total > 0) {
       return { results: rows, total };
     }
 
-    return await this.runFallbackSearch(cleanQuery, limit, offset, [sql`p.site_id = ${siteId}`]);
+    return await this.runFallbackSearch(cleanQuery, limit, offset, [sql`p.site_id = ${siteId}`], ownerId);
   }
 
   async getDatabaseHealthInfo() {
@@ -312,16 +423,19 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getUser(_id: string): Promise<User | undefined> {
-    return undefined;
+  async getUser(id: string): Promise<User | undefined> {
+    const [user] = await this.db.select().from(users).where(eq(users.id, id));
+    return user ?? undefined;
   }
 
-  async getUserByUsername(_username: string): Promise<User | undefined> {
-    return undefined;
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await this.db.select().from(users).where(eq(users.email, email));
+    return user ?? undefined;
   }
 
-  async createUser(_user: InsertUser): Promise<User> {
-    throw new Error("User management is not implemented");
+  async createUser(user: InsertUser): Promise<User> {
+    const [newUser] = await this.db.insert(users).values(user).returning();
+    return newUser;
   }
 }
 
