@@ -325,3 +325,20 @@ export class DatabaseStorage implements IStorage {
 }
 
 export const storage = new DatabaseStorage();
+
+export async function ensureDatabaseSchema(): Promise<void> {
+  try {
+    await db.execute(sql`
+      ALTER TABLE "pages"
+      ADD COLUMN IF NOT EXISTS "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "pages"
+      ADD COLUMN IF NOT EXISTS "chunks" jsonb DEFAULT '[]'::jsonb NOT NULL
+    `);
+  } catch (error) {
+    console.error("[storage] Не удалось обновить схему базы данных", error);
+    throw error;
+  }
+}
