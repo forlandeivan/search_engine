@@ -6,10 +6,14 @@ import { EventEmitter } from 'events';
 import { storage } from './storage';
 import { type InsertPage, type ContentChunk, type PageMetadata, type ChunkMedia } from '@shared/schema';
 
+type CheerioRoot = ReturnType<typeof cheerio.load>;
+type CheerioCollection = cheerio.Cheerio<any>;
+
 interface CrawlOptions {
   maxDepth: number;
   followExternalLinks: boolean;
   excludePatterns: string[];
+  maxChunkSize: number;
 }
 
 interface CrawlResult {
@@ -46,11 +50,12 @@ export class WebCrawler {
   private browser: any | null = null;
   private browserLaunchPromise: Promise<any> | null = null;
   private browserUnavailable = false;
-  private readonly maxChunkSize = 1200;
+  private readonly defaultMaxChunkSize = 1200;
   private options: CrawlOptions = {
     maxDepth: 3,
     followExternalLinks: false,
-    excludePatterns: []
+    excludePatterns: [],
+    maxChunkSize: this.defaultMaxChunkSize,
   };
 
   constructor() {
@@ -225,30 +230,44 @@ export class WebCrawler {
         throw new Error(`Site with ID ${siteId} not found`);
       }
 
-      if (!site.url) {
+      const configuredStartUrls = Array.from(
+        new Set(
+          (site.startUrls ?? [])
+            .map((url) => this.normalizeUrl(url))
+            .filter((url) => Boolean(url))
+        )
+      );
+
+      const fallbackUrls = site.url ? [this.normalizeUrl(site.url)] : [];
+      const initialUrls = configuredStartUrls.length > 0 ? configuredStartUrls : fallbackUrls;
+
+      if (initialUrls.length === 0) {
         await storage.updateSite(siteId, {
           status: 'idle',
-          error: 'URL не задан для проекта'
+          error: 'Не заданы стартовые URL для проекта'
         });
-        throw new Error(`Site with ID ${siteId} does not have a configured URL`);
+        throw new Error(`Site with ID ${siteId} does not have configured start URLs`);
       }
 
       this.currentSiteId = siteId;
       this.shouldStop = false;
       this.activeCrawls.set(siteId, true);
       this.crawledUrls.clear();
-      this.pendingUrls = [{ url: site.url, depth: 0 }];
+      this.pendingUrls = initialUrls.map((url) => ({ url, depth: 0 }));
       this.options = {
         maxDepth: site.crawlDepth,
         followExternalLinks: site.followExternalLinks,
-        excludePatterns: site.excludePatterns
+        excludePatterns: site.excludePatterns,
+        maxChunkSize: site.maxChunkSize ?? this.defaultMaxChunkSize,
       };
 
       this.log(siteId, 'info', 'Запуск краулинга проекта', {
-        url: site.url,
+        project: site.name ?? site.url,
+        startUrls: initialUrls,
         maxDepth: this.options.maxDepth,
         followExternalLinks: this.options.followExternalLinks,
         excludePatterns: this.options.excludePatterns,
+        maxChunkSize: this.options.maxChunkSize,
       });
 
       let totalPages = 0;
@@ -602,7 +621,7 @@ export class WebCrawler {
     }
   }
 
-  private cleanDocument($: cheerio.Root): void {
+  private cleanDocument($: CheerioRoot): void {
     const removalSelectors = [
       'script',
       'style',
@@ -646,7 +665,7 @@ export class WebCrawler {
     return text.replace(/\s+/g, ' ').trim();
   }
 
-  private getContentRoot($: cheerio.Root): cheerio.Cheerio {
+  private getContentRoot($: CheerioRoot): CheerioCollection {
     const selectors = [
       'main',
       'article',
@@ -674,8 +693,8 @@ export class WebCrawler {
   }
 
   private parseContentIntoChunks(
-    $: cheerio.Root,
-    contentRoot: cheerio.Cheerio,
+    $: CheerioRoot,
+    contentRoot: CheerioCollection,
     pageUrl: string
   ): { chunks: ContentChunk[]; aggregatedText: string; wordCount: number } {
     const headings = contentRoot.find('h2, h3, h4').toArray();
@@ -683,7 +702,8 @@ export class WebCrawler {
     let positionCounter = 0;
 
     const pushChunk = (chunk: ContentChunk) => {
-      const chunkCopies = this.subdivideChunksBySize(chunk, this.maxChunkSize);
+      const chunkSizeLimit = this.options.maxChunkSize ?? this.defaultMaxChunkSize;
+      const chunkCopies = this.subdivideChunksBySize(chunk, chunkSizeLimit);
       for (const part of chunkCopies) {
         const clonedImages = part.metadata.images.map(image => ({ ...image }));
         const clonedLinks = [...part.metadata.links];
@@ -724,12 +744,12 @@ export class WebCrawler {
         pushChunk(fallbackChunk);
       }
     } else {
-      headings.forEach((element, index) => {
+      headings.forEach((element: any, index: number) => {
         const headingElement = $(element);
         const headingText = this.normalizeText(headingElement.text()) || `Раздел ${index + 1}`;
         const level = parseInt(element.tagName?.replace(/[^0-9]/g, '') ?? '2', 10) || 2;
 
-        const sectionNodes: cheerio.Element[] = [];
+        const sectionNodes: any[] = [];
         let node = element.next;
 
         while (node) {
@@ -786,7 +806,7 @@ export class WebCrawler {
     };
   }
 
-  private extractMetaDescription($: cheerio.Root): string | undefined {
+  private extractMetaDescription($: CheerioRoot): string | undefined {
     return (
       this.normalizeText($('meta[name="description"]').attr('content')) ||
       this.normalizeText($('meta[property="og:description"]').attr('content')) ||
@@ -795,7 +815,7 @@ export class WebCrawler {
   }
 
   private extractPageMetadata(
-    $: cheerio.Root,
+    $: CheerioRoot,
     pageUrl: string,
     aggregatedText: string,
     chunks: ContentChunk[],
@@ -826,7 +846,7 @@ export class WebCrawler {
     return metadata;
   }
 
-  private extractLinksForCrawl($: cheerio.Root, url: string): string[] {
+  private extractLinksForCrawl($: CheerioRoot, url: string): string[] {
     const links: string[] = [];
     let baseUrl: URL | null = null;
 
@@ -839,7 +859,7 @@ export class WebCrawler {
       });
     }
 
-    $('a[href]').each((_, element) => {
+    $('a[href]').each((_: any, element: any) => {
       const href = $(element).attr('href');
       if (!href) {
         return;
@@ -998,11 +1018,11 @@ export class WebCrawler {
     return links.slice(0, 20);
   }
 
-  private collectPageImages($: cheerio.Root, pageUrl: string): string[] {
+  private collectPageImages($: CheerioRoot, pageUrl: string): string[] {
     const images: string[] = [];
     const seen = new Set<string>();
 
-    $('img[src]').each((_, element) => {
+    $('img[src]').each((_: any, element: any) => {
       const src = this.normalizeText($(element).attr('src'));
       if (!src) {
         return;
@@ -1020,11 +1040,11 @@ export class WebCrawler {
     return images.slice(0, 10);
   }
 
-  private collectPageLinks($: cheerio.Root, pageUrl: string): string[] {
+  private collectPageLinks($: CheerioRoot, pageUrl: string): string[] {
     const links: string[] = [];
     const seen = new Set<string>();
 
-    $('a[href]').each((_, element) => {
+    $('a[href]').each((_: any, element: any) => {
       const href = this.normalizeText($(element).attr('href'));
       if (!href) {
         return;
@@ -1081,7 +1101,7 @@ export class WebCrawler {
 
   private buildDeepLink(
     pageUrl: string,
-    headingElement: cheerio.Cheerio,
+    headingElement: CheerioCollection,
     headingText: string,
     index: number
   ): string {

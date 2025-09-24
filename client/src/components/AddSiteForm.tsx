@@ -2,199 +2,207 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Plus, X } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Plus, Trash2, HelpCircle } from "lucide-react";
 
-interface SiteConfig {
-  url: string;
+export interface SiteConfig {
+  name: string;
+  startUrls: string[];
   crawlDepth: number;
-  followExternalLinks: boolean;
-  crawlFrequency: "manual" | "hourly" | "daily" | "weekly";
-  excludePatterns: string[];
+  maxChunkSize: number;
 }
 
 interface AddSiteFormProps {
   onSubmit: (config: SiteConfig) => void;
   onCancel?: () => void;
+  isSubmitting?: boolean;
 }
 
-export default function AddSiteForm({ onSubmit, onCancel }: AddSiteFormProps) {
-  const [config, setConfig] = useState<SiteConfig>({
-    url: "",
-    crawlDepth: 3,
-    followExternalLinks: false,
-    crawlFrequency: "daily",
-    excludePatterns: []
-  });
-  
-  const [newPattern, setNewPattern] = useState("");
+export default function AddSiteForm({ onSubmit, onCancel, isSubmitting = false }: AddSiteFormProps) {
+  const [projectName, setProjectName] = useState("");
+  const [urls, setUrls] = useState<string[]>([""]);
+  const [crawlDepth, setCrawlDepth] = useState<number>(3);
+  const [maxChunkSize, setMaxChunkSize] = useState<number>(1200);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (config.url.trim()) {
-      onSubmit({
-        ...config,
-        url: config.url.trim()
-      });
-      console.log('Site added:', config);
+  const updateUrl = (index: number, value: string) => {
+    setUrls((prev) => prev.map((url, idx) => (idx === index ? value : url)));
+  };
+
+  const addUrlField = () => {
+    setUrls((prev) => [...prev, ""]);
+  };
+
+  const removeUrlField = (index: number) => {
+    setUrls((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const resetForm = () => {
+    setProjectName("");
+    setUrls([""]);
+    setCrawlDepth(3);
+    setMaxChunkSize(1200);
+  };
+
+  const handleCancel = () => {
+    resetForm();
+    onCancel?.();
+  };
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedName = projectName.trim();
+    const normalizedUrls = Array.from(
+      new Set(
+        urls
+          .map((url) => url.trim())
+          .filter((url) => url.length > 0)
+      )
+    );
+
+    if (!trimmedName || normalizedUrls.length === 0) {
+      return;
     }
+
+    onSubmit({
+      name: trimmedName,
+      startUrls: normalizedUrls,
+      crawlDepth,
+      maxChunkSize,
+    });
+    resetForm();
   };
 
-  const addExcludePattern = () => {
-    if (newPattern.trim() && !config.excludePatterns.includes(newPattern.trim())) {
-      setConfig(prev => ({
-        ...prev,
-        excludePatterns: [...prev.excludePatterns, newPattern.trim()]
-      }));
-      setNewPattern("");
-    }
-  };
-
-  const removeExcludePattern = (pattern: string) => {
-    setConfig(prev => ({
-      ...prev,
-      excludePatterns: prev.excludePatterns.filter(p => p !== pattern)
-    }));
-  };
+  const canRemoveUrl = urls.length > 1;
+  const isSubmitDisabled =
+    !projectName.trim() || urls.every((url) => url.trim().length === 0) || isSubmitting;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Добавить сайт для краулинга</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="url">URL сайта</Label>
-            <Input
-              id="url"
-              type="url"
-              value={config.url}
-              onChange={(e) => setConfig(prev => ({ ...prev, url: e.target.value }))}
-              placeholder="https://example.com"
-              required
-              data-testid="input-site-url"
-            />
-          </div>
+    <form onSubmit={handleSubmit} className="space-y-6" data-testid="form-add-project">
+      <div className="space-y-2">
+        <Label htmlFor="project-name">Название проекта</Label>
+        <Input
+          id="project-name"
+          value={projectName}
+          onChange={(event) => setProjectName(event.target.value)}
+          placeholder="Например, Корпоративный блог"
+          autoFocus
+          data-testid="input-project-name"
+          required
+        />
+      </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="depth">Глубина краулинга</Label>
-              <Select 
-                value={config.crawlDepth.toString()} 
-                onValueChange={(value) => setConfig(prev => ({ ...prev, crawlDepth: parseInt(value) }))}
-              >
-                <SelectTrigger data-testid="select-crawl-depth">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">1 уровень</SelectItem>
-                  <SelectItem value="2">2 уровня</SelectItem>
-                  <SelectItem value="3">3 уровня</SelectItem>
-                  <SelectItem value="5">5 уровней</SelectItem>
-                  <SelectItem value="10">10 уровней</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Label>Стартовые URL-адреса</Label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={addUrlField}
+            className="gap-1"
+            data-testid="button-add-url"
+          >
+            <Plus className="h-4 w-4" />
+            Добавить URL
+          </Button>
+        </div>
 
-            <div>
-              <Label htmlFor="frequency">Частота краулинга</Label>
-              <Select 
-                value={config.crawlFrequency} 
-                onValueChange={(value: SiteConfig['crawlFrequency']) => 
-                  setConfig(prev => ({ ...prev, crawlFrequency: value }))}
-              >
-                <SelectTrigger data-testid="select-crawl-frequency">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="manual">Вручную</SelectItem>
-                  <SelectItem value="hourly">Каждый час</SelectItem>
-                  <SelectItem value="daily">Каждый день</SelectItem>
-                  <SelectItem value="weekly">Каждую неделю</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <Switch
-              id="external-links"
-              checked={config.followExternalLinks}
-              onCheckedChange={(checked) => 
-                setConfig(prev => ({ ...prev, followExternalLinks: checked }))}
-              data-testid="switch-external-links"
-            />
-            <Label htmlFor="external-links">Следовать внешним ссылкам</Label>
-          </div>
-
-          <div>
-            <Label>Исключить пути (regex)</Label>
-            <div className="flex gap-2 mb-2">
+        <div className="space-y-2">
+          {urls.map((url, index) => (
+            <div key={index} className="flex items-center gap-2">
               <Input
-                value={newPattern}
-                onChange={(e) => setNewPattern(e.target.value)}
-                placeholder="/admin|/private|\.pdf$"
-                data-testid="input-exclude-pattern"
+                type="url"
+                value={url}
+                onChange={(event) => updateUrl(index, event.target.value)}
+                placeholder="https://example.com/section"
+                data-testid={`input-project-url-${index}`}
+                required={index === 0}
               />
-              <Button 
-                type="button" 
-                onClick={addExcludePattern}
-                disabled={!newPattern.trim()}
-                data-testid="button-add-pattern"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
+              {canRemoveUrl && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => removeUrlField(index)}
+                  aria-label="Удалить URL"
+                  data-testid={`button-remove-url-${index}`}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
             </div>
-            {config.excludePatterns.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {config.excludePatterns.map((pattern, index) => (
-                  <div 
-                    key={index}
-                    className="flex items-center gap-1 bg-muted rounded px-2 py-1 text-sm"
-                  >
-                    <code className="font-mono text-xs">{pattern}</code>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeExcludePattern(pattern)}
-                      className="h-4 w-4 p-0"
-                      data-testid={`button-remove-pattern-${index}`}
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          ))}
+        </div>
 
-          <div className="flex gap-2 pt-4">
-            <Button 
-              type="submit" 
-              disabled={!config.url.trim()}
-              data-testid="button-add-site"
-            >
-              Добавить сайт
-            </Button>
-            {onCancel && (
-              <Button 
-                type="button" 
-                variant="outline" 
-                onClick={onCancel}
-                data-testid="button-cancel"
-              >
-                Отмена
-              </Button>
-            )}
+        <p className="text-sm text-muted-foreground">
+          Краулинг начнётся с каждой указанной страницы. Новые ссылки будут добавляться автоматически.
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="crawl-depth">Глубина краулинга</Label>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs leading-relaxed">
+                  <p>1 уровень — только стартовые страницы.</p>
+                  <p>2 уровня — стартовые страницы и ссылки с них.</p>
+                  <p>3 уровня и выше — глубже по ссылкам внутри сайта.</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
-        </form>
-      </CardContent>
-    </Card>
+          <Select
+            value={crawlDepth.toString()}
+            onValueChange={(value) => setCrawlDepth(parseInt(value, 10))}
+          >
+            <SelectTrigger id="crawl-depth" data-testid="select-crawl-depth">
+              <SelectValue placeholder="Выберите глубину" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">1 уровень</SelectItem>
+              <SelectItem value="2">2 уровня</SelectItem>
+              <SelectItem value="3">3 уровня</SelectItem>
+              <SelectItem value="5">5 уровней</SelectItem>
+              <SelectItem value="10">10 уровней</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="chunk-size">Максимальный размер чанка (символы)</Label>
+          <Input
+            id="chunk-size"
+            type="number"
+            min={200}
+            max={8000}
+            step={100}
+            value={maxChunkSize}
+            onChange={(event) => setMaxChunkSize(Number(event.target.value))}
+            data-testid="input-max-chunk-size"
+            required
+          />
+          <p className="text-sm text-muted-foreground">
+            Если текст длиннее указанного значения, он будет разбит на части 1/2, 2/2 и т.д.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2 pt-2">
+        {onCancel && (
+          <Button type="button" variant="outline" onClick={handleCancel} data-testid="button-cancel" disabled={isSubmitting}>
+            Отмена
+          </Button>
+        )}
+        <Button type="submit" disabled={isSubmitDisabled} data-testid="button-add-site">
+          {isSubmitting ? "Добавляем..." : "Добавить проект"}
+        </Button>
+      </div>
+    </form>
   );
 }
-
-export type { SiteConfig };

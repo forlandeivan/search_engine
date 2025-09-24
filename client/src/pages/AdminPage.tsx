@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Plus, Search, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -23,7 +24,12 @@ export default function AdminPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchFilter, setSearchFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "crawling" | "completed" | "failed">("all");
-  const [siteToDelete, setSiteToDelete] = useState<{ id: string; url: string; pageCount?: number } | null>(null);
+  const [siteToDelete, setSiteToDelete] = useState<{
+    id: string;
+    name: string;
+    primaryUrl?: string;
+    pageCount?: number;
+  } | null>(null);
 
   // Fetch sites data with extended stats and auto-refresh if any site is crawling
   type SiteWithStats = Site & { pagesFound?: number; pagesIndexed?: number };
@@ -144,17 +150,21 @@ export default function AdminPage() {
     recrawlMutation.mutate(siteId);
   };
 
-  const mapCrawlStatus = (status: SiteWithStats): CrawlStatus => ({
-    id: status.id,
-    url: status.url ?? "URL не задан",
-    status: (status.status ?? "idle") as CrawlStatus["status"],
-    progress: 0,
-    pagesFound: status.pagesFound ?? 0,
-    pagesIndexed: status.pagesIndexed ?? status.pagesFound ?? 0,
-    lastCrawled: status.lastCrawled ? new Date(status.lastCrawled) : undefined,
-    nextCrawl: status.nextCrawl ? new Date(status.nextCrawl) : undefined,
-    error: status.error ?? undefined,
-  });
+  const mapCrawlStatus = (status: SiteWithStats): CrawlStatus => {
+    const primaryUrl = status.startUrls?.[0] ?? status.url ?? "URL не задан";
+
+    return {
+      id: status.id,
+      url: primaryUrl,
+      status: (status.status ?? "idle") as CrawlStatus["status"],
+      progress: 0,
+      pagesFound: status.pagesFound ?? 0,
+      pagesIndexed: status.pagesIndexed ?? status.pagesFound ?? 0,
+      lastCrawled: status.lastCrawled ? new Date(status.lastCrawled) : undefined,
+      nextCrawl: status.nextCrawl ? new Date(status.nextCrawl) : undefined,
+      error: status.error ?? undefined,
+    };
+  };
 
   // Emergency stop all crawls mutation
   const emergencyStopMutation = useMutation({
@@ -210,9 +220,14 @@ export default function AdminPage() {
   const normalizedSearch = searchFilter.trim().toLowerCase();
 
   const filteredStatuses = displaySites.filter((status) => {
+    const searchTargets = [
+      status.name ?? "",
+      status.url ?? "",
+      ...(status.startUrls ?? []),
+    ];
     const matchesSearch = normalizedSearch.length === 0
       ? true
-      : status.url.toLowerCase().includes(normalizedSearch);
+      : searchTargets.some((target) => target?.toLowerCase().includes(normalizedSearch));
     const matchesStatus = statusFilter === "all" || status.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -223,6 +238,22 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-6">
+      <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
+        <DialogContent className="max-w-2xl" aria-describedby="add-project-description">
+          <DialogHeader>
+            <DialogTitle>Добавить проект</DialogTitle>
+            <DialogDescription id="add-project-description">
+              Укажите название, стартовые URL и параметры краулинга. Краулинг пока запускается вручную.
+            </DialogDescription>
+          </DialogHeader>
+          <AddSiteForm
+            onSubmit={handleAddSite}
+            onCancel={() => setShowAddForm(false)}
+            isSubmitting={addSiteMutation.isPending}
+          />
+        </DialogContent>
+      </Dialog>
+
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-3">
@@ -282,15 +313,6 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {showAddForm && (
-        <div className="space-y-4">
-          <AddSiteForm 
-            onSubmit={handleAddSite}
-            onCancel={() => setShowAddForm(false)}
-          />
-        </div>
-      )}
-
       <Tabs value={statusFilter} onValueChange={(value) => setStatusFilter(value as any)}>
         <div className="flex items-center justify-between">
           <TabsList>
@@ -312,7 +334,7 @@ export default function AdminPage() {
             <div className="relative">
               <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Поиск по URL..."
+                placeholder="Поиск по названию или URL..."
                 value={searchFilter}
                 onChange={(e) => setSearchFilter(e.target.value)}
                 className="pl-8 w-64"
@@ -329,6 +351,10 @@ export default function AdminPage() {
                 <CrawlStatusCard
                   key={status.id}
                   crawlStatus={mapCrawlStatus(status)}
+                  projectName={status.name ?? undefined}
+                  startUrls={status.startUrls ?? []}
+                  crawlDepth={status.crawlDepth}
+                  maxChunkSize={status.maxChunkSize}
                   href={`/admin/projects/${status.id}`}
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
@@ -337,7 +363,8 @@ export default function AdminPage() {
                   onDelete={() =>
                     setSiteToDelete({
                       id: status.id,
-                      url: status.url ?? "Без URL",
+                      name: status.name ?? status.url ?? "Без названия",
+                      primaryUrl: status.startUrls?.[0] ?? status.url ?? undefined,
                       pageCount: (status.pagesIndexed ?? status.pagesFound) ?? 0,
                     })
                   }
@@ -369,6 +396,10 @@ export default function AdminPage() {
               <CrawlStatusCard
                 key={status.id}
                 crawlStatus={mapCrawlStatus(status)}
+                projectName={status.name ?? undefined}
+                startUrls={status.startUrls ?? []}
+                crawlDepth={status.crawlDepth}
+                maxChunkSize={status.maxChunkSize}
                 href={`/admin/projects/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
@@ -377,7 +408,8 @@ export default function AdminPage() {
                 onDelete={() =>
                   setSiteToDelete({
                     id: status.id,
-                    url: status.url ?? "Без URL",
+                    name: status.name ?? status.url ?? "Без названия",
+                    primaryUrl: status.startUrls?.[0] ?? status.url ?? undefined,
                     pageCount: (status.pagesIndexed ?? status.pagesFound) ?? 0,
                   })
                 }
@@ -392,6 +424,10 @@ export default function AdminPage() {
               <CrawlStatusCard
                 key={status.id}
                 crawlStatus={mapCrawlStatus(status)}
+                projectName={status.name ?? undefined}
+                startUrls={status.startUrls ?? []}
+                crawlDepth={status.crawlDepth}
+                maxChunkSize={status.maxChunkSize}
                 href={`/admin/projects/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
@@ -400,7 +436,8 @@ export default function AdminPage() {
                 onDelete={() =>
                   setSiteToDelete({
                     id: status.id,
-                    url: status.url ?? "Без URL",
+                    name: status.name ?? status.url ?? "Без названия",
+                    primaryUrl: status.startUrls?.[0] ?? status.url ?? undefined,
                     pageCount: (status.pagesIndexed ?? status.pagesFound) ?? 0,
                   })
                 }
@@ -415,6 +452,10 @@ export default function AdminPage() {
               <CrawlStatusCard
                 key={status.id}
                 crawlStatus={mapCrawlStatus(status)}
+                projectName={status.name ?? undefined}
+                startUrls={status.startUrls ?? []}
+                crawlDepth={status.crawlDepth}
+                maxChunkSize={status.maxChunkSize}
                 href={`/admin/projects/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
@@ -423,7 +464,8 @@ export default function AdminPage() {
                 onDelete={() =>
                   setSiteToDelete({
                     id: status.id,
-                    url: status.url ?? "Без URL",
+                    name: status.name ?? status.url ?? "Без названия",
+                    primaryUrl: status.startUrls?.[0] ?? status.url ?? undefined,
                     pageCount: (status.pagesIndexed ?? status.pagesFound) ?? 0,
                   })
                 }
@@ -438,7 +480,13 @@ export default function AdminPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Удалить проект?</AlertDialogTitle>
             <AlertDialogDescription>
-              Вы уверены, что хотите удалить проект "{siteToDelete?.url}"? Это действие необратимо. Будет удалено {siteToDelete?.pageCount} страниц.
+              Вы уверены, что хотите удалить проект "{siteToDelete?.name}"? Это действие необратимо.
+              Будет удалено {siteToDelete?.pageCount ?? 0} страниц.
+              {siteToDelete?.primaryUrl && (
+                <span className="block pt-2 text-muted-foreground text-sm">
+                  Основной URL: {siteToDelete.primaryUrl}
+                </span>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

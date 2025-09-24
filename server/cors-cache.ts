@@ -21,15 +21,18 @@ export async function refreshCorsCache(): Promise<Set<string>> {
     
     // Process database sites and extract hostnames
     for (const site of sites) {
-      if (!site.url) {
-        continue;
-      }
-      try {
-        const url = new URL(site.url);
-        hostnames.add(url.hostname);
-      } catch (urlError) {
-        log(`CORS cache: Invalid URL in database: ${site.url} - ${urlError}`);
-        // Skip invalid URLs instead of breaking the entire cache
+      const urlsToProcess = site.startUrls?.length ? site.startUrls : site.url ? [site.url] : [];
+
+      for (const rawUrl of urlsToProcess) {
+        if (!rawUrl) {
+          continue;
+        }
+        try {
+          const url = new URL(rawUrl);
+          hostnames.add(url.hostname);
+        } catch (urlError) {
+          log(`CORS cache: Invalid URL in database: ${rawUrl} - ${urlError}`);
+        }
       }
     }
     

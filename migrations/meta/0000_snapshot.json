@@ -209,11 +209,25 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Новый проект'"
+        },
         "url": {
           "name": "url",
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "start_urls": {
+          "name": "start_urls",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "crawl_depth": {
           "name": "crawl_depth",
@@ -221,6 +235,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": 3
+        },
+        "max_chunk_size": {
+          "name": "max_chunk_size",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1200
         },
         "follow_external_links": {
           "name": "follow_external_links",
@@ -234,7 +255,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'daily'"
+          "default": "'manual'"
         },
         "exclude_patterns": {
           "name": "exclude_patterns",

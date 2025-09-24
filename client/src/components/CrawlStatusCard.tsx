@@ -33,6 +33,9 @@ interface CrawlStatusCardProps {
   crawlStatus: CrawlStatus;
   projectName?: string;
   projectDescription?: string | null;
+  startUrls?: string[];
+  crawlDepth?: number;
+  maxChunkSize?: number;
   href?: string;
   onStart?: (id: string) => void;
   onStop?: (id: string) => void;
@@ -106,6 +109,9 @@ export default function CrawlStatusCard({
   crawlStatus,
   projectName,
   projectDescription,
+  startUrls,
+  crawlDepth,
+  maxChunkSize,
   href,
   onStart,
   onStop,
@@ -118,6 +124,28 @@ export default function CrawlStatusCard({
   const lastCrawledInfo = crawlStatus.lastCrawled
     ? formatLastCrawled(crawlStatus.lastCrawled)
     : null;
+  const uniqueStartUrls = Array.from(
+    new Set(
+      (startUrls && startUrls.length > 0
+        ? startUrls
+        : crawlStatus.url
+          ? [crawlStatus.url]
+          : [])
+    )
+  );
+  const primaryUrl = uniqueStartUrls[0] ?? crawlStatus.url;
+  const additionalUrlsCount = uniqueStartUrls.length > 1 ? uniqueStartUrls.length - 1 : 0;
+  const formatDepth = (depth: number) => {
+    const lastDigit = depth % 10;
+    const lastTwoDigits = depth % 100;
+    if (lastDigit === 1 && lastTwoDigits !== 11) {
+      return `${depth} уровень`;
+    }
+    if ([2, 3, 4].includes(lastDigit) && ![12, 13, 14].includes(lastTwoDigits)) {
+      return `${depth} уровня`;
+    }
+    return `${depth} уровней`;
+  };
 
   const handleActionClick = (
     event: MouseEvent<HTMLButtonElement>,
@@ -210,14 +238,19 @@ export default function CrawlStatusCard({
 
         <div className="space-y-1">
           <h4 className="text-lg font-semibold leading-tight" data-testid={`text-project-${crawlStatus.id}`}>
-            {projectName ?? crawlStatus.url}
+            {projectName ?? primaryUrl ?? "Без названия"}
           </h4>
           {projectDescription && (
             <p className="line-clamp-2 text-sm text-muted-foreground">{projectDescription}</p>
           )}
-          {crawlStatus.url && (
+          {primaryUrl && (
             <p className="break-all text-xs text-muted-foreground" data-testid={`text-url-${crawlStatus.id}`}>
-              {crawlStatus.url}
+              {primaryUrl}
+            </p>
+          )}
+          {additionalUrlsCount > 0 && (
+            <p className="text-xs text-muted-foreground">
+              +{additionalUrlsCount} доп. URL
             </p>
           )}
         </div>
@@ -251,6 +284,27 @@ export default function CrawlStatusCard({
             </p>
           </div>
         </div>
+
+        {(crawlDepth !== undefined || maxChunkSize !== undefined) && (
+          <div className="grid grid-cols-2 gap-4 text-xs">
+            {crawlDepth !== undefined && (
+              <div>
+                <span className="text-muted-foreground">Глубина:</span>
+                <p className="font-medium">
+                  {formatDepth(crawlDepth)}
+                </p>
+              </div>
+            )}
+            {maxChunkSize !== undefined && (
+              <div>
+                <span className="text-muted-foreground">Размер чанка:</span>
+                <p className="font-medium">
+                  {maxChunkSize.toLocaleString("ru-RU")} символов
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {lastCrawledInfo && (
           <p className="text-xs text-muted-foreground" title={lastCrawledInfo.title}>
