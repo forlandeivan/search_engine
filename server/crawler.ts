@@ -1249,23 +1249,59 @@ export class WebCrawler {
       chunks.push(current.trim());
     }
 
-    if (chunks.length === 0) {
-      const words = text.split(/\s+/);
-      let buffer: string[] = [];
-      let bufferLength = 0;
-      for (const word of words) {
-        if (bufferLength + word.length + 1 > maxSize) {
-          chunks.push(buffer.join(' ').trim());
-          buffer = [word];
-          bufferLength = word.length + 1;
+    const shouldFallbackToWords =
+      chunks.length === 0 || chunks.some(chunkText => chunkText.length > maxSize);
+
+    if (shouldFallbackToWords) {
+      const words = text.split(/\s+/).filter(Boolean);
+      const characterSplit = (input: string) =>
+        input.match(new RegExp(`.{1,${maxSize}}`, 'g')) ?? [input];
+
+      const wordChunks: string[] = [];
+      let currentChunk = '';
+
+      const flushCurrentChunk = () => {
+        if (currentChunk.trim()) {
+          wordChunks.push(currentChunk.trim());
+          currentChunk = '';
         } else {
-          buffer.push(word);
-          bufferLength += word.length + 1;
+          currentChunk = '';
         }
+      };
+
+      for (const word of words) {
+        if (currentChunk.length === 0) {
+          if (word.length <= maxSize) {
+            currentChunk = word;
+          } else {
+            const segments = characterSplit(word);
+            wordChunks.push(...segments.slice(0, -1).map(segment => segment.trim()));
+            currentChunk = segments[segments.length - 1] ?? '';
+          }
+          continue;
+        }
+
+        const candidate = `${currentChunk} ${word}`;
+        if (candidate.length <= maxSize) {
+          currentChunk = candidate;
+          continue;
+        }
+
+        flushCurrentChunk();
+
+        if (word.length <= maxSize) {
+          currentChunk = word;
+          continue;
+        }
+
+        const segments = characterSplit(word);
+        wordChunks.push(...segments.slice(0, -1).map(segment => segment.trim()));
+        currentChunk = segments[segments.length - 1] ?? '';
       }
-      if (buffer.length > 0) {
-        chunks.push(buffer.join(' ').trim());
-      }
+
+      flushCurrentChunk();
+
+      return wordChunks.filter(Boolean);
     }
 
     return chunks.filter(Boolean);
