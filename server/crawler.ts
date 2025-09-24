@@ -1231,80 +1231,20 @@ export class WebCrawler {
       return [text];
     }
 
-    const sentences = text.match(/[^.!?\n]+[.!?\n]*/g) ?? [];
-    const chunks: string[] = [];
-    let current = '';
-
-    for (const sentence of sentences) {
-      const candidate = `${current} ${sentence}`.trim();
-      if (candidate.length > maxSize && current) {
-        chunks.push(current.trim());
-        current = sentence.trim();
-      } else {
-        current = candidate;
-      }
+    const normalizedText = text.trim();
+    if (normalizedText.length <= maxSize) {
+      return [normalizedText];
     }
 
-    if (current) {
-      chunks.push(current.trim());
+    const totalLength = normalizedText.length;
+    const parts: string[] = [];
+
+    for (let start = 0; start < totalLength; start += maxSize) {
+      const end = Math.min(start + maxSize, totalLength);
+      parts.push(normalizedText.slice(start, end));
     }
 
-    const shouldFallbackToWords =
-      chunks.length === 0 || chunks.some(chunkText => chunkText.length > maxSize);
-
-    if (shouldFallbackToWords) {
-      const words = text.split(/\s+/).filter(Boolean);
-      const characterSplit = (input: string) =>
-        input.match(new RegExp(`.{1,${maxSize}}`, 'g')) ?? [input];
-
-      const wordChunks: string[] = [];
-      let currentChunk = '';
-
-      const flushCurrentChunk = () => {
-        if (currentChunk.trim()) {
-          wordChunks.push(currentChunk.trim());
-          currentChunk = '';
-        } else {
-          currentChunk = '';
-        }
-      };
-
-      for (const word of words) {
-        if (currentChunk.length === 0) {
-          if (word.length <= maxSize) {
-            currentChunk = word;
-          } else {
-            const segments = characterSplit(word);
-            wordChunks.push(...segments.slice(0, -1).map(segment => segment.trim()));
-            currentChunk = segments[segments.length - 1] ?? '';
-          }
-          continue;
-        }
-
-        const candidate = `${currentChunk} ${word}`;
-        if (candidate.length <= maxSize) {
-          currentChunk = candidate;
-          continue;
-        }
-
-        flushCurrentChunk();
-
-        if (word.length <= maxSize) {
-          currentChunk = word;
-          continue;
-        }
-
-        const segments = characterSplit(word);
-        wordChunks.push(...segments.slice(0, -1).map(segment => segment.trim()));
-        currentChunk = segments[segments.length - 1] ?? '';
-      }
-
-      flushCurrentChunk();
-
-      return wordChunks.filter(Boolean);
-    }
-
-    return chunks.filter(Boolean);
+    return parts.filter(Boolean);
   }
 
   private collectChunkImagesFromHtml(html: string, pageUrl: string): ChunkMedia[] {
