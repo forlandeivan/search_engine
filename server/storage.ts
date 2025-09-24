@@ -65,6 +65,46 @@ function buildWhereClause(conditions: SQL[]): SQL {
 
 export class DatabaseStorage implements IStorage {
   private db = db;
+  private userFullNameColumnEnsured = false;
+  private ensuringUserFullNameColumn: Promise<void> | null = null;
+
+  private async ensureUserFullNameColumnExists(): Promise<void> {
+    if (this.userFullNameColumnEnsured) {
+      return;
+    }
+
+    if (this.ensuringUserFullNameColumn) {
+      return this.ensuringUserFullNameColumn;
+    }
+
+    this.ensuringUserFullNameColumn = (async () => {
+      const columnCheck = await this.db.execute(sql`
+        SELECT EXISTS(
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'users'
+            AND column_name = 'full_name'
+        ) AS exists
+      `);
+
+      const columnExists = Boolean(columnCheck.rows?.[0]?.exists);
+
+      if (!columnExists) {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
+        await this.db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
+        await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
+      }
+
+      this.userFullNameColumnEnsured = true;
+    })();
+
+    try {
+      await this.ensuringUserFullNameColumn;
+    } finally {
+      this.ensuringUserFullNameColumn = null;
+    }
+  }
 
   async createSite(site: SiteInsert): Promise<Site> {
     const [newSite] = await this.db.insert(sites).values(site).returning();
@@ -424,16 +464,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUser(id: string): Promise<User | undefined> {
+    await this.ensureUserFullNameColumnExists();
     const [user] = await this.db.select().from(users).where(eq(users.id, id));
     return user ?? undefined;
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
+    await this.ensureUserFullNameColumnExists();
     const [user] = await this.db.select().from(users).where(eq(users.email, email));
     return user ?? undefined;
   }
 
   async createUser(user: InsertUser): Promise<User> {
+    await this.ensureUserFullNameColumnExists();
     const [newUser] = await this.db.insert(users).values(user).returning();
     return newUser;
   }
