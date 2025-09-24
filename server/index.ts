@@ -2,7 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { storage } from "./storage";
+import { storage, ensureDatabaseSchema } from "./storage";
 import { getAllowedHostnames } from "./cors-cache";
 import fs from "fs";
 import path from "path";
@@ -106,6 +106,13 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  try {
+    await ensureDatabaseSchema();
+    log("Проверка схемы базы данных выполнена");
+  } catch (error) {
+    log(`Не удалось подготовить схему базы данных: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   // Reset any stuck crawling sites on server startup
   try {
     const sites = await storage.getAllSites();
