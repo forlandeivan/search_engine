@@ -320,121 +320,132 @@ export default function PagesPage() {
               </CardHeader>
               <CardContent>
                 <div className="grid gap-3">
-                  {pages.map((page) => (
-                    <div
-                      key={page.id}
-                      className="p-4 border rounded-lg hover-elevate transition-colors"
-                    >
-                      <div className="flex items-start gap-4">
-                        <Checkbox
-                          checked={selectedPages.has(page.id)}
-                          onCheckedChange={(checked) => handleSelectPage(page.id, checked as boolean)}
-                          className="mt-1"
-                          data-testid={`checkbox-page-${page.id}`}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2">
-                            <h3 className="font-medium truncate">
-                              {page.title || "Без названия"}
-                            </h3>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              asChild
-                              data-testid={`button-open-page-${page.id}`}
-                            >
-                              <a 
-                                href={page.url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="shrink-0"
+                  {pages.map((page) => {
+                    const contentLength = page.content?.length ?? 0;
+                    const wordCount = page.content
+                      ? page.content.trim().split(/\s+/).filter(Boolean).length
+                      : 0;
+
+                    return (
+                      <div
+                        key={page.id}
+                        className="p-4 border rounded-lg hover-elevate transition-colors"
+                      >
+                        <div className="flex items-start gap-4">
+                          <Checkbox
+                            checked={selectedPages.has(page.id)}
+                            onCheckedChange={(checked) => handleSelectPage(page.id, checked as boolean)}
+                            className="mt-1"
+                            data-testid={`checkbox-page-${page.id}`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2">
+                              <h3 className="font-medium truncate">
+                                {page.title || "Без названия"}
+                              </h3>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                asChild
+                                data-testid={`button-open-page-${page.id}`}
                               >
-                                <ExternalLink className="h-3 w-3" />
-                              </a>
-                            </Button>
-                          </div>
-                          
-                          <p className="text-sm text-muted-foreground mb-2 truncate">
-                            {page.url}
-                          </p>
-                          
-                          {page.metaDescription && (
-                            <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
-                              {page.metaDescription}
-                            </p>
-                          )}
-                          
-                          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              <Calendar className="h-3 w-3" />
-                              {page.createdAt ? formatDistanceToNow(new Date(page.createdAt), { 
-                                addSuffix: true, 
-                                locale: ru 
-                              }) : 'Дата неизвестна'}
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <Hash className="h-3 w-3" />
-                              {page.contentHash.substring(0, 8)}
-                            </span>
-                          </div>
-                        </div>
-                        
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button 
-                              variant="outline" 
-                              size="sm"
-                              data-testid={`button-view-content-${page.id}`}
-                            >
-                              <FileText className="h-4 w-4 mr-1" />
-                              Содержимое
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent className="max-w-4xl max-h-[80vh]">
-                            <DialogHeader>
-                              <DialogTitle className="flex items-center gap-2">
-                                <span className="truncate">{page.title || "Без названия"}</span>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  asChild
+                                <a
+                                  href={page.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="shrink-0"
                                 >
-                                  <a 
-                                    href={page.url} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                  >
-                                    <ExternalLink className="h-3 w-3" />
-                                  </a>
-                                </Button>
-                              </DialogTitle>
-                              <p className="text-sm text-muted-foreground truncate">
-                                {page.url}
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              </Button>
+                            </div>
+
+                            <p className="text-sm text-muted-foreground mb-2 truncate">
+                              {page.url}
+                            </p>
+
+                            {page.metaDescription && (
+                              <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
+                                {page.metaDescription}
                               </p>
-                            </DialogHeader>
-                            <ScrollArea className="h-96 w-full">
-                              <div className="space-y-4">
-                                {page.metaDescription && (
+                            )}
+
+                            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <Calendar className="h-3 w-3" />
+                                {page.createdAt ? formatDistanceToNow(new Date(page.createdAt), {
+                                  addSuffix: true,
+                                  locale: ru
+                                }) : 'Дата неизвестна'}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Hash className="h-3 w-3" />
+                                {page.contentHash.substring(0, 8)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <Dialog>
+                            <DialogTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                data-testid={`button-view-content-${page.id}`}
+                              >
+                                <FileText className="h-4 w-4 mr-1" />
+                                Содержимое
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-4xl max-h-[80vh]">
+                              <DialogHeader>
+                                <DialogTitle className="flex items-center gap-2">
+                                  <span className="truncate">{page.title || "Без названия"}</span>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    asChild
+                                  >
+                                    <a
+                                      href={page.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                    </a>
+                                  </Button>
+                                </DialogTitle>
+                                <p className="text-sm text-muted-foreground truncate">
+                                  {page.url}
+                                </p>
+                              </DialogHeader>
+                              <ScrollArea className="h-96 w-full">
+                                <div className="space-y-4">
+                                  {page.metaDescription && (
+                                    <div>
+                                      <h4 className="font-medium mb-2">Описание:</h4>
+                                      <p className="text-sm text-muted-foreground">
+                                        {page.metaDescription}
+                                      </p>
+                                    </div>
+                                  )}
                                   <div>
-                                    <h4 className="font-medium mb-2">Описание:</h4>
-                                    <p className="text-sm text-muted-foreground">
-                                      {page.metaDescription}
-                                    </p>
+                                    <h4 className="font-medium mb-2">Содержимое:</h4>
+                                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground mb-3">
+                                      <span>Символов: {contentLength}</span>
+                                      <span>Слов: {wordCount}</span>
+                                    </div>
+                                    <pre className="text-sm bg-muted p-4 rounded-lg whitespace-pre-wrap">
+                                      {page.content}
+                                    </pre>
                                   </div>
-                                )}
-                                <div>
-                                  <h4 className="font-medium mb-2">Содержимое:</h4>
-                                  <pre className="text-sm bg-muted p-4 rounded-lg whitespace-pre-wrap">
-                                    {page.content}
-                                  </pre>
                                 </div>
-                              </div>
-                            </ScrollArea>
-                          </DialogContent>
-                        </Dialog>
+                              </ScrollArea>
+                            </DialogContent>
+                          </Dialog>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
