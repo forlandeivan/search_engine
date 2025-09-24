@@ -25,6 +25,11 @@ const bulkDeletePagesSchema = z.object({
   pageIds: z.array(z.string()).min(1).max(1000)
 });
 
+const sendJsonToWebhookSchema = z.object({
+  webhookUrl: z.string().trim().url("Некорректный URL"),
+  payload: z.string().min(1, "JSON не может быть пустым")
+});
+
 const createProjectSchema = z.object({
   name: z.string().trim().min(1, "Название проекта обязательно").max(200, "Слишком длинное название"),
   startUrls: z.array(z.string().trim().url("Некорректный URL"))
@@ -804,7 +809,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/webhook/crawl", async (req, res) => {
     try {
       const { url, secret } = req.body;
-      
+
       // Basic security - in production, validate secret token
       if (!url) {
         return res.status(400).json({ error: "URL is required" });
@@ -843,6 +848,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error processing webhook:", error);
       res.status(500).json({ error: "Failed to process webhook" });
+    }
+  });
+
+  app.post("/api/webhook/send-json", async (req, res) => {
+    try {
+      const { webhookUrl, payload } = sendJsonToWebhookSchema.parse(req.body);
+
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(payload);
+      } catch (error) {
+        return res.status(400).json({
+          error: "Некорректный JSON",
+          details: error instanceof Error ? error.message : String(error)
+        });
+      }
+
+      if (!Array.isArray(parsedJson)) {
+        return res.status(400).json({
+          error: "JSON должен быть массивом чанков"
+        });
+      }
+
+      const webhookResponse = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsedJson)
+      });
+
+      const responseText = await webhookResponse.text();
+
+      if (!webhookResponse.ok) {
+        return res.status(webhookResponse.status).json({
+          error: "Удалённый вебхук вернул ошибку",
+          status: webhookResponse.status,
+          details: responseText
+        });
+      }
+
+      res.json({
+        message: "JSON успешно отправлен на вебхук",
+        status: webhookResponse.status,
+        response: responseText
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные данные запроса",
+          details: error.errors
+        });
+      }
+
+      console.error("Ошибка пересылки JSON на вебхук:", error);
+      res.status(500).json({ error: "Не удалось отправить JSON на вебхук" });
     }
   });
 

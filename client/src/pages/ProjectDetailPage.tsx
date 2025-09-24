@@ -362,20 +362,26 @@ export default function ProjectDetailPage() {
     setIsSendingJson(true);
 
     try {
-      const response = await fetch(webhookUrl, {
+      const response = await fetch("/api/webhook/send-json", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: jsonDialogState.jsonText,
+        body: JSON.stringify({ webhookUrl, payload: jsonDialogState.jsonText }),
       });
 
+      const result = await response.json().catch(() => null);
+
       if (!response.ok) {
-        const details = await response.text();
-        throw new Error(details || "Сервер вернул ошибку");
+        const errorMessage =
+          (result && (result.error ?? result.details)) ||
+          "Сервер вернул ошибку";
+        throw new Error(errorMessage);
       }
 
       toast({
         title: "JSON отправлен",
-        description: "Данные успешно переданы на указанный вебхук.",
+        description:
+          (result && (result.message || result.details)) ||
+          "Данные успешно переданы на указанный вебхук.",
       });
 
       resetJsonDialogState();
