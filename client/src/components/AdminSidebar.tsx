@@ -9,21 +9,27 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarHeader
+  SidebarHeader,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
-import { 
-  Search, 
-  Settings, 
-  Globe, 
-  Database, 
+import {
+  Search,
+  Settings,
+  Globe,
+  Database,
   Activity,
   Webhook,
   Calendar,
   BookOpen,
   Boxes,
-  Brain
+  Brain,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface SidebarItem {
   title: string;
@@ -47,6 +53,7 @@ interface Site {
 
 export default function AdminSidebar() {
   const [location] = useLocation();
+  const { state, toggleSidebar } = useSidebar();
   
   // Fetch live statistics
   const { data: stats } = useQuery<Stats>({
@@ -192,10 +199,28 @@ export default function AdminSidebar() {
   ];
 
   return (
-    <Sidebar>
+    <Sidebar collapsible="icon">
+      <SidebarRail />
       <SidebarHeader className="p-4 border-b">
-        <h2 className="text-lg font-semibold">Поисковый движок</h2>
-        <p className="text-sm text-muted-foreground">Админ-панель</p>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold">Поисковый движок</h2>
+            <p className="text-sm text-muted-foreground">Админ-панель</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={toggleSidebar}
+            aria-label={state === "expanded" ? "Свернуть меню" : "Развернуть меню"}
+          >
+            {state === "expanded" ? (
+              <ChevronLeft className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
       </SidebarHeader>
       
       <SidebarContent>
@@ -214,6 +239,9 @@ export default function AdminSidebar() {
           </SidebarGroup>
         ))}
       </SidebarContent>
+      <div className="border-t p-4">
+        <SidebarTrigger className="w-full justify-center" aria-label="Переключить меню" />
+      </div>
     </Sidebar>
   );
 }

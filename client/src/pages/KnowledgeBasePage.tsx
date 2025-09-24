@@ -24,11 +24,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  FilePlus,
   FileText,
   FolderClosed,
+  FolderOpen,
+  FolderPlus,
   Library,
   PlusCircle,
-  Rows3,
   SquarePen,
 } from "lucide-react";
 
@@ -119,6 +124,8 @@ interface TreeProps {
   onAddDocument: (parentId: string | null) => void;
   onSelectDocument: (documentId: string) => void;
   selectedDocumentId?: string;
+  expandedNodes: Record<string, boolean>;
+  onToggleNode: (nodeId: string) => void;
   level?: number;
 }
 
@@ -128,74 +135,108 @@ function TreeView({
   onAddDocument,
   onSelectDocument,
   selectedDocumentId,
+  expandedNodes,
+  onToggleNode,
   level = 0,
 }: TreeProps) {
   return (
-    <div className={cn("space-y-2", level > 0 && "pl-4 border-l border-border/60")}> 
-      {nodes.map((node) => (
-        <div key={node.id} className="space-y-2">
-          <div
-            className={cn(
-              "flex items-center justify-between rounded-md border bg-card px-3 py-2 text-sm transition",
-              node.type === "document" &&
-                selectedDocumentId === node.documentId &&
-                "border-primary/60 bg-primary/10 text-primary"
-            )}
-          >
-            <button
-              type="button"
-              className="flex flex-1 items-center gap-2 text-left"
-              onClick={() => {
-                if (node.type === "document" && node.documentId) {
-                  onSelectDocument(node.documentId);
-                }
-              }}
-            >
-              {node.type === "folder" ? (
-                <FolderClosed className="h-4 w-4 text-muted-foreground" />
-              ) : (
-                <FileText className="h-4 w-4 text-muted-foreground" />
+    <ul className={cn("space-y-1 text-sm", level > 0 && "border-l border-border/60 pl-3")}> 
+      {nodes.map((node) => {
+        const isFolder = node.type === "folder";
+        const hasChildren = Boolean(node.children && node.children.length > 0);
+        const isExpanded = !isFolder || expandedNodes[node.id] !== false;
+        const isSelected =
+          node.type === "document" && node.documentId === selectedDocumentId;
+
+        return (
+          <li key={node.id} className="group rounded-md">
+            <div
+              className={cn(
+                "flex items-center gap-2 rounded-md px-2 py-1 transition",
+                isSelected && "bg-primary/10 text-primary",
+                !isSelected && "hover:bg-muted"
               )}
-              <span className="font-medium">{node.title}</span>
-            </button>
+            >
+              {isFolder ? (
+                <button
+                  type="button"
+                  onClick={() => onToggleNode(node.id)}
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted-foreground/10"
+                  aria-label={isExpanded ? "Свернуть раздел" : "Развернуть раздел"}
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </button>
+              ) : (
+                <span className="h-6 w-6" />
+              )}
 
-            {node.type === "folder" && (
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => onAddFolder(node.id)}
-                  title="Добавить раздел"
-                >
-                  <Rows3 className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => onAddDocument(node.id)}
-                  title="Добавить документ"
-                >
-                  <SquarePen className="h-4 w-4" />
-                </Button>
-              </div>
+              <button
+                type="button"
+                className="flex flex-1 items-center gap-2 text-left"
+                onClick={() => {
+                  if (node.type === "document" && node.documentId) {
+                    onSelectDocument(node.documentId);
+                  } else if (node.type === "folder") {
+                    onToggleNode(node.id);
+                  }
+                }}
+              >
+                {node.type === "folder" ? (
+                  isExpanded ? (
+                    <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <FolderClosed className="h-4 w-4 text-muted-foreground" />
+                  )
+                ) : (
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                )}
+                <span className="font-medium leading-none">{node.title}</span>
+              </button>
+
+              {isFolder && (
+                <div className="ml-auto hidden items-center gap-1 group-hover:flex">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => onAddFolder(node.id)}
+                    title="Добавить подраздел"
+                  >
+                    <FolderPlus className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => onAddDocument(node.id)}
+                    title="Добавить документ"
+                  >
+                    <FilePlus className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {hasChildren && isExpanded && (
+              <TreeView
+                nodes={node.children ?? []}
+                onAddFolder={onAddFolder}
+                onAddDocument={onAddDocument}
+                onSelectDocument={onSelectDocument}
+                selectedDocumentId={selectedDocumentId}
+                expandedNodes={expandedNodes}
+                onToggleNode={onToggleNode}
+                level={level + 1}
+              />
             )}
-          </div>
-
-          {node.children && node.children.length > 0 && (
-            <TreeView
-              nodes={node.children}
-              onAddFolder={onAddFolder}
-              onAddDocument={onAddDocument}
-              onSelectDocument={onSelectDocument}
-              selectedDocumentId={selectedDocumentId}
-              level={level + 1}
-            />
-          )}
-        </div>
-      ))}
-    </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -214,6 +255,7 @@ export default function KnowledgeBasePage() {
   const [isEditing, setIsEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftContent, setDraftContent] = useState("");
+  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
 
   const selectedBase = useMemo(
     () => knowledgeBases.find((base) => base.id === selectedBaseId) ?? null,
@@ -233,10 +275,32 @@ export default function KnowledgeBasePage() {
   }, [selectedBase, selectedDocument]);
 
   useEffect(() => {
-    if (!selectedBaseId && knowledgeBases.length > 0) {
-      setSelectedBaseId(knowledgeBases[0].id);
+    if (!selectedBase) {
+      setExpandedNodes({});
+      return;
     }
-  }, [knowledgeBases, selectedBaseId]);
+
+    setExpandedNodes((previous) => {
+      const next = { ...previous };
+
+      const ensureFolders = (nodes: TreeNode[]) => {
+        nodes.forEach((node) => {
+          if (node.type === "folder") {
+            if (!(node.id in next)) {
+              next[node.id] = true;
+            }
+
+            if (node.children && node.children.length > 0) {
+              ensureFolders(node.children);
+            }
+          }
+        });
+      };
+
+      ensureFolders(selectedBase.structure);
+      return next;
+    });
+  }, [selectedBase]);
 
   useEffect(() => {
     if (currentDocument) {
@@ -267,6 +331,7 @@ export default function KnowledgeBasePage() {
     setKnowledgeBases((prev) => [...prev, base]);
     setSelectedBaseId(id);
     setSelectedDocument(null);
+    setExpandedNodes({});
     setNewBaseName("");
     setNewBaseDescription("");
     setIsCreateBaseOpen(false);
@@ -302,6 +367,12 @@ export default function KnowledgeBasePage() {
             : base
         )
       );
+
+      setExpandedNodes((prev) => ({
+        ...prev,
+        [folderNode.id]: true,
+        ...(nodeCreation.parentId ? { [nodeCreation.parentId]: true } : {}),
+      }));
     }
 
     if (nodeCreation.type === "document") {
@@ -339,6 +410,12 @@ export default function KnowledgeBasePage() {
       );
 
       setSelectedDocument({ baseId: selectedBase.id, documentId });
+      if (nodeCreation.parentId) {
+        setExpandedNodes((prev) => ({
+          ...prev,
+          [nodeCreation.parentId as string]: true,
+        }));
+      }
     }
 
     setNodeCreation(null);
@@ -390,16 +467,41 @@ export default function KnowledgeBasePage() {
     ? Object.values(selectedBase.documents).length
     : 0;
 
+  const handleToggleNode = (nodeId: string) => {
+    setExpandedNodes((prev) => ({
+      ...prev,
+      [nodeId]: !(prev[nodeId] ?? true),
+    }));
+  };
+
+  const handleBackToList = () => {
+    setSelectedBaseId(null);
+    setSelectedDocument(null);
+    setExpandedNodes({});
+  };
+
   return (
-    <div className="flex h-full flex-col gap-6 p-6">
-      <div className="flex flex-col gap-4">
+    <>
+      <div className="flex h-full flex-col gap-6 p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold">Загрузка знаний</h1>
+            <h1 className="text-2xl font-semibold">
+              {selectedBase ? selectedBase.name : "Загрузка знаний"}
+            </h1>
             <p className="text-muted-foreground">
-              Управляйте базами знаний, создавайте разделы и добавляйте документы с поддержкой Markdown.
+              {selectedBase
+                ? selectedBase.description ||
+                  "Управляйте структурой базы знаний и редактируйте документы."
+                : "Выберите базу знаний или создайте новую, чтобы начать работу с документами."}
             </p>
           </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {selectedBase && (
+            <Button variant="outline" onClick={handleBackToList}>
+              <ChevronLeft className="mr-2 h-4 w-4" />
+              Список баз
+            </Button>
+          )}
           <Dialog open={isCreateBaseOpen} onOpenChange={setIsCreateBaseOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -447,95 +549,82 @@ export default function KnowledgeBasePage() {
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col gap-6 lg:flex-row">
-        <Card className="w-full lg:w-80">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Library className="h-5 w-5" />
-              Базы знаний
-            </CardTitle>
-            <CardDescription>
-              Выберите базу, чтобы настроить структуру и управлять документами.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {knowledgeBases.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Пока что у вас нет баз знаний. Создайте первую, чтобы начать.
-              </p>
-            ) : (
-              <ScrollArea className="h-[28rem] pr-4">
-                <div className="space-y-3">
-                  {knowledgeBases.map((base) => {
-                    const isActive = base.id === selectedBase?.id;
-                    const documentCount = Object.keys(base.documents).length;
-
-                    return (
-                      <button
-                        key={base.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedBaseId(base.id);
-                          setSelectedDocument(null);
-                        }}
-                        className={cn(
-                          "w-full rounded-lg border bg-card p-4 text-left transition hover:border-primary/70 hover:shadow-sm",
-                          isActive && "border-primary bg-primary/10 shadow"
-                        )}
-                      >
-                        <h3 className="text-base font-semibold">{base.name}</h3>
-                        {base.description && (
-                          <p className="mt-1 line-clamp-3 text-sm text-muted-foreground">
-                            {base.description}
-                          </p>
-                        )}
-                        <p className="mt-3 text-xs text-muted-foreground">
-                          Документов: {documentCount}
-                        </p>
-                      </button>
-                    );
-                  })}
+      {!selectedBase ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-6">
+          <Card className="w-full max-w-4xl">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Library className="h-5 w-5" />
+                Выберите базу знаний
+              </CardTitle>
+              <CardDescription>
+                Работайте с документами, выбрав одну из существующих баз или создайте новую.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {knowledgeBases.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-10 text-center text-sm text-muted-foreground">
+                  <Library className="h-10 w-10" />
+                  <p>Пока что у вас нет баз знаний. Создайте первую, чтобы начать работу с документами.</p>
                 </div>
-              </ScrollArea>
-            )}
-          </CardContent>
-        </Card>
+              ) : (
+                <ScrollArea className="max-h-[28rem] pr-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {knowledgeBases.map((base) => {
+                      const documentCount = Object.keys(base.documents).length;
 
-        <Card className="flex-1">
-          <CardHeader className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <CardTitle className="text-lg">
-                  {selectedBase ? selectedBase.name : "Нет выбранной базы"}
-                </CardTitle>
-                <CardDescription>
-                  {selectedBase?.description ||
-                    "Создайте базу знаний и выберите её для настройки."}
-                </CardDescription>
-              </div>
-              {selectedBase && (
-                <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                  <span>Всего документов: {totalDocuments}</span>
-                </div>
+                      return (
+                        <button
+                          key={base.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedBaseId(base.id);
+                            setSelectedDocument(null);
+                          }}
+                          className="flex h-full flex-col rounded-lg border bg-card p-4 text-left transition hover:border-primary/70 hover:shadow-sm"
+                        >
+                          <h3 className="text-base font-semibold">{base.name}</h3>
+                          {base.description && (
+                            <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">
+                              {base.description}
+                            </p>
+                          )}
+                          <span className="mt-4 text-xs text-muted-foreground">
+                            Документов: {documentCount}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
               )}
-            </div>
-            {selectedBase && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => openNodeDialog("folder", null)}>
-                  <Rows3 className="mr-2 h-4 w-4" />
-                  Добавить раздел
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
+        <div className="flex flex-1 flex-col gap-6 lg:flex-row">
+          <Card className="w-full lg:w-96">
+            <CardHeader>
+              <CardTitle className="text-lg">Структура базы</CardTitle>
+              <CardDescription>
+                Управляйте иерархией документов с помощью древовидной навигации.
+              </CardDescription>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span>Документов: {totalDocuments}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                <Button size="sm" onClick={() => openNodeDialog("folder", null)}>
+                  <FolderPlus className="mr-2 h-4 w-4" />
+                  Раздел
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => openNodeDialog("document", null)}>
-                  <SquarePen className="mr-2 h-4 w-4" />
-                  Добавить документ
+                <Button size="sm" variant="outline" onClick={() => openNodeDialog("document", null)}>
+                  <FilePlus className="mr-2 h-4 w-4" />
+                  Документ
                 </Button>
               </div>
-            )}
-          </CardHeader>
-          <Separator />
-          <CardContent className="h-full">
-            {selectedBase ? (
-              selectedBase.structure.length > 0 ? (
+            </CardHeader>
+            <CardContent>
+              {selectedBase.structure.length > 0 ? (
                 <ScrollArea className="h-[28rem] pr-4">
                   <TreeView
                     nodes={selectedBase.structure}
@@ -543,148 +632,137 @@ export default function KnowledgeBasePage() {
                     onAddDocument={(parentId) => openNodeDialog("document", parentId)}
                     onSelectDocument={handleSelectDocument}
                     selectedDocumentId={selectedDocument?.documentId}
+                    expandedNodes={expandedNodes}
+                    onToggleNode={handleToggleNode}
                   />
                 </ScrollArea>
               ) : (
-                <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                  <p>Добавьте первый раздел или документ, чтобы начать строить структуру.</p>
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <Button size="sm" onClick={() => openNodeDialog("folder", null)}>
-                      <Rows3 className="mr-2 h-4 w-4" />
-                      Добавить раздел
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => openNodeDialog("document", null)}>
-                      <SquarePen className="mr-2 h-4 w-4" />
-                      Добавить документ
-                    </Button>
-                  </div>
+                <div className="flex flex-col items-center justify-center gap-3 py-10 text-center text-sm text-muted-foreground">
+                  <Library className="h-10 w-10" />
+                  <p>Добавьте первый раздел или документ, чтобы построить дерево страницы.</p>
                 </div>
-              )
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                Выберите базу знаний для отображения структуры.
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              )}
+            </CardContent>
+          </Card>
 
-        <Card className="flex-1">
-          <CardHeader>
-            <CardTitle className="text-lg">Документ</CardTitle>
-            <CardDescription>
-              Создавайте и редактируйте материалы в формате Markdown, переключаясь между режимами.
-            </CardDescription>
-          </CardHeader>
-          <Separator />
-          <CardContent className="h-full">
-            {currentDocument ? (
-              <div className="flex h-full flex-col gap-4">
-                {isEditing ? (
-                  <Input
-                    value={draftTitle}
-                    onChange={(event) => setDraftTitle(event.target.value)}
-                    placeholder="Название документа"
-                  />
-                ) : (
-                  <h2 className="text-xl font-semibold">{currentDocument.title}</h2>
-                )}
+          <Card className="flex-1">
+            <CardHeader>
+              <CardTitle className="text-lg">Документ</CardTitle>
+              <CardDescription>
+                Создавайте и редактируйте материалы в формате Markdown, переключаясь между режимами.
+              </CardDescription>
+            </CardHeader>
+            <Separator />
+            <CardContent className="h-full">
+              {currentDocument ? (
+                <div className="flex h-full flex-col gap-4">
+                  {isEditing ? (
+                    <Input
+                      value={draftTitle}
+                      onChange={(event) => setDraftTitle(event.target.value)}
+                      placeholder="Название документа"
+                    />
+                  ) : (
+                    <h2 className="text-xl font-semibold">{currentDocument.title}</h2>
+                  )}
 
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span>
-                    Последнее сохранение: {new Date(currentDocument.updatedAt).toLocaleString()}
-                  </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span>
+                      Последнее сохранение: {new Date(currentDocument.updatedAt).toLocaleString()}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {isEditing ? (
+                        <>
+                          <Button size="sm" onClick={handleSaveDocument}>
+                            Сохранить изменения
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setIsEditing(false);
+                              setDraftTitle(currentDocument.title);
+                              setDraftContent(currentDocument.content);
+                            }}
+                          >
+                            Отмена
+                          </Button>
+                        </>
+                      ) : (
+                        <Button size="sm" variant="outline" onClick={() => setIsEditing(true)}>
+                          Редактировать
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="min-h-[20rem] flex-1 rounded-lg border bg-muted/30 p-4">
                     {isEditing ? (
-                      <>
-                        <Button size="sm" onClick={handleSaveDocument}>
-                          Сохранить изменения
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setIsEditing(false);
-                            setDraftTitle(currentDocument.title);
-                            setDraftContent(currentDocument.content);
-                          }}
-                        >
-                          Отмена
-                        </Button>
-                      </>
+                      <Textarea
+                        className="h-full min-h-[18rem]"
+                        value={draftContent}
+                        onChange={(event) => setDraftContent(event.target.value)}
+                        placeholder="Введите содержимое в формате Markdown"
+                      />
+                    ) : draftContent ? (
+                      <ScrollArea className="h-full pr-4">
+                        <div className="prose prose-sm max-w-none dark:prose-invert">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {currentDocument.content || ""}
+                          </ReactMarkdown>
+                        </div>
+                      </ScrollArea>
                     ) : (
-                      <Button size="sm" variant="outline" onClick={() => setIsEditing(true)}>
-                        Редактировать
-                      </Button>
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                        Документ пока пуст. Включите режим редактирования, чтобы добавить контент.
+                      </div>
                     )}
                   </div>
                 </div>
-
-                <div className="min-h-[20rem] flex-1 rounded-lg border bg-muted/30 p-4">
-                  {isEditing ? (
-                    <Textarea
-                      className="h-full min-h-[18rem]"
-                      value={draftContent}
-                      onChange={(event) => setDraftContent(event.target.value)}
-                      placeholder="Введите содержимое в формате Markdown"
-                    />
-                  ) : draftContent ? (
-                    <ScrollArea className="h-full pr-4">
-                      <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {currentDocument.content || ""}
-                        </ReactMarkdown>
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                      Документ пока пуст. Включите режим редактирования, чтобы добавить контент.
-                    </div>
-                  )}
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
+                  <SquarePen className="h-10 w-10" />
+                  <p>Выберите документ в структуре базы знаний или создайте новый.</p>
                 </div>
-              </div>
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
-                <SquarePen className="h-10 w-10" />
-                <p>Выберите документ в структуре базы знаний или создайте новый.</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Dialog open={isNodeDialogOpen} onOpenChange={setIsNodeDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {nodeCreation?.type === "folder" ? "Новый раздел" : "Новый документ"}
-            </DialogTitle>
-            <DialogDescription>
-              {nodeCreation?.type === "folder"
-                ? "Создайте раздел, чтобы сгруппировать документы или подкатегории."
-                : "Создайте документ с пустым содержимым и начните работу в редакторе Markdown."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <label className="text-sm font-medium" htmlFor="node-title">
-              Название
-            </label>
-            <Input
-              id="node-title"
-              autoFocus
-              value={nodeTitle}
-              onChange={(event) => setNodeTitle(event.target.value)}
-              placeholder={
-                nodeCreation?.type === "folder"
-                  ? "Например, Раздел по продукту"
-                  : "Например, Инструкция для команды"
-              }
-            />
-          </div>
-          <DialogFooter>
-            <Button onClick={handleCreateNode}>Создать</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
+    <Dialog open={isNodeDialogOpen} onOpenChange={setIsNodeDialogOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {nodeCreation?.type === "folder" ? "Новый раздел" : "Новый документ"}
+          </DialogTitle>
+          <DialogDescription>
+            {nodeCreation?.type === "folder"
+              ? "Создайте раздел, чтобы сгруппировать документы или подкатегории."
+              : "Создайте документ с пустым содержимым и начните работу в редакторе Markdown."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor="node-title">
+            Название
+          </label>
+          <Input
+            id="node-title"
+            autoFocus
+            value={nodeTitle}
+            onChange={(event) => setNodeTitle(event.target.value)}
+            placeholder={
+              nodeCreation?.type === "folder"
+                ? "Например, Раздел по продукту"
+                : "Например, Инструкция для команды"
+            }
+          />
+        </div>
+        <DialogFooter>
+          <Button onClick={handleCreateNode}>Создать</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
