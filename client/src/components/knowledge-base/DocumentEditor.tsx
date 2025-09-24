@@ -47,7 +47,7 @@ export function DocumentEditor({ value, onChange }: DocumentEditorProps) {
           "prose prose-sm max-w-none dark:prose-invert min-h-[18rem] focus:outline-none"
       }
     },
-    onUpdate: ({ editor }) => {
+    onUpdate: ({ editor }: { editor: any }) => {
       onChange(editor.getHTML());
     }
   });

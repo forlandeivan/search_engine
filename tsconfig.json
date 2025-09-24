@@ -18,7 +18,11 @@
     "types": ["node", "vite/client"],
     "paths": {
       "@/*": ["./client/src/*"],
-      "@shared/*": ["./shared/*"]
+      "@shared/*": ["./shared/*"],
+      "@tiptap/react": ["./types/tiptap-react"],
+      "@tiptap/starter-kit": ["./types/tiptap-starter-kit"],
+      "@tiptap/extension-placeholder": ["./types/tiptap-extension-placeholder"],
+      "bcryptjs": ["./types/bcryptjs"]
     }
   }
 }

@@ -443,6 +443,98 @@ export const storage = new DatabaseStorage();
 
 export async function ensureDatabaseSchema(): Promise<void> {
   try {
+    // Обновление схемы таблицы пользователей для поддержки авторизации по email
+    const emailColumnCheck = await db.execute(sql`
+      SELECT COUNT(*)::int AS "emailColumnCount"
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'users'
+        AND column_name = 'email'
+    `);
+    const emailColumnCount = Number(emailColumnCheck.rows[0]?.emailColumnCount ?? 0);
+
+    if (emailColumnCount === 0) {
+      const usernameColumnCheck = await db.execute(sql`
+        SELECT COUNT(*)::int AS "usernameColumnCount"
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+          AND column_name = 'username'
+      `);
+      const usernameColumnCount = Number(usernameColumnCheck.rows[0]?.usernameColumnCount ?? 0);
+
+      if (usernameColumnCount > 0) {
+        await db.execute(sql`ALTER TABLE "users" RENAME COLUMN "username" TO "email"`);
+      } else {
+        await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "email" text`);
+      }
+    }
+
+    const passwordColumnCheck = await db.execute(sql`
+      SELECT COUNT(*)::int AS "passwordColumnCount"
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'users'
+        AND column_name = 'password'
+    `);
+    const passwordColumnCount = Number(passwordColumnCheck.rows[0]?.passwordColumnCount ?? 0);
+
+    if (passwordColumnCount > 0) {
+      await db.execute(sql`ALTER TABLE "users" RENAME COLUMN "password" TO "password_hash"`);
+    }
+
+    await db.execute(sql`ALTER TABLE "users" DROP CONSTRAINT IF EXISTS "users_username_unique"`);
+    await db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT IF NOT EXISTS "users_email_unique" UNIQUE ("email")`);
+    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
+    await db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
+    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "created_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+    await db.execute(sql`
+      UPDATE "users"
+      SET
+        "created_at" = COALESCE("created_at", CURRENT_TIMESTAMP),
+        "updated_at" = COALESCE("updated_at", CURRENT_TIMESTAMP)
+    `);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "created_at" SET NOT NULL`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "updated_at" SET NOT NULL`);
+
+    await db.execute(sql`ALTER TABLE "sites" ADD COLUMN IF NOT EXISTS "owner_id" varchar`);
+
+    const upsertUser = await db.execute(sql`
+      WITH upsert_user AS (
+        INSERT INTO "users" ("email", "full_name", "password_hash")
+        VALUES (
+          'forlandeivan@gmail.com',
+          'Иван Фролов',
+          '$2b$12$fYPpL/EqGB.IykWRGbSN3uYJQYNmD4fj7UncIr6zV2zMCemnbj6kC'
+        )
+        ON CONFLICT ("email") DO UPDATE SET
+          "full_name" = EXCLUDED."full_name",
+          "password_hash" = EXCLUDED."password_hash",
+          "updated_at" = CURRENT_TIMESTAMP
+        RETURNING id
+      )
+      SELECT id FROM upsert_user
+    `);
+
+    const upsertedUserId = upsertUser.rows[0]?.id as string | undefined;
+
+    if (upsertedUserId) {
+      await db.execute(sql`
+        UPDATE "sites"
+        SET "owner_id" = ${upsertedUserId}
+        WHERE "owner_id" IS NULL
+      `);
+    }
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ADD CONSTRAINT IF NOT EXISTS "sites_owner_id_users_id_fk"
+      FOREIGN KEY ("owner_id") REFERENCES "users"("id") ON DELETE cascade
+    `);
+    await db.execute(sql`ALTER TABLE "sites" ALTER COLUMN "owner_id" SET NOT NULL`);
+
     await db.execute(sql`
       ALTER TABLE "sites"
       ADD COLUMN IF NOT EXISTS "name" text DEFAULT 'Новый проект'
