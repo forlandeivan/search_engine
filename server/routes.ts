@@ -183,6 +183,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const client = getQdrantClient();
       const info = await client.getCollection(req.params.name);
+      const vectorsConfig = info.config?.params?.vectors as
+        | { size?: number | null; distance?: string | null }
+        | undefined;
+
       res.json({
         name: req.params.name,
         status: info.status,
@@ -190,6 +194,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pointsCount: info.points_count ?? info.vectors_count ?? 0,
         vectorsCount: info.vectors_count ?? null,
         segmentsCount: info.segments_count,
+        vectorSize: vectorsConfig?.size ?? null,
+        distance: vectorsConfig?.distance ?? null,
         config: info.config,
       });
     } catch (error) {
@@ -204,6 +210,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error(`Ошибка при получении коллекции ${req.params.name}:`, error);
       res.status(500).json({
         error: "Не удалось получить информацию о коллекции",
+        details,
+      });
+    }
+  });
+
+  app.get("/api/vector/collections/:name/points", async (req, res) => {
+    try {
+      const limitParam = typeof req.query.limit === "string" ? req.query.limit.trim() : undefined;
+      const limitNumber = limitParam ? Number.parseInt(limitParam, 10) : Number.NaN;
+      const limit = Number.isFinite(limitNumber) && limitNumber > 0 ? Math.min(limitNumber, 100) : 20;
+
+      const offsetParam = typeof req.query.offset === "string" ? req.query.offset.trim() : undefined;
+      let offset: string | number | undefined;
+      if (offsetParam) {
+        if (/^-?\d+$/.test(offsetParam)) {
+          offset = Number.parseInt(offsetParam, 10);
+        } else {
+          offset = offsetParam;
+        }
+      }
+
+      const client = getQdrantClient();
+      const result = await client.scroll(req.params.name, {
+        limit,
+        offset,
+        with_payload: true,
+        with_vector: false,
+      });
+
+      const points = result.points.map(({ vector: _vector, payload, ...rest }) => ({
+        ...rest,
+        payload: payload ?? null,
+      }));
+
+      res.json({
+        points,
+        nextPageOffset: result.next_page_offset ?? null,
+      });
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      const details = getErrorDetails(error);
+      console.error(`Ошибка при получении записей коллекции ${req.params.name}:`, error);
+      res.status(500).json({
+        error: "Не удалось получить записи коллекции",
         details,
       });
     }

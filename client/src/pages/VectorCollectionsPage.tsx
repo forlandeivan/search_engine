@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link, useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -86,6 +87,7 @@ export default function VectorCollectionsPage() {
   });
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null);
+  const [, setLocation] = useLocation();
 
   const { data, isLoading, isFetching, error } = useQuery<CollectionsResponse>({
     queryKey: ["/api/vector/collections"],
@@ -276,7 +278,12 @@ export default function VectorCollectionsPage() {
                     <TableRow key={collection.name}>
                       <TableCell className="font-medium">
                         <div className="flex flex-col">
-                          <span>{collection.name}</span>
+                          <Link
+                            href={`/admin/vector/collections/${encodeURIComponent(collection.name)}`}
+                            className="text-primary hover:underline"
+                          >
+                            {collection.name}
+                          </Link>
                           {collection.error && (
                             <span className="text-xs text-destructive">{collection.error}</span>
                           )}
@@ -294,6 +301,14 @@ export default function VectorCollectionsPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onSelect={(event) => {
+                                event.preventDefault();
+                                setLocation(`/admin/vector/collections/${encodeURIComponent(collection.name)}`);
+                              }}
+                            >
+                              Открыть коллекцию
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               onSelect={(event) => {
                                 event.preventDefault();
