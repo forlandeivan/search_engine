@@ -112,8 +112,12 @@ export const qdrantIntegrationConfigSchema = z.object({
     .min(1, "Укажите коллекцию Qdrant"),
   vectorFieldName: z.string().trim().min(1).default("vector"),
   payloadFields: z.record(z.string()).default({}),
-  vectorSize: z.number().int().positive().optional(),
-  upsertMode: z.enum(["replace", "append"]).default("replace"),
+  vectorSize: z
+    .union([z.number().int().positive(), z.string().trim().min(1)])
+    .optional(),
+  upsertMode: z
+    .union([z.enum(["replace", "append"]), z.string().trim().min(1)])
+    .default("replace"),
 });
 
 export type EmbeddingRequestConfig = z.infer<typeof embeddingRequestConfigSchema>;
