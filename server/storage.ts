@@ -79,6 +79,103 @@ function buildWhereClause(conditions: SQL[]): SQL {
   return sql.join(conditions, sql` AND `);
 }
 
+let embeddingProvidersTableEnsured = false;
+let ensuringEmbeddingProvidersTable: Promise<void> | null = null;
+
+async function ensureEmbeddingProvidersTable(): Promise<void> {
+  if (embeddingProvidersTableEnsured) {
+    return;
+  }
+
+  if (ensuringEmbeddingProvidersTable) {
+    await ensuringEmbeddingProvidersTable;
+    return;
+  }
+
+  ensuringEmbeddingProvidersTable = (async () => {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "embedding_providers" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" text NOT NULL,
+        "provider_type" text NOT NULL DEFAULT 'gigachat',
+        "description" text,
+        "is_active" boolean NOT NULL DEFAULT true,
+        "token_url" text NOT NULL,
+        "embeddings_url" text NOT NULL,
+        "authorization_key" text NOT NULL DEFAULT '',
+        "scope" text NOT NULL,
+        "model" text NOT NULL,
+        "allow_self_signed_certificate" boolean NOT NULL DEFAULT FALSE,
+        "request_headers" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "request_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "response_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "qdrant_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      ADD COLUMN IF NOT EXISTS "authorization_key" text DEFAULT ''
+    `);
+
+    await db.execute(sql`
+      UPDATE "embedding_providers"
+      SET "authorization_key" = COALESCE("authorization_key", '')
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      ALTER COLUMN "authorization_key" SET NOT NULL,
+      ALTER COLUMN "authorization_key" SET DEFAULT ''
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      DROP COLUMN IF EXISTS "client_id"
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      DROP COLUMN IF EXISTS "client_secret"
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      ADD COLUMN IF NOT EXISTS "allow_self_signed_certificate" boolean DEFAULT FALSE
+    `);
+
+    await db.execute(sql`
+      UPDATE "embedding_providers"
+      SET "allow_self_signed_certificate" = COALESCE("allow_self_signed_certificate", FALSE)
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      ALTER COLUMN "allow_self_signed_certificate" SET NOT NULL,
+      ALTER COLUMN "allow_self_signed_certificate" SET DEFAULT FALSE
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "embedding_providers_active_idx"
+        ON "embedding_providers" ("is_active")
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "embedding_providers_provider_type_idx"
+        ON "embedding_providers" ("provider_type")
+    `);
+  })();
+
+  try {
+    await ensuringEmbeddingProvidersTable;
+    embeddingProvidersTableEnsured = true;
+  } finally {
+    ensuringEmbeddingProvidersTable = null;
+  }
+}
+
 export class DatabaseStorage implements IStorage {
   private db = db;
   private userAuthColumnsEnsured = false;
@@ -540,15 +637,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async listEmbeddingProviders(): Promise<EmbeddingProvider[]> {
+    await ensureEmbeddingProvidersTable();
     return await this.db.select().from(embeddingProviders).orderBy(desc(embeddingProviders.createdAt));
   }
 
   async getEmbeddingProvider(id: string): Promise<EmbeddingProvider | undefined> {
+    await ensureEmbeddingProvidersTable();
     const [provider] = await this.db.select().from(embeddingProviders).where(eq(embeddingProviders.id, id));
     return provider ?? undefined;
   }
 
   async createEmbeddingProvider(provider: EmbeddingProviderInsert): Promise<EmbeddingProvider> {
+    await ensureEmbeddingProvidersTable();
     const [created] = await this.db.insert(embeddingProviders).values(provider).returning();
     return created;
   }
@@ -557,6 +657,7 @@ export class DatabaseStorage implements IStorage {
     id: string,
     updates: Partial<EmbeddingProviderInsert>,
   ): Promise<EmbeddingProvider | undefined> {
+    await ensureEmbeddingProvidersTable();
     const sanitizedUpdates = Object.fromEntries(
       Object.entries(updates).filter(([, value]) => value !== undefined),
     ) as Partial<EmbeddingProviderInsert>;
@@ -575,6 +676,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteEmbeddingProvider(id: string): Promise<boolean> {
+    await ensureEmbeddingProvidersTable();
     const deleted = await this.db
       .delete(embeddingProviders)
       .where(eq(embeddingProviders.id, id))
@@ -628,6 +730,7 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return updatedUser ?? undefined;
   }
+
 }
 
 export const storage = new DatabaseStorage();
@@ -814,79 +917,7 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS "chunk_overlap" boolean DEFAULT FALSE
     `);
 
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS "embedding_providers" (
-        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
-        "name" text NOT NULL,
-        "provider_type" text NOT NULL DEFAULT 'gigachat',
-        "description" text,
-        "is_active" boolean NOT NULL DEFAULT true,
-        "token_url" text NOT NULL,
-        "embeddings_url" text NOT NULL,
-        "authorization_key" text NOT NULL DEFAULT '',
-        "scope" text NOT NULL,
-        "model" text NOT NULL,
-        "allow_self_signed_certificate" boolean NOT NULL DEFAULT FALSE,
-        "request_headers" jsonb NOT NULL DEFAULT '{}'::jsonb,
-        "request_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
-        "response_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
-        "qdrant_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
-        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    await db.execute(sql`
-      ALTER TABLE "embedding_providers"
-      ADD COLUMN IF NOT EXISTS "authorization_key" text DEFAULT ''
-    `);
-
-    await db.execute(sql`
-      UPDATE "embedding_providers"
-      SET "authorization_key" = COALESCE("authorization_key", '')
-    `);
-
-    await db.execute(sql`
-      ALTER TABLE "embedding_providers"
-      ALTER COLUMN "authorization_key" SET NOT NULL,
-      ALTER COLUMN "authorization_key" SET DEFAULT ''
-    `);
-
-    await db.execute(sql`
-      ALTER TABLE "embedding_providers"
-      DROP COLUMN IF EXISTS "client_id"
-    `);
-
-    await db.execute(sql`
-      ALTER TABLE "embedding_providers"
-      DROP COLUMN IF EXISTS "client_secret"
-    `);
-
-    await db.execute(sql`
-      ALTER TABLE "embedding_providers"
-      ADD COLUMN IF NOT EXISTS "allow_self_signed_certificate" boolean DEFAULT FALSE
-    `);
-
-    await db.execute(sql`
-      UPDATE "embedding_providers"
-      SET "allow_self_signed_certificate" = COALESCE("allow_self_signed_certificate", FALSE)
-    `);
-
-    await db.execute(sql`
-      ALTER TABLE "embedding_providers"
-      ALTER COLUMN "allow_self_signed_certificate" SET NOT NULL,
-      ALTER COLUMN "allow_self_signed_certificate" SET DEFAULT FALSE
-    `);
-
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS "embedding_providers_active_idx"
-        ON "embedding_providers" ("is_active")
-    `);
-
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS "embedding_providers_provider_type_idx"
-        ON "embedding_providers" ("provider_type")
-    `);
+    await ensureEmbeddingProvidersTable();
 
     await db.execute(sql`
       UPDATE "sites"
