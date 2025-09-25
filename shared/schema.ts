@@ -206,6 +206,7 @@ export const embeddingProviders = pgTable("embedding_providers", {
   authorizationKey: text("authorization_key").notNull(),
   scope: text("scope").notNull(),
   model: text("model").notNull(),
+  allowSelfSigned: boolean("allow_self_signed").notNull().default(false),
   requestHeaders: jsonb("request_headers").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
   requestConfig: jsonb("request_config").$type<EmbeddingRequestConfig>().notNull().default(sql`'{}'::jsonb`),
   responseConfig: jsonb("response_config").$type<EmbeddingResponseConfig>().notNull().default(sql`'{}'::jsonb`),
@@ -312,6 +313,7 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
     scope: z.string().trim().min(1, "Укажите OAuth scope"),
     model: z.string().trim().min(1, "Укажите модель"),
+    allowSelfSigned: z.boolean().default(false),
     requestHeaders: z.record(z.string()).default({}),
     requestConfig: embeddingRequestConfigSchema,
     responseConfig: embeddingResponseConfigSchema,
@@ -326,6 +328,7 @@ export const updateEmbeddingProviderSchema = insertEmbeddingProviderSchema
     requestConfig: embeddingRequestConfigSchema.optional(),
     responseConfig: embeddingResponseConfigSchema.optional(),
     qdrantConfig: qdrantIntegrationConfigSchema.optional(),
+    allowSelfSigned: z.boolean().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нет данных для обновления",
