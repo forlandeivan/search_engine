@@ -118,7 +118,20 @@ export class DatabaseStorage implements IStorage {
       }
 
       await this.db.execute(sql`ALTER TABLE "users" DROP CONSTRAINT IF EXISTS "users_username_unique"`);
-      await this.db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT IF NOT EXISTS "users_email_unique" UNIQUE ("email")`);
+
+      const emailUniqueConstraintCheck = await this.db.execute(sql`
+        SELECT COUNT(*)::int AS "emailUniqueConstraintCount"
+        FROM pg_constraint
+        WHERE conrelid = 'public.users'::regclass
+          AND conname = 'users_email_unique'
+      `);
+      const emailUniqueConstraintCount = Number(
+        emailUniqueConstraintCheck.rows[0]?.emailUniqueConstraintCount ?? 0
+      );
+
+      if (emailUniqueConstraintCount === 0) {
+        await this.db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT "users_email_unique" UNIQUE ("email")`);
+      }
 
       await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
       await this.db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
@@ -566,7 +579,20 @@ export async function ensureDatabaseSchema(): Promise<void> {
     }
 
     await db.execute(sql`ALTER TABLE "users" DROP CONSTRAINT IF EXISTS "users_username_unique"`);
-    await db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT IF NOT EXISTS "users_email_unique" UNIQUE ("email")`);
+
+    const emailUniqueConstraintCheck = await db.execute(sql`
+      SELECT COUNT(*)::int AS "emailUniqueConstraintCount"
+      FROM pg_constraint
+      WHERE conrelid = 'public.users'::regclass
+        AND conname = 'users_email_unique'
+    `);
+    const emailUniqueConstraintCount = Number(
+      emailUniqueConstraintCheck.rows[0]?.emailUniqueConstraintCount ?? 0
+    );
+
+    if (emailUniqueConstraintCount === 0) {
+      await db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT "users_email_unique" UNIQUE ("email")`);
+    }
     await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
     await db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
