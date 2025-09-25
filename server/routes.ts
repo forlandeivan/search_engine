@@ -353,7 +353,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const errorMessage = error instanceof Error ? error.message : String(error);
         let message = "Не удалось подключиться к сервису эмбеддингов";
         if (errorMessage) {
-          message += `: ${errorMessage}`;
+          message += ": " + errorMessage;
         }
 
         return res.status(502).send(message);
