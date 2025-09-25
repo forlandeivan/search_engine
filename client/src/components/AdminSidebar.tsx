@@ -28,6 +28,7 @@ import {
   Brain,
   ChevronLeft,
   ChevronRight,
+  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -119,6 +120,16 @@ export default function AdminSidebar() {
   };
 
   const sections: Array<{ label: string; items: SidebarItem[] }> = [
+    {
+      label: "Администрирование",
+      items: [
+        {
+          title: "Пользователи",
+          url: "/admin/users",
+          icon: Users,
+        },
+      ],
+    },
     {
       label: "Основное",
       items: [
