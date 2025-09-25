@@ -477,11 +477,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let tokenResponse: FetchResponse;
       try {
+        const tokenRequestBody = new URLSearchParams({
+          scope: payload.scope,
+          grant_type: "client_credentials",
+        }).toString();
+
         const tokenRequestOptions = applyTlsPreferences<NodeFetchOptions>(
           {
             method: "POST",
             headers: tokenHeaders,
-            body: new URLSearchParams({ scope: payload.scope }).toString(),
+            body: tokenRequestBody,
           },
           payload.allowSelfSignedCertificate,
         );
