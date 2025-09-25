@@ -13,6 +13,7 @@ import PagesPage from "@/pages/PagesPage";
 import TildaApiPage from "@/pages/TildaApiPage";
 import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
 import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
+import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
 import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
@@ -43,6 +44,7 @@ function MainRouter() {
       <Route path="/pages" component={PagesPage} />
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
+      <Route path="/vector/storage" component={VectorStorageSettingsPage} />
       <Route path="/integrations/api" component={TildaApiPage} />
       <Route path="/" component={SearchPage} />
       <Route component={NotFound} />
