@@ -45,7 +45,7 @@ import {
   type InsertEmbeddingProvider,
 } from "@shared/schema";
 
-import { Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 
 type ProvidersResponse = {
   providers: PublicEmbeddingProvider[];
@@ -86,7 +86,6 @@ const requestHeadersSchema = z.record(z.string());
 
 const defaultRequestHeaders = {
   Accept: "application/json",
-  "X-Client-Id": "<ваш X-Client-Id>",
 };
 
 const defaultRequestConfig = {
@@ -104,15 +103,15 @@ const defaultResponseConfig = {
 };
 
 const defaultQdrantConfig = {
-  collectionName: "",
-  vectorFieldName: "vector",
+  collectionName: "{{ knowledge_base.slug }}",
+  vectorFieldName: "{{ collection.vector_field | default: 'vector' }}",
   payloadFields: {
-    source_id: "sourceId",
-    text: "text",
-    metadata: "metadata",
+    source_id: "{{ document.id }}",
+    text: "{{ chunk.text }}",
+    metadata: "{{ chunk.metadata | json }}",
   },
-  vectorSize: 1024,
-  upsertMode: "replace",
+  vectorSize: "{{ embedding.vector_size | default: 1024 }}",
+  upsertMode: "{{ integration.upsert_mode | default: 'replace' }}",
 };
 
 const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
@@ -195,6 +194,66 @@ export default function EmbeddingServicesPage() {
     onError: (error: Error) => {
       toast({
         title: "Не удалось изменить статус",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const testCredentialsMutation = useMutation<string, Error>({
+    mutationFn: async () => {
+      form.clearErrors();
+
+      const values = form.getValues();
+      const tokenUrl = values.tokenUrl.trim();
+      const authorizationKey = values.authorizationKey.trim();
+      const scope = values.scope.trim();
+
+      if (!tokenUrl) {
+        const message = "Укажите endpoint для получения токена";
+        form.setError("tokenUrl", { type: "manual", message });
+        throw new Error(message);
+      }
+
+      if (!authorizationKey) {
+        const message = "Укажите Authorization key";
+        form.setError("authorizationKey", { type: "manual", message });
+        throw new Error(message);
+      }
+
+      if (!scope) {
+        const message = "Укажите OAuth scope";
+        form.setError("scope", { type: "manual", message });
+        throw new Error(message);
+      }
+
+      const requestHeaders = parseJsonField(
+        values.requestHeaders,
+        requestHeadersSchema,
+        "requestHeaders",
+        "Укажите заголовки запроса в формате JSON",
+        true,
+      );
+
+      const response = await apiRequest("POST", "/api/embedding/services/test-credentials", {
+        tokenUrl,
+        authorizationKey,
+        scope,
+        requestHeaders,
+      });
+
+      const result = (await response.json()) as { message?: string };
+      return result.message ?? "Авторизация подтверждена";
+    },
+    onSuccess: (message) => {
+      toast({
+        title: "Авторизация подтверждена",
+        description: message,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Проверка не удалась",
         description: error.message,
         variant: "destructive",
       });
@@ -479,13 +538,42 @@ export default function EmbeddingServicesPage() {
                             autoComplete="new-password"
                           />
                         </FormControl>
-                        <FormDescription>
-                          Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormDescription>
+                        Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
+                      </FormDescription>
+                      <div className="flex flex-wrap items-center gap-2 pt-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => testCredentialsMutation.mutate()}
+                          disabled={testCredentialsMutation.isPending}
+                        >
+                          {testCredentialsMutation.isPending ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверяем...
+                            </>
+                          ) : (
+                            <>
+                              <ShieldCheck className="mr-2 h-4 w-4" /> Проверить авторизацию
+                            </>
+                          )}
+                        </Button>
+                        {testCredentialsMutation.isSuccess && !testCredentialsMutation.isPending ? (
+                          <span className="flex items-center gap-1 text-sm text-emerald-600">
+                            <ShieldCheck className="h-4 w-4" /> {testCredentialsMutation.data}
+                          </span>
+                        ) : null}
+                        {testCredentialsMutation.isError && !testCredentialsMutation.isPending ? (
+                          <span className="flex items-center gap-1 text-sm text-destructive">
+                            <AlertCircle className="h-4 w-4" /> {testCredentialsMutation.error?.message}
+                          </span>
+                        ) : null}
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
@@ -532,11 +620,12 @@ export default function EmbeddingServicesPage() {
                           {...field}
                           spellCheck={false}
                           rows={4}
-                          placeholder='{"X-Client-Id": "<ваш X-Client-Id>"}'
+                          placeholder='{"Accept": "application/json"}'
                         />
                       </FormControl>
                       <FormDescription>
-                        JSON-объект со строковыми значениями. Например, для GigaChat требуется заголовок
+                        JSON-объект со строковыми значениями. Добавьте заголовки только если они требуются вашим API.
+                        Например, провайдер GigaChat может запросить идентификатор
                         <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">X-Client-Id</code>.
                       </FormDescription>
                       <FormMessage />
@@ -600,12 +689,16 @@ export default function EmbeddingServicesPage() {
                           {...field}
                           spellCheck={false}
                           rows={6}
-                          placeholder='{"collectionName":"content_vectors","vectorFieldName":"vector"}'
+                          placeholder='{"collectionName":"{{ knowledge_base.slug }}","vectorFieldName":"{{ collection.vector_field }}"}'
                         />
                       </FormControl>
                       <FormDescription>
-                        Укажите целевую коллекцию, название векторного поля и сопоставление payload (например, текст
-                        исходного чанка, идентификатор документа и метаданные).
+                        Опишите шаблон Liquid для коллекции, векторного поля и payload. Доступны объекты
+                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">knowledge_base</code>,
+                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">document</code>,
+                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">chunk</code>,
+                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">embedding</code> и
+                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">integration</code>.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
