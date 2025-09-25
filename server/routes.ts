@@ -1,7 +1,12 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import fetch, { Headers, type Response as FetchResponse } from "node-fetch";
+import fetch, {
+  Headers,
+  type Response as FetchResponse,
+  type RequestInit as FetchRequestInit,
+} from "node-fetch";
+import { Agent as HttpsAgent } from "https";
 import { storage } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
 import { z } from "zod";
@@ -52,6 +57,24 @@ function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbedding
   return {
     ...rest,
     hasAuthorizationKey: Boolean(authorizationKey && authorizationKey.length > 0),
+  };
+}
+
+type NodeFetchOptions = FetchRequestInit & { agent?: HttpsAgent };
+
+const insecureTlsAgent = new HttpsAgent({ rejectUnauthorized: false });
+
+function applyTlsPreferences<T extends NodeFetchOptions>(
+  options: T,
+  allowSelfSignedCertificate: boolean,
+): T {
+  if (!allowSelfSignedCertificate) {
+    return options;
+  }
+
+  return {
+    ...options,
+    agent: insecureTlsAgent,
   };
 }
 
@@ -118,6 +141,7 @@ const testEmbeddingCredentialsSchema = z.object({
   authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
   scope: z.string().trim().min(1, "Укажите OAuth scope"),
   model: z.string().trim().min(1, "Укажите модель эмбеддингов"),
+  allowSelfSignedCertificate: z.boolean().default(false),
   requestHeaders: z.record(z.string()).default({}),
   requestConfig: embeddingRequestConfigSchema.optional(),
   responseConfig: embeddingResponseConfigSchema.optional(),
@@ -448,14 +472,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let tokenResponse: FetchResponse;
       try {
-        tokenResponse = await fetch(payload.tokenUrl, {
-          method: "POST",
-          headers: tokenHeaders,
-          body: new URLSearchParams({ scope: payload.scope }).toString(),
-        });
+        const tokenRequestOptions = applyTlsPreferences<NodeFetchOptions>(
+          {
+            method: "POST",
+            headers: tokenHeaders,
+            body: new URLSearchParams({ scope: payload.scope }).toString(),
+          },
+          payload.allowSelfSignedCertificate,
+        );
+        tokenResponse = await fetch(payload.tokenUrl, tokenRequestOptions);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const details = errorMessage ? `: ${errorMessage}` : "";
+        if (
+          !payload.allowSelfSignedCertificate &&
+          details.includes("self-signed certificate")
+        ) {
+          return res.status(502).send(
+            "Не удалось подключиться к сервису эмбеддингов: сертификат не прошёл проверку. Включите опцию доверия самоподписанным сертификатам и повторите попытку.",
+          );
+        }
         return res
           .status(502)
           .send(`Не удалось подключиться к сервису эмбеддингов${details}`);
@@ -482,6 +518,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const messageParts = ["Соединение установлено."];
+
+      if (payload.allowSelfSignedCertificate) {
+        messageParts.push("Проверка сертификата отключена.");
+      }
 
       let accessToken: string | undefined;
       if (parsedBody && typeof parsedBody === "object") {
@@ -523,11 +563,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let embeddingResponse: FetchResponse;
       try {
-        embeddingResponse = await fetch(payload.embeddingsUrl, {
-          method: "POST",
-          headers: embeddingHeaders,
-          body: JSON.stringify(embeddingBody),
-        });
+        const embeddingRequestOptions = applyTlsPreferences<NodeFetchOptions>(
+          {
+            method: "POST",
+            headers: embeddingHeaders,
+            body: JSON.stringify(embeddingBody),
+          },
+          payload.allowSelfSignedCertificate,
+        );
+        embeddingResponse = await fetch(payload.embeddingsUrl, embeddingRequestOptions);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const details = errorMessage ? `: ${errorMessage}` : "";
@@ -611,6 +655,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (payload.requestConfig !== undefined) updates.requestConfig = payload.requestConfig;
       if (payload.responseConfig !== undefined) updates.responseConfig = payload.responseConfig;
       if (payload.qdrantConfig !== undefined) updates.qdrantConfig = payload.qdrantConfig;
+      if (payload.allowSelfSignedCertificate !== undefined)
+        updates.allowSelfSignedCertificate = payload.allowSelfSignedCertificate;
 
       const updated = await storage.updateEmbeddingProvider(providerId, updates);
       if (!updated) {
