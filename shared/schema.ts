@@ -79,6 +79,47 @@ export const insertUserSchema = createInsertSchema(users).omit({
   lastActiveAt: true,
 });
 
+export const embeddingProviderTypes = ["gigachat", "custom"] as const;
+export type EmbeddingProviderType = (typeof embeddingProviderTypes)[number];
+
+export const embeddingRequestConfigSchema = z
+  .object({
+    inputField: z.string().trim().min(1, "Укажите ключ поля с текстом"),
+    modelField: z.string().trim().min(1, "Укажите ключ модели").default("model"),
+    batchField: z.string().trim().min(1).optional(),
+    additionalBodyFields: z
+      .record(z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.any()), z.record(z.any())]))
+      .default({}),
+  })
+  .default({ inputField: "input", modelField: "model", additionalBodyFields: {} });
+
+export const embeddingResponseConfigSchema = z
+  .object({
+    vectorPath: z
+      .string()
+      .trim()
+      .min(1, "Укажите JSON-путь до вектора в ответе"),
+    idPath: z.string().trim().min(1).optional(),
+    usageTokensPath: z.string().trim().min(1).optional(),
+    rawVectorType: z.enum(["float32", "float64"]).default("float32"),
+  })
+  .default({ vectorPath: "data[0].embedding", rawVectorType: "float32" });
+
+export const qdrantIntegrationConfigSchema = z.object({
+  collectionName: z
+    .string()
+    .trim()
+    .min(1, "Укажите коллекцию Qdrant"),
+  vectorFieldName: z.string().trim().min(1).default("vector"),
+  payloadFields: z.record(z.string()).default({}),
+  vectorSize: z.number().int().positive().optional(),
+  upsertMode: z.enum(["replace", "append"]).default("replace"),
+});
+
+export type EmbeddingRequestConfig = z.infer<typeof embeddingRequestConfigSchema>;
+export type EmbeddingResponseConfig = z.infer<typeof embeddingResponseConfigSchema>;
+export type QdrantIntegrationConfig = z.infer<typeof qdrantIntegrationConfigSchema>;
+
 export const registerUserSchema = z
   .object({
     fullName: z
@@ -148,6 +189,26 @@ export const searchIndex = pgTable("search_index", {
   position: integer("position").notNull(),
   relevance: doublePrecision("relevance"), // Add missing relevance column
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const embeddingProviders = pgTable("embedding_providers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  providerType: text("provider_type").$type<EmbeddingProviderType>().notNull().default("gigachat"),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  tokenUrl: text("token_url").notNull(),
+  embeddingsUrl: text("embeddings_url").notNull(),
+  clientId: text("client_id").notNull(),
+  clientSecret: text("client_secret").notNull(),
+  scope: text("scope").notNull(),
+  model: text("model").notNull(),
+  requestHeaders: jsonb("request_headers").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+  requestConfig: jsonb("request_config").$type<EmbeddingRequestConfig>().notNull().default(sql`'{}'::jsonb`),
+  responseConfig: jsonb("response_config").$type<EmbeddingResponseConfig>().notNull().default(sql`'{}'::jsonb`),
+  qdrantConfig: jsonb("qdrant_config").$type<QdrantIntegrationConfig>().notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 // Relations
@@ -221,6 +282,54 @@ export const insertSearchIndexSchema = createInsertSchema(searchIndex).omit({
   createdAt: true,
 });
 
+export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProviders)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+  })
+  .extend({
+    name: z.string().trim().min(1, "Укажите название сервиса").max(200, "Слишком длинное название"),
+    providerType: z.enum(embeddingProviderTypes).default("gigachat"),
+    isActive: z.boolean().default(true),
+    description: z
+      .string()
+      .trim()
+      .max(1000, "Описание слишком длинное")
+      .optional()
+      .transform((value) => (value && value.length > 0 ? value : undefined)),
+    tokenUrl: z
+      .string()
+      .trim()
+      .url("Некорректный URL для получения Access Token"),
+    embeddingsUrl: z
+      .string()
+      .trim()
+      .url("Некорректный URL сервиса эмбеддингов"),
+    clientId: z.string().trim().min(1, "Укажите идентификатор клиента"),
+    clientSecret: z.string().min(1, "Укажите секрет клиента"),
+    scope: z.string().trim().min(1, "Укажите OAuth scope"),
+    model: z.string().trim().min(1, "Укажите модель"),
+    requestHeaders: z.record(z.string()).default({}),
+    requestConfig: embeddingRequestConfigSchema,
+    responseConfig: embeddingResponseConfigSchema,
+    qdrantConfig: qdrantIntegrationConfigSchema,
+  });
+
+export const updateEmbeddingProviderSchema = insertEmbeddingProviderSchema
+  .partial()
+  .extend({
+    clientSecret: z.string().min(1, "Укажите секрет клиента").optional(),
+    isActive: z.boolean().optional(),
+    requestHeaders: z.record(z.string()).optional(),
+    requestConfig: embeddingRequestConfigSchema.optional(),
+    responseConfig: embeddingResponseConfigSchema.optional(),
+    qdrantConfig: qdrantIntegrationConfigSchema.optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "Нет данных для обновления",
+  });
+
 // Types
 export type Site = typeof sites.$inferSelect;
 export type InsertSite = z.infer<typeof insertSiteSchema>;
@@ -232,3 +341,10 @@ export type InsertSearchIndexEntry = z.infer<typeof insertSearchIndexSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type PublicUser = Omit<User, "passwordHash">;
+export type EmbeddingProvider = typeof embeddingProviders.$inferSelect;
+export type EmbeddingProviderInsert = typeof embeddingProviders.$inferInsert;
+export type InsertEmbeddingProvider = z.infer<typeof insertEmbeddingProviderSchema>;
+export type UpdateEmbeddingProvider = z.infer<typeof updateEmbeddingProviderSchema>;
+export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "clientSecret"> & {
+  hasClientSecret: boolean;
+};

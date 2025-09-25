@@ -14,6 +14,7 @@ import TildaApiPage from "@/pages/TildaApiPage";
 import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
 import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
 import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
+import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
 import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
@@ -28,6 +29,7 @@ import type { CSSProperties } from "react";
 function AdminRouter() {
   return (
     <Switch>
+      <Route path="/admin/embeddings" component={EmbeddingServicesPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />
       <Route path="/admin" component={AdminUsersPage} />
