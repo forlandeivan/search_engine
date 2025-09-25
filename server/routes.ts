@@ -434,13 +434,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/embedding/services/test-credentials", requireAdmin, async (req, res, next) => {
     try {
       const payload = testEmbeddingCredentialsSchema.parse(req.body);
-      const requestConfig =
-        payload.requestConfig ?? embeddingRequestConfigSchema.parse(undefined);
-      const responseConfig =
-        payload.responseConfig ?? embeddingResponseConfigSchema.parse(undefined);
       const requestConfig = embeddingRequestConfigSchema.parse(payload.requestConfig ?? {});
       const responseConfig = embeddingResponseConfigSchema.parse(payload.responseConfig ?? {});
-main
 
       const tokenHeaders = new Headers();
       tokenHeaders.set("Authorization", payload.authorizationKey);
@@ -527,9 +522,6 @@ main
       const embeddingBody = createEmbeddingRequestBody(requestConfig, payload.model, TEST_EMBEDDING_TEXT);
 
       let embeddingResponse: FetchResponse;
-
-      let embeddingResponse: globalThis.Response;
-main
       try {
         embeddingResponse = await fetch(payload.embeddingsUrl, {
           method: "POST",
