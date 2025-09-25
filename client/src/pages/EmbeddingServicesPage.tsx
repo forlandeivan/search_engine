@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, type FieldPath } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -45,7 +45,7 @@ import {
   type InsertEmbeddingProvider,
 } from "@shared/schema";
 
-import { AlertCircle, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 
 type DebugStage = "token-request" | "token-response" | "embedding-request" | "embedding-response";
 
@@ -217,12 +217,86 @@ const defaultFormValues: FormValues = {
   qdrantConfig: formatJson(defaultQdrantConfig),
 };
 
+const EMBEDDING_FORM_STORAGE_KEY = "embeddingService.formDraft";
+const EMBEDDING_TOKEN_STORAGE_KEY = "embeddingService.authorizationKey";
+
 export default function EmbeddingServicesPage() {
   const { toast } = useToast();
 
   const form = useForm<FormValues>({
     defaultValues: defaultFormValues,
   });
+
+  const hasHydratedStoredValues = useRef(false);
+  const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      hasHydratedStoredValues.current = true;
+      return;
+    }
+
+    let storedFormValues: Partial<Omit<FormValues, "authorizationKey">> | null = null;
+    try {
+      const rawDraft = window.localStorage.getItem(EMBEDDING_FORM_STORAGE_KEY);
+      if (rawDraft) {
+        const parsedDraft = JSON.parse(rawDraft) as unknown;
+        if (parsedDraft && typeof parsedDraft === "object") {
+          storedFormValues = parsedDraft as Partial<Omit<FormValues, "authorizationKey">>;
+        }
+      }
+    } catch (error) {
+      console.error("Не удалось загрузить сохранённые параметры эмбеддингов", error);
+    }
+
+    let storedAuthorizationKey: string | null = null;
+    try {
+      storedAuthorizationKey = window.localStorage.getItem(EMBEDDING_TOKEN_STORAGE_KEY);
+    } catch (error) {
+      console.error("Не удалось загрузить сохранённый Authorization key", error);
+    }
+
+    if (storedFormValues || storedAuthorizationKey !== null) {
+      const nextValues: FormValues = {
+        ...defaultFormValues,
+        ...storedFormValues,
+        authorizationKey:
+          storedAuthorizationKey !== null
+            ? storedAuthorizationKey
+            : defaultFormValues.authorizationKey,
+      };
+
+      form.reset(nextValues);
+    }
+
+    hasHydratedStoredValues.current = true;
+  }, [form]);
+
+  useEffect(() => {
+    const subscription = form.watch((values) => {
+      if (!hasHydratedStoredValues.current || typeof window === "undefined") {
+        return;
+      }
+
+      const { authorizationKey, ...rest } = values;
+
+      try {
+        window.localStorage.setItem(EMBEDDING_FORM_STORAGE_KEY, JSON.stringify(rest));
+      } catch (error) {
+        console.error("Не удалось сохранить параметры эмбеддингов", error);
+      }
+
+      if (authorizationKey !== undefined) {
+        try {
+          window.localStorage.setItem(EMBEDDING_TOKEN_STORAGE_KEY, authorizationKey);
+        } catch (error) {
+          console.error("Не удалось сохранить Authorization key", error);
+        }
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [form]);
 
   const [debugSteps, setDebugSteps] = useState<DebugStep[]>(() => buildDebugSteps());
 
@@ -246,10 +320,12 @@ export default function EmbeddingServicesPage() {
         description: "Настройки подключения к эмбеддингам успешно добавлены.",
       });
 
+      const currentValues = form.getValues();
+
       form.reset({
-        ...form.getValues(),
+        ...currentValues,
         description: "",
-        authorizationKey: "",
+        authorizationKey: currentValues.authorizationKey,
         requestHeaders: variables.formattedStrings.requestHeaders,
         requestConfig: variables.formattedStrings.requestConfig,
         responseConfig: variables.formattedStrings.responseConfig,
@@ -736,13 +812,34 @@ export default function EmbeddingServicesPage() {
                       <FormItem>
                         <FormLabel>Authorization key</FormLabel>
                         <FormControl>
-                          <Input
-                            {...field}
-                            type="password"
-                            placeholder="Значение заголовка Authorization"
-                            required
-                            autoComplete="new-password"
-                          />
+                          <div className="relative">
+                            <Input
+                              {...field}
+                              type={isAuthorizationVisible ? "text" : "password"}
+                              placeholder="Значение заголовка Authorization"
+                              required
+                              autoComplete="new-password"
+                              className="pr-10"
+                            />
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
+                              onClick={() => setIsAuthorizationVisible((previous) => !previous)}
+                              aria-label={
+                                isAuthorizationVisible
+                                  ? "Скрыть Authorization key"
+                                  : "Показать Authorization key"
+                              }
+                            >
+                              {isAuthorizationVisible ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </div>
                         </FormControl>
                         <FormDescription>
                           Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
