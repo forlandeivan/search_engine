@@ -43,10 +43,10 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined 
 }
 
 function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbeddingProvider {
-  const { clientSecret, ...rest } = provider;
+  const { authorizationKey, ...rest } = provider;
   return {
     ...rest,
-    hasClientSecret: Boolean(clientSecret && clientSecret.length > 0),
+    hasAuthorizationKey: Boolean(authorizationKey && authorizationKey.length > 0),
   };
 }
 
@@ -335,8 +335,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (payload.isActive !== undefined) updates.isActive = payload.isActive;
       if (payload.tokenUrl !== undefined) updates.tokenUrl = payload.tokenUrl;
       if (payload.embeddingsUrl !== undefined) updates.embeddingsUrl = payload.embeddingsUrl;
-      if (payload.clientId !== undefined) updates.clientId = payload.clientId;
-      if (payload.clientSecret !== undefined) updates.clientSecret = payload.clientSecret;
+      if (payload.authorizationKey !== undefined) updates.authorizationKey = payload.authorizationKey;
       if (payload.scope !== undefined) updates.scope = payload.scope;
       if (payload.model !== undefined) updates.model = payload.model;
       if (payload.requestHeaders !== undefined) updates.requestHeaders = payload.requestHeaders;

@@ -73,8 +73,7 @@ type FormValues = {
   isActive: boolean;
   tokenUrl: string;
   embeddingsUrl: string;
-  clientId: string;
-  clientSecret: string;
+  authorizationKey: string;
   scope: string;
   model: string;
   requestHeaders: string;
@@ -87,7 +86,7 @@ const requestHeadersSchema = z.record(z.string());
 
 const defaultRequestHeaders = {
   Accept: "application/json",
-  "X-Client-Id": "<ваш client_id>",
+  "X-Client-Id": "<ваш X-Client-Id>",
 };
 
 const defaultRequestConfig = {
@@ -125,8 +124,7 @@ const defaultFormValues: FormValues = {
   isActive: true,
   tokenUrl: "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
   embeddingsUrl: "https://gigachat.devices.sberbank.ru/api/v1/embeddings",
-  clientId: "",
-  clientSecret: "",
+  authorizationKey: "",
   scope: "GIGACHAT_API_PERS",
   model: "embeddings",
   requestHeaders: formatJson(defaultRequestHeaders),
@@ -165,7 +163,7 @@ export default function EmbeddingServicesPage() {
       form.reset({
         ...form.getValues(),
         description: "",
-        clientSecret: "",
+        authorizationKey: "",
         requestHeaders: variables.formattedStrings.requestHeaders,
         requestConfig: variables.formattedStrings.requestConfig,
         responseConfig: variables.formattedStrings.responseConfig,
@@ -301,8 +299,7 @@ export default function EmbeddingServicesPage() {
         isActive: values.isActive,
         tokenUrl: values.tokenUrl.trim(),
         embeddingsUrl: values.embeddingsUrl.trim(),
-        clientId: values.clientId.trim(),
-        clientSecret: values.clientSecret,
+        authorizationKey: values.authorizationKey.trim(),
         scope: values.scope.trim(),
         model: values.model.trim(),
         requestHeaders,
@@ -465,38 +462,26 @@ export default function EmbeddingServicesPage() {
                   />
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4">
                   <FormField
                     control={form.control}
-                    name="clientId"
-                    rules={{ required: "Укажите client_id" }}
+                    name="authorizationKey"
+                    rules={{ required: "Укажите Authorization key" }}
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>OAuth client_id</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Сервисный идентификатор" required autoComplete="off" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="clientSecret"
-                    rules={{ required: "Укажите client_secret" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>OAuth client_secret</FormLabel>
+                        <FormLabel>Authorization key</FormLabel>
                         <FormControl>
                           <Input
                             {...field}
                             type="password"
-                            placeholder="Секретный ключ"
+                            placeholder="Значение заголовка Authorization"
                             required
                             autoComplete="new-password"
                           />
                         </FormControl>
+                        <FormDescription>
+                          Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -547,7 +532,7 @@ export default function EmbeddingServicesPage() {
                           {...field}
                           spellCheck={false}
                           rows={4}
-                          placeholder='{"X-Client-Id": "<ваш client_id>"}'
+                          placeholder='{"X-Client-Id": "<ваш X-Client-Id>"}'
                         />
                       </FormControl>
                       <FormDescription>
@@ -662,8 +647,9 @@ export default function EmbeddingServicesPage() {
                   <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">{defaultFormValues.tokenUrl}</code>.
                 </li>
                 <li>
-                  Использовать HTTP Basic авторизацию с парой <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">client_id:client_secret</code>
-                  и передать тело запроса <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">scope={defaultFormValues.scope}</code>.
+                  Передать заголовок <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">Authorization</code> со значением, указанным в поле
+                  Authorization key (например, <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">Basic &lt;token&gt;</code>), и тело запроса
+                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">scope={defaultFormValues.scope}</code>.
                 </li>
                 <li>
                   Полученный <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">access_token</code> использовать для обращения к
@@ -702,11 +688,11 @@ export default function EmbeddingServicesPage() {
                 Требования к сохранению данных
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3 text-sm text-muted-foreground">
-              <p>
-                Клиентские секреты хранятся в зашифрованном виде на стороне сервера и не отображаются повторно после
-                сохранения. Проверьте корректность данных до отправки формы.
-              </p>
+              <CardContent className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  Authorization ключи хранятся в зашифрованном виде на стороне сервера и не отображаются повторно после
+                  сохранения. Проверьте корректность данных до отправки формы.
+                </p>
               <p>
                 Формат JSON в полях конфигурации должен быть валидным. Используйте двойные кавычки и убедитесь, что в
                 Qdrant существует указанная коллекция или она будет создана заранее.
@@ -811,8 +797,8 @@ export default function EmbeddingServicesPage() {
                       </p>
                     </div>
                     <div>
-                      <p className="font-medium text-foreground">Статус секрета</p>
-                      <p>{provider.hasClientSecret ? "Секрет сохранён" : "Секрет не задан"}</p>
+                      <p className="font-medium text-foreground">Статус ключа</p>
+                      <p>{provider.hasAuthorizationKey ? "Ключ сохранён" : "Ключ не задан"}</p>
                     </div>
                   </div>
 
