@@ -117,7 +117,7 @@ function calculateWordCount(text?: string | null): number {
 }
 
 export default function ProjectDetailPage() {
-  const [match, params] = useRoute("/admin/projects/:siteId");
+  const [match, params] = useRoute("/projects/:siteId");
   const siteId = params?.siteId ?? null;
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -443,7 +443,7 @@ export default function ProjectDetailPage() {
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center gap-3">
         <Button asChild variant="ghost" size="sm" className="gap-2 px-2">
-          <Link href="/admin">
+          <Link href="/projects">
             <ChevronLeft className="h-4 w-4" />
             Назад к проектам
           </Link>

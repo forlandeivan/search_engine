@@ -279,7 +279,7 @@ export default function VectorCollectionsPage() {
                       <TableCell className="font-medium">
                         <div className="flex flex-col">
                           <Link
-                            href={`/admin/vector/collections/${encodeURIComponent(collection.name)}`}
+                            href={`/vector/collections/${encodeURIComponent(collection.name)}`}
                             className="text-primary hover:underline"
                           >
                             {collection.name}
@@ -304,7 +304,7 @@ export default function VectorCollectionsPage() {
                             <DropdownMenuItem
                               onSelect={(event) => {
                                 event.preventDefault();
-                                setLocation(`/admin/vector/collections/${encodeURIComponent(collection.name)}`);
+                                setLocation(`/vector/collections/${encodeURIComponent(collection.name)}`);
                               }}
                             >
                               Открыть коллекцию

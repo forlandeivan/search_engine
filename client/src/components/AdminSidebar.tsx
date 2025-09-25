@@ -18,12 +18,6 @@ import {
   Users,
   Settings,
   CreditCard,
-  BookOpen,
-  Webhook,
-  Boxes,
-  Brain,
-  Globe,
-  Database,
   ChevronLeft,
   ChevronRight,
   ShieldCheck,
@@ -94,55 +88,13 @@ export default function AdminSidebar() {
     );
   };
 
-  const sections: Array<{ label: string; items: SidebarItem[] }> = [
+  const sections: Array<{ label?: string; items: SidebarItem[] }> = [
     {
-      label: "Команда",
       items: [
         {
           title: "Пользователи",
           url: "/admin/users",
           icon: Users,
-        },
-      ],
-    },
-    {
-      label: "Поисковая платформа",
-      items: [
-        {
-          title: "Проекты",
-          url: "/admin/sites",
-          icon: Globe,
-        },
-        {
-          title: "Загрузка знаний",
-          url: "/admin/knowledge",
-          icon: Brain,
-        },
-        {
-          title: "Индексированные страницы",
-          url: "/admin/pages",
-          icon: Database,
-        },
-        {
-          title: "Векторные коллекции",
-          url: "/admin/vector/collections",
-          icon: Boxes,
-        },
-      ],
-    },
-    {
-      label: "Интеграции",
-      items: [
-        {
-          title: "Документация API",
-          url: "/admin/api",
-          icon: BookOpen,
-        },
-        {
-          title: "Вебхуки",
-          url: "/admin/webhooks",
-          icon: Webhook,
-          locked: true,
         },
       ],
     },
@@ -197,9 +149,9 @@ export default function AdminSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {sections.map((section) => (
-          <SidebarGroup key={section.label}>
-            <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
+        {sections.map((section, index) => (
+          <SidebarGroup key={section.label ?? index}>
+            {section.label ? <SidebarGroupLabel>{section.label}</SidebarGroupLabel> : null}
             <SidebarGroupContent>
               <SidebarMenu>
                 {section.items.map((item) => (

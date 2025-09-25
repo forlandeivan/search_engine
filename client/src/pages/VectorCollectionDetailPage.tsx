@@ -100,7 +100,7 @@ function formatValue(value: unknown): string {
 }
 
 export default function VectorCollectionDetailPage() {
-  const [match, params] = useRoute("/admin/vector/collections/:name");
+  const [match, params] = useRoute("/vector/collections/:name");
   const encodedName = params?.name ?? "";
   const collectionName = encodedName ? decodeURIComponent(encodedName) : null;
 
@@ -202,27 +202,27 @@ export default function VectorCollectionDetailPage() {
     },
   ];
 
-  return (
-    <div className="flex flex-col gap-6 p-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Button asChild variant="ghost" size="sm" className="gap-2 px-2">
-            <Link href="/admin/vector/collections">
-              <ChevronLeft className="h-4 w-4" />
-              Назад к коллекциям
-            </Link>
+    return (
+      <div className="flex flex-col gap-6 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Button asChild variant="ghost" size="sm" className="gap-2 px-2">
+              <Link href="/vector/collections">
+                <ChevronLeft className="h-4 w-4" />
+                Назад к коллекциям
+              </Link>
+            </Button>
+            {collection?.status && (
+              <Badge variant={statusVariants[collection.status] ?? "secondary"}>
+                {statusLabels[collection.status] ?? collection.status}
+              </Badge>
+            )}
+          </div>
+          <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Обновить
           </Button>
-          {collection?.status && (
-            <Badge variant={statusVariants[collection.status] ?? "secondary"}>
-              {statusLabels[collection.status] ?? collection.status}
-            </Badge>
-          )}
         </div>
-        <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Обновить
-        </Button>
-      </div>
 
       <div className="space-y-2">
         <h1 className="text-2xl font-bold">
