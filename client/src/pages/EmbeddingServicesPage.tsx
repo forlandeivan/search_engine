@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useForm, type FieldPath } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -46,6 +46,89 @@ import {
 } from "@shared/schema";
 
 import { AlertCircle, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+
+type DebugStage = "token-request" | "token-response" | "embedding-request" | "embedding-response";
+
+type DebugStepStatus = "idle" | "pending" | "success" | "error";
+
+type DebugStep = {
+  stage: DebugStage;
+  title: string;
+  status: DebugStepStatus;
+  detail?: string;
+};
+
+type TestCredentialsDebugStep = {
+  stage: DebugStage;
+  status: "success" | "error";
+  detail: string;
+};
+
+type TestCredentialsResult = {
+  message: string;
+  steps: TestCredentialsDebugStep[];
+};
+
+type TestCredentialsError = Error & {
+  steps?: TestCredentialsDebugStep[];
+};
+
+const debugStepDefinitions: Array<Pick<DebugStep, "stage" | "title">> = [
+  {
+    stage: "token-request",
+    title: "Запрос access_token",
+  },
+  {
+    stage: "token-response",
+    title: "Обработка ответа OAuth",
+  },
+  {
+    stage: "embedding-request",
+    title: "Запрос эмбеддингов",
+  },
+  {
+    stage: "embedding-response",
+    title: "Проверка ответа сервиса",
+  },
+];
+
+const stageOrder = debugStepDefinitions.map((step) => step.stage);
+
+const buildDebugSteps = (statusByStage?: TestCredentialsDebugStep[], fallbackToError = false): DebugStep[] => {
+  if (!statusByStage || statusByStage.length === 0) {
+    return debugStepDefinitions.map((step) => ({
+      ...step,
+      status: fallbackToError ? "error" : "idle",
+    }));
+  }
+
+  const highestIndex = Math.max(...statusByStage.map((step) => stageOrder.indexOf(step.stage)));
+  const hasError = statusByStage.some((step) => step.status === "error");
+
+  return debugStepDefinitions.map((step, index) => {
+    const matched = statusByStage.find((item) => item.stage === step.stage);
+
+    if (matched) {
+      return {
+        ...step,
+        status: matched.status,
+        detail: matched.detail,
+      } as DebugStep;
+    }
+
+    if (!hasError && index === highestIndex + 1) {
+      return {
+        ...step,
+        status: "pending",
+      } as DebugStep;
+    }
+
+    return {
+      ...step,
+      status: "idle",
+    } as DebugStep;
+  });
+};
 
 type ProvidersResponse = {
   providers: PublicEmbeddingProvider[];
@@ -141,6 +224,8 @@ export default function EmbeddingServicesPage() {
     defaultValues: defaultFormValues,
   });
 
+  const [debugSteps, setDebugSteps] = useState<DebugStep[]>(() => buildDebugSteps());
+
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/embedding/services"],
   });
@@ -202,7 +287,7 @@ export default function EmbeddingServicesPage() {
     },
   });
 
-  const testCredentialsMutation = useMutation<string, Error>({
+  const testCredentialsMutation = useMutation<TestCredentialsResult, TestCredentialsError>({
     mutationFn: async () => {
       form.clearErrors();
 
@@ -267,28 +352,89 @@ export default function EmbeddingServicesPage() {
         true,
       );
 
-      const response = await apiRequest("POST", "/api/embedding/services/test-credentials", {
-        tokenUrl,
-        embeddingsUrl,
-        authorizationKey,
-        scope,
-        model,
-        allowSelfSignedCertificate: values.allowSelfSignedCertificate,
-        requestHeaders,
-        requestConfig,
-        responseConfig,
-      });
+      setDebugSteps(
+        debugStepDefinitions.map((step, index) => ({
+          ...step,
+          status: index === 0 ? "pending" : "idle",
+        })),
+      );
 
-      const result = (await response.json()) as { message?: string };
-      return result.message ?? "Авторизация подтверждена";
+      let response: Response;
+      try {
+        response = await fetch("/api/embedding/services/test-credentials", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            tokenUrl,
+            embeddingsUrl,
+            authorizationKey,
+            scope,
+            model,
+            allowSelfSignedCertificate: values.allowSelfSignedCertificate,
+            requestHeaders,
+            requestConfig,
+            responseConfig,
+          }),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const steps: TestCredentialsDebugStep[] = [
+          {
+            stage: "token-request",
+            status: "error",
+            detail: message,
+          },
+        ];
+        setDebugSteps(buildDebugSteps(steps, true));
+        const enrichedError = new Error(`Не удалось отправить запрос: ${message}`) as TestCredentialsError;
+        enrichedError.steps = steps;
+        throw enrichedError;
+      }
+
+      const rawBody = await response.text();
+      let parsed: Partial<TestCredentialsResult> | null = null;
+
+      if (rawBody) {
+        try {
+          parsed = JSON.parse(rawBody) as Partial<TestCredentialsResult>;
+        } catch (error) {
+          console.error("Не удалось разобрать ответ проверки эмбеддингов", error);
+        }
+      }
+
+      if (!response.ok) {
+        const message = parsed?.message ?? (rawBody || response.statusText);
+        const errorSteps = Array.isArray(parsed?.steps)
+          ? (parsed?.steps as TestCredentialsDebugStep[])
+          : [];
+        setDebugSteps(errorSteps.length > 0 ? buildDebugSteps(errorSteps, true) : buildDebugSteps());
+        const enrichedError = new Error(message) as TestCredentialsError;
+        enrichedError.steps = errorSteps.length > 0 ? errorSteps : undefined;
+        throw enrichedError;
+      }
+
+      const steps = Array.isArray(parsed?.steps)
+        ? (parsed?.steps as TestCredentialsDebugStep[])
+        : [];
+      const message = parsed?.message ?? "Авторизация подтверждена";
+      setDebugSteps(buildDebugSteps(steps));
+      return { message, steps };
     },
-    onSuccess: (message) => {
+    onSuccess: (result) => {
       toast({
         title: "Авторизация подтверждена",
-        description: message,
+        description: result.message,
       });
     },
-    onError: (error: Error) => {
+    onError: (error) => {
+      if (error.steps && error.steps.length > 0) {
+        setDebugSteps(buildDebugSteps(error.steps, true));
+      } else {
+        setDebugSteps(buildDebugSteps());
+      }
       toast({
         title: "Проверка не удалась",
         description: error.message,
@@ -303,6 +449,8 @@ export default function EmbeddingServicesPage() {
     () => providers.filter((provider) => provider.isActive).length,
     [providers],
   );
+
+  const hasActiveDebugSteps = debugSteps.some((step) => step.status !== "idle");
 
   const parseJsonField = <T,>(
     value: string,
@@ -596,42 +744,82 @@ export default function EmbeddingServicesPage() {
                             autoComplete="new-password"
                           />
                         </FormControl>
-                      <FormDescription>
-                        Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
-                      </FormDescription>
-                      <div className="flex flex-wrap items-center gap-2 pt-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => testCredentialsMutation.mutate()}
-                          disabled={testCredentialsMutation.isPending}
-                        >
-                          {testCredentialsMutation.isPending ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверяем...
-                            </>
-                          ) : (
-                            <>
-                              <ShieldCheck className="mr-2 h-4 w-4" /> Проверить авторизацию
-                            </>
-                          )}
-                        </Button>
-                        {testCredentialsMutation.isSuccess && !testCredentialsMutation.isPending ? (
-                          <span className="flex items-center gap-1 text-sm text-emerald-600">
-                            <ShieldCheck className="h-4 w-4" /> {testCredentialsMutation.data}
-                          </span>
-                        ) : null}
-                        {testCredentialsMutation.isError && !testCredentialsMutation.isPending ? (
-                          <span className="flex items-center gap-1 text-sm text-destructive">
-                            <AlertCircle className="h-4 w-4" /> {testCredentialsMutation.error?.message}
-                          </span>
-                        ) : null}
-                      </div>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                        <FormDescription>
+                          Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
+                        </FormDescription>
+                        <div className="flex flex-col gap-3 pt-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => testCredentialsMutation.mutate()}
+                              disabled={testCredentialsMutation.isPending}
+                            >
+                              {testCredentialsMutation.isPending ? (
+                                <>
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверяем...
+                                </>
+                              ) : (
+                                <>
+                                  <ShieldCheck className="mr-2 h-4 w-4" /> Проверить авторизацию
+                                </>
+                              )}
+                            </Button>
+                            {testCredentialsMutation.isSuccess && !testCredentialsMutation.isPending ? (
+                              <span className="flex items-center gap-1 text-sm text-emerald-600">
+                                <ShieldCheck className="h-4 w-4" /> {testCredentialsMutation.data?.message}
+                              </span>
+                            ) : null}
+                            {testCredentialsMutation.isError && !testCredentialsMutation.isPending ? (
+                              <span className="flex items-center gap-1 text-sm text-destructive">
+                                <AlertCircle className="h-4 w-4" /> {testCredentialsMutation.error?.message}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          {hasActiveDebugSteps ? (
+                            <div className="rounded-lg border bg-muted/50 p-4">
+                              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                Ход проверки
+                              </p>
+                              <div className="mt-3 space-y-2">
+                                {debugSteps.map((step) => {
+                                  const statusColor =
+                                    step.status === "error"
+                                      ? "text-destructive"
+                                      : step.status === "success"
+                                        ? "text-emerald-600"
+                                        : "text-muted-foreground";
+
+                                  return (
+                                    <div key={step.stage} className="flex items-start gap-2 text-sm">
+                                      {step.status === "pending" ? (
+                                        <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-muted-foreground" />
+                                      ) : step.status === "success" ? (
+                                        <ShieldCheck className="mt-0.5 h-4 w-4 text-emerald-600" />
+                                      ) : step.status === "error" ? (
+                                        <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
+                                      ) : (
+                                        <Sparkles className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                                      )}
+                                      <div className="space-y-1">
+                                        <div className={`font-medium ${statusColor}`}>{step.title}</div>
+                                        {step.detail ? (
+                                          <div className={`text-sm ${statusColor}`}>{step.detail}</div>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
