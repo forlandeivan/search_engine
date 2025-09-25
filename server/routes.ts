@@ -6,6 +6,7 @@ import fetch, {
   type Response as FetchResponse,
   type RequestInit as FetchRequestInit,
 } from "node-fetch";
+import { randomUUID } from "crypto";
 import { Agent as HttpsAgent } from "https";
 import { storage } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
@@ -488,6 +489,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       tokenHeaders.set("Authorization", authorizationHeader);
       tokenHeaders.set("Content-Type", "application/x-www-form-urlencoded");
       tokenHeaders.set("Accept", "application/json");
+
+      if (!tokenHeaders.has("RqUID")) {
+        tokenHeaders.set("RqUID", randomUUID());
+      }
 
       for (const [key, value] of Object.entries(payload.requestHeaders)) {
         tokenHeaders.set(key, value);
