@@ -349,6 +349,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           headers,
           body: new URLSearchParams({ scope: payload.scope }).toString(),
         });
+codex/extract-json-values-as-template-variables-e7gmzw
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        let message = "Не удалось подключиться к сервису эмбеддингов";
+        if (errorMessage) {
+          message += ": " + errorMessage;
+        }
+
+        return res.status(502).send(message);
+
  codex/extract-json-values-as-template-variables-78uheh
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
