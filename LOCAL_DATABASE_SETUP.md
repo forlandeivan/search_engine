@@ -145,10 +145,26 @@ curl "http://localhost:5000/api/search?q=example"
    - `frequency`, `position` (integer) - частота и позиция термина
    - `relevance` (double precision) - релевантность термина
 
-4. **users** - Пользователи (для будущих админ функций)
+4. **embedding_providers** - Настройки сервисов эмбеддингов
+   - `id` (UUID) - уникальный идентификатор сервиса
+   - `name` (text) - отображаемое название интеграции
+   - `provider_type` (text) - тип провайдера (например, `gigachat` или `custom`)
+   - `is_active` (boolean) - флаг активности сервиса
+   - `token_url` (text) - эндпоинт получения access token
+   - `embeddings_url` (text) - эндпоинт генерации эмбеддингов
+   - `authorization_key` (text) - дополнительный ключ авторизации
+   - `scope` (text) - OAuth scope
+   - `model` (text) - идентификатор модели
+   - `allow_self_signed_certificate` (boolean) - разрешение на самоподписанные сертификаты
+   - `request_headers`, `request_config`, `response_config`, `qdrant_config` (jsonb) - расширенные настройки интеграции
+
+5. **users** - Пользователи (для будущих админ функций)
    - `id` (UUID) - уникальный идентификатор
-   - `username` (text) - имя пользователя
-   - `password` (text) - хешированный пароль
+   - `email` (text) - логин пользователя
+   - `password_hash` (text) - хешированный пароль
+   - `full_name` (text) - отображаемое имя
+   - `role` (text) - роль (`admin` или `user`)
+   - `last_active_at` (timestamp) - последняя активность
 
 ### Ключевые особенности:
 
