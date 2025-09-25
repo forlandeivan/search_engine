@@ -76,7 +76,6 @@ type FormValues = {
   authorizationKey: string;
   scope: string;
   model: string;
-  allowSelfSigned: boolean;
   requestHeaders: string;
   requestConfig: string;
   responseConfig: string;
@@ -127,7 +126,6 @@ const defaultFormValues: FormValues = {
   authorizationKey: "",
   scope: "GIGACHAT_API_PERS",
   model: "embeddings",
-  allowSelfSigned: false,
   requestHeaders: formatJson(defaultRequestHeaders),
   requestConfig: formatJson(defaultRequestConfig),
   responseConfig: formatJson(defaultResponseConfig),
@@ -212,7 +210,6 @@ export default function EmbeddingServicesPage() {
       const authorizationKey = values.authorizationKey.trim();
       const scope = values.scope.trim();
       const model = values.model.trim();
-      const allowSelfSigned = values.allowSelfSigned;
 
       if (!tokenUrl) {
         const message = "Укажите endpoint для получения токена";
@@ -277,7 +274,6 @@ export default function EmbeddingServicesPage() {
         requestHeaders,
         requestConfig,
         responseConfig,
-        allowSelfSigned,
       });
 
       const result = (await response.json()) as { message?: string };
@@ -399,7 +395,6 @@ export default function EmbeddingServicesPage() {
         authorizationKey: values.authorizationKey.trim(),
         scope: values.scope.trim(),
         model: values.model.trim(),
-        allowSelfSigned: values.allowSelfSigned,
         requestHeaders,
         requestConfig,
         responseConfig,
@@ -515,25 +510,6 @@ export default function EmbeddingServicesPage() {
                         <FormLabel className="text-base">Активировать сразу</FormLabel>
                         <FormDescription>
                           Если выключить, сервис сохранится в черновиках и не будет использоваться пользователями.
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="allowSelfSigned"
-                  render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-lg border p-4">
-                      <div className="space-y-1">
-                        <FormLabel className="text-base">Разрешить самоподписанные сертификаты</FormLabel>
-                        <FormDescription>
-                          Отключает проверку TLS-сертификата. Используйте только в доверенных сетях или при работе с
-                          корпоративными шлюзами.
                         </FormDescription>
                       </div>
                       <FormControl>
@@ -950,14 +926,6 @@ export default function EmbeddingServicesPage() {
                     <div>
                       <p className="font-medium text-foreground">Статус ключа</p>
                       <p>{provider.hasAuthorizationKey ? "Ключ сохранён" : "Ключ не задан"}</p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">TLS-проверка</p>
-                      <p>
-                        {provider.allowSelfSigned
-                          ? "Проверка сертификата отключена"
-                          : "Строгая проверка сертификата"}
-                      </p>
                     </div>
                   </div>
 

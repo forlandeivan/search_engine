@@ -2,7 +2,6 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import fetch, { Headers, type Response as FetchResponse } from "node-fetch";
-import https from "node:https";
 import { storage } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
 import { z } from "zod";
@@ -122,7 +121,6 @@ const testEmbeddingCredentialsSchema = z.object({
   requestHeaders: z.record(z.string()).default({}),
   requestConfig: embeddingRequestConfigSchema.optional(),
   responseConfig: embeddingResponseConfigSchema.optional(),
-  allowSelfSigned: z.boolean().optional().default(false),
 });
 
 const TEST_EMBEDDING_TEXT = "привет!";
@@ -436,11 +434,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/embedding/services/test-credentials", requireAdmin, async (req, res, next) => {
     try {
       const payload = testEmbeddingCredentialsSchema.parse(req.body);
+      const requestConfig =
+        payload.requestConfig ?? embeddingRequestConfigSchema.parse(undefined);
+      const responseConfig =
+        payload.responseConfig ?? embeddingResponseConfigSchema.parse(undefined);
       const requestConfig = embeddingRequestConfigSchema.parse(payload.requestConfig ?? {});
       const responseConfig = embeddingResponseConfigSchema.parse(payload.responseConfig ?? {});
-      const tlsAgent = payload.allowSelfSigned
-        ? new https.Agent({ rejectUnauthorized: false })
-        : undefined;
+main
 
       const tokenHeaders = new Headers();
       tokenHeaders.set("Authorization", payload.authorizationKey);
@@ -457,7 +457,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           method: "POST",
           headers: tokenHeaders,
           body: new URLSearchParams({ scope: payload.scope }).toString(),
-          agent: tlsAgent,
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -488,10 +487,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const messageParts = ["Соединение установлено."];
-
-      if (payload.allowSelfSigned) {
-        messageParts.push("Проверка TLS-сертификата отключена (разрешены самоподписанные сертификаты).");
-      }
 
       let accessToken: string | undefined;
       if (parsedBody && typeof parsedBody === "object") {
@@ -532,12 +527,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const embeddingBody = createEmbeddingRequestBody(requestConfig, payload.model, TEST_EMBEDDING_TEXT);
 
       let embeddingResponse: FetchResponse;
+
+      let embeddingResponse: globalThis.Response;
+main
       try {
         embeddingResponse = await fetch(payload.embeddingsUrl, {
           method: "POST",
           headers: embeddingHeaders,
           body: JSON.stringify(embeddingBody),
-          agent: tlsAgent,
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -618,7 +615,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (payload.authorizationKey !== undefined) updates.authorizationKey = payload.authorizationKey;
       if (payload.scope !== undefined) updates.scope = payload.scope;
       if (payload.model !== undefined) updates.model = payload.model;
-      if (payload.allowSelfSigned !== undefined) updates.allowSelfSigned = payload.allowSelfSigned;
       if (payload.requestHeaders !== undefined) updates.requestHeaders = payload.requestHeaders;
       if (payload.requestConfig !== undefined) updates.requestConfig = payload.requestConfig;
       if (payload.responseConfig !== undefined) updates.responseConfig = payload.responseConfig;
