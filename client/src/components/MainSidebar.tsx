@@ -155,14 +155,14 @@ export default function MainSidebar({ showAdminLink = false }: MainSidebarProps)
         },
         {
           title: "Проекты",
-          url: "/admin/sites",
+          url: "/projects",
           icon: Globe,
           badge: sites ? sites.length.toString() : "0",
           badgeVariant: "secondary",
         },
         {
           title: "Загрузка знаний",
-          url: "/admin/knowledge",
+          url: "/knowledge",
           icon: Brain,
         },
       ],
@@ -172,26 +172,26 @@ export default function MainSidebar({ showAdminLink = false }: MainSidebarProps)
       items: [
         {
           title: "Индексированные страницы",
-          url: "/admin/pages",
+          url: "/pages",
           icon: Database,
           badge: stats?.pages ? stats.pages.total.toString() : "0",
           badgeVariant: "default",
         },
         {
           title: "Статистика каулинга",
-          url: "/admin/stats",
+          url: "/stats",
           icon: Activity,
           locked: true,
         },
         {
           title: "Расписание",
-          url: "/admin/schedule",
+          url: "/schedule",
           icon: Calendar,
           locked: true,
         },
         {
           title: "Вебхуки",
-          url: "/admin/webhooks",
+          url: "/integrations/webhooks",
           icon: Webhook,
           locked: true,
         },
@@ -202,7 +202,7 @@ export default function MainSidebar({ showAdminLink = false }: MainSidebarProps)
       items: [
         {
           title: "Коллекции",
-          url: "/admin/vector/collections",
+          url: "/vector/collections",
           icon: Boxes,
         },
       ],
@@ -212,12 +212,12 @@ export default function MainSidebar({ showAdminLink = false }: MainSidebarProps)
       items: [
         {
           title: "Документация API",
-          url: "/admin/api",
+          url: "/integrations/api",
           icon: BookOpen,
         },
         {
           title: "Настройки",
-          url: "/admin/settings",
+          url: "/settings",
           icon: Settings,
           locked: true,
         },

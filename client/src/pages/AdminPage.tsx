@@ -357,7 +357,7 @@ export default function AdminPage() {
                   maxChunkSize={status.maxChunkSize}
                   chunkOverlap={status.chunkOverlap}
                   chunkOverlapSize={status.chunkOverlapSize}
-                  href={`/admin/projects/${status.id}`}
+                  href={`/projects/${status.id}`}
                   onStart={handleStartCrawl}
                   onStop={handleStopCrawl}
                   onRetry={handleRetryCrawl}
@@ -404,7 +404,7 @@ export default function AdminPage() {
                   maxChunkSize={status.maxChunkSize}
                   chunkOverlap={status.chunkOverlap}
                   chunkOverlapSize={status.chunkOverlapSize}
-                  href={`/admin/projects/${status.id}`}
+                  href={`/projects/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
@@ -434,7 +434,7 @@ export default function AdminPage() {
                   maxChunkSize={status.maxChunkSize}
                   chunkOverlap={status.chunkOverlap}
                   chunkOverlapSize={status.chunkOverlapSize}
-                  href={`/admin/projects/${status.id}`}
+                  href={`/projects/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}
@@ -464,7 +464,7 @@ export default function AdminPage() {
                   maxChunkSize={status.maxChunkSize}
                   chunkOverlap={status.chunkOverlap}
                   chunkOverlapSize={status.chunkOverlapSize}
-                  href={`/admin/projects/${status.id}`}
+                  href={`/projects/${status.id}`}
                 onStart={handleStartCrawl}
                 onStop={handleStopCrawl}
                 onRetry={handleRetryCrawl}

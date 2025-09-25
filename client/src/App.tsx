@@ -28,14 +28,6 @@ function AdminRouter() {
   return (
     <Switch>
       <Route path="/admin/users" component={AdminUsersPage} />
-      <Route path="/admin/sites" component={AdminPage} />
-      <Route path="/admin/projects/:siteId" component={ProjectDetailPage} />
-      <Route path="/admin/pages" component={PagesPage} />
-      <Route path="/admin/knowledge" component={KnowledgeBasePage} />
-      <Route path="/admin/vector/collections/:name" component={VectorCollectionDetailPage} />
-      <Route path="/admin/vector/collections" component={VectorCollectionsPage} />
-      <Route path="/admin/api" component={TildaApiPage} />
-      <Route path="/admin/:tab" component={AdminPage} />
       <Route path="/admin" component={AdminUsersPage} />
       <Route component={NotFound} />
     </Switch>
@@ -45,6 +37,13 @@ function AdminRouter() {
 function MainRouter() {
   return (
     <Switch>
+      <Route path="/projects/:siteId" component={ProjectDetailPage} />
+      <Route path="/projects" component={AdminPage} />
+      <Route path="/knowledge" component={KnowledgeBasePage} />
+      <Route path="/pages" component={PagesPage} />
+      <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
+      <Route path="/vector/collections" component={VectorCollectionsPage} />
+      <Route path="/integrations/api" component={TildaApiPage} />
       <Route path="/" component={SearchPage} />
       <Route component={NotFound} />
     </Switch>
