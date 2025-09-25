@@ -461,6 +461,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const requestConfig = embeddingRequestConfigSchema.parse(payload.requestConfig ?? {});
       const responseConfig = embeddingResponseConfigSchema.parse(payload.responseConfig ?? {});
 
+      type CredentialDebugStage =
+        | "token-request"
+        | "token-response"
+        | "embedding-request"
+        | "embedding-response";
+
+      type CredentialDebugStep = {
+        stage: CredentialDebugStage;
+        status: "success" | "error";
+        detail: string;
+      };
+
+      const debugSteps: CredentialDebugStep[] = [];
+
+      const respondWithError = (status: number, message: string) => {
+        return res.status(status).json({ message, steps: debugSteps });
+      };
+
       const tokenHeaders = new Headers();
       const rawAuthorizationKey = payload.authorizationKey.trim();
       const hasAuthScheme = /^(?:[A-Za-z]+)\s+\S+/.test(rawAuthorizationKey);
@@ -491,6 +509,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           payload.allowSelfSignedCertificate,
         );
         tokenResponse = await fetch(payload.tokenUrl, tokenRequestOptions);
+        debugSteps.push({
+          stage: "token-request",
+          status: "success",
+          detail: `POST ${payload.tokenUrl} (scope: ${payload.scope})`,
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const details = errorMessage ? `: ${errorMessage}` : "";
@@ -498,13 +521,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
           !payload.allowSelfSignedCertificate &&
           details.includes("self-signed certificate")
         ) {
-          return res.status(502).send(
-            "Не удалось подключиться к сервису эмбеддингов: сертификат не прошёл проверку. Включите опцию доверия самоподписанным сертификатам и повторите попытку.",
-          );
+          const message =
+            "Не удалось подключиться к сервису эмбеддингов: сертификат не прошёл проверку. Включите опцию доверия самоподписанным сертификатам и повторите попытку.";
+          debugSteps.push({
+            stage: "token-request",
+            status: "error",
+            detail: message,
+          });
+          return respondWithError(502, message);
         }
-        return res
-          .status(502)
-          .send(`Не удалось подключиться к сервису эмбеддингов${details}`);
+        const message = `Не удалось подключиться к сервису эмбеддингов${details}`;
+        debugSteps.push({
+          stage: "token-request",
+          status: "error",
+          detail: message,
+        });
+        return respondWithError(502, message);
       }
 
       const rawBody = await tokenResponse.text();
@@ -524,7 +556,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message = parsedBody.trim();
         }
 
-        return res.status(400).send(message);
+        debugSteps.push({
+          stage: "token-response",
+          status: "error",
+          detail: message,
+        });
+        return respondWithError(400, `Ошибка на этапе получения токена: ${message}`);
       }
 
       const messageParts = ["Соединение установлено."];
@@ -540,6 +577,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (typeof body.access_token === "string" && body.access_token.trim()) {
           accessToken = body.access_token;
           messageParts.push("Получен access_token.");
+          debugSteps.push({
+            stage: "token-response",
+            status: "success",
+            detail: `Статус ${tokenResponse.status}. Получен access_token.`,
+          });
         }
 
         if (typeof body.expires_in === "number") {
@@ -554,7 +596,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (!accessToken) {
-        return res.status(400).send("Сервис не вернул access_token");
+        const message = "Сервис не вернул access_token";
+        debugSteps.push({
+          stage: "token-response",
+          status: "error",
+          detail: message,
+        });
+        return respondWithError(400, `Ошибка на этапе получения токена: ${message}`);
       }
 
       const embeddingHeaders = new Headers();
@@ -582,12 +630,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           payload.allowSelfSignedCertificate,
         );
         embeddingResponse = await fetch(payload.embeddingsUrl, embeddingRequestOptions);
+        debugSteps.push({
+          stage: "embedding-request",
+          status: "success",
+          detail: `POST ${payload.embeddingsUrl} (model: ${payload.model})`,
+        });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const details = errorMessage ? `: ${errorMessage}` : "";
-        return res
-          .status(502)
-          .send(`Не удалось выполнить запрос к сервису эмбеддингов${details}`);
+        const message = `Не удалось выполнить запрос к сервису эмбеддингов${details}`;
+        debugSteps.push({
+          stage: "embedding-request",
+          status: "error",
+          detail: message,
+        });
+        return respondWithError(502, message);
       }
 
       const embeddingsRawBody = await embeddingResponse.text();
@@ -607,23 +664,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message = embeddingsParsedBody.trim();
         }
 
-        return res.status(400).send(message);
+        debugSteps.push({
+          stage: "embedding-response",
+          status: "error",
+          detail: message,
+        });
+        return respondWithError(400, `Ошибка на этапе получения вектора: ${message}`);
       }
 
       if (!embeddingsParsedBody || typeof embeddingsParsedBody !== "object") {
-        return res.status(400).send("Не удалось разобрать ответ сервиса эмбеддингов");
+        const message = "Не удалось разобрать ответ сервиса эмбеддингов";
+        debugSteps.push({
+          stage: "embedding-response",
+          status: "error",
+          detail: message,
+        });
+        return respondWithError(400, `Ошибка на этапе получения вектора: ${message}`);
       }
 
       const vectorValue = getValueByPath(embeddingsParsedBody, responseConfig.vectorPath);
       const vector = ensureNumberArray(vectorValue);
 
       if (!vector || vector.length === 0) {
-        return res
-          .status(400)
-          .send("Не удалось получить числовой вектор из ответа сервиса");
+        const message = "Не удалось получить числовой вектор из ответа сервиса";
+        debugSteps.push({
+          stage: "embedding-response",
+          status: "error",
+          detail: message,
+        });
+        return respondWithError(400, `Ошибка на этапе получения вектора: ${message}`);
       }
 
       messageParts.push(`Получен вектор длиной ${vector.length}.`);
+      debugSteps.push({
+        stage: "embedding-response",
+        status: "success",
+        detail: `Статус ${embeddingResponse.status}. Вектор длиной ${vector.length}.`,
+      });
 
       if (responseConfig.usageTokensPath) {
         const usageValue = getValueByPath(embeddingsParsedBody, responseConfig.usageTokensPath);
@@ -635,7 +712,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      res.json({ message: messageParts.join(" ") });
+      res.json({ message: messageParts.join(" "), steps: debugSteps });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Некорректные данные", details: error.issues });
