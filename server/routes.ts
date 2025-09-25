@@ -9,7 +9,15 @@ import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
 import passport from "passport";
 import bcrypt from "bcryptjs";
-import { registerUserSchema, type PublicUser, userRoles } from "@shared/schema";
+import {
+  registerUserSchema,
+  type PublicUser,
+  userRoles,
+  insertEmbeddingProviderSchema,
+  updateEmbeddingProviderSchema,
+  type PublicEmbeddingProvider,
+  type EmbeddingProvider,
+} from "@shared/schema";
 import { requireAuth, requireAdmin, getSessionUser, toPublicUser } from "./auth";
 
 function getErrorDetails(error: unknown): string {
@@ -32,6 +40,14 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined 
   }
 
   return user;
+}
+
+function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbeddingProvider {
+  const { clientSecret, ...rest } = provider;
+  return {
+    ...rest,
+    hasClientSecret: Boolean(clientSecret && clientSecret.length > 0),
+  };
 }
 
 // Bulk delete schema
@@ -275,6 +291,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Некорректные данные", details: error.issues });
       }
 
+      next(error);
+    }
+  });
+
+  app.get("/api/embedding/services", requireAdmin, async (_req, res, next) => {
+    try {
+      const providers = await storage.listEmbeddingProviders();
+      res.json({ providers: providers.map(toPublicEmbeddingProvider) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/embedding/services", requireAdmin, async (req, res, next) => {
+    try {
+      const payload = insertEmbeddingProviderSchema.parse(req.body);
+      const provider = await storage.createEmbeddingProvider({
+        ...payload,
+        description: payload.description ?? null,
+      });
+
+      res.status(201).json({ provider: toPublicEmbeddingProvider(provider) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      next(error);
+    }
+  });
+
+  app.put("/api/embedding/services/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const providerId = req.params.id;
+      const payload = updateEmbeddingProviderSchema.parse(req.body);
+
+      const updates: Partial<EmbeddingProvider> = {};
+
+      if (payload.name !== undefined) updates.name = payload.name;
+      if (payload.providerType !== undefined) updates.providerType = payload.providerType;
+      if (payload.description !== undefined) updates.description = payload.description ?? null;
+      if (payload.isActive !== undefined) updates.isActive = payload.isActive;
+      if (payload.tokenUrl !== undefined) updates.tokenUrl = payload.tokenUrl;
+      if (payload.embeddingsUrl !== undefined) updates.embeddingsUrl = payload.embeddingsUrl;
+      if (payload.clientId !== undefined) updates.clientId = payload.clientId;
+      if (payload.clientSecret !== undefined) updates.clientSecret = payload.clientSecret;
+      if (payload.scope !== undefined) updates.scope = payload.scope;
+      if (payload.model !== undefined) updates.model = payload.model;
+      if (payload.requestHeaders !== undefined) updates.requestHeaders = payload.requestHeaders;
+      if (payload.requestConfig !== undefined) updates.requestConfig = payload.requestConfig;
+      if (payload.responseConfig !== undefined) updates.responseConfig = payload.responseConfig;
+      if (payload.qdrantConfig !== undefined) updates.qdrantConfig = payload.qdrantConfig;
+
+      const updated = await storage.updateEmbeddingProvider(providerId, updates);
+      if (!updated) {
+        return res.status(404).json({ message: "Сервис не найден" });
+      }
+
+      res.json({ provider: toPublicEmbeddingProvider(updated) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      next(error);
+    }
+  });
+
+  app.delete("/api/embedding/services/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const deleted = await storage.deleteEmbeddingProvider(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ message: "Сервис не найден" });
+      }
+
+      res.status(204).send();
+    } catch (error) {
       next(error);
     }
   });

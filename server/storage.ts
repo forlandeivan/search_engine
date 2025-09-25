@@ -3,6 +3,7 @@ import {
   pages,
   searchIndex,
   users,
+  embeddingProviders,
   type Site,
   type SiteInsert,
   type Page,
@@ -11,6 +12,8 @@ import {
   type InsertSearchIndexEntry,
   type User,
   type InsertUser,
+  type EmbeddingProvider,
+  type EmbeddingProviderInsert,
 } from "@shared/schema";
 import { db } from "./db";
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
@@ -57,6 +60,16 @@ export interface IStorage {
   listUsers(): Promise<User[]>;
   updateUserRole(userId: string, role: User["role"]): Promise<User | undefined>;
   recordUserActivity(userId: string): Promise<User | undefined>;
+
+  // Embedding services
+  listEmbeddingProviders(): Promise<EmbeddingProvider[]>;
+  getEmbeddingProvider(id: string): Promise<EmbeddingProvider | undefined>;
+  createEmbeddingProvider(provider: EmbeddingProviderInsert): Promise<EmbeddingProvider>;
+  updateEmbeddingProvider(
+    id: string,
+    updates: Partial<EmbeddingProviderInsert>,
+  ): Promise<EmbeddingProvider | undefined>;
+  deleteEmbeddingProvider(id: string): Promise<boolean>;
 }
 
 function buildWhereClause(conditions: SQL[]): SQL {
@@ -526,6 +539,50 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  async listEmbeddingProviders(): Promise<EmbeddingProvider[]> {
+    return await this.db.select().from(embeddingProviders).orderBy(desc(embeddingProviders.createdAt));
+  }
+
+  async getEmbeddingProvider(id: string): Promise<EmbeddingProvider | undefined> {
+    const [provider] = await this.db.select().from(embeddingProviders).where(eq(embeddingProviders.id, id));
+    return provider ?? undefined;
+  }
+
+  async createEmbeddingProvider(provider: EmbeddingProviderInsert): Promise<EmbeddingProvider> {
+    const [created] = await this.db.insert(embeddingProviders).values(provider).returning();
+    return created;
+  }
+
+  async updateEmbeddingProvider(
+    id: string,
+    updates: Partial<EmbeddingProviderInsert>,
+  ): Promise<EmbeddingProvider | undefined> {
+    const sanitizedUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([, value]) => value !== undefined),
+    ) as Partial<EmbeddingProviderInsert>;
+
+    if (Object.keys(sanitizedUpdates).length === 0) {
+      return await this.getEmbeddingProvider(id);
+    }
+
+    const [updated] = await this.db
+      .update(embeddingProviders)
+      .set({ ...sanitizedUpdates, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(embeddingProviders.id, id))
+      .returning();
+
+    return updated ?? undefined;
+  }
+
+  async deleteEmbeddingProvider(id: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(embeddingProviders)
+      .where(eq(embeddingProviders.id, id))
+      .returning({ id: embeddingProviders.id });
+
+    return deleted.length > 0;
+  }
+
   async getUser(id: string): Promise<User | undefined> {
     await this.ensureUserAuthColumns();
     const [user] = await this.db.select().from(users).where(eq(users.id, id));
@@ -755,6 +812,38 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await db.execute(sql`
       ALTER TABLE "sites"
       ADD COLUMN IF NOT EXISTS "chunk_overlap" boolean DEFAULT FALSE
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "embedding_providers" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" text NOT NULL,
+        "provider_type" text NOT NULL DEFAULT 'gigachat',
+        "description" text,
+        "is_active" boolean NOT NULL DEFAULT true,
+        "token_url" text NOT NULL,
+        "embeddings_url" text NOT NULL,
+        "client_id" text NOT NULL,
+        "client_secret" text NOT NULL,
+        "scope" text NOT NULL,
+        "model" text NOT NULL,
+        "request_headers" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "request_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "response_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "qdrant_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "embedding_providers_active_idx"
+        ON "embedding_providers" ("is_active")
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "embedding_providers_provider_type_idx"
+        ON "embedding_providers" ("provider_type")
     `);
 
     await db.execute(sql`

@@ -16,11 +16,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   Users,
-  Settings,
-  CreditCard,
+  Sparkles,
   ChevronLeft,
   ChevronRight,
-  ShieldCheck,
   ArrowLeft,
   HardDrive,
 } from "lucide-react";
@@ -102,7 +100,7 @@ export default function AdminSidebar() {
       ],
     },
     {
-      label: "Настройки",
+      label: "Векторный поиск",
       items: [
         {
           title: "Настройки хранилища",
@@ -110,22 +108,9 @@ export default function AdminSidebar() {
           icon: HardDrive,
         },
         {
-          title: "Общие настройки",
-          url: "/admin/settings",
-          icon: Settings,
-          locked: true,
-        },
-        {
-          title: "Биллинг",
-          url: "/admin/billing",
-          icon: CreditCard,
-          locked: true,
-        },
-        {
-          title: "Роли и права",
-          url: "/admin/roles",
-          icon: ShieldCheck,
-          locked: true,
+          title: "Эмбеддинги",
+          url: "/admin/embeddings",
+          icon: Sparkles,
         },
       ],
     },
