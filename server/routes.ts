@@ -462,7 +462,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const responseConfig = embeddingResponseConfigSchema.parse(payload.responseConfig ?? {});
 
       const tokenHeaders = new Headers();
-      tokenHeaders.set("Authorization", payload.authorizationKey);
+      const rawAuthorizationKey = payload.authorizationKey.trim();
+      const hasAuthScheme = /^(?:[A-Za-z]+)\s+\S+/.test(rawAuthorizationKey);
+      const authorizationHeader = hasAuthScheme
+        ? rawAuthorizationKey
+        : `Basic ${rawAuthorizationKey}`;
+      tokenHeaders.set("Authorization", authorizationHeader);
       tokenHeaders.set("Content-Type", "application/x-www-form-urlencoded");
       tokenHeaders.set("Accept", "application/json");
 
