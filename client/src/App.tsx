@@ -14,6 +14,7 @@ import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
 import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
 import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
+import AdminUsersPage from "@/pages/AdminUsersPage";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
 import { Loader2 } from "lucide-react";
@@ -22,11 +23,11 @@ import { useToast } from "@/hooks/use-toast";
 import type { PublicUser } from "@shared/schema";
 import type { CSSProperties } from "react";
 
-function Router() {
+function AdminRouter() {
   return (
     <Switch>
       <Route path="/" component={SearchPage} />
-      <Route path="/admin" component={AdminPage} />
+      <Route path="/admin/users" component={AdminUsersPage} />
       <Route path="/admin/sites" component={AdminPage} />
       <Route path="/admin/projects/:siteId" component={ProjectDetailPage} />
       <Route path="/admin/pages" component={PagesPage} />
@@ -35,6 +36,33 @@ function Router() {
       <Route path="/admin/vector/collections" component={VectorCollectionsPage} />
       <Route path="/admin/api" component={TildaApiPage} />
       <Route path="/admin/:tab" component={AdminPage} />
+      <Route path="/admin" component={AdminUsersPage} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+function UnauthorizedPage() {
+  return (
+    <div className="p-6 space-y-2">
+      <h1 className="text-2xl font-semibold">Недостаточно прав</h1>
+      <p className="text-muted-foreground">
+        У вас нет доступа к административной панели. Обратитесь к администратору для получения прав.
+      </p>
+    </div>
+  );
+}
+
+function UserRouter() {
+  return (
+    <Switch>
+      <Route path="/" component={SearchPage} />
+      <Route path="/admin/:rest*">
+        <UnauthorizedPage />
+      </Route>
+      <Route path="/admin">
+        <UnauthorizedPage />
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
@@ -95,7 +123,7 @@ function HeaderUserArea({ user }: { user: PublicUser }) {
   );
 }
 
-function AppShell({ user }: { user: PublicUser }) {
+function AdminAppShell({ user }: { user: PublicUser }) {
   const style = {
     "--sidebar-width": "20rem",
     "--sidebar-width-icon": "4rem",
@@ -111,11 +139,25 @@ function AppShell({ user }: { user: PublicUser }) {
             <HeaderUserArea user={user} />
           </header>
           <main className="flex-1 overflow-auto">
-            <Router />
+            <AdminRouter />
           </main>
         </div>
       </div>
     </SidebarProvider>
+  );
+}
+
+function UserAppShell({ user }: { user: PublicUser }) {
+  return (
+    <div className="min-h-screen flex flex-col">
+      <header className="flex items-center justify-between p-4 border-b gap-2">
+        <span className="text-lg font-semibold">Поисковая панель</span>
+        <HeaderUserArea user={user} />
+      </header>
+      <main className="flex-1 overflow-auto">
+        <UserRouter />
+      </main>
+    </div>
   );
 }
 
@@ -136,7 +178,13 @@ function AppContent() {
     return <AuthPage />;
   }
 
-  return <AppShell user={session.user} />;
+  const { user } = session;
+
+  if (user.role === "admin") {
+    return <AdminAppShell user={user} />;
+  }
+
+  return <UserAppShell user={user} />;
 }
 
 function App() {

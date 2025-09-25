@@ -74,8 +74,9 @@ export function configureAuth(app: Express) {
           if (!isValid) {
             return done(null, false, { message: "Неверный email или пароль" });
           }
+          const updatedUser = await storage.recordUserActivity(user.id);
 
-          return done(null, toPublicUser(user));
+          return done(null, toPublicUser(updatedUser ?? user));
         } catch (error) {
           return done(error as Error);
         }
@@ -84,14 +85,42 @@ export function configureAuth(app: Express) {
   );
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (req.isAuthenticated && req.isAuthenticated()) {
-    return next();
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (!req.isAuthenticated || !req.isAuthenticated()) {
+    res.status(401).json({ message: "Требуется авторизация" });
+    return;
   }
 
-  res.status(401).json({ message: "Требуется авторизация" });
+  try {
+    const user = req.user;
+    if (user?.id) {
+      const updatedUser = await storage.recordUserActivity(user.id);
+      if (updatedUser) {
+        req.user = toPublicUser(updatedUser);
+      }
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
 export function getSessionUser(req: Request): PublicUser | null {
   return req.user ?? null;
+}
+
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.isAuthenticated || !req.isAuthenticated()) {
+    res.status(401).json({ message: "Требуется авторизация" });
+    return;
+  }
+
+  const user = req.user;
+  if (!user || user.role !== "admin") {
+    res.status(403).json({ message: "Недостаточно прав" });
+    return;
+  }
+
+  next();
 }

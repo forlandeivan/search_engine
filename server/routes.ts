@@ -9,8 +9,8 @@ import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
 import passport from "passport";
 import bcrypt from "bcryptjs";
-import { registerUserSchema, type PublicUser } from "@shared/schema";
-import { requireAuth, getSessionUser, toPublicUser } from "./auth";
+import { registerUserSchema, type PublicUser, userRoles } from "@shared/schema";
+import { requireAuth, requireAdmin, getSessionUser, toPublicUser } from "./auth";
 
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
@@ -155,13 +155,23 @@ interface PublicSearchResponse {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  app.get("/api/auth/session", (req, res) => {
-    const user = getSessionUser(req);
-    if (!user) {
-      return res.status(401).json({ message: "Нет активной сессии" });
-    }
+  app.get("/api/auth/session", async (req, res, next) => {
+    try {
+      const user = getSessionUser(req);
+      if (!user) {
+        return res.status(401).json({ message: "Нет активной сессии" });
+      }
 
-    res.json({ user });
+      const updatedUser = await storage.recordUserActivity(user.id);
+      const safeUser = updatedUser ? toPublicUser(updatedUser) : user;
+      if (updatedUser) {
+        req.user = safeUser;
+      }
+
+      res.json({ user: safeUser });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.post("/api/auth/register", async (req, res, next) => {
@@ -182,7 +192,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         passwordHash,
       });
 
-      const safeUser = toPublicUser(user);
+      const updatedUser = await storage.recordUserActivity(user.id);
+      const safeUser = toPublicUser(updatedUser ?? user);
       req.logIn(safeUser, (error) => {
         if (error) {
           return next(error);
@@ -230,6 +241,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.use("/api", requireAuth);
+
+  app.get("/api/admin/users", requireAdmin, async (_req, res, next) => {
+    try {
+      const users = await storage.listUsers();
+      res.json({ users: users.map((user) => toPublicUser(user)) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  const updateUserRoleSchema = z.object({
+    role: z.enum(userRoles),
+  });
+
+  app.patch("/api/admin/users/:userId/role", requireAdmin, async (req, res, next) => {
+    try {
+      const { role } = updateUserRoleSchema.parse(req.body);
+      const { userId } = req.params;
+
+      if (!userId) {
+        return res.status(400).json({ message: "Не указан пользователь" });
+      }
+
+      const updatedUser = await storage.updateUserRole(userId, role);
+      if (!updatedUser) {
+        return res.status(404).json({ message: "Пользователь не найден" });
+      }
+
+      res.json({ user: toPublicUser(updatedUser) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      next(error);
+    }
+  });
 
   // Vector search endpoints
   app.get("/api/vector/collections", async (_req, res) => {

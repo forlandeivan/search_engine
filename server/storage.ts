@@ -54,6 +54,9 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  listUsers(): Promise<User[]>;
+  updateUserRole(userId: string, role: User["role"]): Promise<User | undefined>;
+  recordUserActivity(userId: string): Promise<User | undefined>;
 }
 
 function buildWhereClause(conditions: SQL[]): SQL {
@@ -136,6 +139,14 @@ export class DatabaseStorage implements IStorage {
       await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
       await this.db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
+
+      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "role" text DEFAULT 'user'`);
+      await this.db.execute(sql`UPDATE "users" SET "role" = COALESCE("role", 'user')`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "role" SET NOT NULL`);
+
+      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "last_active_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+      await this.db.execute(sql`UPDATE "users" SET "last_active_at" = COALESCE("last_active_at", "updated_at", CURRENT_TIMESTAMP)`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "last_active_at" SET NOT NULL`);
 
       await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "created_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
       await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
@@ -532,6 +543,34 @@ export class DatabaseStorage implements IStorage {
     const [newUser] = await this.db.insert(users).values(user).returning();
     return newUser;
   }
+
+  async listUsers(): Promise<User[]> {
+    await this.ensureUserAuthColumns();
+    return await this.db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async updateUserRole(userId: string, role: User["role"]): Promise<User | undefined> {
+    await this.ensureUserAuthColumns();
+    const [updatedUser] = await this.db
+      .update(users)
+      .set({ role, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(users.id, userId))
+      .returning();
+    return updatedUser ?? undefined;
+  }
+
+  async recordUserActivity(userId: string): Promise<User | undefined> {
+    await this.ensureUserAuthColumns();
+    const [updatedUser] = await this.db
+      .update(users)
+      .set({
+        lastActiveAt: sql`CURRENT_TIMESTAMP`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return updatedUser ?? undefined;
+  }
 }
 
 export const storage = new DatabaseStorage();
@@ -596,6 +635,15 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
     await db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
+
+    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "role" text DEFAULT 'user'`);
+    await db.execute(sql`UPDATE "users" SET "role" = COALESCE("role", 'user')`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "role" SET NOT NULL`);
+
+    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "last_active_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+    await db.execute(sql`UPDATE "users" SET "last_active_at" = COALESCE("last_active_at", "updated_at", CURRENT_TIMESTAMP)`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "last_active_at" SET NOT NULL`);
+
     await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "created_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
     await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
     await db.execute(sql`
@@ -635,6 +683,12 @@ export async function ensureDatabaseSchema(): Promise<void> {
         WHERE "owner_id" IS NULL
       `);
     }
+
+    await db.execute(sql`
+      UPDATE "users"
+      SET "role" = 'admin'
+      WHERE "email" = 'forlandeivan@gmail.com'
+    `);
 
     await db.execute(sql`
       ALTER TABLE "sites"

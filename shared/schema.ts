@@ -57,19 +57,26 @@ export interface PageMetadata {
 }
 
 // Users table for platform authentication
+export const userRoles = ["admin", "user"] as const;
+export type UserRole = (typeof userRoles)[number];
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
   fullName: text("full_name").notNull(),
   passwordHash: text("password_hash").notNull(),
+  role: text("role").$type<UserRole>().notNull().default("user"),
+  lastActiveAt: timestamp("last_active_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
+  role: true,
   createdAt: true,
   updatedAt: true,
+  lastActiveAt: true,
 });
 
 export const registerUserSchema = z
