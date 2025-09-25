@@ -206,12 +206,20 @@ export default function EmbeddingServicesPage() {
 
       const values = form.getValues();
       const tokenUrl = values.tokenUrl.trim();
+      const embeddingsUrl = values.embeddingsUrl.trim();
       const authorizationKey = values.authorizationKey.trim();
       const scope = values.scope.trim();
+      const model = values.model.trim();
 
       if (!tokenUrl) {
         const message = "Укажите endpoint для получения токена";
         form.setError("tokenUrl", { type: "manual", message });
+        throw new Error(message);
+      }
+
+      if (!embeddingsUrl) {
+        const message = "Укажите endpoint сервиса эмбеддингов";
+        form.setError("embeddingsUrl", { type: "manual", message });
         throw new Error(message);
       }
 
@@ -227,6 +235,12 @@ export default function EmbeddingServicesPage() {
         throw new Error(message);
       }
 
+      if (!model) {
+        const message = "Укажите модель";
+        form.setError("model", { type: "manual", message });
+        throw new Error(message);
+      }
+
       const requestHeaders = parseJsonField(
         values.requestHeaders,
         requestHeadersSchema,
@@ -235,11 +249,31 @@ export default function EmbeddingServicesPage() {
         true,
       );
 
+      const requestConfig = parseJsonField(
+        values.requestConfig,
+        embeddingRequestConfigSchema,
+        "requestConfig",
+        "Опишите структуру тела запроса",
+        true,
+      );
+
+      const responseConfig = parseJsonField(
+        values.responseConfig,
+        embeddingResponseConfigSchema,
+        "responseConfig",
+        "Укажите путь до вектора в ответе",
+        true,
+      );
+
       const response = await apiRequest("POST", "/api/embedding/services/test-credentials", {
         tokenUrl,
+        embeddingsUrl,
         authorizationKey,
         scope,
+        model,
         requestHeaders,
+        requestConfig,
+        responseConfig,
       });
 
       const result = (await response.json()) as { message?: string };

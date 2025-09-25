@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import fetch, { Headers, type Response as FetchResponse } from "node-fetch";
 import { storage } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
 import { z } from "zod";
@@ -17,6 +18,10 @@ import {
   updateEmbeddingProviderSchema,
   type PublicEmbeddingProvider,
   type EmbeddingProvider,
+  embeddingRequestConfigSchema,
+  embeddingResponseConfigSchema,
+  type EmbeddingRequestConfig,
+  type EmbeddingResponseConfig,
 } from "@shared/schema";
 import { requireAuth, requireAdmin, getSessionUser, toPublicUser } from "./auth";
 
@@ -109,10 +114,107 @@ const createVectorCollectionSchema = z.object({
 
 const testEmbeddingCredentialsSchema = z.object({
   tokenUrl: z.string().trim().url("Некорректный URL для получения токена"),
+  embeddingsUrl: z.string().trim().url("Некорректный URL сервиса эмбеддингов"),
   authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
   scope: z.string().trim().min(1, "Укажите OAuth scope"),
+  model: z.string().trim().min(1, "Укажите модель эмбеддингов"),
   requestHeaders: z.record(z.string()).default({}),
+  requestConfig: embeddingRequestConfigSchema.optional(),
+  responseConfig: embeddingResponseConfigSchema.optional(),
 });
+
+const TEST_EMBEDDING_TEXT = "привет!";
+
+function parseJson(text: string): unknown {
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function parseJsonPath(path: string): Array<string | number> {
+  const result: Array<string | number> = [];
+  const regex = /[^.[\]]+|\[(\d+)\]/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(path)) !== null) {
+    if (match[1] !== undefined) {
+      result.push(Number.parseInt(match[1], 10));
+    } else {
+      result.push(match[0] ?? "");
+    }
+  }
+
+  return result;
+}
+
+function getValueByPath(payload: unknown, path: string): unknown {
+  if (!path) return payload;
+
+  const segments = parseJsonPath(path);
+  let current: unknown = payload;
+
+  for (const segment of segments) {
+    if (current === null || current === undefined) {
+      return undefined;
+    }
+
+    if (typeof segment === "number") {
+      if (!Array.isArray(current) || segment < 0 || segment >= current.length) {
+        return undefined;
+      }
+
+      current = current[segment];
+      continue;
+    }
+
+    if (typeof current !== "object") {
+      return undefined;
+    }
+
+    current = (current as Record<string, unknown>)[segment];
+  }
+
+  return current;
+}
+
+function createEmbeddingRequestBody(
+  config: EmbeddingRequestConfig,
+  model: string,
+  sampleText: string,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { ...config.additionalBodyFields };
+  body[config.modelField] = model;
+
+  if (config.batchField) {
+    body[config.batchField] = [{ [config.inputField]: sampleText }];
+  } else {
+    body[config.inputField] = [sampleText];
+  }
+
+  return body;
+}
+
+function ensureNumberArray(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const numbers: number[] = [];
+
+  for (const item of value) {
+    if (typeof item !== "number" || Number.isNaN(item)) {
+      return undefined;
+    }
+
+    numbers.push(item);
+  }
+
+  return numbers;
+}
 
 const upsertPointsSchema = z.object({
   wait: z.boolean().optional(),
@@ -332,21 +434,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/embedding/services/test-credentials", requireAdmin, async (req, res, next) => {
     try {
       const payload = testEmbeddingCredentialsSchema.parse(req.body);
+      const requestConfig =
+        payload.requestConfig ?? embeddingRequestConfigSchema.parse(undefined);
+      const responseConfig =
+        payload.responseConfig ?? embeddingResponseConfigSchema.parse(undefined);
 
-      const headers = new Headers();
-      headers.set("Authorization", payload.authorizationKey);
-      headers.set("Content-Type", "application/x-www-form-urlencoded");
-      headers.set("Accept", "application/json");
+      const tokenHeaders = new Headers();
+      tokenHeaders.set("Authorization", payload.authorizationKey);
+      tokenHeaders.set("Content-Type", "application/x-www-form-urlencoded");
+      tokenHeaders.set("Accept", "application/json");
 
       for (const [key, value] of Object.entries(payload.requestHeaders)) {
-        headers.set(key, value);
+        tokenHeaders.set(key, value);
       }
 
-      let tokenResponse: globalThis.Response;
+      let tokenResponse: FetchResponse;
       try {
         tokenResponse = await fetch(payload.tokenUrl, {
           method: "POST",
-          headers,
+          headers: tokenHeaders,
           body: new URLSearchParams({ scope: payload.scope }).toString(),
         });
       } catch (error) {
@@ -358,15 +464,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const rawBody = await tokenResponse.text();
-      let parsedBody: unknown = null;
-
-      if (rawBody) {
-        try {
-          parsedBody = JSON.parse(rawBody);
-        } catch {
-          parsedBody = rawBody;
-        }
-      }
+      const parsedBody = parseJson(rawBody);
 
       if (!tokenResponse.ok) {
         let message = `Сервис вернул статус ${tokenResponse.status}`;
@@ -385,25 +483,107 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).send(message);
       }
 
-      const parts = ["Соединение установлено."];
+      const messageParts = ["Соединение установлено."];
 
+      let accessToken: string | undefined;
       if (parsedBody && typeof parsedBody === "object") {
         const body = parsedBody as Record<string, unknown>;
 
-        if (typeof body.access_token === "string") {
-          parts.push("Получен access_token.");
+        if (typeof body.access_token === "string" && body.access_token.trim()) {
+          accessToken = body.access_token;
+          messageParts.push("Получен access_token.");
         }
 
         if (typeof body.expires_in === "number") {
-          parts.push(`Действует ${body.expires_in} с.`);
+          messageParts.push(`Действует ${body.expires_in} с.`);
         }
 
         if (typeof body.expires_at === "string") {
-          parts.push(`Истекает ${body.expires_at}.`);
+          messageParts.push(`Истекает ${body.expires_at}.`);
+        }
+      } else if (typeof parsedBody === "string" && parsedBody.trim()) {
+        messageParts.push(parsedBody.trim());
+      }
+
+      if (!accessToken) {
+        return res.status(400).send("Сервис не вернул access_token");
+      }
+
+      const embeddingHeaders = new Headers();
+      embeddingHeaders.set("Content-Type", "application/json");
+      embeddingHeaders.set("Accept", "application/json");
+
+      for (const [key, value] of Object.entries(payload.requestHeaders)) {
+        embeddingHeaders.set(key, value);
+      }
+
+      if (!embeddingHeaders.has("Authorization")) {
+        embeddingHeaders.set("Authorization", `Bearer ${accessToken}`);
+      }
+
+      const embeddingBody = createEmbeddingRequestBody(requestConfig, payload.model, TEST_EMBEDDING_TEXT);
+
+      let embeddingResponse: FetchResponse;
+      try {
+        embeddingResponse = await fetch(payload.embeddingsUrl, {
+          method: "POST",
+          headers: embeddingHeaders,
+          body: JSON.stringify(embeddingBody),
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const details = errorMessage ? `: ${errorMessage}` : "";
+        return res
+          .status(502)
+          .send(`Не удалось выполнить запрос к сервису эмбеддингов${details}`);
+      }
+
+      const embeddingsRawBody = await embeddingResponse.text();
+      const embeddingsParsedBody = parseJson(embeddingsRawBody);
+
+      if (!embeddingResponse.ok) {
+        let message = `Сервис эмбеддингов вернул статус ${embeddingResponse.status}`;
+
+        if (embeddingsParsedBody && typeof embeddingsParsedBody === "object") {
+          const body = embeddingsParsedBody as Record<string, unknown>;
+          if (typeof body.error_description === "string") {
+            message = body.error_description;
+          } else if (typeof body.message === "string") {
+            message = body.message;
+          }
+        } else if (typeof embeddingsParsedBody === "string" && embeddingsParsedBody.trim()) {
+          message = embeddingsParsedBody.trim();
+        }
+
+        return res.status(400).send(message);
+      }
+
+      if (!embeddingsParsedBody || typeof embeddingsParsedBody !== "object") {
+        return res.status(400).send("Не удалось разобрать ответ сервиса эмбеддингов");
+      }
+
+      const vectorValue = getValueByPath(embeddingsParsedBody, responseConfig.vectorPath);
+      const vector = ensureNumberArray(vectorValue);
+
+      if (!vector || vector.length === 0) {
+        return res
+          .status(400)
+          .send("Не удалось получить числовой вектор из ответа сервиса");
+      }
+
+      messageParts.push(`Получен вектор длиной ${vector.length}.`);
+
+      if (responseConfig.usageTokensPath) {
+        const usageValue = getValueByPath(embeddingsParsedBody, responseConfig.usageTokensPath);
+
+        if (typeof usageValue === "number" && Number.isFinite(usageValue)) {
+          messageParts.push(`Израсходовано ${usageValue} токенов.`);
+        } else if (typeof usageValue === "string" && usageValue.trim()) {
+          messageParts.push(`Израсходовано токенов: ${usageValue.trim()}.`);
         }
       }
 
-      res.json({ message: parts.join(" ") });
+      res.json({ message: messageParts.join(" ") });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Некорректные данные", details: error.issues });
