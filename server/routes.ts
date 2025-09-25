@@ -349,12 +349,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           headers,
           body: new URLSearchParams({ scope: payload.scope }).toString(),
         });
+ codex/extract-json-values-as-template-variables-78uheh
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const details = errorMessage ? `: ${errorMessage}` : "";
         return res
           .status(502)
           .send(`Не удалось подключиться к сервису эмбеддингов${details}`);
+
+      } catch (_error) {
+        return res.status(502).send("Не удалось подключиться к сервису эмбеддингов");
+ main
       }
 
       const rawBody = await tokenResponse.text();
