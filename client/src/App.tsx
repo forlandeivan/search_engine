@@ -28,6 +28,7 @@ import type { CSSProperties } from "react";
 function AdminRouter() {
   return (
     <Switch>
+      <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />
       <Route path="/admin" component={AdminUsersPage} />
       <Route component={NotFound} />
@@ -44,7 +45,6 @@ function MainRouter() {
       <Route path="/pages" component={PagesPage} />
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
-      <Route path="/vector/storage" component={VectorStorageSettingsPage} />
       <Route path="/integrations/api" component={TildaApiPage} />
       <Route path="/" component={SearchPage} />
       <Route component={NotFound} />

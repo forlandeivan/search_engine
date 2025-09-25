@@ -22,6 +22,7 @@ import {
   ChevronRight,
   ShieldCheck,
   ArrowLeft,
+  HardDrive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -103,6 +104,11 @@ export default function AdminSidebar() {
     {
       label: "Настройки",
       items: [
+        {
+          title: "Настройки хранилища",
+          url: "/admin/storage",
+          icon: HardDrive,
+        },
         {
           title: "Общие настройки",
           url: "/admin/settings",
