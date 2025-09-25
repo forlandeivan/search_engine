@@ -70,6 +70,27 @@ CREATE TABLE "search_index" (
     "created_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
+-- Create embedding_providers table for external embedding services configuration
+CREATE TABLE "embedding_providers" (
+    "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    "name" text NOT NULL,
+    "provider_type" text DEFAULT 'gigachat' NOT NULL,
+    "description" text,
+    "is_active" boolean DEFAULT true NOT NULL,
+    "token_url" text NOT NULL,
+    "embeddings_url" text NOT NULL,
+    "authorization_key" text DEFAULT '' NOT NULL,
+    "scope" text NOT NULL,
+    "model" text NOT NULL,
+    "allow_self_signed_certificate" boolean DEFAULT false NOT NULL,
+    "request_headers" jsonb DEFAULT '{}'::jsonb NOT NULL,
+    "request_config" jsonb DEFAULT '{}'::jsonb NOT NULL,
+    "response_config" jsonb DEFAULT '{}'::jsonb NOT NULL,
+    "qdrant_config" jsonb DEFAULT '{}'::jsonb NOT NULL,
+    "created_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
 -- Create indexes for performance
 CREATE INDEX idx_sites_url ON sites(url);
 CREATE INDEX idx_sites_status ON sites(status);
@@ -92,6 +113,9 @@ CREATE INDEX idx_pages_content_trgm ON pages USING gin(content gin_trgm_ops);
 CREATE INDEX idx_search_index_page_id ON search_index(page_id);
 CREATE INDEX idx_search_index_term ON search_index(term);
 CREATE INDEX idx_search_index_relevance ON search_index(relevance);
+
+CREATE INDEX idx_embedding_providers_active ON embedding_providers(is_active);
+CREATE INDEX idx_embedding_providers_provider_type ON embedding_providers(provider_type);
 
 -- Triggers for automatic search vector updates
 CREATE OR REPLACE FUNCTION update_search_vectors() RETURNS TRIGGER AS $$
