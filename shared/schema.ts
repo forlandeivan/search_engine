@@ -199,8 +199,7 @@ export const embeddingProviders = pgTable("embedding_providers", {
   isActive: boolean("is_active").notNull().default(true),
   tokenUrl: text("token_url").notNull(),
   embeddingsUrl: text("embeddings_url").notNull(),
-  clientId: text("client_id").notNull(),
-  clientSecret: text("client_secret").notNull(),
+  authorizationKey: text("authorization_key").notNull(),
   scope: text("scope").notNull(),
   model: text("model").notNull(),
   requestHeaders: jsonb("request_headers").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
@@ -306,8 +305,7 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
       .string()
       .trim()
       .url("Некорректный URL сервиса эмбеддингов"),
-    clientId: z.string().trim().min(1, "Укажите идентификатор клиента"),
-    clientSecret: z.string().min(1, "Укажите секрет клиента"),
+    authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
     scope: z.string().trim().min(1, "Укажите OAuth scope"),
     model: z.string().trim().min(1, "Укажите модель"),
     requestHeaders: z.record(z.string()).default({}),
@@ -319,7 +317,6 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
 export const updateEmbeddingProviderSchema = insertEmbeddingProviderSchema
   .partial()
   .extend({
-    clientSecret: z.string().min(1, "Укажите секрет клиента").optional(),
     isActive: z.boolean().optional(),
     requestHeaders: z.record(z.string()).optional(),
     requestConfig: embeddingRequestConfigSchema.optional(),
@@ -345,6 +342,6 @@ export type EmbeddingProvider = typeof embeddingProviders.$inferSelect;
 export type EmbeddingProviderInsert = typeof embeddingProviders.$inferInsert;
 export type InsertEmbeddingProvider = z.infer<typeof insertEmbeddingProviderSchema>;
 export type UpdateEmbeddingProvider = z.infer<typeof updateEmbeddingProviderSchema>;
-export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "clientSecret"> & {
-  hasClientSecret: boolean;
+export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "authorizationKey"> & {
+  hasAuthorizationKey: boolean;
 };
