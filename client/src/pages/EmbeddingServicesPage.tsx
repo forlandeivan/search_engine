@@ -76,6 +76,7 @@ type FormValues = {
   authorizationKey: string;
   scope: string;
   model: string;
+  allowSelfSignedCertificate: boolean;
   requestHeaders: string;
   requestConfig: string;
   responseConfig: string;
@@ -126,6 +127,7 @@ const defaultFormValues: FormValues = {
   authorizationKey: "",
   scope: "GIGACHAT_API_PERS",
   model: "embeddings",
+  allowSelfSignedCertificate: true,
   requestHeaders: formatJson(defaultRequestHeaders),
   requestConfig: formatJson(defaultRequestConfig),
   responseConfig: formatJson(defaultResponseConfig),
@@ -271,6 +273,7 @@ export default function EmbeddingServicesPage() {
         authorizationKey,
         scope,
         model,
+        allowSelfSignedCertificate: values.allowSelfSignedCertificate,
         requestHeaders,
         requestConfig,
         responseConfig,
@@ -395,6 +398,7 @@ export default function EmbeddingServicesPage() {
         authorizationKey: values.authorizationKey.trim(),
         scope: values.scope.trim(),
         model: values.model.trim(),
+        allowSelfSignedCertificate: values.allowSelfSignedCertificate,
         requestHeaders,
         requestConfig,
         responseConfig,
@@ -515,6 +519,26 @@ export default function EmbeddingServicesPage() {
                       <FormControl>
                         <Switch checked={field.value} onCheckedChange={field.onChange} />
                       </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="allowSelfSignedCertificate"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-1 pr-4">
+                        <FormLabel className="text-base">Доверять самоподписанным сертификатам</FormLabel>
+                        <FormDescription>
+                          Отключает проверку TLS. Используйте только для доверенных провайдеров, например корпоративного API
+                          GigaChat.
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                      <FormMessage />
                     </FormItem>
                   )}
                 />
@@ -926,6 +950,14 @@ export default function EmbeddingServicesPage() {
                     <div>
                       <p className="font-medium text-foreground">Статус ключа</p>
                       <p>{provider.hasAuthorizationKey ? "Ключ сохранён" : "Ключ не задан"}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium text-foreground">Проверка TLS</p>
+                      <p>
+                        {provider.allowSelfSignedCertificate
+                          ? "Самоподписанные сертификаты разрешены"
+                          : "Требуется доверенный сертификат"}
+                      </p>
                     </div>
                   </div>
 
