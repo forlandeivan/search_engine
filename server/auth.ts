@@ -21,7 +21,10 @@ export function configureAuth(app: Express) {
 
   app.use(
     session({
-      store: new PgSession({ pool }),
+      store: new PgSession({
+        pool,
+        createTableIfMissing: true,
+      }),
       secret: sessionSecret,
       resave: false,
       saveUninitialized: false,
