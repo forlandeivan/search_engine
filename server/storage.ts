@@ -838,6 +838,32 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
     await db.execute(sql`
       ALTER TABLE "embedding_providers"
+      ADD COLUMN IF NOT EXISTS "authorization_key" text DEFAULT ''
+    `);
+
+    await db.execute(sql`
+      UPDATE "embedding_providers"
+      SET "authorization_key" = COALESCE("authorization_key", '')
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      ALTER COLUMN "authorization_key" SET NOT NULL,
+      ALTER COLUMN "authorization_key" SET DEFAULT ''
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      DROP COLUMN IF EXISTS "client_id"
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      DROP COLUMN IF EXISTS "client_secret"
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
       ADD COLUMN IF NOT EXISTS "allow_self_signed_certificate" boolean DEFAULT FALSE
     `);
 
