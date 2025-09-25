@@ -826,6 +826,7 @@ export async function ensureDatabaseSchema(): Promise<void> {
         "authorization_key" text NOT NULL DEFAULT '',
         "scope" text NOT NULL,
         "model" text NOT NULL,
+        "allow_self_signed_certificate" boolean NOT NULL DEFAULT FALSE,
         "request_headers" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "request_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "response_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -833,6 +834,22 @@ export async function ensureDatabaseSchema(): Promise<void> {
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      ADD COLUMN IF NOT EXISTS "allow_self_signed_certificate" boolean DEFAULT FALSE
+    `);
+
+    await db.execute(sql`
+      UPDATE "embedding_providers"
+      SET "allow_self_signed_certificate" = COALESCE("allow_self_signed_certificate", FALSE)
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      ALTER COLUMN "allow_self_signed_certificate" SET NOT NULL,
+      ALTER COLUMN "allow_self_signed_certificate" SET DEFAULT FALSE
     `);
 
     await db.execute(sql`
