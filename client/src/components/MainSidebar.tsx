@@ -15,6 +15,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import {
   Search,
   Globe,
@@ -26,7 +27,6 @@ import {
   Boxes,
   Brain,
   ChevronLeft,
-  ChevronRight,
   Settings,
   Shield,
 } from "lucide-react";
@@ -59,6 +59,7 @@ interface MainSidebarProps {
 export default function MainSidebar({ showAdminLink = false }: MainSidebarProps) {
   const [location] = useLocation();
   const { state, toggleSidebar } = useSidebar();
+  const isCollapsed = state === "collapsed";
 
   const { data: stats } = useQuery<Stats>({
     queryKey: ['/api/stats'],
@@ -79,30 +80,45 @@ export default function MainSidebar({ showAdminLink = false }: MainSidebarProps)
       .replace(/ё/g, 'е')}`;
 
   const renderMenuButton = (item: SidebarItem) => {
+    const collapsedTooltip = item.locked
+      ? {
+          children: (
+            <div className="space-y-1">
+              <p className="text-sm font-medium leading-none">{item.title}</p>
+              <p className="text-xs text-muted-foreground">Доступно в платной версии</p>
+            </div>
+          ),
+        }
+      : item.title;
+
     const content = (
       <>
-        <item.icon className="h-4 w-4" />
-        <span>{item.title}</span>
-        {item.locked ? (
-          <Badge variant="outline" className="ml-auto text-xs border-dashed text-muted-foreground">
-            PRO
-          </Badge>
-        ) : (
-          item.badge && (
-            <Badge variant={item.badgeVariant || "default"} className="ml-auto text-xs">
-              {item.badge}
+        <item.icon className={cn("h-4 w-4", isCollapsed && "mx-auto")} />
+        {!isCollapsed && <span className="truncate">{item.title}</span>}
+        {!isCollapsed &&
+          (item.locked ? (
+            <Badge variant="outline" className="ml-auto text-xs border-dashed text-muted-foreground">
+              PRO
             </Badge>
-          )
-        )}
+          ) : (
+            item.badge && (
+              <Badge variant={item.badgeVariant || "default"} className="ml-auto text-xs">
+                {item.badge}
+              </Badge>
+            )
+          ))}
       </>
     );
 
     if (item.locked) {
       return (
         <SidebarMenuButton
-          className="justify-start opacity-60 cursor-not-allowed"
+          className={cn(
+            "justify-start opacity-60 cursor-not-allowed",
+            isCollapsed && "justify-center"
+          )}
           disabled
-          tooltip="Доступно в платной версии"
+          tooltip={isCollapsed ? collapsedTooltip : "Доступно в платной версии"}
           data-testid={getTestId(item)}
         >
           {content}
@@ -114,10 +130,16 @@ export default function MainSidebar({ showAdminLink = false }: MainSidebarProps)
       <SidebarMenuButton
         asChild
         isActive={isItemActive(item)}
-        className="justify-start"
+        className={cn("justify-start", isCollapsed && "justify-center")}
+        tooltip={isCollapsed ? collapsedTooltip : undefined}
         data-testid={getTestId(item)}
       >
-        <Link href={item.url}>{content}</Link>
+        <Link
+          href={item.url}
+          className={cn("flex flex-1 items-center gap-2", isCollapsed && "justify-center gap-0")}
+        >
+          {content}
+        </Link>
       </SidebarMenuButton>
     );
   };
@@ -214,26 +236,28 @@ export default function MainSidebar({ showAdminLink = false }: MainSidebarProps)
   return (
     <Sidebar collapsible="icon">
       <SidebarRail />
-      <SidebarHeader className="p-4 border-b">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h2 className="text-lg font-semibold">Поисковый движок</h2>
-            <p className="text-sm text-muted-foreground">Рабочая область</p>
+      <SidebarHeader className={cn("border-b p-4", isCollapsed && "items-center p-3")}> 
+        {isCollapsed ? (
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
+            ПД
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={toggleSidebar}
-            aria-label={state === "expanded" ? "Свернуть меню" : "Развернуть меню"}
-          >
-            {state === "expanded" ? (
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-semibold">Поисковый движок</h2>
+              <p className="text-sm text-muted-foreground">Рабочая область</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={toggleSidebar}
+              aria-label={state === "expanded" ? "Свернуть меню" : "Развернуть меню"}
+            >
               <ChevronLeft className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
+            </Button>
+          </div>
+        )}
       </SidebarHeader>
 
       <SidebarContent>
@@ -253,7 +277,10 @@ export default function MainSidebar({ showAdminLink = false }: MainSidebarProps)
         ))}
       </SidebarContent>
       <div className="border-t p-4">
-        <SidebarTrigger className="w-full justify-center" aria-label="Переключить меню" />
+        <SidebarTrigger
+          className={isCollapsed ? "h-8 w-8 self-center p-0" : "w-full justify-center"}
+          aria-label="Переключить меню"
+        />
       </div>
     </Sidebar>
   );
