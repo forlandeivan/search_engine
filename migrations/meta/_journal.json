@@ -57,13 +57,6 @@
       "when": 1758104593459,
       "tag": "0007_embedding_services",
       "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1758104594459,
-      "tag": "0009_embedding_providers_allow_self_signed",
-      "breakpoints": true
     }
   ]
 }
