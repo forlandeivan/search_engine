@@ -28,6 +28,9 @@ import {
   embeddingResponseConfigSchema,
   type EmbeddingRequestConfig,
   type EmbeddingResponseConfig,
+  qdrantIntegrationConfigSchema,
+  type ContentChunk,
+  type Site,
 } from "@shared/schema";
 import { requireAuth, requireAdmin, getSessionUser, toPublicUser } from "./auth";
 
@@ -241,6 +244,289 @@ function ensureNumberArray(value: unknown): number[] | undefined {
   return numbers;
 }
 
+function evaluateTemplateExpression(
+  expression: string,
+  context: Record<string, unknown>,
+): unknown {
+  const parts = expression
+    .split("|")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  if (parts.length === 0) {
+    return undefined;
+  }
+
+  const [path, ...filters] = parts;
+  let value = getValueByPath(context, path);
+
+  for (const filter of filters) {
+    switch (filter) {
+      case "json":
+        return JSON.stringify(value ?? null);
+      case "lower":
+      case "lowercase":
+        if (typeof value === "string") {
+          value = value.toLowerCase();
+        }
+        break;
+      case "upper":
+      case "uppercase":
+        if (typeof value === "string") {
+          value = value.toUpperCase();
+        }
+        break;
+      case "trim":
+        if (typeof value === "string") {
+          value = value.trim();
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  return value;
+}
+
+function renderTemplateString(template: string, context: Record<string, unknown>): string {
+  return template.replace(/{{\s*([^}]+)\s*}}/g, (_match, rawExpression: string) => {
+    const value = evaluateTemplateExpression(rawExpression, context);
+
+    if (value === undefined || value === null) {
+      return "";
+    }
+
+    if (typeof value === "string") {
+      return value;
+    }
+
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  });
+}
+
+function renderTemplateValue(
+  template: unknown,
+  context: Record<string, unknown>,
+): unknown {
+  if (typeof template !== "string") {
+    return template;
+  }
+
+  const trimmed = template.trim();
+  const exactExpressionMatch = trimmed.match(/^{{\s*([^}]+)\s*}}$/);
+
+  if (exactExpressionMatch) {
+    return evaluateTemplateExpression(exactExpressionMatch[1] ?? "", context);
+  }
+
+  if (!template.includes("{{")) {
+    return template;
+  }
+
+  return renderTemplateString(template, context);
+}
+
+async function fetchAccessToken(provider: EmbeddingProvider): Promise<string> {
+  const tokenHeaders = new Headers();
+  const rawAuthorizationKey = provider.authorizationKey.trim();
+  const hasAuthScheme = /^(?:[A-Za-z]+)\s+\S+/.test(rawAuthorizationKey);
+  const authorizationHeader = hasAuthScheme
+    ? rawAuthorizationKey
+    : `Basic ${rawAuthorizationKey}`;
+
+  tokenHeaders.set("Authorization", authorizationHeader);
+  tokenHeaders.set("Content-Type", "application/x-www-form-urlencoded");
+  tokenHeaders.set("Accept", "application/json");
+
+  if (!tokenHeaders.has("RqUID")) {
+    tokenHeaders.set("RqUID", randomUUID());
+  }
+
+  for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+    tokenHeaders.set(key, value);
+  }
+
+  const tokenRequestBody = new URLSearchParams({
+    scope: provider.scope,
+    grant_type: "client_credentials",
+  }).toString();
+
+  let tokenResponse: FetchResponse;
+
+  try {
+    const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+      {
+        method: "POST",
+        headers: tokenHeaders,
+        body: tokenRequestBody,
+      },
+      provider.allowSelfSignedCertificate,
+    );
+
+    tokenResponse = await fetch(provider.tokenUrl, requestOptions);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    if (
+      !provider.allowSelfSignedCertificate &&
+      errorMessage.toLowerCase().includes("self-signed certificate")
+    ) {
+      throw new Error(
+        "Не удалось подключиться к сервису эмбеддингов: сертификат не прошёл проверку. Включите доверие самоподписанным сертификатам и повторите попытку.",
+      );
+    }
+
+    throw new Error(`Не удалось выполнить запрос для получения токена: ${errorMessage}`);
+  }
+
+  const rawBody = await tokenResponse.text();
+  const parsedBody = parseJson(rawBody);
+
+  if (!tokenResponse.ok) {
+    let message = `Сервис вернул статус ${tokenResponse.status}`;
+
+    if (parsedBody && typeof parsedBody === "object") {
+      const body = parsedBody as Record<string, unknown>;
+      if (typeof body.error_description === "string") {
+        message = body.error_description;
+      } else if (typeof body.message === "string") {
+        message = body.message;
+      }
+    } else if (typeof parsedBody === "string" && parsedBody.trim()) {
+      message = parsedBody.trim();
+    }
+
+    throw new Error(`Ошибка на этапе получения токена: ${message}`);
+  }
+
+  if (parsedBody && typeof parsedBody === "object") {
+    const body = parsedBody as Record<string, unknown>;
+    const token = body.access_token;
+
+    if (typeof token === "string" && token.trim()) {
+      return token;
+    }
+  }
+
+  throw new Error("Сервис не вернул access_token");
+}
+
+interface EmbeddingVectorResult {
+  vector: number[];
+  usageTokens?: number;
+  embeddingId?: string | number;
+  rawResponse: unknown;
+}
+
+async function fetchEmbeddingVector(
+  provider: EmbeddingProvider,
+  accessToken: string,
+  requestConfig: EmbeddingRequestConfig,
+  responseConfig: EmbeddingResponseConfig,
+  text: string,
+): Promise<EmbeddingVectorResult> {
+  const embeddingHeaders = new Headers();
+  embeddingHeaders.set("Content-Type", "application/json");
+  embeddingHeaders.set("Accept", "application/json");
+
+  for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+    embeddingHeaders.set(key, value);
+  }
+
+  if (!embeddingHeaders.has("Authorization")) {
+    embeddingHeaders.set("Authorization", `Bearer ${accessToken}`);
+  }
+
+  const embeddingBody = createEmbeddingRequestBody(requestConfig, provider.model, text);
+
+  let embeddingResponse: FetchResponse;
+
+  try {
+    const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+      {
+        method: "POST",
+        headers: embeddingHeaders,
+        body: JSON.stringify(embeddingBody),
+      },
+      provider.allowSelfSignedCertificate,
+    );
+
+    embeddingResponse = await fetch(provider.embeddingsUrl, requestOptions);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Не удалось выполнить запрос к сервису эмбеддингов: ${errorMessage}`);
+  }
+
+  const rawBody = await embeddingResponse.text();
+  const parsedBody = parseJson(rawBody);
+
+  if (!embeddingResponse.ok) {
+    let message = `Сервис эмбеддингов вернул статус ${embeddingResponse.status}`;
+
+    if (parsedBody && typeof parsedBody === "object") {
+      const body = parsedBody as Record<string, unknown>;
+      if (typeof body.error_description === "string") {
+        message = body.error_description;
+      } else if (typeof body.message === "string") {
+        message = body.message;
+      }
+    } else if (typeof parsedBody === "string" && parsedBody.trim()) {
+      message = parsedBody.trim();
+    }
+
+    throw new Error(`Ошибка на этапе получения вектора: ${message}`);
+  }
+
+  if (!parsedBody || typeof parsedBody !== "object") {
+    throw new Error("Не удалось разобрать ответ сервиса эмбеддингов");
+  }
+
+  const vectorValue = getValueByPath(parsedBody, responseConfig.vectorPath);
+  const vector = ensureNumberArray(vectorValue);
+
+  if (!vector || vector.length === 0) {
+    throw new Error("Сервис эмбеддингов не вернул числовой вектор");
+  }
+
+  let usageTokens: number | undefined;
+  if (responseConfig.usageTokensPath) {
+    const usageValue = getValueByPath(parsedBody, responseConfig.usageTokensPath);
+
+    if (typeof usageValue === "number" && Number.isFinite(usageValue)) {
+      usageTokens = usageValue;
+    } else if (typeof usageValue === "string" && usageValue.trim()) {
+      const parsedNumber = Number.parseFloat(usageValue);
+      if (!Number.isNaN(parsedNumber)) {
+        usageTokens = parsedNumber;
+      }
+    }
+  }
+
+  let embeddingId: string | number | undefined;
+  if (responseConfig.idPath) {
+    const idValue = getValueByPath(parsedBody, responseConfig.idPath);
+    if (typeof idValue === "string" || typeof idValue === "number") {
+      embeddingId = idValue;
+    }
+  }
+
+  return {
+    vector,
+    usageTokens,
+    embeddingId,
+    rawResponse: parsedBody,
+  };
+}
+
 const upsertPointsSchema = z.object({
   wait: z.boolean().optional(),
   ordering: z.enum(["weak", "medium", "strong"]).optional(),
@@ -268,6 +554,10 @@ const searchPointsSchema = z.object({
     z.literal("all")
   ]).optional(),
   timeout: z.number().positive().optional(),
+});
+
+const vectorizePageSchema = z.object({
+  embeddingProviderId: z.string().uuid("Некорректный идентификатор сервиса эмбеддингов"),
 });
 
 // Public search API request/response schemas
@@ -1612,6 +1902,249 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching pages:', error);
       res.status(500).json({ error: 'Failed to fetch pages' });
+    }
+  });
+
+  app.post("/api/pages/:id/vectorize", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const { embeddingProviderId } = vectorizePageSchema.parse(req.body);
+      const pageId = req.params.id;
+
+      const page = await storage.getPage(pageId, user.id);
+      if (!page) {
+        return res.status(404).json({ error: "Страница не найдена" });
+      }
+
+      const chunks = Array.isArray(page.chunks) ? (page.chunks as ContentChunk[]) : [];
+      const nonEmptyChunks = chunks.filter(
+        (chunk) => typeof chunk.content === "string" && chunk.content.trim().length > 0,
+      );
+
+      if (nonEmptyChunks.length === 0) {
+        return res.status(400).json({ error: "У страницы нет чанков для отправки в Qdrant" });
+      }
+
+      const provider = await storage.getEmbeddingProvider(embeddingProviderId);
+      if (!provider) {
+        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+      }
+
+      if (!provider.isActive) {
+        return res.status(400).json({ error: "Выбранный сервис эмбеддингов отключён" });
+      }
+
+      const requestConfig = embeddingRequestConfigSchema.parse(provider.requestConfig ?? {});
+      const responseConfig = embeddingResponseConfigSchema.parse(provider.responseConfig ?? {});
+      const qdrantConfig = qdrantIntegrationConfigSchema.parse(provider.qdrantConfig ?? {});
+
+      const site: Site | undefined = await storage.getSite(page.siteId, user.id);
+
+      const baseContext: Record<string, unknown> = {
+        page: {
+          ...page,
+          chunks: undefined,
+        },
+        document: {
+          id: page.id,
+          url: page.url,
+          title: page.title ?? "",
+          metadata: page.metadata ?? {},
+        },
+        site: site ?? null,
+        provider: {
+          id: provider.id,
+          name: provider.name,
+          model: provider.model,
+        },
+      };
+
+      const resolvedCollectionNameValue = renderTemplateValue(
+        qdrantConfig.collectionName,
+        baseContext,
+      );
+      const collectionName = typeof resolvedCollectionNameValue === "string"
+        ? resolvedCollectionNameValue.trim()
+        : resolvedCollectionNameValue === undefined || resolvedCollectionNameValue === null
+          ? ""
+          : String(resolvedCollectionNameValue).trim();
+
+      if (!collectionName) {
+        return res.status(400).json({
+          error: "Укажите название коллекции Qdrant в настройках сервиса эмбеддингов",
+        });
+      }
+
+      const resolvedVectorFieldValue = renderTemplateValue(
+        qdrantConfig.vectorFieldName ?? "vector",
+        baseContext,
+      );
+      const vectorFieldName = typeof resolvedVectorFieldValue === "string"
+        ? resolvedVectorFieldValue.trim() || "vector"
+        : resolvedVectorFieldValue === undefined || resolvedVectorFieldValue === null
+          ? "vector"
+          : String(resolvedVectorFieldValue).trim() || "vector";
+
+      const resolvedUpsertModeValue = renderTemplateValue(
+        qdrantConfig.upsertMode ?? "replace",
+        baseContext,
+      );
+      const upsertMode =
+        typeof resolvedUpsertModeValue === "string" && resolvedUpsertModeValue.trim().length > 0
+          ? resolvedUpsertModeValue.trim().toLowerCase()
+          : resolvedUpsertModeValue === undefined || resolvedUpsertModeValue === null
+            ? "replace"
+            : String(resolvedUpsertModeValue).trim().toLowerCase() || "replace";
+
+      const accessToken = await fetchAccessToken(provider);
+
+      const embeddingResults: Array<
+        EmbeddingVectorResult & { chunk: ContentChunk; index: number }
+      > = [];
+
+      for (let index = 0; index < nonEmptyChunks.length; index += 1) {
+        const chunk = nonEmptyChunks[index];
+
+        try {
+          const result = await fetchEmbeddingVector(
+            provider,
+            accessToken,
+            requestConfig,
+            responseConfig,
+            chunk.content,
+          );
+          embeddingResults.push({ ...result, chunk, index });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`Ошибка при обработке чанка ${index + 1}: ${message}`);
+        }
+      }
+
+      if (embeddingResults.length === 0) {
+        return res.status(400).json({
+          error: "Не удалось получить эмбеддинги для чанков страницы",
+        });
+      }
+
+      const client = getQdrantClient();
+
+      const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
+        const { chunk, index, vector, usageTokens, embeddingId, rawResponse } = result;
+        const baseChunkId = chunk.id && chunk.id.trim().length > 0
+          ? chunk.id
+          : `${page.id}-chunk-${chunk.metadata?.position ?? index}`;
+        const pointId = upsertMode === "append"
+          ? `${baseChunkId}-${randomUUID()}`
+          : baseChunkId;
+
+        const chunkContext: Record<string, unknown> = {
+          chunk: {
+            ...chunk,
+            text: chunk.content,
+          },
+          embedding: {
+            id: embeddingId ?? null,
+            model: provider.model,
+            vector_size: vector.length,
+            response: rawResponse,
+          },
+        };
+
+        const payloadContext = {
+          ...baseContext,
+          ...chunkContext,
+        };
+
+        const payload: Record<string, unknown> = {
+          page_id: page.id,
+          page_url: page.url,
+          page_title: page.title ?? null,
+          site_id: page.siteId,
+          chunk_id: baseChunkId,
+          chunk_heading: chunk.heading ?? null,
+          chunk_level: chunk.level ?? null,
+          chunk_deep_link: chunk.deepLink ?? null,
+          chunk_text: chunk.content,
+          chunk_metadata: chunk.metadata ?? null,
+          embedding_model: provider.model,
+        };
+
+        if (usageTokens !== undefined) {
+          payload.embedding_tokens = usageTokens;
+        }
+
+        if (embeddingId !== undefined) {
+          payload.embedding_id = embeddingId;
+        }
+
+        for (const [key, value] of Object.entries(qdrantConfig.payloadFields ?? {})) {
+          const renderedValue = renderTemplateValue(value, payloadContext);
+          if (renderedValue !== undefined) {
+            payload[key] = renderedValue;
+          }
+        }
+
+        for (const [key, value] of Object.entries(payload)) {
+          if (value === undefined) {
+            delete payload[key];
+          }
+        }
+
+        const vectorPayload =
+          vectorFieldName && vectorFieldName !== "vector"
+            ? { [vectorFieldName]: vector }
+            : vector;
+
+        return {
+          id: pointId,
+          vector: vectorPayload as Schemas["PointStruct"]["vector"],
+          payload,
+        };
+      });
+
+      const upsertResult = await client.upsert(collectionName, {
+        wait: true,
+        points,
+      });
+
+      const totalUsageTokens = embeddingResults.reduce((sum, result) => {
+        return sum + (result.usageTokens ?? 0);
+      }, 0);
+
+      res.json({
+        message: `В коллекцию ${collectionName} отправлено ${points.length} чанков`,
+        pointsCount: points.length,
+        vectorSize: embeddingResults[0]?.vector.length ?? null,
+        collectionName,
+        provider: {
+          id: provider.id,
+          name: provider.name,
+        },
+        totalUsageTokens,
+        upsertStatus: upsertResult.status ?? null,
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные данные запроса",
+          details: error.errors,
+        });
+      }
+
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Ошибка при отправке чанков страницы ${req.params.id} в Qdrant:`, error);
+      res.status(500).json({ error: message });
     }
   });
 

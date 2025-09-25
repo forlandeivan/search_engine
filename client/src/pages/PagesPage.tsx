@@ -5,10 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Search,
   ExternalLink,
@@ -18,12 +19,14 @@ import {
   Trash2,
   ListOrdered,
   Gauge,
+  Loader2,
+  Sparkles,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
-import type { ContentChunk, PageMetadata } from "@shared/schema";
+import type { ContentChunk, PageMetadata, PublicEmbeddingProvider } from "@shared/schema";
 
 interface Page {
   id: string;
@@ -63,6 +66,169 @@ interface StatsData {
   };
 }
 
+interface VectorizePageResponse {
+  message?: string;
+  pointsCount: number;
+  collectionName: string;
+  vectorSize?: number | null;
+  totalUsageTokens?: number;
+}
+
+interface VectorizePageDialogProps {
+  page: Page;
+  providers: PublicEmbeddingProvider[];
+}
+
+function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
+  const { toast } = useToast();
+  const [isOpen, setIsOpen] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>("");
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (providers.length > 0) {
+      setSelectedProviderId(providers[0].id);
+    } else {
+      setSelectedProviderId("");
+    }
+  }, [providers, isOpen]);
+
+  const vectorizeMutation = useMutation<VectorizePageResponse, Error, string>({
+    mutationFn: async (providerId: string) => {
+      const response = await apiRequest("POST", `/api/pages/${page.id}/vectorize`, {
+        embeddingProviderId: providerId,
+      });
+      return (await response.json()) as VectorizePageResponse;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Чанки отправлены",
+        description:
+          data.message ??
+          `Добавлено ${data.pointsCount} чанков в коллекцию ${data.collectionName}`,
+      });
+      setIsOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось отправить чанки",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open);
+    if (!open) {
+      vectorizeMutation.reset();
+    }
+  };
+
+  const handleConfirm = () => {
+    if (!selectedProviderId) {
+      toast({
+        title: "Выберите сервис",
+        description: "Чтобы отправить чанки, выберите активный сервис эмбеддингов.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    vectorizeMutation.mutate(selectedProviderId);
+  };
+
+  const totalChunks = Array.isArray(page.chunks) ? page.chunks.length : 0;
+  const disabled = providers.length === 0;
+
+  return (
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={disabled}
+          className="whitespace-nowrap"
+        >
+          <Sparkles className="mr-1 h-4 w-4" />
+          Векторизация
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Отправка чанков в Qdrant</DialogTitle>
+          <p className="text-sm text-muted-foreground">
+            Страница содержит {totalChunks.toLocaleString("ru-RU")} чанков. Они будут
+            преобразованы в эмбеддинги выбранным сервисом и записаны в коллекцию Qdrant.
+          </p>
+        </DialogHeader>
+
+        {providers.length === 0 ? (
+          <div className="space-y-4">
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              Нет активных сервисов эмбеддингов. Добавьте и включите сервис на вкладке
+              «Эмбеддинги», чтобы выполнять загрузку чанков в Qdrant.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Сервис эмбеддингов</label>
+              <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите сервис" />
+                </SelectTrigger>
+                <SelectContent>
+                  {providers.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Будут использованы настройки Qdrant выбранного сервиса. Убедитесь, что указана
+                правильная коллекция.
+              </p>
+            </div>
+
+            {vectorizeMutation.isError && (
+              <p className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+                {vectorizeMutation.error.message}
+              </p>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => handleOpenChange(false)}>
+            Отмена
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={disabled || vectorizeMutation.isPending || !selectedProviderId}
+          >
+            {vectorizeMutation.isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Отправка...
+              </>
+            ) : (
+              <>
+                <Sparkles className="mr-2 h-4 w-4" />
+                Отправить
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function PagesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSite, setSelectedSite] = useState<string>("all");
@@ -86,6 +252,14 @@ export default function PagesPage() {
   const { data: stats } = useQuery<StatsData>({
     queryKey: ['/api/stats'],
   });
+
+  const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
+    queryKey: ['/api/embedding/services'],
+  });
+
+  const activeEmbeddingProviders = (embeddingServices?.providers ?? []).filter(
+    (provider) => provider.isActive,
+  );
 
   // Group pages by site
   const pagesBySite: PagesBySite[] = sites.map(site => ({
@@ -438,111 +612,114 @@ export default function PagesPage() {
                             </div>
                           </div>
 
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                data-testid={`button-view-content-${page.id}`}
-                              >
-                                <FileText className="h-4 w-4 mr-1" />
-                                Содержимое
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="max-w-4xl max-h-[80vh]">
-                              <DialogHeader>
-                                <DialogTitle className="flex items-center gap-2">
-                                  <span className="truncate">{page.title || "Без названия"}</span>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    asChild
-                                  >
-                                    <a
-                                      href={page.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  data-testid={`button-view-content-${page.id}`}
+                                >
+                                  <FileText className="h-4 w-4 mr-1" />
+                                  Содержимое
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent className="max-w-4xl max-h-[80vh]">
+                                <DialogHeader>
+                                  <DialogTitle className="flex items-center gap-2">
+                                    <span className="truncate">{page.title || "Без названия"}</span>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      asChild
                                     >
-                                      <ExternalLink className="h-3 w-3" />
-                                    </a>
-                                  </Button>
-                                </DialogTitle>
-                                <p className="text-sm text-muted-foreground truncate">
-                                  {page.url}
-                                </p>
-                              </DialogHeader>
-                              <ScrollArea className="h-96 w-full">
-                                <div className="space-y-4">
-                                  {page.metaDescription && (
-                                    <div>
-                                      <h4 className="font-medium mb-2">Описание:</h4>
-                                      <p className="text-sm text-muted-foreground">
-                                        {page.metaDescription}
-                                      </p>
-                                    </div>
-                                  )}
-                                  <div>
-                                    <h4 className="font-medium mb-2">Содержимое:</h4>
-                                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground mb-3">
-                                      <span>Символов (агрегировано): {contentLength.toLocaleString("ru-RU")}</span>
-                                      <span>Слов (агрегировано): {aggregatedWordCount.toLocaleString("ru-RU")}</span>
-                                      {chunkCount > 0 && (
-                                        <>
-                                          <span>Чанков: {chunkCount.toLocaleString("ru-RU")}</span>
-                                          <span>Макс. чанк: {maxChunkLength.toLocaleString("ru-RU")} символов</span>
-                                          <span>Сред. чанк: {avgChunkLength.toLocaleString("ru-RU")} символов</span>
-                                          <span>Макс. слов в чанке: {maxChunkWordCount.toLocaleString("ru-RU")}</span>
-                                          {configuredChunkSize && (
-                                            <span>Лимит проекта: {configuredChunkSize.toLocaleString("ru-RU")} символов</span>
-                                          )}
-                                          {chunksOverLimit > 0 && (
-                                            <span className="text-destructive">
-                                              {chunksOverLimit.toLocaleString("ru-RU")} чанков превышают лимит
-                                            </span>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                    {chunkCount > 0 && (
-                                      <div className="space-y-3 mb-6">
-                                        <h5 className="text-sm font-medium">Разбивка по чанкам:</h5>
-                                        {chunks.map((chunk, index) => {
-                                          const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
-                                          const chunkWordCount = chunk.metadata?.wordCount ??
-                                            chunk.content.trim().split(/\s+/).filter(Boolean).length;
-                                          return (
-                                            <div
-                                              key={chunk.id || `${page.id}-chunk-${index}`}
-                                              className="rounded-lg border bg-muted/30 p-3"
-                                            >
-                                              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                                                <div className="text-sm font-medium truncate">
-                                                  {chunk.heading || `Чанк ${index + 1}`}
-                                                </div>
-                                                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                                                  <span>Символов: {chunkCharCount.toLocaleString("ru-RU")}</span>
-                                                  <span>Слов: {chunkWordCount.toLocaleString("ru-RU")}</span>
-                                                  {chunk.metadata?.position !== undefined && (
-                                                    <span>Позиция: {chunk.metadata.position + 1}</span>
-                                                  )}
-                                                </div>
-                                              </div>
-                                              <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
-                                                {chunk.content}
-                                              </p>
-                                            </div>
-                                          );
-                                        })}
+                                      <a
+                                        href={page.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        <ExternalLink className="h-3 w-3" />
+                                      </a>
+                                    </Button>
+                                  </DialogTitle>
+                                  <p className="text-sm text-muted-foreground truncate">
+                                    {page.url}
+                                  </p>
+                                </DialogHeader>
+                                <ScrollArea className="h-96 w-full">
+                                  <div className="space-y-4">
+                                    {page.metaDescription && (
+                                      <div>
+                                        <h4 className="font-medium mb-2">Описание:</h4>
+                                        <p className="text-sm text-muted-foreground">
+                                          {page.metaDescription}
+                                        </p>
                                       </div>
                                     )}
-                                    <pre className="text-sm bg-muted p-4 rounded-lg whitespace-pre-wrap">
-                                      {page.content}
-                                    </pre>
+                                    <div>
+                                      <h4 className="font-medium mb-2">Содержимое:</h4>
+                                      <div className="flex flex-wrap gap-4 text-xs text-muted-foreground mb-3">
+                                        <span>Символов (агрегировано): {contentLength.toLocaleString("ru-RU")}</span>
+                                        <span>Слов (агрегировано): {aggregatedWordCount.toLocaleString("ru-RU")}</span>
+                                        {chunkCount > 0 && (
+                                          <>
+                                            <span>Чанков: {chunkCount.toLocaleString("ru-RU")}</span>
+                                            <span>Макс. чанк: {maxChunkLength.toLocaleString("ru-RU")} символов</span>
+                                            <span>Сред. чанк: {avgChunkLength.toLocaleString("ru-RU")} символов</span>
+                                            <span>Макс. слов в чанке: {maxChunkWordCount.toLocaleString("ru-RU")}</span>
+                                            {configuredChunkSize && (
+                                              <span>Лимит проекта: {configuredChunkSize.toLocaleString("ru-RU")} символов</span>
+                                            )}
+                                            {chunksOverLimit > 0 && (
+                                              <span className="text-destructive">
+                                                {chunksOverLimit.toLocaleString("ru-RU")} чанков превышают лимит
+                                              </span>
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
+                                      {chunkCount > 0 && (
+                                        <div className="space-y-3 mb-6">
+                                          <h5 className="text-sm font-medium">Разбивка по чанкам:</h5>
+                                          {chunks.map((chunk, index) => {
+                                            const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
+                                            const chunkWordCount = chunk.metadata?.wordCount ??
+                                              chunk.content.trim().split(/\s+/).filter(Boolean).length;
+                                            return (
+                                              <div
+                                                key={chunk.id || `${page.id}-chunk-${index}`}
+                                                className="rounded-lg border bg-muted/30 p-3"
+                                              >
+                                                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                                  <div className="text-sm font-medium truncate">
+                                                    {chunk.heading || `Чанк ${index + 1}`}
+                                                  </div>
+                                                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                                                    <span>Символов: {chunkCharCount.toLocaleString("ru-RU")}</span>
+                                                    <span>Слов: {chunkWordCount.toLocaleString("ru-RU")}</span>
+                                                    {chunk.metadata?.position !== undefined && (
+                                                      <span>Позиция: {chunk.metadata.position + 1}</span>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                                <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                                                  {chunk.content}
+                                                </p>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                      <pre className="text-sm bg-muted p-4 rounded-lg whitespace-pre-wrap">
+                                        {page.content}
+                                      </pre>
+                                    </div>
                                   </div>
-                                </div>
-                              </ScrollArea>
-                            </DialogContent>
-                          </Dialog>
+                                </ScrollArea>
+                              </DialogContent>
+                            </Dialog>
+                            <VectorizePageDialog page={page} providers={activeEmbeddingProviders} />
+                          </div>
                         </div>
                       </div>
                     );
