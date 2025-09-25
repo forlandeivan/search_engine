@@ -62,6 +62,13 @@
       "idx": 8,
       "version": "7",
       "when": 1758104594459,
+      "tag": "0008_embedding_providers_authorization_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1758104595459,
       "tag": "0009_embedding_providers_allow_self_signed",
       "breakpoints": true
     }
