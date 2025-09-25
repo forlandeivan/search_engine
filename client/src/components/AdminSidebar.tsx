@@ -21,6 +21,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldCheck,
+  ArrowLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -36,6 +37,7 @@ interface SidebarItem {
 export default function AdminSidebar() {
   const [location] = useLocation();
   const { state, toggleSidebar } = useSidebar();
+  const isCollapsed = state === "collapsed";
 
   const isItemActive = (item: SidebarItem) => location === item.url;
 
@@ -127,23 +129,37 @@ export default function AdminSidebar() {
     <Sidebar collapsible="icon">
       <SidebarRail />
       <SidebarHeader className="p-4 border-b">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h2 className="text-lg font-semibold">Администрирование</h2>
-            <p className="text-sm text-muted-foreground">Управление платформой</p>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-semibold">Администрирование</h2>
+              <p className="text-sm text-muted-foreground">Управление платформой</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={toggleSidebar}
+              aria-label={state === "expanded" ? "Свернуть меню" : "Развернуть меню"}
+            >
+              {state === "expanded" ? (
+                <ChevronLeft className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+            </Button>
           </div>
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={toggleSidebar}
-            aria-label={state === "expanded" ? "Свернуть меню" : "Развернуть меню"}
+            asChild
+            variant="outline"
+            size={isCollapsed ? "icon" : "sm"}
+            className={isCollapsed ? "h-8 w-8 self-end" : "justify-start gap-2"}
+            aria-label="Вернуться к пользовательскому меню"
           >
-            {state === "expanded" ? (
-              <ChevronLeft className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
+            <Link href="/">
+              <ArrowLeft className="h-4 w-4" />
+              {!isCollapsed && <span>К пользовательскому меню</span>}
+            </Link>
           </Button>
         </div>
       </SidebarHeader>
