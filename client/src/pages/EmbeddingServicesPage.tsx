@@ -37,10 +37,10 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import {
+  DEFAULT_EMBEDDING_REQUEST_CONFIG,
+  DEFAULT_EMBEDDING_RESPONSE_CONFIG,
+  DEFAULT_QDRANT_CONFIG,
   embeddingProviderTypes,
-  embeddingRequestConfigSchema,
-  embeddingResponseConfigSchema,
-  qdrantIntegrationConfigSchema,
   type PublicEmbeddingProvider,
   type InsertEmbeddingProvider,
 } from "@shared/schema";
@@ -136,12 +136,7 @@ type ProvidersResponse = {
 
 type CreateEmbeddingServiceVariables = {
   payload: InsertEmbeddingProvider;
-  formattedStrings: {
-    requestHeaders: string;
-    requestConfig: string;
-    responseConfig: string;
-    qdrantConfig: string;
-  };
+  formattedRequestHeaders: string;
 };
 
 type ToggleEmbeddingServiceVariables = {
@@ -161,41 +156,12 @@ type FormValues = {
   model: string;
   allowSelfSignedCertificate: boolean;
   requestHeaders: string;
-  requestConfig: string;
-  responseConfig: string;
-  qdrantConfig: string;
 };
 
 const requestHeadersSchema = z.record(z.string());
 
 const defaultRequestHeaders = {
   Accept: "application/json",
-};
-
-const defaultRequestConfig = {
-  inputField: "input",
-  modelField: "model",
-  additionalBodyFields: {
-    encoding_format: "float",
-  },
-};
-
-const defaultResponseConfig = {
-  vectorPath: "data[0].embedding",
-  usageTokensPath: "usage.total_tokens",
-  rawVectorType: "float32",
-};
-
-const defaultQdrantConfig = {
-  collectionName: "{{ knowledge_base.slug }}",
-  vectorFieldName: "{{ collection.vector_field | default: 'vector' }}",
-  payloadFields: {
-    source_id: "{{ document.id }}",
-    text: "{{ chunk.text }}",
-    metadata: "{{ chunk.metadata | json }}",
-  },
-  vectorSize: "{{ embedding.vector_size | default: 1024 }}",
-  upsertMode: "{{ integration.upsert_mode | default: 'replace' }}",
 };
 
 const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
@@ -212,9 +178,6 @@ const defaultFormValues: FormValues = {
   model: "embeddings",
   allowSelfSignedCertificate: true,
   requestHeaders: formatJson(defaultRequestHeaders),
-  requestConfig: formatJson(defaultRequestConfig),
-  responseConfig: formatJson(defaultResponseConfig),
-  qdrantConfig: formatJson(defaultQdrantConfig),
 };
 
 const EMBEDDING_FORM_STORAGE_KEY = "embeddingService.formDraft";
@@ -326,10 +289,7 @@ export default function EmbeddingServicesPage() {
         ...currentValues,
         description: "",
         authorizationKey: currentValues.authorizationKey,
-        requestHeaders: variables.formattedStrings.requestHeaders,
-        requestConfig: variables.formattedStrings.requestConfig,
-        responseConfig: variables.formattedStrings.responseConfig,
-        qdrantConfig: variables.formattedStrings.qdrantConfig,
+        requestHeaders: variables.formattedRequestHeaders,
       });
     },
     onError: (error: Error) => {
@@ -412,22 +372,6 @@ export default function EmbeddingServicesPage() {
         true,
       );
 
-      const requestConfig = parseJsonField(
-        values.requestConfig,
-        embeddingRequestConfigSchema,
-        "requestConfig",
-        "Опишите структуру тела запроса",
-        true,
-      );
-
-      const responseConfig = parseJsonField(
-        values.responseConfig,
-        embeddingResponseConfigSchema,
-        "responseConfig",
-        "Укажите путь до вектора в ответе",
-        true,
-      );
-
       setDebugSteps(
         debugStepDefinitions.map((step, index) => ({
           ...step,
@@ -451,8 +395,6 @@ export default function EmbeddingServicesPage() {
             model,
             allowSelfSignedCertificate: values.allowSelfSignedCertificate,
             requestHeaders,
-            requestConfig,
-            responseConfig,
           }),
         });
       } catch (error) {
@@ -589,29 +531,6 @@ export default function EmbeddingServicesPage() {
         true,
       ) as InsertEmbeddingProvider["requestHeaders"];
 
-      const requestConfig = parseJsonField(
-        values.requestConfig,
-        embeddingRequestConfigSchema,
-        "requestConfig",
-        "Опишите структуру тела запроса",
-        true,
-      ) as InsertEmbeddingProvider["requestConfig"];
-
-      const responseConfig = parseJsonField(
-        values.responseConfig,
-        embeddingResponseConfigSchema,
-        "responseConfig",
-        "Укажите путь до вектора в ответе",
-        true,
-      ) as InsertEmbeddingProvider["responseConfig"];
-
-      const qdrantConfig = parseJsonField(
-        values.qdrantConfig,
-        qdrantIntegrationConfigSchema,
-        "qdrantConfig",
-        "Опишите схему записи в Qdrant",
-      ) as InsertEmbeddingProvider["qdrantConfig"];
-
       const payload: InsertEmbeddingProvider = {
         providerType: values.providerType,
         name: values.name.trim(),
@@ -624,19 +543,24 @@ export default function EmbeddingServicesPage() {
         model: values.model.trim(),
         allowSelfSignedCertificate: values.allowSelfSignedCertificate,
         requestHeaders,
-        requestConfig,
-        responseConfig,
-        qdrantConfig,
+        requestConfig: {
+          ...DEFAULT_EMBEDDING_REQUEST_CONFIG,
+          additionalBodyFields: {
+            ...DEFAULT_EMBEDDING_REQUEST_CONFIG.additionalBodyFields,
+          },
+        },
+        responseConfig: { ...DEFAULT_EMBEDDING_RESPONSE_CONFIG },
+        qdrantConfig: {
+          ...DEFAULT_QDRANT_CONFIG,
+          payloadFields: {
+            ...DEFAULT_QDRANT_CONFIG.payloadFields,
+          },
+        },
       };
 
-      const formattedStrings = {
-        requestHeaders: formatJson(requestHeaders),
-        requestConfig: formatJson(requestConfig),
-        responseConfig: formatJson(responseConfig),
-        qdrantConfig: formatJson(qdrantConfig),
-      };
+      const formattedRequestHeaders = formatJson(requestHeaders);
 
-      createServiceMutation.mutate({ payload, formattedStrings });
+      createServiceMutation.mutate({ payload, formattedRequestHeaders });
     } catch (_error) {
       toast({
         title: "Не удалось подготовить данные",
@@ -661,8 +585,8 @@ export default function EmbeddingServicesPage() {
           <CardHeader>
             <CardTitle>Новый сервис эмбеддингов</CardTitle>
             <CardDescription>
-              Укажите параметры авторизации и форматы запросов/ответов, чтобы платформа могла автоматически получать
-              эмбеддинги и складывать их в нужную коллекцию Qdrant.
+              Укажите параметры авторизации и подключения к API. Схема обращения к сервису и запись чанков в Qdrant
+              настроены автоматически и подходят для GigaChat Embeddings от СберБанка.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -976,78 +900,6 @@ export default function EmbeddingServicesPage() {
                   )}
                 />
 
-                <FormField
-                  control={form.control}
-                  name="requestConfig"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Структура тела запроса</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          spellCheck={false}
-                          rows={6}
-                          placeholder='{"inputField":"input","modelField":"model"}'
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Укажите, в каком поле нужно передавать текст и как фиксируется выбранная модель. Можно добавить
-                        дополнительные параметры (например, <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">encoding_format</code>).
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="responseConfig"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Парсинг ответа</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          spellCheck={false}
-                          rows={5}
-                          placeholder='{"vectorPath":"data[0].embedding"}'
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Опишите путь до массива с эмбеддингами и, при необходимости, пути до usage-метрик.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="qdrantConfig"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Запись в Qdrant</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          spellCheck={false}
-                          rows={6}
-                          placeholder='{"collectionName":"{{ knowledge_base.slug }}","vectorFieldName":"{{ collection.vector_field }}"}'
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Опишите шаблон Liquid для коллекции, векторного поля и payload. Доступны объекты
-                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">knowledge_base</code>,
-                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">document</code>,
-                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">chunk</code>,
-                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">embedding</code> и
-                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">integration</code>.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
                 <div className="flex justify-end">
                   <Button type="submit" disabled={createServiceMutation.isPending}>
                     {createServiceMutation.isPending ? (
@@ -1093,25 +945,26 @@ export default function EmbeddingServicesPage() {
                   <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">Authorization: Bearer &lt;token&gt;</code> и
                   <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">X-Client-Id</code>.
                 </li>
-                <li>
-                  Передать текстовую нагрузку в поле, указанное в конфигурации (по умолчанию
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">input</code>) и зафиксировать модель через поле
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">model</code>.
-                </li>
-                <li>
-                  Распарсить ответ и извлечь вектор по пути
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">data[0].embedding</code>. Полученный массив чисел будет
-                  использован при записи в коллекцию Qdrant, указанную в настройках.
-                </li>
+                  <li>
+                    Передать текстовую нагрузку в поле
+                    <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">input</code> (массив строк) и указать модель в поле
+                    <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">model</code>.
+                  </li>
+                  <li>
+                    Распарсить ответ и извлечь вектор по пути
+                    <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">data[0].embedding</code>. Полученный массив чисел сохраняется
+                    в коллекцию Qdrant, название которой формируется автоматически на основе проекта.
+                  </li>
               </ol>
 
               <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
                 Пример тела запроса:
                 <pre className="mt-2 overflow-auto rounded bg-background p-3">
-{`{
-  "model": "embeddings",
-  "input": "Здесь размещаем текст чанка"
-}`}
+  {`{
+    "model": "embeddings",
+    "input": ["Здесь размещаем текст чанка"],
+    "encoding_format": "float"
+  }`}
                 </pre>
               </div>
             </CardContent>
@@ -1129,11 +982,11 @@ export default function EmbeddingServicesPage() {
                   Authorization ключи хранятся в зашифрованном виде на стороне сервера и не отображаются повторно после
                   сохранения. Проверьте корректность данных до отправки формы.
                 </p>
-              <p>
-                Формат JSON в полях конфигурации должен быть валидным. Используйте двойные кавычки и убедитесь, что в
-                Qdrant существует указанная коллекция или она будет создана заранее.
-              </p>
-            </CardContent>
+                <p>
+                  JSON в поле дополнительных заголовков должен быть валидным. Коллекция и payload для Qdrant формируются
+                  автоматически, дополнительно настраивать их не требуется.
+                </p>
+              </CardContent>
           </Card>
         </div>
       </div>
@@ -1185,7 +1038,6 @@ export default function EmbeddingServicesPage() {
             </div>
           ) : (
             providers.map((provider) => {
-              const qdrantInfo = provider.qdrantConfig;
               const isToggling =
                 toggleServiceMutation.isPending && toggleServiceMutation.variables?.id === provider.id;
 
@@ -1227,9 +1079,8 @@ export default function EmbeddingServicesPage() {
                     </div>
                     <div>
                       <p className="font-medium text-foreground">Коллекция Qdrant</p>
-                      <p className="break-all">
-                        {qdrantInfo.collectionName} · поле: {qdrantInfo.vectorFieldName ?? "vector"}
-                        {qdrantInfo.vectorSize ? ` · размер: ${qdrantInfo.vectorSize}` : ""}
+                      <p className="text-sm text-muted-foreground">
+                        Название и структура коллекции формируются автоматически на этапе отправки чанков.
                       </p>
                     </div>
                     <div>
