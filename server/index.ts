@@ -140,6 +140,8 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
+    const errorDetails = err instanceof Error && err.stack ? err.stack : String(err);
+    log(`Unhandled error ${status}: ${errorDetails}`);
     res.status(status).json({ message });
     throw err;
   });

@@ -728,7 +728,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/embedding/services", requireAdmin, async (req, res, next) => {
+  app.post("/api/embedding/services", requireAdmin, async (req, res) => {
     try {
       const payload = insertEmbeddingProviderSchema.parse(req.body);
       const provider = await storage.createEmbeddingProvider({
@@ -742,7 +742,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Некорректные данные", details: error.issues });
       }
 
-      next(error);
+      const errorDetails = getErrorDetails(error);
+      console.error(
+        `[Embedding Services] Ошибка при создании сервиса эмбеддингов: ${errorDetails}`,
+        error,
+      );
+
+      return res.status(500).json({
+        message: "Не удалось создать сервис эмбеддингов",
+        details: errorDetails,
+      });
     }
   });
 
