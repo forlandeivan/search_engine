@@ -438,6 +438,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         payload.requestConfig ?? embeddingRequestConfigSchema.parse(undefined);
       const responseConfig =
         payload.responseConfig ?? embeddingResponseConfigSchema.parse(undefined);
+      const requestConfig = embeddingRequestConfigSchema.parse(payload.requestConfig ?? {});
+      const responseConfig = embeddingResponseConfigSchema.parse(payload.responseConfig ?? {});
+main
 
       const tokenHeaders = new Headers();
       tokenHeaders.set("Authorization", payload.authorizationKey);
@@ -524,6 +527,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const embeddingBody = createEmbeddingRequestBody(requestConfig, payload.model, TEST_EMBEDDING_TEXT);
 
       let embeddingResponse: FetchResponse;
+
+      let embeddingResponse: globalThis.Response;
+main
       try {
         embeddingResponse = await fetch(payload.embeddingsUrl, {
           method: "POST",
