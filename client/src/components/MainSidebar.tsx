@@ -1,4 +1,5 @@
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sidebar,
   SidebarContent,
@@ -15,18 +16,19 @@ import {
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import {
-  Users,
-  Settings,
-  CreditCard,
-  BookOpen,
-  Webhook,
-  Boxes,
-  Brain,
+  Search,
   Globe,
   Database,
+  Activity,
+  Webhook,
+  Calendar,
+  BookOpen,
+  Boxes,
+  Brain,
   ChevronLeft,
   ChevronRight,
-  ShieldCheck,
+  Settings,
+  Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -39,9 +41,34 @@ interface SidebarItem {
   locked?: boolean;
 }
 
-export default function AdminSidebar() {
+interface Stats {
+  sites: { total: number; crawling: number; completed: number; failed: number; };
+  pages: { total: number; };
+}
+
+interface Site {
+  id: string;
+  url: string;
+  status: string;
+}
+
+interface MainSidebarProps {
+  showAdminLink?: boolean;
+}
+
+export default function MainSidebar({ showAdminLink = false }: MainSidebarProps) {
   const [location] = useLocation();
   const { state, toggleSidebar } = useSidebar();
+
+  const { data: stats } = useQuery<Stats>({
+    queryKey: ['/api/stats'],
+    refetchInterval: 10000,
+  });
+
+  const { data: sites } = useQuery<Site[]>({
+    queryKey: ['/api/sites/extended'],
+    refetchInterval: 10000,
+  });
 
   const isItemActive = (item: SidebarItem) => location === item.url;
 
@@ -56,15 +83,16 @@ export default function AdminSidebar() {
       <>
         <item.icon className="h-4 w-4" />
         <span>{item.title}</span>
-        {item.locked && (
+        {item.locked ? (
           <Badge variant="outline" className="ml-auto text-xs border-dashed text-muted-foreground">
-            Скоро
+            PRO
           </Badge>
-        )}
-        {item.badge && !item.locked && (
-          <Badge variant={item.badgeVariant || "default"} className="ml-auto text-xs">
-            {item.badge}
-          </Badge>
+        ) : (
+          item.badge && (
+            <Badge variant={item.badgeVariant || "default"} className="ml-auto text-xs">
+              {item.badge}
+            </Badge>
+          )
         )}
       </>
     );
@@ -74,7 +102,7 @@ export default function AdminSidebar() {
         <SidebarMenuButton
           className="justify-start opacity-60 cursor-not-allowed"
           disabled
-          tooltip="Секция в разработке"
+          tooltip="Доступно в платной версии"
           data-testid={getTestId(item)}
         >
           {content}
@@ -96,47 +124,48 @@ export default function AdminSidebar() {
 
   const sections: Array<{ label: string; items: SidebarItem[] }> = [
     {
-      label: "Команда",
+      label: "Основное",
       items: [
         {
-          title: "Пользователи",
-          url: "/admin/users",
-          icon: Users,
+          title: "Поиск",
+          url: "/",
+          icon: Search,
         },
-      ],
-    },
-    {
-      label: "Поисковая платформа",
-      items: [
         {
           title: "Проекты",
           url: "/admin/sites",
           icon: Globe,
+          badge: sites ? sites.length.toString() : "0",
+          badgeVariant: "secondary",
         },
         {
           title: "Загрузка знаний",
           url: "/admin/knowledge",
           icon: Brain,
         },
+      ],
+    },
+    {
+      label: "Управление",
+      items: [
         {
           title: "Индексированные страницы",
           url: "/admin/pages",
           icon: Database,
+          badge: stats?.pages ? stats.pages.total.toString() : "0",
+          badgeVariant: "default",
         },
         {
-          title: "Векторные коллекции",
-          url: "/admin/vector/collections",
-          icon: Boxes,
+          title: "Статистика каулинга",
+          url: "/admin/stats",
+          icon: Activity,
+          locked: true,
         },
-      ],
-    },
-    {
-      label: "Интеграции",
-      items: [
         {
-          title: "Документация API",
-          url: "/admin/api",
-          icon: BookOpen,
+          title: "Расписание",
+          url: "/admin/schedule",
+          icon: Calendar,
+          locked: true,
         },
         {
           title: "Вебхуки",
@@ -147,29 +176,40 @@ export default function AdminSidebar() {
       ],
     },
     {
-      label: "Настройки",
+      label: "Векторный поиск",
       items: [
         {
-          title: "Общие настройки",
+          title: "Коллекции",
+          url: "/admin/vector/collections",
+          icon: Boxes,
+        },
+      ],
+    },
+    {
+      label: "Система",
+      items: [
+        {
+          title: "Документация API",
+          url: "/admin/api",
+          icon: BookOpen,
+        },
+        {
+          title: "Настройки",
           url: "/admin/settings",
           icon: Settings,
-          locked: true,
-        },
-        {
-          title: "Биллинг",
-          url: "/admin/billing",
-          icon: CreditCard,
-          locked: true,
-        },
-        {
-          title: "Роли и права",
-          url: "/admin/roles",
-          icon: ShieldCheck,
           locked: true,
         },
       ],
     },
   ];
+
+  if (showAdminLink) {
+    sections[sections.length - 1].items.push({
+      title: "Администрирование",
+      url: "/admin/users",
+      icon: Shield,
+    });
+  }
 
   return (
     <Sidebar collapsible="icon">
@@ -177,8 +217,8 @@ export default function AdminSidebar() {
       <SidebarHeader className="p-4 border-b">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h2 className="text-lg font-semibold">Администрирование</h2>
-            <p className="text-sm text-muted-foreground">Управление платформой</p>
+            <h2 className="text-lg font-semibold">Поисковый движок</h2>
+            <p className="text-sm text-muted-foreground">Рабочая область</p>
           </div>
           <Button
             variant="ghost"

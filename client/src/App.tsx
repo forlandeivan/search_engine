@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import AdminSidebar from "@/components/AdminSidebar";
+import MainSidebar from "@/components/MainSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
 import SearchPage from "@/pages/SearchPage";
 import AdminPage from "@/pages/AdminPage";
@@ -26,7 +27,6 @@ import type { CSSProperties } from "react";
 function AdminRouter() {
   return (
     <Switch>
-      <Route path="/" component={SearchPage} />
       <Route path="/admin/users" component={AdminUsersPage} />
       <Route path="/admin/sites" component={AdminPage} />
       <Route path="/admin/projects/:siteId" component={ProjectDetailPage} />
@@ -42,6 +42,15 @@ function AdminRouter() {
   );
 }
 
+function MainRouter() {
+  return (
+    <Switch>
+      <Route path="/" component={SearchPage} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
 function UnauthorizedPage() {
   return (
     <div className="p-6 space-y-2">
@@ -50,21 +59,6 @@ function UnauthorizedPage() {
         У вас нет доступа к административной панели. Обратитесь к администратору для получения прав.
       </p>
     </div>
-  );
-}
-
-function UserRouter() {
-  return (
-    <Switch>
-      <Route path="/" component={SearchPage} />
-      <Route path="/admin/:rest*">
-        <UnauthorizedPage />
-      </Route>
-      <Route path="/admin">
-        <UnauthorizedPage />
-      </Route>
-      <Route component={NotFound} />
-    </Switch>
   );
 }
 
@@ -147,17 +141,27 @@ function AdminAppShell({ user }: { user: PublicUser }) {
   );
 }
 
-function UserAppShell({ user }: { user: PublicUser }) {
+function MainAppShell({ user }: { user: PublicUser }) {
+  const style = {
+    "--sidebar-width": "20rem",
+    "--sidebar-width-icon": "4rem",
+  } as CSSProperties;
+
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="flex items-center justify-between p-4 border-b gap-2">
-        <span className="text-lg font-semibold">Поисковая панель</span>
-        <HeaderUserArea user={user} />
-      </header>
-      <main className="flex-1 overflow-auto">
-        <UserRouter />
-      </main>
-    </div>
+    <SidebarProvider style={style}>
+      <div className="flex h-screen w-full">
+        <MainSidebar showAdminLink={user.role === "admin"} />
+        <div className="flex flex-col flex-1">
+          <header className="flex items-center justify-between p-2 border-b gap-2">
+            <SidebarTrigger data-testid="button-sidebar-toggle" />
+            <HeaderUserArea user={user} />
+          </header>
+          <main className="flex-1 overflow-auto">
+            <MainRouter />
+          </main>
+        </div>
+      </div>
+    </SidebarProvider>
   );
 }
 
@@ -180,11 +184,16 @@ function AppContent() {
 
   const { user } = session;
 
-  if (user.role === "admin") {
-    return <AdminAppShell user={user} />;
-  }
-
-  return <UserAppShell user={user} />;
+  return (
+    <Switch>
+      <Route path="/admin/:rest*">
+        {user.role === "admin" ? <AdminAppShell user={user} /> : <UnauthorizedPage />}
+      </Route>
+      <Route>
+        <MainAppShell user={user} />
+      </Route>
+    </Switch>
+  );
 }
 
 function App() {
