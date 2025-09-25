@@ -37,12 +37,9 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import {
-  DEFAULT_EMBEDDING_REQUEST_CONFIG,
-  DEFAULT_EMBEDDING_RESPONSE_CONFIG,
-  DEFAULT_QDRANT_CONFIG,
   embeddingProviderTypes,
+  insertEmbeddingProviderSchema,
   type PublicEmbeddingProvider,
-  type InsertEmbeddingProvider,
 } from "@shared/schema";
 
 import { AlertCircle, Eye, EyeOff, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
@@ -134,8 +131,10 @@ type ProvidersResponse = {
   providers: PublicEmbeddingProvider[];
 };
 
+type EmbeddingProviderPayload = z.input<typeof insertEmbeddingProviderSchema>;
+
 type CreateEmbeddingServiceVariables = {
-  payload: InsertEmbeddingProvider;
+  payload: EmbeddingProviderPayload;
   formattedRequestHeaders: string;
 };
 
@@ -160,9 +159,7 @@ type FormValues = {
 
 const requestHeadersSchema = z.record(z.string());
 
-const defaultRequestHeaders = {
-  Accept: "application/json",
-};
+const defaultRequestHeaders: Record<string, string> = {};
 
 const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -529,9 +526,9 @@ export default function EmbeddingServicesPage() {
         "requestHeaders",
         "Укажите заголовки запроса в формате JSON",
         true,
-      ) as InsertEmbeddingProvider["requestHeaders"];
+      ) as z.infer<typeof requestHeadersSchema>;
 
-      const payload: InsertEmbeddingProvider = {
+      const payload: EmbeddingProviderPayload = {
         providerType: values.providerType,
         name: values.name.trim(),
         description: values.description.trim() ? values.description.trim() : undefined,
@@ -542,21 +539,11 @@ export default function EmbeddingServicesPage() {
         scope: values.scope.trim(),
         model: values.model.trim(),
         allowSelfSignedCertificate: values.allowSelfSignedCertificate,
-        requestHeaders,
-        requestConfig: {
-          ...DEFAULT_EMBEDDING_REQUEST_CONFIG,
-          additionalBodyFields: {
-            ...DEFAULT_EMBEDDING_REQUEST_CONFIG.additionalBodyFields,
-          },
-        },
-        responseConfig: { ...DEFAULT_EMBEDDING_RESPONSE_CONFIG },
-        qdrantConfig: {
-          ...DEFAULT_QDRANT_CONFIG,
-          payloadFields: {
-            ...DEFAULT_QDRANT_CONFIG.payloadFields,
-          },
-        },
       };
+
+      if (Object.keys(requestHeaders).length > 0) {
+        payload.requestHeaders = requestHeaders;
+      }
 
       const formattedRequestHeaders = formatJson(requestHeaders);
 
