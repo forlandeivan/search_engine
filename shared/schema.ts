@@ -124,6 +124,27 @@ export type EmbeddingRequestConfig = z.infer<typeof embeddingRequestConfigSchema
 export type EmbeddingResponseConfig = z.infer<typeof embeddingResponseConfigSchema>;
 export type QdrantIntegrationConfig = z.infer<typeof qdrantIntegrationConfigSchema>;
 
+export const DEFAULT_EMBEDDING_REQUEST_CONFIG: EmbeddingRequestConfig = {
+  inputField: "input",
+  modelField: "model",
+  additionalBodyFields: {
+    encoding_format: "float",
+  },
+};
+
+export const DEFAULT_EMBEDDING_RESPONSE_CONFIG: EmbeddingResponseConfig = {
+  vectorPath: "data[0].embedding",
+  usageTokensPath: "usage.total_tokens",
+  rawVectorType: "float32",
+};
+
+export const DEFAULT_QDRANT_CONFIG: QdrantIntegrationConfig = {
+  collectionName: "auto",
+  vectorFieldName: "vector",
+  payloadFields: {},
+  upsertMode: "replace",
+};
+
 export const registerUserSchema = z
   .object({
     fullName: z
@@ -315,20 +336,46 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
     model: z.string().trim().min(1, "Укажите модель"),
     allowSelfSignedCertificate: z.boolean().default(false),
     requestHeaders: z.record(z.string()).default({}),
-    requestConfig: embeddingRequestConfigSchema,
-    responseConfig: embeddingResponseConfigSchema,
-    qdrantConfig: qdrantIntegrationConfigSchema,
+    requestConfig: z
+      .any()
+      .optional()
+      .transform(() => ({ ...DEFAULT_EMBEDDING_REQUEST_CONFIG } as EmbeddingRequestConfig)),
+    responseConfig: z
+      .any()
+      .optional()
+      .transform(() => ({ ...DEFAULT_EMBEDDING_RESPONSE_CONFIG } as EmbeddingResponseConfig)),
+    qdrantConfig: z
+      .any()
+      .optional()
+      .transform(() => ({ ...DEFAULT_QDRANT_CONFIG } as QdrantIntegrationConfig)),
   });
 
-export const updateEmbeddingProviderSchema = insertEmbeddingProviderSchema
-  .partial()
-  .extend({
+export const updateEmbeddingProviderSchema = z
+  .object({
+    name: z.string().trim().min(1, "Укажите название сервиса").max(200, "Слишком длинное название").optional(),
+    providerType: z.enum(embeddingProviderTypes).optional(),
+    description: z
+      .string()
+      .trim()
+      .max(1000, "Описание слишком длинное")
+      .optional()
+      .transform((value) => (value && value.length > 0 ? value : undefined)),
     isActive: z.boolean().optional(),
-    requestHeaders: z.record(z.string()).optional(),
-    requestConfig: embeddingRequestConfigSchema.optional(),
-    responseConfig: embeddingResponseConfigSchema.optional(),
-    qdrantConfig: qdrantIntegrationConfigSchema.optional(),
+    tokenUrl: z
+      .string()
+      .trim()
+      .url("Некорректный URL для получения Access Token")
+      .optional(),
+    embeddingsUrl: z
+      .string()
+      .trim()
+      .url("Некорректный URL сервиса эмбеддингов")
+      .optional(),
+    authorizationKey: z.string().trim().min(1, "Укажите Authorization key").optional(),
+    scope: z.string().trim().min(1, "Укажите OAuth scope").optional(),
+    model: z.string().trim().min(1, "Укажите модель").optional(),
     allowSelfSignedCertificate: z.boolean().optional(),
+    requestHeaders: z.record(z.string()).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нет данных для обновления",
