@@ -107,6 +107,13 @@ const createVectorCollectionSchema = z.object({
   onDiskPayload: z.boolean().optional(),
 });
 
+const testEmbeddingCredentialsSchema = z.object({
+  tokenUrl: z.string().trim().url("Некорректный URL для получения токена"),
+  authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
+  scope: z.string().trim().min(1, "Укажите OAuth scope"),
+  requestHeaders: z.record(z.string()).default({}),
+});
+
 const upsertPointsSchema = z.object({
   wait: z.boolean().optional(),
   ordering: z.enum(["weak", "medium", "strong"]).optional(),
@@ -313,6 +320,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       res.status(201).json({ provider: toPublicEmbeddingProvider(provider) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      next(error);
+    }
+  });
+
+  app.post("/api/embedding/services/test-credentials", requireAdmin, async (req, res, next) => {
+    try {
+      const payload = testEmbeddingCredentialsSchema.parse(req.body);
+
+      const headers = new Headers();
+      headers.set("Authorization", payload.authorizationKey);
+      headers.set("Content-Type", "application/x-www-form-urlencoded");
+      headers.set("Accept", "application/json");
+
+      for (const [key, value] of Object.entries(payload.requestHeaders)) {
+        headers.set(key, value);
+      }
+
+      let tokenResponse: globalThis.Response;
+      try {
+        tokenResponse = await fetch(payload.tokenUrl, {
+          method: "POST",
+          headers,
+          body: new URLSearchParams({ scope: payload.scope }).toString(),
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const details = errorMessage ? `: ${errorMessage}` : "";
+        return res
+          .status(502)
+          .send(`Не удалось подключиться к сервису эмбеддингов${details}`);
+      }
+
+      const rawBody = await tokenResponse.text();
+      let parsedBody: unknown = null;
+
+      if (rawBody) {
+        try {
+          parsedBody = JSON.parse(rawBody);
+        } catch {
+          parsedBody = rawBody;
+        }
+      }
+
+      if (!tokenResponse.ok) {
+        let message = `Сервис вернул статус ${tokenResponse.status}`;
+
+        if (parsedBody && typeof parsedBody === "object") {
+          const body = parsedBody as Record<string, unknown>;
+          if (typeof body.error_description === "string") {
+            message = body.error_description;
+          } else if (typeof body.message === "string") {
+            message = body.message;
+          }
+        } else if (typeof parsedBody === "string" && parsedBody.trim()) {
+          message = parsedBody.trim();
+        }
+
+        return res.status(400).send(message);
+      }
+
+      const parts = ["Соединение установлено."];
+
+      if (parsedBody && typeof parsedBody === "object") {
+        const body = parsedBody as Record<string, unknown>;
+
+        if (typeof body.access_token === "string") {
+          parts.push("Получен access_token.");
+        }
+
+        if (typeof body.expires_in === "number") {
+          parts.push(`Действует ${body.expires_in} с.`);
+        }
+
+        if (typeof body.expires_at === "string") {
+          parts.push(`Истекает ${body.expires_at}.`);
+        }
+      }
+
+      res.json({ message: parts.join(" ") });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Некорректные данные", details: error.issues });
