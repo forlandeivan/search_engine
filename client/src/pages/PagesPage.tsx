@@ -621,11 +621,11 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
               <div>
                 <p className="text-xs uppercase text-muted-foreground">Payload (пример первого чанка)</p>
                 {payloadPreview ? (
-                  <ScrollArea className="mt-2 max-h-64 rounded-md border bg-background p-3">
-                    <pre className="whitespace-pre-wrap break-words text-xs font-mono leading-relaxed">
+                  <div className="mt-2 max-h-80 overflow-auto rounded-md border bg-background">
+                    <pre className="w-full min-w-full whitespace-pre-wrap break-words p-3 text-xs font-mono leading-relaxed">
                       {payloadPreviewJson}
                     </pre>
-                  </ScrollArea>
+                  </div>
                 ) : (
                   <p className="mt-2 text-xs text-muted-foreground">
                     Добавьте контент на страницу, чтобы увидеть пример payload.
