@@ -762,366 +762,379 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
           Векторизация
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-4xl lg:max-w-5xl">
-        <DialogHeader>
-          <DialogTitle>Отправка чанков в Qdrant</DialogTitle>
-          <p className="text-sm text-muted-foreground">
-            Страница содержит {totalChunks.toLocaleString("ru-RU")} чанков. Они будут
-            преобразованы в эмбеддинги выбранным сервисом и записаны в коллекцию Qdrant.
-          </p>
-        </DialogHeader>
-
-        {providers.length === 0 ? (
-          <div className="space-y-4">
-            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              Нет активных сервисов эмбеддингов. Добавьте и включите сервис на вкладке
-              «Эмбеддинги», чтобы выполнять загрузку чанков в Qdrant.
-            </p>
+      <DialogContent className="sm:max-w-4xl lg:max-w-5xl max-h-[85vh] overflow-hidden p-0">
+        <div className="flex h-full flex-col">
+          <div className="px-6 pt-6">
+            <DialogHeader>
+              <DialogTitle>Отправка чанков в Qdrant</DialogTitle>
+              <p className="text-sm text-muted-foreground">
+                Страница содержит {totalChunks.toLocaleString("ru-RU")} чанков. Они будут
+                преобразованы в эмбеддинги выбранным сервисом и записаны в коллекцию Qdrant.
+              </p>
+            </DialogHeader>
           </div>
-        ) : (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.95fr)] lg:items-start">
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Сервис эмбеддингов</label>
-                <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Выберите сервис" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {providers.map((provider) => (
-                      <SelectItem key={provider.id} value={provider.id}>
-                        {provider.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Будут использованы настройки Qdrant выбранного сервиса. Убедитесь, что указана
-                  правильная коллекция.
-                </p>
-              </div>
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="text-sm font-medium">Коллекция Qdrant</label>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={collectionMode === "existing" ? "secondary" : "outline"}
-                      onClick={() => setCollectionMode("existing")}
-                      disabled={availableCollections.length === 0 && !isCollectionsLoading}
-                    >
-                      Существующая
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={collectionMode === "new" ? "secondary" : "outline"}
-                      onClick={() => setCollectionMode("new")}
-                    >
-                      Создать новую
-                    </Button>
-                  </div>
-                </div>
-                {collectionMode === "existing" ? (
-                  <div className="space-y-2">
-                    {isCollectionsLoading ? (
-                      <p className="text-xs text-muted-foreground">Загружаем список коллекций…</p>
-                    ) : collections.length === 0 ? (
-                      <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                        Коллекции не найдены. Создайте новую, чтобы загрузить данные.
-                      </p>
-                    ) : availableCollections.length === 0 ? (
-                      <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                        {providerVectorSize
-                          ? `Нет коллекций с размером вектора ${providerVectorSize.toLocaleString("ru-RU")}. Создайте новую коллекцию.`
-                          : "Подходящие коллекции не найдены. Создайте новую, чтобы загрузить данные."}
-                      </p>
-                    ) : (
-                      <>
-                        <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Выберите коллекцию" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableCollections.map((collection) => {
-                              const normalizedSize = parseVectorSize(collection.vectorSize);
-                              const label = normalizedSize
-                                ? `${collection.name} · ${normalizedSize}d`
-                                : collection.name;
-                              return (
-                                <SelectItem key={collection.name} value={collection.name}>
-                                  {label}
-                                </SelectItem>
-                              );
-                            })}
-                          </SelectContent>
-                        </Select>
-                        {providerVectorSize && (
-                          <p className="text-xs text-muted-foreground">
-                            Показаны только коллекции с размером вектора {providerVectorSize.toLocaleString("ru-RU")}.
-                            {filteredOutCollectionsCount > 0
-                              ? ` Скрыто ${filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций с другой размерностью.`
-                              : ""}
-                          </p>
-                        )}
-                      </>
-                    )}
-                    {collectionsErrorMessage && (
-                      <p className="text-xs text-destructive">
-                        Не удалось загрузить коллекции: {collectionsErrorMessage}
-                      </p>
-                    )}
+
+          <div className="flex-1 px-6 pb-6">
+            <ScrollArea className="h-full">
+              <div className="space-y-6 pr-4">
+                {providers.length === 0 ? (
+                  <div className="space-y-4">
+                    <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                      Нет активных сервисов эмбеддингов. Добавьте и включите сервис на вкладке
+                      «Эмбеддинги», чтобы выполнять загрузку чанков в Qdrant.
+                    </p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    <Input
-                      value={newCollectionName}
-                      onChange={(event) => setNewCollectionName(event.target.value)}
-                      placeholder={defaultCollectionName}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Коллекция будет создана автоматически перед отправкой чанков. Допустимы
-                      латинские буквы, цифры, символы «_» и «-».
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {vectorizeMutation.isError && (
-                <p className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-                  {vectorizeMutation.error.message}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
-              <div>
-                <p className="text-xs uppercase text-muted-foreground">Эмбеддинги</p>
-                <div className="mt-1 space-y-1 text-sm">
-                  <p>Сервис: {selectedProvider?.name ?? "—"}</p>
-                  {selectedProvider?.model && <p>Модель: {selectedProvider.model}</p>}
-                  {providerVectorSize && (
-                    <p>Размер вектора: {providerVectorSize.toLocaleString("ru-RU")}</p>
-                  )}
-                  <p>Чанков к обработке: {totalChunks.toLocaleString("ru-RU")}</p>
-                  <p>Оценка расхода токенов: {tokensHint}</p>
-                </div>
-              </div>
-              {firstChunk && (
-                <div className="space-y-2">
-                  <p className="text-xs uppercase text-muted-foreground">Текст первого чанка</p>
-                  <div className="rounded-md border bg-background p-3">
-                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
-                      {firstChunk.content}
-                    </p>
-                  </div>
-                </div>
-              )}
-              {collectionMode === "new" ? (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-xs uppercase text-muted-foreground">Схема новой коллекции</p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1"
-                      onClick={handleAddSchemaField}
-                    >
-                      <Plus className="h-4 w-4" /> Поле
-                    </Button>
-                  </div>
-                  {schemaFields.length === 0 ? (
-                    <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                      Добавьте хотя бы одно поле, чтобы задать структуру новой коллекции.
-                    </p>
-                  ) : (
-                    <div className="space-y-3">
-                      {schemaFields.map((field) => (
-                        <div
-                          key={field.id}
-                          className={cn(
-                            "space-y-3 rounded-lg border bg-background p-3",
-                            embeddingFieldId === field.id && "border-primary/70 shadow-sm",
-                          )}
-                        >
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="flex-1 space-y-2">
-                              <label className="text-xs font-medium uppercase text-muted-foreground">Название поля</label>
-                              <Input
-                                value={field.name}
-                                onChange={(event) =>
-                                  handleUpdateSchemaField(field.id, { name: event.target.value })
-                                }
-                                placeholder="Например, content"
-                              />
-                            </div>
-                            <div className="flex items-start justify-end gap-2">
-                              {embeddingFieldId === field.id && (
-                                <Badge variant="secondary" className="self-center text-[10px] uppercase">
-                                  Поле эмбеддингов
-                                </Badge>
-                              )}
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-muted-foreground"
-                                  >
-                                    <MoreVertical className="h-4 w-4" />
-                                    <span className="sr-only">Дополнительные действия</span>
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-56">
-                                  <DropdownMenuLabel>Действия</DropdownMenuLabel>
-                                  <DropdownMenuItem
-                                    className="gap-2"
-                                    onSelect={(event) => {
-                                      event.preventDefault();
-                                      handleSelectEmbeddingField(field.id);
-                                    }}
-                                  >
-                                    {embeddingFieldId === field.id ? (
-                                      <Check className="h-4 w-4 text-primary" />
-                                    ) : (
-                                      <Sparkles className="h-4 w-4 text-muted-foreground" />
-                                    )}
-                                    Использовать для эмбеддингов
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    className="gap-2 text-destructive focus:text-destructive"
-                                    onSelect={(event) => {
-                                      event.preventDefault();
-                                      handleRemoveSchemaField(field.id);
-                                    }}
-                                  >
-                                    <Trash2 className="h-4 w-4" /> Удалить поле
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                  <>
+                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-start xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Сервис эмбеддингов</label>
+                          <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Выберите сервис" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {providers.map((provider) => (
+                                <SelectItem key={provider.id} value={provider.id}>
+                                  {provider.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            Будут использованы настройки Qdrant выбранного сервиса. Убедитесь, что указана
+                            правильная коллекция.
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <label className="text-sm font-medium">Коллекция Qdrant</label>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={collectionMode === "existing" ? "secondary" : "outline"}
+                                onClick={() => setCollectionMode("existing")}
+                                disabled={availableCollections.length === 0 && !isCollectionsLoading}
+                              >
+                                Существующая
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={collectionMode === "new" ? "secondary" : "outline"}
+                                onClick={() => setCollectionMode("new")}
+                              >
+                                Создать новую
+                              </Button>
                             </div>
                           </div>
-                          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)] md:items-start">
+                          {collectionMode === "existing" ? (
                             <div className="space-y-2">
-                              <label className="text-xs font-medium uppercase text-muted-foreground">
-                                Liquid шаблон
-                              </label>
-                              <Textarea
-                                value={field.template}
-                                onChange={(event) =>
-                                  handleUpdateSchemaField(field.id, { template: event.target.value })
-                                }
-                                placeholder="Например, {{ chunk.text }}"
-                                rows={3}
+                              {isCollectionsLoading ? (
+                                <p className="text-xs text-muted-foreground">Загружаем список коллекций…</p>
+                              ) : collections.length === 0 ? (
+                                <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                                  Коллекции не найдены. Создайте новую, чтобы загрузить данные.
+                                </p>
+                              ) : availableCollections.length === 0 ? (
+                                <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                                  {providerVectorSize
+                                    ? `Нет коллекций с размером вектора ${providerVectorSize.toLocaleString("ru-RU")}. Создайте новую коллекцию.`
+                                    : "Подходящие коллекции не найдены. Создайте новую, чтобы загрузить данные."}
+                                </p>
+                              ) : (
+                                <>
+                                  <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Выберите коллекцию" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {availableCollections.map((collection) => {
+                                        const normalizedSize = parseVectorSize(collection.vectorSize);
+                                        const label = normalizedSize
+                                          ? `${collection.name} · ${normalizedSize}d`
+                                          : collection.name;
+                                        return (
+                                          <SelectItem key={collection.name} value={collection.name}>
+                                            {label}
+                                          </SelectItem>
+                                        );
+                                      })}
+                                    </SelectContent>
+                                  </Select>
+                                  {providerVectorSize && (
+                                    <p className="text-xs text-muted-foreground">
+                                      Показаны только коллекции с размером вектора {providerVectorSize.toLocaleString("ru-RU")}.
+                                      {filteredOutCollectionsCount > 0
+                                        ? ` Скрыто ${filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций с другой размерностью.`
+                                        : ""}
+                                    </p>
+                                  )}
+                                </>
+                              )}
+                              {collectionsErrorMessage && (
+                                <p className="text-xs text-destructive">
+                                  Не удалось загрузить коллекции: {collectionsErrorMessage}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <Input
+                                value={newCollectionName}
+                                onChange={(event) => setNewCollectionName(event.target.value)}
+                                placeholder={defaultCollectionName}
                               />
                               <p className="text-xs text-muted-foreground">
-                                Используйте переменные <code className="rounded bg-muted px-1">chunk</code>{" "}
-                                <code className="rounded bg-muted px-1">page</code>{" "}
-                                <code className="rounded bg-muted px-1">site</code> и{" "}
-                                <code className="rounded bg-muted px-1">provider</code>.
+                                Коллекция будет создана автоматически перед отправкой чанков. Допустимы
+                                латинские буквы, цифры, символы «_» и «-».
                               </p>
                             </div>
-                            <div className="space-y-3">
-                              <div className="space-y-2">
-                                <label className="text-xs font-medium uppercase text-muted-foreground">Тип данных</label>
-                                <Select
-                                  value={field.type}
-                                  onValueChange={(value) =>
-                                    handleUpdateSchemaField(field.id, {
-                                      type: value as CollectionFieldType,
-                                    })
-                                  }
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Выберите тип" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="string">Строка</SelectItem>
-                                    <SelectItem value="double">Double</SelectItem>
-                                    <SelectItem value="object">Object (JSON)</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2">
-                                <div>
-                                  <p className="text-xs font-medium text-muted-foreground">Массив</p>
-                                  <p className="text-[11px] text-muted-foreground">
-                                    Значение будет сохранено как массив.
-                                  </p>
-                                </div>
-                                <Switch
-                                  checked={field.isArray}
-                                  onCheckedChange={(checked) =>
-                                    handleUpdateSchemaField(field.id, { isArray: checked })
-                                  }
-                                />
-                              </div>
-                            </div>
+                          )}
+                        </div>
+
+                        {vectorizeMutation.isError && (
+                          <p className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+                            {vectorizeMutation.error.message}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
+                        <div>
+                          <p className="text-xs uppercase text-muted-foreground">Эмбеддинги</p>
+                          <div className="mt-1 space-y-1 text-sm">
+                            <p>Сервис: {selectedProvider?.name ?? "—"}</p>
+                            {selectedProvider?.model && <p>Модель: {selectedProvider.model}</p>}
+                            {providerVectorSize && (
+                              <p>Размер вектора: {providerVectorSize.toLocaleString("ru-RU")}</p>
+                            )}
+                            <p>Чанков к обработке: {totalChunks.toLocaleString("ru-RU")}</p>
+                            <p>Оценка расхода токенов: {tokensHint}</p>
                           </div>
                         </div>
-                      ))}
+                        {firstChunk && (
+                          <div className="space-y-2">
+                            <p className="text-xs uppercase text-muted-foreground">Текст первого чанка</p>
+                            <div className="rounded-md border bg-background p-3">
+                              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
+                                {firstChunk.content}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
-                  <div>
-                    <p className="text-xs uppercase text-muted-foreground">Пример документа</p>
-                    {schemaPreviewJson ? (
-                      <div className="mt-2 max-h-72 overflow-auto rounded-md border bg-background">
-                        <pre className="w-full min-w-full whitespace-pre-wrap break-words p-3 text-xs font-mono leading-relaxed">
-                          {schemaPreviewJson}
-                        </pre>
+
+                    {collectionMode === "new" ? (
+                      <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs uppercase text-muted-foreground">Схема новой коллекции</p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1"
+                            onClick={handleAddSchemaField}
+                          >
+                            <Plus className="h-4 w-4" /> Поле
+                          </Button>
+                        </div>
+                        {schemaFields.length === 0 ? (
+                          <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                            Добавьте хотя бы одно поле, чтобы задать структуру новой коллекции.
+                          </p>
+                        ) : (
+                          <div className="space-y-3">
+                            {schemaFields.map((field) => (
+                              <div
+                                key={field.id}
+                                className={cn(
+                                  "space-y-3 rounded-lg border bg-background p-3",
+                                  embeddingFieldId === field.id && "border-primary/70 shadow-sm",
+                                )}
+                              >
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                  <div className="flex-1 space-y-2">
+                                    <label className="text-xs font-medium uppercase text-muted-foreground">Название поля</label>
+                                    <Input
+                                      value={field.name}
+                                      onChange={(event) =>
+                                        handleUpdateSchemaField(field.id, { name: event.target.value })
+                                      }
+                                      placeholder="Например, content"
+                                    />
+                                  </div>
+                                  <div className="flex items-start justify-end gap-2">
+                                    {embeddingFieldId === field.id && (
+                                      <Badge variant="secondary" className="self-center text-[10px] uppercase">
+                                        Поле эмбеддингов
+                                      </Badge>
+                                    )}
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-8 w-8 text-muted-foreground"
+                                        >
+                                          <MoreVertical className="h-4 w-4" />
+                                          <span className="sr-only">Дополнительные действия</span>
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end" className="w-56">
+                                        <DropdownMenuLabel>Действия</DropdownMenuLabel>
+                                        <DropdownMenuItem
+                                          className="gap-2"
+                                          onSelect={(event) => {
+                                            event.preventDefault();
+                                            handleSelectEmbeddingField(field.id);
+                                          }}
+                                        >
+                                          {embeddingFieldId === field.id ? (
+                                            <Check className="h-4 w-4 text-primary" />
+                                          ) : (
+                                            <Sparkles className="h-4 w-4 text-muted-foreground" />
+                                          )}
+                                          Использовать для эмбеддингов
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                          className="gap-2 text-destructive focus:text-destructive"
+                                          onSelect={(event) => {
+                                            event.preventDefault();
+                                            handleRemoveSchemaField(field.id);
+                                          }}
+                                        >
+                                          <Trash2 className="h-4 w-4" /> Удалить поле
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </div>
+                                </div>
+                                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)] md:items-start">
+                                  <div className="space-y-2">
+                                    <label className="text-xs font-medium uppercase text-muted-foreground">
+                                      Liquid шаблон
+                                    </label>
+                                    <Textarea
+                                      value={field.template}
+                                      onChange={(event) =>
+                                        handleUpdateSchemaField(field.id, { template: event.target.value })
+                                      }
+                                      placeholder="Например, {{ chunk.text }}"
+                                      rows={3}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                      Используйте переменные <code className="rounded bg-muted px-1">chunk</code>{" "}
+                                      <code className="rounded bg-muted px-1">page</code>{" "}
+                                      <code className="rounded bg-muted px-1">site</code> и{" "}
+                                      <code className="rounded bg-muted px-1">provider</code>.
+                                    </p>
+                                  </div>
+                                  <div className="space-y-3">
+                                    <div className="space-y-2">
+                                      <label className="text-xs font-medium uppercase text-muted-foreground">Тип данных</label>
+                                      <Select
+                                        value={field.type}
+                                        onValueChange={(value) =>
+                                          handleUpdateSchemaField(field.id, {
+                                            type: value as CollectionFieldType,
+                                          })
+                                        }
+                                      >
+                                        <SelectTrigger>
+                                          <SelectValue placeholder="Выберите тип" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="string">Строка</SelectItem>
+                                          <SelectItem value="double">Double</SelectItem>
+                                          <SelectItem value="object">Object (JSON)</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2">
+                                      <div>
+                                        <p className="text-xs font-medium text-muted-foreground">Массив</p>
+                                        <p className="text-[11px] text-muted-foreground">
+                                          Значение будет сохранено как массив.
+                                        </p>
+                                      </div>
+                                      <Switch
+                                        checked={field.isArray}
+                                        onCheckedChange={(checked) =>
+                                          handleUpdateSchemaField(field.id, { isArray: checked })
+                                        }
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-xs uppercase text-muted-foreground">Пример документа</p>
+                          {schemaPreviewJson ? (
+                            <div className="mt-2 max-h-72 overflow-auto rounded-md border bg-background">
+                              <pre className="w-full min-w-full whitespace-pre-wrap break-words p-3 text-xs font-mono leading-relaxed">
+                                {schemaPreviewJson}
+                              </pre>
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              {firstChunk
+                                ? "Заполните шаблоны, чтобы увидеть предпросмотр документа."
+                                : "Добавьте контент на страницу, чтобы построить предпросмотр."}
+                            </p>
+                          )}
+                        </div>
+                        <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">Поле для эмбеддингов:</span>{" "}
+                          {embeddingFieldName ? (
+                            <span>{embeddingFieldName}</span>
+                          ) : (
+                            <span className="text-destructive">не выбрано</span>
+                          )}
+                        </div>
                       </div>
                     ) : (
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        {firstChunk
-                          ? "Заполните шаблоны, чтобы увидеть предпросмотр документа."
-                          : "Добавьте контент на страницу, чтобы построить предпросмотр."}
-                      </p>
+                      <div className="rounded-lg border bg-muted/20 p-4">
+                        <p className="text-xs uppercase text-muted-foreground">Схема коллекции</p>
+                        <p className="mt-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                          При использовании существующей коллекции её схема задана заранее. Создайте новую коллекцию, чтобы
+                          изменить структуру полей.
+                        </p>
+                      </div>
                     )}
-                  </div>
-                  <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">Поле для эмбеддингов:</span>{" "}
-                    {embeddingFieldName ? (
-                      <span>{embeddingFieldName}</span>
-                    ) : (
-                      <span className="text-destructive">не выбрано</span>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-xs uppercase text-muted-foreground">Схема коллекции</p>
-                  <p className="mt-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                    При использовании существующей коллекции её схема задана заранее. Создайте новую коллекцию, чтобы
-                    изменить структуру полей.
-                  </p>
-                </div>
-              )}
-            </div>
+                  </>
+                )}
+              </div>
+            </ScrollArea>
           </div>
-        )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => handleOpenChange(false)}>
-            Отмена
-          </Button>
-          <Button onClick={handleConfirm} disabled={confirmDisabled}>
-            {vectorizeMutation.isPending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Отправка...
-              </>
-            ) : (
-              <>
-                <Sparkles className="mr-2 h-4 w-4" />
-                Отправить
-              </>
-            )}
-          </Button>
-        </DialogFooter>
+          <DialogFooter className="border-t border-border/60 bg-background/80 px-6 py-4">
+            <Button variant="outline" onClick={() => handleOpenChange(false)}>
+              Отмена
+            </Button>
+            <Button onClick={handleConfirm} disabled={confirmDisabled}>
+              {vectorizeMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Отправка...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Отправить
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
