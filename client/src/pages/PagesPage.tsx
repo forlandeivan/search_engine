@@ -1,11 +1,18 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -119,6 +126,9 @@ interface CollectionSchemaField {
   template: string;
 }
 
+const TEMPLATE_PATH_LIMIT = 400;
+const TEMPLATE_SUGGESTION_LIMIT = 150;
+
 function generateFieldId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -144,6 +154,59 @@ function getDefaultSchemaFields(): CollectionSchemaField[] {
     createSchemaField({ name: "title", template: "{{ page.title }}" }),
     createSchemaField({ name: "url", template: "{{ page.url }}" }),
   ];
+}
+
+function collectTemplatePaths(source: unknown, limit = TEMPLATE_PATH_LIMIT): string[] {
+  if (!source || typeof source !== "object") {
+    return [];
+  }
+
+  const paths = new Set<string>();
+  const visited = new WeakSet<object>();
+
+  const visit = (value: unknown, path: string) => {
+    if (paths.size >= limit) {
+      return;
+    }
+
+    if (value && typeof value === "object") {
+      const objectValue = value as object;
+      if (visited.has(objectValue)) {
+        return;
+      }
+      visited.add(objectValue);
+    }
+
+    if (path) {
+      paths.add(path);
+    }
+
+    if (paths.size >= limit) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.slice(0, 5).forEach((item, index) => {
+        const nextPath = path ? `${path}[${index}]` : `[${index}]`;
+        visit(item, nextPath);
+      });
+      return;
+    }
+
+    if (value && typeof value === "object") {
+      Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+        if (paths.size >= limit) {
+          return;
+        }
+        const nextPath = path ? `${path}.${key}` : key;
+        visit(child, nextPath);
+      });
+    }
+  };
+
+  visit(source, "");
+
+  return Array.from(paths).sort((a, b) => a.localeCompare(b, "ru"));
 }
 
 function parsePathSegments(path: string): string[] {
@@ -441,6 +504,9 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
   const [embeddingFieldId, setEmbeddingFieldId] = useState<string | null>(
     () => initialEmbeddingFieldIdRef.current,
   );
+  const [activeTab, setActiveTab] = useState<"settings" | "context">("settings");
+  const [activeSuggestionsFieldId, setActiveSuggestionsFieldId] = useState<string | null>(null);
+  const templateFieldRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
   const defaultCollectionName = useMemo(() => suggestCollectionName(page), [page]);
   const {
@@ -565,13 +631,21 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
-    if (!open) {
-      vectorizeMutation.reset();
-      setCollectionMode(availableCollections.length > 0 ? "existing" : "new");
-      setSelectedCollectionName(availableCollections[0]?.name ?? "");
-      setNewCollectionName(defaultCollectionName);
-      resetSchemaBuilder();
+    if (open) {
+      setActiveTab("settings");
+      setActiveSuggestionsFieldId(null);
+      templateFieldRefs.current = {};
+      return;
     }
+
+    vectorizeMutation.reset();
+    setCollectionMode(availableCollections.length > 0 ? "existing" : "new");
+    setSelectedCollectionName(availableCollections[0]?.name ?? "");
+    setNewCollectionName(defaultCollectionName);
+    resetSchemaBuilder();
+    setActiveSuggestionsFieldId(null);
+    setActiveTab("settings");
+    templateFieldRefs.current = {};
   };
 
   const handleConfirm = () => {
@@ -648,6 +722,37 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
 
     return buildLiquidContext(page, firstChunk, selectedProvider, totalChunks);
   }, [firstChunk, page, selectedProvider, totalChunks]);
+  const liquidContextJson = useMemo(() => {
+    if (!liquidContext) {
+      return "";
+    }
+
+    try {
+      return JSON.stringify(liquidContext, null, 2);
+    } catch (error) {
+      console.error("Не удалось подготовить JSON контекста", error);
+      return "";
+    }
+  }, [liquidContext]);
+  const templateVariableSuggestions = useMemo(() => {
+    if (!liquidContext) {
+      return [];
+    }
+
+    return collectTemplatePaths(liquidContext);
+  }, [liquidContext]);
+  const limitedTemplateVariableSuggestions = useMemo(
+    () => templateVariableSuggestions.slice(0, TEMPLATE_SUGGESTION_LIMIT),
+    [templateVariableSuggestions],
+  );
+  const hasMoreTemplateSuggestions =
+    templateVariableSuggestions.length > TEMPLATE_SUGGESTION_LIMIT;
+
+  useEffect(() => {
+    if (templateVariableSuggestions.length === 0) {
+      setActiveSuggestionsFieldId(null);
+    }
+  }, [templateVariableSuggestions.length]);
 
   const schemaPreview = useMemo(() => {
     if (!liquidContext) {
@@ -749,6 +854,80 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
     setEmbeddingFieldId(id);
   };
 
+  const handleTemplateInputChange = (
+    fieldId: string,
+    event: ChangeEvent<HTMLTextAreaElement>,
+  ) => {
+    const { value, selectionStart } = event.target;
+    templateFieldRefs.current[fieldId] = event.target;
+    handleUpdateSchemaField(fieldId, { template: value });
+
+    setActiveSuggestionsFieldId((current) => {
+      if (selectionStart === null) {
+        return current === fieldId ? null : current;
+      }
+
+      if (selectionStart < 2 && current === fieldId) {
+        return null;
+      }
+
+      if (selectionStart >= 2) {
+        const lastTwo = value.slice(selectionStart - 2, selectionStart);
+        if (lastTwo === "{{") {
+          return fieldId;
+        }
+
+        if (current === fieldId) {
+          const beforeCaret = value.slice(0, selectionStart);
+          if (beforeCaret.trimEnd().endsWith("}}")) {
+            return null;
+          }
+        }
+      }
+
+      if (current === fieldId && !value.includes("{{")) {
+        return null;
+      }
+
+      return current;
+    });
+  };
+
+  const handleTemplateKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Escape") {
+      setActiveSuggestionsFieldId(null);
+    }
+  };
+
+  const handleInsertTemplateVariable = (fieldId: string, path: string) => {
+    const textarea = templateFieldRefs.current[fieldId];
+    if (!textarea) {
+      return;
+    }
+
+    const { selectionStart, selectionEnd, value } = textarea;
+    const start = selectionStart ?? value.length;
+    const end = selectionEnd ?? start;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const trimmedBefore = before.trimEnd();
+    const hasOpenBraces = trimmedBefore.endsWith("{{");
+    const needsLeadingSpace = hasOpenBraces && before.slice(trimmedBefore.length).length === 0;
+    const insertion = hasOpenBraces
+      ? `${needsLeadingSpace ? " " : ""}${path} }}`
+      : `{{ ${path} }}`;
+    const nextValue = `${before}${insertion}${after}`;
+
+    handleUpdateSchemaField(fieldId, { template: nextValue });
+    setActiveSuggestionsFieldId(null);
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const caretPosition = before.length + insertion.length;
+      textarea.setSelectionRange(caretPosition, caretPosition);
+    });
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
@@ -762,7 +941,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
           Векторизация
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-4xl lg:max-w-5xl max-h-[85vh] overflow-hidden p-0">
+      <DialogContent className="sm:max-w-4xl lg:max-w-5xl h-[85vh] max-h-[85vh] overflow-hidden p-0">
         <div className="flex h-full flex-col">
           <div className="px-6 pt-6">
             <DialogHeader>
@@ -776,8 +955,18 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
 
           <div className="flex-1 px-6 pb-6">
             <ScrollArea className="h-full">
-              <div className="space-y-6 pr-4">
-                {providers.length === 0 ? (
+              <div className="pr-4">
+                <Tabs
+                  value={activeTab}
+                  onValueChange={(value) => setActiveTab(value as "settings" | "context")}
+                  className="space-y-4"
+                >
+                  <TabsList className="w-fit">
+                    <TabsTrigger value="settings">Настройки</TabsTrigger>
+                    <TabsTrigger value="context">JSON страницы</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="settings" className="space-y-6">
+                    {providers.length === 0 ? (
                   <div className="space-y-4">
                     <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                       Нет активных сервисов эмбеддингов. Добавьте и включите сервис на вкладке
@@ -1022,9 +1211,23 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                                     </label>
                                     <Textarea
                                       value={field.template}
-                                      onChange={(event) =>
-                                        handleUpdateSchemaField(field.id, { template: event.target.value })
+                                      onChange={(event) => handleTemplateInputChange(field.id, event)}
+                                      onKeyDown={handleTemplateKeyDown}
+                                      onBlur={() =>
+                                        setActiveSuggestionsFieldId((current) =>
+                                          current === field.id ? null : current,
+                                        )
                                       }
+                                      onFocus={() => {
+                                        setActiveSuggestionsFieldId(null);
+                                      }}
+                                      ref={(element) => {
+                                        if (element) {
+                                          templateFieldRefs.current[field.id] = element;
+                                        } else {
+                                          delete templateFieldRefs.current[field.id];
+                                        }
+                                      }}
                                       placeholder="Например, {{ chunk.text }}"
                                       rows={3}
                                     />
@@ -1034,6 +1237,32 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                                       <code className="rounded bg-muted px-1">site</code> и{" "}
                                       <code className="rounded bg-muted px-1">provider</code>.
                                     </p>
+                                    {activeSuggestionsFieldId === field.id &&
+                                      limitedTemplateVariableSuggestions.length > 0 && (
+                                        <div className="space-y-2 rounded-md border bg-background p-2 text-xs shadow-sm">
+                                          <p className="font-medium text-muted-foreground">
+                                            Подставьте одно из доступных полей:
+                                          </p>
+                                          <div className="flex flex-wrap gap-2">
+                                            {limitedTemplateVariableSuggestions.map((path) => (
+                                              <button
+                                                key={path}
+                                                type="button"
+                                                className="rounded border border-muted-foreground/30 bg-muted/40 px-2 py-1 font-mono text-[11px] text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                                                onMouseDown={(event) => event.preventDefault()}
+                                                onClick={() => handleInsertTemplateVariable(field.id, path)}
+                                              >
+                                                {`{{ ${path} }}`}
+                                              </button>
+                                            ))}
+                                          </div>
+                                          {hasMoreTemplateSuggestions && (
+                                            <p className="text-[10px] text-muted-foreground">
+                                              Показаны первые {TEMPLATE_SUGGESTION_LIMIT.toLocaleString("ru-RU")} полей.
+                                            </p>
+                                          )}
+                                        </div>
+                                      )}
                                   </div>
                                   <div className="space-y-3">
                                     <div className="space-y-2">
@@ -1112,6 +1341,48 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                     )}
                   </>
                 )}
+                  </TabsContent>
+                  <TabsContent value="context">
+                    <div className="space-y-4">
+                      <p className="text-sm text-muted-foreground">
+                        Просмотрите данные страницы и чанка, которые доступны в шаблонизаторе Liquid.
+                      </p>
+                      {liquidContextJson ? (
+                        <div className="max-h-[60vh] overflow-auto rounded-md border bg-background">
+                          <pre className="w-full min-w-full whitespace-pre-wrap break-words p-4 text-xs font-mono leading-relaxed">
+                            {liquidContextJson}
+                          </pre>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          Добавьте контент на страницу или выберите сервис, чтобы построить JSON контекста.
+                        </p>
+                      )}
+                      {limitedTemplateVariableSuggestions.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-xs uppercase text-muted-foreground">Доступные переменные</p>
+                          <div className="max-h-48 overflow-auto rounded-md border bg-background p-2">
+                            <div className="flex flex-wrap gap-2">
+                              {limitedTemplateVariableSuggestions.map((path) => (
+                                <code
+                                  key={path}
+                                  className="rounded bg-muted px-2 py-1 text-xs font-mono text-muted-foreground"
+                                >
+                                  {`{{ ${path} }}`}
+                                </code>
+                              ))}
+                            </div>
+                          </div>
+                          {hasMoreTemplateSuggestions && (
+                            <p className="text-[11px] text-muted-foreground">
+                              Показаны первые {TEMPLATE_SUGGESTION_LIMIT.toLocaleString("ru-RU")} полей. Полный список см. в JSON выше.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </TabsContent>
+                </Tabs>
               </div>
             </ScrollArea>
           </div>
