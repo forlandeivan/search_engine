@@ -953,9 +953,8 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
             </DialogHeader>
           </div>
 
-          <div className="flex-1 px-6 pb-6">
-            <ScrollArea className="h-full">
-              <div className="pr-4">
+          <div className="flex-1 overflow-y-auto px-6 pb-6">
+            <div className="pr-4">
                 <Tabs
                   value={activeTab}
                   onValueChange={(value) => setActiveTab(value as "settings" | "context")}
@@ -1384,7 +1383,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                   </TabsContent>
                 </Tabs>
               </div>
-            </ScrollArea>
+            </div>
           </div>
 
           <DialogFooter className="border-t border-border/60 bg-background/80 px-6 py-4">
