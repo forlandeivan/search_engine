@@ -149,7 +149,8 @@ function buildPayloadPreview(
   chunkCharLimit: number | null,
 ) {
   const chunkPositionRaw = chunk.metadata?.position;
-  const chunkIndex = typeof chunkPositionRaw === "number" ? chunkPositionRaw : 0;
+  const chunkPosition = typeof chunkPositionRaw === "number" ? chunkPositionRaw : 0;
+  const chunkIndex = chunkPosition;
   const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
   const chunkWordCount = chunk.metadata?.wordCount ?? null;
   const baseChunkId =
@@ -165,39 +166,6 @@ function buildPayloadPreview(
   const siteUrlValue = siteMetadata?.["siteUrl"];
 
   const payload = {
-    pageId: page.id,
-    pageUrl: page.url,
-    pageTitle: page.title ?? null,
-    pageMetadata: page.metadata ?? null,
-    siteId: page.siteId,
-    siteName: typeof siteNameValue === "string" ? siteNameValue : null,
-    siteUrl: typeof siteUrlValue === "string" ? siteUrlValue : null,
-    providerId: provider?.id ?? null,
-    providerName: provider?.name ?? null,
-    providerModel: provider?.model ?? null,
-    totalChunks,
-    chunkCharLimit,
-    chunkId: baseChunkId,
-    chunkIndex,
-    chunkHeading: chunk.heading ?? null,
-    chunkLevel: chunk.level ?? null,
-    chunkDeepLink: chunk.deepLink ?? null,
-    chunkText: chunk.content,
-    chunkCharCount,
-    chunkWordCount,
-    chunkPosition: chunkIndex,
-    chunkExcerpt: chunk.metadata?.excerpt ?? null,
-    chunk: {
-      id: baseChunkId,
-      index: chunkIndex,
-      heading: chunk.heading ?? null,
-      level: chunk.level ?? null,
-      deepLink: chunk.deepLink ?? null,
-      text: chunk.content,
-      charCount: chunkCharCount,
-      wordCount: chunkWordCount,
-      metadata: chunk.metadata ?? null,
-    },
     page: {
       id: page.id,
       url: page.url,
@@ -206,14 +174,28 @@ function buildPayloadPreview(
       chunkCharLimit,
       metadata: page.metadata ?? null,
     },
-    site:
-      typeof siteNameValue === "string" || typeof siteUrlValue === "string"
-        ? {
-            id: page.siteId,
-            name: typeof siteNameValue === "string" ? siteNameValue : null,
-            url: typeof siteUrlValue === "string" ? siteUrlValue : null,
-          }
-        : null,
+    site: {
+      id: page.siteId,
+      name: typeof siteNameValue === "string" ? siteNameValue : null,
+      url: typeof siteUrlValue === "string" ? siteUrlValue : null,
+    },
+    provider: {
+      id: provider?.id ?? null,
+      name: provider?.name ?? null,
+    },
+    chunk: {
+      id: baseChunkId,
+      index: chunkIndex,
+      position: chunkPosition,
+      heading: chunk.heading ?? null,
+      level: chunk.level ?? null,
+      deepLink: chunk.deepLink ?? null,
+      text: chunk.content,
+      charCount: chunkCharCount,
+      wordCount: chunkWordCount,
+      excerpt: chunk.metadata?.excerpt ?? null,
+      metadata: chunk.metadata ?? null,
+    },
     embedding: {
       model: provider?.model ?? null,
       vectorSize:
