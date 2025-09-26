@@ -6,7 +6,7 @@ import fetch, {
   type Response as FetchResponse,
   type RequestInit as FetchRequestInit,
 } from "node-fetch";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { Agent as HttpsAgent } from "https";
 import { storage } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
@@ -244,6 +244,43 @@ function ensureNumberArray(value: unknown): number[] | undefined {
   }
 
   return numbers;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function createDeterministicUuid(value: string): string {
+  const hash = createHash("sha256").update(value).digest();
+  const bytes = hash.subarray(0, 16);
+
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = bytes.toString("hex");
+
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function normalizePointId(candidate: string | number): string | number {
+  if (typeof candidate === "number") {
+    return candidate;
+  }
+
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return createDeterministicUuid("empty");
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+
+  if (isUuid(trimmed)) {
+    return trimmed;
+  }
+
+  return createDeterministicUuid(trimmed);
 }
 
 function extractEmbeddingResponse(parsedBody: unknown) {
@@ -1944,7 +1981,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const baseChunkId = chunk.id && chunk.id.trim().length > 0
           ? chunk.id
           : `${page.id}-chunk-${chunk.metadata?.position ?? index}`;
-        const pointId = baseChunkId;
+        const pointId = normalizePointId(baseChunkId);
         const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
         const chunkWordCount = chunk.metadata?.wordCount ?? null;
         const chunkPosition = chunk.metadata?.position ?? index;
