@@ -630,11 +630,11 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
               {firstChunk && (
                 <div className="space-y-2">
                   <p className="text-xs uppercase text-muted-foreground">Текст первого чанка</p>
-                  <ScrollArea className="max-h-40 rounded-md border bg-background p-3">
+                  <div className="rounded-md border bg-background p-3">
                     <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
                       {firstChunk.content}
                     </p>
-                  </ScrollArea>
+                  </div>
                 </div>
               )}
               <div>
