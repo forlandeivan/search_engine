@@ -1,7 +1,15 @@
 import { ReactNode, useMemo, useState } from "react";
 import { Link, useRoute } from "wouter";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Check, ChevronLeft, Copy, HelpCircle, RefreshCw } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  Copy,
+  HelpCircle,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
+} from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +91,7 @@ export default function VectorCollectionDetailPage() {
   const collectionName = encodedName ? decodeURIComponent(encodedName) : null;
   const [selectedPoint, setSelectedPoint] = useState<CollectionPoint | null>(null);
   const [isJsonCopied, setIsJsonCopied] = useState(false);
+  const [isPointPreviewFullScreen, setIsPointPreviewFullScreen] = useState(false);
   const { toast } = useToast();
 
   const {
@@ -173,6 +182,7 @@ export default function VectorCollectionDetailPage() {
   const closePointPreview = () => {
     setSelectedPoint(null);
     setIsJsonCopied(false);
+    setIsPointPreviewFullScreen(false);
   };
 
   const handleCopyJson = async () => {
@@ -268,9 +278,12 @@ export default function VectorCollectionDetailPage() {
 
   const renderPreviewField = (field: { label: string; value: string }, index: number) => {
     return (
-      <div key={`${field.label}-${index}`} className="space-y-1">
-        <p className="text-xs font-medium uppercase text-muted-foreground">{field.label}</p>
-        <p className="line-clamp-3 text-sm text-muted-foreground">{field.value}</p>
+      <div
+        key={`${field.label}-${index}`}
+        className="rounded-md border border-border/60 bg-muted/40 p-3 transition-colors group-hover:border-primary/40"
+      >
+        <p className="text-[11px] font-medium uppercase text-muted-foreground">{field.label}</p>
+        <p className="mt-1 line-clamp-3 text-sm text-muted-foreground">{field.value}</p>
       </div>
     );
   };
@@ -399,7 +412,7 @@ export default function VectorCollectionDetailPage() {
           ) : points.length === 0 ? (
             <p className="text-muted-foreground">В коллекции пока нет записей.</p>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="space-y-4">
               {points.map((point) => {
                 const previewFields = getPreviewFields(point);
                 const isSelected = selectedPoint?.id === point.id;
@@ -410,30 +423,37 @@ export default function VectorCollectionDetailPage() {
                     key={String(point.id)}
                     onClick={() => setSelectedPoint(point)}
                     className={cn(
-                      "group flex h-full flex-col justify-between gap-3 rounded-xl border border-border/60 bg-card/80 p-4 text-left shadow-sm transition-all",
+                      "group w-full rounded-lg border border-border/60 bg-card/80 p-4 text-left shadow-sm transition-all",
                       "hover:border-primary/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
                       isSelected && "border-primary shadow-md",
                     )}
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-xs text-muted-foreground">ID записи</p>
-                        <p className="font-mono text-sm font-semibold text-foreground">{point.id}</p>
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div>
+                            <p className="text-xs text-muted-foreground">ID записи</p>
+                            <p className="font-mono text-sm font-semibold text-foreground">{point.id}</p>
+                          </div>
+                          <Badge variant="outline" className="bg-background/60">
+                            {previewFields.length} полей
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground sm:text-right">
+                          Нажмите, чтобы открыть полную запись
+                        </p>
                       </div>
-                      <Badge variant="secondary">{previewFields.length} полей</Badge>
-                    </div>
 
-                    <div className="space-y-3">
-                      {previewFields.length > 0 ? (
-                        previewFields.map((field, index) => renderPreviewField(field, index))
-                      ) : (
-                        <p className="text-sm text-muted-foreground">Данных для предпросмотра нет…</p>
-                      )}
+                      <div>
+                        {previewFields.length > 0 ? (
+                          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                            {previewFields.map((field, index) => renderPreviewField(field, index))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">Данных для предпросмотра нет…</p>
+                        )}
+                      </div>
                     </div>
-
-                    <p className="text-xs text-muted-foreground">
-                      Нажмите, чтобы открыть полную запись
-                    </p>
                   </button>
                 );
               })}
@@ -458,12 +478,40 @@ export default function VectorCollectionDetailPage() {
           }
         }}
       >
-        <SheetContent side="right" className="flex w-full max-w-3xl flex-col gap-4">
-          <SheetHeader className="space-y-1">
-            <SheetTitle>Запись коллекции</SheetTitle>
-            <SheetDescription>
-              Просмотр полного JSON без поля вектора. Вы можете скопировать данные для анализа или отладки.
-            </SheetDescription>
+        <SheetContent
+          side="right"
+          className={cn(
+            "flex w-full flex-col gap-4",
+            isPointPreviewFullScreen ? "max-w-[95vw]" : "max-w-6xl",
+          )}
+        >
+          <SheetHeader className="space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <SheetTitle>Запись коллекции</SheetTitle>
+                <SheetDescription>
+                  Просмотр полного JSON без поля вектора. Вы можете скопировать данные для анализа или отладки.
+                </SheetDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-2"
+                onClick={() => setIsPointPreviewFullScreen((prev) => !prev)}
+              >
+                {isPointPreviewFullScreen ? (
+                  <>
+                    <Minimize2 className="h-4 w-4" />
+                    Свернуть
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="h-4 w-4" />
+                    На весь экран
+                  </>
+                )}
+              </Button>
+            </div>
           </SheetHeader>
 
           {selectedPoint && (
@@ -478,7 +526,12 @@ export default function VectorCollectionDetailPage() {
                 </Button>
               </div>
 
-              <ScrollArea className="h-[70vh] rounded-lg border border-border/60 bg-muted/30 p-4">
+              <ScrollArea
+                className={cn(
+                  "rounded-lg border border-border/60 bg-muted/30 p-4",
+                  isPointPreviewFullScreen ? "h-[calc(100vh-220px)]" : "h-[70vh]",
+                )}
+              >
                 {selectedPointJson ? (
                   <pre className="text-sm leading-relaxed text-foreground">
                     {selectedPointJson}
