@@ -928,482 +928,488 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
     });
   };
 
+  const renderDialogHeader = () => (
+    <div className="px-6 pb-4 pt-6">
+      <DialogHeader className="space-y-3">
+        <DialogTitle>Отправка чанков в Qdrant</DialogTitle>
+        <p className="text-sm text-muted-foreground">
+          Страница содержит {totalChunks.toLocaleString("ru-RU")} чанков. Они будут преобразованы в
+          эмбеддинги выбранным сервисом и записаны в коллекцию Qdrant.
+        </p>
+      </DialogHeader>
+    </div>
+  );
+
+  const renderEmptyProvidersState = () => (
+    <div className="space-y-4">
+      <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+        Нет активных сервисов эмбеддингов. Добавьте и включите сервис на вкладке «Эмбеддинги», чтобы
+        выполнять загрузку чанков в Qdrant.
+      </p>
+    </div>
+  );
+
+  const renderExistingCollectionSelector = () => {
+    if (isCollectionsLoading) {
+      return <p className="text-xs text-muted-foreground">Загружаем список коллекций…</p>;
+    }
+
+    if (collections.length === 0) {
+      return (
+        <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+          Коллекции не найдены. Создайте новую, чтобы загрузить данные.
+        </p>
+      );
+    }
+
+    if (availableCollections.length === 0) {
+      return (
+        <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+          {providerVectorSize
+            ? `Нет коллекций с размером вектора ${providerVectorSize.toLocaleString("ru-RU")}. Создайте новую коллекцию.`
+            : "Подходящие коллекции не найдены. Создайте новую, чтобы загрузить данные."}
+        </p>
+      );
+    }
+
+    return (
+      <>
+        <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
+          <SelectTrigger>
+            <SelectValue placeholder="Выберите коллекцию" />
+          </SelectTrigger>
+          <SelectContent>
+            {availableCollections.map((collection) => {
+              const normalizedSize = parseVectorSize(collection.vectorSize);
+              const label = normalizedSize ? `${collection.name} · ${normalizedSize}d` : collection.name;
+
+              return (
+                <SelectItem key={collection.name} value={collection.name}>
+                  {label}
+                </SelectItem>
+              );
+            })}
+          </SelectContent>
+        </Select>
+        {providerVectorSize && (
+          <p className="text-xs text-muted-foreground">
+            Показаны только коллекции с размером вектора {providerVectorSize.toLocaleString("ru-RU")}.
+            {filteredOutCollectionsCount > 0
+              ? ` Скрыто ${filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций с другой размерностью.`
+              : ""}
+          </p>
+        )}
+      </>
+    );
+  };
+
+  const renderCollectionSelector = () => (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="text-sm font-medium">Коллекция Qdrant</label>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={collectionMode === "existing" ? "secondary" : "outline"}
+            onClick={() => setCollectionMode("existing")}
+            disabled={availableCollections.length === 0 && !isCollectionsLoading}
+          >
+            Существующая
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={collectionMode === "new" ? "secondary" : "outline"}
+            onClick={() => setCollectionMode("new")}
+          >
+            Создать новую
+          </Button>
+        </div>
+      </div>
+      {collectionMode === "existing" ? (
+        <>
+          {renderExistingCollectionSelector()}
+          {collectionsErrorMessage && (
+            <p className="text-xs text-destructive">
+              Не удалось загрузить коллекции: {collectionsErrorMessage}
+            </p>
+          )}
+        </>
+      ) : (
+        <div className="space-y-2">
+          <Input
+            value={newCollectionName}
+            onChange={(event) => setNewCollectionName(event.target.value)}
+            placeholder={defaultCollectionName}
+          />
+          <p className="text-xs text-muted-foreground">
+            Коллекция будет создана автоматически перед отправкой чанков. Допустимы латинские буквы, цифры, символы «_» и
+            «-».
+          </p>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderEmbeddingSummary = () => (
+    <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
+      <div>
+        <p className="text-xs uppercase text-muted-foreground">Эмбеддинги</p>
+        <div className="mt-1 space-y-1 text-sm">
+          <p>Сервис: {selectedProvider?.name ?? "—"}</p>
+          {selectedProvider?.model && <p>Модель: {selectedProvider.model}</p>}
+          {providerVectorSize && <p>Размер вектора: {providerVectorSize.toLocaleString("ru-RU")}</p>}
+          <p>Чанков к обработке: {totalChunks.toLocaleString("ru-RU")}</p>
+          <p>Оценка расхода токенов: {tokensHint}</p>
+        </div>
+      </div>
+      {firstChunk && (
+        <div className="space-y-2">
+          <p className="text-xs uppercase text-muted-foreground">Текст первого чанка</p>
+          <div className="rounded-md border bg-background p-3">
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
+              {firstChunk.content}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderSchemaField = (field: CollectionSchemaField) => (
+    <div
+      key={field.id}
+      className={cn(
+        "space-y-3 rounded-lg border bg-background p-3",
+        embeddingFieldId === field.id && "border-primary/70 shadow-sm",
+      )}
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex-1 space-y-2">
+          <label className="text-xs font-medium uppercase text-muted-foreground">Название поля</label>
+          <Input
+            value={field.name}
+            onChange={(event) => handleUpdateSchemaField(field.id, { name: event.target.value })}
+            placeholder="Например, content"
+          />
+        </div>
+        <div className="flex items-start justify-end gap-2">
+          {embeddingFieldId === field.id && (
+            <Badge variant="secondary" className="self-center text-[10px] uppercase">
+              Поле эмбеддингов
+            </Badge>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+                <MoreVertical className="h-4 w-4" />
+                <span className="sr-only">Дополнительные действия</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Действия</DropdownMenuLabel>
+              <DropdownMenuItem
+                className="gap-2"
+                onSelect={(event) => {
+                  event.preventDefault();
+                  handleSelectEmbeddingField(field.id);
+                }}
+              >
+                {embeddingFieldId === field.id ? (
+                  <Check className="h-4 w-4 text-primary" />
+                ) : (
+                  <Sparkles className="h-4 w-4 text-muted-foreground" />
+                )}
+                Использовать для эмбеддингов
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="gap-2 text-destructive focus:text-destructive"
+                onSelect={(event) => {
+                  event.preventDefault();
+                  handleRemoveSchemaField(field.id);
+                }}
+              >
+                <Trash2 className="h-4 w-4" /> Удалить поле
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)] md:items-start">
+        <div className="space-y-2">
+          <label className="text-xs font-medium uppercase text-muted-foreground">Liquid шаблон</label>
+          <Textarea
+            value={field.template}
+            onChange={(event) => handleTemplateInputChange(field.id, event)}
+            onKeyDown={handleTemplateKeyDown}
+            onBlur={() => setActiveSuggestionsFieldId((current) => (current === field.id ? null : current))}
+            onFocus={() => {
+              setActiveSuggestionsFieldId(null);
+            }}
+            ref={(element) => {
+              if (element) {
+                templateFieldRefs.current[field.id] = element;
+              } else {
+                delete templateFieldRefs.current[field.id];
+              }
+            }}
+            placeholder="Например, {{ chunk.text }}"
+            rows={3}
+          />
+          <p className="text-xs text-muted-foreground">
+            Используйте переменные <code className="rounded bg-muted px-1">chunk</code>{" "}
+            <code className="rounded bg-muted px-1">page</code>{" "}
+            <code className="rounded bg-muted px-1">site</code> и <code className="rounded bg-muted px-1">provider</code>.
+          </p>
+          {activeSuggestionsFieldId === field.id && limitedTemplateVariableSuggestions.length > 0 && (
+            <div className="space-y-2 rounded-md border bg-background p-2 text-xs shadow-sm">
+              <p className="font-medium text-muted-foreground">Подставьте одно из доступных полей:</p>
+              <div className="flex flex-wrap gap-2">
+                {limitedTemplateVariableSuggestions.map((path) => (
+                  <button
+                    key={path}
+                    type="button"
+                    className="rounded border border-muted-foreground/30 bg-muted/40 px-2 py-1 font-mono text-[11px] text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => handleInsertTemplateVariable(field.id, path)}
+                  >
+                    {`{{ ${path} }}`}
+                  </button>
+                ))}
+              </div>
+              {hasMoreTemplateSuggestions && (
+                <p className="text-[10px] text-muted-foreground">
+                  Показаны первые {TEMPLATE_SUGGESTION_LIMIT.toLocaleString("ru-RU")} полей.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <label className="text-xs font-medium uppercase text-muted-foreground">Тип данных</label>
+            <Select
+              value={field.type}
+              onValueChange={(value) =>
+                handleUpdateSchemaField(field.id, {
+                  type: value as CollectionFieldType,
+                })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Выберите тип" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="string">Строка</SelectItem>
+                <SelectItem value="double">Double</SelectItem>
+                <SelectItem value="object">Object (JSON)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">Массив</p>
+              <p className="text-[11px] text-muted-foreground">Значение будет сохранено как массив.</p>
+            </div>
+            <Switch
+              checked={field.isArray}
+              onCheckedChange={(checked) => handleUpdateSchemaField(field.id, { isArray: checked })}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderSchemaBuilder = () => (
+    <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs uppercase text-muted-foreground">Схема новой коллекции</p>
+        <Button type="button" variant="outline" size="sm" className="h-8 gap-1" onClick={handleAddSchemaField}>
+          <Plus className="h-4 w-4" /> Поле
+        </Button>
+      </div>
+      {schemaFields.length === 0 ? (
+        <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+          Добавьте хотя бы одно поле, чтобы задать структуру новой коллекции.
+        </p>
+      ) : (
+        <div className="space-y-3">{schemaFields.map((field) => renderSchemaField(field))}</div>
+      )}
+      <div>
+        <p className="text-xs uppercase text-muted-foreground">Пример документа</p>
+        {schemaPreviewJson ? (
+          <div className="mt-2 max-h-72 overflow-auto rounded-md border bg-background">
+            <pre className="w-full min-w-full whitespace-pre-wrap break-words p-3 text-xs font-mono leading-relaxed">
+              {schemaPreviewJson}
+            </pre>
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {firstChunk
+              ? "Заполните шаблоны, чтобы увидеть предпросмотр документа."
+              : "Добавьте контент на страницу, чтобы построить предпросмотр."}
+          </p>
+        )}
+      </div>
+      <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Поле для эмбеддингов:</span>{" "}
+        {embeddingFieldName ? <span>{embeddingFieldName}</span> : <span className="text-destructive">не выбрано</span>}
+      </div>
+    </div>
+  );
+
+  const renderSettingsTab = () => {
+    if (providers.length === 0) {
+      return renderEmptyProvidersState();
+    }
+
+    return (
+      <>
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-start xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Сервис эмбеддингов</label>
+              <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите сервис" />
+                </SelectTrigger>
+                <SelectContent>
+                  {providers.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Будут использованы настройки Qdrant выбранного сервиса. Убедитесь, что указана правильная коллекция.
+              </p>
+            </div>
+            {renderCollectionSelector()}
+            {vectorizeMutation.isError && (
+              <p className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+                {vectorizeMutation.error.message}
+              </p>
+            )}
+          </div>
+          {renderEmbeddingSummary()}
+        </div>
+        {collectionMode === "new" ? (
+          renderSchemaBuilder()
+        ) : (
+          <div className="rounded-lg border bg-muted/20 p-4">
+            <p className="text-xs uppercase text-muted-foreground">Схема коллекции</p>
+            <p className="mt-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+              При использовании существующей коллекции её схема задана заранее. Создайте новую коллекцию, чтобы изменить
+              структуру полей.
+            </p>
+          </div>
+        )}
+      </>
+    );
+  };
+
+  const renderContextTab = () => (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Просмотрите данные страницы и чанка, которые доступны в шаблонизаторе Liquid.
+      </p>
+      {liquidContextJson ? (
+        <div className="max-h-[60vh] overflow-auto rounded-md border bg-background">
+          <pre className="w-full min-w-full whitespace-pre-wrap break-words p-4 text-xs font-mono leading-relaxed">
+            {liquidContextJson}
+          </pre>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Добавьте контент на страницу или выберите сервис, чтобы построить JSON контекста.
+        </p>
+      )}
+      {limitedTemplateVariableSuggestions.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs uppercase text-muted-foreground">Доступные переменные</p>
+          <div className="max-h-48 overflow-auto rounded-md border bg-background p-2">
+            <div className="flex flex-wrap gap-2">
+              {limitedTemplateVariableSuggestions.map((path) => (
+                <code key={path} className="rounded bg-muted px-2 py-1 text-xs font-mono text-muted-foreground">
+                  {`{{ ${path} }}`}
+                </code>
+              ))}
+            </div>
+          </div>
+          {hasMoreTemplateSuggestions && (
+            <p className="text-[11px] text-muted-foreground">
+              Показаны первые {TEMPLATE_SUGGESTION_LIMIT.toLocaleString("ru-RU")} полей. Полный список см. в JSON выше.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderDialogTabs = () => (
+    <Tabs
+      value={activeTab}
+      onValueChange={(value) => setActiveTab(value as "settings" | "context")}
+      className="space-y-4"
+    >
+      <TabsList className="w-fit">
+        <TabsTrigger value="settings">Настройки</TabsTrigger>
+        <TabsTrigger value="context">JSON страницы</TabsTrigger>
+      </TabsList>
+      <TabsContent value="settings" className="space-y-6">
+        {renderSettingsTab()}
+      </TabsContent>
+      <TabsContent value="context">{renderContextTab()}</TabsContent>
+    </Tabs>
+  );
+
+  const renderDialogBody = () => (
+    <ScrollArea className="flex-1 min-h-0">
+      <div className="px-6 pb-6">
+        <div className="pr-4">{renderDialogTabs()}</div>
+      </div>
+    </ScrollArea>
+  );
+
+  const renderDialogFooter = () => (
+    <DialogFooter className="border-t border-border/60 bg-background/80 px-6 py-4">
+      <Button variant="outline" onClick={() => handleOpenChange(false)}>
+        Отмена
+      </Button>
+      <Button onClick={handleConfirm} disabled={confirmDisabled}>
+        {vectorizeMutation.isPending ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Отправка...
+          </>
+        ) : (
+          <>
+            <Sparkles className="mr-2 h-4 w-4" />
+            Отправить
+          </>
+        )}
+      </Button>
+    </DialogFooter>
+  );
+
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          className="whitespace-nowrap"
-        >
+        <Button variant="outline" size="sm" disabled={disabled} className="whitespace-nowrap">
           <Sparkles className="mr-1 h-4 w-4" />
           Векторизация
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-4xl lg:max-w-5xl h-[85vh] max-h-[85vh] overflow-hidden p-0">
-        <div className="flex h-full flex-col">
-          <div className="px-6 pt-6">
-            <DialogHeader>
-              <DialogTitle>Отправка чанков в Qdrant</DialogTitle>
-              <p className="text-sm text-muted-foreground">
-                Страница содержит {totalChunks.toLocaleString("ru-RU")} чанков. Они будут
-                преобразованы в эмбеддинги выбранным сервисом и записаны в коллекцию Qdrant.
-              </p>
-            </DialogHeader>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-6 pb-6">
-            <div className="pr-4">
-                <Tabs
-                  value={activeTab}
-                  onValueChange={(value) => setActiveTab(value as "settings" | "context")}
-                  className="space-y-4"
-                >
-                  <TabsList className="w-fit">
-                    <TabsTrigger value="settings">Настройки</TabsTrigger>
-                    <TabsTrigger value="context">JSON страницы</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="settings" className="space-y-6">
-                    {providers.length === 0 ? (
-                  <div className="space-y-4">
-                    <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                      Нет активных сервисов эмбеддингов. Добавьте и включите сервис на вкладке
-                      «Эмбеддинги», чтобы выполнять загрузку чанков в Qdrant.
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-start xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Сервис эмбеддингов</label>
-                          <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Выберите сервис" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {providers.map((provider) => (
-                                <SelectItem key={provider.id} value={provider.id}>
-                                  {provider.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <p className="text-xs text-muted-foreground">
-                            Будут использованы настройки Qdrant выбранного сервиса. Убедитесь, что указана
-                            правильная коллекция.
-                          </p>
-                        </div>
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <label className="text-sm font-medium">Коллекция Qdrant</label>
-                            <div className="flex items-center gap-2">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant={collectionMode === "existing" ? "secondary" : "outline"}
-                                onClick={() => setCollectionMode("existing")}
-                                disabled={availableCollections.length === 0 && !isCollectionsLoading}
-                              >
-                                Существующая
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant={collectionMode === "new" ? "secondary" : "outline"}
-                                onClick={() => setCollectionMode("new")}
-                              >
-                                Создать новую
-                              </Button>
-                            </div>
-                          </div>
-                          {collectionMode === "existing" ? (
-                            <div className="space-y-2">
-                              {isCollectionsLoading ? (
-                                <p className="text-xs text-muted-foreground">Загружаем список коллекций…</p>
-                              ) : collections.length === 0 ? (
-                                <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                                  Коллекции не найдены. Создайте новую, чтобы загрузить данные.
-                                </p>
-                              ) : availableCollections.length === 0 ? (
-                                <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                                  {providerVectorSize
-                                    ? `Нет коллекций с размером вектора ${providerVectorSize.toLocaleString("ru-RU")}. Создайте новую коллекцию.`
-                                    : "Подходящие коллекции не найдены. Создайте новую, чтобы загрузить данные."}
-                                </p>
-                              ) : (
-                                <>
-                                  <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Выберите коллекцию" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {availableCollections.map((collection) => {
-                                        const normalizedSize = parseVectorSize(collection.vectorSize);
-                                        const label = normalizedSize
-                                          ? `${collection.name} · ${normalizedSize}d`
-                                          : collection.name;
-                                        return (
-                                          <SelectItem key={collection.name} value={collection.name}>
-                                            {label}
-                                          </SelectItem>
-                                        );
-                                      })}
-                                    </SelectContent>
-                                  </Select>
-                                  {providerVectorSize && (
-                                    <p className="text-xs text-muted-foreground">
-                                      Показаны только коллекции с размером вектора {providerVectorSize.toLocaleString("ru-RU")}.
-                                      {filteredOutCollectionsCount > 0
-                                        ? ` Скрыто ${filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций с другой размерностью.`
-                                        : ""}
-                                    </p>
-                                  )}
-                                </>
-                              )}
-                              {collectionsErrorMessage && (
-                                <p className="text-xs text-destructive">
-                                  Не удалось загрузить коллекции: {collectionsErrorMessage}
-                                </p>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="space-y-2">
-                              <Input
-                                value={newCollectionName}
-                                onChange={(event) => setNewCollectionName(event.target.value)}
-                                placeholder={defaultCollectionName}
-                              />
-                              <p className="text-xs text-muted-foreground">
-                                Коллекция будет создана автоматически перед отправкой чанков. Допустимы
-                                латинские буквы, цифры, символы «_» и «-».
-                              </p>
-                            </div>
-                          )}
-                        </div>
-
-                        {vectorizeMutation.isError && (
-                          <p className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-                            {vectorizeMutation.error.message}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
-                        <div>
-                          <p className="text-xs uppercase text-muted-foreground">Эмбеддинги</p>
-                          <div className="mt-1 space-y-1 text-sm">
-                            <p>Сервис: {selectedProvider?.name ?? "—"}</p>
-                            {selectedProvider?.model && <p>Модель: {selectedProvider.model}</p>}
-                            {providerVectorSize && (
-                              <p>Размер вектора: {providerVectorSize.toLocaleString("ru-RU")}</p>
-                            )}
-                            <p>Чанков к обработке: {totalChunks.toLocaleString("ru-RU")}</p>
-                            <p>Оценка расхода токенов: {tokensHint}</p>
-                          </div>
-                        </div>
-                        {firstChunk && (
-                          <div className="space-y-2">
-                            <p className="text-xs uppercase text-muted-foreground">Текст первого чанка</p>
-                            <div className="rounded-md border bg-background p-3">
-                              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
-                                {firstChunk.content}
-                              </p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {collectionMode === "new" ? (
-                      <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-xs uppercase text-muted-foreground">Схема новой коллекции</p>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-1"
-                            onClick={handleAddSchemaField}
-                          >
-                            <Plus className="h-4 w-4" /> Поле
-                          </Button>
-                        </div>
-                        {schemaFields.length === 0 ? (
-                          <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                            Добавьте хотя бы одно поле, чтобы задать структуру новой коллекции.
-                          </p>
-                        ) : (
-                          <div className="space-y-3">
-                            {schemaFields.map((field) => (
-                              <div
-                                key={field.id}
-                                className={cn(
-                                  "space-y-3 rounded-lg border bg-background p-3",
-                                  embeddingFieldId === field.id && "border-primary/70 shadow-sm",
-                                )}
-                              >
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                  <div className="flex-1 space-y-2">
-                                    <label className="text-xs font-medium uppercase text-muted-foreground">Название поля</label>
-                                    <Input
-                                      value={field.name}
-                                      onChange={(event) =>
-                                        handleUpdateSchemaField(field.id, { name: event.target.value })
-                                      }
-                                      placeholder="Например, content"
-                                    />
-                                  </div>
-                                  <div className="flex items-start justify-end gap-2">
-                                    {embeddingFieldId === field.id && (
-                                      <Badge variant="secondary" className="self-center text-[10px] uppercase">
-                                        Поле эмбеддингов
-                                      </Badge>
-                                    )}
-                                    <DropdownMenu>
-                                      <DropdownMenuTrigger asChild>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-8 w-8 text-muted-foreground"
-                                        >
-                                          <MoreVertical className="h-4 w-4" />
-                                          <span className="sr-only">Дополнительные действия</span>
-                                        </Button>
-                                      </DropdownMenuTrigger>
-                                      <DropdownMenuContent align="end" className="w-56">
-                                        <DropdownMenuLabel>Действия</DropdownMenuLabel>
-                                        <DropdownMenuItem
-                                          className="gap-2"
-                                          onSelect={(event) => {
-                                            event.preventDefault();
-                                            handleSelectEmbeddingField(field.id);
-                                          }}
-                                        >
-                                          {embeddingFieldId === field.id ? (
-                                            <Check className="h-4 w-4 text-primary" />
-                                          ) : (
-                                            <Sparkles className="h-4 w-4 text-muted-foreground" />
-                                          )}
-                                          Использовать для эмбеддингов
-                                        </DropdownMenuItem>
-                                        <DropdownMenuSeparator />
-                                        <DropdownMenuItem
-                                          className="gap-2 text-destructive focus:text-destructive"
-                                          onSelect={(event) => {
-                                            event.preventDefault();
-                                            handleRemoveSchemaField(field.id);
-                                          }}
-                                        >
-                                          <Trash2 className="h-4 w-4" /> Удалить поле
-                                        </DropdownMenuItem>
-                                      </DropdownMenuContent>
-                                    </DropdownMenu>
-                                  </div>
-                                </div>
-                                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)] md:items-start">
-                                  <div className="space-y-2">
-                                    <label className="text-xs font-medium uppercase text-muted-foreground">
-                                      Liquid шаблон
-                                    </label>
-                                    <Textarea
-                                      value={field.template}
-                                      onChange={(event) => handleTemplateInputChange(field.id, event)}
-                                      onKeyDown={handleTemplateKeyDown}
-                                      onBlur={() =>
-                                        setActiveSuggestionsFieldId((current) =>
-                                          current === field.id ? null : current,
-                                        )
-                                      }
-                                      onFocus={() => {
-                                        setActiveSuggestionsFieldId(null);
-                                      }}
-                                      ref={(element) => {
-                                        if (element) {
-                                          templateFieldRefs.current[field.id] = element;
-                                        } else {
-                                          delete templateFieldRefs.current[field.id];
-                                        }
-                                      }}
-                                      placeholder="Например, {{ chunk.text }}"
-                                      rows={3}
-                                    />
-                                    <p className="text-xs text-muted-foreground">
-                                      Используйте переменные <code className="rounded bg-muted px-1">chunk</code>{" "}
-                                      <code className="rounded bg-muted px-1">page</code>{" "}
-                                      <code className="rounded bg-muted px-1">site</code> и{" "}
-                                      <code className="rounded bg-muted px-1">provider</code>.
-                                    </p>
-                                    {activeSuggestionsFieldId === field.id &&
-                                      limitedTemplateVariableSuggestions.length > 0 && (
-                                        <div className="space-y-2 rounded-md border bg-background p-2 text-xs shadow-sm">
-                                          <p className="font-medium text-muted-foreground">
-                                            Подставьте одно из доступных полей:
-                                          </p>
-                                          <div className="flex flex-wrap gap-2">
-                                            {limitedTemplateVariableSuggestions.map((path) => (
-                                              <button
-                                                key={path}
-                                                type="button"
-                                                className="rounded border border-muted-foreground/30 bg-muted/40 px-2 py-1 font-mono text-[11px] text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                                                onMouseDown={(event) => event.preventDefault()}
-                                                onClick={() => handleInsertTemplateVariable(field.id, path)}
-                                              >
-                                                {`{{ ${path} }}`}
-                                              </button>
-                                            ))}
-                                          </div>
-                                          {hasMoreTemplateSuggestions && (
-                                            <p className="text-[10px] text-muted-foreground">
-                                              Показаны первые {TEMPLATE_SUGGESTION_LIMIT.toLocaleString("ru-RU")} полей.
-                                            </p>
-                                          )}
-                                        </div>
-                                      )}
-                                  </div>
-                                  <div className="space-y-3">
-                                    <div className="space-y-2">
-                                      <label className="text-xs font-medium uppercase text-muted-foreground">Тип данных</label>
-                                      <Select
-                                        value={field.type}
-                                        onValueChange={(value) =>
-                                          handleUpdateSchemaField(field.id, {
-                                            type: value as CollectionFieldType,
-                                          })
-                                        }
-                                      >
-                                        <SelectTrigger>
-                                          <SelectValue placeholder="Выберите тип" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="string">Строка</SelectItem>
-                                          <SelectItem value="double">Double</SelectItem>
-                                          <SelectItem value="object">Object (JSON)</SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                    <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2">
-                                      <div>
-                                        <p className="text-xs font-medium text-muted-foreground">Массив</p>
-                                        <p className="text-[11px] text-muted-foreground">
-                                          Значение будет сохранено как массив.
-                                        </p>
-                                      </div>
-                                      <Switch
-                                        checked={field.isArray}
-                                        onCheckedChange={(checked) =>
-                                          handleUpdateSchemaField(field.id, { isArray: checked })
-                                        }
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <div>
-                          <p className="text-xs uppercase text-muted-foreground">Пример документа</p>
-                          {schemaPreviewJson ? (
-                            <div className="mt-2 max-h-72 overflow-auto rounded-md border bg-background">
-                              <pre className="w-full min-w-full whitespace-pre-wrap break-words p-3 text-xs font-mono leading-relaxed">
-                                {schemaPreviewJson}
-                              </pre>
-                            </div>
-                          ) : (
-                            <p className="mt-2 text-xs text-muted-foreground">
-                              {firstChunk
-                                ? "Заполните шаблоны, чтобы увидеть предпросмотр документа."
-                                : "Добавьте контент на страницу, чтобы построить предпросмотр."}
-                            </p>
-                          )}
-                        </div>
-                        <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">Поле для эмбеддингов:</span>{" "}
-                          {embeddingFieldName ? (
-                            <span>{embeddingFieldName}</span>
-                          ) : (
-                            <span className="text-destructive">не выбрано</span>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border bg-muted/20 p-4">
-                        <p className="text-xs uppercase text-muted-foreground">Схема коллекции</p>
-                        <p className="mt-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                          При использовании существующей коллекции её схема задана заранее. Создайте новую коллекцию, чтобы
-                          изменить структуру полей.
-                        </p>
-                      </div>
-                    )}
-                  </>
-                )}
-                  </TabsContent>
-                  <TabsContent value="context">
-                    <div className="space-y-4">
-                      <p className="text-sm text-muted-foreground">
-                        Просмотрите данные страницы и чанка, которые доступны в шаблонизаторе Liquid.
-                      </p>
-                      {liquidContextJson ? (
-                        <div className="max-h-[60vh] overflow-auto rounded-md border bg-background">
-                          <pre className="w-full min-w-full whitespace-pre-wrap break-words p-4 text-xs font-mono leading-relaxed">
-                            {liquidContextJson}
-                          </pre>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">
-                          Добавьте контент на страницу или выберите сервис, чтобы построить JSON контекста.
-                        </p>
-                      )}
-                      {limitedTemplateVariableSuggestions.length > 0 && (
-                        <div className="space-y-2">
-                          <p className="text-xs uppercase text-muted-foreground">Доступные переменные</p>
-                          <div className="max-h-48 overflow-auto rounded-md border bg-background p-2">
-                            <div className="flex flex-wrap gap-2">
-                              {limitedTemplateVariableSuggestions.map((path) => (
-                                <code
-                                  key={path}
-                                  className="rounded bg-muted px-2 py-1 text-xs font-mono text-muted-foreground"
-                                >
-                                  {`{{ ${path} }}`}
-                                </code>
-                              ))}
-                            </div>
-                          </div>
-                          {hasMoreTemplateSuggestions && (
-                            <p className="text-[11px] text-muted-foreground">
-                              Показаны первые {TEMPLATE_SUGGESTION_LIMIT.toLocaleString("ru-RU")} полей. Полный список см. в JSON выше.
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </TabsContent>
-                </Tabs>
-                </div>
-              </div>
-
-              <DialogFooter className="border-t border-border/60 bg-background/80 px-6 py-4">
-                <Button variant="outline" onClick={() => handleOpenChange(false)}>
-                  Отмена
-                </Button>
-                <Button onClick={handleConfirm} disabled={confirmDisabled}>
-                  {vectorizeMutation.isPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Отправка...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="mr-2 h-4 w-4" />
-                      Отправить
-                    </>
-                  )}
-                </Button>
-              </DialogFooter>
-            </div>
+      <DialogContent className="sm:max-w-4xl lg:max-w-5xl gap-0 p-0">
+        <div className="flex max-h-[inherit] min-h-0 flex-col">
+          {renderDialogHeader()}
+          {renderDialogBody()}
+          {renderDialogFooter()}
+        </div>
       </DialogContent>
     </Dialog>
   );
