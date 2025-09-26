@@ -18,6 +18,23 @@ import {
 import { db } from "./db";
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 
+type PgError = Error & { code?: string };
+
+function isPgError(error: unknown): error is PgError {
+  return typeof error === "object" && error !== null && "message" in error;
+}
+
+function swallowPgError(error: unknown, allowedCodes: string[]): void {
+  if (!isPgError(error)) {
+    throw error;
+  }
+
+  const code = (error as PgError).code;
+  if (!code || !allowedCodes.includes(code)) {
+    throw error;
+  }
+}
+
 export interface IStorage {
   // Sites management
   createSite(site: SiteInsert): Promise<Site>;
@@ -115,10 +132,14 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
       )
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "embedding_providers"
-      ADD COLUMN IF NOT EXISTS "authorization_key" text DEFAULT ''
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "embedding_providers"
+        ADD COLUMN "authorization_key" text DEFAULT ''
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
 
     await db.execute(sql`
       UPDATE "embedding_providers"
@@ -127,8 +148,12 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
 
     await db.execute(sql`
       ALTER TABLE "embedding_providers"
-      ALTER COLUMN "authorization_key" SET NOT NULL,
       ALTER COLUMN "authorization_key" SET DEFAULT ''
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      ALTER COLUMN "authorization_key" SET NOT NULL
     `);
 
     await db.execute(sql`
@@ -141,10 +166,14 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
       DROP COLUMN IF EXISTS "client_secret"
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "embedding_providers"
-      ADD COLUMN IF NOT EXISTS "allow_self_signed_certificate" boolean DEFAULT FALSE
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "embedding_providers"
+        ADD COLUMN "allow_self_signed_certificate" boolean DEFAULT FALSE
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
 
     await db.execute(sql`
       UPDATE "embedding_providers"
@@ -153,19 +182,31 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
 
     await db.execute(sql`
       ALTER TABLE "embedding_providers"
-      ALTER COLUMN "allow_self_signed_certificate" SET NOT NULL,
       ALTER COLUMN "allow_self_signed_certificate" SET DEFAULT FALSE
     `);
 
     await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS "embedding_providers_active_idx"
-        ON "embedding_providers" ("is_active")
+      ALTER TABLE "embedding_providers"
+      ALTER COLUMN "allow_self_signed_certificate" SET NOT NULL
     `);
 
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS "embedding_providers_provider_type_idx"
-        ON "embedding_providers" ("provider_type")
-    `);
+    try {
+      await db.execute(sql`
+        CREATE INDEX "embedding_providers_active_idx"
+          ON "embedding_providers" ("is_active")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07", "42710"]);
+    }
+
+    try {
+      await db.execute(sql`
+        CREATE INDEX "embedding_providers_provider_type_idx"
+          ON "embedding_providers" ("provider_type")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07", "42710"]);
+    }
   })();
 
   try {
@@ -213,7 +254,11 @@ export class DatabaseStorage implements IStorage {
         if (usernameColumnCount > 0) {
           await this.db.execute(sql`ALTER TABLE "users" RENAME COLUMN "username" TO "email"`);
         } else {
-          await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "email" text`);
+          try {
+            await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "email" text`);
+          } catch (error) {
+            swallowPgError(error, ["42701"]);
+          }
         }
       }
 
@@ -246,20 +291,40 @@ export class DatabaseStorage implements IStorage {
         await this.db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT "users_email_unique" UNIQUE ("email")`);
       }
 
-      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "full_name" text`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
       await this.db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
 
-      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "role" text DEFAULT 'user'`);
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "role" text DEFAULT 'user'`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
       await this.db.execute(sql`UPDATE "users" SET "role" = COALESCE("role", 'user')`);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "role" SET NOT NULL`);
 
-      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "last_active_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "last_active_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
       await this.db.execute(sql`UPDATE "users" SET "last_active_at" = COALESCE("last_active_at", "updated_at", CURRENT_TIMESTAMP)`);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "last_active_at" SET NOT NULL`);
 
-      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "created_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
-      await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "created_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
       await this.db.execute(sql`
         UPDATE "users"
         SET
@@ -760,7 +825,11 @@ export async function ensureDatabaseSchema(): Promise<void> {
       if (usernameColumnCount > 0) {
         await db.execute(sql`ALTER TABLE "users" RENAME COLUMN "username" TO "email"`);
       } else {
-        await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "email" text`);
+        try {
+          await db.execute(sql`ALTER TABLE "users" ADD COLUMN "email" text`);
+        } catch (error) {
+          swallowPgError(error, ["42701"]);
+        }
       }
     }
 
@@ -792,20 +861,40 @@ export async function ensureDatabaseSchema(): Promise<void> {
     if (emailUniqueConstraintCount === 0) {
       await db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT "users_email_unique" UNIQUE ("email")`);
     }
-    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "full_name" text`);
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "full_name" text`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
     await db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
 
-    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "role" text DEFAULT 'user'`);
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "role" text DEFAULT 'user'`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
     await db.execute(sql`UPDATE "users" SET "role" = COALESCE("role", 'user')`);
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "role" SET NOT NULL`);
 
-    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "last_active_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "last_active_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
     await db.execute(sql`UPDATE "users" SET "last_active_at" = COALESCE("last_active_at", "updated_at", CURRENT_TIMESTAMP)`);
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "last_active_at" SET NOT NULL`);
 
-    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "created_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
-    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "created_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
     await db.execute(sql`
       UPDATE "users"
       SET
@@ -815,7 +904,11 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "created_at" SET NOT NULL`);
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "updated_at" SET NOT NULL`);
 
-    await db.execute(sql`ALTER TABLE "sites" ADD COLUMN IF NOT EXISTS "owner_id" varchar`);
+    try {
+      await db.execute(sql`ALTER TABLE "sites" ADD COLUMN "owner_id" varchar`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
 
     const upsertUser = await db.execute(sql`
       WITH upsert_user AS (
@@ -850,17 +943,25 @@ export async function ensureDatabaseSchema(): Promise<void> {
       WHERE "email" = 'forlandeivan@gmail.com'
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "sites"
-      ADD CONSTRAINT IF NOT EXISTS "sites_owner_id_users_id_fk"
-      FOREIGN KEY ("owner_id") REFERENCES "users"("id") ON DELETE cascade
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD CONSTRAINT "sites_owner_id_users_id_fk"
+        FOREIGN KEY ("owner_id") REFERENCES "users"("id") ON DELETE cascade
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42710"]);
+    }
     await db.execute(sql`ALTER TABLE "sites" ALTER COLUMN "owner_id" SET NOT NULL`);
 
-    await db.execute(sql`
-      ALTER TABLE "sites"
-      ADD COLUMN IF NOT EXISTS "name" text DEFAULT 'Новый проект'
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "name" text DEFAULT 'Новый проект'
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
 
     await db.execute(sql`
       UPDATE "sites"
@@ -876,10 +977,14 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ALTER COLUMN "name" SET DEFAULT 'Новый проект'
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "sites"
-      ADD COLUMN IF NOT EXISTS "start_urls" jsonb DEFAULT '[]'::jsonb
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "start_urls" jsonb DEFAULT '[]'::jsonb
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
 
     await db.execute(sql`
       UPDATE "sites"
@@ -896,10 +1001,14 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ALTER COLUMN "start_urls" SET DEFAULT '[]'::jsonb
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "sites"
-      ADD COLUMN IF NOT EXISTS "max_chunk_size" integer DEFAULT 1200
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "max_chunk_size" integer DEFAULT 1200
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
 
     await db.execute(sql`
       UPDATE "sites"
@@ -912,10 +1021,14 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ALTER COLUMN "max_chunk_size" SET DEFAULT 1200
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "sites"
-      ADD COLUMN IF NOT EXISTS "chunk_overlap" boolean DEFAULT FALSE
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "chunk_overlap" boolean DEFAULT FALSE
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
 
     await ensureEmbeddingProvidersTable();
 
@@ -930,10 +1043,14 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ALTER COLUMN "chunk_overlap" SET DEFAULT FALSE
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "sites"
-      ADD COLUMN IF NOT EXISTS "chunk_overlap_size" integer DEFAULT 0
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "chunk_overlap_size" integer DEFAULT 0
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
 
     await db.execute(sql`
       UPDATE "sites"
@@ -956,15 +1073,23 @@ export async function ensureDatabaseSchema(): Promise<void> {
       SET "crawl_frequency" = COALESCE(NULLIF("crawl_frequency", ''), 'manual')
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "pages"
-      ADD COLUMN IF NOT EXISTS "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "pages"
+        ADD COLUMN "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
 
-    await db.execute(sql`
-      ALTER TABLE "pages"
-      ADD COLUMN IF NOT EXISTS "chunks" jsonb DEFAULT '[]'::jsonb NOT NULL
-    `);
+    try {
+      await db.execute(sql`
+        ALTER TABLE "pages"
+        ADD COLUMN "chunks" jsonb DEFAULT '[]'::jsonb NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
   } catch (error) {
     console.error("[storage] Не удалось обновить схему базы данных", error);
     throw error;
