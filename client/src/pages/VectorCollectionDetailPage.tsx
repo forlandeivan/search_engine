@@ -480,10 +480,8 @@ export default function VectorCollectionDetailPage() {
       >
         <SheetContent
           side="right"
-          className={cn(
-            "flex w-full flex-col gap-4",
-            isPointPreviewFullScreen ? "max-w-[95vw]" : "max-w-6xl",
-          )}
+          size={isPointPreviewFullScreen ? "fullscreen" : "xl"}
+          className="flex h-full flex-col gap-4"
         >
           <SheetHeader className="space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
