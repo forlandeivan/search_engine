@@ -41,6 +41,70 @@ function getErrorDetails(error: unknown): string {
   return String(error);
 }
 
+function extractQdrantApiError(error: unknown):
+  | {
+      status: number;
+      message: string;
+      details: unknown;
+    }
+  | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const candidate = error as {
+    status?: unknown;
+    statusText?: unknown;
+    data?: unknown;
+    message?: unknown;
+  };
+
+  if (typeof candidate.status !== "number") {
+    return undefined;
+  }
+
+  if (typeof candidate.statusText !== "string" && typeof candidate.message !== "string") {
+    return undefined;
+  }
+
+  const data = candidate.data;
+  let message: string | undefined;
+
+  if (data && typeof data === "object") {
+    const dataRecord = data as Record<string, unknown>;
+    const nestedError = dataRecord.error;
+    const nestedStatus = dataRecord.status;
+    const nestedMessage = dataRecord.message;
+
+    if (typeof nestedError === "string" && nestedError.trim().length > 0) {
+      message = nestedError;
+    } else if (typeof nestedMessage === "string" && nestedMessage.trim().length > 0) {
+      message = nestedMessage;
+    } else if (typeof nestedStatus === "string" && nestedStatus.trim().length > 0) {
+      message = nestedStatus;
+    }
+  }
+
+  if (!message) {
+    if (typeof candidate.message === "string" && candidate.message.trim().length > 0) {
+      message = candidate.message;
+    } else if (
+      typeof candidate.statusText === "string" &&
+      candidate.statusText.trim().length > 0
+    ) {
+      message = candidate.statusText;
+    } else {
+      message = "Ошибка Qdrant";
+    }
+  }
+
+  return {
+    status: candidate.status,
+    message,
+    details: data ?? null,
+  };
+}
+
 function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined {
   const user = getSessionUser(req);
   if (!user) {
@@ -1130,6 +1194,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error("Ошибка Qdrant при создании коллекции:", error);
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
+        });
+      }
+
       console.error("Ошибка при создании коллекции Qdrant:", error);
       res.status(500).json({
         error: "Не удалось создать коллекцию",
@@ -1190,6 +1263,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({
           error: "Некорректные данные точек",
           details: error.errors,
+        });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error(
+          `Ошибка Qdrant при загрузке точек в коллекцию ${req.params.name}:`,
+          error,
+        );
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
         });
       }
 
@@ -1963,6 +2048,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(503).json({
           error: "Qdrant не настроен",
           details: error.message,
+        });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error(
+          `Ошибка Qdrant при отправке чанков страницы ${req.params.id}:`,
+          error,
+        );
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
         });
       }
 
