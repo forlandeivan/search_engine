@@ -518,7 +518,6 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                   правильная коллекция.
                 </p>
               </div>
-
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <label className="text-sm font-medium">Коллекция Qdrant</label>
