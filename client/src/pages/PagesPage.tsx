@@ -480,7 +480,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
           Векторизация
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="sm:max-w-4xl lg:max-w-5xl">
         <DialogHeader>
           <DialogTitle>Отправка чанков в Qdrant</DialogTitle>
           <p className="text-sm text-muted-foreground">
@@ -497,112 +497,119 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
             </p>
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Сервис эмбеддингов</label>
-              <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Выберите сервис" />
-                </SelectTrigger>
-                <SelectContent>
-                  {providers.map((provider) => (
-                    <SelectItem key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Будут использованы настройки Qdrant выбранного сервиса. Убедитесь, что указана
-                правильная коллекция.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label className="text-sm font-medium">Коллекция Qdrant</label>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={collectionMode === "existing" ? "secondary" : "outline"}
-                    onClick={() => setCollectionMode("existing")}
-                    disabled={availableCollections.length === 0 && !isCollectionsLoading}
-                  >
-                    Существующая
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={collectionMode === "new" ? "secondary" : "outline"}
-                    onClick={() => setCollectionMode("new")}
-                  >
-                    Создать новую
-                  </Button>
-                </div>
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.95fr)] lg:items-start">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Сервис эмбеддингов</label>
+                <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите сервис" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {providers.map((provider) => (
+                      <SelectItem key={provider.id} value={provider.id}>
+                        {provider.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Будут использованы настройки Qdrant выбранного сервиса. Убедитесь, что указана
+                  правильная коллекция.
+                </p>
               </div>
-              {collectionMode === "existing" ? (
-                <div className="space-y-2">
-                  {isCollectionsLoading ? (
-                    <p className="text-xs text-muted-foreground">Загружаем список коллекций…</p>
-                  ) : collections.length === 0 ? (
-                    <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                      Коллекции не найдены. Создайте новую, чтобы загрузить данные.
-                    </p>
-                  ) : availableCollections.length === 0 ? (
-                    <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                      {providerVectorSize
-                        ? `Нет коллекций с размером вектора ${providerVectorSize.toLocaleString("ru-RU")}. Создайте новую коллекцию.`
-                        : "Подходящие коллекции не найдены. Создайте новую, чтобы загрузить данные."}
-                    </p>
-                  ) : (
-                    <>
-                      <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Выберите коллекцию" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {availableCollections.map((collection) => {
-                            const normalizedSize = parseVectorSize(collection.vectorSize);
-                            const label = normalizedSize
-                              ? `${collection.name} · ${normalizedSize}d`
-                              : collection.name;
-                            return (
-                              <SelectItem key={collection.name} value={collection.name}>
-                                {label}
-                              </SelectItem>
-                            );
-                          })}
-                        </SelectContent>
-                      </Select>
-                      {providerVectorSize && (
-                        <p className="text-xs text-muted-foreground">
-                          Показаны только коллекции с размером вектора {providerVectorSize.toLocaleString("ru-RU")}.
-                          {filteredOutCollectionsCount > 0
-                            ? ` Скрыто ${filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций с другой размерностью.`
-                            : ""}
-                        </p>
-                      )}
-                    </>
-                  )}
-                  {collectionsErrorMessage && (
-                    <p className="text-xs text-destructive">
-                      Не удалось загрузить коллекции: {collectionsErrorMessage}
-                    </p>
-                  )}
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-sm font-medium">Коллекция Qdrant</label>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={collectionMode === "existing" ? "secondary" : "outline"}
+                      onClick={() => setCollectionMode("existing")}
+                      disabled={availableCollections.length === 0 && !isCollectionsLoading}
+                    >
+                      Существующая
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={collectionMode === "new" ? "secondary" : "outline"}
+                      onClick={() => setCollectionMode("new")}
+                    >
+                      Создать новую
+                    </Button>
+                  </div>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <Input
-                    value={newCollectionName}
-                    onChange={(event) => setNewCollectionName(event.target.value)}
-                    placeholder={defaultCollectionName}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Коллекция будет создана автоматически перед отправкой чанков. Допустимы
-                    латинские буквы, цифры, символы «_» и «-».
-                  </p>
-                </div>
+                {collectionMode === "existing" ? (
+                  <div className="space-y-2">
+                    {isCollectionsLoading ? (
+                      <p className="text-xs text-muted-foreground">Загружаем список коллекций…</p>
+                    ) : collections.length === 0 ? (
+                      <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                        Коллекции не найдены. Создайте новую, чтобы загрузить данные.
+                      </p>
+                    ) : availableCollections.length === 0 ? (
+                      <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                        {providerVectorSize
+                          ? `Нет коллекций с размером вектора ${providerVectorSize.toLocaleString("ru-RU")}. Создайте новую коллекцию.`
+                          : "Подходящие коллекции не найдены. Создайте новую, чтобы загрузить данные."}
+                      </p>
+                    ) : (
+                      <>
+                        <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Выберите коллекцию" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableCollections.map((collection) => {
+                              const normalizedSize = parseVectorSize(collection.vectorSize);
+                              const label = normalizedSize
+                                ? `${collection.name} · ${normalizedSize}d`
+                                : collection.name;
+                              return (
+                                <SelectItem key={collection.name} value={collection.name}>
+                                  {label}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                        {providerVectorSize && (
+                          <p className="text-xs text-muted-foreground">
+                            Показаны только коллекции с размером вектора {providerVectorSize.toLocaleString("ru-RU")}.
+                            {filteredOutCollectionsCount > 0
+                              ? ` Скрыто ${filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций с другой размерностью.`
+                              : ""}
+                          </p>
+                        )}
+                      </>
+                    )}
+                    {collectionsErrorMessage && (
+                      <p className="text-xs text-destructive">
+                        Не удалось загрузить коллекции: {collectionsErrorMessage}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Input
+                      value={newCollectionName}
+                      onChange={(event) => setNewCollectionName(event.target.value)}
+                      placeholder={defaultCollectionName}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Коллекция будет создана автоматически перед отправкой чанков. Допустимы
+                      латинские буквы, цифры, символы «_» и «-».
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {vectorizeMutation.isError && (
+                <p className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+                  {vectorizeMutation.error.message}
+                </p>
               )}
             </div>
 
@@ -622,18 +629,18 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
               {firstChunk && (
                 <div className="space-y-2">
                   <p className="text-xs uppercase text-muted-foreground">Текст первого чанка</p>
-                  <ScrollArea className="max-h-40 rounded-md border bg-background p-3">
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
+                  <div className="rounded-md border bg-background p-3">
+                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
                       {firstChunk.content}
                     </p>
-                  </ScrollArea>
+                  </div>
                 </div>
               )}
               <div>
                 <p className="text-xs uppercase text-muted-foreground">Payload (пример первого чанка)</p>
                 {payloadPreview ? (
                   <ScrollArea className="mt-2 max-h-64 rounded-md border bg-background p-3">
-                    <pre className="text-xs font-mono whitespace-pre-wrap break-words leading-relaxed">
+                    <pre className="whitespace-pre-wrap break-words text-xs font-mono leading-relaxed">
                       {payloadPreviewJson}
                     </pre>
                   </ScrollArea>
@@ -644,12 +651,6 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                 )}
               </div>
             </div>
-
-            {vectorizeMutation.isError && (
-              <p className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-                {vectorizeMutation.error.message}
-              </p>
-            )}
           </div>
         )}
 
