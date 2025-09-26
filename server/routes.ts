@@ -26,7 +26,9 @@ import {
   type EmbeddingProvider,
   type ContentChunk,
   type Site,
+  DEFAULT_QDRANT_CONFIG,
 } from "@shared/schema";
+import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import { requireAuth, requireAdmin, getSessionUser, toPublicUser } from "./auth";
 
 function getErrorDetails(error: unknown): string {
@@ -39,6 +41,26 @@ function getErrorDetails(error: unknown): string {
   }
 
   return String(error);
+}
+
+function parseVectorSize(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 function extractQdrantApiError(error: unknown):
@@ -117,8 +139,24 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined 
 
 function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbeddingProvider {
   const { authorizationKey, ...rest } = provider;
+  let qdrantConfig =
+    rest.qdrantConfig && typeof rest.qdrantConfig === "object"
+      ? { ...rest.qdrantConfig }
+      : undefined;
+
+  if (rest.providerType === "gigachat") {
+    const baseConfig = qdrantConfig ?? { ...DEFAULT_QDRANT_CONFIG };
+    const normalizedSize = parseVectorSize(baseConfig.vectorSize);
+
+    qdrantConfig = {
+      ...baseConfig,
+      vectorSize: normalizedSize ?? GIGACHAT_EMBEDDING_VECTOR_SIZE,
+    };
+  }
+
   return {
     ...rest,
+    qdrantConfig: qdrantConfig ?? rest.qdrantConfig,
     hasAuthorizationKey: Boolean(authorizationKey && authorizationKey.length > 0),
   };
 }
@@ -723,9 +761,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/embedding/services", requireAdmin, async (req, res) => {
     try {
       const payload = insertEmbeddingProviderSchema.parse(req.body);
+      const normalizedQdrantConfig =
+        payload.providerType === "gigachat"
+          ? (() => {
+              const baseConfig =
+                payload.qdrantConfig && typeof payload.qdrantConfig === "object"
+                  ? { ...payload.qdrantConfig }
+                  : { ...DEFAULT_QDRANT_CONFIG };
+              const normalizedSize = parseVectorSize(baseConfig.vectorSize);
+
+              return {
+                ...baseConfig,
+                vectorSize: normalizedSize ?? GIGACHAT_EMBEDDING_VECTOR_SIZE,
+              };
+            })()
+          : payload.qdrantConfig;
       const provider = await storage.createEmbeddingProvider({
         ...payload,
         description: payload.description ?? null,
+        qdrantConfig: normalizedQdrantConfig,
       });
 
       res.status(201).json({ provider: toPublicEmbeddingProvider(provider) });
