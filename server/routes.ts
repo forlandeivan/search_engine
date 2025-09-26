@@ -2076,41 +2076,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
         const chunkWordCount = chunk.metadata?.wordCount ?? null;
         const chunkPosition = chunk.metadata?.position ?? index;
+        const chunkExcerpt = chunk.metadata?.excerpt ?? null;
 
         const rawPayload = {
-          pageId: page.id,
-          pageUrl: page.url,
-          pageTitle: page.title ?? null,
-          pageMetadata: page.metadata ?? null,
-          siteId: page.siteId,
-          siteName: site?.name ?? null,
-          siteUrl: site?.url ?? null,
-          providerId: provider.id,
-          providerName: provider.name,
-          providerModel: provider.model,
-          totalChunks,
-          chunkCharLimit,
-          chunkId: baseChunkId,
-          chunkIndex: index,
-          chunkHeading: chunk.heading ?? null,
-          chunkLevel: chunk.level ?? null,
-          chunkDeepLink: chunk.deepLink ?? null,
-          chunkText: chunk.content,
-          chunkCharCount,
-          chunkWordCount,
-          chunkPosition,
-          chunkExcerpt: chunk.metadata?.excerpt ?? null,
-          chunk: {
-            id: baseChunkId,
-            index,
-            heading: chunk.heading ?? null,
-            level: chunk.level ?? null,
-            deepLink: chunk.deepLink ?? null,
-            text: chunk.content,
-            charCount: chunkCharCount,
-            wordCount: chunkWordCount,
-            metadata: chunk.metadata ?? null,
-          },
           page: {
             id: page.id,
             url: page.url,
@@ -2119,13 +2087,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
             chunkCharLimit,
             metadata: page.metadata ?? null,
           },
-          site: site
-            ? {
-                id: site.id,
-                name: site.name,
-                url: site.url,
-              }
-            : null,
+          site: {
+            id: page.siteId,
+            name: site?.name ?? null,
+            url: site?.url ?? null,
+          },
+          provider: {
+            id: provider.id,
+            name: provider.name,
+          },
+          chunk: {
+            id: baseChunkId,
+            index,
+            position: chunkPosition,
+            heading: chunk.heading ?? null,
+            level: chunk.level ?? null,
+            deepLink: chunk.deepLink ?? null,
+            text: chunk.content,
+            charCount: chunkCharCount,
+            wordCount: chunkWordCount,
+            excerpt: chunkExcerpt,
+            metadata: chunk.metadata ?? null,
+          },
           embedding: {
             model: provider.model,
             vectorSize: vector.length,
