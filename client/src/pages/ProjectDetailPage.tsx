@@ -183,11 +183,6 @@ export default function ProjectDetailPage() {
 
   const buildJsonPayloadForPage = (page: Page) => {
     const chunks = Array.isArray(page.chunks) ? page.chunks : [];
-    const chunkCharLimit = site?.maxChunkSize
-      ?? chunks.reduce((max, chunk) => {
-        const charCount = chunk.metadata?.charCount ?? chunk.content.length;
-        return Math.max(max, charCount);
-      }, 0);
     const totalChunks = chunks.length;
 
     const payload = chunks.map((chunk, index) => {
@@ -198,7 +193,6 @@ export default function ProjectDetailPage() {
       return {
         pageTitle: page.title ?? "Без названия",
         totalChunks,
-        chunkCharLimit,
         chunk: {
           heading: chunk.heading || `Чанк ${index + 1}`,
           index: chunkIndex,
