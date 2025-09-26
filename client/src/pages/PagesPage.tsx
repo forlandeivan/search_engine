@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Search,
   ExternalLink,
@@ -21,6 +31,9 @@ import {
   Gauge,
   Loader2,
   Sparkles,
+  MoreVertical,
+  Plus,
+  Check,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -28,6 +41,7 @@ import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import type { ContentChunk, PageMetadata, PublicEmbeddingProvider } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
+import { cn } from "@/lib/utils";
 
 interface Page {
   id: string;
@@ -95,6 +109,205 @@ interface VectorizeRequestPayload {
   createCollection?: boolean;
 }
 
+type CollectionFieldType = "string" | "double" | "object";
+
+interface CollectionSchemaField {
+  id: string;
+  name: string;
+  type: CollectionFieldType;
+  isArray: boolean;
+  template: string;
+}
+
+function generateFieldId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return Math.random().toString(36).slice(2);
+}
+
+function createSchemaField(partial?: Partial<Omit<CollectionSchemaField, "id">>): CollectionSchemaField {
+  return {
+    id: generateFieldId(),
+    name: "",
+    type: "string",
+    isArray: false,
+    template: "",
+    ...partial,
+  };
+}
+
+function getDefaultSchemaFields(): CollectionSchemaField[] {
+  return [
+    createSchemaField({ name: "content", template: "{{ chunk.text }}" }),
+    createSchemaField({ name: "title", template: "{{ page.title }}" }),
+    createSchemaField({ name: "url", template: "{{ page.url }}" }),
+  ];
+}
+
+function parsePathSegments(path: string): string[] {
+  const segments: string[] = [];
+  const regex = /([^.[\]]+)|\[(\d+)\]/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(path)) !== null) {
+    const [, dotSegment, indexSegment] = match;
+    if (dotSegment) {
+      segments.push(dotSegment);
+    } else if (indexSegment) {
+      segments.push(indexSegment);
+    }
+  }
+
+  return segments;
+}
+
+function getValueFromContext(source: unknown, path: string): unknown {
+  if (!path) {
+    return undefined;
+  }
+
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const [basePath] = trimmed.split("|");
+  const segments = parsePathSegments(basePath.trim());
+
+  return segments.reduce<unknown>((current, segment) => {
+    if (current === null || current === undefined) {
+      return undefined;
+    }
+
+    if (typeof current === "object") {
+      if (Array.isArray(current)) {
+        const index = Number.parseInt(segment, 10);
+        return Number.isNaN(index) ? undefined : current[index];
+      }
+
+      return (current as Record<string, unknown>)[segment];
+    }
+
+    return undefined;
+  }, source);
+}
+
+function renderLiquidTemplate(template: string, context: Record<string, unknown>): unknown {
+  const raw = template ?? "";
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const singleExpressionMatch = trimmed.match(/^\{\{\s*([^}]+)\s*\}\}$/);
+  if (singleExpressionMatch) {
+    const value = getValueFromContext(context, singleExpressionMatch[1]);
+    return value ?? null;
+  }
+
+  let hasReplacement = false;
+  const replaced = raw.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_, expression: string) => {
+    hasReplacement = true;
+    const value = getValueFromContext(context, expression);
+
+    if (value === null || value === undefined) {
+      return "";
+    }
+
+    if (typeof value === "object") {
+      try {
+        return JSON.stringify(value);
+      } catch (error) {
+        console.error("Не удалось сериализовать значение для Liquid шаблона", error);
+        return "";
+      }
+    }
+
+    return String(value);
+  });
+
+  return hasReplacement ? replaced : raw;
+}
+
+function castValueToType(value: unknown, type: CollectionFieldType): unknown {
+  if (value === undefined) {
+    return null;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (type === "double") {
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+
+    if (typeof value === "string") {
+      const parsed = Number.parseFloat(value.trim());
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    return null;
+  }
+
+  if (type === "object") {
+    if (typeof value === "object") {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(trimmed);
+      } catch (error) {
+        console.error("Не удалось распарсить JSON из Liquid шаблона", error);
+        return trimmed;
+      }
+    }
+
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    console.error("Не удалось преобразовать значение в строку", error);
+    return String(value);
+  }
+}
+
+function normalizeArrayValue(value: unknown, isArray: boolean): unknown {
+  if (!isArray) {
+    return value;
+  }
+
+  if (value === null || value === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim().length === 0) {
+    return [];
+  }
+
+  return [value];
+}
+
 function sanitizeCollectionName(source: string): string {
   return source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
 }
@@ -141,12 +354,11 @@ function parseVectorSize(value: unknown): number | null {
   return null;
 }
 
-function buildPayloadPreview(
+function buildLiquidContext(
   page: Page,
   chunk: ContentChunk,
   provider: PublicEmbeddingProvider | undefined,
   totalChunks: number,
-  chunkCharLimit: number | null,
 ) {
   const chunkPositionRaw = chunk.metadata?.position;
   const chunkPosition = typeof chunkPositionRaw === "number" ? chunkPositionRaw : 0;
@@ -171,7 +383,7 @@ function buildPayloadPreview(
       url: page.url,
       title: page.title ?? null,
       totalChunks,
-      chunkCharLimit,
+      chunkCharLimit: null,
       metadata: page.metadata ?? null,
     },
     site: {
@@ -219,6 +431,16 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
   const [collectionMode, setCollectionMode] = useState<"existing" | "new">("existing");
   const [selectedCollectionName, setSelectedCollectionName] = useState<string>("");
   const [newCollectionName, setNewCollectionName] = useState<string>("");
+  const initialEmbeddingFieldIdRef = useRef<string | null>(null);
+  const [schemaFields, setSchemaFields] = useState<CollectionSchemaField[]>(() => {
+    const defaults = getDefaultSchemaFields();
+    initialEmbeddingFieldIdRef.current =
+      defaults.find((field) => field.name === "content")?.id ?? defaults[0]?.id ?? null;
+    return defaults;
+  });
+  const [embeddingFieldId, setEmbeddingFieldId] = useState<string | null>(
+    () => initialEmbeddingFieldIdRef.current,
+  );
 
   const defaultCollectionName = useMemo(() => suggestCollectionName(page), [page]);
   const {
@@ -348,6 +570,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
       setCollectionMode(availableCollections.length > 0 ? "existing" : "new");
       setSelectedCollectionName(availableCollections[0]?.name ?? "");
       setNewCollectionName(defaultCollectionName);
+      resetSchemaBuilder();
     }
   };
 
@@ -418,21 +641,52 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
   const totalCharacters = nonEmptyChunks.reduce((sum, chunk) => sum + chunk.content.length, 0);
   const estimatedTokens = totalCharacters > 0 ? Math.ceil(totalCharacters / 4) : 0;
   const firstChunk = nonEmptyChunks[0];
-  const payloadPreview = useMemo(() => {
+  const liquidContext = useMemo(() => {
     if (!firstChunk) {
       return null;
     }
 
-    return buildPayloadPreview(page, firstChunk, selectedProvider, totalChunks, null);
+    return buildLiquidContext(page, firstChunk, selectedProvider, totalChunks);
   }, [firstChunk, page, selectedProvider, totalChunks]);
 
-  const payloadPreviewJson = useMemo(() => {
-    if (!payloadPreview) {
+  const schemaPreview = useMemo(() => {
+    if (!liquidContext) {
+      return null;
+    }
+
+    return schemaFields.reduce<Record<string, unknown>>((acc, field) => {
+      const fieldName = field.name.trim();
+      if (!fieldName) {
+        return acc;
+      }
+
+      const rendered = renderLiquidTemplate(field.template, liquidContext);
+      const typedValue = castValueToType(rendered, field.type);
+      acc[fieldName] = normalizeArrayValue(typedValue, field.isArray);
+      return acc;
+    }, {});
+  }, [liquidContext, schemaFields]);
+
+  const schemaPreviewJson = useMemo(() => {
+    if (!schemaPreview || schemaFields.length === 0) {
       return "";
     }
 
-    return JSON.stringify(payloadPreview, null, 2);
-  }, [payloadPreview]);
+    try {
+      return JSON.stringify(schemaPreview, null, 2);
+    } catch (error) {
+      console.error("Не удалось подготовить предпросмотр схемы", error);
+      return "";
+    }
+  }, [schemaFields.length, schemaPreview]);
+
+  const embeddingFieldName = useMemo(() => {
+    if (!embeddingFieldId) {
+      return null;
+    }
+
+    return schemaFields.find((field) => field.id === embeddingFieldId)?.name ?? null;
+  }, [embeddingFieldId, schemaFields]);
 
   const disabled = providers.length === 0 || totalChunks === 0;
   const confirmDisabled =
@@ -448,6 +702,52 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
 
   const tokensHint =
     estimatedTokens > 0 ? `${estimatedTokens.toLocaleString("ru-RU")} токенов` : "недоступно";
+
+  const resetSchemaBuilder = () => {
+    const defaults = getDefaultSchemaFields();
+    const defaultEmbedding = defaults.find((field) => field.name === "content") ?? defaults[0] ?? null;
+    setSchemaFields(defaults);
+    setEmbeddingFieldId(defaultEmbedding?.id ?? null);
+  };
+
+  const handleAddSchemaField = () => {
+    const newField = createSchemaField();
+    setSchemaFields((prev) => [...prev, newField]);
+    setEmbeddingFieldId((current) => current ?? newField.id);
+  };
+
+  const handleUpdateSchemaField = (
+    id: string,
+    patch: Partial<Omit<CollectionSchemaField, "id">>,
+  ) => {
+    setSchemaFields((prev) =>
+      prev.map((field) => (field.id === id ? { ...field, ...patch } : field)),
+    );
+  };
+
+  const handleRemoveSchemaField = (id: string) => {
+    setSchemaFields((prev) => {
+      const next = prev.filter((field) => field.id !== id);
+      if (prev.length !== next.length) {
+        setEmbeddingFieldId((current) => {
+          if (!next.length) {
+            return null;
+          }
+
+          if (current && current !== id && next.some((field) => field.id === current)) {
+            return current;
+          }
+
+          return next[0]?.id ?? null;
+        });
+      }
+      return next;
+    });
+  };
+
+  const handleSelectEmbeddingField = (id: string) => {
+    setEmbeddingFieldId(id);
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -618,20 +918,188 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                   </div>
                 </div>
               )}
-              <div>
-                <p className="text-xs uppercase text-muted-foreground">Payload (пример первого чанка)</p>
-                {payloadPreview ? (
-                  <div className="mt-2 max-h-80 overflow-auto rounded-md border bg-background">
-                    <pre className="w-full min-w-full whitespace-pre-wrap break-words p-3 text-xs font-mono leading-relaxed">
-                      {payloadPreviewJson}
-                    </pre>
+              {collectionMode === "new" ? (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs uppercase text-muted-foreground">Схема новой коллекции</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1"
+                      onClick={handleAddSchemaField}
+                    >
+                      <Plus className="h-4 w-4" /> Поле
+                    </Button>
                   </div>
-                ) : (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Добавьте контент на страницу, чтобы увидеть пример payload.
+                  {schemaFields.length === 0 ? (
+                    <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                      Добавьте хотя бы одно поле, чтобы задать структуру новой коллекции.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {schemaFields.map((field) => (
+                        <div
+                          key={field.id}
+                          className={cn(
+                            "space-y-3 rounded-lg border bg-background p-3",
+                            embeddingFieldId === field.id && "border-primary/70 shadow-sm",
+                          )}
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="flex-1 space-y-2">
+                              <label className="text-xs font-medium uppercase text-muted-foreground">Название поля</label>
+                              <Input
+                                value={field.name}
+                                onChange={(event) =>
+                                  handleUpdateSchemaField(field.id, { name: event.target.value })
+                                }
+                                placeholder="Например, content"
+                              />
+                            </div>
+                            <div className="flex items-start justify-end gap-2">
+                              {embeddingFieldId === field.id && (
+                                <Badge variant="secondary" className="self-center text-[10px] uppercase">
+                                  Поле эмбеддингов
+                                </Badge>
+                              )}
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-muted-foreground"
+                                  >
+                                    <MoreVertical className="h-4 w-4" />
+                                    <span className="sr-only">Дополнительные действия</span>
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-56">
+                                  <DropdownMenuLabel>Действия</DropdownMenuLabel>
+                                  <DropdownMenuItem
+                                    className="gap-2"
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      handleSelectEmbeddingField(field.id);
+                                    }}
+                                  >
+                                    {embeddingFieldId === field.id ? (
+                                      <Check className="h-4 w-4 text-primary" />
+                                    ) : (
+                                      <Sparkles className="h-4 w-4 text-muted-foreground" />
+                                    )}
+                                    Использовать для эмбеддингов
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    className="gap-2 text-destructive focus:text-destructive"
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      handleRemoveSchemaField(field.id);
+                                    }}
+                                  >
+                                    <Trash2 className="h-4 w-4" /> Удалить поле
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,220px)] md:items-start">
+                            <div className="space-y-2">
+                              <label className="text-xs font-medium uppercase text-muted-foreground">
+                                Liquid шаблон
+                              </label>
+                              <Textarea
+                                value={field.template}
+                                onChange={(event) =>
+                                  handleUpdateSchemaField(field.id, { template: event.target.value })
+                                }
+                                placeholder="Например, {{ chunk.text }}"
+                                rows={3}
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                Используйте переменные <code className="rounded bg-muted px-1">chunk</code>{" "}
+                                <code className="rounded bg-muted px-1">page</code>{" "}
+                                <code className="rounded bg-muted px-1">site</code> и{" "}
+                                <code className="rounded bg-muted px-1">provider</code>.
+                              </p>
+                            </div>
+                            <div className="space-y-3">
+                              <div className="space-y-2">
+                                <label className="text-xs font-medium uppercase text-muted-foreground">Тип данных</label>
+                                <Select
+                                  value={field.type}
+                                  onValueChange={(value) =>
+                                    handleUpdateSchemaField(field.id, {
+                                      type: value as CollectionFieldType,
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Выберите тип" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="string">Строка</SelectItem>
+                                    <SelectItem value="double">Double</SelectItem>
+                                    <SelectItem value="object">Object (JSON)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2">
+                                <div>
+                                  <p className="text-xs font-medium text-muted-foreground">Массив</p>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    Значение будет сохранено как массив.
+                                  </p>
+                                </div>
+                                <Switch
+                                  checked={field.isArray}
+                                  onCheckedChange={(checked) =>
+                                    handleUpdateSchemaField(field.id, { isArray: checked })
+                                  }
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-xs uppercase text-muted-foreground">Пример документа</p>
+                    {schemaPreviewJson ? (
+                      <div className="mt-2 max-h-72 overflow-auto rounded-md border bg-background">
+                        <pre className="w-full min-w-full whitespace-pre-wrap break-words p-3 text-xs font-mono leading-relaxed">
+                          {schemaPreviewJson}
+                        </pre>
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {firstChunk
+                          ? "Заполните шаблоны, чтобы увидеть предпросмотр документа."
+                          : "Добавьте контент на страницу, чтобы построить предпросмотр."}
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">Поле для эмбеддингов:</span>{" "}
+                    {embeddingFieldName ? (
+                      <span>{embeddingFieldName}</span>
+                    ) : (
+                      <span className="text-destructive">не выбрано</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-xs uppercase text-muted-foreground">Схема коллекции</p>
+                  <p className="mt-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                    При использовании существующей коллекции её схема задана заранее. Создайте новую коллекцию, чтобы
+                    изменить структуру полей.
                   </p>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
         )}
