@@ -27,6 +27,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import type { ContentChunk, PageMetadata, PublicEmbeddingProvider } from "@shared/schema";
+import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 
 interface Page {
   id: string;
@@ -84,6 +85,7 @@ interface VectorCollectionListResponse {
   collections: Array<{
     name: string;
     status: string;
+    vectorSize: number | null;
   }>;
 }
 
@@ -117,6 +119,26 @@ function removeUndefinedDeep<T>(value: T): T {
   }
 
   return value;
+}
+
+function parseVectorSize(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 function buildPayloadPreview(
@@ -230,6 +252,36 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
 
   const collections = collectionsData?.collections ?? [];
   const isCollectionsLoading = collectionsLoading || collectionsFetching;
+  const selectedProvider = useMemo(
+    () => providers.find((provider) => provider.id === selectedProviderId),
+    [providers, selectedProviderId],
+  );
+  const providerVectorSize = useMemo(() => {
+    if (!selectedProvider) {
+      return null;
+    }
+
+    const configuredSize = parseVectorSize(selectedProvider.qdrantConfig?.vectorSize);
+    if (configuredSize) {
+      return configuredSize;
+    }
+
+    if (selectedProvider.providerType === "gigachat") {
+      return GIGACHAT_EMBEDDING_VECTOR_SIZE;
+    }
+
+    return null;
+  }, [selectedProvider]);
+  const availableCollections = useMemo(() => {
+    if (!providerVectorSize) {
+      return collections;
+    }
+
+    return collections.filter(
+      (collection) => parseVectorSize(collection.vectorSize) === providerVectorSize,
+    );
+  }, [collections, providerVectorSize]);
+  const filteredOutCollectionsCount = collections.length - availableCollections.length;
 
   useEffect(() => {
     if (!isOpen) {
@@ -258,17 +310,24 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
       return;
     }
 
-    if (collections.length === 0) {
-      setCollectionMode("new");
-      setSelectedCollectionName("");
+    if (availableCollections.length === 0) {
+      if (collectionMode !== "new") {
+        setCollectionMode("new");
+      }
+      if (selectedCollectionName) {
+        setSelectedCollectionName("");
+      }
       return;
     }
 
-    if (!selectedCollectionName) {
-      setCollectionMode("existing");
-      setSelectedCollectionName(collections[0].name);
+    if (collectionMode !== "existing") {
+      return;
     }
-  }, [collections, isOpen, selectedCollectionName]);
+
+    if (!availableCollections.some((collection) => collection.name === selectedCollectionName)) {
+      setSelectedCollectionName(availableCollections[0].name);
+    }
+  }, [availableCollections, collectionMode, isOpen, selectedCollectionName]);
 
   const vectorizeMutation = useMutation<VectorizePageResponse, Error, VectorizeRequestPayload>({
     mutationFn: async ({ providerId, collectionName, createCollection: createNew }) => {
@@ -304,8 +363,8 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
     setIsOpen(open);
     if (!open) {
       vectorizeMutation.reset();
-      setCollectionMode(collections.length > 0 ? "existing" : "new");
-      setSelectedCollectionName(collections[0]?.name ?? "");
+      setCollectionMode(availableCollections.length > 0 ? "existing" : "new");
+      setSelectedCollectionName(availableCollections[0]?.name ?? "");
       setNewCollectionName(defaultCollectionName);
     }
   };
@@ -377,7 +436,6 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
   const totalCharacters = nonEmptyChunks.reduce((sum, chunk) => sum + chunk.content.length, 0);
   const estimatedTokens = totalCharacters > 0 ? Math.ceil(totalCharacters / 4) : 0;
   const firstChunk = nonEmptyChunks[0];
-  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
   const payloadPreview = useMemo(() => {
     if (!firstChunk) {
       return null;
@@ -391,16 +449,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
       return "";
     }
 
-    return JSON.stringify(
-      payloadPreview,
-      (_key, value) => {
-        if (typeof value === "string" && value.length > 180) {
-          return `${value.slice(0, 180)}…`;
-        }
-        return value;
-      },
-      2,
-    );
+    return JSON.stringify(payloadPreview, null, 2);
   }, [payloadPreview]);
 
   const disabled = providers.length === 0 || totalChunks === 0;
@@ -409,7 +458,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
     vectorizeMutation.isPending ||
     !selectedProviderId ||
     (collectionMode === "existing"
-      ? !selectedCollectionName
+      ? availableCollections.length === 0 || !selectedCollectionName
       : newCollectionName.trim().length === 0);
 
   const collectionsErrorMessage =
@@ -478,7 +527,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                     size="sm"
                     variant={collectionMode === "existing" ? "secondary" : "outline"}
                     onClick={() => setCollectionMode("existing")}
-                    disabled={collections.length === 0 && !isCollectionsLoading}
+                    disabled={availableCollections.length === 0 && !isCollectionsLoading}
                   >
                     Существующая
                   </Button>
@@ -500,19 +549,41 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                     <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
                       Коллекции не найдены. Создайте новую, чтобы загрузить данные.
                     </p>
+                  ) : availableCollections.length === 0 ? (
+                    <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                      {providerVectorSize
+                        ? `Нет коллекций с размером вектора ${providerVectorSize.toLocaleString("ru-RU")}. Создайте новую коллекцию.`
+                        : "Подходящие коллекции не найдены. Создайте новую, чтобы загрузить данные."}
+                    </p>
                   ) : (
-                    <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите коллекцию" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {collections.map((collection) => (
-                          <SelectItem key={collection.name} value={collection.name}>
-                            {collection.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <>
+                      <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Выберите коллекцию" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableCollections.map((collection) => {
+                            const normalizedSize = parseVectorSize(collection.vectorSize);
+                            const label = normalizedSize
+                              ? `${collection.name} · ${normalizedSize}d`
+                              : collection.name;
+                            return (
+                              <SelectItem key={collection.name} value={collection.name}>
+                                {label}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                      {providerVectorSize && (
+                        <p className="text-xs text-muted-foreground">
+                          Показаны только коллекции с размером вектора {providerVectorSize.toLocaleString("ru-RU")}.
+                          {filteredOutCollectionsCount > 0
+                            ? ` Скрыто ${filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций с другой размерностью.`
+                            : ""}
+                        </p>
+                      )}
+                    </>
                   )}
                   {collectionsErrorMessage && (
                     <p className="text-xs text-destructive">
@@ -535,27 +606,36 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
               )}
             </div>
 
-            <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+            <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
               <div>
                 <p className="text-xs uppercase text-muted-foreground">Эмбеддинги</p>
                 <div className="mt-1 space-y-1 text-sm">
                   <p>Сервис: {selectedProvider?.name ?? "—"}</p>
                   {selectedProvider?.model && <p>Модель: {selectedProvider.model}</p>}
+                  {providerVectorSize && (
+                    <p>Размер вектора: {providerVectorSize.toLocaleString("ru-RU")}</p>
+                  )}
                   <p>Чанков к обработке: {totalChunks.toLocaleString("ru-RU")}</p>
                   <p>Оценка расхода токенов: {tokensHint}</p>
-                  {firstChunk && (
-                    <p className="text-xs text-muted-foreground">
-                      Пример текста: {firstChunk.content.slice(0, 140)}
-                      {firstChunk.content.length > 140 ? "…" : ""}
-                    </p>
-                  )}
                 </div>
               </div>
+              {firstChunk && (
+                <div className="space-y-2">
+                  <p className="text-xs uppercase text-muted-foreground">Текст первого чанка</p>
+                  <ScrollArea className="max-h-40 rounded-md border bg-background p-3">
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
+                      {firstChunk.content}
+                    </p>
+                  </ScrollArea>
+                </div>
+              )}
               <div>
                 <p className="text-xs uppercase text-muted-foreground">Payload (пример первого чанка)</p>
                 {payloadPreview ? (
-                  <ScrollArea className="mt-2 max-h-48 rounded-md border bg-background p-3">
-                    <pre className="text-xs whitespace-pre-wrap break-words">{payloadPreviewJson}</pre>
+                  <ScrollArea className="mt-2 max-h-64 rounded-md border bg-background p-3">
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-words leading-relaxed">
+                      {payloadPreviewJson}
+                    </pre>
                   </ScrollArea>
                 ) : (
                   <p className="mt-2 text-xs text-muted-foreground">
