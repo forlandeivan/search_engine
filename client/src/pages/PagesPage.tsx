@@ -1382,29 +1382,28 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
                     </div>
                   </TabsContent>
                 </Tabs>
+                </div>
               </div>
-            </div>
-          </div>
 
-          <DialogFooter className="border-t border-border/60 bg-background/80 px-6 py-4">
-            <Button variant="outline" onClick={() => handleOpenChange(false)}>
-              Отмена
-            </Button>
-            <Button onClick={handleConfirm} disabled={confirmDisabled}>
-              {vectorizeMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Отправка...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  Отправить
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </div>
+              <DialogFooter className="border-t border-border/60 bg-background/80 px-6 py-4">
+                <Button variant="outline" onClick={() => handleOpenChange(false)}>
+                  Отмена
+                </Button>
+                <Button onClick={handleConfirm} disabled={confirmDisabled}>
+                  {vectorizeMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Отправка...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="mr-2 h-4 w-4" />
+                      Отправить
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
       </DialogContent>
     </Dialog>
   );
