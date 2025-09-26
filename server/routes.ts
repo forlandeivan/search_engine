@@ -544,6 +544,12 @@ const searchPointsSchema = z.object({
 
 const vectorizePageSchema = z.object({
   embeddingProviderId: z.string().uuid("Некорректный идентификатор сервиса эмбеддингов"),
+  collectionName: z
+    .string()
+    .trim()
+    .min(1, "Укажите название коллекции")
+    .optional(),
+  createCollection: z.boolean().optional(),
 });
 
 // Public search API request/response schemas
@@ -1914,7 +1920,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const { embeddingProviderId } = vectorizePageSchema.parse(req.body);
+      const { embeddingProviderId, collectionName: requestedCollectionName, createCollection } =
+        vectorizePageSchema.parse(req.body);
       const pageId = req.params.id;
 
       const page = await storage.getPage(pageId, user.id);
@@ -1941,10 +1948,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const site: Site | undefined = await storage.getSite(page.siteId, user.id);
-
-      const collectionName = buildCollectionName(site, provider);
+      const collectionName =
+        requestedCollectionName && requestedCollectionName.trim().length > 0
+          ? requestedCollectionName.trim()
+          : buildCollectionName(site, provider);
       const chunkCharLimit = site?.maxChunkSize ?? null;
       const totalChunks = nonEmptyChunks.length;
+
+      const client = getQdrantClient();
+      const shouldCreateCollection = Boolean(createCollection);
+      let collectionExists = false;
+
+      try {
+        await client.getCollection(collectionName);
+        collectionExists = true;
+      } catch (collectionError) {
+        const qdrantError = extractQdrantApiError(collectionError);
+        if (qdrantError) {
+          if (qdrantError.status === 404) {
+            if (!shouldCreateCollection) {
+              return res.status(404).json({
+                error: `Коллекция ${collectionName} не найдена`,
+                details: qdrantError.details,
+              });
+            }
+          } else {
+            return res.status(qdrantError.status).json({
+              error: qdrantError.message,
+              details: qdrantError.details,
+            });
+          }
+        } else {
+          throw collectionError;
+        }
+      }
 
       const accessToken = await fetchAccessToken(provider);
 
@@ -1974,7 +2011,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const client = getQdrantClient();
+      let collectionCreated = false;
 
       const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
         const { chunk, index, vector, usageTokens, embeddingId } = result;
@@ -2052,6 +2089,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       });
 
+      if (!collectionExists && shouldCreateCollection) {
+        const firstVector = embeddingResults[0]?.vector;
+        const vectorLength = Array.isArray(firstVector) ? firstVector.length : undefined;
+        if (!vectorLength || vectorLength <= 0) {
+          return res.status(500).json({
+            error: "Не удалось определить размер вектора для новой коллекции",
+          });
+        }
+
+        let distance: "Cosine" | "Euclid" | "Dot" | "Manhattan" = "Cosine";
+        const configuredVectorSize = provider.qdrantConfig?.vectorSize;
+        let vectorSizeForCreation = vectorLength;
+
+        if (typeof configuredVectorSize === "number" && Number.isFinite(configuredVectorSize)) {
+          vectorSizeForCreation = configuredVectorSize;
+        } else if (typeof configuredVectorSize === "string") {
+          const parsedSize = Number.parseInt(configuredVectorSize, 10);
+          if (Number.isFinite(parsedSize) && parsedSize > 0) {
+            vectorSizeForCreation = parsedSize;
+          }
+        }
+
+        try {
+          await client.createCollection(collectionName, {
+            vectors: {
+              size: vectorSizeForCreation,
+              distance,
+            },
+          });
+          collectionCreated = true;
+        } catch (creationError) {
+          const qdrantError = extractQdrantApiError(creationError);
+          if (qdrantError) {
+            return res.status(qdrantError.status).json({
+              error: qdrantError.message,
+              details: qdrantError.details,
+            });
+          }
+
+          throw creationError;
+        }
+      }
+
       const upsertResult = await client.upsert(collectionName, {
         wait: true,
         points,
@@ -2072,6 +2152,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         totalUsageTokens,
         upsertStatus: upsertResult.status ?? null,
+        collectionCreated,
       });
     } catch (error) {
       if (error instanceof z.ZodError) {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -72,6 +72,7 @@ interface VectorizePageResponse {
   collectionName: string;
   vectorSize?: number | null;
   totalUsageTokens?: number;
+  collectionCreated?: boolean;
 }
 
 interface VectorizePageDialogProps {
@@ -79,10 +80,156 @@ interface VectorizePageDialogProps {
   providers: PublicEmbeddingProvider[];
 }
 
+interface VectorCollectionListResponse {
+  collections: Array<{
+    name: string;
+    status: string;
+  }>;
+}
+
+interface VectorizeRequestPayload {
+  providerId: string;
+  collectionName?: string;
+  createCollection?: boolean;
+}
+
+function sanitizeCollectionName(source: string): string {
+  return source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+}
+
+function suggestCollectionName(page: Page): string {
+  const base = page.siteId || page.id;
+  const normalized = sanitizeCollectionName(base).slice(0, 60);
+  const suffix = normalized.length > 0 ? normalized : "default";
+  return `kb_${suffix}`;
+}
+
+function removeUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => removeUndefinedDeep(item)) as unknown as T;
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, current]) => current !== undefined)
+      .map(([key, current]) => [key, removeUndefinedDeep(current)]);
+    return Object.fromEntries(entries) as unknown as T;
+  }
+
+  return value;
+}
+
+function buildPayloadPreview(
+  page: Page,
+  chunk: ContentChunk,
+  provider: PublicEmbeddingProvider | undefined,
+  totalChunks: number,
+  chunkCharLimit: number | null,
+) {
+  const chunkPositionRaw = chunk.metadata?.position;
+  const chunkIndex = typeof chunkPositionRaw === "number" ? chunkPositionRaw : 0;
+  const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
+  const chunkWordCount = chunk.metadata?.wordCount ?? null;
+  const baseChunkId =
+    chunk.id && chunk.id.trim().length > 0
+      ? chunk.id
+      : `${page.id}-chunk-${chunkIndex}`;
+
+  const siteMetadata =
+    page.metadata && typeof page.metadata === "object"
+      ? (page.metadata as unknown as Record<string, unknown>)
+      : undefined;
+  const siteNameValue = siteMetadata?.["siteName"];
+  const siteUrlValue = siteMetadata?.["siteUrl"];
+
+  const payload = {
+    pageId: page.id,
+    pageUrl: page.url,
+    pageTitle: page.title ?? null,
+    pageMetadata: page.metadata ?? null,
+    siteId: page.siteId,
+    siteName: typeof siteNameValue === "string" ? siteNameValue : null,
+    siteUrl: typeof siteUrlValue === "string" ? siteUrlValue : null,
+    providerId: provider?.id ?? null,
+    providerName: provider?.name ?? null,
+    providerModel: provider?.model ?? null,
+    totalChunks,
+    chunkCharLimit,
+    chunkId: baseChunkId,
+    chunkIndex,
+    chunkHeading: chunk.heading ?? null,
+    chunkLevel: chunk.level ?? null,
+    chunkDeepLink: chunk.deepLink ?? null,
+    chunkText: chunk.content,
+    chunkCharCount,
+    chunkWordCount,
+    chunkPosition: chunkIndex,
+    chunkExcerpt: chunk.metadata?.excerpt ?? null,
+    chunk: {
+      id: baseChunkId,
+      index: chunkIndex,
+      heading: chunk.heading ?? null,
+      level: chunk.level ?? null,
+      deepLink: chunk.deepLink ?? null,
+      text: chunk.content,
+      charCount: chunkCharCount,
+      wordCount: chunkWordCount,
+      metadata: chunk.metadata ?? null,
+    },
+    page: {
+      id: page.id,
+      url: page.url,
+      title: page.title ?? null,
+      totalChunks,
+      chunkCharLimit,
+      metadata: page.metadata ?? null,
+    },
+    site:
+      typeof siteNameValue === "string" || typeof siteUrlValue === "string"
+        ? {
+            id: page.siteId,
+            name: typeof siteNameValue === "string" ? siteNameValue : null,
+            url: typeof siteUrlValue === "string" ? siteUrlValue : null,
+          }
+        : null,
+    embedding: {
+      model: provider?.model ?? null,
+      vectorSize:
+        typeof provider?.qdrantConfig?.vectorSize === "number"
+          ? provider?.qdrantConfig?.vectorSize
+          : typeof provider?.qdrantConfig?.vectorSize === "string"
+          ? provider?.qdrantConfig?.vectorSize
+          : null,
+      tokens: null,
+      id: null,
+    },
+  };
+
+  return removeUndefinedDeep(payload);
+}
+
 function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState<string>("");
+  const [collectionMode, setCollectionMode] = useState<"existing" | "new">("existing");
+  const [selectedCollectionName, setSelectedCollectionName] = useState<string>("");
+  const [newCollectionName, setNewCollectionName] = useState<string>("");
+
+  const defaultCollectionName = useMemo(() => suggestCollectionName(page), [page]);
+  const {
+    data: collectionsData,
+    isLoading: collectionsLoading,
+    isFetching: collectionsFetching,
+    error: collectionsError,
+  } = useQuery<VectorCollectionListResponse>({
+    queryKey: ["/api/vector/collections"],
+    enabled: isOpen,
+    staleTime: 30_000,
+  });
+
+  const collections = collectionsData?.collections ?? [];
+  const isCollectionsLoading = collectionsLoading || collectionsFetching;
 
   useEffect(() => {
     if (!isOpen) {
@@ -96,19 +243,51 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
     }
   }, [providers, isOpen]);
 
-  const vectorizeMutation = useMutation<VectorizePageResponse, Error, string>({
-    mutationFn: async (providerId: string) => {
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (!newCollectionName) {
+      setNewCollectionName(defaultCollectionName);
+    }
+  }, [defaultCollectionName, isOpen, newCollectionName]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (collections.length === 0) {
+      setCollectionMode("new");
+      setSelectedCollectionName("");
+      return;
+    }
+
+    if (!selectedCollectionName) {
+      setCollectionMode("existing");
+      setSelectedCollectionName(collections[0].name);
+    }
+  }, [collections, isOpen, selectedCollectionName]);
+
+  const vectorizeMutation = useMutation<VectorizePageResponse, Error, VectorizeRequestPayload>({
+    mutationFn: async ({ providerId, collectionName, createCollection: createNew }) => {
       const response = await apiRequest("POST", `/api/pages/${page.id}/vectorize`, {
         embeddingProviderId: providerId,
+        collectionName,
+        createCollection: createNew,
       });
       return (await response.json()) as VectorizePageResponse;
     },
     onSuccess: (data) => {
+      const collectionNote = data.collectionCreated
+        ? `Коллекция ${data.collectionName} создана автоматически.`
+        : "";
       toast({
         title: "Чанки отправлены",
         description:
           data.message ??
-          `Добавлено ${data.pointsCount} чанков в коллекцию ${data.collectionName}`,
+          `Добавлено ${data.pointsCount} чанков в коллекцию ${data.collectionName}. ${collectionNote}`.trim(),
       });
       setIsOpen(false);
     },
@@ -125,6 +304,9 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
     setIsOpen(open);
     if (!open) {
       vectorizeMutation.reset();
+      setCollectionMode(collections.length > 0 ? "existing" : "new");
+      setSelectedCollectionName(collections[0]?.name ?? "");
+      setNewCollectionName(defaultCollectionName);
     }
   };
 
@@ -138,11 +320,103 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
       return;
     }
 
-    vectorizeMutation.mutate(selectedProviderId);
+    if (collectionMode === "existing") {
+      if (!selectedCollectionName) {
+        toast({
+          title: "Выберите коллекцию",
+          description: "Укажите коллекцию Qdrant для загрузки чанков.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      vectorizeMutation.mutate({
+        providerId: selectedProviderId,
+        collectionName: selectedCollectionName,
+        createCollection: false,
+      });
+      return;
+    }
+
+    const trimmedName = newCollectionName.trim();
+    if (!trimmedName) {
+      toast({
+        title: "Укажите название коллекции",
+        description: "Название новой коллекции не может быть пустым.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const normalizedName = sanitizeCollectionName(trimmedName).slice(0, 60);
+    if (!normalizedName) {
+      toast({
+        title: "Некорректное название",
+        description: "Используйте латиницу, цифры, символы подчёркивания или дефисы.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (normalizedName !== trimmedName) {
+      setNewCollectionName(normalizedName);
+    }
+
+    vectorizeMutation.mutate({
+      providerId: selectedProviderId,
+      collectionName: normalizedName,
+      createCollection: true,
+    });
   };
 
-  const totalChunks = Array.isArray(page.chunks) ? page.chunks.length : 0;
-  const disabled = providers.length === 0;
+  const allChunks = Array.isArray(page.chunks) ? page.chunks : [];
+  const nonEmptyChunks = allChunks.filter(
+    (chunk) => typeof chunk.content === "string" && chunk.content.trim().length > 0,
+  );
+  const totalChunks = nonEmptyChunks.length;
+  const totalCharacters = nonEmptyChunks.reduce((sum, chunk) => sum + chunk.content.length, 0);
+  const estimatedTokens = totalCharacters > 0 ? Math.ceil(totalCharacters / 4) : 0;
+  const firstChunk = nonEmptyChunks[0];
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
+  const payloadPreview = useMemo(() => {
+    if (!firstChunk) {
+      return null;
+    }
+
+    return buildPayloadPreview(page, firstChunk, selectedProvider, totalChunks, null);
+  }, [firstChunk, page, selectedProvider, totalChunks]);
+
+  const payloadPreviewJson = useMemo(() => {
+    if (!payloadPreview) {
+      return "";
+    }
+
+    return JSON.stringify(
+      payloadPreview,
+      (_key, value) => {
+        if (typeof value === "string" && value.length > 180) {
+          return `${value.slice(0, 180)}…`;
+        }
+        return value;
+      },
+      2,
+    );
+  }, [payloadPreview]);
+
+  const disabled = providers.length === 0 || totalChunks === 0;
+  const confirmDisabled =
+    disabled ||
+    vectorizeMutation.isPending ||
+    !selectedProviderId ||
+    (collectionMode === "existing"
+      ? !selectedCollectionName
+      : newCollectionName.trim().length === 0);
+
+  const collectionsErrorMessage =
+    collectionsError instanceof Error ? collectionsError.message : undefined;
+
+  const tokensHint =
+    estimatedTokens > 0 ? `${estimatedTokens.toLocaleString("ru-RU")} токенов` : "недоступно";
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -195,6 +469,102 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
               </p>
             </div>
 
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-sm font-medium">Коллекция Qdrant</label>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={collectionMode === "existing" ? "secondary" : "outline"}
+                    onClick={() => setCollectionMode("existing")}
+                    disabled={collections.length === 0 && !isCollectionsLoading}
+                  >
+                    Существующая
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={collectionMode === "new" ? "secondary" : "outline"}
+                    onClick={() => setCollectionMode("new")}
+                  >
+                    Создать новую
+                  </Button>
+                </div>
+              </div>
+              {collectionMode === "existing" ? (
+                <div className="space-y-2">
+                  {isCollectionsLoading ? (
+                    <p className="text-xs text-muted-foreground">Загружаем список коллекций…</p>
+                  ) : collections.length === 0 ? (
+                    <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                      Коллекции не найдены. Создайте новую, чтобы загрузить данные.
+                    </p>
+                  ) : (
+                    <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите коллекцию" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {collections.map((collection) => (
+                          <SelectItem key={collection.name} value={collection.name}>
+                            {collection.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {collectionsErrorMessage && (
+                    <p className="text-xs text-destructive">
+                      Не удалось загрузить коллекции: {collectionsErrorMessage}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Input
+                    value={newCollectionName}
+                    onChange={(event) => setNewCollectionName(event.target.value)}
+                    placeholder={defaultCollectionName}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Коллекция будет создана автоматически перед отправкой чанков. Допустимы
+                    латинские буквы, цифры, символы «_» и «-».
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+              <div>
+                <p className="text-xs uppercase text-muted-foreground">Эмбеддинги</p>
+                <div className="mt-1 space-y-1 text-sm">
+                  <p>Сервис: {selectedProvider?.name ?? "—"}</p>
+                  {selectedProvider?.model && <p>Модель: {selectedProvider.model}</p>}
+                  <p>Чанков к обработке: {totalChunks.toLocaleString("ru-RU")}</p>
+                  <p>Оценка расхода токенов: {tokensHint}</p>
+                  {firstChunk && (
+                    <p className="text-xs text-muted-foreground">
+                      Пример текста: {firstChunk.content.slice(0, 140)}
+                      {firstChunk.content.length > 140 ? "…" : ""}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs uppercase text-muted-foreground">Payload (пример первого чанка)</p>
+                {payloadPreview ? (
+                  <ScrollArea className="mt-2 max-h-48 rounded-md border bg-background p-3">
+                    <pre className="text-xs whitespace-pre-wrap break-words">{payloadPreviewJson}</pre>
+                  </ScrollArea>
+                ) : (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Добавьте контент на страницу, чтобы увидеть пример payload.
+                  </p>
+                )}
+              </div>
+            </div>
+
             {vectorizeMutation.isError && (
               <p className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
                 {vectorizeMutation.error.message}
@@ -207,10 +577,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
           <Button variant="outline" onClick={() => handleOpenChange(false)}>
             Отмена
           </Button>
-          <Button
-            onClick={handleConfirm}
-            disabled={disabled || vectorizeMutation.isPending || !selectedProviderId}
-          >
+          <Button onClick={handleConfirm} disabled={confirmDisabled}>
             {vectorizeMutation.isPending ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
