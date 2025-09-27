@@ -5,6 +5,7 @@ import {
   Check,
   ChevronLeft,
   Copy,
+  Download,
   HelpCircle,
   Maximize2,
   Minimize2,
@@ -159,6 +160,19 @@ export default function VectorCollectionDetailPage() {
     }
   }, [selectedPoint]);
 
+  const selectedPointDownloadJson = useMemo(() => {
+    if (!selectedPoint) {
+      return "";
+    }
+
+    try {
+      return JSON.stringify(selectedPoint, null, 2);
+    } catch (error) {
+      console.error("Не удалось подготовить полный JSON записи", error);
+      return "";
+    }
+  }, [selectedPoint]);
+
   if (!match) {
     return null;
   }
@@ -202,6 +216,38 @@ export default function VectorCollectionDetailPage() {
       toast({
         title: "Не удалось скопировать",
         description: "Скопируйте данные вручную и попробуйте ещё раз.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDownloadJson = () => {
+    if (!selectedPointDownloadJson || !selectedPoint) {
+      return;
+    }
+
+    try {
+      const blob = new Blob([selectedPointDownloadJson], {
+        type: "text/plain;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const normalizedCollectionName = (collectionName ?? "collection").replace(/[^\p{L}\p{N}_-]+/gu, "-");
+      link.href = url;
+      link.download = `${normalizedCollectionName}-record-${selectedPoint.id}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast({
+        title: "Файл скачан",
+        description: "Полный JSON записи сохранён в формате TXT.",
+      });
+    } catch (error) {
+      console.error("Не удалось скачать JSON записи", error);
+      toast({
+        title: "Не удалось скачать",
+        description: "Попробуйте ещё раз или скопируйте данные вручную.",
         variant: "destructive",
       });
     }
@@ -514,15 +560,26 @@ export default function VectorCollectionDetailPage() {
 
           {selectedPoint && (
             <div className="flex flex-1 flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm text-muted-foreground">
-                  ID: <span className="font-mono text-foreground">{selectedPoint.id}</span>
-                </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm text-muted-foreground">
+                ID: <span className="font-mono text-foreground">{selectedPoint.id}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadJson}
+                  disabled={!selectedPointDownloadJson}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Скачать TXT
+                </Button>
                 <Button variant="outline" size="sm" onClick={handleCopyJson} disabled={!selectedPointJson}>
                   {isJsonCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
                   {isJsonCopied ? "Скопировано" : "Скопировать JSON"}
                 </Button>
               </div>
+            </div>
 
               <ScrollArea
                 className={cn(
