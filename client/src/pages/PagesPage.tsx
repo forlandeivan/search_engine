@@ -131,6 +131,7 @@ interface CollectionSchemaField extends CollectionSchemaFieldInput {
 
 const TEMPLATE_PATH_LIMIT = 400;
 const TEMPLATE_SUGGESTION_LIMIT = 150;
+const DEFAULT_NEW_COLLECTION_NAME = "New Collection";
 
 function generateFieldId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -214,13 +215,6 @@ function collectTemplatePaths(source: unknown, limit = TEMPLATE_PATH_LIMIT): str
 
 function sanitizeCollectionName(source: string): string {
   return source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
-}
-
-function suggestCollectionName(page: Page): string {
-  const base = page.siteId || page.id;
-  const normalized = sanitizeCollectionName(base).slice(0, 60);
-  const suffix = normalized.length > 0 ? normalized : "default";
-  return `kb_${suffix}`;
 }
 
 function removeUndefinedDeep<T>(value: T): T {
@@ -334,7 +328,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
   const [selectedProviderId, setSelectedProviderId] = useState<string>("");
   const [collectionMode, setCollectionMode] = useState<"existing" | "new">("existing");
   const [selectedCollectionName, setSelectedCollectionName] = useState<string>("");
-  const [newCollectionName, setNewCollectionName] = useState<string>("");
+  const [newCollectionName, setNewCollectionName] = useState<string>(DEFAULT_NEW_COLLECTION_NAME);
   const initialEmbeddingFieldIdRef = useRef<string | null>(null);
   const [schemaFields, setSchemaFields] = useState<CollectionSchemaField[]>(() => {
     const defaults = getDefaultSchemaFields();
@@ -349,7 +343,6 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
   const [activeSuggestionsFieldId, setActiveSuggestionsFieldId] = useState<string | null>(null);
   const templateFieldRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
-  const defaultCollectionName = useMemo(() => suggestCollectionName(page), [page]);
   const {
     data: collectionsData,
     isLoading: collectionsLoading,
@@ -412,9 +405,9 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
     }
 
     if (!newCollectionName) {
-      setNewCollectionName(defaultCollectionName);
+      setNewCollectionName(DEFAULT_NEW_COLLECTION_NAME);
     }
-  }, [defaultCollectionName, isOpen, newCollectionName]);
+  }, [isOpen, newCollectionName]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -488,7 +481,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
     vectorizeMutation.reset();
     setCollectionMode(availableCollections.length > 0 ? "existing" : "new");
     setSelectedCollectionName(availableCollections[0]?.name ?? "");
-    setNewCollectionName(defaultCollectionName);
+    setNewCollectionName(DEFAULT_NEW_COLLECTION_NAME);
     resetSchemaBuilder();
     setActiveSuggestionsFieldId(null);
     setActiveTab("settings");
@@ -936,7 +929,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
           <Input
             value={newCollectionName}
             onChange={(event) => setNewCollectionName(event.target.value)}
-            placeholder={defaultCollectionName}
+            placeholder={DEFAULT_NEW_COLLECTION_NAME}
           />
           <p className="text-xs text-muted-foreground">
             Коллекция будет создана автоматически перед отправкой чанков. Допустимы латинские буквы, цифры, символы «_» и
