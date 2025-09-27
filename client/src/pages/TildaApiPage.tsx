@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Copy, ExternalLink, Search, Globe, Code2, RefreshCw, Loader2 } from "lucide-react";
+import { Copy, ExternalLink, Search, Globe, Code2, RefreshCw, Loader2, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
@@ -60,6 +60,8 @@ export default function TildaApiPage() {
   const publicSearchEndpoint = selectedSite
     ? `${publicApiBase}/collections/${selectedSite.publicId}/search`
     : `${publicApiBase}/collections/YOUR_COLLECTION_ID/search`;
+  const vectorExampleCollection = selectedSite?.publicId ?? "COLLECTION_NAME";
+  const vectorSearchEndpoint = `${currentDomain}/api/vector/collections/${vectorExampleCollection}/search`;
 
   const rotateApiKey = useMutation<{ site: Site; apiKey: string }, Error, string>({
     mutationFn: async (siteId: string) => {
@@ -492,7 +494,7 @@ export default function TildaApiPage() {
   };
 
   return (
-    <div className="container mx-auto p-6 max-w-6xl">
+    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 xl:px-0">
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
           <Code2 className="h-8 w-8" />
@@ -503,8 +505,8 @@ export default function TildaApiPage() {
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
-        <Card className="h-fit">
+      <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)] xl:gap-8">
+        <Card className="h-fit shadow-sm">
           <CardHeader>
             <CardTitle>Разделы документации</CardTitle>
             <CardDescription>Инструкции по интеграциям и виджетам</CardDescription>
@@ -516,11 +518,11 @@ export default function TildaApiPage() {
                 <Button
                   key={section.id}
                   variant={activeSection === section.id ? "secondary" : "ghost"}
-                  className="w-full justify-start gap-3"
+                  className="w-full items-start justify-start gap-3 whitespace-normal rounded-lg px-4 py-3 text-left"
                   onClick={() => setActiveSection(section.id)}
                 >
                   <Icon className="h-4 w-4" />
-                  <div className="flex flex-col items-start">
+                  <div className="flex flex-col items-start text-left">
                     <span className="font-semibold leading-tight">{section.title}</span>
                     <span className="text-xs text-muted-foreground">{section.description}</span>
                   </div>
@@ -667,24 +669,37 @@ export default function TildaApiPage() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <h4 className="font-semibold">cURL</h4>
-                  <ScrollArea className="bg-muted rounded-md p-4">
-                    <pre className="text-xs leading-5">
-{`curl -X POST '${publicSearchEndpoint}' \
-  -H 'Content-Type: application/json' \
-  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \
+                  <div className="relative rounded-lg bg-muted p-4">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute top-2 right-2"
+                      onClick={() =>
+                        copyToClipboard(
+                          `curl -X POST '${publicSearchEndpoint}' \\\n+  -H 'Content-Type: application/json' \\\n+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\\n+  -d '{\\n    "query": "маркетинг",\\n    "hitsPerPage": 5,\\n    "page": 0\\n  }'`,
+                          "cURL"
+                        )
+                      }
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                    <pre className="text-xs leading-5 whitespace-pre-wrap break-words">
+{`curl -X POST '${publicSearchEndpoint}' \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\
   -d '{
     "query": "маркетинг",
     "hitsPerPage": 5,
     "page": 0
   }'`}
                     </pre>
-                  </ScrollArea>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
                   <h4 className="font-semibold">Пример ответа</h4>
-                  <ScrollArea className="bg-muted rounded-md p-4 h-64">
-                    <pre className="text-xs leading-5">
+                  <ScrollArea className="h-64 rounded-lg bg-muted p-4">
+                    <pre className="text-xs leading-5 whitespace-pre-wrap break-words">
 {`{
   "hits": [
     {
@@ -706,6 +721,177 @@ export default function TildaApiPage() {
 }`}
                     </pre>
                   </ScrollArea>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="h-5 w-5" />
+                  Векторный поиск по коллекциям
+                </CardTitle>
+                <CardDescription>
+                  Используйте заранее загруженные эмбеддинги, чтобы находить релевантные документы по близости вектора запроса.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Эндпоинт принимает массив чисел такой же размерности, как вектор в выбранной коллекции Qdrant. Параметр
+                    <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">limit</code> играет роль <strong>topK</strong> — количество ближайших документов, которые нужно вернуть.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Название коллекции можно посмотреть в разделе «Векторный поиск → Коллекции». По умолчанию пример использует
+                    идентификатор выбранного сайта: <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">{vectorExampleCollection}</code>.
+                  </p>
+                </div>
+
+                <div className="rounded-lg border p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="default">POST</Badge>
+                    <code className="text-sm break-all">/api/vector/collections/{'{collectionName}'}/search</code>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-semibold">Тело запроса</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="grid grid-cols-1 gap-2 font-medium sm:grid-cols-4">
+                      <span>Поле</span>
+                      <span>Тип</span>
+                      <span>Обязательное</span>
+                      <span>Описание</span>
+                    </div>
+                    <Separator />
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>vector</code>
+                      <span>number[]</span>
+                      <Badge variant="destructive" className="w-fit">Да</Badge>
+                      <span>Вектор запроса (длина должна совпадать с размерностью коллекции).</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>limit</code>
+                      <span>number</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>TopK — количество ближайших результатов. По умолчанию 10.</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>offset</code>
+                      <span>number</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>Пропустить первые N результатов.</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>filter</code>
+                      <span>Qdrant filter</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>Ограничение по payload (например, конкретный сайт, язык или тег).</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>withPayload</code>
+                      <span>boolean | object</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>Управляет возвратом payload в ответе.</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>withVector</code>
+                      <span>boolean</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>Вернуть ли исходные векторы документов.</span>
+                    </div>
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div>
+                  <h4 className="font-semibold mb-2">Пример запроса</h4>
+                  <div className="relative rounded-lg bg-muted p-4">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute top-2 right-2"
+                      onClick={() =>
+                        copyToClipboard(
+                          `POST ${vectorSearchEndpoint}\nContent-Type: application/json\n\n{\n  "vector": [0.12, -0.03, 0.87, ...],\n  "limit": 5,\n  "filter": {\n    "must": [\n      {\n        "key": "metadata.siteId",\n        "match": { "value": "${selectedSite?.id ?? "site-123"}" }\n      }\n    ]\n  },\n  "withPayload": true\n}`,
+                          "Векторный поиск"
+                        )
+                      }
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                    <pre className="text-sm whitespace-pre-wrap break-words">
+{`POST ${vectorSearchEndpoint}
+Content-Type: application/json
+
+{
+  "vector": [0.12, -0.03, 0.87, ...],
+  "limit": 5,
+  "filter": {
+    "must": [
+      {
+        "key": "metadata.siteId",
+        "match": { "value": "${selectedSite?.id ?? "site-123"}" }
+      }
+    ]
+  },
+  "withPayload": true
+}`}
+                    </pre>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Пример ответа</h4>
+                  <div className="relative rounded-lg bg-muted p-4">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute top-2 right-2"
+                      onClick={() =>
+                        copyToClipboard(
+                          `{
+  "results": [
+    {
+      "id": "point-001",
+      "score": 0.842,
+      "payload": {
+        "title": "FAQ по доставке",
+        "url": "https://example.com/faq/delivery",
+        "metadata": {
+          "siteId": "${selectedSite?.id ?? "site-123"}",
+          "language": "ru"
+        }
+      }
+    }
+  ]
+}`,
+                          "Ответ векторного поиска"
+                        )
+                      }
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                    <pre className="text-sm whitespace-pre-wrap break-words">
+{`{
+  "results": [
+    {
+      "id": "point-001",
+      "score": 0.842,
+      "payload": {
+        "title": "FAQ по доставке",
+        "url": "https://example.com/faq/delivery",
+        "metadata": {
+          "siteId": "${selectedSite?.id ?? "site-123"}",
+          "language": "ru"
+        }
+      }
+    }
+  ]
+}`}
+                    </pre>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -771,7 +957,7 @@ export default function TildaApiPage() {
                 <div>
                   <h4 className="font-semibold mb-2">Базовый URL</h4>
                   <div className="flex items-center gap-2">
-                    <code className="px-2 py-1 bg-muted rounded text-sm flex-1">
+                    <code className="flex-1 rounded bg-muted px-3 py-2 text-sm whitespace-pre-wrap break-words">
                       {currentDomain}/api
                     </code>
                     <Button
@@ -832,24 +1018,24 @@ export default function TildaApiPage() {
 
               <div className="space-y-3">
                 <h4 className="font-semibold">JSON-тело запроса</h4>
-                <div className="border rounded-lg p-4">
-                  <div className="grid grid-cols-4 gap-4 text-sm">
+                <div className="rounded-lg border p-4">
+                  <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-4">
                     <div className="font-mono font-semibold">query</div>
                     <div><Badge variant="destructive">обязательный</Badge></div>
                     <div>string</div>
                     <div>Поисковый запрос</div>
                   </div>
                 </div>
-                <div className="border rounded-lg p-4">
-                  <div className="grid grid-cols-4 gap-4 text-sm">
+                <div className="rounded-lg border p-4">
+                  <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-4">
                     <div className="font-mono font-semibold">hitsPerPage</div>
                     <div><Badge variant="secondary">необязательный</Badge></div>
                     <div>number</div>
                     <div>Количество результатов (по умолчанию: 10)</div>
                   </div>
                 </div>
-                <div className="border rounded-lg p-4">
-                  <div className="grid grid-cols-4 gap-4 text-sm">
+                <div className="rounded-lg border p-4">
+                  <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-4">
                     <div className="font-mono font-semibold">page</div>
                     <div><Badge variant="secondary">необязательный</Badge></div>
                     <div>number</div>
@@ -862,10 +1048,7 @@ export default function TildaApiPage() {
 
               <div>
                 <h4 className="font-semibold mb-3">Пример запроса</h4>
-                <div className="relative">
-                  <pre className="bg-muted p-4 rounded-lg text-sm overflow-x-auto">
-                    <code>{`fetch('${publicSearchEndpoint}', {\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'X-API-Key': '${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}'\n  },\n  body: JSON.stringify({\n    query: 'контакты',\n    hitsPerPage: 5,\n    page: 0\n  })\n}).then((res) => res.json());`}</code>
-                  </pre>
+                <div className="relative rounded-lg bg-muted p-4">
                   <Button
                     variant="ghost"
                     size="sm"
@@ -880,14 +1063,49 @@ export default function TildaApiPage() {
                   >
                     <Copy className="h-4 w-4" />
                   </Button>
+                  <pre className="text-sm whitespace-pre-wrap break-words">
+{`fetch('${publicSearchEndpoint}', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': '${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}'
+  },
+  body: JSON.stringify({
+    query: 'контакты',
+    hitsPerPage: 5,
+    page: 0
+  })
+}).then((res) => res.json());`}
+                  </pre>
                 </div>
               </div>
 
               <div>
                 <h4 className="font-semibold mb-3">Пример ответа</h4>
-                <ScrollArea className="h-64">
-                  <pre className="bg-muted p-4 rounded-lg text-sm">
-                    <code>{`{\n  "hits": [\n    {\n      "objectID": "page-123",\n      "url": "https://mysite.tilda.ws/contacts",\n      "title": "Контакты - Наша компания",\n      "excerpt": "Свяжитесь с нами любым удобным способом...",\n      "_highlightResult": {\n        "title": {\n          "value": "<mark>Контакты</mark> - Наша компания",\n          "matchLevel": "partial"\n        }\n      }\n    }\n  ],\n  "nbHits": 1,\n  "page": 0,\n  "hitsPerPage": 5,\n  "nbPages": 1,\n  "query": "контакты",\n  "params": "query=контакты&hitsPerPage=5&page=0"\n}`}</code>
+                <ScrollArea className="h-64 rounded-lg bg-muted p-4">
+                  <pre className="text-sm whitespace-pre-wrap break-words">
+{`{
+  "hits": [
+    {
+      "objectID": "page-123",
+      "url": "https://mysite.tilda.ws/contacts",
+      "title": "Контакты - Наша компания",
+      "excerpt": "Свяжитесь с нами любым удобным способом...",
+      "_highlightResult": {
+        "title": {
+          "value": "<mark>Контакты</mark> - Наша компания",
+          "matchLevel": "partial"
+        }
+      }
+    }
+  ],
+  "nbHits": 1,
+  "page": 0,
+  "hitsPerPage": 5,
+  "nbPages": 1,
+  "query": "контакты",
+  "params": "query=контакты&hitsPerPage=5&page=0"
+}`}
                   </pre>
                 </ScrollArea>
               </div>
@@ -926,8 +1144,8 @@ export default function TildaApiPage() {
                   результатов.
                 </p>
                 <div className="relative">
-                  <ScrollArea className="h-80">
-                    <pre className="bg-muted p-4 rounded-lg text-sm">
+                  <ScrollArea className="h-80 rounded-lg bg-muted p-4">
+                    <pre className="text-sm whitespace-pre-wrap break-words">
                       <code>{zeroBlockHtml}</code>
                     </pre>
                   </ScrollArea>
@@ -949,8 +1167,8 @@ export default function TildaApiPage() {
                   Добавьте стили внутри того же блока. Они отвечают за адаптивность, подсветку и общий вид результата.
                 </p>
                 <div className="relative">
-                  <ScrollArea className="h-80">
-                    <pre className="bg-muted p-4 rounded-lg text-sm">
+                  <ScrollArea className="h-80 rounded-lg bg-muted p-4">
+                    <pre className="text-sm whitespace-pre-wrap break-words">
                       <code>{zeroBlockCss}</code>
                     </pre>
                   </ScrollArea>
@@ -973,8 +1191,8 @@ export default function TildaApiPage() {
                   в тот же блок сразу после HTML и CSS.
                 </p>
                 <div className="relative">
-                  <ScrollArea className="h-[420px]">
-                    <pre className="bg-muted p-4 rounded-lg text-sm">
+                  <ScrollArea className="h-[420px] rounded-lg bg-muted p-4">
+                    <pre className="text-sm whitespace-pre-wrap break-words">
                       <code>{zeroBlockJs}</code>
                     </pre>
                   </ScrollArea>
@@ -997,8 +1215,8 @@ export default function TildaApiPage() {
                   он сразу начнёт работать.
                 </p>
                 <div className="relative">
-                  <ScrollArea className="h-[500px]">
-                    <pre className="bg-muted p-4 rounded-lg text-sm">
+                  <ScrollArea className="h-[500px] rounded-lg bg-muted p-4">
+                    <pre className="text-sm whitespace-pre-wrap break-words">
                       <code>{zeroBlockFull}</code>
                     </pre>
                   </ScrollArea>
