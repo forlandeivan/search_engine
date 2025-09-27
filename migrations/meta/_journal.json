@@ -71,6 +71,13 @@
       "when": 1758104595459,
       "tag": "0009_embedding_providers_allow_self_signed",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1758104596459,
+      "tag": "0010_sites_public_api",
+      "breakpoints": true
     }
   ]
 }

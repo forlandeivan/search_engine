@@ -632,7 +632,7 @@ const vectorizePageSchema = z.object({
 
 // Public search API request/response schemas
 const publicSearchRequestSchema = z.object({
-  query: z.string().min(1),
+  query: z.string().trim().min(1),
   hitsPerPage: z.number().int().positive().max(100).default(10),
   page: z.number().int().min(0).default(0),
   facetFilters: z.array(z.string()).optional(),
@@ -664,7 +664,208 @@ interface PublicSearchResponse {
   params: string;
 }
 
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightQuery(text: string, query: string): { value: string; matchLevel: "none" | "partial" | "full" } {
+  if (!text.trim()) {
+    return { value: text, matchLevel: "none" };
+  }
+
+  const terms = Array.from(new Set(query.split(/\s+/).filter(Boolean)));
+  if (terms.length === 0) {
+    return { value: text, matchLevel: "none" };
+  }
+
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  let hasMatch = false;
+  const highlighted = text.replace(pattern, (match) => {
+    hasMatch = true;
+    return `<mark>${match}</mark>`;
+  });
+
+  return { value: highlighted, matchLevel: hasMatch ? "partial" : "none" };
+}
+
+function buildExcerpt(content: string | null | undefined, query: string, maxLength = 220): string | undefined {
+  if (!content) {
+    return undefined;
+  }
+
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const lowerContent = normalized.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const matchIndex = lowerContent.indexOf(lowerQuery);
+
+  if (matchIndex === -1) {
+    return normalized.slice(0, maxLength) + (normalized.length > maxLength ? "…" : "");
+  }
+
+  const start = Math.max(0, matchIndex - Math.floor(maxLength / 2));
+  const end = Math.min(normalized.length, start + maxLength);
+  const excerpt = normalized.slice(start, end);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < normalized.length ? "…" : "";
+  return `${prefix}${excerpt}${suffix}`;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  app.post("/api/public/collections/:publicId/search", async (req, res) => {
+    try {
+      const headerKey = req.headers["x-api-key"];
+      const apiKeyCandidates: Array<unknown> = [
+        Array.isArray(headerKey) ? headerKey[0] : headerKey,
+        req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>).apiKey : undefined,
+        req.query.apiKey,
+        req.query.apikey,
+      ];
+
+      const apiKey = apiKeyCandidates.find((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+      if (!apiKey) {
+        return res.status(401).json({ error: "Укажите X-API-Key в заголовке или apiKey в запросе" });
+      }
+
+      const site = await storage.getSiteByPublicId(req.params.publicId);
+      if (!site) {
+        return res.status(404).json({ error: "Коллекция не найдена" });
+      }
+
+      if (site.publicApiKey !== apiKey) {
+        return res.status(401).json({ error: "Некорректный API-ключ" });
+      }
+
+      const payloadSource: Record<string, unknown> = {};
+      if (req.body && typeof req.body === "object") {
+        Object.assign(payloadSource, req.body as Record<string, unknown>);
+      }
+
+      if (!("query" in payloadSource)) {
+        if (typeof req.query.q === "string" && req.query.q.trim()) {
+          payloadSource.query = req.query.q;
+        } else if (typeof req.query.query === "string" && req.query.query.trim()) {
+          payloadSource.query = req.query.query;
+        }
+      }
+
+      if (!("hitsPerPage" in payloadSource) && typeof req.query.hitsPerPage === "string") {
+        const parsedHits = Number.parseInt(req.query.hitsPerPage, 10);
+        if (Number.isFinite(parsedHits)) {
+          payloadSource.hitsPerPage = parsedHits;
+        }
+      }
+
+      if (!("page" in payloadSource) && typeof req.query.page === "string") {
+        const parsedPage = Number.parseInt(req.query.page, 10);
+        if (Number.isFinite(parsedPage)) {
+          payloadSource.page = parsedPage;
+        }
+      }
+
+      const payload = publicSearchRequestSchema.parse(payloadSource);
+      const cleanQuery = payload.query.trim();
+
+      if (!cleanQuery) {
+        return res.json({
+          hits: [],
+          nbHits: 0,
+          page: payload.page,
+          nbPages: 0,
+          hitsPerPage: payload.hitsPerPage,
+          query: payload.query,
+          params: new URLSearchParams({
+            query: payload.query,
+            hitsPerPage: String(payload.hitsPerPage),
+            page: String(payload.page),
+          }).toString(),
+        } satisfies PublicSearchResponse);
+      }
+
+      const offset = payload.page * payload.hitsPerPage;
+      const { results, total } = await storage.searchPagesByCollection(
+        cleanQuery,
+        site.id,
+        payload.hitsPerPage,
+        offset,
+      );
+
+      const hits: PublicSearchResponse["hits"] = results.map((page) => {
+        const excerptSource =
+          page.metaDescription ||
+          buildExcerpt(page.content, cleanQuery) ||
+          (page.metadata?.description
+            ? buildExcerpt(page.metadata.description, cleanQuery)
+            : undefined);
+
+        const titleHighlight = page.title ? highlightQuery(page.title, cleanQuery) : undefined;
+        const contentHighlight = excerptSource ? highlightQuery(excerptSource, cleanQuery) : undefined;
+
+        const highlightResult: Record<string, { value: string; matchLevel: string }> = {};
+        if (titleHighlight && titleHighlight.matchLevel !== "none") {
+          highlightResult.title = {
+            value: titleHighlight.value,
+            matchLevel: titleHighlight.matchLevel,
+          };
+        }
+        if (contentHighlight && contentHighlight.matchLevel !== "none") {
+          highlightResult.content = {
+            value: contentHighlight.value,
+            matchLevel: contentHighlight.matchLevel,
+          };
+        }
+
+        const hierarchy: PublicSearchResponse["hits"][number]["hierarchy"] = {};
+        if (site.name) {
+          hierarchy.lvl0 = site.name;
+        }
+        if (page.title) {
+          hierarchy.lvl1 = page.title;
+        }
+        if (page.metadata?.description) {
+          hierarchy.lvl2 = page.metadata.description;
+        }
+
+        return {
+          objectID: page.id,
+          url: page.url,
+          title: page.title ?? undefined,
+          content: page.content ?? undefined,
+          hierarchy: Object.keys(hierarchy).length > 0 ? hierarchy : undefined,
+          excerpt: excerptSource ?? undefined,
+          _highlightResult: Object.keys(highlightResult).length > 0 ? highlightResult : undefined,
+        };
+      });
+
+      const params = new URLSearchParams({
+        query: payload.query,
+        hitsPerPage: String(payload.hitsPerPage),
+        page: String(payload.page),
+      });
+
+      res.json({
+        hits,
+        nbHits: total,
+        page: payload.page,
+        nbPages: Math.ceil(total / payload.hitsPerPage),
+        hitsPerPage: payload.hitsPerPage,
+        query: payload.query,
+        params: params.toString(),
+      } satisfies PublicSearchResponse);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Некорректные параметры запроса", details: error.issues });
+      }
+
+      console.error("Ошибка публичного поиска:", error);
+      res.status(500).json({ error: "Не удалось выполнить поиск" });
+    }
+  });
+
   app.get("/api/auth/session", async (req, res, next) => {
     try {
       const user = getSessionUser(req);
@@ -1627,6 +1828,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating site:", error);
       res.status(500).json({ error: "Failed to update site" });
+    }
+  });
+
+  app.post("/api/sites/:id/api-key/rotate", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const result = await storage.rotateSiteApiKey(req.params.id, user.id);
+      if (!result) {
+        return res.status(404).json({ error: "Проект не найден" });
+      }
+
+      res.json({ site: result.site, apiKey: result.apiKey });
+    } catch (error) {
+      console.error("Ошибка при обновлении API-ключа проекта:", error);
+      res.status(500).json({ error: "Не удалось обновить API-ключ" });
     }
   });
 

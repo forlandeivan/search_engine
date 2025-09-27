@@ -17,6 +17,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { randomBytes } from "crypto";
 
 type PgError = Error & { code?: string };
 
@@ -39,9 +40,14 @@ export interface IStorage {
   // Sites management
   createSite(site: SiteInsert): Promise<Site>;
   getSite(id: string, ownerId?: string): Promise<Site | undefined>;
+  getSiteByPublicId(publicId: string): Promise<Site | undefined>;
   getAllSites(ownerId?: string): Promise<Site[]>;
   updateSite(id: string, updates: Partial<Site>, ownerId?: string): Promise<Site | undefined>;
   deleteSite(id: string, ownerId?: string): Promise<boolean>;
+  rotateSiteApiKey(
+    siteId: string,
+    ownerId?: string,
+  ): Promise<{ site: Site; apiKey: string } | undefined>;
 
   // Pages management
   createPage(page: InsertPage): Promise<Page>;
@@ -357,6 +363,11 @@ export class DatabaseStorage implements IStorage {
     return site ?? undefined;
   }
 
+  async getSiteByPublicId(publicId: string): Promise<Site | undefined> {
+    const [site] = await this.db.select().from(sites).where(eq(sites.publicId, publicId));
+    return site ?? undefined;
+  }
+
   async getAllSites(ownerId?: string): Promise<Site[]> {
     let query = this.db.select().from(sites);
     if (ownerId) {
@@ -383,6 +394,32 @@ export class DatabaseStorage implements IStorage {
       : eq(sites.id, id);
     const result = await this.db.delete(sites).where(condition);
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async rotateSiteApiKey(
+    siteId: string,
+    ownerId?: string,
+  ): Promise<{ site: Site; apiKey: string } | undefined> {
+    const newApiKey = randomBytes(32).toString("hex");
+    const condition = ownerId
+      ? and(eq(sites.id, siteId), eq(sites.ownerId, ownerId))
+      : eq(sites.id, siteId);
+
+    const [updatedSite] = await this.db
+      .update(sites)
+      .set({
+        publicApiKey: newApiKey,
+        publicApiKeyGeneratedAt: sql`CURRENT_TIMESTAMP`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(condition)
+      .returning();
+
+    if (!updatedSite) {
+      return undefined;
+    }
+
+    return { site: updatedSite, apiKey: newApiKey };
   }
 
   async createPage(page: InsertPage): Promise<Page> {
