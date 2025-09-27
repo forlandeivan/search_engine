@@ -1258,11 +1258,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit,
         offset,
         with_payload: true,
-        with_vector: false,
+        with_vector: true,
       });
 
-      const points = result.points.map(({ vector: _vector, payload, ...rest }) => ({
+      const points = result.points.map(({ vector, payload, ...rest }) => ({
         ...rest,
+        vector: vector ?? null,
         payload: payload ?? null,
       }));
 
