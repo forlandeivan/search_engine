@@ -91,6 +91,8 @@ export default function VectorCollectionsPage() {
 
   const { data, isLoading, isFetching, error } = useQuery<CollectionsResponse>({
     queryKey: ["/api/vector/collections"],
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const createCollectionMutation = useMutation({
