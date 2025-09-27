@@ -144,6 +144,10 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined 
   return user;
 }
 
+function resolveOwnerScope(user: PublicUser): string | undefined {
+  return user.role === "admin" ? undefined : user.id;
+}
+
 function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbeddingProvider {
   const { authorizationKey, ...rest } = provider;
   let qdrantConfig =
@@ -1704,7 +1708,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const sites = await storage.getAllSites(user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const sites = await storage.getAllSites(ownerScope);
       res.json(sites);
     } catch (error) {
       console.error("Error fetching sites:", error);
@@ -1772,10 +1777,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const sites = await storage.getAllSites(user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const sites = await storage.getAllSites(ownerScope);
       const sitesWithStats = await Promise.all(
         sites.map(async (site) => {
-          const pages = await storage.getPagesBySiteId(site.id, user.id);
+          const pages = await storage.getPagesBySiteId(site.id, ownerScope);
           return {
             ...site,
             pagesFound: pages.length,
@@ -1797,7 +1803,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const site = await storage.getSite(req.params.id, user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const site = await storage.getSite(req.params.id, ownerScope);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -1815,7 +1822,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     try {
       const updates = req.body;
-      const updatedSite = await storage.updateSite(req.params.id, updates, user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const updatedSite = await storage.updateSite(req.params.id, updates, ownerScope);
       if (!updatedSite) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -1838,7 +1846,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const result = await storage.rotateSiteApiKey(req.params.id, user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const result = await storage.rotateSiteApiKey(req.params.id, ownerScope);
       if (!result) {
         return res.status(404).json({ error: "Проект не найден" });
       }
@@ -1856,9 +1865,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
+      const ownerScope = resolveOwnerScope(user);
       // Get site info before deletion for logging
-      const siteToDelete = await storage.getSite(req.params.id, user.id);
-      const success = await storage.deleteSite(req.params.id, user.id);
+      const siteToDelete = await storage.getSite(req.params.id, ownerScope);
+      const success = await storage.deleteSite(req.params.id, ownerScope);
       if (!success) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -1881,7 +1891,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const site = await storage.getSite(req.params.id, user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const site = await storage.getSite(req.params.id, ownerScope);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -1913,7 +1924,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const site = await storage.getSite(req.params.id, user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const site = await storage.getSite(req.params.id, ownerScope);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -1932,7 +1944,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get current page count before recrawling for logging
-      const existingPages = await storage.getPagesBySiteId(req.params.id, user.id);
+      const existingPages = await storage.getPagesBySiteId(req.params.id, ownerScope);
       console.log(
         `Starting recrawl for site ${site.name ?? site.url ?? 'без названия'} - currently has ${existingPages.length} pages`
       );
@@ -1960,7 +1972,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const site = await storage.getSite(req.params.id, user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const site = await storage.getSite(req.params.id, ownerScope);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -2017,7 +2030,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const pages = await storage.getPagesBySiteId(req.params.id, user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const pages = await storage.getPagesBySiteId(req.params.id, ownerScope);
       res.json(pages);
     } catch (error) {
       console.error("Error fetching pages:", error);
@@ -2071,15 +2085,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let results;
       let total;
 
+      const ownerScope = resolveOwnerScope(user);
+
       if (siteId) {
         console.log("📁 Filtering search by site:", siteId);
-        const site = await storage.getSite(siteId, user.id);
+        const site = await storage.getSite(siteId, ownerScope);
         if (!site) {
           return res.status(404).json({ error: "Проект не найден" });
         }
-        ({ results, total } = await storage.searchPagesByCollection(decodedQuery, siteId, limit, offset, user.id));
+        ({ results, total } = await storage.searchPagesByCollection(decodedQuery, siteId, limit, offset, ownerScope));
       } else {
-        ({ results, total } = await storage.searchPages(decodedQuery, limit, offset, user.id));
+        ({ results, total } = await storage.searchPages(decodedQuery, limit, offset, ownerScope));
       }
       console.log("✅ Search completed:", { 
         resultsCount: results.length, 
@@ -2124,7 +2140,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Find site by URL among all start URLs
-      const sites = await storage.getAllSites(user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const sites = await storage.getAllSites(ownerScope);
       const normalizedUrl = url.toString().trim();
       const site = sites.find((s) => {
         if (!normalizedUrl) {
@@ -2220,7 +2237,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const allPages = await storage.getAllPages(user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const allPages = await storage.getAllPages(ownerScope);
       res.json(allPages);
     } catch (error) {
       console.error('Error fetching pages:', error);
@@ -2235,6 +2253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
+      const ownerScope = resolveOwnerScope(user);
       const {
         embeddingProviderId,
         collectionName: requestedCollectionName,
@@ -2244,7 +2263,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vectorizePageSchema.parse(req.body);
       const pageId = req.params.id;
 
-      const page = await storage.getPage(pageId, user.id);
+      const page = await storage.getPage(pageId, ownerScope);
       if (!page) {
         return res.status(404).json({ error: "Страница не найдена" });
       }
@@ -2267,7 +2286,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Выбранный сервис эмбеддингов отключён" });
       }
 
-      const site: Site | undefined = await storage.getSite(page.siteId, user.id);
+      const site: Site | undefined = await storage.getSite(page.siteId, ownerScope);
       const collectionName =
         requestedCollectionName && requestedCollectionName.trim().length > 0
           ? requestedCollectionName.trim()
@@ -2570,7 +2589,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Требуется идентификатор страницы" });
       }
 
-      const deleted = await storage.deletePage(pageId, user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const deleted = await storage.deletePage(pageId, ownerScope);
 
       if (!deleted) {
         return res.status(404).json({ error: "Страница не найдена" });
@@ -2595,7 +2615,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`🗑️ Bulk delete requested for ${pageIds.length} pages`);
 
-      const deleteResults = await storage.bulkDeletePages(pageIds, user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const deleteResults = await storage.bulkDeletePages(pageIds, ownerScope);
       
       console.log(`✅ Bulk delete completed: ${deleteResults.deletedCount} pages deleted`);
       
@@ -2625,7 +2646,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const sites = await storage.getAllSites(user.id);
+      const ownerScope = resolveOwnerScope(user);
+      const sites = await storage.getAllSites(ownerScope);
       const totalSites = sites.length;
       const activeCrawls = sites.filter(s => s.status === 'crawling').length;
       const completedCrawls = sites.filter(s => s.status === 'completed').length;
@@ -2633,7 +2655,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let totalPages = 0;
       for (const site of sites) {
-        const pages = await storage.getPagesBySiteId(site.id, user.id);
+        const pages = await storage.getPagesBySiteId(site.id, ownerScope);
         totalPages += pages.length;
       }
 
