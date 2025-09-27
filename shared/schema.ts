@@ -182,6 +182,16 @@ export const sites = pgTable("sites", {
   ownerId: varchar("owner_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
+  publicId: varchar("public_id")
+    .notNull()
+    .unique()
+    .default(sql`gen_random_uuid()`),
+  publicApiKey: text("public_api_key")
+    .notNull()
+    .default(sql`encode(gen_random_bytes(32), 'hex')`),
+  publicApiKeyGeneratedAt: timestamp("public_api_key_generated_at")
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
 });
 
 // Pages table for storing crawled page content

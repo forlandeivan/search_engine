@@ -1,14 +1,25 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Copy, ExternalLink, Search, Globe, Code2 } from "lucide-react";
+import { Copy, ExternalLink, Search, Globe, Code2, RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { type Site } from "@shared/schema";
 
 export default function TildaApiPage() {
   const sections = [
+    {
+      id: "public-api",
+      title: "Публичный API поиска",
+      description: "Получите ключи доступа и примеры запросов.",
+      icon: Search,
+    },
     {
       id: "tilda",
       title: "Tilda",
@@ -17,10 +28,60 @@ export default function TildaApiPage() {
     },
   ];
   const [activeSection, setActiveSection] = useState(sections[0].id);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data: sites = [], isLoading: isSitesLoading } = useQuery<Site[]>({
+    queryKey: ["/api/sites"],
+  });
+  const [selectedSiteId, setSelectedSiteId] = useState<string | undefined>();
+
+  useEffect(() => {
+    if (sites.length > 0 && !selectedSiteId) {
+      setSelectedSiteId(sites[0].id);
+    }
+  }, [sites, selectedSiteId]);
+
+  const selectedSite = useMemo(() => {
+    if (sites.length === 0) {
+      return undefined;
+    }
+
+    if (selectedSiteId) {
+      return sites.find((site) => site.id === selectedSiteId) ?? sites[0];
+    }
+
+    return sites[0];
+  }, [sites, selectedSiteId]);
 
   const currentDomain =
     typeof window !== "undefined" ? window.location.origin : "https://ваш-домен.replit.dev";
-  const apiEndpoint = `${currentDomain}/api`;
+  const publicApiBase = `${currentDomain}/api/public`;
+  const apiEndpoint = publicApiBase;
+  const publicSearchEndpoint = selectedSite
+    ? `${publicApiBase}/collections/${selectedSite.publicId}/search`
+    : `${publicApiBase}/collections/YOUR_COLLECTION_ID/search`;
+
+  const rotateApiKey = useMutation<{ site: Site; apiKey: string }, Error, string>({
+    mutationFn: async (siteId: string) => {
+      const response = await apiRequest("POST", `/api/sites/${siteId}/api-key/rotate`);
+      return (await response.json()) as { site: Site; apiKey: string };
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "API-ключ обновлён",
+        description: "Новый ключ применён. Не забудьте обновить интеграции.",
+      });
+      setSelectedSiteId(data.site.id);
+      queryClient.invalidateQueries({ queryKey: ["/api/sites"] });
+    },
+    onError: () => {
+      toast({
+        title: "Не удалось обновить ключ",
+        description: "Попробуйте ещё раз через несколько секунд.",
+        variant: "destructive",
+      });
+    },
+  });
 
   const zeroBlockHtml = `<div id="search-widget" class="search-container">
   <div class="search-box">
@@ -206,6 +267,8 @@ export default function TildaApiPage() {
   const zeroBlockJsLines = [
     "<script>",
     "const API_ENDPOINT = '__API_ENDPOINT__';",
+    "const COLLECTION_ID = '__COLLECTION_ID__';",
+    "const API_KEY = '__API_KEY__';",
     "",
     "class TildaSearchWidget {",
     "  constructor(apiEndpoint) {",
@@ -274,8 +337,16 @@ export default function TildaApiPage() {
     "",
     "    try {",
     "      const response = await fetch(",
-    "        this.apiEndpoint + '/search?q=' + encodeURIComponent(query) + '&limit=10',",
-    "        { signal: this.controller.signal }",
+    "        `${this.apiEndpoint}/collections/${COLLECTION_ID}/search`,",
+    "        {",
+    "          method: 'POST',",
+    "          headers: {",
+    "            'Content-Type': 'application/json',",
+    "            'X-API-Key': API_KEY",
+    "          },",
+    "          body: JSON.stringify({ query, hitsPerPage: 10 }),",
+    "          signal: this.controller.signal",
+    "        }",
     "      );",
     "",
     "      if (!response.ok) {",
@@ -295,8 +366,8 @@ export default function TildaApiPage() {
     "  }",
     "",
     "  displayResults(data, query) {",
-    "    const results = data.results || [];",
-    "    const total = data.total || 0;",
+    "    const results = data.hits || [];",
+    "    const total = data.nbHits || 0;",
     "",
     "    if (!results.length) {",
     "      this.resultsEl.innerHTML = `",
@@ -314,7 +385,7 @@ export default function TildaApiPage() {
     "",
     "  renderResult(result, query) {",
     "    const title = result.title || 'Без названия';",
-    "    const description = this.truncateText(result.metaDescription || result.content || '', 200);",
+    "    const description = this.truncateText(result.excerpt || result.content || '', 200);",
     "",
     "    return `",
     "      <div class=\"result-item\" onclick=\"window.open('\\${result.url}', '_blank')\">",
@@ -398,11 +469,26 @@ export default function TildaApiPage() {
   ];
   let zeroBlockJs = zeroBlockJsLines.join("\n");
   zeroBlockJs = zeroBlockJs.replace('__API_ENDPOINT__', apiEndpoint);
+  zeroBlockJs = zeroBlockJs.replace('__COLLECTION_ID__', selectedSite?.publicId ?? 'YOUR_COLLECTION_ID');
+  zeroBlockJs = zeroBlockJs.replace('__API_KEY__', selectedSite?.publicApiKey ?? 'YOUR_API_KEY');
 
   const zeroBlockFull = [zeroBlockHtml, '', zeroBlockCss, '', zeroBlockJs].join('\n');
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const copyToClipboard = async (text: string, label?: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({
+        title: "Скопировано",
+        description: label ? `${label} скопирован в буфер обмена.` : "Значение скопировано в буфер обмена.",
+      });
+    } catch (error) {
+      console.error("Clipboard error", error);
+      toast({
+        title: "Не удалось скопировать",
+        description: "Скопируйте значение вручную.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -444,16 +530,221 @@ export default function TildaApiPage() {
           </CardContent>
         </Card>
 
-        {activeSection === "tilda" && (
+        {activeSection === "public-api" && (
           <div className="space-y-6">
             <div>
               <h2 className="text-3xl font-bold mb-2 flex items-center gap-2">
-                <Globe className="h-8 w-8" />
-                API для интеграции с Тильдой
+                <Search className="h-8 w-8" />
+                Публичный API поиска
               </h2>
               <p className="text-lg text-muted-foreground">
-                Подключите поисковый движок к вашему сайту на Тильде для обеспечения быстрого и релевантного поиска
+                Получите идентификаторы коллекций и API-ключи, чтобы подключить поиск в своих приложениях и на сторонних платформах.
               </p>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Ваши коллекции</CardTitle>
+                <CardDescription>
+                  Используйте идентификатор коллекции и API-ключ, чтобы выполнять запросы к публичному поиску.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {isSitesLoading ? (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Загружаем список коллекций…</span>
+                  </div>
+                ) : sites.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    У вас пока нет коллекций. Добавьте проект и запустите краулинг, чтобы получить API-доступ.
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {sites.map((site) => {
+                      const endpoint = `${publicApiBase}/collections/${site.publicId}/search`;
+                      const isActive = selectedSite?.id === site.id;
+                      return (
+                        <div
+                          key={site.id}
+                          className={`rounded-lg border p-4 space-y-4 transition ${
+                            isActive ? "border-primary shadow-sm" : "border-border"
+                          }`}
+                        >
+                          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                            <div>
+                              <h3 className="font-semibold text-lg">{site.name}</h3>
+                              <p className="text-sm text-muted-foreground break-all">{site.url}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Ключ обновлён {new Date(site.publicApiKeyGeneratedAt).toLocaleString()}
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button
+                                variant={isActive ? "secondary" : "ghost"}
+                                size="sm"
+                                onClick={() => setSelectedSiteId(site.id)}
+                              >
+                                {isActive ? "Используется в примере" : "Использовать в примере"}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => rotateApiKey.mutate(site.id)}
+                                disabled={rotateApiKey.isPending && rotateApiKey.variables === site.id}
+                              >
+                                {rotateApiKey.isPending && rotateApiKey.variables === site.id ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="mr-2 h-4 w-4" />
+                                )}
+                                Обновить ключ
+                              </Button>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <span className="text-xs uppercase text-muted-foreground">ID коллекции</span>
+                              <div className="flex items-center gap-2">
+                                <code className="bg-muted rounded px-2 py-1 text-sm break-all flex-1">
+                                  {site.publicId}
+                                </code>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => copyToClipboard(site.publicId, "ID коллекции")}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <span className="text-xs uppercase text-muted-foreground">API-ключ</span>
+                              <div className="flex items-center gap-2">
+                                <code className="bg-muted rounded px-2 py-1 text-sm break-all flex-1">
+                                  {site.publicApiKey}
+                                </code>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => copyToClipboard(site.publicApiKey, "API-ключ")}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <span className="text-xs uppercase text-muted-foreground">Endpoint</span>
+                            <div className="flex items-center gap-2">
+                              <code className="bg-muted rounded px-2 py-1 text-sm break-all flex-1">{endpoint}</code>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => copyToClipboard(endpoint, "Endpoint")}
+                              >
+                                <Copy className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Пример запроса</CardTitle>
+                <CardDescription>
+                  Отправьте POST-запрос с заголовком <code>X-API-Key</code> и JSON-телом с параметрами поиска.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <h4 className="font-semibold">cURL</h4>
+                  <ScrollArea className="bg-muted rounded-md p-4">
+                    <pre className="text-xs leading-5">
+{`curl -X POST '${publicSearchEndpoint}' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \
+  -d '{
+    "query": "маркетинг",
+    "hitsPerPage": 5,
+    "page": 0
+  }'`}
+                    </pre>
+                  </ScrollArea>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Пример ответа</h4>
+                  <ScrollArea className="bg-muted rounded-md p-4 h-64">
+                    <pre className="text-xs leading-5">
+{`{
+  "hits": [
+    {
+      "objectID": "page-id",
+      "url": "https://example.com/page",
+      "title": "Заголовок страницы",
+      "excerpt": "Краткий фрагмент с совпадениями…",
+      "_highlightResult": {
+        "title": { "value": "<mark>Поиск</mark> по сайту", "matchLevel": "partial" }
+      }
+    }
+  ],
+  "nbHits": 12,
+  "page": 0,
+  "nbPages": 2,
+  "hitsPerPage": 5,
+  "query": "маркетинг",
+  "params": "query=маркетинг&hitsPerPage=5&page=0"
+}`}
+                    </pre>
+                  </ScrollArea>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {activeSection === "tilda" && (
+          <div className="space-y-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h2 className="text-3xl font-bold mb-2 flex items-center gap-2">
+                  <Globe className="h-8 w-8" />
+                  API для интеграции с Тильдой
+                </h2>
+                <p className="text-lg text-muted-foreground">
+                  Подключите поисковый движок к вашему сайту на Тильде для обеспечения быстрого и релевантного поиска
+                </p>
+              </div>
+              <div className="w-full lg:w-80 space-y-2">
+                <span className="text-sm font-medium text-muted-foreground">Коллекция для примеров</span>
+                {sites.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">
+                    Добавьте коллекцию, чтобы получить API-ключ и идентификатор.
+                  </div>
+                ) : (
+                  <Select value={selectedSite?.id ?? ""} onValueChange={(value) => setSelectedSiteId(value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите коллекцию" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sites.map((site) => (
+                        <SelectItem key={site.id} value={site.id}>
+                          {site.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
             </div>
 
             <Tabs defaultValue="overview" className="space-y-6">
@@ -523,41 +814,46 @@ export default function TildaApiPage() {
                 Поиск по сайту
               </CardTitle>
               <CardDescription>
-                Основной endpoint для выполнения поиска
+                Публичный endpoint для выполнения поиска по выбранной коллекции
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <Badge variant="default">GET</Badge>
-                  <code className="text-sm">/api/search</code>
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <Badge variant="default">POST</Badge>
+                  <code className="text-sm break-all">
+                    /api/public/collections/{selectedSite ? selectedSite.publicId : ":collectionId"}/search
+                  </code>
                 </div>
-                
-                <h4 className="font-semibold mb-3">Параметры запроса</h4>
-                <div className="space-y-3">
-                  <div className="border rounded-lg p-4">
-                    <div className="grid grid-cols-4 gap-4 text-sm">
-                      <div className="font-mono font-semibold">q</div>
-                      <div><Badge variant="destructive">обязательный</Badge></div>
-                      <div>string</div>
-                      <div>Поисковый запрос</div>
-                    </div>
+                <p className="text-sm text-muted-foreground">
+                  Выполняет поиск по страницам выбранной коллекции. Передайте API-ключ в заголовке <code>X-API-Key</code>.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="font-semibold">JSON-тело запроса</h4>
+                <div className="border rounded-lg p-4">
+                  <div className="grid grid-cols-4 gap-4 text-sm">
+                    <div className="font-mono font-semibold">query</div>
+                    <div><Badge variant="destructive">обязательный</Badge></div>
+                    <div>string</div>
+                    <div>Поисковый запрос</div>
                   </div>
-                  <div className="border rounded-lg p-4">
-                    <div className="grid grid-cols-4 gap-4 text-sm">
-                      <div className="font-mono font-semibold">limit</div>
-                      <div><Badge variant="secondary">необязательный</Badge></div>
-                      <div>number</div>
-                      <div>Количество результатов (по умолчанию: 10, макс: 50)</div>
-                    </div>
+                </div>
+                <div className="border rounded-lg p-4">
+                  <div className="grid grid-cols-4 gap-4 text-sm">
+                    <div className="font-mono font-semibold">hitsPerPage</div>
+                    <div><Badge variant="secondary">необязательный</Badge></div>
+                    <div>number</div>
+                    <div>Количество результатов (по умолчанию: 10)</div>
                   </div>
-                  <div className="border rounded-lg p-4">
-                    <div className="grid grid-cols-4 gap-4 text-sm">
-                      <div className="font-mono font-semibold">offset</div>
-                      <div><Badge variant="secondary">необязательный</Badge></div>
-                      <div>number</div>
-                      <div>Смещение для пагинации (по умолчанию: 0)</div>
-                    </div>
+                </div>
+                <div className="border rounded-lg p-4">
+                  <div className="grid grid-cols-4 gap-4 text-sm">
+                    <div className="font-mono font-semibold">page</div>
+                    <div><Badge variant="secondary">необязательный</Badge></div>
+                    <div>number</div>
+                    <div>Номер страницы (счёт начинается с 0)</div>
                   </div>
                 </div>
               </div>
@@ -568,13 +864,18 @@ export default function TildaApiPage() {
                 <h4 className="font-semibold mb-3">Пример запроса</h4>
                 <div className="relative">
                   <pre className="bg-muted p-4 rounded-lg text-sm overflow-x-auto">
-                    <code>{`GET ${currentDomain}/api/search?q=контакты&limit=5`}</code>
+                    <code>{`fetch('${publicSearchEndpoint}', {\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'X-API-Key': '${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}'\n  },\n  body: JSON.stringify({\n    query: 'контакты',\n    hitsPerPage: 5,\n    page: 0\n  })\n}).then((res) => res.json());`}</code>
                   </pre>
                   <Button
                     variant="ghost"
                     size="sm"
                     className="absolute top-2 right-2"
-                    onClick={() => copyToClipboard(`${currentDomain}/api/search?q=контакты&limit=5`)}
+                    onClick={() =>
+                      copyToClipboard(
+                        `fetch('${publicSearchEndpoint}', {\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'X-API-Key': '${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}'\n  },\n  body: JSON.stringify({\n    query: 'контакты',\n    hitsPerPage: 5,\n    page: 0\n  })\n}).then((res) => res.json());`,
+                        "Пример запроса",
+                      )
+                    }
                     data-testid="button-copy-search-example"
                   >
                     <Copy className="h-4 w-4" />
@@ -586,21 +887,7 @@ export default function TildaApiPage() {
                 <h4 className="font-semibold mb-3">Пример ответа</h4>
                 <ScrollArea className="h-64">
                   <pre className="bg-muted p-4 rounded-lg text-sm">
-                    <code>{JSON.stringify({
-                      "results": [
-                        {
-                          "id": "page-123",
-                          "url": "https://mysite.tilda.ws/contacts",
-                          "title": "Контакты - Наша компания",
-                          "content": "Свяжитесь с нами любым удобным способом...",
-                          "metaDescription": "Контактная информация компании"
-                        }
-                      ],
-                      "total": 1,
-                      "query": "контакты",
-                      "limit": 5,
-                      "offset": 0
-                    }, null, 2)}</code>
+                    <code>{`{\n  "hits": [\n    {\n      "objectID": "page-123",\n      "url": "https://mysite.tilda.ws/contacts",\n      "title": "Контакты - Наша компания",\n      "excerpt": "Свяжитесь с нами любым удобным способом...",\n      "_highlightResult": {\n        "title": {\n          "value": "<mark>Контакты</mark> - Наша компания",\n          "matchLevel": "partial"\n        }\n      }\n    }\n  ],\n  "nbHits": 1,\n  "page": 0,\n  "hitsPerPage": 5,\n  "nbPages": 1,\n  "query": "контакты",\n  "params": "query=контакты&hitsPerPage=5&page=0"\n}`}</code>
                   </pre>
                 </ScrollArea>
               </div>
@@ -624,8 +911,9 @@ export default function TildaApiPage() {
                   адаптирован под Zero блок и содержит все необходимые обработчики, чтобы поиск работал стабильно.
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Текущий endpoint API уже подставлен: {" "}
-                  <code className="bg-muted px-2 py-1 rounded text-xs">{apiEndpoint}</code>
+                  В примерах ниже автоматически подставлены endpoint и API-ключ выбранной коллекции:
+                  {" "}
+                  <code className="bg-muted px-2 py-1 rounded text-xs">{publicSearchEndpoint}</code>
                 </p>
               </div>
 
@@ -735,7 +1023,7 @@ export default function TildaApiPage() {
                   <li>Индикатор загрузки, информативные сообщения об ошибках и статистика найденных страниц.</li>
                   <li>Подсветка совпадений и аккуратные карточки результатов в стиле современного поиска.</li>
                   <li>Адаптивная вёрстка, корректно отображается на мобильных устройствах.</li>
-                  <li>Скрипт автоматически использует endpoint {apiEndpoint} и готов к работе сразу после вставки.</li>
+                  <li>Скрипт автоматически использует endpoint {publicSearchEndpoint} и готов к работе сразу после вставки.</li>
                 </ul>
               </div>
             </CardContent>
@@ -759,39 +1047,48 @@ export default function TildaApiPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          asChild
                           data-testid="button-test-search-1"
+                          onClick={() =>
+                            copyToClipboard(
+                              `curl -X POST '${publicSearchEndpoint}' \\n+  -H 'Content-Type: application/json' \\n+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\n+  -d '{"query": "поиск", "hitsPerPage": 5}'`,
+                              "curl-запрос",
+                            )
+                          }
                         >
-                          <a href={`${currentDomain}/api/search?q=поиск`} target="_blank">
-                            <ExternalLink className="h-4 w-4 mr-1" />
-                            поиск
-                          </a>
+                          <Copy className="h-4 w-4 mr-1" />
+                          поиск (скопировать curl)
                         </Button>
                       </div>
                       <div className="flex items-center gap-2">
                         <Button
                           variant="outline"
                           size="sm"
-                          asChild
                           data-testid="button-test-search-2"
+                          onClick={() =>
+                            copyToClipboard(
+                              `curl -X POST '${publicSearchEndpoint}' \\n+  -H 'Content-Type: application/json' \\n+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\n+  -d '{"query": "страница", "hitsPerPage": 5}'`,
+                              "curl-запрос",
+                            )
+                          }
                         >
-                          <a href={`${currentDomain}/api/search?q=страница`} target="_blank">
-                            <ExternalLink className="h-4 w-4 mr-1" />
-                            страница
-                          </a>
+                          <Copy className="h-4 w-4 mr-1" />
+                          страница (скопировать curl)
                         </Button>
                       </div>
                       <div className="flex items-center gap-2">
                         <Button
                           variant="outline"
                           size="sm"
-                          asChild
                           data-testid="button-test-search-3"
+                          onClick={() =>
+                            copyToClipboard(
+                              `curl -X POST '${publicSearchEndpoint}' \\n+  -H 'Content-Type: application/json' \\n+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\n+  -d '{"query": "тест", "hitsPerPage": 3}'`,
+                              "curl-запрос",
+                            )
+                          }
                         >
-                          <a href={`${currentDomain}/api/search?q=тест&limit=3`} target="_blank">
-                            <ExternalLink className="h-4 w-4 mr-1" />
-                            тест (лимит 3)
-                          </a>
+                          <Copy className="h-4 w-4 mr-1" />
+                          тест (лимит 3, скопировать curl)
                         </Button>
                       </div>
                     </div>
