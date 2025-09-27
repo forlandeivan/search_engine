@@ -29,6 +29,13 @@ import {
   DEFAULT_QDRANT_CONFIG,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
+import {
+  castValueToType,
+  collectionFieldTypes,
+  normalizeArrayValue,
+  renderLiquidTemplate,
+  type CollectionSchemaFieldInput,
+} from "@shared/vectorization";
 import { requireAuth, requireAdmin, getSessionUser, toPublicUser } from "./auth";
 
 function getErrorDetails(error: unknown): string {
@@ -392,6 +399,24 @@ function removeUndefinedDeep<T>(value: T): T {
   return value;
 }
 
+function buildCustomPayloadFromSchema(
+  fields: CollectionSchemaFieldInput[],
+  context: Record<string, unknown>,
+): Record<string, unknown> {
+  return fields.reduce<Record<string, unknown>>((acc, field) => {
+    try {
+      const rendered = renderLiquidTemplate(field.template ?? "", context);
+      const typedValue = castValueToType(rendered, field.type);
+      acc[field.name] = normalizeArrayValue(typedValue, field.isArray);
+    } catch (error) {
+      console.error(`Не удалось обработать поле схемы "${field.name}"`, error);
+      acc[field.name] = null;
+    }
+
+    return acc;
+  }, {});
+}
+
 async function fetchAccessToken(provider: EmbeddingProvider): Promise<string> {
   const tokenHeaders = new Headers();
   const rawAuthorizationKey = provider.authorizationKey.trim();
@@ -580,6 +605,20 @@ const searchPointsSchema = z.object({
   timeout: z.number().positive().optional(),
 });
 
+const vectorizeCollectionSchemaFieldSchema = z.object({
+  name: z.string().trim().min(1, "Укажите название поля").max(120),
+  type: z.enum(collectionFieldTypes),
+  isArray: z.boolean().optional().default(false),
+  template: z.string().default(""),
+});
+
+const vectorizeCollectionSchemaSchema = z.object({
+  fields: z
+    .array(vectorizeCollectionSchemaFieldSchema)
+    .max(50, "Слишком много полей в схеме"),
+  embeddingFieldName: z.string().trim().min(1).max(120).optional().nullable(),
+});
+
 const vectorizePageSchema = z.object({
   embeddingProviderId: z.string().uuid("Некорректный идентификатор сервиса эмбеддингов"),
   collectionName: z
@@ -588,6 +627,7 @@ const vectorizePageSchema = z.object({
     .min(1, "Укажите название коллекции")
     .optional(),
   createCollection: z.boolean().optional(),
+  schema: vectorizeCollectionSchemaSchema.optional(),
 });
 
 // Public search API request/response schemas
@@ -1974,7 +2014,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const { embeddingProviderId, collectionName: requestedCollectionName, createCollection } =
+      const {
+        embeddingProviderId,
+        collectionName: requestedCollectionName,
+        createCollection,
+        schema,
+      } =
         vectorizePageSchema.parse(req.body);
       const pageId = req.params.id;
 
@@ -2008,6 +2053,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : buildCollectionName(site, provider);
       const chunkCharLimit = site?.maxChunkSize ?? null;
       const totalChunks = nonEmptyChunks.length;
+
+      const normalizedSchemaFields: CollectionSchemaFieldInput[] = (schema?.fields ?? []).map(
+        (field) => ({
+          name: field.name.trim(),
+          type: field.type,
+          isArray: Boolean(field.isArray),
+          template: field.template ?? "",
+        }),
+      );
+      const hasCustomSchema = normalizedSchemaFields.length > 0;
 
       const client = getQdrantClient();
       const shouldCreateCollection = Boolean(createCollection);
@@ -2069,14 +2124,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
         const { chunk, index, vector, usageTokens, embeddingId } = result;
-        const baseChunkId = chunk.id && chunk.id.trim().length > 0
-          ? chunk.id
-          : `${page.id}-chunk-${chunk.metadata?.position ?? index}`;
+        const chunkPositionRaw = chunk.metadata?.position;
+        const chunkPosition =
+          typeof chunkPositionRaw === "number" ? chunkPositionRaw : index;
+        const baseChunkId =
+          chunk.id && chunk.id.trim().length > 0
+            ? chunk.id
+            : `${page.id}-chunk-${chunkPosition}`;
         const pointId = normalizePointId(baseChunkId);
         const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
         const chunkWordCount = chunk.metadata?.wordCount ?? null;
-        const chunkPosition = chunk.metadata?.position ?? index;
         const chunkExcerpt = chunk.metadata?.excerpt ?? null;
+
+        const metadataRecord =
+          page.metadata && typeof page.metadata === "object"
+            ? (page.metadata as unknown as Record<string, unknown>)
+            : undefined;
+        const siteNameRaw = metadataRecord?.["siteName"];
+        const siteUrlRaw = metadataRecord?.["siteUrl"];
+        const resolvedSiteName =
+          typeof siteNameRaw === "string" ? siteNameRaw : site?.name ?? null;
+        const resolvedSiteUrl =
+          typeof siteUrlRaw === "string" ? siteUrlRaw : site?.url ?? null;
+
+        const templateContext = removeUndefinedDeep({
+          page: {
+            id: page.id,
+            url: page.url,
+            title: page.title ?? null,
+            totalChunks,
+            chunkCharLimit,
+            metadata: page.metadata ?? null,
+          },
+          site: {
+            id: page.siteId,
+            name: resolvedSiteName,
+            url: resolvedSiteUrl,
+          },
+          provider: {
+            id: provider.id,
+            name: provider.name,
+          },
+          chunk: {
+            id: baseChunkId,
+            index,
+            position: chunkPosition,
+            heading: chunk.heading ?? null,
+            level: chunk.level ?? null,
+            deepLink: chunk.deepLink ?? null,
+            text: chunk.content,
+            charCount: chunkCharCount,
+            wordCount: chunkWordCount,
+            excerpt: chunkExcerpt,
+            metadata: chunk.metadata ?? null,
+          },
+          embedding: {
+            model: provider.model,
+            vectorSize: vector.length,
+            tokens: usageTokens ?? null,
+            id: embeddingId ?? null,
+          },
+        }) as Record<string, unknown>;
 
         const rawPayload = {
           page: {
@@ -2117,7 +2225,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         };
 
-        const payload = removeUndefinedDeep(rawPayload) as Record<string, unknown>;
+        const customPayload = hasCustomSchema
+          ? buildCustomPayloadFromSchema(normalizedSchemaFields, templateContext)
+          : null;
+
+        const payloadSource = customPayload ?? rawPayload;
+        const payload = removeUndefinedDeep(payloadSource) as Record<string, unknown>;
 
         return {
           id: pointId,

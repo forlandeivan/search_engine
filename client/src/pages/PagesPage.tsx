@@ -48,6 +48,14 @@ import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import type { ContentChunk, PageMetadata, PublicEmbeddingProvider } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
+import {
+  castValueToType,
+  normalizeArrayValue,
+  renderLiquidTemplate,
+  type CollectionFieldType,
+  type CollectionSchemaFieldInput,
+  type VectorizeCollectionSchema,
+} from "@shared/vectorization";
 import { cn } from "@/lib/utils";
 
 interface Page {
@@ -114,16 +122,11 @@ interface VectorizeRequestPayload {
   providerId: string;
   collectionName?: string;
   createCollection?: boolean;
+  schema?: VectorizeCollectionSchema | null;
 }
 
-type CollectionFieldType = "string" | "double" | "object";
-
-interface CollectionSchemaField {
+interface CollectionSchemaField extends CollectionSchemaFieldInput {
   id: string;
-  name: string;
-  type: CollectionFieldType;
-  isArray: boolean;
-  template: string;
 }
 
 const TEMPLATE_PATH_LIMIT = 400;
@@ -207,168 +210,6 @@ function collectTemplatePaths(source: unknown, limit = TEMPLATE_PATH_LIMIT): str
   visit(source, "");
 
   return Array.from(paths).sort((a, b) => a.localeCompare(b, "ru"));
-}
-
-function parsePathSegments(path: string): string[] {
-  const segments: string[] = [];
-  const regex = /([^.[\]]+)|\[(\d+)\]/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(path)) !== null) {
-    const [, dotSegment, indexSegment] = match;
-    if (dotSegment) {
-      segments.push(dotSegment);
-    } else if (indexSegment) {
-      segments.push(indexSegment);
-    }
-  }
-
-  return segments;
-}
-
-function getValueFromContext(source: unknown, path: string): unknown {
-  if (!path) {
-    return undefined;
-  }
-
-  const trimmed = path.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const [basePath] = trimmed.split("|");
-  const segments = parsePathSegments(basePath.trim());
-
-  return segments.reduce<unknown>((current, segment) => {
-    if (current === null || current === undefined) {
-      return undefined;
-    }
-
-    if (typeof current === "object") {
-      if (Array.isArray(current)) {
-        const index = Number.parseInt(segment, 10);
-        return Number.isNaN(index) ? undefined : current[index];
-      }
-
-      return (current as Record<string, unknown>)[segment];
-    }
-
-    return undefined;
-  }, source);
-}
-
-function renderLiquidTemplate(template: string, context: Record<string, unknown>): unknown {
-  const raw = template ?? "";
-  const trimmed = raw.trim();
-
-  if (!trimmed) {
-    return null;
-  }
-
-  const singleExpressionMatch = trimmed.match(/^\{\{\s*([^}]+)\s*\}\}$/);
-  if (singleExpressionMatch) {
-    const value = getValueFromContext(context, singleExpressionMatch[1]);
-    return value ?? null;
-  }
-
-  let hasReplacement = false;
-  const replaced = raw.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_, expression: string) => {
-    hasReplacement = true;
-    const value = getValueFromContext(context, expression);
-
-    if (value === null || value === undefined) {
-      return "";
-    }
-
-    if (typeof value === "object") {
-      try {
-        return JSON.stringify(value);
-      } catch (error) {
-        console.error("Не удалось сериализовать значение для Liquid шаблона", error);
-        return "";
-      }
-    }
-
-    return String(value);
-  });
-
-  return hasReplacement ? replaced : raw;
-}
-
-function castValueToType(value: unknown, type: CollectionFieldType): unknown {
-  if (value === undefined) {
-    return null;
-  }
-
-  if (value === null) {
-    return null;
-  }
-
-  if (type === "double") {
-    if (typeof value === "number") {
-      return Number.isFinite(value) ? value : null;
-    }
-
-    if (typeof value === "string") {
-      const parsed = Number.parseFloat(value.trim());
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-
-    return null;
-  }
-
-  if (type === "object") {
-    if (typeof value === "object") {
-      return value;
-    }
-
-    if (typeof value === "string") {
-      const trimmed = value.trim();
-      if (!trimmed) {
-        return null;
-      }
-
-      try {
-        return JSON.parse(trimmed);
-      } catch (error) {
-        console.error("Не удалось распарсить JSON из Liquid шаблона", error);
-        return trimmed;
-      }
-    }
-
-    return value;
-  }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  try {
-    return JSON.stringify(value);
-  } catch (error) {
-    console.error("Не удалось преобразовать значение в строку", error);
-    return String(value);
-  }
-}
-
-function normalizeArrayValue(value: unknown, isArray: boolean): unknown {
-  if (!isArray) {
-    return value;
-  }
-
-  if (value === null || value === undefined) {
-    return [];
-  }
-
-  if (Array.isArray(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim().length === 0) {
-    return [];
-  }
-
-  return [value];
 }
 
 function sanitizeCollectionName(source: string): string {
@@ -600,12 +441,18 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
   }, [availableCollections, collectionMode, isOpen, selectedCollectionName]);
 
   const vectorizeMutation = useMutation<VectorizePageResponse, Error, VectorizeRequestPayload>({
-    mutationFn: async ({ providerId, collectionName, createCollection: createNew }) => {
-      const response = await apiRequest("POST", `/api/pages/${page.id}/vectorize`, {
+    mutationFn: async ({ providerId, collectionName, createCollection: createNew, schema }) => {
+      const body: Record<string, unknown> = {
         embeddingProviderId: providerId,
         collectionName,
         createCollection: createNew,
-      });
+      };
+
+      if (schema && schema.fields.length > 0) {
+        body.schema = schema;
+      }
+
+      const response = await apiRequest("POST", `/api/pages/${page.id}/vectorize`, body);
       return (await response.json()) as VectorizePageResponse;
     },
     onSuccess: (data) => {
@@ -700,10 +547,20 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
       setNewCollectionName(normalizedName);
     }
 
+    if (!schemaPayload) {
+      toast({
+        title: "Добавьте поля", 
+        description: "Схема новой коллекции должна содержать хотя бы одно поле.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     vectorizeMutation.mutate({
       providerId: selectedProviderId,
       collectionName: normalizedName,
       createCollection: true,
+      schema: schemaPayload,
     });
   };
 
@@ -790,8 +647,46 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
       return null;
     }
 
-    return schemaFields.find((field) => field.id === embeddingFieldId)?.name ?? null;
+    const field = schemaFields.find((current) => current.id === embeddingFieldId);
+    if (!field) {
+      return null;
+    }
+
+    const trimmed = field.name.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }, [embeddingFieldId, schemaFields]);
+
+  const schemaPayload = useMemo<VectorizeCollectionSchema | null>(() => {
+    const normalizedFields = schemaFields
+      .map<CollectionSchemaFieldInput | null>((field) => {
+        const trimmedName = field.name.trim();
+        if (!trimmedName) {
+          return null;
+        }
+
+        return {
+          name: trimmedName,
+          type: field.type,
+          isArray: field.isArray,
+          template: field.template ?? "",
+        };
+      })
+      .filter((field): field is CollectionSchemaFieldInput => field !== null);
+
+    if (normalizedFields.length === 0) {
+      return null;
+    }
+
+    const embeddingName =
+      embeddingFieldName && normalizedFields.some((field) => field.name === embeddingFieldName)
+        ? embeddingFieldName
+        : null;
+
+    return {
+      fields: normalizedFields,
+      embeddingFieldName: embeddingName,
+    };
+  }, [schemaFields, embeddingFieldName]);
 
   const disabled = providers.length === 0 || totalChunks === 0;
   const confirmDisabled =
@@ -800,7 +695,7 @@ function VectorizePageDialog({ page, providers }: VectorizePageDialogProps) {
     !selectedProviderId ||
     (collectionMode === "existing"
       ? availableCollections.length === 0 || !selectedCollectionName
-      : newCollectionName.trim().length === 0);
+      : newCollectionName.trim().length === 0 || !schemaPayload);
 
   const collectionsErrorMessage =
     collectionsError instanceof Error ? collectionsError.message : undefined;
