@@ -12,6 +12,7 @@ import {
   SidebarHeader,
   SidebarRail,
   SidebarTrigger,
+  SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
@@ -29,8 +30,10 @@ import {
   ChevronLeft,
   Settings,
   Shield,
+  CircleUser,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { PublicUser } from "@shared/schema";
 
 interface SidebarItem {
   title: string;
@@ -54,9 +57,10 @@ interface Site {
 
 interface MainSidebarProps {
   showAdminLink?: boolean;
+  user: PublicUser;
 }
 
-export default function MainSidebar({ showAdminLink = false }: MainSidebarProps) {
+export default function MainSidebar({ showAdminLink = false, user }: MainSidebarProps) {
   const [location] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
@@ -276,12 +280,37 @@ export default function MainSidebar({ showAdminLink = false }: MainSidebarProps)
           </SidebarGroup>
         ))}
       </SidebarContent>
-      <div className="border-t p-4">
+      <SidebarFooter className="border-t gap-3">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={location === "/profile"}
+              className={cn("justify-start", isCollapsed && "justify-center")}
+              tooltip={isCollapsed ? user.fullName : undefined}
+              data-testid="link-profile"
+            >
+              <Link
+                href="/profile"
+                className={cn("flex flex-1 items-center gap-2", isCollapsed && "justify-center gap-0")}
+              >
+                <CircleUser className={cn("h-5 w-5", isCollapsed && "mx-auto")} />
+                {!isCollapsed && (
+                  <div className="flex flex-col text-left leading-tight">
+                    <span className="text-sm font-medium">Профиль</span>
+                    <span className="text-xs text-muted-foreground truncate">{user.fullName}</span>
+                    <span className="text-[11px] text-muted-foreground/70 truncate">{user.email}</span>
+                  </div>
+                )}
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
         <SidebarTrigger
           className={isCollapsed ? "h-8 w-8 self-center p-0" : "w-full justify-center"}
           aria-label="Переключить меню"
         />
-      </div>
+      </SidebarFooter>
     </Sidebar>
   );
 }

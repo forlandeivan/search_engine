@@ -11,8 +11,12 @@ import type { PublicUser, User } from "@shared/schema";
 const PgSession = connectPgSimple(session);
 
 export function toPublicUser(user: User): PublicUser {
-  const { passwordHash, ...safe } = user;
-  return safe;
+  const { passwordHash, personalApiTokenHash, personalApiTokenLastFour, ...safe } = user;
+  return {
+    ...safe,
+    personalApiTokenLastFour: personalApiTokenLastFour ?? null,
+    hasPersonalApiToken: Boolean(personalApiTokenHash && personalApiTokenHash.length > 0),
+  };
 }
 
 export function configureAuth(app: Express) {

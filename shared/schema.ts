@@ -64,11 +64,17 @@ export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
   fullName: text("full_name").notNull(),
+  firstName: text("first_name").notNull().default(""),
+  lastName: text("last_name").notNull().default(""),
+  phone: text("phone").notNull().default(""),
   passwordHash: text("password_hash").notNull(),
   role: text("role").$type<UserRole>().notNull().default("user"),
   lastActiveAt: timestamp("last_active_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  personalApiTokenHash: text("personal_api_token_hash"),
+  personalApiTokenLastFour: text("personal_api_token_last_four"),
+  personalApiTokenGeneratedAt: timestamp("personal_api_token_generated_at"),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({
@@ -77,6 +83,9 @@ export const insertUserSchema = createInsertSchema(users).omit({
   createdAt: true,
   updatedAt: true,
   lastActiveAt: true,
+  personalApiTokenHash: true,
+  personalApiTokenLastFour: true,
+  personalApiTokenGeneratedAt: true,
 });
 
 export const embeddingProviderTypes = ["gigachat", "custom"] as const;
@@ -401,7 +410,13 @@ export type SearchIndexEntry = typeof searchIndex.$inferSelect;
 export type InsertSearchIndexEntry = z.infer<typeof insertSearchIndexSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
-export type PublicUser = Omit<User, "passwordHash">;
+export type PublicUser = Omit<
+  User,
+  "passwordHash" | "personalApiTokenHash" | "personalApiTokenLastFour"
+> & {
+  hasPersonalApiToken: boolean;
+  personalApiTokenLastFour: string | null;
+};
 export type EmbeddingProvider = typeof embeddingProviders.$inferSelect;
 export type EmbeddingProviderInsert = typeof embeddingProviders.$inferInsert;
 export type InsertEmbeddingProvider = z.infer<typeof insertEmbeddingProviderSchema>;

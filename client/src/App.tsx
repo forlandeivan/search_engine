@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Link } from "wouter";
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -20,6 +20,7 @@ import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
+import ProfilePage from "@/pages/ProfilePage";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -48,6 +49,7 @@ function MainRouter() {
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
       <Route path="/integrations/api" component={TildaApiPage} />
+      <Route path="/profile" component={ProfilePage} />
       <Route path="/" component={SearchPage} />
       <Route component={NotFound} />
     </Switch>
@@ -102,11 +104,10 @@ function HeaderUserArea({ user }: { user: PublicUser }) {
   });
 
   return (
-    <div className="flex items-center gap-3">
-      <div className="hidden sm:block text-right leading-tight">
-        <p className="text-sm font-medium">{user.fullName}</p>
-        <p className="text-xs text-muted-foreground">{user.email}</p>
-      </div>
+    <div className="flex items-center gap-2">
+      <Button asChild variant="ghost" size="sm" data-testid="button-open-profile">
+        <Link href="/profile">Профиль</Link>
+      </Button>
       <ThemeToggle />
       <Button
         size="sm"
@@ -129,7 +130,7 @@ function AdminAppShell({ user }: { user: PublicUser }) {
   return (
     <SidebarProvider style={style}>
       <div className="flex h-screen w-full">
-        <AdminSidebar />
+        <AdminSidebar user={user} />
         <div className="flex flex-col flex-1">
           <header className="flex items-center justify-between p-2 border-b gap-2">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
@@ -153,7 +154,7 @@ function MainAppShell({ user }: { user: PublicUser }) {
   return (
     <SidebarProvider style={style}>
       <div className="flex h-screen w-full">
-        <MainSidebar showAdminLink={user.role === "admin"} />
+        <MainSidebar showAdminLink={user.role === "admin"} user={user} />
         <div className="flex flex-col flex-1">
           <header className="flex items-center justify-between p-2 border-b gap-2">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
