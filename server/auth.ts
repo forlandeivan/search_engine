@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "./db";
 import { storage } from "./storage";
 import type { PublicUser, User } from "@shared/schema";
+import { createHash } from "crypto";
 
 const PgSession = connectPgSimple(session);
 
@@ -89,19 +90,76 @@ export function configureAuth(app: Express) {
   );
 }
 
-export async function requireAuth(req: Request, res: Response, next: NextFunction) {
+export function getSessionUser(req: Request): PublicUser | null {
+  return req.user ?? null;
+}
+
+async function authenticateWithSession(req: Request): Promise<PublicUser | null> {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
-    res.status(401).json({ message: "Требуется авторизация" });
-    return;
+    return null;
   }
 
+  const user = req.user as PublicUser | undefined;
+  if (!user?.id) {
+    return null;
+  }
+
+  const updatedUser = await storage.recordUserActivity(user.id);
+  const safeUser = updatedUser ? toPublicUser(updatedUser) : user;
+  req.user = safeUser;
+
+  return safeUser;
+}
+
+async function authenticateWithPersonalToken(req: Request): Promise<PublicUser | null> {
+  const authorizationHeader = req.headers.authorization;
+  if (typeof authorizationHeader !== "string" || authorizationHeader.trim().length === 0) {
+    return null;
+  }
+
+  const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
+  if (!scheme || scheme.toLowerCase() !== "bearer") {
+    return null;
+  }
+
+  const token = rest.join(" ").trim();
+  if (token.length === 0) {
+    return null;
+  }
+
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const fullUser = await storage.getUserByPersonalApiTokenHash(tokenHash);
+  if (!fullUser) {
+    return null;
+  }
+
+  const updatedUser = await storage.recordUserActivity(fullUser.id);
+  const safeUser = toPublicUser(updatedUser ?? fullUser);
+  req.user = safeUser;
+
+  return safeUser;
+}
+
+async function resolveAuthenticatedUser(req: Request): Promise<PublicUser | null> {
+  const existingUser = req.user as PublicUser | undefined;
+  if (existingUser?.id) {
+    return existingUser;
+  }
+
+  const sessionUser = await authenticateWithSession(req);
+  if (sessionUser) {
+    return sessionUser;
+  }
+
+  return await authenticateWithPersonalToken(req);
+}
+
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
-    const user = req.user;
-    if (user?.id) {
-      const updatedUser = await storage.recordUserActivity(user.id);
-      if (updatedUser) {
-        req.user = toPublicUser(updatedUser);
-      }
+    const user = await resolveAuthenticatedUser(req);
+    if (!user) {
+      res.status(401).json({ message: "Требуется авторизация" });
+      return;
     }
 
     next();
@@ -110,21 +168,21 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 }
 
-export function getSessionUser(req: Request): PublicUser | null {
-  return req.user ?? null;
-}
+export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  try {
+    const user = await resolveAuthenticatedUser(req);
+    if (!user) {
+      res.status(401).json({ message: "Требуется авторизация" });
+      return;
+    }
 
-export function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (!req.isAuthenticated || !req.isAuthenticated()) {
-    res.status(401).json({ message: "Требуется авторизация" });
-    return;
+    if (user.role !== "admin") {
+      res.status(403).json({ message: "Недостаточно прав" });
+      return;
+    }
+
+    next();
+  } catch (error) {
+    next(error);
   }
-
-  const user = req.user;
-  if (!user || user.role !== "admin") {
-    res.status(403).json({ message: "Недостаточно прав" });
-    return;
-  }
-
-  next();
 }
