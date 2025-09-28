@@ -1342,13 +1342,16 @@ export default function PagesPage() {
   })).filter(group => group.pages.length > 0);
 
   // Filter pages based on search and site selection
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+
   const filteredPagesBySite = pagesBySite.map(group => ({
     ...group,
     pages: group.pages.filter(page => {
-      const matchesSearch = searchQuery === "" || 
-        page.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        page.url.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        page.content.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch =
+        normalizedSearchQuery.length === 0 ||
+        [page.title, page.url, page.content].some(value =>
+          (value ?? "").toLowerCase().includes(normalizedSearchQuery),
+        );
       
       return matchesSearch;
     })
@@ -1658,7 +1661,7 @@ export default function PagesPage() {
                               </span>
                               <span className="flex items-center gap-1">
                                 <Hash className="h-3 w-3" />
-                                {page.contentHash.substring(0, 8)}
+                                {page.contentHash ? page.contentHash.substring(0, 8) : "—"}
                               </span>
                               {chunkCount > 0 && (
                                 <span className="flex items-center gap-1">
