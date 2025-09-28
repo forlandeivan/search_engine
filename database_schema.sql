@@ -17,6 +17,15 @@ CREATE TABLE "users" (
     "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
+CREATE TABLE "personal_api_tokens" (
+    "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    "user_id" varchar NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+    "token_hash" text NOT NULL,
+    "last_four" text NOT NULL,
+    "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "revoked_at" timestamp
+);
+
 -- Create sites table for storing crawl configurations
 CREATE TABLE "sites" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -116,6 +125,9 @@ CREATE INDEX idx_search_index_relevance ON search_index(relevance);
 
 CREATE INDEX idx_embedding_providers_active ON embedding_providers(is_active);
 CREATE INDEX idx_embedding_providers_provider_type ON embedding_providers(provider_type);
+
+CREATE INDEX personal_api_tokens_user_id_idx ON personal_api_tokens(user_id);
+CREATE INDEX personal_api_tokens_active_idx ON personal_api_tokens(user_id) WHERE revoked_at IS NULL;
 
 -- Triggers for automatic search vector updates
 CREATE OR REPLACE FUNCTION update_search_vectors() RETURNS TRIGGER AS $$

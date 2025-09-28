@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import fetch, {
@@ -19,6 +19,7 @@ import bcrypt from "bcryptjs";
 import {
   registerUserSchema,
   type PublicUser,
+  type PersonalApiToken,
   userRoles,
   insertEmbeddingProviderSchema,
   updateEmbeddingProviderSchema,
@@ -159,6 +160,55 @@ function splitFullName(fullName: string): { firstName: string; lastName: string 
     firstName: first,
     lastName: rest.join(" ") ?? "",
   };
+}
+
+type PersonalApiTokenSummary = {
+  id: string;
+  lastFour: string;
+  createdAt: string;
+  revokedAt: string | null;
+};
+
+function toPersonalApiTokenSummary(token: PersonalApiToken): PersonalApiTokenSummary {
+  const createdAt = token.createdAt instanceof Date ? token.createdAt.toISOString() : String(token.createdAt);
+  const revokedAt = token.revokedAt
+    ? token.revokedAt instanceof Date
+      ? token.revokedAt.toISOString()
+      : String(token.revokedAt)
+    : null;
+
+  return {
+    id: token.id,
+    lastFour: token.lastFour,
+    createdAt,
+    revokedAt,
+  };
+}
+
+async function loadTokensAndSyncUser(userId: string): Promise<{
+  tokens: PersonalApiToken[];
+  activeTokens: PersonalApiToken[];
+  latestActive: PersonalApiToken | null;
+}> {
+  const tokens = await storage.listUserPersonalApiTokens(userId);
+  const activeTokens = tokens.filter((token) => !token.revokedAt);
+  const latestActive = activeTokens.length > 0 ? activeTokens[0]! : null;
+
+  if (latestActive) {
+    await storage.setUserPersonalApiToken(userId, {
+      hash: latestActive.tokenHash,
+      lastFour: latestActive.lastFour,
+      generatedAt: latestActive.createdAt,
+    });
+  } else {
+    await storage.setUserPersonalApiToken(userId, {
+      hash: null,
+      lastFour: null,
+      generatedAt: null,
+    });
+  }
+
+  return { tokens, activeTokens, latestActive };
 }
 
 function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbeddingProvider {
@@ -1106,7 +1156,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/users/me/api-token", async (req, res, next) => {
+  const issuePersonalTokenHandler = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const sessionUser = getAuthorizedUser(req, res);
       if (!sessionUser) {
@@ -1118,19 +1168,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const hash = createHash("sha256").update(token).digest("hex");
       const lastFour = token.slice(-4);
 
-      const updatedUser = await storage.setUserPersonalApiToken(sessionUser.id, {
-        hash,
-        lastFour,
-      });
-      const refreshedUser = updatedUser ?? (await storage.getUser(sessionUser.id));
-      const safeUser = refreshedUser ? toPublicUser(refreshedUser) : sessionUser;
+      await storage.createUserPersonalApiToken(sessionUser.id, { hash, lastFour });
+
+      const { tokens, activeTokens, latestActive } = await loadTokensAndSyncUser(sessionUser.id);
+      const refreshedUser = await storage.getUser(sessionUser.id);
+      const baseSafeUser = refreshedUser ? toPublicUser(refreshedUser) : sessionUser;
+      const safeUser: PublicUser = {
+        ...baseSafeUser,
+        hasPersonalApiToken: activeTokens.length > 0,
+        personalApiTokenLastFour: latestActive ? latestActive.lastFour : null,
+        personalApiTokenGeneratedAt: latestActive ? latestActive.createdAt : null,
+      };
 
       req.logIn(safeUser, (error) => {
         if (error) {
           return next(error);
         }
 
-        res.json({ token, user: safeUser });
+        res.json({
+          token,
+          user: safeUser,
+          tokens: tokens.map(toPersonalApiTokenSummary),
+        });
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  app.get("/api/users/me/api-tokens", async (req, res, next) => {
+    try {
+      const sessionUser = getAuthorizedUser(req, res);
+      if (!sessionUser) {
+        return;
+      }
+
+      const tokens = await storage.listUserPersonalApiTokens(sessionUser.id);
+      res.json({ tokens: tokens.map(toPersonalApiTokenSummary) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/users/me/api-tokens", issuePersonalTokenHandler);
+  app.post("/api/users/me/api-token", issuePersonalTokenHandler);
+
+  app.post("/api/users/me/api-tokens/:tokenId/revoke", async (req, res, next) => {
+    try {
+      const sessionUser = getAuthorizedUser(req, res);
+      if (!sessionUser) {
+        return;
+      }
+
+      const { tokenId } = req.params;
+      if (!tokenId) {
+        return res.status(400).json({ message: "Не указан токен" });
+      }
+
+      const revokedToken = await storage.revokeUserPersonalApiToken(sessionUser.id, tokenId);
+      if (!revokedToken) {
+        return res.status(404).json({ message: "Токен не найден или уже отозван" });
+      }
+
+      const { tokens, activeTokens, latestActive } = await loadTokensAndSyncUser(sessionUser.id);
+      const refreshedUser = await storage.getUser(sessionUser.id);
+      const baseSafeUser = refreshedUser ? toPublicUser(refreshedUser) : sessionUser;
+      const safeUser: PublicUser = {
+        ...baseSafeUser,
+        hasPersonalApiToken: activeTokens.length > 0,
+        personalApiTokenLastFour: latestActive ? latestActive.lastFour : null,
+        personalApiTokenGeneratedAt: latestActive ? latestActive.createdAt : null,
+      };
+
+      req.logIn(safeUser, (error) => {
+        if (error) {
+          return next(error);
+        }
+
+        res.json({
+          user: safeUser,
+          tokens: tokens.map(toPersonalApiTokenSummary),
+        });
       });
     } catch (error) {
       next(error);

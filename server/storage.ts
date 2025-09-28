@@ -3,6 +3,7 @@ import {
   pages,
   searchIndex,
   users,
+  personalApiTokens,
   embeddingProviders,
   type Site,
   type SiteInsert,
@@ -11,12 +12,13 @@ import {
   type SearchIndexEntry,
   type InsertSearchIndexEntry,
   type User,
+  type PersonalApiToken,
   type InsertUser,
   type EmbeddingProvider,
   type EmbeddingProviderInsert,
 } from "@shared/schema";
 import { db } from "./db";
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { randomBytes } from "crypto";
 
 type PgError = Error & { code?: string };
@@ -88,9 +90,15 @@ export interface IStorage {
     updates: { firstName: string; lastName: string; phone: string; fullName: string },
   ): Promise<User | undefined>;
   updateUserPassword(userId: string, passwordHash: string): Promise<User | undefined>;
+  createUserPersonalApiToken(
+    userId: string,
+    token: { hash: string; lastFour: string },
+  ): Promise<PersonalApiToken | undefined>;
+  listUserPersonalApiTokens(userId: string): Promise<PersonalApiToken[]>;
+  revokeUserPersonalApiToken(userId: string, tokenId: string): Promise<PersonalApiToken | undefined>;
   setUserPersonalApiToken(
     userId: string,
-    token: { hash: string | null; lastFour: string | null },
+    token: { hash: string | null; lastFour: string | null; generatedAt?: Date | string | null },
   ): Promise<User | undefined>;
 
   // Embedding services
@@ -407,6 +415,36 @@ export class DatabaseStorage implements IStorage {
       `);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "created_at" SET NOT NULL`);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "updated_at" SET NOT NULL`);
+
+      await this.db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "personal_api_tokens" (
+          "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+          "user_id" varchar NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+          "token_hash" text NOT NULL,
+          "last_four" text NOT NULL,
+          "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "revoked_at" timestamp
+        )
+      `);
+
+      try {
+        await this.db.execute(sql`
+          CREATE INDEX "personal_api_tokens_user_id_idx"
+            ON "personal_api_tokens" ("user_id")
+        `);
+      } catch (error) {
+        swallowPgError(error, ["42P07", "42710"]);
+      }
+
+      try {
+        await this.db.execute(sql`
+          CREATE INDEX "personal_api_tokens_active_idx"
+            ON "personal_api_tokens" ("user_id")
+            WHERE "revoked_at" IS NULL
+        `);
+      } catch (error) {
+        swallowPgError(error, ["42P07", "42710"]);
+      }
 
       this.userAuthColumnsEnsured = true;
     })();
@@ -930,17 +968,70 @@ export class DatabaseStorage implements IStorage {
     return updatedUser ?? undefined;
   }
 
+  async createUserPersonalApiToken(
+    userId: string,
+    token: { hash: string; lastFour: string },
+  ): Promise<PersonalApiToken | undefined> {
+    await this.ensureUserAuthColumns();
+    const [createdToken] = await this.db
+      .insert(personalApiTokens)
+      .values({
+        userId,
+        tokenHash: token.hash,
+        lastFour: token.lastFour,
+      })
+      .returning();
+    return createdToken ?? undefined;
+  }
+
+  async listUserPersonalApiTokens(userId: string): Promise<PersonalApiToken[]> {
+    await this.ensureUserAuthColumns();
+    return await this.db
+      .select()
+      .from(personalApiTokens)
+      .where(eq(personalApiTokens.userId, userId))
+      .orderBy(desc(personalApiTokens.createdAt));
+  }
+
+  async revokeUserPersonalApiToken(
+    userId: string,
+    tokenId: string,
+  ): Promise<PersonalApiToken | undefined> {
+    await this.ensureUserAuthColumns();
+    const [updatedToken] = await this.db
+      .update(personalApiTokens)
+      .set({ revokedAt: sql`CURRENT_TIMESTAMP` })
+      .where(
+        and(
+          eq(personalApiTokens.id, tokenId),
+          eq(personalApiTokens.userId, userId),
+          isNull(personalApiTokens.revokedAt),
+        ),
+      )
+      .returning();
+    return updatedToken ?? undefined;
+  }
+
   async setUserPersonalApiToken(
     userId: string,
-    token: { hash: string | null; lastFour: string | null },
+    token: { hash: string | null; lastFour: string | null; generatedAt?: Date | string | null },
   ): Promise<User | undefined> {
     await this.ensureUserAuthColumns();
+    const generatedAtValue =
+      token.generatedAt === undefined
+        ? token.hash
+          ? sql`CURRENT_TIMESTAMP`
+          : null
+        : token.generatedAt === null
+          ? null
+          : new Date(token.generatedAt);
+
     const [updatedUser] = await this.db
       .update(users)
       .set({
         personalApiTokenHash: token.hash ?? null,
         personalApiTokenLastFour: token.lastFour ?? null,
-        personalApiTokenGeneratedAt: token.hash ? sql`CURRENT_TIMESTAMP` : null,
+        personalApiTokenGeneratedAt: generatedAtValue,
         updatedAt: sql`CURRENT_TIMESTAMP`,
       })
       .where(eq(users.id, userId))
