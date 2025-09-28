@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Copy, ExternalLink, Search, Globe, Code2, RefreshCw, Loader2, Database } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -736,6 +737,15 @@ export default function TildaApiPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                <Alert className="border border-muted-foreground/30 bg-muted/40">
+                  <AlertTitle>Авторизация запросов</AlertTitle>
+                  <AlertDescription>
+                    Для доступа к эндпоинту используйте персональный токен из раздела «Профиль». Добавьте заголовок
+                    <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">Authorization: Bearer &lt;ваш_токен&gt;</code>
+                    ко всем запросам векторного поиска и другим приватным API.
+                  </AlertDescription>
+                </Alert>
+
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">
                     Эндпоинт принимает массив чисел такой же размерности, как вектор в выбранной коллекции Qdrant. Параметр

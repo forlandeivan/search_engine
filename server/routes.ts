@@ -6,7 +6,7 @@ import fetch, {
   type Response as FetchResponse,
   type RequestInit as FetchRequestInit,
 } from "node-fetch";
-import { createHash, randomUUID } from "crypto";
+import { createHash, randomUUID, randomBytes } from "crypto";
 import { Agent as HttpsAgent } from "https";
 import { storage } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
@@ -146,6 +146,19 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined 
 
 function resolveOwnerScope(user: PublicUser): string | undefined {
   return user.role === "admin" ? undefined : user.id;
+}
+
+function splitFullName(fullName: string): { firstName: string; lastName: string } {
+  const normalized = fullName.trim().replace(/\s+/g, " ");
+  if (normalized.length === 0) {
+    return { firstName: "Пользователь", lastName: "" };
+  }
+
+  const [first, ...rest] = normalized.split(" ");
+  return {
+    firstName: first,
+    lastName: rest.join(" ") ?? "",
+  };
 }
 
 function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbeddingProvider {
@@ -901,9 +914,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const passwordHash = await bcrypt.hash(payload.password, 12);
+      const { firstName, lastName } = splitFullName(fullName);
       const user = await storage.createUser({
         email,
         fullName,
+        firstName,
+        lastName,
+        phone: "",
         passwordHash,
       });
 
@@ -956,6 +973,169 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.use("/api", requireAuth);
+
+  const updateProfileSchema = z.object({
+    firstName: z
+      .string()
+      .trim()
+      .min(1, "Введите имя")
+      .max(100, "Слишком длинное имя"),
+    lastName: z
+      .string()
+      .trim()
+      .max(120, "Слишком длинная фамилия")
+      .optional(),
+    phone: z
+      .string()
+      .trim()
+      .max(30, "Слишком длинный номер")
+      .optional()
+      .refine((value) => !value || /^[0-9+()\s-]*$/.test(value), "Некорректный номер телефона"),
+  });
+
+  app.get("/api/users/me", async (req, res, next) => {
+    try {
+      const sessionUser = getAuthorizedUser(req, res);
+      if (!sessionUser) {
+        return;
+      }
+
+      const freshUser = await storage.getUser(sessionUser.id);
+      const safeUser = freshUser ? toPublicUser(freshUser) : sessionUser;
+      if (freshUser) {
+        req.user = safeUser;
+      }
+
+      res.json({ user: safeUser });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/users/me", async (req, res, next) => {
+    try {
+      const sessionUser = getAuthorizedUser(req, res);
+      if (!sessionUser) {
+        return;
+      }
+
+      const parsed = updateProfileSchema.parse(req.body);
+      const firstName = parsed.firstName.trim();
+      const lastName = parsed.lastName?.trim() ?? "";
+      const phone = parsed.phone?.trim() ?? "";
+      const fullName = [firstName, lastName].filter((part) => part.length > 0).join(" ");
+
+      const updatedUser = await storage.updateUserProfile(sessionUser.id, {
+        firstName,
+        lastName,
+        phone,
+        fullName: fullName.length > 0 ? fullName : firstName,
+      });
+
+      const refreshedUser = updatedUser ?? (await storage.getUser(sessionUser.id));
+      const safeUser = refreshedUser ? toPublicUser(refreshedUser) : sessionUser;
+
+      req.logIn(safeUser, (error) => {
+        if (error) {
+          return next(error);
+        }
+
+        res.json({ user: safeUser });
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      next(error);
+    }
+  });
+
+  const changePasswordSchema = z
+    .object({
+      currentPassword: z
+        .string()
+        .min(8, "Минимальная длина пароля 8 символов")
+        .max(100, "Слишком длинный пароль"),
+      newPassword: z
+        .string()
+        .min(8, "Минимальная длина пароля 8 символов")
+        .max(100, "Слишком длинный пароль"),
+    })
+    .refine((data) => data.currentPassword !== data.newPassword, {
+      message: "Новый пароль должен отличаться от текущего",
+      path: ["newPassword"],
+    });
+
+  app.post("/api/users/me/password", async (req, res, next) => {
+    try {
+      const sessionUser = getAuthorizedUser(req, res);
+      if (!sessionUser) {
+        return;
+      }
+
+      const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+      const fullUser = await storage.getUser(sessionUser.id);
+
+      if (!fullUser) {
+        return res.status(404).json({ message: "Пользователь не найден" });
+      }
+
+      const isValid = await bcrypt.compare(currentPassword, fullUser.passwordHash);
+      if (!isValid) {
+        return res.status(400).json({ message: "Текущий пароль указан неверно" });
+      }
+
+      const newPasswordHash = await bcrypt.hash(newPassword, 12);
+      const updatedUser = await storage.updateUserPassword(sessionUser.id, newPasswordHash);
+      const safeUser = toPublicUser(updatedUser ?? fullUser);
+
+      req.logIn(safeUser, (error) => {
+        if (error) {
+          return next(error);
+        }
+
+        res.json({ user: safeUser });
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      next(error);
+    }
+  });
+
+  app.post("/api/users/me/api-token", async (req, res, next) => {
+    try {
+      const sessionUser = getAuthorizedUser(req, res);
+      if (!sessionUser) {
+        return;
+      }
+
+      const tokenBuffer = randomBytes(32);
+      const token = tokenBuffer.toString("hex");
+      const hash = createHash("sha256").update(token).digest("hex");
+      const lastFour = token.slice(-4);
+
+      const updatedUser = await storage.setUserPersonalApiToken(sessionUser.id, {
+        hash,
+        lastFour,
+      });
+      const refreshedUser = updatedUser ?? (await storage.getUser(sessionUser.id));
+      const safeUser = refreshedUser ? toPublicUser(refreshedUser) : sessionUser;
+
+      req.logIn(safeUser, (error) => {
+        if (error) {
+          return next(error);
+        }
+
+        res.json({ token, user: safeUser });
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
 
   app.get("/api/admin/users", requireAdmin, async (_req, res, next) => {
     try {

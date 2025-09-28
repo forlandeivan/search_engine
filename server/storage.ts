@@ -83,6 +83,15 @@ export interface IStorage {
   listUsers(): Promise<User[]>;
   updateUserRole(userId: string, role: User["role"]): Promise<User | undefined>;
   recordUserActivity(userId: string): Promise<User | undefined>;
+  updateUserProfile(
+    userId: string,
+    updates: { firstName: string; lastName: string; phone: string; fullName: string },
+  ): Promise<User | undefined>;
+  updateUserPassword(userId: string, passwordHash: string): Promise<User | undefined>;
+  setUserPersonalApiToken(
+    userId: string,
+    token: { hash: string | null; lastFour: string | null },
+  ): Promise<User | undefined>;
 
   // Embedding services
   listEmbeddingProviders(): Promise<EmbeddingProvider[]>;
@@ -304,6 +313,65 @@ export class DatabaseStorage implements IStorage {
       }
       await this.db.execute(sql`UPDATE "users" SET "full_name" = COALESCE("full_name", 'Новый пользователь')`);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "full_name" SET NOT NULL`);
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "first_name" text DEFAULT ''`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "last_name" text DEFAULT ''`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "phone" text DEFAULT ''`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "personal_api_token_hash" text`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "personal_api_token_last_four" text`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "personal_api_token_generated_at" timestamp`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      await this.db.execute(sql`
+        UPDATE "users"
+        SET
+          "first_name" = CASE
+            WHEN COALESCE(NULLIF(btrim("first_name"), ''), '') <> '' THEN btrim("first_name")
+            WHEN position(' ' in "full_name") > 0 THEN split_part("full_name", ' ', 1)
+            ELSE "full_name"
+          END,
+          "last_name" = CASE
+            WHEN COALESCE(NULLIF(btrim("last_name"), ''), '') <> '' THEN btrim("last_name")
+            WHEN position(' ' in "full_name") > 0 THEN btrim(substring("full_name" from position(' ' in "full_name") + 1))
+            ELSE ''
+          END,
+          "phone" = COALESCE("phone", '')
+      `);
+
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "first_name" SET DEFAULT ''`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "first_name" SET NOT NULL`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "last_name" SET DEFAULT ''`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "last_name" SET NOT NULL`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "phone" SET DEFAULT ''`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "phone" SET NOT NULL`);
 
       try {
         await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "role" text DEFAULT 'user'`);
@@ -826,6 +894,53 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({
         lastActiveAt: sql`CURRENT_TIMESTAMP`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return updatedUser ?? undefined;
+  }
+
+  async updateUserProfile(
+    userId: string,
+    updates: { firstName: string; lastName: string; phone: string; fullName: string },
+  ): Promise<User | undefined> {
+    await this.ensureUserAuthColumns();
+    const [updatedUser] = await this.db
+      .update(users)
+      .set({
+        firstName: updates.firstName,
+        lastName: updates.lastName,
+        phone: updates.phone,
+        fullName: updates.fullName,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return updatedUser ?? undefined;
+  }
+
+  async updateUserPassword(userId: string, passwordHash: string): Promise<User | undefined> {
+    await this.ensureUserAuthColumns();
+    const [updatedUser] = await this.db
+      .update(users)
+      .set({ passwordHash, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(users.id, userId))
+      .returning();
+    return updatedUser ?? undefined;
+  }
+
+  async setUserPersonalApiToken(
+    userId: string,
+    token: { hash: string | null; lastFour: string | null },
+  ): Promise<User | undefined> {
+    await this.ensureUserAuthColumns();
+    const [updatedUser] = await this.db
+      .update(users)
+      .set({
+        personalApiTokenHash: token.hash ?? null,
+        personalApiTokenLastFour: token.lastFour ?? null,
+        personalApiTokenGeneratedAt: token.hash ? sql`CURRENT_TIMESTAMP` : null,
         updatedAt: sql`CURRENT_TIMESTAMP`,
       })
       .where(eq(users.id, userId))
