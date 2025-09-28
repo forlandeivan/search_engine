@@ -100,6 +100,7 @@ export interface IStorage {
     userId: string,
     token: { hash: string | null; lastFour: string | null; generatedAt?: Date | string | null },
   ): Promise<User | undefined>;
+  getUserByPersonalApiTokenHash(hash: string): Promise<User | undefined>;
 
   // Embedding services
   listEmbeddingProviders(): Promise<EmbeddingProvider[]>;
@@ -1037,6 +1038,20 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, userId))
       .returning();
     return updatedUser ?? undefined;
+  }
+
+  async getUserByPersonalApiTokenHash(hash: string): Promise<User | undefined> {
+    await this.ensureUserAuthColumns();
+
+    const [result] = await this.db
+      .select({ user: users })
+      .from(personalApiTokens)
+      .innerJoin(users, eq(personalApiTokens.userId, users.id))
+      .where(and(eq(personalApiTokens.tokenHash, hash), isNull(personalApiTokens.revokedAt)))
+      .orderBy(desc(personalApiTokens.createdAt))
+      .limit(1);
+
+    return result?.user ?? undefined;
   }
 
 }
