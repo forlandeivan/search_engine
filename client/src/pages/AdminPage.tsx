@@ -225,9 +225,12 @@ export default function AdminPage() {
       status.url ?? "",
       ...(status.startUrls ?? []),
     ];
-    const matchesSearch = normalizedSearch.length === 0
-      ? true
-      : searchTargets.some((target) => target?.toLowerCase().includes(normalizedSearch));
+    const matchesSearch =
+      normalizedSearch.length === 0
+        ? true
+        : searchTargets.some((target) =>
+            (target ?? "").toLowerCase().includes(normalizedSearch),
+          );
     const matchesStatus = statusFilter === "all" || status.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
