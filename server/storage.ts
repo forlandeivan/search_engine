@@ -1306,6 +1306,70 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ALTER COLUMN "chunk_overlap_size" SET DEFAULT 0
     `);
 
+    try {
+      await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
+    } catch (error) {
+      swallowPgError(error, ["42710", "42501"]);
+    }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "public_id" varchar
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "public_api_key" text
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "public_api_key_generated_at" timestamp
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await db.execute(sql`
+      UPDATE "sites"
+      SET
+        "public_id" = COALESCE("public_id", gen_random_uuid()),
+        "public_api_key" = COALESCE("public_api_key", encode(gen_random_bytes(32), 'hex')),
+        "public_api_key_generated_at" = COALESCE("public_api_key_generated_at", CURRENT_TIMESTAMP)
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ALTER COLUMN "public_id" SET NOT NULL,
+      ALTER COLUMN "public_api_key" SET NOT NULL,
+      ALTER COLUMN "public_api_key_generated_at" SET NOT NULL
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "sites"
+      ALTER COLUMN "public_id" SET DEFAULT gen_random_uuid(),
+      ALTER COLUMN "public_api_key" SET DEFAULT encode(gen_random_bytes(32), 'hex'),
+      ALTER COLUMN "public_api_key_generated_at" SET DEFAULT CURRENT_TIMESTAMP
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD CONSTRAINT "sites_public_id_unique" UNIQUE("public_id")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42710"]);
+    }
+
     await db.execute(sql`
       ALTER TABLE "sites"
       ALTER COLUMN "crawl_frequency" SET DEFAULT 'manual'
