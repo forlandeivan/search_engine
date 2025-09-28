@@ -77,6 +77,17 @@ export const users = pgTable("users", {
   personalApiTokenGeneratedAt: timestamp("personal_api_token_generated_at"),
 });
 
+export const personalApiTokens = pgTable("personal_api_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  lastFour: text("last_four").notNull(),
+  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  revokedAt: timestamp("revoked_at"),
+});
+
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   role: true,
@@ -417,6 +428,9 @@ export type PublicUser = Omit<
   hasPersonalApiToken: boolean;
   personalApiTokenLastFour: string | null;
 };
+export type PersonalApiToken = typeof personalApiTokens.$inferSelect;
+export type InsertPersonalApiToken = typeof personalApiTokens.$inferInsert;
+export type PublicPersonalApiToken = Omit<PersonalApiToken, "tokenHash" | "userId">;
 export type EmbeddingProvider = typeof embeddingProviders.$inferSelect;
 export type EmbeddingProviderInsert = typeof embeddingProviders.$inferInsert;
 export type InsertEmbeddingProvider = z.infer<typeof insertEmbeddingProviderSchema>;
