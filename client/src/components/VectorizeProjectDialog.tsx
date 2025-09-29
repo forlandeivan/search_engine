@@ -6,7 +6,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Sparkles, Hash, ListOrdered, Gauge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +32,7 @@ import {
   normalizeArrayValue,
   renderLiquidTemplate,
   type CollectionSchemaFieldInput,
+  type ProjectVectorizationJobStatus,
   type VectorizeCollectionSchema,
 } from "@shared/vectorization";
 import {
@@ -59,12 +60,7 @@ interface VectorizeRequestPayload {
 
 interface VectorizeProjectResponse {
   message?: string;
-  pointsCount: number;
-  collectionName: string;
-  vectorSize?: number | null;
-  totalUsageTokens?: number;
-  collectionCreated?: boolean;
-  pagesProcessed?: number;
+  status: ProjectVectorizationJobStatus;
 }
 
 interface CollectionSchemaField extends CollectionSchemaFieldInput {
@@ -82,6 +78,7 @@ interface VectorizeProjectDialogProps {
   site: Site;
   pages: Page[];
   providers: PublicEmbeddingProvider[];
+  currentStatus?: ProjectVectorizationJobStatus | null;
 }
 
 const TEMPLATE_PATH_LIMIT = 400;
@@ -468,8 +465,9 @@ function buildLiquidContext(
   return removeUndefinedDeep(payload);
 }
 
-export default function VectorizeProjectDialog({ site, pages, providers }: VectorizeProjectDialogProps) {
+export default function VectorizeProjectDialog({ site, pages, providers, currentStatus }: VectorizeProjectDialogProps) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState<string>("");
   const [collectionMode, setCollectionMode] = useState<"existing" | "new">("existing");
@@ -506,6 +504,12 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
   }, [pages]);
 
   const totalChunks = projectChunks.length;
+  const activeVectorizationStatus = currentStatus ?? null;
+  const isVectorizationActive = Boolean(
+    activeVectorizationStatus &&
+      (activeVectorizationStatus.status === "running" ||
+        activeVectorizationStatus.status === "pending"),
+  );
   const totalCharacters = useMemo(() => {
     return projectChunks.reduce((sum, entry) => {
       const charCount = entry.chunk.metadata?.charCount ?? entry.chunk.content.length;
@@ -693,9 +697,10 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
     } satisfies VectorizeCollectionSchema;
   }, [schemaFields, embeddingFieldId]);
 
-  const disabled = providers.length === 0 || totalChunks === 0;
+  const triggerDisabled = providers.length === 0 || totalChunks === 0;
   const confirmDisabled =
-    disabled ||
+    triggerDisabled ||
+    isVectorizationActive ||
     !selectedProviderId ||
     (collectionMode === "existing"
       ? availableCollections.length === 0 || !selectedCollectionName
@@ -845,22 +850,41 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
       return (await response.json()) as VectorizeProjectResponse;
     },
     onSuccess: (data) => {
-      const collectionNote = data.collectionCreated
-        ? `Коллекция ${data.collectionName} создана автоматически.`
-        : "";
-      const pagesCount = data.pagesProcessed ?? processedPagesCount;
+      const totalRecords = data.status?.totalRecords ?? totalChunks;
+      const createdRecords = data.status?.createdRecords ?? 0;
+      const description =
+        data.message ??
+        `Фоновая векторизация запущена. Подготовлено ${createdRecords.toLocaleString("ru-RU")} из ${totalRecords.toLocaleString("ru-RU")} записей.`;
+
       toast({
-        title: "Чанки отправлены",
-        description:
-          data.message ??
-          `Добавлено ${data.pointsCount} чанков из ${pagesCount} страниц в коллекцию ${data.collectionName}. ${collectionNote}`.trim(),
+        title: "Векторизация запущена",
+        description,
       });
+
+      queryClient.invalidateQueries({
+        queryKey: ["/api/sites", site.id, "vectorization-status"],
+      });
+
       setIsOpen(false);
     },
     onError: (error) => {
+      let description = error.message;
+      const separatorIndex = description.indexOf(":");
+      if (separatorIndex !== -1) {
+        const rawPayload = description.slice(separatorIndex + 1).trim();
+        try {
+          const parsed = JSON.parse(rawPayload);
+          if (parsed && typeof parsed.error === "string" && parsed.error.trim().length > 0) {
+            description = parsed.error;
+          }
+        } catch {
+          // ignore JSON parse errors and keep original message
+        }
+      }
+
       toast({
         title: "Не удалось отправить чанки",
-        description: error.message,
+        description,
         variant: "destructive",
       });
     },
@@ -1358,6 +1382,17 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
   const renderDialogBody = () => (
     <ScrollArea className="flex-1 min-h-0">
       <div className="px-6 pb-6">
+        {isVectorizationActive && activeVectorizationStatus && (
+          <div className="mb-4 rounded-md border border-dashed border-border/60 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Векторизация уже запущена</p>
+            <p>
+              Подготовлено {activeVectorizationStatus.createdRecords.toLocaleString("ru-RU")} из
+              {" "}
+              {activeVectorizationStatus.totalRecords.toLocaleString("ru-RU")} записей. Прогресс можно
+              отслеживать в карточке статуса проекта.
+            </p>
+          </div>
+        )}
         <div className="pr-4">{renderDialogTabs()}</div>
       </div>
     </ScrollArea>
@@ -1390,7 +1425,7 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
         <Button
           variant="default"
           size="sm"
-          disabled={disabled || vectorizeMutation.isPending}
+          disabled={triggerDisabled || vectorizeMutation.isPending}
           className="gap-2"
         >
           <Sparkles className="h-4 w-4" />

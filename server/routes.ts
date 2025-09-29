@@ -37,6 +37,7 @@ import {
   normalizeArrayValue,
   renderLiquidTemplate,
   type CollectionSchemaFieldInput,
+  type ProjectVectorizationJobStatus,
 } from "@shared/vectorization";
 import { requireAuth, requireAdmin, getSessionUser, toPublicUser } from "./auth";
 
@@ -643,6 +644,392 @@ async function fetchEmbeddingVector(
     rawResponse: parsedBody,
   };
 }
+
+type ProjectChunkEntry = {
+  page: Page;
+  chunk: ContentChunk;
+  index: number;
+  totalChunks: number;
+};
+
+interface StartProjectVectorizationOptions {
+  site: Site;
+  projectChunks: ProjectChunkEntry[];
+  provider: EmbeddingProvider;
+  collectionName: string;
+  shouldCreateCollection: boolean;
+  schemaFields: CollectionSchemaFieldInput[];
+  client: QdrantClient;
+  collectionExists: boolean;
+}
+
+class ProjectVectorizationManager {
+  private jobs = new Map<string, ProjectVectorizationJobStatus>();
+  private runningJobs = new Map<string, Promise<void>>();
+
+  getStatus(siteId: string): ProjectVectorizationJobStatus {
+    const existing = this.jobs.get(siteId);
+    if (existing) {
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    return {
+      siteId,
+      status: "idle",
+      totalChunks: 0,
+      processedChunks: 0,
+      totalPages: 0,
+      processedPages: 0,
+      totalRecords: 0,
+      createdRecords: 0,
+      failedChunks: 0,
+      startedAt: null,
+      finishedAt: null,
+      message: undefined,
+      error: undefined,
+      providerId: undefined,
+      providerName: undefined,
+      collectionName: undefined,
+      lastUpdatedAt: now,
+      totalUsageTokens: null,
+      upsertStatus: null,
+    } satisfies ProjectVectorizationJobStatus;
+  }
+
+  isRunning(siteId: string): boolean {
+    return this.runningJobs.has(siteId);
+  }
+
+  startProjectVectorization(
+    options: StartProjectVectorizationOptions,
+  ): ProjectVectorizationJobStatus {
+    const { site, projectChunks, provider, collectionName } = options;
+
+    if (this.runningJobs.has(site.id)) {
+      throw new Error("Векторизация уже запущена для этого проекта");
+    }
+
+    const totalChunks = projectChunks.length;
+    const totalPages = new Set(projectChunks.map((entry) => entry.page.id)).size;
+    const startedAt = new Date().toISOString();
+
+    this.updateStatus(site.id, {
+      siteId: site.id,
+      status: "running",
+      totalChunks,
+      processedChunks: 0,
+      totalPages,
+      processedPages: 0,
+      totalRecords: totalChunks,
+      createdRecords: 0,
+      failedChunks: 0,
+      providerId: provider.id,
+      providerName: provider.name,
+      collectionName,
+      startedAt,
+      finishedAt: null,
+      message: `Запущена векторизация проекта: ${totalChunks.toLocaleString("ru-RU")} записей`,
+      error: undefined,
+      totalUsageTokens: null,
+      upsertStatus: null,
+    });
+
+    const taskPromise = this.runJob(options)
+      .catch((error) => {
+        console.error(
+          `Ошибка фоновой векторизации проекта ${site.id}:`,
+          error,
+        );
+      })
+      .finally(() => {
+        this.runningJobs.delete(site.id);
+      });
+
+    this.runningJobs.set(site.id, taskPromise);
+    return this.jobs.get(site.id)!;
+  }
+
+  private updateStatus(
+    siteId: string,
+    patch: Partial<ProjectVectorizationJobStatus>,
+  ): ProjectVectorizationJobStatus {
+    const current = this.jobs.get(siteId) ?? this.getStatus(siteId);
+    const next: ProjectVectorizationJobStatus = {
+      ...current,
+      ...patch,
+      siteId,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+
+    this.jobs.set(siteId, next);
+    return next;
+  }
+
+  private async runJob({
+    site,
+    projectChunks,
+    provider,
+    collectionName,
+    shouldCreateCollection,
+    schemaFields,
+    client,
+    collectionExists: initialCollectionExists,
+  }: StartProjectVectorizationOptions): Promise<void> {
+    const siteId = site.id;
+    const processedPageIds = new Set<string>();
+    const totalChunks = projectChunks.length;
+    const totalPages = new Set(projectChunks.map((entry) => entry.page.id)).size;
+
+    try {
+      const accessToken = await fetchAccessToken(provider);
+      this.updateStatus(siteId, {
+        message: `Получен доступ к сервису эмбеддингов, обрабатываем ${totalChunks.toLocaleString("ru-RU")} чанков`,
+      });
+
+      const embeddingResults: Array<
+        EmbeddingVectorResult & {
+          chunk: ContentChunk;
+          page: Page;
+          index: number;
+          totalChunks: number;
+        }
+      > = [];
+
+      for (const entry of projectChunks) {
+        const { page, chunk, index, totalChunks: pageChunks } = entry;
+        const result = await fetchEmbeddingVector(
+          provider,
+          accessToken,
+          chunk.content,
+        );
+        embeddingResults.push({
+          ...result,
+          chunk,
+          page,
+          index,
+          totalChunks: pageChunks,
+        });
+
+        processedPageIds.add(page.id);
+
+        this.updateStatus(siteId, {
+          processedChunks: embeddingResults.length,
+          processedPages: processedPageIds.size,
+          createdRecords: embeddingResults.length,
+          message: `Страница «${
+            page.title ?? page.url ?? page.id
+          }»: чанк ${index + 1} из ${pageChunks}`,
+        });
+      }
+
+      if (embeddingResults.length === 0) {
+        throw new Error("Не удалось получить эмбеддинги для чанков проекта");
+      }
+
+      const hasCustomSchema = schemaFields.length > 0;
+      const chunkCharLimit = site?.maxChunkSize ?? null;
+
+      const points: Schemas["PointStruct"][] = embeddingResults.map(
+        (result) => {
+          const { chunk, page, index, totalChunks: pageChunks, vector, usageTokens, embeddingId } = result;
+          const chunkPositionRaw = chunk.metadata?.position;
+          const chunkPosition =
+            typeof chunkPositionRaw === "number" ? chunkPositionRaw : index;
+          const baseChunkId =
+            chunk.id && chunk.id.trim().length > 0
+              ? chunk.id
+              : `${page.id}-chunk-${chunkPosition}`;
+          const pointId = normalizePointId(baseChunkId);
+          const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
+          const chunkWordCount = chunk.metadata?.wordCount ?? null;
+          const chunkExcerpt = chunk.metadata?.excerpt ?? null;
+
+          const metadataRecord =
+            page.metadata && typeof page.metadata === "object"
+              ? (page.metadata as unknown as Record<string, unknown>)
+              : undefined;
+          const siteNameRaw = metadataRecord?.["siteName"];
+          const siteUrlRaw = metadataRecord?.["siteUrl"];
+          const resolvedSiteName =
+            typeof siteNameRaw === "string" ? siteNameRaw : site?.name ?? null;
+          const resolvedSiteUrl =
+            typeof siteUrlRaw === "string" ? siteUrlRaw : site?.url ?? null;
+
+          const templateContext = removeUndefinedDeep({
+            page: {
+              id: page.id,
+              url: page.url,
+              title: page.title ?? null,
+              totalChunks: pageChunks,
+              chunkCharLimit,
+              metadata: page.metadata ?? null,
+            },
+            site: {
+              id: site.id,
+              name: resolvedSiteName,
+              url: resolvedSiteUrl,
+            },
+            provider: {
+              id: provider.id,
+              name: provider.name,
+            },
+            chunk: {
+              id: baseChunkId,
+              index,
+              position: chunkPosition,
+              heading: chunk.heading ?? null,
+              level: chunk.level ?? null,
+              deepLink: chunk.deepLink ?? null,
+              text: chunk.content,
+              charCount: chunkCharCount,
+              wordCount: chunkWordCount,
+              excerpt: chunkExcerpt,
+              metadata: chunk.metadata ?? null,
+            },
+            embedding: {
+              model: provider.model,
+              vectorSize: vector.length,
+              tokens: usageTokens ?? null,
+              id: embeddingId ?? null,
+            },
+          }) as Record<string, unknown>;
+
+          const rawPayload = {
+            page: {
+              id: page.id,
+              url: page.url,
+              title: page.title ?? null,
+              totalChunks: pageChunks,
+              chunkCharLimit,
+              metadata: page.metadata ?? null,
+            },
+            site: {
+              id: site.id,
+              name: site?.name ?? null,
+              url: site?.url ?? null,
+            },
+            provider: {
+              id: provider.id,
+              name: provider.name,
+            },
+            chunk: {
+              id: baseChunkId,
+              index,
+              position: chunkPosition,
+              heading: chunk.heading ?? null,
+              level: chunk.level ?? null,
+              deepLink: chunk.deepLink ?? null,
+              text: chunk.content,
+              charCount: chunkCharCount,
+              wordCount: chunkWordCount,
+              excerpt: chunkExcerpt,
+              metadata: chunk.metadata ?? null,
+            },
+            embedding: {
+              model: provider.model,
+              vectorSize: vector.length,
+              tokens: usageTokens ?? null,
+              id: embeddingId ?? null,
+            },
+          } as Record<string, unknown>;
+
+          const customPayload = hasCustomSchema
+            ? buildCustomPayloadFromSchema(schemaFields, templateContext)
+            : null;
+
+          const payloadSource = customPayload ?? rawPayload;
+          const payload = removeUndefinedDeep(payloadSource) as Record<
+            string,
+            unknown
+          >;
+
+          return {
+            id: pointId,
+            vector: vector as Schemas["PointStruct"]["vector"],
+            payload,
+          } satisfies Schemas["PointStruct"];
+        },
+      );
+
+      this.updateStatus(siteId, {
+        createdRecords: points.length,
+        message: `Подготовлено ${points.length.toLocaleString("ru-RU")} записей, отправляем в Qdrant...`,
+      });
+
+      let collectionExists = initialCollectionExists;
+
+      if (!collectionExists && shouldCreateCollection) {
+        const firstVector = embeddingResults[0]?.vector;
+        const vectorLength = Array.isArray(firstVector)
+          ? firstVector.length
+          : undefined;
+        if (!vectorLength || vectorLength <= 0) {
+          throw new Error(
+            "Не удалось определить размер вектора для новой коллекции",
+          );
+        }
+
+        let distance: "Cosine" | "Euclid" | "Dot" | "Manhattan" = "Cosine";
+        const configuredVectorSize = provider.qdrantConfig?.vectorSize;
+        let vectorSizeForCreation = vectorLength;
+
+        if (
+          typeof configuredVectorSize === "number" &&
+          Number.isFinite(configuredVectorSize)
+        ) {
+          vectorSizeForCreation = configuredVectorSize;
+        } else if (typeof configuredVectorSize === "string") {
+          const parsedSize = Number.parseInt(configuredVectorSize, 10);
+          if (Number.isFinite(parsedSize) && parsedSize > 0) {
+            vectorSizeForCreation = parsedSize;
+          }
+        }
+
+        await client.createCollection(collectionName, {
+          vectors: {
+            size: vectorSizeForCreation,
+            distance,
+          },
+        });
+        collectionExists = true;
+      }
+
+      const upsertResult = await client.upsert(collectionName, {
+        wait: true,
+        points,
+      });
+
+      const totalUsageTokens = embeddingResults.reduce((sum, result) => {
+        return sum + (result.usageTokens ?? 0);
+      }, 0);
+
+      this.updateStatus(siteId, {
+        status: "completed",
+        processedChunks: totalChunks,
+        processedPages: totalPages,
+        createdRecords: points.length,
+        failedChunks: 0,
+        finishedAt: new Date().toISOString(),
+        message: `В коллекцию ${collectionName} отправлено ${points.length.toLocaleString("ru-RU")} чанков из ${totalPages.toLocaleString("ru-RU")} страниц`,
+        error: undefined,
+        totalUsageTokens,
+        upsertStatus: upsertResult.status ?? null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.updateStatus(siteId, {
+        status: "failed",
+        error: message,
+        message,
+        finishedAt: new Date().toISOString(),
+      });
+      throw error;
+    }
+  }
+}
+
+const projectVectorizationManager = new ProjectVectorizationManager();
 
 const upsertPointsSchema = z.object({
   wait: z.boolean().optional(),
@@ -2934,9 +3321,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? requestedCollectionName.trim()
           : buildCollectionName(site, provider);
 
-      const chunkCharLimit = site?.maxChunkSize ?? null;
-      const processedPagesCount = new Set(projectChunks.map((entry) => entry.page.id)).size;
-
       const normalizedSchemaFields: CollectionSchemaFieldInput[] = (schema?.fields ?? []).map(
         (field) => ({
           name: field.name.trim(),
@@ -2945,11 +3329,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           template: field.template ?? "",
         }),
       );
-      const hasCustomSchema = normalizedSchemaFields.length > 0;
 
       const client = getQdrantClient();
       const shouldCreateCollection = Boolean(createCollection);
       let collectionExists = false;
+
+      if (projectVectorizationManager.isRunning(siteId)) {
+        return res.status(409).json({
+          error: "Векторизация проекта уже выполняется",
+        });
+      }
 
       try {
         await client.getCollection(collectionName);
@@ -2975,214 +3364,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const accessToken = await fetchAccessToken(provider);
-
-      const embeddingResults: Array<
-        EmbeddingVectorResult & { chunk: ContentChunk; page: Page; index: number; totalChunks: number }
-      > = [];
-
-      for (const entry of projectChunks) {
-        const { page, chunk, index } = entry;
-
-        try {
-          const result = await fetchEmbeddingVector(provider, accessToken, chunk.content);
-          embeddingResults.push({ ...result, chunk, page, index, totalChunks: entry.totalChunks });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          throw new Error(
-            `Ошибка при обработке страницы «${page.title ?? page.url ?? page.id}», чанк ${index + 1}: ${message}`,
-          );
-        }
-      }
-
-      if (embeddingResults.length === 0) {
-        return res.status(400).json({
-          error: "Не удалось получить эмбеддинги для чанков проекта",
-        });
-      }
-
-      let collectionCreated = false;
-
-      const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
-        const { chunk, page, index, totalChunks, vector, usageTokens, embeddingId } = result;
-        const chunkPositionRaw = chunk.metadata?.position;
-        const chunkPosition = typeof chunkPositionRaw === "number" ? chunkPositionRaw : index;
-        const baseChunkId =
-          chunk.id && chunk.id.trim().length > 0
-            ? chunk.id
-            : `${page.id}-chunk-${chunkPosition}`;
-        const pointId = normalizePointId(baseChunkId);
-        const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
-        const chunkWordCount = chunk.metadata?.wordCount ?? null;
-        const chunkExcerpt = chunk.metadata?.excerpt ?? null;
-
-        const metadataRecord =
-          page.metadata && typeof page.metadata === "object"
-            ? (page.metadata as unknown as Record<string, unknown>)
-            : undefined;
-        const siteNameRaw = metadataRecord?.["siteName"];
-        const siteUrlRaw = metadataRecord?.["siteUrl"];
-        const resolvedSiteName = typeof siteNameRaw === "string" ? siteNameRaw : site?.name ?? null;
-        const resolvedSiteUrl = typeof siteUrlRaw === "string" ? siteUrlRaw : site?.url ?? null;
-
-        const templateContext = removeUndefinedDeep({
-          page: {
-            id: page.id,
-            url: page.url,
-            title: page.title ?? null,
-            totalChunks,
-            chunkCharLimit,
-            metadata: page.metadata ?? null,
-          },
-          site: {
-            id: site.id,
-            name: resolvedSiteName,
-            url: resolvedSiteUrl,
-          },
-          provider: {
-            id: provider.id,
-            name: provider.name,
-          },
-          chunk: {
-            id: baseChunkId,
-            index,
-            position: chunkPosition,
-            heading: chunk.heading ?? null,
-            level: chunk.level ?? null,
-            deepLink: chunk.deepLink ?? null,
-            text: chunk.content,
-            charCount: chunkCharCount,
-            wordCount: chunkWordCount,
-            excerpt: chunkExcerpt,
-            metadata: chunk.metadata ?? null,
-          },
-          embedding: {
-            model: provider.model,
-            vectorSize: vector.length,
-            tokens: usageTokens ?? null,
-            id: embeddingId ?? null,
-          },
-        }) as Record<string, unknown>;
-
-        const rawPayload = {
-          page: {
-            id: page.id,
-            url: page.url,
-            title: page.title ?? null,
-            totalChunks,
-            chunkCharLimit,
-            metadata: page.metadata ?? null,
-          },
-          site: {
-            id: site.id,
-            name: site?.name ?? null,
-            url: site?.url ?? null,
-          },
-          provider: {
-            id: provider.id,
-            name: provider.name,
-          },
-          chunk: {
-            id: baseChunkId,
-            index,
-            position: chunkPosition,
-            heading: chunk.heading ?? null,
-            level: chunk.level ?? null,
-            deepLink: chunk.deepLink ?? null,
-            text: chunk.content,
-            charCount: chunkCharCount,
-            wordCount: chunkWordCount,
-            excerpt: chunkExcerpt,
-            metadata: chunk.metadata ?? null,
-          },
-          embedding: {
-            model: provider.model,
-            vectorSize: vector.length,
-            tokens: usageTokens ?? null,
-            id: embeddingId ?? null,
-          },
-        } as Record<string, unknown>;
-
-        const customPayload = hasCustomSchema
-          ? buildCustomPayloadFromSchema(normalizedSchemaFields, templateContext)
-          : null;
-
-        const payloadSource = customPayload ?? rawPayload;
-        const payload = removeUndefinedDeep(payloadSource) as Record<string, unknown>;
-
-        return {
-          id: pointId,
-          vector: vector as Schemas["PointStruct"]["vector"],
-          payload,
-        };
-      });
-
-      if (!collectionExists && shouldCreateCollection) {
-        const firstVector = embeddingResults[0]?.vector;
-        const vectorLength = Array.isArray(firstVector) ? firstVector.length : undefined;
-        if (!vectorLength || vectorLength <= 0) {
-          return res.status(500).json({
-            error: "Не удалось определить размер вектора для новой коллекции",
-          });
-        }
-
-        let distance: "Cosine" | "Euclid" | "Dot" | "Manhattan" = "Cosine";
-        const configuredVectorSize = provider.qdrantConfig?.vectorSize;
-        let vectorSizeForCreation = vectorLength;
-
-        if (typeof configuredVectorSize === "number" && Number.isFinite(configuredVectorSize)) {
-          vectorSizeForCreation = configuredVectorSize;
-        } else if (typeof configuredVectorSize === "string") {
-          const parsedSize = Number.parseInt(configuredVectorSize, 10);
-          if (Number.isFinite(parsedSize) && parsedSize > 0) {
-            vectorSizeForCreation = parsedSize;
-          }
-        }
-
-        try {
-          await client.createCollection(collectionName, {
-            vectors: {
-              size: vectorSizeForCreation,
-              distance,
-            },
-          });
-          collectionCreated = true;
-        } catch (creationError) {
-          const qdrantError = extractQdrantApiError(creationError);
-          if (qdrantError) {
-            return res.status(qdrantError.status).json({
-              error: qdrantError.message,
-              details: qdrantError.details,
-            });
-          }
-
-          throw creationError;
-        }
-      }
-
-      const upsertResult = await client.upsert(collectionName, {
-        wait: true,
-        points,
-      });
-
-      const totalUsageTokens = embeddingResults.reduce((sum, result) => {
-        return sum + (result.usageTokens ?? 0);
-      }, 0);
-
-      res.json({
-        message: `В коллекцию ${collectionName} отправлено ${points.length} чанков из ${processedPagesCount} страниц`,
-        pointsCount: points.length,
-        pagesProcessed: processedPagesCount,
-        vectorSize: embeddingResults[0]?.vector.length ?? null,
+      const status = projectVectorizationManager.startProjectVectorization({
+        site,
+        projectChunks,
+        provider,
         collectionName,
-        provider: {
-          id: provider.id,
-          name: provider.name,
-        },
-        totalUsageTokens,
-        upsertStatus: upsertResult.status ?? null,
-        collectionCreated,
+        shouldCreateCollection,
+        schemaFields: normalizedSchemaFields,
+        client,
+        collectionExists,
       });
+
+      res.status(202).json({
+        message: `Запущена векторизация проекта: ${status.totalRecords.toLocaleString("ru-RU")} записей`,
+        status,
+      });
+
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({
@@ -3210,6 +3407,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Ошибка при отправке чанков проекта ${req.params.id} в Qdrant:`, error);
       res.status(500).json({ error: message });
+    }
+  });
+
+  app.get("/api/sites/:id/vectorization-status", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const ownerScope = resolveOwnerScope(user);
+      const site = await storage.getSite(req.params.id, ownerScope);
+      if (!site) {
+        return res.status(404).json({ error: "Проект не найден" });
+      }
+
+      const status = projectVectorizationManager.getStatus(site.id);
+      res.json({ status });
+    } catch (error) {
+      console.error(
+        `Ошибка при получении статуса векторизации проекта ${req.params.id}:`,
+        error,
+      );
+      res.status(500).json({ error: "Не удалось получить статус векторизации" });
     }
   });
 
