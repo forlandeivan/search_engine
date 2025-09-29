@@ -73,6 +73,64 @@ function parseVectorSize(value: unknown): number | null {
   return null;
 }
 
+function resolveVectorSizeForCollection(
+  provider: EmbeddingProvider,
+  detectedVectorLength: number,
+): number {
+  const configuredSize = parseVectorSize(provider.qdrantConfig?.vectorSize);
+  if (configuredSize) {
+    return configuredSize;
+  }
+
+  if (detectedVectorLength > 0) {
+    return detectedVectorLength;
+  }
+
+  if (provider.providerType === "gigachat") {
+    return GIGACHAT_EMBEDDING_VECTOR_SIZE;
+  }
+
+  throw new Error(
+    "Не удалось определить размер вектора для новой коллекции. Укажите vectorSize в настройках сервиса эмбеддингов",
+  );
+}
+
+async function ensureCollectionCreatedIfNeeded(options: {
+  client: QdrantClient;
+  provider: EmbeddingProvider;
+  collectionName: string;
+  detectedVectorLength: number;
+  shouldCreateCollection: boolean;
+  collectionExists: boolean;
+}): Promise<boolean> {
+  const {
+    client,
+    provider,
+    collectionName,
+    detectedVectorLength,
+    shouldCreateCollection,
+    collectionExists,
+  } = options;
+
+  if (collectionExists || !shouldCreateCollection) {
+    return false;
+  }
+
+  const vectorSizeForCreation = resolveVectorSizeForCollection(
+    provider,
+    detectedVectorLength,
+  );
+
+  await client.createCollection(collectionName, {
+    vectors: {
+      size: vectorSizeForCreation,
+      distance: "Cosine",
+    },
+  });
+
+  return true;
+}
+
 function extractQdrantApiError(error: unknown):
   | {
       status: number;
@@ -827,6 +885,36 @@ class ProjectVectorizationManager {
         throw new Error("Не удалось получить эмбеддинги для чанков проекта");
       }
 
+      let collectionExists = initialCollectionExists;
+      const firstVector = embeddingResults[0]?.vector;
+      const detectedVectorLength = Array.isArray(firstVector)
+        ? firstVector.length
+        : 0;
+
+      if (!collectionExists) {
+        if (detectedVectorLength <= 0) {
+          throw new Error(
+            "Не удалось определить размер вектора для новой коллекции",
+          );
+        }
+
+        const created = await ensureCollectionCreatedIfNeeded({
+          client,
+          provider,
+          collectionName,
+          detectedVectorLength,
+          shouldCreateCollection,
+          collectionExists,
+        });
+
+        if (created) {
+          collectionExists = true;
+          this.updateStatus(siteId, {
+            message: `Коллекция ${collectionName} создана. Подготавливаем записи для отправки...`,
+          });
+        }
+      }
+
       const hasCustomSchema = schemaFields.length > 0;
       const chunkCharLimit = site?.maxChunkSize ?? null;
 
@@ -956,44 +1044,6 @@ class ProjectVectorizationManager {
         createdRecords: points.length,
         message: `Подготовлено ${points.length.toLocaleString("ru-RU")} записей, отправляем в Qdrant...`,
       });
-
-      let collectionExists = initialCollectionExists;
-
-      if (!collectionExists && shouldCreateCollection) {
-        const firstVector = embeddingResults[0]?.vector;
-        const vectorLength = Array.isArray(firstVector)
-          ? firstVector.length
-          : undefined;
-        if (!vectorLength || vectorLength <= 0) {
-          throw new Error(
-            "Не удалось определить размер вектора для новой коллекции",
-          );
-        }
-
-        let distance: "Cosine" | "Euclid" | "Dot" | "Manhattan" = "Cosine";
-        const configuredVectorSize = provider.qdrantConfig?.vectorSize;
-        let vectorSizeForCreation = vectorLength;
-
-        if (
-          typeof configuredVectorSize === "number" &&
-          Number.isFinite(configuredVectorSize)
-        ) {
-          vectorSizeForCreation = configuredVectorSize;
-        } else if (typeof configuredVectorSize === "string") {
-          const parsedSize = Number.parseInt(configuredVectorSize, 10);
-          if (Number.isFinite(parsedSize) && parsedSize > 0) {
-            vectorSizeForCreation = parsedSize;
-          }
-        }
-
-        await client.createCollection(collectionName, {
-          vectors: {
-            size: vectorSizeForCreation,
-            distance,
-          },
-        });
-        collectionExists = true;
-      }
 
       const upsertResult = await client.upsert(collectionName, {
         wait: true,
@@ -3048,6 +3098,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let collectionCreated = false;
 
+      const firstVector = embeddingResults[0]?.vector;
+      const detectedVectorLength = Array.isArray(firstVector)
+        ? firstVector.length
+        : 0;
+
+      if (!collectionExists) {
+        if (detectedVectorLength <= 0) {
+          return res.status(500).json({
+            error: "Не удалось определить размер вектора для новой коллекции",
+          });
+        }
+
+        try {
+          const created = await ensureCollectionCreatedIfNeeded({
+            client,
+            provider,
+            collectionName,
+            detectedVectorLength,
+            shouldCreateCollection,
+            collectionExists,
+          });
+          if (created) {
+            collectionCreated = true;
+            collectionExists = true;
+          }
+        } catch (creationError) {
+          const qdrantError = extractQdrantApiError(creationError);
+          if (qdrantError) {
+            return res.status(qdrantError.status).json({
+              error: qdrantError.message,
+              details: qdrantError.details,
+            });
+          }
+
+          throw creationError;
+        }
+      }
+
       const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
         const { chunk, index, vector, usageTokens, embeddingId } = result;
         const chunkPositionRaw = chunk.metadata?.position;
@@ -3165,49 +3253,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       });
 
-      if (!collectionExists && shouldCreateCollection) {
-        const firstVector = embeddingResults[0]?.vector;
-        const vectorLength = Array.isArray(firstVector) ? firstVector.length : undefined;
-        if (!vectorLength || vectorLength <= 0) {
-          return res.status(500).json({
-            error: "Не удалось определить размер вектора для новой коллекции",
-          });
-        }
-
-        let distance: "Cosine" | "Euclid" | "Dot" | "Manhattan" = "Cosine";
-        const configuredVectorSize = provider.qdrantConfig?.vectorSize;
-        let vectorSizeForCreation = vectorLength;
-
-        if (typeof configuredVectorSize === "number" && Number.isFinite(configuredVectorSize)) {
-          vectorSizeForCreation = configuredVectorSize;
-        } else if (typeof configuredVectorSize === "string") {
-          const parsedSize = Number.parseInt(configuredVectorSize, 10);
-          if (Number.isFinite(parsedSize) && parsedSize > 0) {
-            vectorSizeForCreation = parsedSize;
-          }
-        }
-
-        try {
-          await client.createCollection(collectionName, {
-            vectors: {
-              size: vectorSizeForCreation,
-              distance,
-            },
-          });
-          collectionCreated = true;
-        } catch (creationError) {
-          const qdrantError = extractQdrantApiError(creationError);
-          if (qdrantError) {
-            return res.status(qdrantError.status).json({
-              error: qdrantError.message,
-              details: qdrantError.details,
-            });
-          }
-
-          throw creationError;
-        }
-      }
-
       const upsertResult = await client.upsert(collectionName, {
         wait: true,
         points,
@@ -3220,7 +3265,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         message: `В коллекцию ${collectionName} отправлено ${points.length} чанков`,
         pointsCount: points.length,
-        vectorSize: embeddingResults[0]?.vector.length ?? null,
+        vectorSize: detectedVectorLength || null,
         collectionName,
         provider: {
           id: provider.id,
