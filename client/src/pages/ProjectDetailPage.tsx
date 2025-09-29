@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -20,6 +20,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { type Page, type Site, type PublicEmbeddingProvider } from "@shared/schema";
+import { type ProjectVectorizationJobStatus } from "@shared/vectorization";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +30,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import CrawlerLogPanel from "@/components/CrawlerLogPanel";
 import VectorizeProjectDialog from "@/components/VectorizeProjectDialog";
+import VectorizationStatusCard from "@/components/VectorizationStatusCard";
 import {
   Dialog,
   DialogContent,
@@ -145,6 +147,23 @@ export default function ProjectDetailPage() {
   const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
     queryKey: ["/api/embedding/services"],
   });
+
+  const [shouldPollVectorization, setShouldPollVectorization] = useState(false);
+  const vectorizationStatusQuery = useQuery<{ status: ProjectVectorizationJobStatus }>({
+    queryKey: ["/api/sites", siteId ?? "", "vectorization-status"],
+    enabled: Boolean(siteId),
+    refetchInterval: shouldPollVectorization ? 3000 : false,
+  });
+
+  const vectorizationStatus = vectorizationStatusQuery.data?.status ?? null;
+
+  useEffect(() => {
+    const nextShouldPoll =
+      vectorizationStatus !== null &&
+      (vectorizationStatus.status === "running" || vectorizationStatus.status === "pending");
+
+    setShouldPollVectorization((current) => (current === nextShouldPoll ? current : nextShouldPoll));
+  }, [vectorizationStatus]);
 
   const activeEmbeddingProviders = useMemo(
     () => (embeddingServices?.providers ?? []).filter((provider) => provider.isActive),
@@ -473,6 +492,7 @@ export default function ProjectDetailPage() {
                 site={site}
                 pages={sortedPages}
                 providers={activeEmbeddingProviders}
+                currentStatus={vectorizationStatus}
               />
             )}
             {site?.url && (
@@ -485,6 +505,10 @@ export default function ProjectDetailPage() {
             )}
           </div>
         </div>
+
+        {vectorizationStatus && vectorizationStatus.status !== "idle" && (
+          <VectorizationStatusCard status={vectorizationStatus} />
+        )}
 
         {site?.error && (
           <Alert variant="destructive">

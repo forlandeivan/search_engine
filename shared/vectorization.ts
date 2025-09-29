@@ -14,6 +14,28 @@ export interface VectorizeCollectionSchema {
   embeddingFieldName?: string | null;
 }
 
+export type ProjectVectorizationJobStatus = {
+  siteId: string;
+  status: "idle" | "pending" | "running" | "completed" | "failed";
+  totalChunks: number;
+  processedChunks: number;
+  totalPages: number;
+  processedPages: number;
+  totalRecords: number;
+  createdRecords: number;
+  failedChunks: number;
+  providerId?: string;
+  providerName?: string;
+  collectionName?: string;
+  message?: string;
+  error?: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  lastUpdatedAt: string;
+  totalUsageTokens?: number | null;
+  upsertStatus?: string | null;
+};
+
 function parsePathSegments(path: string): string[] {
   const segments: string[] = [];
   const regex = /([^.\[\]]+)|\[(\d+)\]/g;
