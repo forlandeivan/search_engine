@@ -2429,6 +2429,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error(`Ошибка Qdrant при поиске в коллекции ${req.params.name}:`, error);
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
+        });
+      }
+
       console.error(`Ошибка при поиске в коллекции ${req.params.name}:`, error);
       res.status(500).json({
         error: "Не удалось выполнить поиск",
