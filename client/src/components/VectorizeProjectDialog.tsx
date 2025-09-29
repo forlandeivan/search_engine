@@ -86,7 +86,13 @@ interface VectorizeProjectDialogProps {
 
 const TEMPLATE_PATH_LIMIT = 400;
 const TEMPLATE_SUGGESTION_LIMIT = 150;
+const CONTEXT_PREVIEW_VALUE_LIMIT = 160;
 const DEFAULT_NEW_COLLECTION_NAME = "New Collection";
+
+interface FlattenedContextEntry {
+  path: string;
+  value: unknown;
+}
 
 function generateFieldId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -166,6 +172,190 @@ function collectTemplatePaths(source: unknown, limit = TEMPLATE_PATH_LIMIT): str
   visit(source, "");
 
   return Array.from(paths).sort((a, b) => a.localeCompare(b, "ru"));
+}
+
+function getValueAtPath(source: unknown, path: string): unknown {
+  if (!path) {
+    return source;
+  }
+
+  const tokens: Array<string | number> = [];
+  const regex = /([^.[\]]+)|\[(\d+)\]/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(path)) !== null) {
+    if (match[1]) {
+      tokens.push(match[1]);
+      continue;
+    }
+
+    if (match[2]) {
+      tokens.push(Number.parseInt(match[2], 10));
+    }
+  }
+
+  return tokens.reduce<unknown>((current, token) => {
+    if (current === null || current === undefined) {
+      return undefined;
+    }
+
+    if (typeof token === "number") {
+      if (!Array.isArray(current)) {
+        return undefined;
+      }
+      return current[token];
+    }
+
+    if (typeof current !== "object") {
+      return undefined;
+    }
+
+    return (current as Record<string, unknown>)[token];
+  }, source);
+}
+
+function looksLikeDateTime(value: string): boolean {
+  if (value.length < 8) {
+    return false;
+  }
+
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return false;
+  }
+
+  return /[-T:\d]/.test(value);
+}
+
+type ValueKind = "string" | "text" | "number" | "boolean" | "object" | "null";
+
+function detectFieldTypeFromValue(
+  value: unknown,
+): Pick<CollectionSchemaFieldInput, "type" | "isArray"> & { kind: ValueKind } {
+  if (Array.isArray(value)) {
+    const firstMeaningful = value.find((item) => item !== null && item !== undefined);
+    const nested = detectFieldTypeFromValue(firstMeaningful ?? "");
+    return {
+      type: nested.type,
+      isArray: true,
+      kind: nested.kind,
+    };
+  }
+
+  if (typeof value === "number") {
+    return { type: "double", isArray: false, kind: "number" };
+  }
+
+  if (typeof value === "boolean") {
+    return { type: "string", isArray: false, kind: "boolean" };
+  }
+
+  if (typeof value === "string") {
+    if (looksLikeDateTime(value)) {
+      return { type: "string", isArray: false, kind: "string" };
+    }
+
+    return { type: "string", isArray: false, kind: value.length > 200 ? "text" : "string" };
+  }
+
+  if (value && typeof value === "object") {
+    return { type: "object", isArray: false, kind: "object" };
+  }
+
+  return { type: "string", isArray: false, kind: "null" };
+}
+
+const FIELD_TYPE_LABELS: Record<CollectionSchemaFieldInput["type"], string> = {
+  string: "Строка",
+  double: "Число",
+  object: "JSON",
+};
+
+const VALUE_KIND_LABELS: Record<ValueKind, string> = {
+  string: "Строка",
+  text: "Длинная строка",
+  number: "Число",
+  boolean: "Логический тип",
+  object: "Объект",
+  null: "Пустое значение",
+};
+
+function formatPreviewValue(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+
+  if (value === undefined) {
+    return "—";
+  }
+
+  if (typeof value === "string") {
+    return value.length > CONTEXT_PREVIEW_VALUE_LIMIT
+      ? `${value.slice(0, CONTEXT_PREVIEW_VALUE_LIMIT - 1)}…`
+      : value;
+  }
+
+  try {
+    const stringified = JSON.stringify(value);
+    if (!stringified) {
+      return "";
+    }
+    return stringified.length > CONTEXT_PREVIEW_VALUE_LIMIT
+      ? `${stringified.slice(0, CONTEXT_PREVIEW_VALUE_LIMIT - 1)}…`
+      : stringified;
+  } catch (error) {
+    console.error("Не удалось сериализовать значение контекста", error);
+    return String(value);
+  }
+}
+
+function deriveFieldNameFromPath(path: string): string {
+  if (!path) {
+    return "field";
+  }
+
+  const withoutIndexes = path.replace(/\[(\d+)\]/g, "_$1");
+  const normalized = withoutIndexes
+    .split(".")
+    .filter(Boolean)
+    .join("_")
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/_{2,}/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+
+  return normalized.length > 0 ? normalized : "field";
+}
+
+function ensureUniqueFieldName(
+  baseName: string,
+  fields: CollectionSchemaField[],
+): string {
+  const fallback = baseName && baseName.trim().length > 0 ? baseName.trim() : "field";
+  const existingNames = new Set(
+    fields
+      .map((field) => field.name.trim())
+      .filter((name) => name.length > 0),
+  );
+
+  if (!existingNames.has(fallback)) {
+    return fallback;
+  }
+
+  let counter = 2;
+  while (existingNames.has(`${fallback}_${counter}`)) {
+    counter += 1;
+  }
+
+  return `${fallback}_${counter}`;
+}
+
+function normalizeTemplateValue(template: string | undefined): string {
+  return (template ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*}}/g, " }}")
+    .replace(/{{\s*/g, "{{ ")
+    .trim();
 }
 
 function sanitizeCollectionName(source: string): string {
@@ -295,7 +485,7 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
   const [embeddingFieldId, setEmbeddingFieldId] = useState<string | null>(
     () => initialEmbeddingFieldIdRef.current,
   );
-  const [activeTab, setActiveTab] = useState<"settings" | "context">("settings");
+  const [activeTab, setActiveTab] = useState<"settings" | "context" | "fields">("settings");
   const [activeSuggestionsFieldId, setActiveSuggestionsFieldId] = useState<string | null>(null);
   const templateFieldRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
@@ -446,6 +636,16 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
 
     return collectTemplatePaths(liquidContext);
   }, [liquidContext]);
+  const contextFieldEntries = useMemo<FlattenedContextEntry[]>(() => {
+    if (!liquidContext) {
+      return [];
+    }
+
+    return templateVariableSuggestions.map((path) => ({
+      path,
+      value: getValueAtPath(liquidContext, path),
+    }));
+  }, [liquidContext, templateVariableSuggestions]);
 
   const limitedTemplateVariableSuggestions = useMemo(
     () => templateVariableSuggestions.slice(0, TEMPLATE_SUGGESTION_LIMIT),
@@ -518,6 +718,57 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
     const newField = createSchemaField();
     setSchemaFields((prev) => [...prev, newField]);
     setEmbeddingFieldId((current) => current ?? newField.id);
+  };
+
+  const handleAddFieldFromContextEntry = (entry: FlattenedContextEntry) => {
+    if (vectorizeMutation.isPending) {
+      return;
+    }
+
+    const templateSource = `{{ ${entry.path} }}`;
+    const normalizedTemplate = normalizeTemplateValue(templateSource);
+    const existingField = schemaFields.find(
+      (field) => normalizeTemplateValue(field.template) === normalizedTemplate,
+    );
+
+    if (existingField) {
+      toast({
+        title: "Поле уже добавлено",
+        description: "Эта переменная уже используется в схеме коллекции.",
+      });
+      setActiveTab("settings");
+      return;
+    }
+
+    const { type, isArray } = detectFieldTypeFromValue(entry.value);
+    const fieldName = ensureUniqueFieldName(
+      deriveFieldNameFromPath(entry.path),
+      schemaFields,
+    );
+    const newField = createSchemaField({
+      name: fieldName,
+      template: templateSource,
+      type,
+      isArray,
+    });
+
+    setSchemaFields((prev) => [...prev, newField]);
+    setEmbeddingFieldId((current) => current ?? newField.id);
+    setActiveTab("settings");
+    setActiveSuggestionsFieldId(null);
+    toast({
+      title: "Поле добавлено",
+      description: `Поле «${fieldName}» добавлено в схему коллекции.`,
+    });
+
+    setTimeout(() => {
+      const textarea = templateFieldRefs.current[newField.id];
+      if (textarea) {
+        textarea.focus();
+        const length = textarea.value.length;
+        textarea.setSelectionRange(length, length);
+      }
+    }, 0);
   };
 
   const handleUpdateSchemaField = (
@@ -989,6 +1240,64 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
     }, {});
   }, [liquidContext, schemaFields]);
 
+  const renderFieldsTab = () => (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Найдите нужное поле в плоском списке данных и быстро добавьте его в схему новой коллекции.
+      </p>
+      {contextFieldEntries.length > 0 ? (
+        <div className="max-h-[60vh] overflow-auto rounded-md border bg-background">
+          <div className="divide-y">
+            {contextFieldEntries.map((entry) => {
+              const { type, isArray, kind } = detectFieldTypeFromValue(entry.value);
+              const typeLabel = FIELD_TYPE_LABELS[type];
+              const kindLabel = VALUE_KIND_LABELS[kind];
+              const preview = formatPreviewValue(entry.value);
+              const normalizedTemplate = normalizeTemplateValue(`{{ ${entry.path} }}`);
+              const alreadyAdded = schemaFields.some(
+                (field) => normalizeTemplateValue(field.template) === normalizedTemplate,
+              );
+
+              return (
+                <div key={entry.path} className="space-y-2 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <code className="break-all rounded bg-muted px-2 py-1 text-xs font-mono text-muted-foreground">
+                      {entry.path}
+                    </code>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={alreadyAdded ? "secondary" : "outline"}
+                      onClick={() => handleAddFieldFromContextEntry(entry)}
+                      disabled={alreadyAdded || vectorizeMutation.isPending}
+                    >
+                      {alreadyAdded ? "Уже в схеме" : "Добавить в схему"}
+                    </Button>
+                  </div>
+                  <div className="rounded-md border bg-muted/40 p-2 text-xs font-mono leading-relaxed text-muted-foreground">
+                    {preview}
+                  </div>
+                  <p className="text-[11px] uppercase text-muted-foreground">
+                    Тип данных: {isArray ? `Массив · ${kindLabel}` : kindLabel}. Формат поля: {typeLabel}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Добавьте контент в страницы проекта или выберите сервис, чтобы увидеть доступные поля контекста.
+        </p>
+      )}
+      {hasMoreTemplateSuggestions && contextFieldEntries.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          Показаны первые {TEMPLATE_SUGGESTION_LIMIT.toLocaleString("ru-RU")} полей. Полный список см. в JSON проекта.
+        </p>
+      )}
+    </div>
+  );
+
   const renderContextTab = () => (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
@@ -1018,20 +1327,31 @@ export default function VectorizeProjectDialog({ site, pages, providers }: Vecto
     </div>
   );
 
+  const handleTabChange = (value: string) => {
+    if (value === "context" || value === "fields") {
+      setActiveTab(value);
+      return;
+    }
+
+    setActiveTab("settings");
+  };
+
   const renderDialogTabs = () => (
     <Tabs
       value={activeTab}
-      onValueChange={(value) => setActiveTab(value as "settings" | "context")}
+      onValueChange={handleTabChange}
       className="space-y-4"
     >
       <TabsList className="w-fit">
         <TabsTrigger value="settings">Настройки</TabsTrigger>
         <TabsTrigger value="context">JSON проекта</TabsTrigger>
+        <TabsTrigger value="fields">Поля</TabsTrigger>
       </TabsList>
       <TabsContent value="settings" className="space-y-6">
         {renderSettingsTab()}
       </TabsContent>
       <TabsContent value="context">{renderContextTab()}</TabsContent>
+      <TabsContent value="fields">{renderFieldsTab()}</TabsContent>
     </Tabs>
   );
 
