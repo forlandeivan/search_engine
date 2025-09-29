@@ -26,6 +26,7 @@ import {
   type PublicEmbeddingProvider,
   type EmbeddingProvider,
   type ContentChunk,
+  type Page,
   type Site,
   DEFAULT_QDRANT_CONFIG,
 } from "@shared/schema";
@@ -2871,6 +2872,343 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Ошибка при отправке чанков страницы ${req.params.id} в Qdrant:`, error);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/sites/:id/vectorize", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const ownerScope = resolveOwnerScope(user);
+      const {
+        embeddingProviderId,
+        collectionName: requestedCollectionName,
+        createCollection,
+        schema,
+      } = vectorizePageSchema.parse(req.body);
+      const siteId = req.params.id;
+
+      const site = await storage.getSite(siteId, ownerScope);
+      if (!site) {
+        return res.status(404).json({ error: "Проект не найден" });
+      }
+
+      const pages = await storage.getPagesBySiteId(siteId, ownerScope);
+      const projectChunks = pages.flatMap((page) => {
+        const pageChunks = Array.isArray(page.chunks)
+          ? (page.chunks as ContentChunk[])
+          : [];
+        const nonEmptyChunks = pageChunks.filter(
+          (chunk) => typeof chunk.content === "string" && chunk.content.trim().length > 0,
+        );
+
+        return nonEmptyChunks.map((chunk, index) => ({
+          page,
+          chunk,
+          index,
+          totalChunks: nonEmptyChunks.length,
+        }));
+      });
+
+      if (projectChunks.length === 0) {
+        return res.status(400).json({
+          error: "У проекта нет чанков для отправки в Qdrant",
+        });
+      }
+
+      const provider = await storage.getEmbeddingProvider(embeddingProviderId);
+      if (!provider) {
+        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+      }
+
+      if (!provider.isActive) {
+        return res.status(400).json({ error: "Выбранный сервис эмбеддингов отключён" });
+      }
+
+      const collectionName =
+        requestedCollectionName && requestedCollectionName.trim().length > 0
+          ? requestedCollectionName.trim()
+          : buildCollectionName(site, provider);
+
+      const chunkCharLimit = site?.maxChunkSize ?? null;
+      const processedPagesCount = new Set(projectChunks.map((entry) => entry.page.id)).size;
+
+      const normalizedSchemaFields: CollectionSchemaFieldInput[] = (schema?.fields ?? []).map(
+        (field) => ({
+          name: field.name.trim(),
+          type: field.type,
+          isArray: Boolean(field.isArray),
+          template: field.template ?? "",
+        }),
+      );
+      const hasCustomSchema = normalizedSchemaFields.length > 0;
+
+      const client = getQdrantClient();
+      const shouldCreateCollection = Boolean(createCollection);
+      let collectionExists = false;
+
+      try {
+        await client.getCollection(collectionName);
+        collectionExists = true;
+      } catch (collectionError) {
+        const qdrantError = extractQdrantApiError(collectionError);
+        if (qdrantError) {
+          if (qdrantError.status === 404) {
+            if (!shouldCreateCollection) {
+              return res.status(404).json({
+                error: `Коллекция ${collectionName} не найдена`,
+                details: qdrantError.details,
+              });
+            }
+          } else {
+            return res.status(qdrantError.status).json({
+              error: qdrantError.message,
+              details: qdrantError.details,
+            });
+          }
+        } else {
+          throw collectionError;
+        }
+      }
+
+      const accessToken = await fetchAccessToken(provider);
+
+      const embeddingResults: Array<
+        EmbeddingVectorResult & { chunk: ContentChunk; page: Page; index: number; totalChunks: number }
+      > = [];
+
+      for (const entry of projectChunks) {
+        const { page, chunk, index } = entry;
+
+        try {
+          const result = await fetchEmbeddingVector(provider, accessToken, chunk.content);
+          embeddingResults.push({ ...result, chunk, page, index, totalChunks: entry.totalChunks });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Ошибка при обработке страницы «${page.title ?? page.url ?? page.id}», чанк ${index + 1}: ${message}`,
+          );
+        }
+      }
+
+      if (embeddingResults.length === 0) {
+        return res.status(400).json({
+          error: "Не удалось получить эмбеддинги для чанков проекта",
+        });
+      }
+
+      let collectionCreated = false;
+
+      const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
+        const { chunk, page, index, totalChunks, vector, usageTokens, embeddingId } = result;
+        const chunkPositionRaw = chunk.metadata?.position;
+        const chunkPosition = typeof chunkPositionRaw === "number" ? chunkPositionRaw : index;
+        const baseChunkId =
+          chunk.id && chunk.id.trim().length > 0
+            ? chunk.id
+            : `${page.id}-chunk-${chunkPosition}`;
+        const pointId = normalizePointId(baseChunkId);
+        const chunkCharCount = chunk.metadata?.charCount ?? chunk.content.length;
+        const chunkWordCount = chunk.metadata?.wordCount ?? null;
+        const chunkExcerpt = chunk.metadata?.excerpt ?? null;
+
+        const metadataRecord =
+          page.metadata && typeof page.metadata === "object"
+            ? (page.metadata as unknown as Record<string, unknown>)
+            : undefined;
+        const siteNameRaw = metadataRecord?.["siteName"];
+        const siteUrlRaw = metadataRecord?.["siteUrl"];
+        const resolvedSiteName = typeof siteNameRaw === "string" ? siteNameRaw : site?.name ?? null;
+        const resolvedSiteUrl = typeof siteUrlRaw === "string" ? siteUrlRaw : site?.url ?? null;
+
+        const templateContext = removeUndefinedDeep({
+          page: {
+            id: page.id,
+            url: page.url,
+            title: page.title ?? null,
+            totalChunks,
+            chunkCharLimit,
+            metadata: page.metadata ?? null,
+          },
+          site: {
+            id: site.id,
+            name: resolvedSiteName,
+            url: resolvedSiteUrl,
+          },
+          provider: {
+            id: provider.id,
+            name: provider.name,
+          },
+          chunk: {
+            id: baseChunkId,
+            index,
+            position: chunkPosition,
+            heading: chunk.heading ?? null,
+            level: chunk.level ?? null,
+            deepLink: chunk.deepLink ?? null,
+            text: chunk.content,
+            charCount: chunkCharCount,
+            wordCount: chunkWordCount,
+            excerpt: chunkExcerpt,
+            metadata: chunk.metadata ?? null,
+          },
+          embedding: {
+            model: provider.model,
+            vectorSize: vector.length,
+            tokens: usageTokens ?? null,
+            id: embeddingId ?? null,
+          },
+        }) as Record<string, unknown>;
+
+        const rawPayload = {
+          page: {
+            id: page.id,
+            url: page.url,
+            title: page.title ?? null,
+            totalChunks,
+            chunkCharLimit,
+            metadata: page.metadata ?? null,
+          },
+          site: {
+            id: site.id,
+            name: site?.name ?? null,
+            url: site?.url ?? null,
+          },
+          provider: {
+            id: provider.id,
+            name: provider.name,
+          },
+          chunk: {
+            id: baseChunkId,
+            index,
+            position: chunkPosition,
+            heading: chunk.heading ?? null,
+            level: chunk.level ?? null,
+            deepLink: chunk.deepLink ?? null,
+            text: chunk.content,
+            charCount: chunkCharCount,
+            wordCount: chunkWordCount,
+            excerpt: chunkExcerpt,
+            metadata: chunk.metadata ?? null,
+          },
+          embedding: {
+            model: provider.model,
+            vectorSize: vector.length,
+            tokens: usageTokens ?? null,
+            id: embeddingId ?? null,
+          },
+        } as Record<string, unknown>;
+
+        const customPayload = hasCustomSchema
+          ? buildCustomPayloadFromSchema(normalizedSchemaFields, templateContext)
+          : null;
+
+        const payloadSource = customPayload ?? rawPayload;
+        const payload = removeUndefinedDeep(payloadSource) as Record<string, unknown>;
+
+        return {
+          id: pointId,
+          vector: vector as Schemas["PointStruct"]["vector"],
+          payload,
+        };
+      });
+
+      if (!collectionExists && shouldCreateCollection) {
+        const firstVector = embeddingResults[0]?.vector;
+        const vectorLength = Array.isArray(firstVector) ? firstVector.length : undefined;
+        if (!vectorLength || vectorLength <= 0) {
+          return res.status(500).json({
+            error: "Не удалось определить размер вектора для новой коллекции",
+          });
+        }
+
+        let distance: "Cosine" | "Euclid" | "Dot" | "Manhattan" = "Cosine";
+        const configuredVectorSize = provider.qdrantConfig?.vectorSize;
+        let vectorSizeForCreation = vectorLength;
+
+        if (typeof configuredVectorSize === "number" && Number.isFinite(configuredVectorSize)) {
+          vectorSizeForCreation = configuredVectorSize;
+        } else if (typeof configuredVectorSize === "string") {
+          const parsedSize = Number.parseInt(configuredVectorSize, 10);
+          if (Number.isFinite(parsedSize) && parsedSize > 0) {
+            vectorSizeForCreation = parsedSize;
+          }
+        }
+
+        try {
+          await client.createCollection(collectionName, {
+            vectors: {
+              size: vectorSizeForCreation,
+              distance,
+            },
+          });
+          collectionCreated = true;
+        } catch (creationError) {
+          const qdrantError = extractQdrantApiError(creationError);
+          if (qdrantError) {
+            return res.status(qdrantError.status).json({
+              error: qdrantError.message,
+              details: qdrantError.details,
+            });
+          }
+
+          throw creationError;
+        }
+      }
+
+      const upsertResult = await client.upsert(collectionName, {
+        wait: true,
+        points,
+      });
+
+      const totalUsageTokens = embeddingResults.reduce((sum, result) => {
+        return sum + (result.usageTokens ?? 0);
+      }, 0);
+
+      res.json({
+        message: `В коллекцию ${collectionName} отправлено ${points.length} чанков из ${processedPagesCount} страниц`,
+        pointsCount: points.length,
+        pagesProcessed: processedPagesCount,
+        vectorSize: embeddingResults[0]?.vector.length ?? null,
+        collectionName,
+        provider: {
+          id: provider.id,
+          name: provider.name,
+        },
+        totalUsageTokens,
+        upsertStatus: upsertResult.status ?? null,
+        collectionCreated,
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные данные запроса",
+          details: error.errors,
+        });
+      }
+
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error(`Ошибка Qdrant при отправке чанков проекта ${req.params.id}:`, error);
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
+        });
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Ошибка при отправке чанков проекта ${req.params.id} в Qdrant:`, error);
       res.status(500).json({ error: message });
     }
   });

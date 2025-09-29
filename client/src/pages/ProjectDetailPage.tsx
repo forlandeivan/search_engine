@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
-import { type Page, type Site } from "@shared/schema";
+import { type Page, type Site, type PublicEmbeddingProvider } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import CrawlerLogPanel from "@/components/CrawlerLogPanel";
+import VectorizeProjectDialog from "@/components/VectorizeProjectDialog";
 import {
   Dialog,
   DialogContent,
@@ -140,6 +141,15 @@ export default function ProjectDetailPage() {
     enabled: Boolean(siteId),
     refetchInterval: () => (site?.status === "crawling" ? 5000 : false),
   });
+
+  const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
+    queryKey: ["/api/embedding/services"],
+  });
+
+  const activeEmbeddingProviders = useMemo(
+    () => (embeddingServices?.providers ?? []).filter((provider) => provider.isActive),
+    [embeddingServices],
+  );
 
   const isCrawling = site?.status === "crawling";
   const [isLogDialogOpen, setIsLogDialogOpen] = useState(false);
@@ -457,14 +467,23 @@ export default function ProjectDetailPage() {
               </p>
             )}
           </div>
-          {site?.url && (
-            <Button asChild variant="outline" size="sm" className="gap-2" disabled={!site?.url}>
-              <a href={site.url} target="_blank" rel="noreferrer">
-                Открыть сайт
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            </Button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {site && (
+              <VectorizeProjectDialog
+                site={site}
+                pages={sortedPages}
+                providers={activeEmbeddingProviders}
+              />
+            )}
+            {site?.url && (
+              <Button asChild variant="outline" size="sm" className="gap-2" disabled={!site?.url}>
+                <a href={site.url} target="_blank" rel="noreferrer">
+                  Открыть сайт
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </Button>
+            )}
+          </div>
         </div>
 
         {site?.error && (
