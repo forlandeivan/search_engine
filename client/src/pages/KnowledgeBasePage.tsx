@@ -1,4 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,6 +37,8 @@ import {
   SquarePen,
 } from "lucide-react";
 import { DocumentEditor } from "@/components/knowledge-base/DocumentEditor";
+import { VectorizeKnowledgeDocumentDialog } from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
+import type { PublicEmbeddingProvider } from "@shared/schema";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 import pdfWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import type { PDFTextItem } from "pdfjs-dist/legacy/build/pdf";
@@ -375,6 +378,15 @@ export default function KnowledgeBasePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isImportingDocument, setIsImportingDocument] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+
+  const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
+    queryKey: ["/api/embedding/services"],
+  });
+
+  const activeEmbeddingProviders = useMemo(
+    () => (embeddingServices?.providers ?? []).filter((provider) => provider.isActive),
+    [embeddingServices],
+  );
 
   const selectedBase = useMemo(
     () => knowledgeBases.find((base) => base.id === selectedBaseId) ?? null,
@@ -1017,6 +1029,24 @@ export default function KnowledgeBasePage() {
                       Последнее сохранение: {new Date(currentDocument.updatedAt).toLocaleString()}
                     </span>
                     <div className="flex items-center gap-2">
+                      <VectorizeKnowledgeDocumentDialog
+                        document={{
+                          id: currentDocument.id,
+                          title: computedTitle || currentDocument.title || "Без названия",
+                          content: draftContent,
+                          updatedAt: currentDocument.updatedAt,
+                        }}
+                        base={
+                          selectedBase
+                            ? {
+                                id: selectedBase.id,
+                                name: selectedBase.name,
+                                description: selectedBase.description,
+                              }
+                            : null
+                        }
+                        providers={activeEmbeddingProviders}
+                      />
                       {isEditing ? (
                         <>
                           <Button size="sm" onClick={handleSaveDocument}>

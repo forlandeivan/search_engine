@@ -511,6 +511,14 @@ function buildCollectionName(site: Site | undefined, provider: EmbeddingProvider
   return `kb_${sanitizeCollectionName(base)}`;
 }
 
+function buildKnowledgeCollectionName(
+  base: { id?: string | null; name?: string | null } | null | undefined,
+  provider: EmbeddingProvider,
+): string {
+  const source = base?.id ?? base?.name ?? provider.id;
+  return `kb_${sanitizeCollectionName(source)}`;
+}
+
 function removeUndefinedDeep<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => removeUndefinedDeep(item)) as unknown as T;
@@ -1133,6 +1141,28 @@ const vectorizePageSchema = z.object({
     .optional(),
   createCollection: z.boolean().optional(),
   schema: vectorizeCollectionSchemaSchema.optional(),
+});
+
+const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
+  document: z.object({
+    id: z.string().trim().min(1, "Укажите идентификатор документа"),
+    title: z.string().optional().nullable(),
+    text: z.string().trim().min(1, "Документ не может быть пустым"),
+    html: z.string().optional().nullable(),
+    path: z.string().optional().nullable(),
+    updatedAt: z.string().optional().nullable(),
+    charCount: z.number().int().min(0).optional(),
+    wordCount: z.number().int().min(0).optional(),
+    excerpt: z.string().optional().nullable(),
+  }),
+  base: z
+    .object({
+      id: z.string().trim().min(1, "Укажите идентификатор библиотеки"),
+      name: z.string().optional().nullable(),
+      description: z.string().optional().nullable(),
+    })
+    .optional()
+    .nullable(),
 });
 
 // Public search API request/response schemas
@@ -3313,6 +3343,256 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Ошибка при отправке чанков страницы ${req.params.id} в Qdrant:`, error);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/knowledge/documents/vectorize", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const {
+        embeddingProviderId,
+        collectionName: requestedCollectionName,
+        createCollection,
+        schema,
+        document: vectorDocument,
+        base,
+      } = vectorizeKnowledgeDocumentSchema.parse(req.body);
+
+      const provider = await storage.getEmbeddingProvider(embeddingProviderId);
+      if (!provider) {
+        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+      }
+
+      if (!provider.isActive) {
+        return res.status(400).json({ error: "Выбранный сервис эмбеддингов отключён" });
+      }
+
+      const documentText = vectorDocument.text.trim();
+      if (documentText.length === 0) {
+        return res.status(400).json({ error: "Документ не содержит текста для векторизации" });
+      }
+
+      const collectionName =
+        requestedCollectionName && requestedCollectionName.trim().length > 0
+          ? requestedCollectionName.trim()
+          : buildKnowledgeCollectionName(base ?? null, provider);
+
+      const normalizedSchemaFields: CollectionSchemaFieldInput[] = (schema?.fields ?? []).map((field) => ({
+        name: field.name.trim(),
+        type: field.type,
+        isArray: Boolean(field.isArray),
+        template: field.template ?? "",
+      }));
+      const hasCustomSchema = normalizedSchemaFields.length > 0;
+
+      const client = getQdrantClient();
+      const shouldCreateCollection = Boolean(createCollection);
+      let collectionExists = false;
+
+      try {
+        await client.getCollection(collectionName);
+        collectionExists = true;
+      } catch (collectionError) {
+        const qdrantError = extractQdrantApiError(collectionError);
+        if (qdrantError) {
+          if (qdrantError.status === 404) {
+            if (!shouldCreateCollection) {
+              return res.status(404).json({
+                error: `Коллекция ${collectionName} не найдена`,
+                details: qdrantError.details,
+              });
+            }
+          } else {
+            return res.status(qdrantError.status).json({
+              error: qdrantError.message,
+              details: qdrantError.details,
+            });
+          }
+        } else {
+          throw collectionError;
+        }
+      }
+
+      const accessToken = await fetchAccessToken(provider);
+      const embeddingResult = await fetchEmbeddingVector(provider, accessToken, documentText);
+      const { vector, usageTokens, embeddingId } = embeddingResult;
+
+      if (!Array.isArray(vector) || vector.length === 0) {
+        return res.status(500).json({ error: "Сервис эмбеддингов вернул пустой вектор" });
+      }
+
+      let collectionCreated = false;
+      const detectedVectorLength = vector.length;
+
+      if (!collectionExists) {
+        try {
+          const created = await ensureCollectionCreatedIfNeeded({
+            client,
+            provider,
+            collectionName,
+            detectedVectorLength,
+            shouldCreateCollection,
+            collectionExists,
+          });
+          if (created) {
+            collectionCreated = true;
+            collectionExists = true;
+          }
+        } catch (creationError) {
+          const qdrantError = extractQdrantApiError(creationError);
+          if (qdrantError) {
+            return res.status(qdrantError.status).json({
+              error: qdrantError.message,
+              details: qdrantError.details,
+            });
+          }
+
+          throw creationError;
+        }
+      }
+
+      const resolvedCharCount =
+        typeof vectorDocument.charCount === "number" && vectorDocument.charCount >= 0
+          ? vectorDocument.charCount
+          : documentText.length;
+      const resolvedWordCount =
+        typeof vectorDocument.wordCount === "number" && vectorDocument.wordCount >= 0
+          ? vectorDocument.wordCount
+          : null;
+      const resolvedExcerpt =
+        typeof vectorDocument.excerpt === "string" && vectorDocument.excerpt.trim().length > 0
+          ? vectorDocument.excerpt
+          : documentText.slice(0, 160);
+
+      const templateContext = removeUndefinedDeep({
+        document: {
+          id: vectorDocument.id,
+          title: vectorDocument.title ?? null,
+          text: documentText,
+          html: vectorDocument.html ?? null,
+          path: vectorDocument.path ?? null,
+          updatedAt: vectorDocument.updatedAt ?? null,
+          charCount: resolvedCharCount,
+          wordCount: resolvedWordCount,
+          excerpt: resolvedExcerpt,
+        },
+        base: base
+          ? {
+              id: base.id,
+              name: base.name ?? null,
+              description: base.description ?? null,
+            }
+          : null,
+        provider: {
+          id: provider.id,
+          name: provider.name,
+        },
+        embedding: {
+          model: provider.model,
+          vectorSize: detectedVectorLength,
+          tokens: usageTokens ?? null,
+          id: embeddingId ?? null,
+        },
+      }) as Record<string, unknown>;
+
+      const rawPayload = {
+        document: {
+          id: vectorDocument.id,
+          title: vectorDocument.title ?? null,
+          text: documentText,
+          html: vectorDocument.html ?? null,
+          path: vectorDocument.path ?? null,
+          updatedAt: vectorDocument.updatedAt ?? null,
+          charCount: resolvedCharCount,
+          wordCount: resolvedWordCount,
+          excerpt: resolvedExcerpt,
+        },
+        base: base
+          ? {
+              id: base.id,
+              name: base.name ?? null,
+              description: base.description ?? null,
+            }
+          : null,
+        provider: {
+          id: provider.id,
+          name: provider.name,
+        },
+        embedding: {
+          model: provider.model,
+          vectorSize: detectedVectorLength,
+          tokens: usageTokens ?? null,
+          id: embeddingId ?? null,
+        },
+      };
+
+      const customPayload = hasCustomSchema
+        ? buildCustomPayloadFromSchema(normalizedSchemaFields, templateContext)
+        : null;
+
+      const payloadSource = customPayload ?? rawPayload;
+      const payload = removeUndefinedDeep(payloadSource) as Record<string, unknown>;
+
+      const pointIdCandidate = vectorDocument.path ?? vectorDocument.id;
+      const pointId = normalizePointId(pointIdCandidate);
+
+      const points: Schemas["PointStruct"][] = [
+        {
+          id: pointId,
+          vector: vector as Schemas["PointStruct"]["vector"],
+          payload,
+        },
+      ];
+
+      const upsertResult = await client.upsert(collectionName, {
+        wait: true,
+        points,
+      });
+
+      res.json({
+        message: `В коллекцию ${collectionName} отправлен документ`,
+        pointsCount: points.length,
+        collectionName,
+        vectorSize: detectedVectorLength || null,
+        provider: {
+          id: provider.id,
+          name: provider.name,
+        },
+        totalUsageTokens: usageTokens ?? null,
+        upsertStatus: upsertResult.status ?? null,
+        collectionCreated,
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные данные запроса",
+          details: error.errors,
+        });
+      }
+
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error("Ошибка Qdrant при отправке документа базы знаний в коллекцию", error);
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
+        });
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Ошибка при отправке документа базы знаний в Qdrant:", error);
       res.status(500).json({ error: message });
     }
   });

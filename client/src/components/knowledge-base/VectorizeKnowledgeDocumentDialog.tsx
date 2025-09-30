@@ -1,0 +1,1192 @@
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import DOMPurify from "dompurify";
+import {
+  Loader2,
+  Sparkles,
+  Hash,
+  FileText,
+  Gauge,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import {
+  castValueToType,
+  normalizeArrayValue,
+  renderLiquidTemplate,
+  type CollectionSchemaFieldInput,
+  type VectorizeCollectionSchema,
+} from "@shared/vectorization";
+import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
+import type { PublicEmbeddingProvider } from "@shared/schema";
+
+interface KnowledgeDocumentForVectorization {
+  id: string;
+  title: string;
+  content: string;
+  updatedAt?: string | null;
+}
+
+interface KnowledgeBaseForVectorization {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+interface VectorCollectionListResponse {
+  collections: Array<{
+    name: string;
+    status: string;
+    vectorSize: number | null;
+  }>;
+}
+
+interface VectorizeKnowledgeDocumentResponse {
+  message?: string;
+  pointsCount: number;
+  collectionName: string;
+  vectorSize?: number | null;
+  totalUsageTokens?: number;
+  collectionCreated?: boolean;
+}
+
+interface VectorizeKnowledgeDocumentDialogProps {
+  document: KnowledgeDocumentForVectorization;
+  base: KnowledgeBaseForVectorization | null;
+  providers: PublicEmbeddingProvider[];
+}
+
+interface VectorizeRequestPayload {
+  providerId: string;
+  collectionName?: string;
+  createCollection?: boolean;
+  schema?: VectorizeCollectionSchema | null;
+}
+
+interface CollectionSchemaField extends CollectionSchemaFieldInput {
+  id: string;
+}
+
+const TEMPLATE_PATH_LIMIT = 400;
+const TEMPLATE_SUGGESTION_LIMIT = 150;
+const CONTEXT_PREVIEW_VALUE_LIMIT = 160;
+const DEFAULT_NEW_COLLECTION_NAME = "New Collection";
+
+function generateFieldId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return Math.random().toString(36).slice(2);
+}
+
+function createSchemaField(partial?: Partial<Omit<CollectionSchemaField, "id">>): CollectionSchemaField {
+  return {
+    id: generateFieldId(),
+    name: "",
+    type: "string",
+    isArray: false,
+    template: "",
+    ...partial,
+  };
+}
+
+function getDefaultSchemaFields(): CollectionSchemaField[] {
+  return [
+    createSchemaField({ name: "content", template: "{{ document.text }}" }),
+    createSchemaField({ name: "title", template: "{{ document.title }}" }),
+    createSchemaField({ name: "url", template: "{{ document.path }}" }),
+  ];
+}
+
+function collectTemplatePaths(source: unknown, limit = TEMPLATE_PATH_LIMIT): string[] {
+  if (!source || typeof source !== "object") {
+    return [];
+  }
+
+  const paths = new Set<string>();
+  const visited = new WeakSet<object>();
+
+  const visit = (value: unknown, path: string) => {
+    if (paths.size >= limit) {
+      return;
+    }
+
+    if (value && typeof value === "object") {
+      const objectValue = value as object;
+      if (visited.has(objectValue)) {
+        return;
+      }
+      visited.add(objectValue);
+    }
+
+    if (path) {
+      paths.add(path);
+    }
+
+    if (paths.size >= limit) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.slice(0, 5).forEach((item, index) => {
+        const nextPath = path ? `${path}[${index}]` : `[${index}]`;
+        visit(item, nextPath);
+      });
+      return;
+    }
+
+    if (value && typeof value === "object") {
+      Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+        if (paths.size >= limit) {
+          return;
+        }
+        const nextPath = path ? `${path}.${key}` : key;
+        visit(child, nextPath);
+      });
+    }
+  };
+
+  visit(source, "");
+
+  return Array.from(paths).sort((a, b) => a.localeCompare(b, "ru"));
+}
+
+function removeUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => removeUndefinedDeep(item)) as unknown as T;
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, current]) => current !== undefined)
+      .map(([key, current]) => [key, removeUndefinedDeep(current)]);
+    return Object.fromEntries(entries) as unknown as T;
+  }
+
+  return value;
+}
+
+function parseVectorSize(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function sanitizeCollectionName(source: string): string {
+  const normalized = source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+  return normalized.length > 0 ? normalized.slice(0, 60) : "default";
+}
+
+function extractPlainTextFromHtml(html: string): string {
+  if (!html) {
+    return "";
+  }
+
+  const normalized = html
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\s*\/(p|div|section|article|h[1-6])\s*>/gi, "\n\n");
+
+  if (typeof window === "undefined") {
+    return normalized.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  const container = window.document.createElement("div");
+  container.innerHTML = normalized;
+  const text = container.textContent ?? "";
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .trim();
+}
+
+function buildDocumentContext(
+  document: KnowledgeDocumentForVectorization,
+  base: KnowledgeBaseForVectorization | null,
+  provider: PublicEmbeddingProvider | undefined,
+  text: string,
+  charCount: number,
+  wordCount: number,
+) {
+  const sanitizedHtml = DOMPurify.sanitize(document.content ?? "");
+  const path = `knowledge://${base?.id ?? "library"}/${document.id}`;
+
+  return removeUndefinedDeep({
+    document: {
+      id: document.id,
+      title: document.title ?? null,
+      text,
+      html: sanitizedHtml,
+      path,
+      updatedAt: document.updatedAt ?? null,
+      charCount,
+      wordCount,
+      excerpt: text.slice(0, CONTEXT_PREVIEW_VALUE_LIMIT) || null,
+    },
+    base: base
+      ? {
+          id: base.id,
+          name: base.name ?? null,
+          description: base.description ?? null,
+        }
+      : null,
+    provider: {
+      id: provider?.id ?? null,
+      name: provider?.name ?? null,
+    },
+    embedding: {
+      model: provider?.model ?? null,
+      vectorSize:
+        typeof provider?.qdrantConfig?.vectorSize === "number"
+          ? provider?.qdrantConfig?.vectorSize
+          : typeof provider?.qdrantConfig?.vectorSize === "string"
+          ? provider?.qdrantConfig?.vectorSize
+          : null,
+      tokens: null,
+      id: null,
+    },
+  });
+}
+
+function formatNumber(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "недоступно";
+  }
+
+  return value.toLocaleString("ru-RU");
+}
+
+export function VectorizeKnowledgeDocumentDialog({
+  document,
+  base,
+  providers,
+}: VectorizeKnowledgeDocumentDialogProps) {
+  const { toast } = useToast();
+  const [isOpen, setIsOpen] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>("");
+  const [collectionMode, setCollectionMode] = useState<"existing" | "new">("existing");
+  const [selectedCollectionName, setSelectedCollectionName] = useState<string>("");
+  const [newCollectionName, setNewCollectionName] = useState<string>(DEFAULT_NEW_COLLECTION_NAME);
+  const initialEmbeddingFieldIdRef = useRef<string | null>(null);
+  const [schemaFields, setSchemaFields] = useState<CollectionSchemaField[]>(() => {
+    const defaults = getDefaultSchemaFields();
+    initialEmbeddingFieldIdRef.current =
+      defaults.find((field) => field.name === "content")?.id ?? defaults[0]?.id ?? null;
+    return defaults;
+  });
+  const [embeddingFieldId, setEmbeddingFieldId] = useState<string | null>(
+    () => initialEmbeddingFieldIdRef.current,
+  );
+  const [activeTab, setActiveTab] = useState<"settings" | "context">("settings");
+  const [activeSuggestionsFieldId, setActiveSuggestionsFieldId] = useState<string | null>(null);
+  const templateFieldRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+
+  const { data: collectionsData, isLoading: collectionsLoading, isFetching: collectionsFetching, error: collectionsError } =
+    useQuery<VectorCollectionListResponse>({
+      queryKey: ["/api/vector/collections"],
+      enabled: isOpen,
+      staleTime: 30_000,
+    });
+
+  const collections = collectionsData?.collections ?? [];
+  const isCollectionsLoading = collectionsLoading || collectionsFetching;
+  const selectedProvider = useMemo(
+    () => providers.find((provider) => provider.id === selectedProviderId),
+    [providers, selectedProviderId],
+  );
+  const providerVectorSize = useMemo(() => {
+    if (!selectedProvider) {
+      return null;
+    }
+
+    const configuredSize = parseVectorSize(selectedProvider.qdrantConfig?.vectorSize);
+    if (configuredSize) {
+      return configuredSize;
+    }
+
+    if (selectedProvider.providerType === "gigachat") {
+      return GIGACHAT_EMBEDDING_VECTOR_SIZE;
+    }
+
+    return null;
+  }, [selectedProvider]);
+
+  const sanitizedHtml = useMemo(() => DOMPurify.sanitize(document.content ?? ""), [document.content]);
+  const documentText = useMemo(() => extractPlainTextFromHtml(sanitizedHtml), [sanitizedHtml]);
+  const documentCharCount = documentText.length;
+  const documentWordCount = documentText
+    ? documentText.split(/\s+/).filter(Boolean).length
+    : 0;
+  const estimatedTokens = documentCharCount > 0 ? Math.ceil(documentCharCount / 4) : 0;
+  const documentPath = useMemo(
+    () => `knowledge://${base?.id ?? "library"}/${document.id}`,
+    [base?.id, document.id],
+  );
+
+  const availableCollections = useMemo(() => {
+    if (!providerVectorSize) {
+      return collections;
+    }
+
+    return collections.filter((collection) => parseVectorSize(collection.vectorSize) === providerVectorSize);
+  }, [collections, providerVectorSize]);
+
+  const filteredOutCollectionsCount = collections.length - availableCollections.length;
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (providers.length > 0) {
+      setSelectedProviderId(providers[0].id);
+    } else {
+      setSelectedProviderId("");
+    }
+  }, [providers, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (!newCollectionName) {
+      setNewCollectionName(DEFAULT_NEW_COLLECTION_NAME);
+    }
+  }, [isOpen, newCollectionName]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (availableCollections.length === 0) {
+      if (collectionMode !== "new") {
+        setCollectionMode("new");
+      }
+      if (selectedCollectionName) {
+        setSelectedCollectionName("");
+      }
+      return;
+    }
+
+    if (collectionMode !== "existing") {
+      return;
+    }
+
+    if (!availableCollections.some((collection) => collection.name === selectedCollectionName)) {
+      setSelectedCollectionName(availableCollections[0].name);
+    }
+  }, [availableCollections, collectionMode, isOpen, selectedCollectionName]);
+
+  const liquidContext = useMemo(() => {
+    if (!documentText) {
+      return null;
+    }
+
+    return buildDocumentContext(
+      document,
+      base,
+      selectedProvider,
+      documentText,
+      documentCharCount,
+      documentWordCount,
+    );
+  }, [document, base, selectedProvider, documentText, documentCharCount, documentWordCount]);
+
+  const liquidContextJson = useMemo(() => {
+    if (!liquidContext) {
+      return "";
+    }
+
+    try {
+      return JSON.stringify(liquidContext, null, 2);
+    } catch (error) {
+      console.error("Не удалось подготовить JSON контекста", error);
+      return "";
+    }
+  }, [liquidContext]);
+
+  const templateVariableSuggestions = useMemo(() => {
+    if (!liquidContext) {
+      return [];
+    }
+
+    return collectTemplatePaths(liquidContext);
+  }, [liquidContext]);
+
+  const limitedTemplateVariableSuggestions = useMemo(
+    () => templateVariableSuggestions.slice(0, TEMPLATE_SUGGESTION_LIMIT),
+    [templateVariableSuggestions],
+  );
+  const hasMoreTemplateSuggestions = templateVariableSuggestions.length > TEMPLATE_SUGGESTION_LIMIT;
+
+  useEffect(() => {
+    if (templateVariableSuggestions.length === 0) {
+      setActiveSuggestionsFieldId(null);
+    }
+  }, [templateVariableSuggestions.length]);
+
+  const schemaPreview = useMemo(() => {
+    if (!liquidContext) {
+      return null;
+    }
+
+    return schemaFields.reduce<Record<string, unknown>>((acc, field) => {
+      const fieldName = field.name.trim();
+      if (!fieldName) {
+        return acc;
+      }
+
+      const rendered = renderLiquidTemplate(field.template, liquidContext);
+      const typedValue = castValueToType(rendered, field.type);
+      acc[fieldName] = normalizeArrayValue(typedValue, field.isArray);
+      return acc;
+    }, {});
+  }, [liquidContext, schemaFields]);
+
+  const schemaPreviewJson = useMemo(() => {
+    if (!schemaPreview || schemaFields.length === 0) {
+      return "";
+    }
+
+    try {
+      return JSON.stringify(schemaPreview, null, 2);
+    } catch (error) {
+      console.error("Не удалось подготовить предпросмотр схемы", error);
+      return "";
+    }
+  }, [schemaFields.length, schemaPreview]);
+
+  const embeddingFieldName = useMemo(() => {
+    if (!embeddingFieldId) {
+      return null;
+    }
+
+    const field = schemaFields.find((current) => current.id === embeddingFieldId);
+    if (!field) {
+      return null;
+    }
+
+    const trimmed = field.name.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }, [embeddingFieldId, schemaFields]);
+
+  const schemaPayload = useMemo<VectorizeCollectionSchema | null>(() => {
+    const normalizedFields = schemaFields
+      .map<CollectionSchemaFieldInput | null>((field) => {
+        const trimmedName = field.name.trim();
+        if (!trimmedName) {
+          return null;
+        }
+
+        return {
+          name: trimmedName,
+          type: field.type,
+          isArray: field.isArray,
+          template: field.template ?? "",
+        };
+      })
+      .filter((field): field is CollectionSchemaFieldInput => field !== null);
+
+    if (normalizedFields.length === 0) {
+      return null;
+    }
+
+    const embeddingName =
+      embeddingFieldName && normalizedFields.some((field) => field.name === embeddingFieldName)
+        ? embeddingFieldName
+        : null;
+
+    return {
+      fields: normalizedFields,
+      embeddingFieldName: embeddingName,
+    };
+  }, [schemaFields, embeddingFieldName]);
+
+  const vectorizeMutation = useMutation<VectorizeKnowledgeDocumentResponse, Error, VectorizeRequestPayload>({
+    mutationFn: async ({ providerId, collectionName, createCollection: createNew, schema }) => {
+      const sanitizedName = collectionName?.trim() ?? "";
+      const body: Record<string, unknown> = {
+        embeddingProviderId: providerId,
+        collectionName: sanitizedName || undefined,
+        createCollection: createNew,
+        document: {
+          id: document.id,
+          title: document.title ?? null,
+          text: documentText,
+          html: sanitizedHtml,
+          path: documentPath,
+          updatedAt: document.updatedAt ?? null,
+          charCount: documentCharCount,
+          wordCount: documentWordCount,
+          excerpt: documentText.slice(0, CONTEXT_PREVIEW_VALUE_LIMIT) || null,
+        },
+      };
+
+      if (base) {
+        body.base = {
+          id: base.id,
+          name: base.name ?? null,
+          description: base.description ?? null,
+        };
+      }
+
+      if (schema && schema.fields.length > 0) {
+        body.schema = schema;
+      }
+
+      const response = await apiRequest("POST", "/api/knowledge/documents/vectorize", body);
+      return (await response.json()) as VectorizeKnowledgeDocumentResponse;
+    },
+    onSuccess: (data) => {
+      const collectionNote = data.collectionCreated
+        ? `Коллекция ${data.collectionName} создана автоматически.`
+        : "";
+      toast({
+        title: "Документ отправлен",
+        description:
+          data.message ??
+          `Добавлено ${data.pointsCount.toLocaleString("ru-RU")} документов в коллекцию ${data.collectionName}. ${collectionNote}`.trim(),
+      });
+      setIsOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось отправить документ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const disabled = providers.length === 0 || !documentText;
+  const confirmDisabled =
+    disabled ||
+    vectorizeMutation.isPending ||
+    !selectedProviderId ||
+    (collectionMode === "existing"
+      ? availableCollections.length === 0 || !selectedCollectionName
+      : newCollectionName.trim().length === 0 || !schemaPayload);
+
+  const collectionsErrorMessage =
+    collectionsError instanceof Error ? collectionsError.message : undefined;
+
+  const tokensHint =
+    estimatedTokens > 0 ? `${estimatedTokens.toLocaleString("ru-RU")} токенов` : "недоступно";
+
+  const resetSchemaBuilder = () => {
+    const defaults = getDefaultSchemaFields();
+    const defaultEmbedding = defaults.find((field) => field.name === "content") ?? defaults[0] ?? null;
+    setSchemaFields(defaults);
+    setEmbeddingFieldId(defaultEmbedding?.id ?? null);
+  };
+
+  const handleAddSchemaField = () => {
+    const newField = createSchemaField();
+    setSchemaFields((prev) => [...prev, newField]);
+    setEmbeddingFieldId((current) => current ?? newField.id);
+  };
+
+  const handleUpdateSchemaField = (
+    id: string,
+    patch: Partial<Omit<CollectionSchemaField, "id">>,
+  ) => {
+    setSchemaFields((prev) => prev.map((field) => (field.id === id ? { ...field, ...patch } : field)));
+  };
+
+  const handleRemoveSchemaField = (id: string) => {
+    setSchemaFields((prev) => {
+      const next = prev.filter((field) => field.id !== id);
+      if (prev.length !== next.length) {
+        setEmbeddingFieldId((current) => {
+          if (!next.length) {
+            return null;
+          }
+
+          if (current && current !== id && next.some((field) => field.id === current)) {
+            return current;
+          }
+
+          return next[0]?.id ?? null;
+        });
+      }
+      return next;
+    });
+  };
+
+  const handleSelectEmbeddingField = (id: string | null) => {
+    setEmbeddingFieldId(id);
+  };
+
+  const handleTemplateInputChange = (
+    fieldId: string,
+    event: ChangeEvent<HTMLTextAreaElement>,
+  ) => {
+    const { value, selectionStart } = event.target;
+    templateFieldRefs.current[fieldId] = event.target;
+    handleUpdateSchemaField(fieldId, { template: value });
+
+    setActiveSuggestionsFieldId((current) => {
+      if (selectionStart === null) {
+        return current === fieldId ? null : current;
+      }
+
+      if (selectionStart < 2 && current === fieldId) {
+        return null;
+      }
+
+      if (selectionStart >= 2) {
+        const lastTwo = value.slice(selectionStart - 2, selectionStart);
+        if (lastTwo === "{{") {
+          return fieldId;
+        }
+
+        if (current === fieldId) {
+          const beforeCaret = value.slice(0, selectionStart);
+          if (beforeCaret.trimEnd().endsWith("}}")) {
+            return null;
+          }
+        }
+      }
+
+      if (current === fieldId && !value.includes("{{")) {
+        return null;
+      }
+
+      return current;
+    });
+  };
+
+  const handleTemplateKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Escape") {
+      setActiveSuggestionsFieldId(null);
+    }
+  };
+
+  const handleInsertTemplateVariable = (fieldId: string, path: string) => {
+    const textarea = templateFieldRefs.current[fieldId];
+    if (!textarea) {
+      return;
+    }
+
+    const { selectionStart, selectionEnd, value } = textarea;
+    const start = selectionStart ?? value.length;
+    const end = selectionEnd ?? start;
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const trimmedBefore = before.trimEnd();
+    const hasOpenBraces = trimmedBefore.endsWith("{{");
+    const needsLeadingSpace = hasOpenBraces && before.slice(trimmedBefore.length).length === 0;
+    const insertion = hasOpenBraces
+      ? `${needsLeadingSpace ? " " : ""}${path} }}`
+      : `{{ ${path} }}`;
+    const nextValue = `${before}${insertion}${after}`;
+
+    handleUpdateSchemaField(fieldId, { template: nextValue });
+    setActiveSuggestionsFieldId(null);
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const caretPosition = before.length + insertion.length;
+      textarea.setSelectionRange(caretPosition, caretPosition);
+    });
+  };
+
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open);
+    if (open) {
+      setActiveTab("settings");
+      setActiveSuggestionsFieldId(null);
+      templateFieldRefs.current = {};
+      return;
+    }
+
+    vectorizeMutation.reset();
+    setCollectionMode(availableCollections.length > 0 ? "existing" : "new");
+    setSelectedCollectionName(availableCollections[0]?.name ?? "");
+    setNewCollectionName(DEFAULT_NEW_COLLECTION_NAME);
+    resetSchemaBuilder();
+    setActiveSuggestionsFieldId(null);
+    setActiveTab("settings");
+    templateFieldRefs.current = {};
+  };
+
+  const handleConfirm = () => {
+    if (!selectedProviderId) {
+      toast({
+        title: "Выберите сервис",
+        description: "Чтобы отправить документ, выберите активный сервис эмбеддингов.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (collectionMode === "existing") {
+      if (!selectedCollectionName) {
+        toast({
+          title: "Выберите коллекцию",
+          description: "Укажите коллекцию Qdrant для загрузки документа.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      vectorizeMutation.mutate({
+        providerId: selectedProviderId,
+        collectionName: selectedCollectionName,
+        createCollection: false,
+      });
+      return;
+    }
+
+    const trimmedName = newCollectionName.trim();
+    if (!trimmedName) {
+      toast({
+        title: "Укажите название коллекции",
+        description: "Название новой коллекции не может быть пустым.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const normalizedName = sanitizeCollectionName(trimmedName).slice(0, 60);
+    if (!normalizedName) {
+      toast({
+        title: "Некорректное название",
+        description: "Используйте латиницу, цифры, символы подчёркивания или дефисы.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (normalizedName !== trimmedName) {
+      setNewCollectionName(normalizedName);
+    }
+
+    if (!schemaPayload) {
+      toast({
+        title: "Добавьте поля",
+        description: "Схема новой коллекции должна содержать хотя бы одно поле.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    vectorizeMutation.mutate({
+      providerId: selectedProviderId,
+      collectionName: normalizedName,
+      createCollection: true,
+      schema: schemaPayload,
+    });
+  };
+
+  const renderDialogHeader = () => (
+    <div className="px-6 pb-4 pt-6">
+      <DialogHeader className="items-start space-y-3">
+        <DialogTitle className="flex w-full flex-col gap-1 text-left">
+          <span className="text-lg font-semibold">Векторизация документа</span>
+          <span className="text-sm text-muted-foreground">
+            Подготовьте документ базы знаний для загрузки в Qdrant. Перед отправкой можно выбрать коллекцию и
+            настроить схему полей.
+          </span>
+        </DialogTitle>
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <FileText className="h-3.5 w-3.5" />
+            {document.title || "Без названия"}
+          </span>
+          <span className="flex items-center gap-1">
+            <Hash className="h-3.5 w-3.5" />
+            {formatNumber(documentCharCount)} символов
+          </span>
+          <span className="flex items-center gap-1">
+            <Gauge className="h-3.5 w-3.5" />
+            {tokensHint}
+          </span>
+        </div>
+        {base && (
+          <div className="text-xs text-muted-foreground">
+            Библиотека: <span className="font-medium">{base.name}</span>
+          </div>
+        )}
+      </DialogHeader>
+    </div>
+  );
+
+  const renderSchemaField = (field: CollectionSchemaField, index: number) => {
+    const isEmbeddingField = embeddingFieldId === field.id;
+    const suggestionsVisible = activeSuggestionsFieldId === field.id;
+
+    return (
+      <div key={field.id} className="space-y-3 rounded-lg border p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="flex-1">
+              <label className="text-xs font-medium">Название поля</label>
+              <Input
+                value={field.name}
+                placeholder={`Поле ${index + 1}`}
+                onChange={(event) => handleUpdateSchemaField(field.id, { name: event.target.value })}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium">Тип</label>
+              <Select
+                value={field.type}
+                onValueChange={(value) => handleUpdateSchemaField(field.id, { type: value as CollectionSchemaFieldInput["type"] })}
+              >
+                <SelectTrigger className="w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="string">Строка</SelectItem>
+                  <SelectItem value="double">Число</SelectItem>
+                  <SelectItem value="object">Объект</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2 pt-5 sm:pt-0">
+              <Checkbox
+                id={`schema-field-array-${field.id}`}
+                checked={field.isArray}
+                onCheckedChange={(checked) => handleUpdateSchemaField(field.id, { isArray: Boolean(checked) })}
+              />
+              <label htmlFor={`schema-field-array-${field.id}`} className="text-xs">
+                Массив
+              </label>
+            </div>
+            <div className="flex items-center gap-2 pt-5 sm:pt-0">
+              <Switch
+                id={`schema-field-embedding-${field.id}`}
+                checked={isEmbeddingField}
+                onCheckedChange={(checked) => handleSelectEmbeddingField(checked ? field.id : null)}
+              />
+              <label htmlFor={`schema-field-embedding-${field.id}`} className="text-xs">
+                Поле вектора
+              </label>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => handleRemoveSchemaField(field.id)}
+            disabled={schemaFields.length === 1}
+          >
+            Удалить
+          </Button>
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-medium">Liquid шаблон</label>
+          <Textarea
+            value={field.template}
+            rows={4}
+            onChange={(event) => handleTemplateInputChange(field.id, event)}
+            onKeyDown={handleTemplateKeyDown}
+            placeholder="Например, {{ document.text }}"
+          />
+          {suggestionsVisible && limitedTemplateVariableSuggestions.length > 0 && (
+            <div className="rounded-md border bg-muted/60 p-3 text-xs">
+              <div className="mb-2 font-medium">Подставьте значение:</div>
+              <div className="flex flex-wrap gap-2">
+                {limitedTemplateVariableSuggestions.map((path) => (
+                  <Button
+                    key={path}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleInsertTemplateVariable(field.id, path)}
+                    className="text-xs"
+                  >
+                    {path}
+                  </Button>
+                ))}
+              </div>
+              {hasMoreTemplateSuggestions && (
+                <div className="mt-2 text-muted-foreground">
+                  Показаны первые {TEMPLATE_SUGGESTION_LIMIT} вариантов.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSchemaBuilder = () => (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="space-y-1">
+          <h4 className="text-sm font-semibold">Схема коллекции</h4>
+          <p className="text-xs text-muted-foreground">
+            Настройте поля, которые будут сохраняться в коллекции. Поле вектора должно содержать текст документа.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={resetSchemaBuilder}>
+            Сбросить
+          </Button>
+          <Button type="button" size="sm" onClick={handleAddSchemaField}>
+            Добавить поле
+          </Button>
+        </div>
+      </div>
+      <div className="space-y-3">
+        {schemaFields.map((field, index) => renderSchemaField(field, index))}
+      </div>
+      <div className="rounded-lg border bg-muted/50 p-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-muted-foreground">Поле для вектора:</span>
+          {embeddingFieldName ? (
+            <span className="font-medium">{embeddingFieldName}</span>
+          ) : (
+            <span className="text-destructive">не выбрано</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderCollectionsSection = () => (
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <h4 className="text-sm font-semibold">Коллекция Qdrant</h4>
+        <p className="text-xs text-muted-foreground">
+          Выберите существующую коллекцию или создайте новую с учётом схемы полей.
+        </p>
+      </div>
+      <div className="flex flex-col gap-3 rounded-lg border p-4">
+        <div className="flex items-center justify-between gap-2">
+          <label className="text-sm font-medium">Коллекция</label>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Режим:</span>
+            <Select value={collectionMode} onValueChange={(value) => setCollectionMode(value as "existing" | "new") }>
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="existing">Существующая</SelectItem>
+                <SelectItem value="new">Новая</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {collectionMode === "existing" ? (
+          <div className="space-y-2">
+            <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Выберите коллекцию" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableCollections.map((collection) => (
+                  <SelectItem key={collection.name} value={collection.name}>
+                    {collection.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {filteredOutCollectionsCount > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Скрыто {filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций из-за несовпадения размера вектора.
+              </p>
+            )}
+            {availableCollections.length === 0 && !isCollectionsLoading && (
+              <p className="text-xs text-muted-foreground">
+                Для выбранного сервиса нет подходящих коллекций. Создайте новую.
+              </p>
+            )}
+            {collectionsErrorMessage && (
+              <p className="text-xs text-destructive">{collectionsErrorMessage}</p>
+            )}
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium" htmlFor="knowledge-new-collection-name">
+                Название коллекции
+              </label>
+              <Input
+                id="knowledge-new-collection-name"
+                value={newCollectionName}
+                onChange={(event) => setNewCollectionName(event.target.value)}
+                placeholder="Например, knowledge-base"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium">Полей в схеме</label>
+              <div className="rounded-md border bg-muted/50 px-3 py-2 text-sm">
+                {schemaFields.length}
+              </div>
+            </div>
+            <div className="sm:col-span-2">{renderSchemaBuilder()}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderProviderSection = () => (
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <h4 className="text-sm font-semibold">Сервис эмбеддингов</h4>
+        <p className="text-xs text-muted-foreground">
+          Активные сервисы преобразуют текст документа в вектор нужного размера.
+        </p>
+      </div>
+      <Select value={selectedProviderId} onValueChange={setSelectedProviderId}>
+        <SelectTrigger className="w-full sm:w-80">
+          <SelectValue placeholder="Выберите сервис" />
+        </SelectTrigger>
+        <SelectContent>
+          {providers.map((provider) => (
+            <SelectItem key={provider.id} value={provider.id}>
+              {provider.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {selectedProvider && (
+        <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-3">
+            <span>Модель: {selectedProvider.model}</span>
+            <span>
+              Размер вектора: {providerVectorSize ? providerVectorSize.toLocaleString("ru-RU") : "недоступно"}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderSettingsTab = () => (
+    <div className="space-y-6 px-6 pb-6">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        {renderProviderSection()}
+        {renderCollectionsSection()}
+      </div>
+      {collectionMode === "existing" && schemaFields.length > 0 && (
+        <div className="rounded-lg border bg-muted/30 p-4 text-xs text-muted-foreground">
+          <p>
+            Схема коллекции не изменяется автоматически. При необходимости создайте новую коллекцию с нужной структурой.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderContextTab = () => (
+    <div className="space-y-6 px-6 pb-6">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="space-y-2">
+          <h4 className="text-sm font-semibold">JSON документа</h4>
+          <p className="text-xs text-muted-foreground">
+            Контекст, который можно использовать в Liquid шаблонах. Значения доступны для формирования payload.
+          </p>
+          <ScrollArea className="h-64 rounded-lg border bg-muted/30 p-4">
+            <pre className="text-xs">{liquidContextJson || "{}"}</pre>
+          </ScrollArea>
+        </div>
+        <div className="space-y-2">
+          <h4 className="text-sm font-semibold">Предпросмотр схемы</h4>
+          <p className="text-xs text-muted-foreground">
+            Проверяйте, какие значения будут записаны в коллекцию по текущей схеме.
+          </p>
+          <ScrollArea className="h-64 rounded-lg border bg-muted/30 p-4">
+            <pre className="text-xs">{schemaPreviewJson || "{}"}</pre>
+          </ScrollArea>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderDialogBody = () => (
+    <div className="flex-1">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "settings" | "context")}>
+        <TabsList className="mx-6 mt-2">
+          <TabsTrigger value="settings">Настройки</TabsTrigger>
+          <TabsTrigger value="context" disabled={!liquidContext}>
+            Контекст
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="settings">{renderSettingsTab()}</TabsContent>
+        <TabsContent value="context">{renderContextTab()}</TabsContent>
+      </Tabs>
+    </div>
+  );
+
+  const renderDialogFooter = () => (
+    <DialogFooter className="gap-2 border-t px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="text-xs text-muted-foreground">
+        {collectionMode === "new"
+          ? "Для новой коллекции укажите схему и название."
+          : "Документ будет отправлен в выбранную коллекцию без изменения схемы."}
+      </div>
+      <Button onClick={handleConfirm} disabled={confirmDisabled}>
+        {vectorizeMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+        Отправить
+      </Button>
+    </DialogFooter>
+  );
+
+  return (
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" disabled={disabled} className="whitespace-nowrap">
+          <Sparkles className="mr-1 h-4 w-4" />
+          Векторизация
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-4xl lg:max-w-5xl gap-0 p-0">
+        <div className="flex max-h-[inherit] min-h-0 flex-col">
+          {renderDialogHeader()}
+          {renderDialogBody()}
+          {renderDialogFooter()}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export default VectorizeKnowledgeDocumentDialog;
