@@ -165,7 +165,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
           badgeVariant: "secondary",
         },
         {
-          title: "Загрузка знаний",
+          title: "База знаний",
           url: "/knowledge",
           icon: Brain,
         },
@@ -240,7 +240,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
   return (
     <Sidebar collapsible="icon">
       <SidebarRail />
-      <SidebarHeader className={cn("border-b p-4", isCollapsed && "items-center p-3")}> 
+      <SidebarHeader className={cn("border-b px-3 py-2", isCollapsed && "items-center p-2.5")}> 
         {isCollapsed ? (
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
             ПД
@@ -264,11 +264,13 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
         )}
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="px-1 py-2">
         {sections.map((section) => (
-          <SidebarGroup key={section.label}>
-            <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
-            <SidebarGroupContent>
+          <SidebarGroup key={section.label} className="px-2 py-1">
+            <SidebarGroupLabel className="h-7 text-[11px] uppercase tracking-wide text-muted-foreground">
+              {section.label}
+            </SidebarGroupLabel>
+            <SidebarGroupContent className="space-y-1">
               <SidebarMenu>
                 {section.items.map((item) => (
                   <SidebarMenuItem key={item.title}>
@@ -280,7 +282,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
           </SidebarGroup>
         ))}
       </SidebarContent>
-      <SidebarFooter className="border-t gap-3">
+      <SidebarFooter className="border-t gap-2 px-3 py-3">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton

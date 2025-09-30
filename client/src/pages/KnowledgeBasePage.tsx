@@ -834,94 +834,94 @@ export default function KnowledgeBasePage() {
 
   return (
     <>
-      <div className="flex h-full flex-col gap-6 p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex h-full flex-col gap-4 px-4 py-4 lg:px-5 lg:py-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">
-              {selectedBase ? selectedBase.name : "Загрузка знаний"}
+              {selectedBase ? selectedBase.name : "База знаний"}
             </h1>
             <p className="text-muted-foreground">
               {selectedBase
                 ? selectedBase.description ||
-                  "Управляйте структурой базы знаний и редактируйте документы."
-                : "Выберите базу знаний или создайте новую, чтобы начать работу с документами."}
+                  "Управляйте структурой библиотеки и редактируйте документы."
+                : "Выберите библиотеку или создайте новую, чтобы начать работу с документами."}
             </p>
           </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {selectedBase && (
-            <Button variant="outline" onClick={handleBackToList}>
-              <ChevronLeft className="mr-2 h-4 w-4" />
-              Список баз
-            </Button>
-          )}
-          <Dialog open={isCreateBaseOpen} onOpenChange={setIsCreateBaseOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <PlusCircle className="mr-2 h-4 w-4" />
-                Создать базу знаний
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedBase && (
+              <Button variant="outline" onClick={handleBackToList}>
+                <ChevronLeft className="mr-2 h-4 w-4" />
+                Список библиотек
               </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Новая база знаний</DialogTitle>
-                <DialogDescription>
-                  Укажите название и описание, чтобы начать структурирование знаний.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-2">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium" htmlFor="knowledge-name">
-                    Название
-                  </label>
-                  <Input
-                    id="knowledge-name"
-                    value={newBaseName}
-                    onChange={(event) => setNewBaseName(event.target.value)}
-                    placeholder="Например, База по продукту"
-                  />
+            )}
+            <Dialog open={isCreateBaseOpen} onOpenChange={setIsCreateBaseOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <PlusCircle className="mr-2 h-4 w-4" />
+                  Создать библиотеку
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Новая библиотека</DialogTitle>
+                  <DialogDescription>
+                    Укажите название и описание, чтобы начать структурирование знаний.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="knowledge-name">
+                      Название
+                    </label>
+                    <Input
+                      id="knowledge-name"
+                      value={newBaseName}
+                      onChange={(event) => setNewBaseName(event.target.value)}
+                      placeholder="Например, Библиотека по продукту"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="knowledge-description">
+                      Описание
+                    </label>
+                    <Textarea
+                      id="knowledge-description"
+                      value={newBaseDescription}
+                      onChange={(event) => setNewBaseDescription(event.target.value)}
+                      placeholder="Кратко опишите назначение библиотеки"
+                      rows={4}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium" htmlFor="knowledge-description">
-                    Описание
-                  </label>
-                  <Textarea
-                    id="knowledge-description"
-                    value={newBaseDescription}
-                    onChange={(event) => setNewBaseDescription(event.target.value)}
-                    placeholder="Кратко опишите назначение базы"
-                    rows={4}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button onClick={handleCreateKnowledgeBase}>Создать</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DialogFooter>
+                  <Button onClick={handleCreateKnowledgeBase}>Создать</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
-      </div>
 
       {!selectedBase ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-6">
           <Card className="w-full max-w-4xl">
-            <CardHeader>
+            <CardHeader className="space-y-3 px-5 py-4">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Library className="h-5 w-5" />
-                Выберите базу знаний
+                Выберите библиотеку
               </CardTitle>
               <CardDescription>
-                Работайте с документами, выбрав одну из существующих баз или создайте новую.
+                Работайте с документами, выбрав одну из существующих библиотек или создайте новую.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-5 pb-5">
               {knowledgeBases.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-3 py-10 text-center text-sm text-muted-foreground">
+                <div className="flex flex-col items-center justify-center gap-3 py-8 text-center text-sm text-muted-foreground">
                   <Library className="h-10 w-10" />
-                  <p>Пока что у вас нет баз знаний. Создайте первую, чтобы начать работу с документами.</p>
+                  <p>Пока что у вас нет библиотек. Создайте первую, чтобы начать работу с документами.</p>
                 </div>
               ) : (
-                <ScrollArea className="max-h-[28rem] pr-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
+                <ScrollArea className="max-h-[26rem] pr-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     {knowledgeBases.map((base) => {
                       const documentCount = Object.keys(base.documents).length;
 
@@ -933,7 +933,7 @@ export default function KnowledgeBasePage() {
                             setSelectedBaseId(base.id);
                             setSelectedDocument(null);
                           }}
-                          className="flex h-full flex-col rounded-lg border bg-card p-4 text-left transition hover:border-primary/70 hover:shadow-sm"
+                          className="flex h-full flex-col rounded-lg border bg-card p-3.5 text-left transition hover:border-primary/70 hover:shadow-sm"
                         >
                           <h3 className="text-base font-semibold">{base.name}</h3>
                           {base.description && (
@@ -954,10 +954,10 @@ export default function KnowledgeBasePage() {
           </Card>
         </div>
       ) : (
-        <div className="flex flex-1 flex-col gap-6 lg:flex-row">
+        <div className="flex flex-1 flex-col gap-4 lg:flex-row">
           <Card className="w-full lg:w-96">
-            <CardHeader>
-              <CardTitle className="text-lg">Структура базы</CardTitle>
+            <CardHeader className="space-y-3 px-5 py-4">
+              <CardTitle className="text-lg">Структура библиотеки</CardTitle>
               <CardDescription>
                 Управляйте иерархией документов с помощью древовидной навигации.
               </CardDescription>
@@ -975,9 +975,9 @@ export default function KnowledgeBasePage() {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-5 pb-5">
               {selectedBase.structure.length > 0 ? (
-                <ScrollArea className="h-[28rem] pr-4">
+                <ScrollArea className="h-[26rem] pr-3">
                   <TreeView
                     nodes={selectedBase.structure}
                     onAddFolder={(parentId) => openNodeDialog("folder", parentId)}
@@ -989,23 +989,23 @@ export default function KnowledgeBasePage() {
                   />
                 </ScrollArea>
               ) : (
-                <div className="flex flex-col items-center justify-center gap-3 py-10 text-center text-sm text-muted-foreground">
+                <div className="flex flex-col items-center justify-center gap-3 py-8 text-center text-sm text-muted-foreground">
                   <Library className="h-10 w-10" />
-                  <p>Добавьте первый раздел или документ, чтобы построить дерево страницы.</p>
+                  <p>Добавьте первый раздел или документ, чтобы построить дерево библиотеки.</p>
                 </div>
               )}
             </CardContent>
           </Card>
 
           <Card className="flex-1">
-            <CardHeader>
+            <CardHeader className="space-y-3 px-5 py-4">
               <CardTitle className="text-lg">Документ</CardTitle>
               <CardDescription>
                 Создавайте и редактируйте материалы через визуальный редактор с заголовком внутри документа.
               </CardDescription>
             </CardHeader>
             <Separator />
-            <CardContent className="h-full">
+            <CardContent className="h-full px-5 pb-5">
               {currentDocument ? (
                 <div className="flex h-full flex-col gap-4">
                   <h2 className="text-xl font-semibold">
@@ -1041,11 +1041,11 @@ export default function KnowledgeBasePage() {
                     </div>
                   </div>
 
-                  <div className="min-h-[20rem] flex-1 rounded-lg border bg-muted/30 p-4">
+                  <div className="min-h-[20rem] flex-1 rounded-lg border bg-muted/30 p-3.5">
                     {isEditing ? (
                       <DocumentEditor value={draftContent} onChange={setDraftContent} />
                     ) : draftContent ? (
-                      <ScrollArea className="h-full pr-4">
+                      <ScrollArea className="h-full pr-3">
                         <div
                           className="prose prose-sm max-w-none dark:prose-invert"
                           dangerouslySetInnerHTML={{
@@ -1063,7 +1063,7 @@ export default function KnowledgeBasePage() {
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
                   <SquarePen className="h-10 w-10" />
-                  <p>Выберите документ в структуре базы знаний или создайте новый.</p>
+                  <p>Выберите документ в структуре библиотеки или создайте новый.</p>
                 </div>
               )}
             </CardContent>
