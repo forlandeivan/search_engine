@@ -822,36 +822,35 @@ export function VectorizeKnowledgeDocumentDialog({
   };
 
   const renderDialogHeader = () => (
-    <div className="px-6 pb-4 pt-6">
-      <DialogHeader className="items-start space-y-3">
-        <DialogTitle className="flex w-full flex-col gap-1 text-left">
-          <span className="text-lg font-semibold">Векторизация документа</span>
-          <span className="text-sm text-muted-foreground">
-            Подготовьте документ базы знаний для загрузки в Qdrant. Перед отправкой можно выбрать коллекцию и
-            настроить схему полей.
-          </span>
-        </DialogTitle>
-        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <FileText className="h-3.5 w-3.5" />
-            {document.title || "Без названия"}
-          </span>
-          <span className="flex items-center gap-1">
-            <Hash className="h-3.5 w-3.5" />
-            {formatNumber(documentCharCount)} символов
-          </span>
-          <span className="flex items-center gap-1">
-            <Gauge className="h-3.5 w-3.5" />
-            {tokensHint}
-          </span>
-        </div>
-        {base && (
-          <div className="text-xs text-muted-foreground">
-            Библиотека: <span className="font-medium">{base.name}</span>
+    <DialogHeader className="space-y-2 border-b border-border/60 bg-muted/40 px-6 py-4">
+      <DialogTitle className="text-xl font-semibold">Векторизация документа</DialogTitle>
+      <p className="text-sm text-muted-foreground">
+        Подготовим документ базы знаний к загрузке в Qdrant. Выберите сервис эмбеддингов и подходящую коллекцию
+        либо создайте новую с нужной схемой.
+      </p>
+      <div className="grid gap-3 pt-2 sm:grid-cols-3">
+        <div className="rounded-md border bg-background p-3">
+          <div className="flex items-center gap-2 text-xs uppercase text-muted-foreground">
+            <FileText className="h-3.5 w-3.5" /> Документ
           </div>
-        )}
-      </DialogHeader>
-    </div>
+          <p className="mt-1 line-clamp-2 text-sm font-semibold leading-snug">
+            {document.title?.trim() ? document.title : "Без названия"}
+          </p>
+        </div>
+        <div className="rounded-md border bg-background p-3">
+          <div className="flex items-center gap-2 text-xs uppercase text-muted-foreground">
+            <Hash className="h-3.5 w-3.5" /> Символов
+          </div>
+          <p className="mt-1 text-lg font-semibold">{formatNumber(documentCharCount)}</p>
+        </div>
+        <div className="rounded-md border bg-background p-3">
+          <div className="flex items-center gap-2 text-xs uppercase text-muted-foreground">
+            <Gauge className="h-3.5 w-3.5" /> Оценка токенов
+          </div>
+          <p className="mt-1 text-lg font-semibold">{tokensHint}</p>
+        </div>
+      </div>
+    </DialogHeader>
   );
 
   const renderSchemaField = (field: CollectionSchemaField, index: number) => {
@@ -990,80 +989,104 @@ export function VectorizeKnowledgeDocumentDialog({
   );
 
   const renderCollectionsSection = () => (
+    <div className="space-y-3">
+      <p className="text-xs uppercase text-muted-foreground">Коллекция Qdrant</p>
+      <Tabs value={collectionMode} onValueChange={(value) => setCollectionMode(value as "existing" | "new")}>
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger
+            value="existing"
+            disabled={
+              availableCollections.length === 0 && !isCollectionsLoading && !collectionsErrorMessage
+            }
+          >
+            Существующая
+          </TabsTrigger>
+          <TabsTrigger value="new">Новая</TabsTrigger>
+        </TabsList>
+        <TabsContent value="existing" className="mt-4 space-y-2">
+          <Select
+            value={selectedCollectionName}
+            onValueChange={setSelectedCollectionName}
+            disabled={availableCollections.length === 0}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Выберите коллекцию" />
+            </SelectTrigger>
+            <SelectContent>
+              {availableCollections.map((collection) => (
+                <SelectItem key={collection.name} value={collection.name}>
+                  {collection.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {filteredOutCollectionsCount > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Скрыто {filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций из-за несовпадения размера вектора.
+            </p>
+          )}
+          {availableCollections.length === 0 && !isCollectionsLoading && (
+            <p className="text-xs text-muted-foreground">
+              Для выбранного сервиса нет подходящих коллекций. Создайте новую.
+            </p>
+          )}
+          {collectionsErrorMessage && (
+            <p className="text-xs text-destructive">{collectionsErrorMessage}</p>
+          )}
+        </TabsContent>
+        <TabsContent value="new" className="mt-4 space-y-3">
+          <Input
+            id="knowledge-new-collection-name"
+            value={newCollectionName}
+            onChange={(event) => setNewCollectionName(event.target.value)}
+            placeholder="Название новой коллекции"
+            maxLength={60}
+          />
+          <p className="text-xs text-muted-foreground">
+            Допустимы латинские буквы, цифры, символы подчёркивания и дефисы. Максимум 60 символов.
+          </p>
+          {renderSchemaBuilder()}
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+
+  const renderInfoSection = () => (
     <div className="space-y-4">
-      <div className="space-y-1">
-        <h4 className="text-sm font-semibold">Коллекция Qdrant</h4>
-        <p className="text-xs text-muted-foreground">
-          Выберите существующую коллекцию или создайте новую с учётом схемы полей.
-        </p>
-      </div>
-      <div className="flex flex-col gap-3 rounded-lg border p-4">
-        <div className="flex items-center justify-between gap-2">
-          <label className="text-sm font-medium">Коллекция</label>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span>Режим:</span>
-            <Select value={collectionMode} onValueChange={(value) => setCollectionMode(value as "existing" | "new") }>
-              <SelectTrigger className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="existing">Существующая</SelectItem>
-                <SelectItem value="new">Новая</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        {collectionMode === "existing" ? (
-          <div className="space-y-2">
-            <Select value={selectedCollectionName} onValueChange={setSelectedCollectionName}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Выберите коллекцию" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableCollections.map((collection) => (
-                  <SelectItem key={collection.name} value={collection.name}>
-                    {collection.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {filteredOutCollectionsCount > 0 && (
-              <p className="text-xs text-muted-foreground">
-                Скрыто {filteredOutCollectionsCount.toLocaleString("ru-RU")} коллекций из-за несовпадения размера вектора.
-              </p>
-            )}
-            {availableCollections.length === 0 && !isCollectionsLoading && (
-              <p className="text-xs text-muted-foreground">
-                Для выбранного сервиса нет подходящих коллекций. Создайте новую.
-              </p>
-            )}
-            {collectionsErrorMessage && (
-              <p className="text-xs text-destructive">{collectionsErrorMessage}</p>
-            )}
-          </div>
+      <div className="space-y-2">
+        <p className="text-xs uppercase text-muted-foreground">Состояние коллекций</p>
+        {isCollectionsLoading ? (
+          <p className="text-sm text-muted-foreground">Загружаем список коллекций…</p>
+        ) : collectionsErrorMessage ? (
+          <p className="text-sm text-destructive">Не удалось загрузить коллекции: {collectionsErrorMessage}</p>
+        ) : collections.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Коллекции отсутствуют. Создайте новую коллекцию, чтобы отправить документ.
+          </p>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <label className="text-xs font-medium" htmlFor="knowledge-new-collection-name">
-                Название коллекции
-              </label>
-              <Input
-                id="knowledge-new-collection-name"
-                value={newCollectionName}
-                onChange={(event) => setNewCollectionName(event.target.value)}
-                placeholder="Например, knowledge-base"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium">Полей в схеме</label>
-              <div className="rounded-md border bg-muted/50 px-3 py-2 text-sm">
-                {schemaFields.length}
-              </div>
-            </div>
-            <div className="sm:col-span-2">{renderSchemaBuilder()}</div>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            Доступно коллекций: {collections.length.toLocaleString("ru-RU")}
+          </p>
         )}
       </div>
+      <div className="space-y-2">
+        <p className="text-xs uppercase text-muted-foreground">Документ</p>
+        <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground">{document.title?.trim() ? document.title : "Без названия"}</p>
+          <p className="break-all">{documentPath}</p>
+          <p>Символов: {formatNumber(documentCharCount)}</p>
+          <p>Оценка токенов: {tokensHint}</p>
+        </div>
+      </div>
+      {base && (
+        <div className="space-y-2">
+          <p className="text-xs uppercase text-muted-foreground">База знаний</p>
+          <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">{base.name}</p>
+            {base.description && <p className="mt-1 text-xs leading-relaxed">{base.description}</p>}
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -1102,17 +1125,13 @@ export function VectorizeKnowledgeDocumentDialog({
 
   const renderSettingsTab = () => (
     <div className="space-y-6 px-6 pb-6">
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        {renderProviderSection()}
-        {renderCollectionsSection()}
-      </div>
-      {collectionMode === "existing" && schemaFields.length > 0 && (
-        <div className="rounded-lg border bg-muted/30 p-4 text-xs text-muted-foreground">
-          <p>
-            Схема коллекции не изменяется автоматически. При необходимости создайте новую коллекцию с нужной структурой.
-          </p>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="space-y-6">
+          {renderProviderSection()}
+          {renderCollectionsSection()}
         </div>
-      )}
+        {renderInfoSection()}
+      </div>
     </div>
   );
 
