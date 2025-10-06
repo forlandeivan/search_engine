@@ -7,6 +7,7 @@ import fetch, {
   type RequestInit as FetchRequestInit,
 } from "node-fetch";
 import { createHash, randomUUID, randomBytes } from "crypto";
+import { performance } from "perf_hooks";
 import { Agent as HttpsAgent } from "https";
 import { storage } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
@@ -51,6 +52,27 @@ function getErrorDetails(error: unknown): string {
   }
 
   return String(error);
+}
+
+function maskSensitiveInfoInUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.password) {
+      parsed.password = "***";
+    }
+    return parsed.toString();
+  } catch {
+    return rawUrl.replace(/:[^:@]*@/, ":***@");
+  }
+}
+
+function getNodeErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const candidate = error as { code?: unknown };
+  return typeof candidate.code === "string" ? candidate.code : undefined;
 }
 
 function parseVectorSize(value: unknown): number | null {
@@ -3917,6 +3939,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+
+  // Health check endpoint for Qdrant diagnostics
+  app.get("/api/health/vector", async (_req, res) => {
+    const qdrantUrl = process.env.QDRANT_URL || null;
+    const maskedUrl = qdrantUrl ? maskSensitiveInfoInUrl(qdrantUrl) : null;
+    const apiKeyConfigured = Boolean(process.env.QDRANT_API_KEY && process.env.QDRANT_API_KEY.trim());
+    const basePayload = {
+      status: "unknown" as const,
+      configured: Boolean(qdrantUrl),
+      connected: false,
+      url: maskedUrl,
+      apiKeyConfigured,
+      collectionsCount: null as number | null,
+      latencyMs: null as number | null,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (!qdrantUrl) {
+      console.warn("[vector-health] QDRANT_URL не задан — Qdrant считается не настроенным");
+      return res.json({
+        ...basePayload,
+        status: "not_configured" as const,
+        error: "Переменная окружения QDRANT_URL не задана",
+      });
+    }
+
+    try {
+      const startedAt = performance.now();
+      const client = getQdrantClient();
+      const collectionsResponse = await client.getCollections();
+      const latencyMs = Math.round(performance.now() - startedAt);
+      const collections =
+        collectionsResponse && typeof collectionsResponse === "object"
+          ? (collectionsResponse as { collections?: unknown }).collections
+          : undefined;
+      const collectionsCount = Array.isArray(collections) ? collections.length : null;
+
+      return res.json({
+        ...basePayload,
+        status: "ok" as const,
+        connected: true,
+        latencyMs,
+        collectionsCount,
+      });
+    } catch (error) {
+      const qdrantError = extractQdrantApiError(error);
+      const errorMessage = qdrantError?.message ?? getErrorDetails(error);
+      const errorDetails = qdrantError?.details ?? null;
+      const errorName = error instanceof Error ? error.name : undefined;
+      const errorCode = getNodeErrorCode(error);
+
+      console.error("[vector-health] Ошибка проверки подключения к Qdrant:", error, {
+        url: maskedUrl,
+        errorName,
+        errorCode,
+      });
+
+      return res.json({
+        ...basePayload,
+        status: "error" as const,
+        error: errorMessage,
+        errorDetails,
+        errorName,
+        errorCode,
+      });
+    }
+  });
 
   // Health check endpoint for database diagnostics
   app.get("/api/health/db", async (req, res) => {
