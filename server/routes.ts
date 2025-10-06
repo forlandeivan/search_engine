@@ -2190,11 +2190,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
         console.error("Ошибка Qdrant при получении списка коллекций:", error);
-        return res.status(qdrantError.status).json({
+
+        const responseBody: Record<string, unknown> = {
           error: "Не удалось загрузить список коллекций",
           details: qdrantError.message,
-          qdrantDetails: qdrantError.details,
-        });
+        };
+
+        if (typeof qdrantError.details === "object" && qdrantError.details !== null) {
+          responseBody.qdrantDetails = qdrantError.details;
+        } else if (typeof qdrantError.details === "string") {
+          const trimmed = qdrantError.details.trim();
+
+          if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+              responseBody.qdrantDetails = JSON.parse(trimmed);
+            } catch {
+              // Если строка похожа на JSON, но парсинг не удался, просто игнорируем её
+            }
+          }
+        }
+
+        return res.status(qdrantError.status).json(responseBody);
       }
 
       const details = getErrorDetails(error);
