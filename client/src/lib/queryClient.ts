@@ -1,10 +1,43 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 async function throwIfResNotOk(res: Response) {
-  if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+  if (res.ok) {
+    return;
   }
+
+  const rawText = await res.text();
+  const text = rawText.trim();
+  let errorMessage = text || res.statusText;
+
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+
+      if (parsed && typeof parsed === "object") {
+        const asRecord = parsed as Record<string, unknown>;
+        const messageParts: string[] = [];
+
+        if (typeof asRecord.error === "string" && asRecord.error.trim().length > 0) {
+          messageParts.push(asRecord.error.trim());
+        }
+
+        if (typeof asRecord.details === "string" && asRecord.details.trim().length > 0) {
+          messageParts.push(asRecord.details.trim());
+        }
+
+        if (messageParts.length > 0) {
+          errorMessage = messageParts.join(" — ");
+        }
+      }
+    } catch {
+      // Игнорируем ошибки парсинга и используем исходный текст
+    }
+  } else if (text.startsWith("<")) {
+    // HTML-ответы от прокси не информативны, используем статус
+    errorMessage = res.statusText || "Неизвестная ошибка";
+  }
+
+  throw new Error(`${res.status}: ${errorMessage}`);
 }
 
 export async function apiRequest(
