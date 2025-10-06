@@ -2121,10 +2121,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Vector search endpoints
+  const qdrantCollectionsResponseSchema = z
+    .object({
+      collections: z
+        .array(
+          z.object({
+            name: z.string().min(1),
+          }),
+        )
+        .optional(),
+    })
+    .strict();
+
   app.get("/api/vector/collections", async (_req, res) => {
     try {
       const client = getQdrantClient();
-      const { collections } = await client.getCollections();
+      const collectionsResponse = await client.getCollections();
+      const parsedCollections = qdrantCollectionsResponseSchema.safeParse(collectionsResponse);
+
+      if (!parsedCollections.success) {
+        console.warn(
+          "Неожиданный формат ответа Qdrant при запросе списка коллекций:",
+          parsedCollections.error.flatten(),
+        );
+      }
+
+      const collections = parsedCollections.success
+        ? parsedCollections.data.collections ?? []
+        : [];
 
       const detailedCollections = await Promise.all(
         collections.map(async ({ name }) => {
@@ -2161,6 +2185,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           error: "Qdrant не настроен",
           details: error.message,
         });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error("Ошибка Qdrant при получении списка коллекций:", error);
+
+        const responseBody: Record<string, unknown> = {
+          error: "Не удалось загрузить список коллекций",
+          details: qdrantError.message,
+        };
+
+        if (typeof qdrantError.details === "object" && qdrantError.details !== null) {
+          responseBody.qdrantDetails = qdrantError.details;
+        } else if (typeof qdrantError.details === "string") {
+          try {
+            responseBody.qdrantDetails = JSON.parse(qdrantError.details);
+          } catch {
+            // Игнорируем значения, которые не похожи на JSON (например, HTML от прокси)
+          }
+        }
+
+        return res.status(qdrantError.status).json(responseBody);
       }
 
       const details = getErrorDetails(error);
