@@ -31,6 +31,7 @@ import {
   Settings,
   Shield,
   CircleUser,
+  Workflow,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -192,6 +193,11 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
           url: "/schedule",
           icon: Calendar,
           locked: true,
+        },
+        {
+          title: "Workflow",
+          url: "/workflow",
+          icon: Workflow,
         },
         {
           title: "Вебхуки",
