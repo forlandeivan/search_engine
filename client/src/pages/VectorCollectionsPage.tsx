@@ -33,9 +33,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { RefreshCcw, DatabaseZap, MoreVertical } from "lucide-react";
+import {
+  RefreshCcw,
+  DatabaseZap,
+  MoreVertical,
+  CheckCircle2,
+  AlertTriangle,
+  CircleSlash,
+  Loader2,
+} from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface VectorCollection {
   name: string;
@@ -57,6 +66,23 @@ interface CreateCollectionPayload {
   name: string;
   vectorSize: number;
   distance: "Cosine" | "Euclid" | "Dot" | "Manhattan";
+}
+
+type VectorHealthStatus = "ok" | "not_configured" | "error" | "unknown";
+
+interface VectorHealthResponse {
+  status: VectorHealthStatus;
+  configured: boolean;
+  connected: boolean;
+  url: string | null;
+  apiKeyConfigured: boolean;
+  collectionsCount: number | null;
+  latencyMs: number | null;
+  timestamp: string;
+  error?: string;
+  errorDetails?: unknown;
+  errorName?: string;
+  errorCode?: string;
 }
 
 const distanceOptions: Array<{ value: CreateCollectionPayload["distance"]; label: string }> = [
@@ -95,6 +121,20 @@ export default function VectorCollectionsPage() {
     refetchOnMount: "always",
   });
 
+  const {
+    data: vectorHealth,
+    isLoading: isVectorHealthLoading,
+    error: vectorHealthError,
+  } = useQuery<VectorHealthResponse, Error>({
+    queryKey: ["/api/health/vector"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/health/vector");
+      return (await response.json()) as VectorHealthResponse;
+    },
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+
   const createCollectionMutation = useMutation({
     mutationFn: async (payload: CreateCollectionPayload) => {
       const response = await apiRequest("POST", "/api/vector/collections", payload);
@@ -113,6 +153,7 @@ export default function VectorCollectionsPage() {
       });
       setIsCreateDialogOpen(false);
       queryClient.invalidateQueries({ queryKey: ["/api/vector/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/health/vector"] });
     },
     onError: (mutationError: any) => {
       toast({
@@ -154,6 +195,7 @@ export default function VectorCollectionsPage() {
         title: "Коллекция удалена",
         description: `Коллекция «${name}» удалена из Qdrant`,
       });
+      queryClient.invalidateQueries({ queryKey: ["/api/health/vector"] });
     },
     onError: (mutationError: any, _name, context) => {
       if (context?.previousData) {
@@ -168,6 +210,7 @@ export default function VectorCollectionsPage() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/vector/collections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/health/vector"] });
     },
   });
 
@@ -217,7 +260,26 @@ export default function VectorCollectionsPage() {
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/vector/collections"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/health/vector"] });
   };
+
+  const formatErrorDetails = (details: unknown): string | null => {
+    if (!details) {
+      return null;
+    }
+
+    if (typeof details === "string") {
+      return details;
+    }
+
+    try {
+      return JSON.stringify(details, null, 2);
+    } catch {
+      return String(details);
+    }
+  };
+
+  const vectorHealthErrorDetails = vectorHealth ? formatErrorDetails(vectorHealth.errorDetails) : null;
 
   return (
     <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
@@ -239,6 +301,94 @@ export default function VectorCollectionsPage() {
               Не удалось загрузить данные: {error instanceof Error ? error.message : "неизвестная ошибка"}
             </p>
           )}
+          <div className="mt-4 space-y-3">
+            {isVectorHealthLoading && (
+              <Alert className="max-w-3xl">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <AlertTitle>Проверяем подключение к Qdrant...</AlertTitle>
+                <AlertDescription>
+                  Выполняем запрос к Qdrant, чтобы убедиться, что соединение доступно.
+                </AlertDescription>
+              </Alert>
+            )}
+            {!isVectorHealthLoading && vectorHealth && (
+              <Alert
+                className="max-w-3xl"
+                variant={vectorHealth.status === "ok" ? "default" : "destructive"}
+              >
+                {vectorHealth.status === "ok" ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                ) : vectorHealth.status === "not_configured" ? (
+                  <CircleSlash className="h-4 w-4" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4" />
+                )}
+                <AlertTitle>
+                  {vectorHealth.status === "ok"
+                    ? "Подключение к Qdrant установлено"
+                    : vectorHealth.status === "not_configured"
+                      ? "Qdrant не настроен"
+                      : "Не удалось подключиться к Qdrant"}
+                </AlertTitle>
+                <AlertDescription className="space-y-1">
+                  <p>
+                    <span className="font-medium">URL:</span>{" "}
+                    {vectorHealth.url ? <code>{vectorHealth.url}</code> : "не задан"}
+                  </p>
+                  <p>
+                    <span className="font-medium">API ключ:</span>{" "}
+                    {vectorHealth.apiKeyConfigured ? "задан" : "не задан"}
+                  </p>
+                  <p>
+                    <span className="font-medium">Количество коллекций:</span>{" "}
+                    {typeof vectorHealth.collectionsCount === "number"
+                      ? vectorHealth.collectionsCount
+                      : "—"}
+                  </p>
+                  <p>
+                    <span className="font-medium">Задержка ответа:</span>{" "}
+                    {typeof vectorHealth.latencyMs === "number"
+                      ? `${vectorHealth.latencyMs} мс`
+                      : "—"}
+                  </p>
+                  {vectorHealth.error && (
+                    <p className="font-medium text-destructive">
+                      Ошибка: {vectorHealth.error}
+                    </p>
+                  )}
+                  {vectorHealth.errorCode && (
+                    <p>
+                      <span className="font-medium">Код ошибки:</span>{" "}
+                      <code>{vectorHealth.errorCode}</code>
+                    </p>
+                  )}
+                  {vectorHealth.errorName && (
+                    <p>
+                      <span className="font-medium">Тип ошибки:</span>{" "}
+                      {vectorHealth.errorName}
+                    </p>
+                  )}
+                  {vectorHealthErrorDetails && (
+                    <pre className="whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
+                      {vectorHealthErrorDetails}
+                    </pre>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Последняя проверка: {new Date(vectorHealth.timestamp).toLocaleString()}
+                  </p>
+                </AlertDescription>
+              </Alert>
+            )}
+            {!isVectorHealthLoading && vectorHealthError && !vectorHealth && (
+              <Alert className="max-w-3xl" variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Не удалось проверить подключение к Qdrant</AlertTitle>
+                <AlertDescription>
+                  {vectorHealthError.message || "Попробуйте обновить страницу чуть позже."}
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <DialogTrigger asChild>
