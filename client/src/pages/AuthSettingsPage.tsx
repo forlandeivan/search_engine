@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ShieldCheck, Loader2, RefreshCw } from "lucide-react";
+import { ShieldCheck, Loader2, RefreshCw, AlertTriangle, CheckCircle2, CircleDashed } from "lucide-react";
 
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -58,6 +59,17 @@ const defaultValues: z.infer<typeof formSchema> = {
   isEnabled: false,
 };
 
+const MASKED_SECRET_PLACEHOLDER = "••••••••";
+
+function buildFormValues(data?: GoogleAuthProviderResponse | null): z.infer<typeof formSchema> {
+  return {
+    clientId: data?.clientId ?? "",
+    clientSecret: data?.hasClientSecret ? MASKED_SECRET_PLACEHOLDER : "",
+    callbackUrl: data?.callbackUrl ?? "/api/auth/google/callback",
+    isEnabled: data?.isEnabled ?? false,
+  };
+}
+
 type GoogleAuthProviderResponse = {
   provider: "google";
   clientId: string;
@@ -82,12 +94,7 @@ export default function AuthSettingsPage() {
 
   useEffect(() => {
     if (settingsQuery.data) {
-      form.reset({
-        clientId: settingsQuery.data.clientId ?? "",
-        clientSecret: "",
-        callbackUrl: settingsQuery.data.callbackUrl ?? "/api/auth/google/callback",
-        isEnabled: settingsQuery.data.isEnabled,
-      });
+      form.reset(buildFormValues(settingsQuery.data));
     }
   }, [settingsQuery.data, form]);
 
@@ -95,15 +102,20 @@ export default function AuthSettingsPage() {
     mutationFn: async (values: z.infer<typeof formSchema>) => {
       const trimmedClientId = values.clientId.trim();
       const trimmedCallbackUrl = values.callbackUrl.trim();
-      const trimmedClientSecret = values.clientSecret?.trim();
+      const rawClientSecret = values.clientSecret ?? "";
+      const trimmedClientSecret = rawClientSecret.trim();
+      const isMaskedSecret = rawClientSecret === MASKED_SECRET_PLACEHOLDER;
       const hasStoredSecret = Boolean(settingsQuery.data?.hasClientSecret);
+      const shouldUpdateSecret = trimmedClientSecret.length > 0 && !isMaskedSecret;
+      const shouldClearSecret = !isMaskedSecret && trimmedClientSecret.length === 0 && hasStoredSecret;
+      const willHaveSecret = shouldUpdateSecret || (hasStoredSecret && !shouldClearSecret);
 
       if (values.isEnabled && trimmedClientId.length === 0) {
         form.setError("clientId", { message: "Укажите Client ID" });
         throw new Error("Заполните Client ID");
       }
 
-      if (values.isEnabled && !hasStoredSecret && !trimmedClientSecret) {
+      if (values.isEnabled && !willHaveSecret) {
         form.setError("clientSecret", { message: "Укажите Client Secret" });
         throw new Error("Заполните Client Secret");
       }
@@ -115,9 +127,9 @@ export default function AuthSettingsPage() {
         isEnabled: values.isEnabled,
       };
 
-      if (trimmedClientSecret && trimmedClientSecret.length > 0) {
+      if (shouldUpdateSecret) {
         payload.clientSecret = trimmedClientSecret;
-      } else if (!hasStoredSecret) {
+      } else if (!hasStoredSecret || shouldClearSecret) {
         payload.clientSecret = "";
       }
 
@@ -128,12 +140,7 @@ export default function AuthSettingsPage() {
       return result;
     },
     onSuccess: (result) => {
-      form.reset({
-        clientId: result.clientId,
-        clientSecret: "",
-        callbackUrl: result.callbackUrl,
-        isEnabled: result.isEnabled,
-      });
+      form.reset(buildFormValues(result));
 
       toast({
         title: "Настройки сохранены",
@@ -155,7 +162,9 @@ export default function AuthSettingsPage() {
 
   const isLoading = settingsQuery.isLoading;
   const isSaving = mutation.isPending;
-  const canSubmit = !isLoading && !isSaving;
+  const hasChanges = form.formState.isDirty;
+  const canSubmit = hasChanges && !isLoading && !isSaving;
+  const showSubmitButton = hasChanges || isSaving;
 
   const infoDescription = useMemo(() => {
     if (!settingsQuery.data) {
@@ -168,6 +177,54 @@ export default function AuthSettingsPage() {
 
     return "Настройки хранятся в базе данных и применяются сразу после сохранения.";
   }, [settingsQuery.data]);
+
+  const clientIdValue = form.watch("clientId");
+  const clientSecretValue = form.watch("clientSecret");
+  const isEnabledValue = form.watch("isEnabled");
+  const trimmedClientId = clientIdValue?.trim() ?? "";
+  const trimmedClientSecret = clientSecretValue?.trim() ?? "";
+  const isMaskedSecret = clientSecretValue === MASKED_SECRET_PLACEHOLDER;
+  const hasStoredSecret = Boolean(settingsQuery.data?.hasClientSecret);
+  const hasSecretConfigured =
+    (trimmedClientSecret.length > 0 && !isMaskedSecret) || (isMaskedSecret && hasStoredSecret);
+
+  const statusInfo = useMemo(() => {
+    if (isSaving) {
+      return {
+        variant: "secondary" as const,
+        icon: <Loader2 className="h-4 w-4 animate-spin" />, 
+        label: "Сохраняем настройки...",
+        description: "Проверяем и применяем новые параметры.",
+      };
+    }
+
+    if (!isEnabledValue) {
+      return {
+        variant: "secondary" as const,
+        icon: <CircleDashed className="h-4 w-4" />, 
+        label: "Провайдер выключен",
+        description: "Вход через Google сейчас недоступен.",
+      };
+    }
+
+    if (trimmedClientId.length > 0 && hasSecretConfigured) {
+      return {
+        variant: "default" as const,
+        icon: <CheckCircle2 className="h-4 w-4" />, 
+        label: "Провайдер подключён",
+        description: hasChanges
+          ? "Изменения ещё не сохранены. Нажмите «Сохранить изменения»."
+          : "Пользователи могут входить через Google.",
+      };
+    }
+
+    return {
+      variant: "destructive" as const,
+      icon: <AlertTriangle className="h-4 w-4" />, 
+      label: "Требуется настройка",
+      description: "Укажите Client ID и секрет, чтобы включить вход через Google.",
+    };
+  }, [hasChanges, hasSecretConfigured, isEnabledValue, isSaving, trimmedClientId.length]);
 
   return (
     <div className="p-6 space-y-6">
@@ -216,6 +273,17 @@ export default function AuthSettingsPage() {
             <CardTitle>Google OAuth</CardTitle>
           </div>
           <CardDescription>{infoDescription}</CardDescription>
+          {statusInfo ? (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Badge variant={statusInfo.variant} className="flex items-center gap-1">
+                {statusInfo.icon}
+                {statusInfo.label}
+              </Badge>
+              {statusInfo.description ? (
+                <span className="text-muted-foreground">{statusInfo.description}</span>
+              ) : null}
+            </div>
+          ) : null}
         </CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((values) => mutation.mutate(values))} className="space-y-6">
@@ -305,12 +373,14 @@ export default function AuthSettingsPage() {
                 )}
               />
             </CardContent>
-            <CardFooter className="flex justify-end">
-              <Button type="submit" disabled={!canSubmit}>
-                {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                {isSaving ? "Сохраняем..." : "Сохранить изменения"}
-              </Button>
-            </CardFooter>
+            {showSubmitButton ? (
+              <CardFooter className="flex justify-end">
+                <Button type="submit" disabled={!canSubmit}>
+                  {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  {isSaving ? "Сохраняем..." : "Сохранить изменения"}
+                </Button>
+              </CardFooter>
+            ) : null}
           </form>
         </Form>
       </Card>
