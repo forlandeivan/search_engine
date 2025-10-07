@@ -125,7 +125,6 @@ export default function AuthPage() {
   const isLogin = mode === "login";
   const isGoogleEnabled = Boolean(providersQuery.data?.providers?.google?.enabled);
   const isGoogleButtonDisabled = providersQuery.isLoading;
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authError = params.get("authError");
