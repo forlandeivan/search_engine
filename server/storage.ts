@@ -49,6 +49,134 @@ function swallowPgError(error: unknown, allowedCodes: string[]): void {
   }
 }
 
+let cachedUuidExpression: SQL | null = null;
+let ensuringUuidExpression: Promise<SQL> | null = null;
+let loggedUuidFallbackWarning = false;
+const randomHexExpressionCache = new Map<number, SQL>();
+const ensuringRandomHexExpression = new Map<number, Promise<SQL>>();
+let loggedRandomHexFallbackWarning = false;
+
+async function hasGenRandomUuidFunction(): Promise<boolean> {
+  const result = await db.execute(sql`
+    SELECT COUNT(*)::int AS "functionCount"
+    FROM pg_proc
+    WHERE proname = 'gen_random_uuid'
+  `);
+  const count = Number(result.rows[0]?.functionCount ?? 0);
+  return Number.isFinite(count) && count > 0;
+}
+
+async function ensurePgcryptoExtensionAvailable(): Promise<void> {
+  try {
+    await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
+  } catch (error) {
+    swallowPgError(error, ["42710", "42501"]);
+  }
+}
+
+async function getUuidGenerationExpression(): Promise<SQL> {
+  if (cachedUuidExpression) {
+    return cachedUuidExpression;
+  }
+
+  if (ensuringUuidExpression) {
+    return ensuringUuidExpression;
+  }
+
+  ensuringUuidExpression = (async () => {
+    if (await hasGenRandomUuidFunction()) {
+      return sql.raw("gen_random_uuid()");
+    }
+
+    await ensurePgcryptoExtensionAvailable();
+
+    if (await hasGenRandomUuidFunction()) {
+      return sql.raw("gen_random_uuid()");
+    }
+
+    if (!loggedUuidFallbackWarning) {
+      console.warn(
+        "pgcrypto недоступен или недоступна функция gen_random_uuid(), используем резервную генерацию идентификаторов",
+      );
+      loggedUuidFallbackWarning = true;
+    }
+
+    return sql.raw(
+      "(lower(lpad(md5(random()::text || clock_timestamp()::text || random()::text), 32, '0')))",
+    );
+  })();
+
+  try {
+    cachedUuidExpression = await ensuringUuidExpression;
+    return cachedUuidExpression;
+  } finally {
+    ensuringUuidExpression = null;
+  }
+}
+
+async function hasGenRandomBytesFunction(): Promise<boolean> {
+  const result = await db.execute(sql`
+    SELECT COUNT(*)::int AS "functionCount"
+    FROM pg_proc
+    WHERE proname = 'gen_random_bytes'
+  `);
+  const count = Number(result.rows[0]?.functionCount ?? 0);
+  return Number.isFinite(count) && count > 0;
+}
+
+async function getRandomHexExpression(byteLength: number): Promise<SQL> {
+  const cached = randomHexExpressionCache.get(byteLength);
+  if (cached) {
+    return cached;
+  }
+
+  const existingPromise = ensuringRandomHexExpression.get(byteLength);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const promise = (async () => {
+    if (await hasGenRandomBytesFunction()) {
+      return sql.raw(`encode(gen_random_bytes(${byteLength}), 'hex')`);
+    }
+
+    await ensurePgcryptoExtensionAvailable();
+
+    if (await hasGenRandomBytesFunction()) {
+      return sql.raw(`encode(gen_random_bytes(${byteLength}), 'hex')`);
+    }
+
+    if (!loggedRandomHexFallbackWarning) {
+      console.warn(
+        "pgcrypto недоступен или недоступна функция gen_random_bytes(), используем резервную генерацию hex-строк",
+      );
+      loggedRandomHexFallbackWarning = true;
+    }
+
+    const hexLength = Math.max(2, byteLength * 2);
+    const segmentCount = Math.max(1, Math.ceil(hexLength / 32));
+    const segments: string[] = [];
+    for (let i = 0; i < segmentCount; i++) {
+      segments.push(
+        `lpad(md5(random()::text || clock_timestamp()::text || ${i + 1}::text || random()::text), 32, '0')`,
+      );
+    }
+    const concatenated = segments.join(" || ");
+    const expression = `lower(substring(${concatenated} FROM 1 FOR ${hexLength}))`;
+    return sql.raw(expression);
+  })();
+
+  ensuringRandomHexExpression.set(byteLength, promise);
+
+  try {
+    const expression = await promise;
+    randomHexExpressionCache.set(byteLength, expression);
+    return expression;
+  } finally {
+    ensuringRandomHexExpression.delete(byteLength);
+  }
+}
+
 export interface GoogleUserUpsertPayload {
   googleId: string;
   email: string;
@@ -292,9 +420,10 @@ async function ensureWorkspacesTable(): Promise<void> {
   }
 
   ensuringWorkspacesTable = (async () => {
+    const uuidExpression = await getUuidGenerationExpression();
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "workspaces" (
-        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
         "name" text NOT NULL,
         "owner_id" varchar NOT NULL,
         "plan" text NOT NULL DEFAULT 'free',
@@ -370,9 +499,10 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
   ensuringEmbeddingProvidersTable = (async () => {
     await ensureWorkspacesTable();
     await ensureWorkspaceMembersTable();
+    const uuidExpression = await getUuidGenerationExpression();
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "embedding_providers" (
-        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
         "name" text NOT NULL,
         "provider_type" text NOT NULL DEFAULT 'gigachat',
         "description" text,
@@ -513,9 +643,10 @@ async function ensureAuthProvidersTable(): Promise<void> {
   }
 
   ensuringAuthProvidersTable = (async () => {
+    const uuidExpression = await getUuidGenerationExpression();
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "auth_providers" (
-        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
         "provider" text NOT NULL UNIQUE,
         "is_enabled" boolean NOT NULL DEFAULT FALSE,
         "client_id" text NOT NULL DEFAULT '',
@@ -811,9 +942,10 @@ export class DatabaseStorage implements IStorage {
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "created_at" SET NOT NULL`);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "updated_at" SET NOT NULL`);
 
+      const uuidExpression = await getUuidGenerationExpression();
       await this.db.execute(sql`
         CREATE TABLE IF NOT EXISTS "personal_api_tokens" (
-          "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+          "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
           "user_id" varchar NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
           "token_hash" text NOT NULL,
           "last_four" text NOT NULL,
@@ -1898,6 +2030,8 @@ export const storage = new DatabaseStorage();
 
 export async function ensureDatabaseSchema(): Promise<void> {
   try {
+    const uuidExpression = await getUuidGenerationExpression();
+    const randomHex32Expression = await getRandomHexExpression(32);
     // Обновление схемы таблицы пользователей для поддержки авторизации по email
     const emailColumnCheck = await db.execute(sql`
       SELECT COUNT(*)::int AS "emailColumnCount"
@@ -2281,8 +2415,8 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await db.execute(sql`
       UPDATE "sites"
       SET
-        "public_id" = COALESCE("public_id", gen_random_uuid()),
-        "public_api_key" = COALESCE("public_api_key", encode(gen_random_bytes(32), 'hex')),
+        "public_id" = COALESCE("public_id", ${uuidExpression}),
+        "public_api_key" = COALESCE("public_api_key", ${randomHex32Expression}),
         "public_api_key_generated_at" = COALESCE("public_api_key_generated_at", CURRENT_TIMESTAMP)
     `);
 
@@ -2295,8 +2429,8 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
     await db.execute(sql`
       ALTER TABLE "sites"
-      ALTER COLUMN "public_id" SET DEFAULT gen_random_uuid(),
-      ALTER COLUMN "public_api_key" SET DEFAULT encode(gen_random_bytes(32), 'hex'),
+      ALTER COLUMN "public_id" SET DEFAULT ${uuidExpression},
+      ALTER COLUMN "public_api_key" SET DEFAULT ${randomHex32Expression},
       ALTER COLUMN "public_api_key_generated_at" SET DEFAULT CURRENT_TIMESTAMP
     `);
 
