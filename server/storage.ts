@@ -56,6 +56,26 @@ const randomHexExpressionCache = new Map<number, SQL>();
 const ensuringRandomHexExpression = new Map<number, Promise<SQL>>();
 let loggedRandomHexFallbackWarning = false;
 
+async function ensureConstraint(
+  tableName: string,
+  constraintName: string,
+  createConstraintSql: SQL,
+): Promise<void> {
+  const constraintCheck = await db.execute(sql`
+    SELECT COUNT(*)::int AS "constraintCount"
+    FROM pg_constraint
+    WHERE conrelid = ${sql.raw(`'public.${tableName}'::regclass`)}
+      AND conname = ${constraintName}
+  `);
+
+  const count = Number(constraintCheck.rows[0]?.constraintCount ?? 0);
+  if (Number.isFinite(count) && count > 0) {
+    return;
+  }
+
+  await db.execute(createConstraintSql);
+}
+
 async function hasGenRandomUuidFunction(): Promise<boolean> {
   const result = await db.execute(sql`
     SELECT COUNT(*)::int AS "functionCount"
@@ -434,11 +454,15 @@ async function ensureWorkspacesTable(): Promise<void> {
       )
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "workspaces"
-      ADD CONSTRAINT IF NOT EXISTS "workspaces_owner_id_fkey"
-      FOREIGN KEY ("owner_id") REFERENCES "users"("id") ON DELETE CASCADE
-    `);
+    await ensureConstraint(
+      "workspaces",
+      "workspaces_owner_id_fkey",
+      sql`
+        ALTER TABLE "workspaces"
+        ADD CONSTRAINT "workspaces_owner_id_fkey"
+        FOREIGN KEY ("owner_id") REFERENCES "users"("id") ON DELETE CASCADE
+      `,
+    );
 
     workspacesTableEnsured = true;
   })();
@@ -469,17 +493,25 @@ async function ensureWorkspaceMembersTable(): Promise<void> {
       )
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "workspace_members"
-      ADD CONSTRAINT IF NOT EXISTS "workspace_members_workspace_id_fkey"
-      FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
-    `);
+    await ensureConstraint(
+      "workspace_members",
+      "workspace_members_workspace_id_fkey",
+      sql`
+        ALTER TABLE "workspace_members"
+        ADD CONSTRAINT "workspace_members_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
 
-    await db.execute(sql`
-      ALTER TABLE "workspace_members"
-      ADD CONSTRAINT IF NOT EXISTS "workspace_members_user_id_fkey"
-      FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
-    `);
+    await ensureConstraint(
+      "workspace_members",
+      "workspace_members_user_id_fkey",
+      sql`
+        ALTER TABLE "workspace_members"
+        ADD CONSTRAINT "workspace_members_user_id_fkey"
+        FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      `,
+    );
 
     workspaceMembersTableEnsured = true;
   })();
@@ -591,11 +623,15 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
       swallowPgError(error, ["42701"]);
     }
 
-    await db.execute(sql`
-      ALTER TABLE "embedding_providers"
-      ADD CONSTRAINT IF NOT EXISTS "embedding_providers_workspace_id_fkey"
-      FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
-    `);
+    await ensureConstraint(
+      "embedding_providers",
+      "embedding_providers_workspace_id_fkey",
+      sql`
+        ALTER TABLE "embedding_providers"
+        ADD CONSTRAINT "embedding_providers_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
 
     try {
       await db.execute(sql`
