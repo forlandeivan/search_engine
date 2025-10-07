@@ -4,6 +4,7 @@ import connectPgSimple from "connect-pg-simple";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import { Strategy as GoogleStrategy, type Profile as GoogleProfile, type VerifyCallback } from "passport-google-oauth20";
+import { Strategy as YandexStrategy, type YandexProfile } from "passport-yandex";
 import bcrypt from "bcryptjs";
 import { pool } from "./db";
 import { storage } from "./storage";
@@ -32,7 +33,7 @@ type PassportWithUnuse = typeof passport & {
   _strategies?: Record<string, unknown>;
 };
 
-type GoogleAuthSettings = {
+type OAuthProviderSettings = {
   clientId: string;
   clientSecret: string;
   callbackUrl: string;
@@ -42,8 +43,10 @@ type GoogleAuthSettings = {
 
 const googleStrategyName = "google";
 let loggedMissingGoogleConfig = false;
+const yandexStrategyName = "yandex";
+let loggedMissingYandexConfig = false;
 
-async function resolveGoogleAuthSettings(): Promise<GoogleAuthSettings> {
+async function resolveGoogleAuthSettings(): Promise<OAuthProviderSettings> {
   const envClientId = (process.env.GOOGLE_CLIENT_ID ?? "").trim();
   const envClientSecret = (process.env.GOOGLE_CLIENT_SECRET ?? "").trim();
   const envCallbackUrl = (process.env.GOOGLE_CALLBACK_URL ?? "/api/auth/google/callback").trim();
@@ -66,6 +69,42 @@ async function resolveGoogleAuthSettings(): Promise<GoogleAuthSettings> {
     }
   } catch (error) {
     console.error("Не удалось загрузить настройки Google OAuth из базы данных:", error);
+  }
+
+  const fallbackEnabled = envClientId.length > 0 && envClientSecret.length > 0;
+
+  return {
+    clientId: envClientId,
+    clientSecret: envClientSecret,
+    callbackUrl: envCallbackUrl,
+    isEnabled: fallbackEnabled,
+    source: "environment",
+  };
+}
+
+async function resolveYandexAuthSettings(): Promise<OAuthProviderSettings> {
+  const envClientId = (process.env.YANDEX_CLIENT_ID ?? "").trim();
+  const envClientSecret = (process.env.YANDEX_CLIENT_SECRET ?? "").trim();
+  const envCallbackUrl = (process.env.YANDEX_CALLBACK_URL ?? "/api/auth/yandex/callback").trim();
+
+  try {
+    const provider = await storage.getAuthProvider("yandex");
+    if (provider) {
+      const clientId = provider.clientId?.trim() ?? "";
+      const clientSecret = provider.clientSecret?.trim() ?? "";
+      const callbackUrl = provider.callbackUrl?.trim() || envCallbackUrl;
+      const isEnabled = provider.isEnabled && clientId.length > 0 && clientSecret.length > 0;
+
+      return {
+        clientId,
+        clientSecret,
+        callbackUrl,
+        isEnabled,
+        source: "database",
+      };
+    }
+  } catch (error) {
+    console.error("Не удалось загрузить настройки Yandex OAuth из базы данных:", error);
   }
 
   const fallbackEnabled = envClientId.length > 0 && envClientSecret.length > 0;
@@ -155,6 +194,108 @@ export async function reloadGoogleAuth(app: Express): Promise<void> {
   await applyGoogleAuthStrategy(app);
 }
 
+async function applyYandexAuthStrategy(app: Express): Promise<void> {
+  const settings = await resolveYandexAuthSettings();
+  const authenticator = passport as PassportWithUnuse;
+
+  if (typeof authenticator.unuse === "function") {
+    try {
+      authenticator.unuse(yandexStrategyName);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/Unknown authentication strategy/i.test(message)) {
+        console.warn("Не удалось отключить Yandex OAuth перед перенастройкой:", message);
+      }
+    }
+  } else if (authenticator._strategies) {
+    delete authenticator._strategies[yandexStrategyName];
+  }
+
+  app.set("yandexAuthConfigured", settings.isEnabled);
+  app.set("yandexAuthSource", settings.source);
+
+  if (!settings.isEnabled) {
+    if (app.get("env") !== "test" && !loggedMissingYandexConfig) {
+      console.warn(
+        "Yandex OAuth не настроен: заполните настройки в админ-панели или установите переменные окружения",
+      );
+      loggedMissingYandexConfig = true;
+    }
+    return;
+  }
+
+  loggedMissingYandexConfig = false;
+
+  authenticator.use(
+    new YandexStrategy(
+      {
+        clientID: settings.clientId,
+        clientSecret: settings.clientSecret,
+        callbackURL: settings.callbackUrl,
+      },
+      async (_accessToken: string, _refreshToken: string, profile: YandexProfile, done: VerifyCallback) => {
+        try {
+          const primaryEmail = (profile.emails ?? []).find(
+            (entry): entry is NonNullable<YandexProfile["emails"]>[number] & { value: string } =>
+              typeof entry?.value === "string" && entry.value.length > 0,
+          );
+          const defaultEmail =
+            typeof profile._json?.default_email === "string" && profile._json.default_email.length > 0
+              ? profile._json.default_email
+              : undefined;
+          const email = primaryEmail?.value ?? defaultEmail;
+
+          if (!email) {
+            return done(null, false, { message: "Не удалось получить email Yandex-профиля" });
+          }
+
+          const avatarFromPhotos = profile.photos?.[0]?.value;
+          let avatar = typeof avatarFromPhotos === "string" ? avatarFromPhotos : undefined;
+          if (!avatar) {
+            const avatarId = profile._json && typeof profile._json.default_avatar_id === "string"
+              ? profile._json.default_avatar_id.trim()
+              : "";
+            if (avatarId) {
+              avatar = `https://avatars.yandex.net/get-yapic/${avatarId}/islands-200`;
+            }
+          }
+
+          const emailVerifiedRaw =
+            (profile._json as { is_email_verified?: boolean; email_verified?: boolean } | undefined)
+              ?.is_email_verified ??
+            (profile._json as { email_verified?: boolean } | undefined)?.email_verified;
+
+          const user = await storage.upsertUserFromYandex({
+            yandexId: profile.id,
+            email,
+            fullName:
+              profile.displayName ||
+              (typeof profile._json?.real_name === "string" ? profile._json.real_name : undefined) ||
+              (typeof profile._json?.display_name === "string" ? profile._json.display_name : undefined),
+            firstName:
+              profile.name?.givenName ||
+              (typeof profile._json?.first_name === "string" ? profile._json.first_name : undefined),
+            lastName:
+              profile.name?.familyName ||
+              (typeof profile._json?.last_name === "string" ? profile._json.last_name : undefined),
+            avatar,
+            emailVerified: emailVerifiedRaw,
+          });
+
+          const updatedUser = await storage.recordUserActivity(user.id);
+          done(null, toPublicUser(updatedUser ?? user));
+        } catch (error) {
+          done(error as Error);
+        }
+      },
+    ),
+  );
+}
+
+export async function reloadYandexAuth(app: Express): Promise<void> {
+  await applyYandexAuthStrategy(app);
+}
+
 export async function configureAuth(app: Express): Promise<void> {
   const sessionSecret = process.env.SESSION_SECRET || "dev-session-secret";
   const cookieSecure = app.get("env") === "production";
@@ -212,7 +353,7 @@ export async function configureAuth(app: Express): Promise<void> {
 
           if (!user.passwordHash) {
             return done(null, false, {
-              message: "Для этого аккаунта включён вход через Google",
+              message: "Для этого аккаунта включён вход через OAuth-провайдер",
             });
           }
 
@@ -231,7 +372,9 @@ export async function configureAuth(app: Express): Promise<void> {
   );
 
   await applyGoogleAuthStrategy(app);
+  await applyYandexAuthStrategy(app);
   app.set("reloadGoogleAuth", () => applyGoogleAuthStrategy(app));
+  app.set("reloadYandexAuth", () => applyYandexAuthStrategy(app));
 }
 
 export function getSessionUser(req: Request): PublicUser | null {

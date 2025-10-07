@@ -76,6 +76,7 @@
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-local": "^1.0.0",
+    "passport-yandex": "^0.0.5",
     "pdfjs-dist": "^4.10.38",
     "pg": "^8.16.3",
     "puppeteer": "^22.15.0",

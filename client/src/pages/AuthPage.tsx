@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { registerUserSchema } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { FcGoogle } from "react-icons/fc";
+import { FaYandex } from "react-icons/fa";
 
 const loginSchema = z.object({
   email: z.string().trim().email("Введите корректный email"),
@@ -35,6 +36,7 @@ type AuthProvidersResponse = {
   providers?: {
     local?: { enabled?: boolean };
     google?: { enabled?: boolean };
+    yandex?: { enabled?: boolean };
   };
 };
 
@@ -66,12 +68,16 @@ export default function AuthPage() {
       try {
         const response = await fetch("/api/auth/providers", { credentials: "include" });
         if (!response.ok) {
-          return { providers: { local: { enabled: true }, google: { enabled: false } } };
+          return {
+            providers: { local: { enabled: true }, google: { enabled: false }, yandex: { enabled: false } },
+          };
         }
 
         return (await response.json()) as AuthProvidersResponse;
       } catch {
-        return { providers: { local: { enabled: true }, google: { enabled: false } } };
+        return {
+          providers: { local: { enabled: true }, google: { enabled: false }, yandex: { enabled: false } },
+        };
       }
     },
     staleTime: 1000 * 60,
@@ -135,13 +141,27 @@ export default function AuthPage() {
       : googleStatus === "disabled"
         ? "Вход через Google пока не настроен. Обратитесь к администратору, чтобы активировать интеграцию."
         : "";
+
+  const isYandexEnabled = Boolean(providersQuery.data?.providers?.yandex?.enabled);
+  const yandexStatus: "loading" | "enabled" | "disabled" = providersQuery.isLoading
+    ? "loading"
+    : isYandexEnabled
+      ? "enabled"
+      : "disabled";
+  const yandexHelperText =
+    yandexStatus === "loading"
+      ? "Проверяем доступность входа через Yandex…"
+      : yandexStatus === "disabled"
+        ? "Вход через Yandex пока не настроен. Обратитесь к администратору, чтобы активировать интеграцию."
+        : "";
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authError = params.get("authError");
 
-    if (authError === "google") {
+    if (authError === "google" || authError === "yandex") {
+      const providerLabel = authError === "google" ? "Google" : "Yandex";
       toast({
-        title: "Не удалось войти через Google",
+        title: `Не удалось войти через ${providerLabel}`,
         description: "Попробуйте ещё раз или используйте вход по email и паролю.",
         variant: "destructive",
       });
@@ -162,6 +182,17 @@ export default function AuthPage() {
     const params = new URLSearchParams();
     params.set("redirect", redirectTarget);
     window.location.href = `/api/auth/google?${params.toString()}`;
+  };
+
+  const handleYandexLogin = () => {
+    if (yandexStatus !== "enabled") {
+      return;
+    }
+
+    const redirectTarget = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const params = new URLSearchParams();
+    params.set("redirect", redirectTarget);
+    window.location.href = `/api/auth/yandex?${params.toString()}`;
   };
 
   return (
@@ -189,25 +220,47 @@ export default function AuthPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full flex items-center justify-center gap-2"
-                onClick={handleGoogleLogin}
-                disabled={googleStatus !== "enabled"}
-                aria-disabled={googleStatus !== "enabled"}
-              >
-                <FcGoogle className="h-5 w-5" />
-                {googleStatus === "loading"
-                  ? "Проверяем Google..."
-                  : isLogin
-                    ? "Войти через Google"
-                    : "Продолжить через Google"}
-              </Button>
-              {googleHelperText && (
-                <p className="text-xs text-muted-foreground text-center">{googleHelperText}</p>
-              )}
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full flex items-center justify-center gap-2"
+                  onClick={handleGoogleLogin}
+                  disabled={googleStatus !== "enabled"}
+                  aria-disabled={googleStatus !== "enabled"}
+                >
+                  <FcGoogle className="h-5 w-5" />
+                  {googleStatus === "loading"
+                    ? "Проверяем Google..."
+                    : isLogin
+                      ? "Войти через Google"
+                      : "Продолжить через Google"}
+                </Button>
+                {googleHelperText && (
+                  <p className="text-xs text-muted-foreground text-center">{googleHelperText}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full flex items-center justify-center gap-2"
+                  onClick={handleYandexLogin}
+                  disabled={yandexStatus !== "enabled"}
+                  aria-disabled={yandexStatus !== "enabled"}
+                >
+                  <FaYandex className="h-5 w-5 text-red-500" />
+                  {yandexStatus === "loading"
+                    ? "Проверяем Yandex..."
+                    : isLogin
+                      ? "Войти через Yandex"
+                      : "Продолжить через Yandex"}
+                </Button>
+                {yandexHelperText && (
+                  <p className="text-xs text-muted-foreground text-center">{yandexHelperText}</p>
+                )}
+              </div>
             </div>
             <div className="relative">
               <div className="absolute inset-0 flex items-center">

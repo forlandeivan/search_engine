@@ -54,6 +54,16 @@ export interface GoogleUserUpsertPayload {
   emailVerified?: boolean | null;
 }
 
+export interface YandexUserUpsertPayload {
+  yandexId: string;
+  email: string;
+  fullName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  avatar?: string | null;
+  emailVerified?: boolean | null;
+}
+
 function normalizeProfileString(value: string | null | undefined): string {
   if (typeof value !== "string") {
     return "";
@@ -155,8 +165,10 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByGoogleId(googleId: string): Promise<User | undefined>;
+  getUserByYandexId(yandexId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   upsertUserFromGoogle(payload: GoogleUserUpsertPayload): Promise<User>;
+  upsertUserFromYandex(payload: YandexUserUpsertPayload): Promise<User>;
   listUsers(): Promise<User[]>;
   updateUserRole(userId: string, role: User["role"]): Promise<User | undefined>;
   recordUserActivity(userId: string): Promise<User | undefined>;
@@ -530,6 +542,50 @@ export class DatabaseStorage implements IStorage {
       if (googleIdUniqueConstraintCount === 0) {
         await this.db.execute(
           sql`ALTER TABLE "users" ADD CONSTRAINT "users_google_id_unique" UNIQUE ("google_id")`
+        );
+      }
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "yandex_id" text`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "yandex_avatar" text DEFAULT ''`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      await this.db.execute(sql`UPDATE "users" SET "yandex_avatar" = COALESCE("yandex_avatar", '')`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "yandex_avatar" SET DEFAULT ''`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "yandex_avatar" SET NOT NULL`);
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "yandex_email_verified" boolean DEFAULT FALSE`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      await this.db.execute(
+        sql`UPDATE "users" SET "yandex_email_verified" = COALESCE("yandex_email_verified", FALSE)`
+      );
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "yandex_email_verified" SET DEFAULT FALSE`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "yandex_email_verified" SET NOT NULL`);
+
+      const yandexIdUniqueConstraintCheck = await this.db.execute(sql`
+        SELECT COUNT(*)::int AS "yandexIdUniqueConstraintCount"
+        FROM pg_constraint
+        WHERE conrelid = 'public.users'::regclass
+          AND conname = 'users_yandex_id_unique'
+      `);
+      const yandexIdUniqueConstraintCount = Number(
+        yandexIdUniqueConstraintCheck.rows[0]?.yandexIdUniqueConstraintCount ?? 0
+      );
+
+      if (yandexIdUniqueConstraintCount === 0) {
+        await this.db.execute(
+          sql`ALTER TABLE "users" ADD CONSTRAINT "users_yandex_id_unique" UNIQUE ("yandex_id")`
         );
       }
 
@@ -1092,6 +1148,17 @@ export class DatabaseStorage implements IStorage {
     return user ?? undefined;
   }
 
+  async getUserByYandexId(yandexId: string): Promise<User | undefined> {
+    await this.ensureUserAuthColumns();
+    const trimmedId = yandexId.trim();
+    if (!trimmedId) {
+      return undefined;
+    }
+
+    const [user] = await this.db.select().from(users).where(eq(users.yandexId, trimmedId));
+    return user ?? undefined;
+  }
+
   async createUser(user: InsertUser): Promise<User> {
     await this.ensureUserAuthColumns();
     const [newUser] = await this.db.insert(users).values(user).returning();
@@ -1187,6 +1254,100 @@ export class DatabaseStorage implements IStorage {
 
     if (!newUser) {
       throw new Error("Не удалось создать пользователя по данным Google");
+    }
+
+    return newUser;
+  }
+
+  async upsertUserFromYandex(payload: YandexUserUpsertPayload): Promise<User> {
+    await this.ensureUserAuthColumns();
+
+    const yandexId = normalizeProfileString(payload.yandexId);
+    if (!yandexId) {
+      throw new Error("Отсутствует идентификатор Yandex");
+    }
+
+    const email = normalizeProfileString(payload.email).toLowerCase();
+    if (!email) {
+      throw new Error("Отсутствует email Yandex-профиля");
+    }
+
+    const avatar = normalizeProfileString(payload.avatar);
+    const { fullName, firstName, lastName } = resolveNamesFromProfile({
+      emailFallback: email,
+      fullName: payload.fullName,
+      firstName: payload.firstName,
+      lastName: payload.lastName,
+    });
+
+    const requestedEmailVerified = payload.emailVerified;
+
+    const [existingByYandex] = await this.db.select().from(users).where(eq(users.yandexId, yandexId));
+    if (existingByYandex) {
+      const yandexEmailVerified =
+        requestedEmailVerified === undefined || requestedEmailVerified === null
+          ? existingByYandex.yandexEmailVerified
+          : Boolean(requestedEmailVerified);
+
+      const [updatedUser] = await this.db
+        .update(users)
+        .set({
+          email,
+          fullName: fullName || existingByYandex.fullName,
+          firstName: firstName || existingByYandex.firstName,
+          lastName: lastName || existingByYandex.lastName,
+          yandexId,
+          yandexAvatar: avatar || existingByYandex.yandexAvatar || "",
+          yandexEmailVerified,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .where(eq(users.id, existingByYandex.id))
+        .returning();
+
+      return updatedUser ?? existingByYandex;
+    }
+
+    const [existingByEmail] = await this.db.select().from(users).where(eq(users.email, email));
+    if (existingByEmail) {
+      const yandexEmailVerified =
+        requestedEmailVerified === undefined || requestedEmailVerified === null
+          ? existingByEmail.yandexEmailVerified
+          : Boolean(requestedEmailVerified);
+
+      const [updatedUser] = await this.db
+        .update(users)
+        .set({
+          yandexId,
+          yandexAvatar: avatar || existingByEmail.yandexAvatar || "",
+          yandexEmailVerified,
+          fullName: fullName || existingByEmail.fullName,
+          firstName: firstName || existingByEmail.firstName,
+          lastName: lastName || existingByEmail.lastName,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .where(eq(users.id, existingByEmail.id))
+        .returning();
+
+      return updatedUser ?? existingByEmail;
+    }
+
+    const [newUser] = await this.db
+      .insert(users)
+      .values({
+        email,
+        fullName,
+        firstName,
+        lastName,
+        phone: "",
+        passwordHash: null,
+        yandexId,
+        yandexAvatar: avatar,
+        yandexEmailVerified: Boolean(requestedEmailVerified),
+      })
+      .returning();
+
+    if (!newUser) {
+      throw new Error("Не удалось создать пользователя по данным Yandex");
     }
 
     return newUser;
@@ -1353,6 +1514,7 @@ export class DatabaseStorage implements IStorage {
     await ensureAuthProvidersTable();
 
     const normalizedProvider = provider;
+    const defaultCallbackUrl = `/api/auth/${normalizedProvider}/callback`;
     const [existing] = await this.db
       .select()
       .from(authProviders)
@@ -1398,7 +1560,7 @@ export class DatabaseStorage implements IStorage {
       isEnabled: updates.isEnabled ?? false,
       clientId: trimmedClientId ?? "",
       clientSecret: trimmedClientSecret ?? "",
-      callbackUrl: trimmedCallbackUrl ?? "/api/auth/google/callback",
+      callbackUrl: trimmedCallbackUrl ?? defaultCallbackUrl,
     };
 
     const [created] = await this.db.insert(authProviders).values(insertPayload).returning();
@@ -1560,6 +1722,48 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
     if (googleIdUniqueConstraintCount === 0) {
       await db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT "users_google_id_unique" UNIQUE ("google_id")`);
+    }
+
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "yandex_id" text`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "yandex_avatar" text DEFAULT ''`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await db.execute(sql`UPDATE "users" SET "yandex_avatar" = COALESCE("yandex_avatar", '')`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "yandex_avatar" SET DEFAULT ''`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "yandex_avatar" SET NOT NULL`);
+
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "yandex_email_verified" boolean DEFAULT FALSE`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await db.execute(
+      sql`UPDATE "users" SET "yandex_email_verified" = COALESCE("yandex_email_verified", FALSE)`
+    );
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "yandex_email_verified" SET DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "yandex_email_verified" SET NOT NULL`);
+
+    const yandexIdUniqueConstraintCheck = await db.execute(sql`
+      SELECT COUNT(*)::int AS "yandexIdUniqueConstraintCount"
+      FROM pg_constraint
+      WHERE conrelid = 'public.users'::regclass
+        AND conname = 'users_yandex_id_unique'
+    `);
+    const yandexIdUniqueConstraintCount = Number(
+      yandexIdUniqueConstraintCheck.rows[0]?.yandexIdUniqueConstraintCount ?? 0
+    );
+
+    if (yandexIdUniqueConstraintCount === 0) {
+      await db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT "users_yandex_id_unique" UNIQUE ("yandex_id")`);
     }
 
     try {
