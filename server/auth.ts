@@ -51,6 +51,18 @@ type OAuthProviderSettings = {
   source: "database" | "environment";
 };
 
+export class WorkspaceContextError extends Error {
+  statusCode: number;
+  status: number;
+
+  constructor(message = "Рабочее пространство не найдено", statusCode = 404) {
+    super(message);
+    this.name = "WorkspaceContextError";
+    this.statusCode = statusCode;
+    this.status = statusCode;
+  }
+}
+
 const googleStrategyName = "google";
 let loggedMissingGoogleConfig = false;
 const yandexStrategyName = "yandex";
@@ -473,14 +485,13 @@ export function toPublicWorkspaceMembership(workspace: WorkspaceWithRole): Publi
 }
 
 export async function ensureWorkspaceContext(req: Request, user: PublicUser): Promise<WorkspaceContext> {
-  let memberships = await storage.listUserWorkspaces(user.id);
+  const memberships = await storage.getOrCreateUserWorkspaces(user.id);
 
   if (memberships.length === 0) {
-    const fullUser = await storage.getUser(user.id);
-    if (fullUser) {
-      await storage.ensurePersonalWorkspace(fullUser);
-      memberships = await storage.listUserWorkspaces(user.id);
-    }
+    console.error(
+      `[auth] Не удалось получить рабочие пространства пользователя ${user.id} (${user.email ?? "без email"})`,
+    );
+    throw new WorkspaceContextError();
   }
 
   const headerWorkspaceRaw = req.headers["x-workspace-id"];
@@ -503,7 +514,10 @@ export async function ensureWorkspaceContext(req: Request, user: PublicUser): Pr
   }
 
   if (!active) {
-    throw new Error("Рабочее пространство не найдено");
+    console.error(
+      `[auth] Рабочее пространство не найдено. Пользователь: ${user.id}, доступные рабочие пространства: ${memberships.map((workspace) => workspace.id).join(", ")}`,
+    );
+    throw new WorkspaceContextError();
   }
 
   if (req.session) {
