@@ -7,6 +7,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import AdminSidebar from "@/components/AdminSidebar";
 import MainSidebar from "@/components/MainSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
+import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 import SearchPage from "@/pages/SearchPage";
 import AdminPage from "@/pages/AdminPage";
 import PagesPage from "@/pages/PagesPage";
@@ -22,10 +23,12 @@ import AdminUsersPage from "@/pages/AdminUsersPage";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
 import ProfilePage from "@/pages/ProfilePage";
+import WorkspaceMembersPage from "@/pages/WorkspaceMembersPage";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import type { PublicUser } from "@shared/schema";
+import type { SessionResponse, WorkspaceState } from "@/types/session";
 import type { CSSProperties } from "react";
 
 function AdminRouter() {
@@ -51,6 +54,7 @@ function MainRouter() {
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
       <Route path="/integrations/api" component={TildaApiPage} />
+      <Route path="/workspaces/members" component={WorkspaceMembersPage} />
       <Route path="/profile" component={ProfilePage} />
       <Route path="/" component={SearchPage} />
       <Route component={NotFound} />
@@ -123,7 +127,7 @@ function HeaderUserArea({ user }: { user: PublicUser }) {
   );
 }
 
-function AdminAppShell({ user }: { user: PublicUser }) {
+function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   const style = {
     "--sidebar-width": "20rem",
     "--sidebar-width-icon": "4rem",
@@ -135,7 +139,10 @@ function AdminAppShell({ user }: { user: PublicUser }) {
         <AdminSidebar user={user} />
         <div className="flex flex-col flex-1">
           <header className="flex items-center justify-between p-2 border-b gap-2">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
+            <div className="flex items-center gap-2">
+              <SidebarTrigger data-testid="button-sidebar-toggle" />
+              <WorkspaceSwitcher workspace={workspace} />
+            </div>
             <HeaderUserArea user={user} />
           </header>
           <main className="flex-1 overflow-auto">
@@ -147,7 +154,7 @@ function AdminAppShell({ user }: { user: PublicUser }) {
   );
 }
 
-function MainAppShell({ user }: { user: PublicUser }) {
+function MainAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   const style = {
     "--sidebar-width": "20rem",
     "--sidebar-width-icon": "4rem",
@@ -159,7 +166,10 @@ function MainAppShell({ user }: { user: PublicUser }) {
         <MainSidebar showAdminLink={user.role === "admin"} user={user} />
         <div className="flex flex-col flex-1">
           <header className="flex items-center justify-between p-2 border-b gap-2">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
+            <div className="flex items-center gap-2">
+              <SidebarTrigger data-testid="button-sidebar-toggle" />
+              <WorkspaceSwitcher workspace={workspace} />
+            </div>
             <HeaderUserArea user={user} />
           </header>
           <main className="flex-1 overflow-auto">
@@ -174,7 +184,7 @@ function MainAppShell({ user }: { user: PublicUser }) {
 function AppContent() {
   const sessionQuery = useQuery({
     queryKey: ["/api/auth/session"],
-    queryFn: getQueryFn<{ user: PublicUser }>({ on401: "returnNull" }),
+    queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
     staleTime: 0,
   });
 
@@ -188,15 +198,15 @@ function AppContent() {
     return <AuthPage />;
   }
 
-  const { user } = session;
+  const { user, workspace } = session;
 
   return (
     <Switch>
       <Route path="/admin/:rest*">
-        {user.role === "admin" ? <AdminAppShell user={user} /> : <UnauthorizedPage />}
+        {user.role === "admin" ? <AdminAppShell user={user} workspace={workspace} /> : <UnauthorizedPage />}
       </Route>
       <Route>
-        <MainAppShell user={user} />
+        <MainAppShell user={user} workspace={workspace} />
       </Route>
     </Switch>
   );

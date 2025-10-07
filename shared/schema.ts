@@ -9,6 +9,7 @@ import {
   jsonb,
   doublePrecision,
   customType,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -82,6 +83,45 @@ export const users = pgTable("users", {
   yandexAvatar: text("yandex_avatar").notNull().default(""),
   yandexEmailVerified: boolean("yandex_email_verified").notNull().default(false),
 });
+
+export const workspacePlans = ["free", "team"] as const;
+export type WorkspacePlan = (typeof workspacePlans)[number];
+
+export const workspaces = pgTable("workspaces", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  ownerId: varchar("owner_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  plan: text("plan").$type<WorkspacePlan>().notNull().default("free"),
+  settings: jsonb("settings")
+    .$type<Record<string, unknown>>()
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const workspaceMemberRoles = ["owner", "manager", "user"] as const;
+export type WorkspaceMemberRole = (typeof workspaceMemberRoles)[number];
+
+export const workspaceMembers = pgTable(
+  "workspace_members",
+  {
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").$type<WorkspaceMemberRole>().notNull().default("user"),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.userId] }),
+  }),
+);
 
 export const personalApiTokens = pgTable("personal_api_tokens", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -223,6 +263,9 @@ export const sites = pgTable("sites", {
   error: text("error"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  workspaceId: varchar("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
   ownerId: varchar("owner_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
@@ -286,6 +329,9 @@ export const embeddingProviders = pgTable("embedding_providers", {
   requestConfig: jsonb("request_config").$type<EmbeddingRequestConfig>().notNull().default(sql`'{}'::jsonb`),
   responseConfig: jsonb("response_config").$type<EmbeddingResponseConfig>().notNull().default(sql`'{}'::jsonb`),
   qdrantConfig: jsonb("qdrant_config").$type<QdrantIntegrationConfig>().notNull().default(sql`'{}'::jsonb`),
+  workspaceId: varchar("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -316,6 +362,7 @@ export const insertSiteSchema = createInsertSchema(sites)
     id: true,
     createdAt: true,
     updatedAt: true,
+    workspaceId: true,
     ownerId: true,
     status: true,
     lastCrawled: true,
@@ -366,6 +413,7 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
     id: true,
     createdAt: true,
     updatedAt: true,
+    workspaceId: true,
   })
   .extend({
     name: z.string().trim().min(1, "Укажите название сервиса").max(200, "Слишком длинное название"),
@@ -494,6 +542,10 @@ export type PublicUser = Omit<
 export type PersonalApiToken = typeof personalApiTokens.$inferSelect;
 export type InsertPersonalApiToken = typeof personalApiTokens.$inferInsert;
 export type PublicPersonalApiToken = Omit<PersonalApiToken, "tokenHash" | "userId">;
+export type Workspace = typeof workspaces.$inferSelect;
+export type WorkspaceInsert = typeof workspaces.$inferInsert;
+export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
+export type WorkspaceMemberInsert = typeof workspaceMembers.$inferInsert;
 export type AuthProvider = typeof authProviders.$inferSelect;
 export type AuthProviderInsert = typeof authProviders.$inferInsert;
 export type EmbeddingProvider = typeof embeddingProviders.$inferSelect;

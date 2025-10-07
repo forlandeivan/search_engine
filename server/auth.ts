@@ -8,12 +8,22 @@ import { Strategy as YandexStrategy, type YandexProfile } from "passport-yandex"
 import bcrypt from "bcryptjs";
 import { pool } from "./db";
 import { storage } from "./storage";
-import type { PublicUser, User } from "@shared/schema";
+import type { PublicUser, User, WorkspaceMemberRole } from "@shared/schema";
+import type { WorkspaceWithRole } from "./storage";
 import { createHash } from "crypto";
 
 declare module "express-session" {
   interface SessionData {
     oauthRedirectTo?: string;
+    workspaceId?: string;
+  }
+}
+
+declare module "express-serve-static-core" {
+  interface Request {
+    workspaceId?: string;
+    workspaceRole?: WorkspaceMemberRole;
+    workspaceMemberships?: WorkspaceWithRole[];
   }
 }
 
@@ -441,6 +451,95 @@ async function resolveAuthenticatedUser(req: Request): Promise<PublicUser | null
   return await authenticateWithPersonalToken(req);
 }
 
+export interface WorkspaceContext {
+  active: WorkspaceWithRole;
+  memberships: WorkspaceWithRole[];
+}
+
+export interface PublicWorkspaceMembership {
+  id: string;
+  name: string;
+  plan: WorkspaceWithRole["plan"];
+  role: WorkspaceMemberRole;
+}
+
+export function toPublicWorkspaceMembership(workspace: WorkspaceWithRole): PublicWorkspaceMembership {
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    plan: workspace.plan,
+    role: workspace.role,
+  };
+}
+
+export async function ensureWorkspaceContext(req: Request, user: PublicUser): Promise<WorkspaceContext> {
+  let memberships = await storage.listUserWorkspaces(user.id);
+
+  if (memberships.length === 0) {
+    const fullUser = await storage.getUser(user.id);
+    if (fullUser) {
+      await storage.ensurePersonalWorkspace(fullUser);
+      memberships = await storage.listUserWorkspaces(user.id);
+    }
+  }
+
+  const headerWorkspaceRaw = req.headers["x-workspace-id"];
+  const headerWorkspaceId = Array.isArray(headerWorkspaceRaw)
+    ? headerWorkspaceRaw[0]
+    : typeof headerWorkspaceRaw === "string"
+      ? headerWorkspaceRaw.trim()
+      : undefined;
+
+  const requestedWorkspaceId = headerWorkspaceId && headerWorkspaceId.length > 0
+    ? headerWorkspaceId
+    : req.session?.workspaceId;
+
+  let active = requestedWorkspaceId
+    ? memberships.find((workspace) => workspace.id === requestedWorkspaceId)
+    : undefined;
+
+  if (!active && memberships.length > 0) {
+    active = memberships[0];
+  }
+
+  if (!active) {
+    throw new Error("Рабочее пространство не найдено");
+  }
+
+  if (req.session) {
+    req.session.workspaceId = active.id;
+  }
+
+  req.workspaceId = active.id;
+  req.workspaceRole = active.role;
+  req.workspaceMemberships = memberships;
+
+  return { active, memberships };
+}
+
+export function buildSessionResponse(user: PublicUser, context: WorkspaceContext) {
+  const active = toPublicWorkspaceMembership(context.active);
+  const memberships = context.memberships.map(toPublicWorkspaceMembership);
+  return {
+    user,
+    workspace: {
+      active,
+      memberships,
+    },
+  };
+}
+
+export function getRequestWorkspace(req: Request): { id: string; role: WorkspaceMemberRole } {
+  if (!req.workspaceId || !req.workspaceRole) {
+    throw new Error("Рабочее пространство не выбрано");
+  }
+  return { id: req.workspaceId, role: req.workspaceRole };
+}
+
+export function getRequestWorkspaceMemberships(req: Request): WorkspaceWithRole[] {
+  return req.workspaceMemberships ?? [];
+}
+
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
     const user = await resolveAuthenticatedUser(req);
@@ -448,6 +547,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       res.status(401).json({ message: "Требуется авторизация" });
       return;
     }
+
+    await ensureWorkspaceContext(req, user);
 
     next();
   } catch (error) {
@@ -467,6 +568,8 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
       res.status(403).json({ message: "Недостаточно прав" });
       return;
     }
+
+    await ensureWorkspaceContext(req, user);
 
     next();
   } catch (error) {

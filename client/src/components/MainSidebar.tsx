@@ -31,6 +31,7 @@ import {
   Settings,
   Shield,
   CircleUser,
+  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -214,6 +215,11 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
     {
       label: "Система",
       items: [
+        {
+          title: "Участники",
+          url: "/workspaces/members",
+          icon: Users,
+        },
         {
           title: "Документация API",
           url: "/integrations/api",

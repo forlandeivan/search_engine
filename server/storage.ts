@@ -6,6 +6,9 @@ import {
   personalApiTokens,
   embeddingProviders,
   authProviders,
+  workspaces,
+  workspaceMembers,
+  workspaceMemberRoles,
   type Site,
   type SiteInsert,
   type Page,
@@ -17,6 +20,8 @@ import {
   type InsertUser,
   type EmbeddingProvider,
   type EmbeddingProviderInsert,
+  type Workspace,
+  type WorkspaceMember,
   type AuthProvider,
   type AuthProviderInsert,
   type AuthProviderType,
@@ -121,35 +126,67 @@ function resolveNamesFromProfile(options: {
   };
 }
 
+function generatePersonalWorkspaceName(user: User): string {
+  const emailPrefix = typeof user.email === "string" ? user.email.split("@")[0] ?? "" : "";
+  const cleaned = emailPrefix.replace(/[^\p{L}\p{N}\s_-]/gu, " ").trim();
+  if (cleaned.length > 0) {
+    return cleaned;
+  }
+
+  const fallback = user.fullName?.trim();
+  if (fallback && fallback.length > 0) {
+    return fallback;
+  }
+
+  return "Личное пространство";
+}
+
+export type WorkspaceWithRole = Workspace & { role: WorkspaceMember["role"] };
+export interface WorkspaceMemberWithUser {
+  member: WorkspaceMember;
+  user: User;
+}
+
 export interface IStorage {
   // Sites management
   createSite(site: SiteInsert): Promise<Site>;
-  getSite(id: string, ownerId?: string): Promise<Site | undefined>;
+  getSite(id: string, workspaceId?: string): Promise<Site | undefined>;
   getSiteByPublicId(publicId: string): Promise<Site | undefined>;
-  getAllSites(ownerId?: string): Promise<Site[]>;
-  updateSite(id: string, updates: Partial<Site>, ownerId?: string): Promise<Site | undefined>;
-  deleteSite(id: string, ownerId?: string): Promise<boolean>;
+  getAllSites(workspaceId?: string): Promise<Site[]>;
+  updateSite(id: string, updates: Partial<Site>, workspaceId?: string): Promise<Site | undefined>;
+  deleteSite(id: string, workspaceId?: string): Promise<boolean>;
   rotateSiteApiKey(
     siteId: string,
-    ownerId?: string,
+    workspaceId?: string,
   ): Promise<{ site: Site; apiKey: string } | undefined>;
 
   // Pages management
   createPage(page: InsertPage): Promise<Page>;
-  getPage(id: string, ownerId?: string): Promise<Page | undefined>;
-  getAllPages(ownerId?: string): Promise<Page[]>;
+  getPage(id: string, workspaceId?: string): Promise<Page | undefined>;
+  getAllPages(workspaceId?: string): Promise<Page[]>;
   getPagesByUrl(url: string): Promise<Page[]>;
-  getPagesBySiteId(siteId: string, ownerId?: string): Promise<Page[]>;
-  updatePage(id: string, updates: Partial<Page>, ownerId?: string): Promise<Page | undefined>;
-  deletePage(id: string, ownerId?: string): Promise<boolean>;
-  bulkDeletePages(pageIds: string[], ownerId?: string): Promise<{ deletedCount: number; notFoundCount: number }>;
-  deletePagesBySiteId(siteId: string, ownerId?: string): Promise<number>;
+  getPagesBySiteId(siteId: string, workspaceId?: string): Promise<Page[]>;
+  updatePage(id: string, updates: Partial<Page>, workspaceId?: string): Promise<Page | undefined>;
+  deletePage(id: string, workspaceId?: string): Promise<boolean>;
+  bulkDeletePages(pageIds: string[], workspaceId?: string): Promise<{ deletedCount: number; notFoundCount: number }>;
+  deletePagesBySiteId(siteId: string, workspaceId?: string): Promise<number>;
 
   // Search index management
   createSearchIndexEntry(entry: InsertSearchIndexEntry): Promise<SearchIndexEntry>;
   deleteSearchIndexByPageId(pageId: string): Promise<number>;
-  searchPages(query: string, limit?: number, offset?: number, ownerId?: string): Promise<{ results: Page[]; total: number }>;
-  searchPagesByCollection(query: string, siteId: string, limit?: number, offset?: number, ownerId?: string): Promise<{ results: Page[]; total: number }>;
+  searchPages(
+    query: string,
+    limit?: number,
+    offset?: number,
+    workspaceId?: string,
+  ): Promise<{ results: Page[]; total: number }>;
+  searchPagesByCollection(
+    query: string,
+    siteId: string,
+    limit?: number,
+    offset?: number,
+    workspaceId?: string,
+  ): Promise<{ results: Page[]; total: number }>;
 
   // Database health diagnostics
   getDatabaseHealthInfo(): Promise<{
@@ -189,6 +226,23 @@ export interface IStorage {
   ): Promise<User | undefined>;
   getUserByPersonalApiTokenHash(hash: string): Promise<User | undefined>;
 
+  // Workspaces
+  getWorkspace(id: string): Promise<Workspace | undefined>;
+  ensurePersonalWorkspace(user: User): Promise<Workspace>;
+  listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
+  addWorkspaceMember(
+    workspaceId: string,
+    userId: string,
+    role?: WorkspaceMember["role"],
+  ): Promise<WorkspaceMember | undefined>;
+  updateWorkspaceMemberRole(
+    workspaceId: string,
+    userId: string,
+    role: WorkspaceMember["role"],
+  ): Promise<WorkspaceMember | undefined>;
+  listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMemberWithUser[]>;
+  removeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean>;
+
   // Auth providers
   getAuthProvider(provider: AuthProviderType): Promise<AuthProvider | undefined>;
   upsertAuthProvider(
@@ -197,14 +251,15 @@ export interface IStorage {
   ): Promise<AuthProvider>;
 
   // Embedding services
-  listEmbeddingProviders(): Promise<EmbeddingProvider[]>;
-  getEmbeddingProvider(id: string): Promise<EmbeddingProvider | undefined>;
+  listEmbeddingProviders(workspaceId?: string): Promise<EmbeddingProvider[]>;
+  getEmbeddingProvider(id: string, workspaceId?: string): Promise<EmbeddingProvider | undefined>;
   createEmbeddingProvider(provider: EmbeddingProviderInsert): Promise<EmbeddingProvider>;
   updateEmbeddingProvider(
     id: string,
     updates: Partial<EmbeddingProviderInsert>,
+    workspaceId?: string,
   ): Promise<EmbeddingProvider | undefined>;
-  deleteEmbeddingProvider(id: string): Promise<boolean>;
+  deleteEmbeddingProvider(id: string, workspaceId?: string): Promise<boolean>;
 }
 
 function buildWhereClause(conditions: SQL[]): SQL {
@@ -220,6 +275,88 @@ let ensuringEmbeddingProvidersTable: Promise<void> | null = null;
 let authProvidersTableEnsured = false;
 let ensuringAuthProvidersTable: Promise<void> | null = null;
 
+let workspacesTableEnsured = false;
+let ensuringWorkspacesTable: Promise<void> | null = null;
+
+let workspaceMembersTableEnsured = false;
+let ensuringWorkspaceMembersTable: Promise<void> | null = null;
+
+async function ensureWorkspacesTable(): Promise<void> {
+  if (workspacesTableEnsured) {
+    return;
+  }
+
+  if (ensuringWorkspacesTable) {
+    await ensuringWorkspacesTable;
+    return;
+  }
+
+  ensuringWorkspacesTable = (async () => {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "workspaces" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" text NOT NULL,
+        "owner_id" varchar NOT NULL,
+        "plan" text NOT NULL DEFAULT 'free',
+        "settings" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "workspaces"
+      ADD CONSTRAINT IF NOT EXISTS "workspaces_owner_id_fkey"
+      FOREIGN KEY ("owner_id") REFERENCES "users"("id") ON DELETE CASCADE
+    `);
+
+    workspacesTableEnsured = true;
+  })();
+
+  await ensuringWorkspacesTable;
+}
+
+async function ensureWorkspaceMembersTable(): Promise<void> {
+  if (workspaceMembersTableEnsured) {
+    return;
+  }
+
+  if (ensuringWorkspaceMembersTable) {
+    await ensuringWorkspaceMembersTable;
+    return;
+  }
+
+  ensuringWorkspaceMembersTable = (async () => {
+    await ensureWorkspacesTable();
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "workspace_members" (
+        "workspace_id" varchar NOT NULL,
+        "user_id" varchar NOT NULL,
+        "role" text NOT NULL DEFAULT 'user',
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT workspace_members_pk PRIMARY KEY ("workspace_id", "user_id")
+      )
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "workspace_members"
+      ADD CONSTRAINT IF NOT EXISTS "workspace_members_workspace_id_fkey"
+      FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "workspace_members"
+      ADD CONSTRAINT IF NOT EXISTS "workspace_members_user_id_fkey"
+      FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+    `);
+
+    workspaceMembersTableEnsured = true;
+  })();
+
+  await ensuringWorkspaceMembersTable;
+}
+
 async function ensureEmbeddingProvidersTable(): Promise<void> {
   if (embeddingProvidersTableEnsured) {
     return;
@@ -231,6 +368,8 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
   }
 
   ensuringEmbeddingProvidersTable = (async () => {
+    await ensureWorkspacesTable();
+    await ensureWorkspaceMembersTable();
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "embedding_providers" (
         "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -248,6 +387,7 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
         "request_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "response_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "qdrant_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "workspace_id" varchar NOT NULL,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
@@ -310,6 +450,30 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
       ALTER TABLE "embedding_providers"
       ALTER COLUMN "allow_self_signed_certificate" SET NOT NULL
     `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "embedding_providers"
+        ADD COLUMN "workspace_id" varchar
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await db.execute(sql`
+      ALTER TABLE "embedding_providers"
+      ADD CONSTRAINT IF NOT EXISTS "embedding_providers_workspace_id_fkey"
+      FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "embedding_providers"
+        ALTER COLUMN "workspace_id" SET NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["23502"]);
+    }
 
     try {
       await db.execute(sql`
@@ -693,9 +857,9 @@ export class DatabaseStorage implements IStorage {
     return newSite;
   }
 
-  async getSite(id: string, ownerId?: string): Promise<Site | undefined> {
-    const condition = ownerId
-      ? and(eq(sites.id, id), eq(sites.ownerId, ownerId))
+  async getSite(id: string, workspaceId?: string): Promise<Site | undefined> {
+    const condition = workspaceId
+      ? and(eq(sites.id, id), eq(sites.workspaceId, workspaceId))
       : eq(sites.id, id);
     const [site] = await this.db.select().from(sites).where(condition);
     return site ?? undefined;
@@ -706,17 +870,17 @@ export class DatabaseStorage implements IStorage {
     return site ?? undefined;
   }
 
-  async getAllSites(ownerId?: string): Promise<Site[]> {
+  async getAllSites(workspaceId?: string): Promise<Site[]> {
     let query = this.db.select().from(sites);
-    if (ownerId) {
-      query = query.where(eq(sites.ownerId, ownerId));
+    if (workspaceId) {
+      query = query.where(eq(sites.workspaceId, workspaceId));
     }
     return await query.orderBy(desc(sites.createdAt));
   }
 
-  async updateSite(id: string, updates: Partial<Site>, ownerId?: string): Promise<Site | undefined> {
-    const condition = ownerId
-      ? and(eq(sites.id, id), eq(sites.ownerId, ownerId))
+  async updateSite(id: string, updates: Partial<Site>, workspaceId?: string): Promise<Site | undefined> {
+    const condition = workspaceId
+      ? and(eq(sites.id, id), eq(sites.workspaceId, workspaceId))
       : eq(sites.id, id);
     const [updatedSite] = await this.db
       .update(sites)
@@ -726,9 +890,9 @@ export class DatabaseStorage implements IStorage {
     return updatedSite ?? undefined;
   }
 
-  async deleteSite(id: string, ownerId?: string): Promise<boolean> {
-    const condition = ownerId
-      ? and(eq(sites.id, id), eq(sites.ownerId, ownerId))
+  async deleteSite(id: string, workspaceId?: string): Promise<boolean> {
+    const condition = workspaceId
+      ? and(eq(sites.id, id), eq(sites.workspaceId, workspaceId))
       : eq(sites.id, id);
     const result = await this.db.delete(sites).where(condition);
     return (result.rowCount ?? 0) > 0;
@@ -736,11 +900,11 @@ export class DatabaseStorage implements IStorage {
 
   async rotateSiteApiKey(
     siteId: string,
-    ownerId?: string,
+    workspaceId?: string,
   ): Promise<{ site: Site; apiKey: string } | undefined> {
     const newApiKey = randomBytes(32).toString("hex");
-    const condition = ownerId
-      ? and(eq(sites.id, siteId), eq(sites.ownerId, ownerId))
+    const condition = workspaceId
+      ? and(eq(sites.id, siteId), eq(sites.workspaceId, workspaceId))
       : eq(sites.id, siteId);
 
     const [updatedSite] = await this.db
@@ -765,13 +929,13 @@ export class DatabaseStorage implements IStorage {
     return newPage;
   }
 
-  async getPage(id: string, ownerId?: string): Promise<Page | undefined> {
-    if (ownerId) {
+  async getPage(id: string, workspaceId?: string): Promise<Page | undefined> {
+    if (workspaceId) {
       const rows = await this.db
         .select({ page: pages })
         .from(pages)
         .innerJoin(sites, eq(pages.siteId, sites.id))
-        .where(and(eq(pages.id, id), eq(sites.ownerId, ownerId)));
+        .where(and(eq(pages.id, id), eq(sites.workspaceId, workspaceId)));
 
       return rows[0]?.page;
     }
@@ -780,8 +944,8 @@ export class DatabaseStorage implements IStorage {
     return page ?? undefined;
   }
 
-  async getAllPages(ownerId?: string): Promise<Page[]> {
-    if (!ownerId) {
+  async getAllPages(workspaceId?: string): Promise<Page[]> {
+    if (!workspaceId) {
       return await this.db.select().from(pages).orderBy(desc(pages.createdAt));
     }
 
@@ -789,7 +953,7 @@ export class DatabaseStorage implements IStorage {
       .select({ page: pages })
       .from(pages)
       .innerJoin(sites, eq(pages.siteId, sites.id))
-      .where(eq(sites.ownerId, ownerId))
+      .where(eq(sites.workspaceId, workspaceId))
       .orderBy(desc(pages.createdAt));
 
     return rows.map(({ page }) => page);
@@ -799,9 +963,9 @@ export class DatabaseStorage implements IStorage {
     return await this.db.select().from(pages).where(eq(pages.url, url));
   }
 
-  async getPagesBySiteId(siteId: string, ownerId?: string): Promise<Page[]> {
-    if (ownerId) {
-      const site = await this.getSite(siteId, ownerId);
+  async getPagesBySiteId(siteId: string, workspaceId?: string): Promise<Page[]> {
+    if (workspaceId) {
+      const site = await this.getSite(siteId, workspaceId);
       if (!site) {
         return [];
       }
@@ -814,9 +978,9 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(pages.lastCrawled));
   }
 
-  async updatePage(id: string, updates: Partial<Page>, ownerId?: string): Promise<Page | undefined> {
-    if (ownerId) {
-      const page = await this.getPage(id, ownerId);
+  async updatePage(id: string, updates: Partial<Page>, workspaceId?: string): Promise<Page | undefined> {
+    if (workspaceId) {
+      const page = await this.getPage(id, workspaceId);
       if (!page) {
         return undefined;
       }
@@ -830,9 +994,9 @@ export class DatabaseStorage implements IStorage {
     return updatedPage ?? undefined;
   }
 
-  async deletePage(id: string, ownerId?: string): Promise<boolean> {
-    if (ownerId) {
-      const page = await this.getPage(id, ownerId);
+  async deletePage(id: string, workspaceId?: string): Promise<boolean> {
+    if (workspaceId) {
+      const page = await this.getPage(id, workspaceId);
       if (!page) {
         return false;
       }
@@ -843,19 +1007,19 @@ export class DatabaseStorage implements IStorage {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async bulkDeletePages(pageIds: string[], ownerId?: string): Promise<{ deletedCount: number; notFoundCount: number }> {
+  async bulkDeletePages(pageIds: string[], workspaceId?: string): Promise<{ deletedCount: number; notFoundCount: number }> {
     if (pageIds.length === 0) {
       return { deletedCount: 0, notFoundCount: 0 };
     }
 
     let accessibleIds: string[];
 
-    if (ownerId) {
+    if (workspaceId) {
       const rows: Array<{ id: string }> = await this.db
         .select({ id: pages.id })
         .from(pages)
         .innerJoin(sites, eq(pages.siteId, sites.id))
-        .where(and(inArray(pages.id, pageIds), eq(sites.ownerId, ownerId)));
+        .where(and(inArray(pages.id, pageIds), eq(sites.workspaceId, workspaceId)));
 
       accessibleIds = rows.map((row) => row.id);
     } else {
@@ -885,9 +1049,9 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async deletePagesBySiteId(siteId: string, ownerId?: string): Promise<number> {
-    if (ownerId) {
-      const site = await this.getSite(siteId, ownerId);
+  async deletePagesBySiteId(siteId: string, workspaceId?: string): Promise<number> {
+    if (workspaceId) {
+      const site = await this.getSite(siteId, workspaceId);
       if (!site) {
         return 0;
       }
@@ -907,12 +1071,12 @@ export class DatabaseStorage implements IStorage {
     return result.rowCount ?? 0;
   }
 
-  private buildOwnerCondition(ownerId?: string): SQL | undefined {
-    if (!ownerId) {
+  private buildWorkspaceCondition(workspaceId?: string): SQL | undefined {
+    if (!workspaceId) {
       return undefined;
     }
 
-    return sql`EXISTS (SELECT 1 FROM sites s WHERE s.id = p.site_id AND s.owner_id = ${ownerId})`;
+    return sql`EXISTS (SELECT 1 FROM sites s WHERE s.id = p.site_id AND s.workspace_id = ${workspaceId})`;
   }
 
   private async runFullTextSearch(
@@ -920,10 +1084,10 @@ export class DatabaseStorage implements IStorage {
     limit: number,
     offset: number,
     additionalConditions: SQL[],
-    ownerId?: string,
+    workspaceId?: string,
   ): Promise<{ rows: Page[]; total: number }> {
     const tsQuery = sql`plainto_tsquery('english', ${query})`;
-    const ownerCondition = this.buildOwnerCondition(ownerId);
+    const ownerCondition = this.buildWorkspaceCondition(workspaceId);
     const conditions = [sql`p.search_vector_combined @@ ${tsQuery}`, ...additionalConditions];
     if (ownerCondition) {
       conditions.push(ownerCondition);
@@ -953,13 +1117,13 @@ export class DatabaseStorage implements IStorage {
     limit: number,
     offset: number,
     additionalConditions: SQL[],
-    ownerId?: string,
+    workspaceId?: string,
   ): Promise<{ results: Page[]; total: number }> {
     const likeCondition = sql`(
       COALESCE(p.title, '') ILIKE '%' || ${query} || '%'
       OR COALESCE(p.content, '') ILIKE '%' || ${query} || '%'
     )`;
-    const ownerCondition = this.buildOwnerCondition(ownerId);
+    const ownerCondition = this.buildWorkspaceCondition(workspaceId);
     const conditions = [...additionalConditions, likeCondition];
     if (ownerCondition) {
       conditions.push(ownerCondition);
@@ -988,19 +1152,19 @@ export class DatabaseStorage implements IStorage {
     query: string,
     limit: number = 10,
     offset: number = 0,
-    ownerId?: string,
+    workspaceId?: string,
   ): Promise<{ results: Page[]; total: number }> {
     const cleanQuery = query.trim();
     if (!cleanQuery) {
       return { results: [], total: 0 };
     }
 
-    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, [], ownerId);
+    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, [], workspaceId);
     if (total > 0) {
       return { results: rows, total };
     }
 
-    return await this.runFallbackSearch(cleanQuery, limit, offset, [], ownerId);
+    return await this.runFallbackSearch(cleanQuery, limit, offset, [], workspaceId);
   }
 
   async searchPagesByCollection(
@@ -1008,7 +1172,7 @@ export class DatabaseStorage implements IStorage {
     siteId: string,
     limit: number = 10,
     offset: number = 0,
-    ownerId?: string,
+    workspaceId?: string,
   ): Promise<{ results: Page[]; total: number }> {
     const cleanQuery = query.trim();
     if (!cleanQuery) {
@@ -1016,12 +1180,12 @@ export class DatabaseStorage implements IStorage {
     }
 
     const additionalConditions = [sql`p.site_id = ${siteId}`];
-    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, additionalConditions, ownerId);
+    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, additionalConditions, workspaceId);
     if (total > 0) {
       return { results: rows, total };
     }
 
-    return await this.runFallbackSearch(cleanQuery, limit, offset, [sql`p.site_id = ${siteId}`], ownerId);
+    return await this.runFallbackSearch(cleanQuery, limit, offset, [sql`p.site_id = ${siteId}`], workspaceId);
   }
 
   async getDatabaseHealthInfo() {
@@ -1076,14 +1240,21 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async listEmbeddingProviders(): Promise<EmbeddingProvider[]> {
+  async listEmbeddingProviders(workspaceId?: string): Promise<EmbeddingProvider[]> {
     await ensureEmbeddingProvidersTable();
-    return await this.db.select().from(embeddingProviders).orderBy(desc(embeddingProviders.createdAt));
+    let query = this.db.select().from(embeddingProviders);
+    if (workspaceId) {
+      query = query.where(eq(embeddingProviders.workspaceId, workspaceId));
+    }
+    return await query.orderBy(desc(embeddingProviders.createdAt));
   }
 
-  async getEmbeddingProvider(id: string): Promise<EmbeddingProvider | undefined> {
+  async getEmbeddingProvider(id: string, workspaceId?: string): Promise<EmbeddingProvider | undefined> {
     await ensureEmbeddingProvidersTable();
-    const [provider] = await this.db.select().from(embeddingProviders).where(eq(embeddingProviders.id, id));
+    const condition = workspaceId
+      ? and(eq(embeddingProviders.id, id), eq(embeddingProviders.workspaceId, workspaceId))
+      : eq(embeddingProviders.id, id);
+    const [provider] = await this.db.select().from(embeddingProviders).where(condition);
     return provider ?? undefined;
   }
 
@@ -1096,6 +1267,7 @@ export class DatabaseStorage implements IStorage {
   async updateEmbeddingProvider(
     id: string,
     updates: Partial<EmbeddingProviderInsert>,
+    workspaceId?: string,
   ): Promise<EmbeddingProvider | undefined> {
     await ensureEmbeddingProvidersTable();
     const sanitizedUpdates = Object.fromEntries(
@@ -1103,23 +1275,30 @@ export class DatabaseStorage implements IStorage {
     ) as Partial<EmbeddingProviderInsert>;
 
     if (Object.keys(sanitizedUpdates).length === 0) {
-      return await this.getEmbeddingProvider(id);
+      return await this.getEmbeddingProvider(id, workspaceId);
     }
+
+    const condition = workspaceId
+      ? and(eq(embeddingProviders.id, id), eq(embeddingProviders.workspaceId, workspaceId))
+      : eq(embeddingProviders.id, id);
 
     const [updated] = await this.db
       .update(embeddingProviders)
       .set({ ...sanitizedUpdates, updatedAt: sql`CURRENT_TIMESTAMP` })
-      .where(eq(embeddingProviders.id, id))
+      .where(condition)
       .returning();
 
     return updated ?? undefined;
   }
 
-  async deleteEmbeddingProvider(id: string): Promise<boolean> {
+  async deleteEmbeddingProvider(id: string, workspaceId?: string): Promise<boolean> {
     await ensureEmbeddingProvidersTable();
+    const condition = workspaceId
+      ? and(eq(embeddingProviders.id, id), eq(embeddingProviders.workspaceId, workspaceId))
+      : eq(embeddingProviders.id, id);
     const deleted = await this.db
       .delete(embeddingProviders)
-      .where(eq(embeddingProviders.id, id))
+      .where(condition)
       .returning({ id: embeddingProviders.id });
 
     return deleted.length > 0;
@@ -1162,6 +1341,10 @@ export class DatabaseStorage implements IStorage {
   async createUser(user: InsertUser): Promise<User> {
     await this.ensureUserAuthColumns();
     const [newUser] = await this.db.insert(users).values(user).returning();
+    if (!newUser) {
+      throw new Error("Не удалось создать пользователя");
+    }
+    await this.ensurePersonalWorkspace(newUser);
     return newUser;
   }
 
@@ -1210,7 +1393,9 @@ export class DatabaseStorage implements IStorage {
         .where(eq(users.id, existingByGoogle.id))
         .returning();
 
-      return updatedUser ?? existingByGoogle;
+      const resolved = updatedUser ?? existingByGoogle;
+      await this.ensurePersonalWorkspace(resolved);
+      return resolved;
     }
 
     const [existingByEmail] = await this.db.select().from(users).where(eq(users.email, email));
@@ -1234,7 +1419,9 @@ export class DatabaseStorage implements IStorage {
         .where(eq(users.id, existingByEmail.id))
         .returning();
 
-      return updatedUser ?? existingByEmail;
+      const resolved = updatedUser ?? existingByEmail;
+      await this.ensurePersonalWorkspace(resolved);
+      return resolved;
     }
 
     const [newUser] = await this.db
@@ -1256,6 +1443,7 @@ export class DatabaseStorage implements IStorage {
       throw new Error("Не удалось создать пользователя по данным Google");
     }
 
+    await this.ensurePersonalWorkspace(newUser);
     return newUser;
   }
 
@@ -1304,7 +1492,9 @@ export class DatabaseStorage implements IStorage {
         .where(eq(users.id, existingByYandex.id))
         .returning();
 
-      return updatedUser ?? existingByYandex;
+      const resolved = updatedUser ?? existingByYandex;
+      await this.ensurePersonalWorkspace(resolved);
+      return resolved;
     }
 
     const [existingByEmail] = await this.db.select().from(users).where(eq(users.email, email));
@@ -1328,7 +1518,9 @@ export class DatabaseStorage implements IStorage {
         .where(eq(users.id, existingByEmail.id))
         .returning();
 
-      return updatedUser ?? existingByEmail;
+      const resolved = updatedUser ?? existingByEmail;
+      await this.ensurePersonalWorkspace(resolved);
+      return resolved;
     }
 
     const [newUser] = await this.db
@@ -1350,6 +1542,7 @@ export class DatabaseStorage implements IStorage {
       throw new Error("Не удалось создать пользователя по данным Yandex");
     }
 
+    await this.ensurePersonalWorkspace(newUser);
     return newUser;
   }
 
@@ -1378,6 +1571,9 @@ export class DatabaseStorage implements IStorage {
       })
       .where(eq(users.id, userId))
       .returning();
+    if (updatedUser) {
+      await this.ensurePersonalWorkspace(updatedUser);
+    }
     return updatedUser ?? undefined;
   }
 
@@ -1398,6 +1594,130 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, userId))
       .returning();
     return updatedUser ?? undefined;
+  }
+
+  async getWorkspace(id: string): Promise<Workspace | undefined> {
+    await ensureWorkspacesTable();
+    const [workspace] = await this.db.select().from(workspaces).where(eq(workspaces.id, id));
+    return workspace ?? undefined;
+  }
+
+  async ensurePersonalWorkspace(user: User): Promise<Workspace> {
+    await ensureWorkspaceMembersTable();
+
+    const existing = await this.db
+      .select({ workspace: workspaces })
+      .from(workspaceMembers)
+      .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+      .where(and(eq(workspaceMembers.userId, user.id), eq(workspaceMembers.role, "owner")))
+      .orderBy(desc(workspaces.createdAt))
+      .limit(1);
+
+    if (existing[0]?.workspace) {
+      return existing[0].workspace;
+    }
+
+    const workspaceName = generatePersonalWorkspaceName(user);
+    const [workspace] = await this.db
+      .insert(workspaces)
+      .values({
+        name: workspaceName,
+        ownerId: user.id,
+        plan: "free",
+      })
+      .returning();
+
+    if (!workspace) {
+      throw new Error("Не удалось создать рабочее пространство");
+    }
+
+    const [member] = await this.db
+      .insert(workspaceMembers)
+      .values({ workspaceId: workspace.id, userId: user.id, role: "owner" })
+      .returning();
+
+    if (!member) {
+      throw new Error("Не удалось сохранить участника рабочего пространства");
+    }
+
+    return workspace;
+  }
+
+  async listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]> {
+    await ensureWorkspaceMembersTable();
+    const rows: Array<{ workspace: Workspace; role: WorkspaceMember["role"] }> = await this.db
+      .select({ workspace: workspaces, role: workspaceMembers.role })
+      .from(workspaceMembers)
+      .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+      .where(eq(workspaceMembers.userId, userId))
+      .orderBy(desc(workspaces.createdAt));
+
+    return rows.map(({ workspace, role }) => ({ ...workspace, role }));
+  }
+
+  async addWorkspaceMember(
+    workspaceId: string,
+    userId: string,
+    role: WorkspaceMember["role"] = "user",
+  ): Promise<WorkspaceMember | undefined> {
+    await ensureWorkspaceMembersTable();
+    const normalizedRole = workspaceMemberRoles.includes(role) ? role : "user";
+
+    const [existing] = await this.db
+      .select()
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+      .limit(1);
+
+    if (existing) {
+      return existing;
+    }
+
+    const [member] = await this.db
+      .insert(workspaceMembers)
+      .values({ workspaceId, userId, role: normalizedRole })
+      .returning();
+
+    return member ?? undefined;
+  }
+
+  async updateWorkspaceMemberRole(
+    workspaceId: string,
+    userId: string,
+    role: WorkspaceMember["role"],
+  ): Promise<WorkspaceMember | undefined> {
+    await ensureWorkspaceMembersTable();
+    const normalizedRole = workspaceMemberRoles.includes(role) ? role : "user";
+
+    const [updated] = await this.db
+      .update(workspaceMembers)
+      .set({ role: normalizedRole, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+      .returning();
+
+    return updated ?? undefined;
+  }
+
+  async listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMemberWithUser[]> {
+    await ensureWorkspaceMembersTable();
+    const rows: Array<{ member: WorkspaceMember; user: User }> = await this.db
+      .select({ member: workspaceMembers, user: users })
+      .from(workspaceMembers)
+      .innerJoin(users, eq(workspaceMembers.userId, users.id))
+      .where(eq(workspaceMembers.workspaceId, workspaceId))
+      .orderBy(desc(workspaceMembers.createdAt));
+
+    return rows.map((row) => ({ member: row.member, user: row.user }));
+  }
+
+  async removeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
+    await ensureWorkspaceMembersTable();
+    const deleted = await this.db
+      .delete(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+      .returning({ userId: workspaceMembers.userId });
+
+    return deleted.length > 0;
   }
 
   async updateUserPassword(userId: string, passwordHash: string): Promise<User | undefined> {
