@@ -124,7 +124,17 @@ export default function AuthPage() {
 
   const isLogin = mode === "login";
   const isGoogleEnabled = Boolean(providersQuery.data?.providers?.google?.enabled);
-  const isGoogleButtonDisabled = providersQuery.isLoading;
+  const googleStatus: "loading" | "enabled" | "disabled" = providersQuery.isLoading
+    ? "loading"
+    : isGoogleEnabled
+      ? "enabled"
+      : "disabled";
+  const googleHelperText =
+    googleStatus === "loading"
+      ? "Проверяем доступность входа через Google…"
+      : googleStatus === "disabled"
+        ? "Вход через Google пока не настроен. Обратитесь к администратору, чтобы активировать интеграцию."
+        : "";
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authError = params.get("authError");
@@ -144,6 +154,10 @@ export default function AuthPage() {
   }, [toast]);
 
   const handleGoogleLogin = () => {
+    if (googleStatus !== "enabled") {
+      return;
+    }
+
     const redirectTarget = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const params = new URLSearchParams();
     params.set("redirect", redirectTarget);
@@ -175,28 +189,34 @@ export default function AuthPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {isGoogleEnabled && (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full flex items-center justify-center gap-2"
-                  onClick={handleGoogleLogin}
-                  disabled={isGoogleButtonDisabled}
-                >
-                  <FcGoogle className="h-5 w-5" />
-                  {isLogin ? "Войти через Google" : "Продолжить через Google"}
-                </Button>
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t" />
-                  </div>
-                  <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-card px-2 text-muted-foreground">или</span>
-                  </div>
-                </div>
-              </>
-            )}
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full flex items-center justify-center gap-2"
+                onClick={handleGoogleLogin}
+                disabled={googleStatus !== "enabled"}
+                aria-disabled={googleStatus !== "enabled"}
+              >
+                <FcGoogle className="h-5 w-5" />
+                {googleStatus === "loading"
+                  ? "Проверяем Google..."
+                  : isLogin
+                    ? "Войти через Google"
+                    : "Продолжить через Google"}
+              </Button>
+              {googleHelperText && (
+                <p className="text-xs text-muted-foreground text-center">{googleHelperText}</p>
+              )}
+            </div>
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">или</span>
+              </div>
+            </div>
             {isLogin ? (
               <form
                 className="space-y-4"
