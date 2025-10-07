@@ -78,6 +78,9 @@ export const users = pgTable("users", {
   googleId: text("google_id").unique(),
   googleAvatar: text("google_avatar").notNull().default(""),
   googleEmailVerified: boolean("google_email_verified").notNull().default(false),
+  yandexId: text("yandex_id").unique(),
+  yandexAvatar: text("yandex_avatar").notNull().default(""),
+  yandexEmailVerified: boolean("yandex_email_verified").notNull().default(false),
 });
 
 export const personalApiTokens = pgTable("personal_api_tokens", {
@@ -113,12 +116,14 @@ export const insertUserSchema = createInsertSchema(users).omit({
   personalApiTokenGeneratedAt: true,
   googleAvatar: true,
   googleEmailVerified: true,
+  yandexAvatar: true,
+  yandexEmailVerified: true,
 });
 
 export const embeddingProviderTypes = ["gigachat", "custom"] as const;
 export type EmbeddingProviderType = (typeof embeddingProviderTypes)[number];
 
-export const authProviderTypes = ["google"] as const;
+export const authProviderTypes = ["google", "yandex"] as const;
 export type AuthProviderType = (typeof authProviderTypes)[number];
 
 export const embeddingRequestConfigSchema = z

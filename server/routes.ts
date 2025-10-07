@@ -42,7 +42,14 @@ import {
   type CollectionSchemaFieldInput,
   type ProjectVectorizationJobStatus,
 } from "@shared/vectorization";
-import { requireAuth, requireAdmin, getSessionUser, toPublicUser, reloadGoogleAuth } from "./auth";
+import {
+  requireAuth,
+  requireAdmin,
+  getSessionUser,
+  toPublicUser,
+  reloadGoogleAuth,
+  reloadYandexAuth,
+} from "./auth";
 
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
@@ -1314,6 +1321,7 @@ function buildExcerpt(content: string | null | undefined, query: string, maxLeng
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const isGoogleAuthEnabled = () => Boolean(app.get("googleAuthConfigured"));
+  const isYandexAuthEnabled = () => Boolean(app.get("yandexAuthConfigured"));
 
   app.post("/api/public/collections/:publicId/search", async (req, res) => {
     try {
@@ -1468,10 +1476,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/auth/providers", (_req, res) => {
     const googleAuthEnabled = isGoogleAuthEnabled();
+    const yandexAuthEnabled = isYandexAuthEnabled();
     res.json({
       providers: {
         local: { enabled: true },
         google: { enabled: googleAuthEnabled },
+        yandex: { enabled: yandexAuthEnabled },
       },
     });
   });
@@ -1535,6 +1545,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!user) {
         return res.redirect(appendAuthErrorParam(redirectTo, "google"));
+      }
+
+      req.logIn(user, (loginError) => {
+        if (loginError) {
+          return next(loginError);
+        }
+
+        res.redirect(redirectTo);
+      });
+    })(req, res, next);
+  });
+
+  app.get("/api/auth/yandex", (req, res, next) => {
+    const yandexAuthEnabled = isYandexAuthEnabled();
+    if (!yandexAuthEnabled) {
+      res.status(404).json({ message: "Авторизация через Yandex недоступна" });
+      return;
+    }
+
+    const redirectCandidate = typeof req.query.redirect === "string" ? req.query.redirect : undefined;
+    const redirectTo = sanitizeRedirectPath(redirectCandidate);
+
+    if (req.session) {
+      req.session.oauthRedirectTo = redirectTo;
+    }
+
+    passport.authenticate("yandex", {
+      scope: ["login:info", "login:email"],
+    })(req, res, next);
+  });
+
+  app.get("/api/auth/yandex/callback", (req, res, next) => {
+    const yandexAuthEnabled = isYandexAuthEnabled();
+    if (!yandexAuthEnabled) {
+      res.status(404).json({ message: "Авторизация через Yandex недоступна" });
+      return;
+    }
+
+    passport.authenticate("yandex", (err: unknown, user: PublicUser | false) => {
+      const redirectTo = sanitizeRedirectPath(req.session?.oauthRedirectTo ?? "/");
+      if (req.session) {
+        delete req.session.oauthRedirectTo;
+      }
+
+      if (err) {
+        console.error("Ошибка Yandex OAuth:", err);
+        return res.redirect(appendAuthErrorParam(redirectTo, "yandex"));
+      }
+
+      if (!user) {
+        return res.redirect(appendAuthErrorParam(redirectTo, "yandex"));
       }
 
       req.logIn(user, (loginError) => {
@@ -1979,6 +2040,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({
         provider: "google",
+        clientId,
+        callbackUrl,
+        isEnabled,
+        hasClientSecret,
+        source: "database" as const,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/auth/providers/yandex", requireAdmin, async (_req, res, next) => {
+    try {
+      const provider = await storage.getAuthProvider("yandex");
+      const envClientId = (process.env.YANDEX_CLIENT_ID ?? "").trim();
+      const envClientSecret = (process.env.YANDEX_CLIENT_SECRET ?? "").trim();
+      const envCallbackUrl = (process.env.YANDEX_CALLBACK_URL ?? "/api/auth/yandex/callback").trim();
+
+      if (provider) {
+        const clientId = provider.clientId?.trim() ?? "";
+        const callbackUrl = provider.callbackUrl?.trim() || envCallbackUrl;
+        const hasSecret = Boolean(provider.clientSecret && provider.clientSecret.trim().length > 0);
+        const isEnabled = provider.isEnabled && clientId.length > 0 && hasSecret;
+
+        res.json({
+          provider: "yandex",
+          clientId,
+          callbackUrl,
+          isEnabled,
+          hasClientSecret: hasSecret,
+          source: "database" as const,
+        });
+        return;
+      }
+
+      res.json({
+        provider: "yandex",
+        clientId: envClientId,
+        callbackUrl: envCallbackUrl,
+        isEnabled: envClientId.length > 0 && envClientSecret.length > 0,
+        hasClientSecret: envClientSecret.length > 0,
+        source: "environment" as const,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.put("/api/admin/auth/providers/yandex", requireAdmin, async (req, res, next) => {
+    try {
+      const payload = upsertAuthProviderSchema.parse(req.body);
+      if (payload.provider !== "yandex") {
+        return res.status(400).json({ error: "Поддерживается только провайдер Yandex" });
+      }
+
+      const trimmedClientId = payload.clientId.trim();
+      const trimmedCallbackUrl = payload.callbackUrl.trim();
+      const trimmedClientSecret =
+        payload.clientSecret !== undefined ? payload.clientSecret.trim() : undefined;
+
+      const existing = await storage.getAuthProvider("yandex");
+      const hasStoredSecret = Boolean(existing?.clientSecret && existing.clientSecret.trim().length > 0);
+
+      if (payload.isEnabled) {
+        if (trimmedClientId.length === 0) {
+          return res.status(400).json({ error: "Укажите Client ID" });
+        }
+
+        const secretCandidate = trimmedClientSecret ?? "";
+        if (secretCandidate.length === 0 && !hasStoredSecret) {
+          return res.status(400).json({ error: "Укажите Client Secret" });
+        }
+      }
+
+      const updates = {
+        isEnabled: payload.isEnabled,
+        clientId: trimmedClientId,
+        callbackUrl: trimmedCallbackUrl,
+        clientSecret:
+          payload.clientSecret !== undefined ? trimmedClientSecret ?? "" : undefined,
+      } satisfies Partial<AuthProviderInsert>;
+
+      const updated = await storage.upsertAuthProvider("yandex", updates);
+
+      try {
+        await reloadYandexAuth(app);
+      } catch (error) {
+        console.error("Не удалось применить обновлённые настройки Yandex OAuth:", error);
+      }
+
+      const clientId = updated.clientId?.trim() ?? "";
+      const hasClientSecret = Boolean(updated.clientSecret && updated.clientSecret.trim().length > 0);
+      const callbackUrl = updated.callbackUrl?.trim() || trimmedCallbackUrl || "/api/auth/yandex/callback";
+      const isEnabled = updated.isEnabled && clientId.length > 0 && hasClientSecret;
+
+      res.json({
+        provider: "yandex",
         clientId,
         callbackUrl,
         isEnabled,
