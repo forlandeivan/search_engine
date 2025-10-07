@@ -24,6 +24,7 @@ import {
   ArrowLeft,
   HardDrive,
   CircleUser,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -119,6 +120,16 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
           title: "Эмбеддинги",
           url: "/admin/embeddings",
           icon: Sparkles,
+        },
+      ],
+    },
+    {
+      label: "Аутентификация",
+      items: [
+        {
+          title: "Настройки входа",
+          url: "/admin/auth",
+          icon: ShieldCheck,
         },
       ],
     },

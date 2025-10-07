@@ -77,7 +77,7 @@ app.use(cors({
   optionsSuccessStatus: 200
 }));
 
-configureAuth(app);
+void configureAuth(app);
 
 app.use((req, res, next) => {
   const start = Date.now();
