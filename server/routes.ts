@@ -75,6 +75,45 @@ function getNodeErrorCode(error: unknown): string | undefined {
   return typeof candidate.code === "string" ? candidate.code : undefined;
 }
 
+function sanitizeRedirectPath(candidate: unknown): string {
+  if (typeof candidate !== "string") {
+    return "/";
+  }
+
+  const trimmed = candidate.trim();
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//")) {
+    return "/";
+  }
+
+  try {
+    const base = "http://localhost";
+    const parsed = new URL(trimmed, base);
+    if (parsed.origin !== base) {
+      return "/";
+    }
+
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "/";
+  }
+}
+
+function appendAuthErrorParam(path: string, code: string): string {
+  const hashIndex = path.indexOf("#");
+  const base = hashIndex >= 0 ? path.slice(0, hashIndex) : path;
+  const hash = hashIndex >= 0 ? path.slice(hashIndex) : "";
+
+  const questionIndex = base.indexOf("?");
+  const pathname = questionIndex >= 0 ? base.slice(0, questionIndex) : base;
+  const query = questionIndex >= 0 ? base.slice(questionIndex + 1) : "";
+
+  const params = new URLSearchParams(query);
+  params.set("authError", code);
+
+  const queryString = params.toString();
+  return `${pathname}${queryString ? `?${queryString}` : ""}${hash}`;
+}
+
 function parseVectorSize(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return value;
@@ -1272,6 +1311,8 @@ function buildExcerpt(content: string | null | undefined, query: string, maxLeng
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  const googleAuthEnabled = Boolean(app.get("googleAuthConfigured"));
+
   app.post("/api/public/collections/:publicId/search", async (req, res) => {
     try {
       const headerKey = req.headers["x-api-key"];
@@ -1423,6 +1464,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/auth/providers", (_req, res) => {
+    res.json({
+      providers: {
+        local: { enabled: true },
+        google: { enabled: googleAuthEnabled },
+      },
+    });
+  });
+
   app.get("/api/auth/session", async (req, res, next) => {
     try {
       const user = getSessionUser(req);
@@ -1440,6 +1490,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       next(error);
     }
+  });
+
+  app.get("/api/auth/google", (req, res, next) => {
+    if (!googleAuthEnabled) {
+      res.status(404).json({ message: "Авторизация через Google недоступна" });
+      return;
+    }
+
+    const redirectCandidate = typeof req.query.redirect === "string" ? req.query.redirect : undefined;
+    const redirectTo = sanitizeRedirectPath(redirectCandidate);
+
+    if (req.session) {
+      req.session.oauthRedirectTo = redirectTo;
+    }
+
+    passport.authenticate("google", {
+      scope: ["profile", "email"],
+      prompt: "select_account",
+    })(req, res, next);
+  });
+
+  app.get("/api/auth/google/callback", (req, res, next) => {
+    if (!googleAuthEnabled) {
+      res.status(404).json({ message: "Авторизация через Google недоступна" });
+      return;
+    }
+
+    passport.authenticate("google", (err: unknown, user: PublicUser | false) => {
+      const redirectTo = sanitizeRedirectPath(req.session?.oauthRedirectTo ?? "/");
+      if (req.session) {
+        delete req.session.oauthRedirectTo;
+      }
+
+      if (err) {
+        console.error("Ошибка Google OAuth:", err);
+        return res.redirect(appendAuthErrorParam(redirectTo, "google"));
+      }
+
+      if (!user) {
+        return res.redirect(appendAuthErrorParam(redirectTo, "google"));
+      }
+
+      req.logIn(user, (loginError) => {
+        if (loginError) {
+          return next(loginError);
+        }
+
+        res.redirect(redirectTo);
+      });
+    })(req, res, next);
   });
 
   app.post("/api/auth/register", async (req, res, next) => {
@@ -1619,6 +1719,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!fullUser) {
         return res.status(404).json({ message: "Пользователь не найден" });
+      }
+
+      if (!fullUser.passwordHash) {
+        return res.status(400).json({
+          message: "Смена пароля недоступна для аккаунта с входом через Google",
+        });
       }
 
       const isValid = await bcrypt.compare(currentPassword, fullUser.passwordHash);

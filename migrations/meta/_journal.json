@@ -92,6 +92,13 @@
       "when": 1758104598459,
       "tag": "0012_personal_api_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1758104599459,
+      "tag": "0013_google_auth",
+      "breakpoints": true
     }
   ]
 }
