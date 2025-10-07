@@ -1313,7 +1313,7 @@ function buildExcerpt(content: string | null | undefined, query: string, maxLeng
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  const googleAuthEnabled = Boolean(app.get("googleAuthConfigured"));
+  const isGoogleAuthEnabled = () => Boolean(app.get("googleAuthConfigured"));
 
   app.post("/api/public/collections/:publicId/search", async (req, res) => {
     try {
@@ -1467,6 +1467,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/providers", (_req, res) => {
+    const googleAuthEnabled = isGoogleAuthEnabled();
     res.json({
       providers: {
         local: { enabled: true },
@@ -1495,6 +1496,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/google", (req, res, next) => {
+    const googleAuthEnabled = isGoogleAuthEnabled();
     if (!googleAuthEnabled) {
       res.status(404).json({ message: "Авторизация через Google недоступна" });
       return;
@@ -1514,6 +1516,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/google/callback", (req, res, next) => {
+    const googleAuthEnabled = isGoogleAuthEnabled();
     if (!googleAuthEnabled) {
       res.status(404).json({ message: "Авторизация через Google недоступна" });
       return;
