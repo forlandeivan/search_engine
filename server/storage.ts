@@ -358,6 +358,7 @@ export interface IStorage {
   getWorkspace(id: string): Promise<Workspace | undefined>;
   ensurePersonalWorkspace(user: User): Promise<Workspace>;
   listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
+  getOrCreateUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
   addWorkspaceMember(
     workspaceId: string,
     userId: string,
@@ -1785,6 +1786,23 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(workspaces.createdAt));
 
     return rows.map(({ workspace, role }) => ({ ...workspace, role }));
+  }
+
+  async getOrCreateUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]> {
+    let memberships = await this.listUserWorkspaces(userId);
+    if (memberships.length > 0) {
+      return memberships;
+    }
+
+    const fullUser = await this.getUser(userId);
+    if (!fullUser) {
+      return memberships;
+    }
+
+    await this.ensurePersonalWorkspace(fullUser);
+    memberships = await this.listUserWorkspaces(userId);
+
+    return memberships;
   }
 
   async addWorkspaceMember(

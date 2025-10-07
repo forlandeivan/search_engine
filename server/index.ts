@@ -142,8 +142,11 @@ app.use((req, res, next) => {
 
     const errorDetails = err instanceof Error && err.stack ? err.stack : String(err);
     log(`Unhandled error ${status}: ${errorDetails}`);
-    res.status(status).json({ message });
-    throw err;
+    if (!res.headersSent) {
+      res.status(status).json({ message });
+    } else {
+      res.end();
+    }
   });
 
   // importantly only setup vite in development and after
