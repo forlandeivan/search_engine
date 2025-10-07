@@ -91,6 +91,17 @@ export const personalApiTokens = pgTable("personal_api_tokens", {
   revokedAt: timestamp("revoked_at"),
 });
 
+export const authProviders = pgTable("auth_providers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  provider: text("provider").$type<AuthProviderType>().notNull().unique(),
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  clientId: text("client_id").notNull().default(""),
+  clientSecret: text("client_secret").notNull().default(""),
+  callbackUrl: text("callback_url").notNull().default("/api/auth/google/callback"),
+  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   role: true,
@@ -106,6 +117,9 @@ export const insertUserSchema = createInsertSchema(users).omit({
 
 export const embeddingProviderTypes = ["gigachat", "custom"] as const;
 export type EmbeddingProviderType = (typeof embeddingProviderTypes)[number];
+
+export const authProviderTypes = ["google"] as const;
+export type AuthProviderType = (typeof authProviderTypes)[number];
 
 export const embeddingRequestConfigSchema = z
   .object({
@@ -416,6 +430,45 @@ export const updateEmbeddingProviderSchema = z
     message: "Нет данных для обновления",
   });
 
+const callbackUrlSchema = z
+  .string()
+  .trim()
+  .min(1, "Укажите Callback URL")
+  .max(500, "Слишком длинный Callback URL")
+  .refine(
+    (value) => {
+      if (value.startsWith("/")) {
+        return true;
+      }
+
+      try {
+        void new URL(value);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Укажите абсолютный URL или путь, начинающийся с /" },
+  );
+
+export const upsertAuthProviderSchema = z
+  .object({
+    provider: z.enum(authProviderTypes),
+    clientId: z
+      .string()
+      .trim()
+      .min(1, "Укажите Client ID")
+      .max(200, "Слишком длинный Client ID"),
+    clientSecret: z
+      .string()
+      .trim()
+      .max(200, "Слишком длинный Client Secret")
+      .optional(),
+    callbackUrl: callbackUrlSchema,
+    isEnabled: z.boolean(),
+  })
+  .strict();
+
 // Types
 export type Site = typeof sites.$inferSelect;
 export type InsertSite = z.infer<typeof insertSiteSchema>;
@@ -436,10 +489,13 @@ export type PublicUser = Omit<
 export type PersonalApiToken = typeof personalApiTokens.$inferSelect;
 export type InsertPersonalApiToken = typeof personalApiTokens.$inferInsert;
 export type PublicPersonalApiToken = Omit<PersonalApiToken, "tokenHash" | "userId">;
+export type AuthProvider = typeof authProviders.$inferSelect;
+export type AuthProviderInsert = typeof authProviders.$inferInsert;
 export type EmbeddingProvider = typeof embeddingProviders.$inferSelect;
 export type EmbeddingProviderInsert = typeof embeddingProviders.$inferInsert;
 export type InsertEmbeddingProvider = z.infer<typeof insertEmbeddingProviderSchema>;
 export type UpdateEmbeddingProvider = z.infer<typeof updateEmbeddingProviderSchema>;
+export type UpsertAuthProvider = z.infer<typeof upsertAuthProviderSchema>;
 export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "authorizationKey"> & {
   hasAuthorizationKey: boolean;
 };

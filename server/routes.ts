@@ -24,8 +24,10 @@ import {
   userRoles,
   insertEmbeddingProviderSchema,
   updateEmbeddingProviderSchema,
+  upsertAuthProviderSchema,
   type PublicEmbeddingProvider,
   type EmbeddingProvider,
+  type AuthProviderInsert,
   type ContentChunk,
   type Page,
   type Site,
@@ -40,7 +42,7 @@ import {
   type CollectionSchemaFieldInput,
   type ProjectVectorizationJobStatus,
 } from "@shared/vectorization";
-import { requireAuth, requireAdmin, getSessionUser, toPublicUser } from "./auth";
+import { requireAuth, requireAdmin, getSessionUser, toPublicUser, reloadGoogleAuth } from "./auth";
 
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
@@ -1884,6 +1886,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Некорректные данные", details: error.issues });
       }
 
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/auth/providers/google", requireAdmin, async (_req, res, next) => {
+    try {
+      const provider = await storage.getAuthProvider("google");
+      const envClientId = (process.env.GOOGLE_CLIENT_ID ?? "").trim();
+      const envClientSecret = (process.env.GOOGLE_CLIENT_SECRET ?? "").trim();
+      const envCallbackUrl = (process.env.GOOGLE_CALLBACK_URL ?? "/api/auth/google/callback").trim();
+
+      if (provider) {
+        const clientId = provider.clientId?.trim() ?? "";
+        const callbackUrl = provider.callbackUrl?.trim() || envCallbackUrl;
+        const hasSecret = Boolean(provider.clientSecret && provider.clientSecret.trim().length > 0);
+        const isEnabled = provider.isEnabled && clientId.length > 0 && hasSecret;
+
+        res.json({
+          provider: "google",
+          clientId,
+          callbackUrl,
+          isEnabled,
+          hasClientSecret: hasSecret,
+          source: "database" as const,
+        });
+        return;
+      }
+
+      res.json({
+        provider: "google",
+        clientId: envClientId,
+        callbackUrl: envCallbackUrl,
+        isEnabled: envClientId.length > 0 && envClientSecret.length > 0,
+        hasClientSecret: envClientSecret.length > 0,
+        source: "environment" as const,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.put("/api/admin/auth/providers/google", requireAdmin, async (req, res, next) => {
+    try {
+      const payload = upsertAuthProviderSchema.parse(req.body);
+      if (payload.provider !== "google") {
+        return res.status(400).json({ error: "Поддерживается только провайдер Google" });
+      }
+
+      const trimmedClientId = payload.clientId.trim();
+      const trimmedCallbackUrl = payload.callbackUrl.trim();
+      const trimmedClientSecret =
+        payload.clientSecret !== undefined ? payload.clientSecret.trim() : undefined;
+
+      const existing = await storage.getAuthProvider("google");
+      const hasStoredSecret = Boolean(existing?.clientSecret && existing.clientSecret.trim().length > 0);
+
+      if (payload.isEnabled) {
+        if (trimmedClientId.length === 0) {
+          return res.status(400).json({ error: "Укажите Client ID" });
+        }
+
+        const secretCandidate = trimmedClientSecret ?? "";
+        if (secretCandidate.length === 0 && !hasStoredSecret) {
+          return res.status(400).json({ error: "Укажите Client Secret" });
+        }
+      }
+
+      const updates = {
+        isEnabled: payload.isEnabled,
+        clientId: trimmedClientId,
+        callbackUrl: trimmedCallbackUrl,
+        clientSecret:
+          payload.clientSecret !== undefined ? trimmedClientSecret ?? "" : undefined,
+      } satisfies Partial<AuthProviderInsert>;
+
+      const updated = await storage.upsertAuthProvider("google", updates);
+
+      try {
+        await reloadGoogleAuth(app);
+      } catch (error) {
+        console.error("Не удалось применить обновлённые настройки Google OAuth:", error);
+      }
+
+      const clientId = updated.clientId?.trim() ?? "";
+      const hasClientSecret = Boolean(updated.clientSecret && updated.clientSecret.trim().length > 0);
+      const callbackUrl = updated.callbackUrl?.trim() || trimmedCallbackUrl || "/api/auth/google/callback";
+      const isEnabled = updated.isEnabled && clientId.length > 0 && hasClientSecret;
+
+      res.json({
+        provider: "google",
+        clientId,
+        callbackUrl,
+        isEnabled,
+        hasClientSecret,
+        source: "database" as const,
+      });
+    } catch (error) {
       next(error);
     }
   });

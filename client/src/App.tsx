@@ -15,6 +15,7 @@ import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
 import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
 import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
 import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
+import AuthSettingsPage from "@/pages/AuthSettingsPage";
 import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import WorkflowEditor from "@/pages/WorkflowEditor";
@@ -31,6 +32,7 @@ import type { CSSProperties } from "react";
 function AdminRouter() {
   return (
     <Switch>
+      <Route path="/admin/auth" component={AuthSettingsPage} />
       <Route path="/admin/embeddings" component={EmbeddingServicesPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />

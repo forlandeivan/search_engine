@@ -5,6 +5,7 @@ import {
   users,
   personalApiTokens,
   embeddingProviders,
+  authProviders,
   type Site,
   type SiteInsert,
   type Page,
@@ -16,6 +17,9 @@ import {
   type InsertUser,
   type EmbeddingProvider,
   type EmbeddingProviderInsert,
+  type AuthProvider,
+  type AuthProviderInsert,
+  type AuthProviderType,
 } from "@shared/schema";
 import { db } from "./db";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
@@ -171,6 +175,13 @@ export interface IStorage {
   ): Promise<User | undefined>;
   getUserByPersonalApiTokenHash(hash: string): Promise<User | undefined>;
 
+  // Auth providers
+  getAuthProvider(provider: AuthProviderType): Promise<AuthProvider | undefined>;
+  upsertAuthProvider(
+    provider: AuthProviderType,
+    updates: Partial<AuthProviderInsert>,
+  ): Promise<AuthProvider>;
+
   // Embedding services
   listEmbeddingProviders(): Promise<EmbeddingProvider[]>;
   getEmbeddingProvider(id: string): Promise<EmbeddingProvider | undefined>;
@@ -191,6 +202,9 @@ function buildWhereClause(conditions: SQL[]): SQL {
 
 let embeddingProvidersTableEnsured = false;
 let ensuringEmbeddingProvidersTable: Promise<void> | null = null;
+
+let authProvidersTableEnsured = false;
+let ensuringAuthProvidersTable: Promise<void> | null = null;
 
 async function ensureEmbeddingProvidersTable(): Promise<void> {
   if (embeddingProvidersTableEnsured) {
@@ -307,6 +321,48 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
     embeddingProvidersTableEnsured = true;
   } finally {
     ensuringEmbeddingProvidersTable = null;
+  }
+}
+
+async function ensureAuthProvidersTable(): Promise<void> {
+  if (authProvidersTableEnsured) {
+    return;
+  }
+
+  if (ensuringAuthProvidersTable) {
+    await ensuringAuthProvidersTable;
+    return;
+  }
+
+  ensuringAuthProvidersTable = (async () => {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "auth_providers" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        "provider" text NOT NULL UNIQUE,
+        "is_enabled" boolean NOT NULL DEFAULT FALSE,
+        "client_id" text NOT NULL DEFAULT '',
+        "client_secret" text NOT NULL DEFAULT '',
+        "callback_url" text NOT NULL DEFAULT '/api/auth/google/callback',
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    try {
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS "auth_providers_provider_idx"
+          ON "auth_providers" ("provider")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07"]);
+    }
+  })();
+
+  try {
+    await ensuringAuthProvidersTable;
+    authProvidersTableEnsured = true;
+  } finally {
+    ensuringAuthProvidersTable = null;
   }
 }
 
@@ -1272,6 +1328,82 @@ export class DatabaseStorage implements IStorage {
       .limit(1);
 
     return result?.user ?? undefined;
+  }
+
+  async getAuthProvider(provider: AuthProviderType): Promise<AuthProvider | undefined> {
+    await ensureAuthProvidersTable();
+
+    const [existing] = await this.db
+      .select()
+      .from(authProviders)
+      .where(eq(authProviders.provider, provider))
+      .limit(1);
+
+    return existing ?? undefined;
+  }
+
+  async upsertAuthProvider(
+    provider: AuthProviderType,
+    updates: Partial<AuthProviderInsert>,
+  ): Promise<AuthProvider> {
+    await ensureAuthProvidersTable();
+
+    const normalizedProvider = provider;
+    const [existing] = await this.db
+      .select()
+      .from(authProviders)
+      .where(eq(authProviders.provider, normalizedProvider))
+      .limit(1);
+
+    const trimmedClientId = updates.clientId?.trim();
+    const trimmedClientSecret = updates.clientSecret?.trim();
+    const trimmedCallbackUrl = updates.callbackUrl?.trim();
+
+    if (existing) {
+      const updatePayload: Partial<AuthProviderInsert> = {};
+
+      if (updates.isEnabled !== undefined) {
+        updatePayload.isEnabled = updates.isEnabled;
+      }
+
+      if (trimmedClientId !== undefined) {
+        updatePayload.clientId = trimmedClientId;
+      }
+
+      if (trimmedClientSecret !== undefined) {
+        updatePayload.clientSecret = trimmedClientSecret;
+      }
+
+      if (trimmedCallbackUrl !== undefined) {
+        updatePayload.callbackUrl = trimmedCallbackUrl;
+      }
+
+      updatePayload.updatedAt = new Date();
+
+      const [updated] = await this.db
+        .update(authProviders)
+        .set(updatePayload)
+        .where(eq(authProviders.provider, normalizedProvider))
+        .returning();
+
+      return updated ?? existing;
+    }
+
+    const insertPayload: AuthProviderInsert = {
+      provider: normalizedProvider,
+      isEnabled: updates.isEnabled ?? false,
+      clientId: trimmedClientId ?? "",
+      clientSecret: trimmedClientSecret ?? "",
+      callbackUrl: trimmedCallbackUrl ?? "/api/auth/google/callback",
+    };
+
+    const [created] = await this.db.insert(authProviders).values(insertPayload).returning();
+
+    if (!created) {
+      throw new Error("Не удалось сохранить настройки провайдера аутентификации");
+    }
+
+    return created;
   }
 
 }

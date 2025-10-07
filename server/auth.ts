@@ -27,7 +27,135 @@ export function toPublicUser(user: User): PublicUser {
   };
 }
 
-export function configureAuth(app: Express) {
+type PassportWithUnuse = typeof passport & {
+  unuse?: (name: string) => void;
+  _strategies?: Record<string, unknown>;
+};
+
+type GoogleAuthSettings = {
+  clientId: string;
+  clientSecret: string;
+  callbackUrl: string;
+  isEnabled: boolean;
+  source: "database" | "environment";
+};
+
+const googleStrategyName = "google";
+let loggedMissingGoogleConfig = false;
+
+async function resolveGoogleAuthSettings(): Promise<GoogleAuthSettings> {
+  const envClientId = (process.env.GOOGLE_CLIENT_ID ?? "").trim();
+  const envClientSecret = (process.env.GOOGLE_CLIENT_SECRET ?? "").trim();
+  const envCallbackUrl = (process.env.GOOGLE_CALLBACK_URL ?? "/api/auth/google/callback").trim();
+
+  try {
+    const provider = await storage.getAuthProvider("google");
+    if (provider) {
+      const clientId = provider.clientId?.trim() ?? "";
+      const clientSecret = provider.clientSecret?.trim() ?? "";
+      const callbackUrl = provider.callbackUrl?.trim() || envCallbackUrl;
+      const isEnabled = provider.isEnabled && clientId.length > 0 && clientSecret.length > 0;
+
+      return {
+        clientId,
+        clientSecret,
+        callbackUrl,
+        isEnabled,
+        source: "database",
+      };
+    }
+  } catch (error) {
+    console.error("Не удалось загрузить настройки Google OAuth из базы данных:", error);
+  }
+
+  const fallbackEnabled = envClientId.length > 0 && envClientSecret.length > 0;
+
+  return {
+    clientId: envClientId,
+    clientSecret: envClientSecret,
+    callbackUrl: envCallbackUrl,
+    isEnabled: fallbackEnabled,
+    source: "environment",
+  };
+}
+
+async function applyGoogleAuthStrategy(app: Express): Promise<void> {
+  const settings = await resolveGoogleAuthSettings();
+  const authenticator = passport as PassportWithUnuse;
+
+  if (typeof authenticator.unuse === "function") {
+    try {
+      authenticator.unuse(googleStrategyName);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/Unknown authentication strategy/i.test(message)) {
+        console.warn("Не удалось отключить Google OAuth перед перенастройкой:", message);
+      }
+    }
+  } else if (authenticator._strategies) {
+    delete authenticator._strategies[googleStrategyName];
+  }
+
+  app.set("googleAuthConfigured", settings.isEnabled);
+  app.set("googleAuthSource", settings.source);
+
+  if (!settings.isEnabled) {
+    if (app.get("env") !== "test" && !loggedMissingGoogleConfig) {
+      console.warn("Google OAuth не настроен: заполните настройки в админ-панели или установите переменные окружения");
+      loggedMissingGoogleConfig = true;
+    }
+    return;
+  }
+
+  loggedMissingGoogleConfig = false;
+
+  authenticator.use(
+    new GoogleStrategy(
+      {
+        clientID: settings.clientId,
+        clientSecret: settings.clientSecret,
+        callbackURL: settings.callbackUrl,
+      },
+      async (
+        _accessToken: string,
+        _refreshToken: string,
+        profile: GoogleProfile,
+        done: VerifyCallback,
+      ) => {
+        try {
+          const primaryEmail = (profile.emails ?? []).find(
+            (entry): entry is NonNullable<GoogleProfile["emails"]>[number] & { value: string } =>
+              typeof entry.value === "string",
+          );
+          if (!primaryEmail?.value) {
+            return done(null, false, { message: "Не удалось получить email Google-профиля" });
+          }
+
+          const user = await storage.upsertUserFromGoogle({
+            googleId: profile.id,
+            email: primaryEmail.value,
+            fullName: profile.displayName,
+            firstName: profile.name?.givenName,
+            lastName: profile.name?.familyName,
+            avatar: profile.photos?.[0]?.value,
+            emailVerified: primaryEmail.verified,
+          });
+
+          const updatedUser = await storage.recordUserActivity(user.id);
+          done(null, toPublicUser(updatedUser ?? user));
+        } catch (error) {
+          done(error as Error);
+        }
+      },
+    ),
+  );
+}
+
+export async function reloadGoogleAuth(app: Express): Promise<void> {
+  await applyGoogleAuthStrategy(app);
+}
+
+export async function configureAuth(app: Express): Promise<void> {
   const sessionSecret = process.env.SESSION_SECRET || "dev-session-secret";
   const cookieSecure = app.get("env") === "production";
 
@@ -102,54 +230,8 @@ export function configureAuth(app: Express) {
     )
   );
 
-  const googleClientId = process.env.GOOGLE_CLIENT_ID;
-  const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const googleCallbackUrl = process.env.GOOGLE_CALLBACK_URL ?? "/api/auth/google/callback";
-  const googleAuthEnabled = Boolean(googleClientId && googleClientSecret);
-
-  app.set("googleAuthConfigured", googleAuthEnabled);
-
-  if (googleAuthEnabled) {
-    passport.use(
-      new GoogleStrategy(
-        {
-          clientID: googleClientId!,
-          clientSecret: googleClientSecret!,
-          callbackURL: googleCallbackUrl,
-        },
-        async (
-          _accessToken: string,
-          _refreshToken: string,
-          profile: GoogleProfile,
-          done: VerifyCallback,
-        ) => {
-          try {
-            const primaryEmail = profile.emails?.find((item) => typeof item.value === "string");
-            if (!primaryEmail?.value) {
-              return done(null, false, { message: "Не удалось получить email Google-профиля" });
-            }
-
-            const user = await storage.upsertUserFromGoogle({
-              googleId: profile.id,
-              email: primaryEmail.value,
-              fullName: profile.displayName,
-              firstName: profile.name?.givenName,
-              lastName: profile.name?.familyName,
-              avatar: profile.photos?.[0]?.value,
-              emailVerified: primaryEmail.verified,
-            });
-
-            const updatedUser = await storage.recordUserActivity(user.id);
-            done(null, toPublicUser(updatedUser ?? user));
-          } catch (error) {
-            done(error as Error);
-          }
-        },
-      ),
-    );
-  } else if (app.get("env") !== "test") {
-    console.warn("Google OAuth не настроен: установите GOOGLE_CLIENT_ID и GOOGLE_CLIENT_SECRET");
-  }
+  await applyGoogleAuthStrategy(app);
+  app.set("reloadGoogleAuth", () => applyGoogleAuthStrategy(app));
 }
 
 export function getSessionUser(req: Request): PublicUser | null {
