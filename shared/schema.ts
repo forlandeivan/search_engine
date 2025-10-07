@@ -67,7 +67,7 @@ export const users = pgTable("users", {
   firstName: text("first_name").notNull().default(""),
   lastName: text("last_name").notNull().default(""),
   phone: text("phone").notNull().default(""),
-  passwordHash: text("password_hash").notNull(),
+  passwordHash: text("password_hash"),
   role: text("role").$type<UserRole>().notNull().default("user"),
   lastActiveAt: timestamp("last_active_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -75,6 +75,9 @@ export const users = pgTable("users", {
   personalApiTokenHash: text("personal_api_token_hash"),
   personalApiTokenLastFour: text("personal_api_token_last_four"),
   personalApiTokenGeneratedAt: timestamp("personal_api_token_generated_at"),
+  googleId: text("google_id").unique(),
+  googleAvatar: text("google_avatar").notNull().default(""),
+  googleEmailVerified: boolean("google_email_verified").notNull().default(false),
 });
 
 export const personalApiTokens = pgTable("personal_api_tokens", {
@@ -97,6 +100,8 @@ export const insertUserSchema = createInsertSchema(users).omit({
   personalApiTokenHash: true,
   personalApiTokenLastFour: true,
   personalApiTokenGeneratedAt: true,
+  googleAvatar: true,
+  googleEmailVerified: true,
 });
 
 export const embeddingProviderTypes = ["gigachat", "custom"] as const;

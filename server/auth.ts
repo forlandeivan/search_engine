@@ -3,11 +3,18 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
+import { Strategy as GoogleStrategy, type Profile as GoogleProfile, type VerifyCallback } from "passport-google-oauth20";
 import bcrypt from "bcryptjs";
 import { pool } from "./db";
 import { storage } from "./storage";
 import type { PublicUser, User } from "@shared/schema";
 import { createHash } from "crypto";
+
+declare module "express-session" {
+  interface SessionData {
+    oauthRedirectTo?: string;
+  }
+}
 
 const PgSession = connectPgSimple(session);
 
@@ -75,6 +82,12 @@ export function configureAuth(app: Express) {
             return done(null, false, { message: "Неверный email или пароль" });
           }
 
+          if (!user.passwordHash) {
+            return done(null, false, {
+              message: "Для этого аккаунта включён вход через Google",
+            });
+          }
+
           const isValid = await bcrypt.compare(password, user.passwordHash);
           if (!isValid) {
             return done(null, false, { message: "Неверный email или пароль" });
@@ -88,6 +101,57 @@ export function configureAuth(app: Express) {
       }
     )
   );
+
+  const googleClientId = process.env.GOOGLE_CLIENT_ID;
+  const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const googleCallbackUrl = process.env.GOOGLE_CALLBACK_URL ?? "/api/auth/google/callback";
+  const googleAuthEnabled = Boolean(googleClientId && googleClientSecret);
+
+  app.set("googleAuthConfigured", googleAuthEnabled);
+
+  if (googleAuthEnabled) {
+    passport.use(
+      new GoogleStrategy(
+        {
+          clientID: googleClientId!,
+          clientSecret: googleClientSecret!,
+          callbackURL: googleCallbackUrl,
+        },
+        async (
+          _accessToken: string,
+          _refreshToken: string,
+          profile: GoogleProfile,
+          done: VerifyCallback,
+        ) => {
+          try {
+            const primaryEmail = profile.emails?.find(
+              (item: NonNullable<GoogleProfile["emails"]>[number]) => typeof item?.value === "string",
+            );
+            if (!primaryEmail?.value) {
+              return done(null, false, { message: "Не удалось получить email Google-профиля" });
+            }
+
+            const user = await storage.upsertUserFromGoogle({
+              googleId: profile.id,
+              email: primaryEmail.value,
+              fullName: profile.displayName,
+              firstName: profile.name?.givenName,
+              lastName: profile.name?.familyName,
+              avatar: profile.photos?.[0]?.value,
+              emailVerified: primaryEmail.verified,
+            });
+
+            const updatedUser = await storage.recordUserActivity(user.id);
+            done(null, toPublicUser(updatedUser ?? user));
+          } catch (error) {
+            done(error as Error);
+          }
+        },
+      ),
+    );
+  } else if (app.get("env") !== "test") {
+    console.warn("Google OAuth не настроен: установите GOOGLE_CLIENT_ID и GOOGLE_CLIENT_SECRET");
+  }
 }
 
 export function getSessionUser(req: Request): PublicUser | null {

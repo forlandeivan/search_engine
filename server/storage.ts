@@ -38,6 +38,73 @@ function swallowPgError(error: unknown, allowedCodes: string[]): void {
   }
 }
 
+export interface GoogleUserUpsertPayload {
+  googleId: string;
+  email: string;
+  fullName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  avatar?: string | null;
+  emailVerified?: boolean | null;
+}
+
+function normalizeProfileString(value: string | null | undefined): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function resolveNamesFromProfile(options: {
+  emailFallback: string;
+  fullName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}): { fullName: string; firstName: string; lastName: string } {
+  const providedFullName = normalizeProfileString(options.fullName);
+  const providedFirstName = normalizeProfileString(options.firstName);
+  const providedLastName = normalizeProfileString(options.lastName);
+
+  let fullName = providedFullName;
+
+  if (!fullName && providedFirstName && providedLastName) {
+    fullName = `${providedFirstName} ${providedLastName}`.trim();
+  }
+
+  if (!fullName && providedFirstName) {
+    fullName = providedFirstName;
+  }
+
+  if (!fullName) {
+    fullName = options.emailFallback;
+  }
+
+  const normalizedFullName = fullName.trim().replace(/\s+/g, " ");
+  const fullNameParts = normalizedFullName.split(" ").filter((part) => part.length > 0);
+
+  let firstName = providedFirstName;
+  let lastName = providedLastName;
+
+  if (!firstName && fullNameParts.length > 0) {
+    firstName = fullNameParts[0];
+  }
+
+  if (!firstName) {
+    firstName = normalizedFullName;
+  }
+
+  if (!lastName) {
+    lastName = fullNameParts.slice(1).join(" ").trim();
+  }
+
+  return {
+    fullName: normalizedFullName,
+    firstName: firstName || normalizedFullName,
+    lastName,
+  };
+}
+
 export interface IStorage {
   // Sites management
   createSite(site: SiteInsert): Promise<Site>;
@@ -81,7 +148,9 @@ export interface IStorage {
   // User management (reserved for future admin features)
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByGoogleId(googleId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  upsertUserFromGoogle(payload: GoogleUserUpsertPayload): Promise<User>;
   listUsers(): Promise<User[]>;
   updateUserRole(userId: string, role: User["role"]): Promise<User | undefined>;
   recordUserActivity(userId: string): Promise<User | undefined>;
@@ -357,6 +426,44 @@ export class DatabaseStorage implements IStorage {
         await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "personal_api_token_generated_at" timestamp`);
       } catch (error) {
         swallowPgError(error, ["42701"]);
+      }
+
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "password_hash" DROP NOT NULL`);
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "google_id" text`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "google_avatar" text DEFAULT ''`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      await this.db.execute(sql`UPDATE "users" SET "google_avatar" = COALESCE("google_avatar", '')`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_avatar" SET DEFAULT ''`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_avatar" SET NOT NULL`);
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "google_email_verified" boolean DEFAULT FALSE`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      await this.db.execute(
+        sql`UPDATE "users" SET "google_email_verified" = COALESCE("google_email_verified", FALSE)`
+      );
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_email_verified" SET DEFAULT FALSE`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_email_verified" SET NOT NULL`);
+
+      try {
+        await this.db.execute(
+          sql`ALTER TABLE "users" ADD CONSTRAINT "users_google_id_unique" UNIQUE ("google_id")`
+        );
+      } catch (error) {
+        swallowPgError(error, ["42710"]);
       }
 
       await this.db.execute(sql`
@@ -906,9 +1013,114 @@ export class DatabaseStorage implements IStorage {
     return user ?? undefined;
   }
 
+  async getUserByGoogleId(googleId: string): Promise<User | undefined> {
+    await this.ensureUserAuthColumns();
+    const trimmedId = googleId.trim();
+    if (!trimmedId) {
+      return undefined;
+    }
+
+    const [user] = await this.db.select().from(users).where(eq(users.googleId, trimmedId));
+    return user ?? undefined;
+  }
+
   async createUser(user: InsertUser): Promise<User> {
     await this.ensureUserAuthColumns();
     const [newUser] = await this.db.insert(users).values(user).returning();
+    return newUser;
+  }
+
+  async upsertUserFromGoogle(payload: GoogleUserUpsertPayload): Promise<User> {
+    await this.ensureUserAuthColumns();
+
+    const googleId = normalizeProfileString(payload.googleId);
+    if (!googleId) {
+      throw new Error("Отсутствует идентификатор Google");
+    }
+
+    const email = normalizeProfileString(payload.email).toLowerCase();
+    if (!email) {
+      throw new Error("Отсутствует email Google-профиля");
+    }
+
+    const avatar = normalizeProfileString(payload.avatar);
+    const { fullName, firstName, lastName } = resolveNamesFromProfile({
+      emailFallback: email,
+      fullName: payload.fullName,
+      firstName: payload.firstName,
+      lastName: payload.lastName,
+    });
+
+    const requestedEmailVerified = payload.emailVerified;
+
+    const [existingByGoogle] = await this.db.select().from(users).where(eq(users.googleId, googleId));
+    if (existingByGoogle) {
+      const googleEmailVerified =
+        requestedEmailVerified === undefined || requestedEmailVerified === null
+          ? existingByGoogle.googleEmailVerified
+          : Boolean(requestedEmailVerified);
+
+      const [updatedUser] = await this.db
+        .update(users)
+        .set({
+          email,
+          fullName: fullName || existingByGoogle.fullName,
+          firstName: firstName || existingByGoogle.firstName,
+          lastName: lastName || existingByGoogle.lastName,
+          googleId,
+          googleAvatar: avatar || existingByGoogle.googleAvatar || "",
+          googleEmailVerified,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .where(eq(users.id, existingByGoogle.id))
+        .returning();
+
+      return updatedUser ?? existingByGoogle;
+    }
+
+    const [existingByEmail] = await this.db.select().from(users).where(eq(users.email, email));
+    if (existingByEmail) {
+      const googleEmailVerified =
+        requestedEmailVerified === undefined || requestedEmailVerified === null
+          ? existingByEmail.googleEmailVerified
+          : Boolean(requestedEmailVerified);
+
+      const [updatedUser] = await this.db
+        .update(users)
+        .set({
+          googleId,
+          googleAvatar: avatar || existingByEmail.googleAvatar || "",
+          googleEmailVerified,
+          fullName: fullName || existingByEmail.fullName,
+          firstName: firstName || existingByEmail.firstName,
+          lastName: lastName || existingByEmail.lastName,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .where(eq(users.id, existingByEmail.id))
+        .returning();
+
+      return updatedUser ?? existingByEmail;
+    }
+
+    const [newUser] = await this.db
+      .insert(users)
+      .values({
+        email,
+        fullName,
+        firstName,
+        lastName,
+        phone: "",
+        passwordHash: null,
+        googleId,
+        googleAvatar: avatar,
+        googleEmailVerified: Boolean(requestedEmailVerified),
+      })
+      .returning();
+
+    if (!newUser) {
+      throw new Error("Не удалось создать пользователя по данным Google");
+    }
+
     return newUser;
   }
 
@@ -1161,6 +1373,42 @@ export async function ensureDatabaseSchema(): Promise<void> {
     `);
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "created_at" SET NOT NULL`);
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "updated_at" SET NOT NULL`);
+
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "password_hash" DROP NOT NULL`);
+
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "google_id" text`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "google_avatar" text DEFAULT ''`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await db.execute(sql`UPDATE "users" SET "google_avatar" = COALESCE("google_avatar", '')`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_avatar" SET DEFAULT ''`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_avatar" SET NOT NULL`);
+
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD COLUMN "google_email_verified" boolean DEFAULT FALSE`);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await db.execute(
+      sql`UPDATE "users" SET "google_email_verified" = COALESCE("google_email_verified", FALSE)`
+    );
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_email_verified" SET DEFAULT FALSE`);
+    await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_email_verified" SET NOT NULL`);
+
+    try {
+      await db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT "users_google_id_unique" UNIQUE ("google_id")`);
+    } catch (error) {
+      swallowPgError(error, ["42710"]);
+    }
 
     try {
       await db.execute(sql`ALTER TABLE "sites" ADD COLUMN "owner_id" varchar`);
