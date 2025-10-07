@@ -18,7 +18,6 @@ import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
 import AuthSettingsPage from "@/pages/AuthSettingsPage";
 import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
-import WorkflowEditor from "@/pages/WorkflowEditor";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
@@ -48,7 +47,6 @@ function MainRouter() {
       <Route path="/projects/:siteId" component={ProjectDetailPage} />
       <Route path="/projects" component={AdminPage} />
       <Route path="/knowledge" component={KnowledgeBasePage} />
-      <Route path="/workflow" component={WorkflowEditor} />
       <Route path="/pages" component={PagesPage} />
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
