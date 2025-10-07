@@ -25,6 +25,8 @@ import { db } from "./db";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { randomBytes } from "crypto";
 
+let globalUserAuthSchemaReady = false;
+
 type PgError = Error & { code?: string };
 
 function isPgError(error: unknown): error is PgError {
@@ -372,7 +374,8 @@ export class DatabaseStorage implements IStorage {
   private ensuringUserAuthColumns: Promise<void> | null = null;
 
   private async ensureUserAuthColumns(): Promise<void> {
-    if (this.userAuthColumnsEnsured) {
+    if (this.userAuthColumnsEnsured || globalUserAuthSchemaReady) {
+      this.userAuthColumnsEnsured = true;
       return;
     }
 
@@ -618,6 +621,7 @@ export class DatabaseStorage implements IStorage {
         swallowPgError(error, ["42P07", "42710"]);
       }
 
+      globalUserAuthSchemaReady = true;
       this.userAuthColumnsEnsured = true;
     })();
 
@@ -1808,6 +1812,8 @@ export async function ensureDatabaseSchema(): Promise<void> {
     } catch (error) {
       swallowPgError(error, ["42701"]);
     }
+
+    globalUserAuthSchemaReady = true;
   } catch (error) {
     console.error("[storage] Не удалось обновить схему базы данных", error);
     throw error;
