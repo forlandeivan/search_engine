@@ -10,6 +10,7 @@ import { createHash, randomUUID, randomBytes } from "crypto";
 import { performance } from "perf_hooks";
 import { Agent as HttpsAgent } from "https";
 import { storage } from "./storage";
+import type { WorkspaceMemberWithUser } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
 import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
@@ -32,6 +33,7 @@ import {
   type Page,
   type Site,
   DEFAULT_QDRANT_CONFIG,
+  workspaceMemberRoles,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import {
@@ -49,6 +51,10 @@ import {
   toPublicUser,
   reloadGoogleAuth,
   reloadYandexAuth,
+  ensureWorkspaceContext,
+  buildSessionResponse,
+  getRequestWorkspace,
+  getRequestWorkspaceMemberships,
 } from "./auth";
 
 function getErrorDetails(error: unknown): string {
@@ -275,10 +281,6 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined 
   return user;
 }
 
-function resolveOwnerScope(user: PublicUser): string | undefined {
-  return user.role === "admin" ? undefined : user.id;
-}
-
 function splitFullName(fullName: string): { firstName: string; lastName: string } {
   const normalized = fullName.trim().replace(/\s+/g, " ");
   if (normalized.length === 0) {
@@ -312,6 +314,30 @@ function toPersonalApiTokenSummary(token: PersonalApiToken): PersonalApiTokenSum
     lastFour: token.lastFour,
     createdAt,
     revokedAt,
+  };
+}
+
+function toIsoDate(value: Date | string | null | undefined): string {
+  if (!value) {
+    return new Date().toISOString();
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+}
+
+function toWorkspaceMemberResponse(entry: WorkspaceMemberWithUser, currentUserId: string) {
+  const { member, user } = entry;
+  return {
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    role: member.role,
+    createdAt: toIsoDate(member.createdAt),
+    updatedAt: toIsoDate(member.updatedAt),
+    isYou: user.id === currentUserId,
   };
 }
 
@@ -576,17 +602,25 @@ function sanitizeCollectionName(source: string): string {
   return normalized.length > 0 ? normalized.slice(0, 60) : "default";
 }
 
-function buildCollectionName(site: Site | undefined, provider: EmbeddingProvider): string {
-  const base = site?.id ?? provider.id;
-  return `kb_${sanitizeCollectionName(base)}`;
+function buildWorkspaceScopedCollectionName(workspaceId: string, projectId: string, collectionId: string): string {
+  const workspaceSlug = sanitizeCollectionName(workspaceId);
+  const projectSlug = sanitizeCollectionName(projectId);
+  const collectionSlug = sanitizeCollectionName(collectionId);
+  return `ws_${workspaceSlug}__proj_${projectSlug}__coll_${collectionSlug}`;
+}
+
+function buildCollectionName(site: Site | undefined, provider: EmbeddingProvider, workspaceId: string): string {
+  const projectId = site?.id ?? provider.id;
+  return buildWorkspaceScopedCollectionName(workspaceId, projectId, provider.id);
 }
 
 function buildKnowledgeCollectionName(
   base: { id?: string | null; name?: string | null } | null | undefined,
   provider: EmbeddingProvider,
+  workspaceId: string,
 ): string {
   const source = base?.id ?? base?.name ?? provider.id;
-  return `kb_${sanitizeCollectionName(source)}`;
+  return buildWorkspaceScopedCollectionName(workspaceId, source, provider.id);
 }
 
 function removeUndefinedDeep<T>(value: T): T {
@@ -1498,8 +1532,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (updatedUser) {
         req.user = safeUser;
       }
-
-      res.json({ user: safeUser });
+      const context = await ensureWorkspaceContext(req, safeUser);
+      res.json(buildSessionResponse(safeUser, context));
     } catch (error) {
       next(error);
     }
@@ -1636,8 +1670,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (error) {
           return next(error);
         }
-
-        res.status(201).json({ user: safeUser });
+        void (async () => {
+          try {
+            const context = await ensureWorkspaceContext(req, safeUser);
+            res.status(201).json(buildSessionResponse(safeUser, context));
+          } catch (workspaceError) {
+            next(workspaceError as Error);
+          }
+        })();
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1662,8 +1702,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (loginError) {
           return next(loginError);
         }
-
-        res.json({ user });
+        void (async () => {
+          try {
+            const updatedUser = await storage.recordUserActivity(user.id);
+            const fullUser = updatedUser ?? (await storage.getUser(user.id));
+            const safeUser = fullUser ? toPublicUser(fullUser) : user;
+            req.user = safeUser;
+            const context = await ensureWorkspaceContext(req, safeUser);
+            res.json(buildSessionResponse(safeUser, context));
+          } catch (workspaceError) {
+            next(workspaceError as Error);
+          }
+        })();
       });
     })(req, res, next);
   });
@@ -1672,6 +1722,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     req.logout((error) => {
       if (error) {
         return next(error);
+      }
+
+      if (req.session) {
+        delete req.session.workspaceId;
       }
 
       res.json({ success: true });
@@ -1697,6 +1751,179 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .max(30, "Слишком длинный номер")
       .optional()
       .refine((value) => !value || /^[0-9+()\s-]*$/.test(value), "Некорректный номер телефона"),
+  });
+
+  const switchWorkspaceSchema = z.object({
+    workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
+  });
+
+  const inviteWorkspaceMemberSchema = z.object({
+    email: z.string().trim().email("Введите корректный email"),
+    role: z.enum(workspaceMemberRoles).default("user"),
+  });
+
+  const updateWorkspaceMemberSchema = z.object({
+    role: z.enum(workspaceMemberRoles),
+  });
+
+  app.get("/api/workspaces", async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const context = await ensureWorkspaceContext(req, user);
+      res.json(buildSessionResponse(user, context).workspace);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/workspaces/switch", async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const payload = switchWorkspaceSchema.parse(req.body);
+      const memberships = getRequestWorkspaceMemberships(req);
+      const target = memberships.find((workspace) => workspace.id === payload.workspaceId);
+      if (!target) {
+        return res.status(404).json({ message: "Рабочее пространство не найдено" });
+      }
+
+      if (req.session) {
+        req.session.workspaceId = target.id;
+      }
+
+      req.workspaceId = target.id;
+      req.workspaceRole = target.role;
+
+      const context = await ensureWorkspaceContext(req, user);
+      res.json(buildSessionResponse(user, context));
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      next(error);
+    }
+  });
+
+  app.get("/api/workspaces/members", async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const members = await storage.listWorkspaceMembers(workspaceId);
+      res.json({ members: members.map((entry) => toWorkspaceMemberResponse(entry, user.id)) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/workspaces/members", async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const payload = inviteWorkspaceMemberSchema.parse(req.body);
+      const normalizedEmail = payload.email.trim().toLowerCase();
+      const targetUser = await storage.getUserByEmail(normalizedEmail);
+      if (!targetUser) {
+        return res.status(404).json({ message: "Пользователь с таким email не найден" });
+      }
+
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const existingMembers = await storage.listWorkspaceMembers(workspaceId);
+      if (existingMembers.some((entry) => entry.user.id === targetUser.id)) {
+        return res.status(409).json({ message: "Пользователь уже состоит в рабочем пространстве" });
+      }
+
+      await storage.addWorkspaceMember(workspaceId, targetUser.id, payload.role);
+      const updatedMembers = await storage.listWorkspaceMembers(workspaceId);
+      res.status(201).json({
+        members: updatedMembers.map((entry) => toWorkspaceMemberResponse(entry, user.id)),
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      next(error);
+    }
+  });
+
+  app.patch("/api/workspaces/members/:memberId", async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const payload = updateWorkspaceMemberSchema.parse(req.body);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const members = await storage.listWorkspaceMembers(workspaceId);
+      const target = members.find((entry) => entry.user.id === req.params.memberId);
+      if (!target) {
+        return res.status(404).json({ message: "Участник не найден" });
+      }
+
+      const ownerCount = members.filter((entry) => entry.member.role === "owner").length;
+      if (target.member.role === "owner" && payload.role !== "owner" && ownerCount <= 1) {
+        return res.status(400).json({ message: "Нельзя изменить роль единственного владельца" });
+      }
+
+      await storage.updateWorkspaceMemberRole(workspaceId, target.user.id, payload.role);
+      const updatedMembers = await storage.listWorkspaceMembers(workspaceId);
+      res.json({ members: updatedMembers.map((entry) => toWorkspaceMemberResponse(entry, user.id)) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      next(error);
+    }
+  });
+
+  app.delete("/api/workspaces/members/:memberId", async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const memberId = req.params.memberId;
+      if (memberId === user.id) {
+        return res.status(400).json({ message: "Нельзя удалить самого себя из рабочего пространства" });
+      }
+
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const members = await storage.listWorkspaceMembers(workspaceId);
+      const target = members.find((entry) => entry.user.id === memberId);
+      if (!target) {
+        return res.status(404).json({ message: "Участник не найден" });
+      }
+
+      const ownerCount = members.filter((entry) => entry.member.role === "owner").length;
+      if (target.member.role === "owner" && ownerCount <= 1) {
+        return res.status(400).json({ message: "Нельзя удалить единственного владельца" });
+      }
+
+      const removed = await storage.removeWorkspaceMember(workspaceId, memberId);
+      if (!removed) {
+        return res.status(404).json({ message: "Участник не найден" });
+      }
+
+      const updatedMembers = await storage.listWorkspaceMembers(workspaceId);
+      res.json({ members: updatedMembers.map((entry) => toWorkspaceMemberResponse(entry, user.id)) });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get("/api/users/me", async (req, res, next) => {
@@ -2148,9 +2375,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/embedding/services", requireAdmin, async (_req, res, next) => {
+  app.get("/api/embedding/services", requireAdmin, async (req, res, next) => {
     try {
-      const providers = await storage.listEmbeddingProviders();
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const providers = await storage.listEmbeddingProviders(workspaceId);
       res.json({ providers: providers.map(toPublicEmbeddingProvider) });
     } catch (error) {
       next(error);
@@ -2175,8 +2403,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
               };
             })()
           : payload.qdrantConfig;
+      const { id: workspaceId } = getRequestWorkspace(req);
       const provider = await storage.createEmbeddingProvider({
         ...payload,
+        workspaceId,
         description: payload.description ?? null,
         qdrantConfig: normalizedQdrantConfig,
       });
@@ -2480,7 +2710,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (payload.allowSelfSignedCertificate !== undefined)
         updates.allowSelfSignedCertificate = payload.allowSelfSignedCertificate;
 
-      const updated = await storage.updateEmbeddingProvider(providerId, updates);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const updated = await storage.updateEmbeddingProvider(providerId, updates, workspaceId);
       if (!updated) {
         return res.status(404).json({ message: "Сервис не найден" });
       }
@@ -2497,7 +2728,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/embedding/services/:id", requireAdmin, async (req, res, next) => {
     try {
-      const deleted = await storage.deleteEmbeddingProvider(req.params.id);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const deleted = await storage.deleteEmbeddingProvider(req.params.id, workspaceId);
       if (!deleted) {
         return res.status(404).json({ message: "Сервис не найден" });
       }
@@ -2921,8 +3153,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const sites = await storage.getAllSites(ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const sites = await storage.getAllSites(workspaceId);
       res.json(sites);
     } catch (error) {
       console.error("Error fetching sites:", error);
@@ -2954,8 +3186,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const chunkOverlapEnabled = validatedData.chunkOverlap ?? false;
       const chunkOverlapSize = chunkOverlapEnabled ? validatedData.chunkOverlapSize ?? 0 : 0;
 
+      const { id: workspaceId } = getRequestWorkspace(req);
       const newSite = await storage.createSite({
         ownerId: user.id,
+        workspaceId,
         name: validatedData.name.trim(),
         url: primaryUrl,
         startUrls: normalizedStartUrls,
@@ -2990,11 +3224,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const sites = await storage.getAllSites(ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const sites = await storage.getAllSites(workspaceId);
       const sitesWithStats = await Promise.all(
         sites.map(async (site) => {
-          const pages = await storage.getPagesBySiteId(site.id, ownerScope);
+          const pages = await storage.getPagesBySiteId(site.id, workspaceId);
           return {
             ...site,
             pagesFound: pages.length,
@@ -3016,8 +3250,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const site = await storage.getSite(req.params.id, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const site = await storage.getSite(req.params.id, workspaceId);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -3035,8 +3269,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     try {
       const updates = req.body;
-      const ownerScope = resolveOwnerScope(user);
-      const updatedSite = await storage.updateSite(req.params.id, updates, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const updatedSite = await storage.updateSite(req.params.id, updates, workspaceId);
       if (!updatedSite) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -3059,8 +3293,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const result = await storage.rotateSiteApiKey(req.params.id, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const result = await storage.rotateSiteApiKey(req.params.id, workspaceId);
       if (!result) {
         return res.status(404).json({ error: "Проект не найден" });
       }
@@ -3078,10 +3312,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
+      const { id: workspaceId } = getRequestWorkspace(req);
       // Get site info before deletion for logging
-      const siteToDelete = await storage.getSite(req.params.id, ownerScope);
-      const success = await storage.deleteSite(req.params.id, ownerScope);
+      const siteToDelete = await storage.getSite(req.params.id, workspaceId);
+      const success = await storage.deleteSite(req.params.id, workspaceId);
       if (!success) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -3104,8 +3338,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const site = await storage.getSite(req.params.id, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const site = await storage.getSite(req.params.id, workspaceId);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -3137,8 +3371,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const site = await storage.getSite(req.params.id, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const site = await storage.getSite(req.params.id, workspaceId);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -3157,7 +3391,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Get current page count before recrawling for logging
-      const existingPages = await storage.getPagesBySiteId(req.params.id, ownerScope);
+      const existingPages = await storage.getPagesBySiteId(req.params.id, workspaceId);
       console.log(
         `Starting recrawl for site ${site.name ?? site.url ?? 'без названия'} - currently has ${existingPages.length} pages`
       );
@@ -3185,8 +3419,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const site = await storage.getSite(req.params.id, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const site = await storage.getSite(req.params.id, workspaceId);
       if (!site) {
         return res.status(404).json({ error: "Site not found" });
       }
@@ -3243,8 +3477,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const pages = await storage.getPagesBySiteId(req.params.id, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const pages = await storage.getPagesBySiteId(req.params.id, workspaceId);
       res.json(pages);
     } catch (error) {
       console.error("Error fetching pages:", error);
@@ -3298,17 +3532,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let results;
       let total;
 
-      const ownerScope = resolveOwnerScope(user);
+      const { id: workspaceId } = getRequestWorkspace(req);
 
       if (siteId) {
         console.log("📁 Filtering search by site:", siteId);
-        const site = await storage.getSite(siteId, ownerScope);
+        const site = await storage.getSite(siteId, workspaceId);
         if (!site) {
           return res.status(404).json({ error: "Проект не найден" });
         }
-        ({ results, total } = await storage.searchPagesByCollection(decodedQuery, siteId, limit, offset, ownerScope));
+        ({ results, total } = await storage.searchPagesByCollection(decodedQuery, siteId, limit, offset, workspaceId));
       } else {
-        ({ results, total } = await storage.searchPages(decodedQuery, limit, offset, ownerScope));
+        ({ results, total } = await storage.searchPages(decodedQuery, limit, offset, workspaceId));
       }
       console.log("✅ Search completed:", { 
         resultsCount: results.length, 
@@ -3353,8 +3587,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Find site by URL among all start URLs
-      const ownerScope = resolveOwnerScope(user);
-      const sites = await storage.getAllSites(ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const sites = await storage.getAllSites(workspaceId);
       const normalizedUrl = url.toString().trim();
       const site = sites.find((s) => {
         if (!normalizedUrl) {
@@ -3450,8 +3684,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const allPages = await storage.getAllPages(ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const allPages = await storage.getAllPages(workspaceId);
       res.json(allPages);
     } catch (error) {
       console.error('Error fetching pages:', error);
@@ -3466,7 +3700,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const ownerScope = resolveOwnerScope(user);
+      const { id: workspaceId } = getRequestWorkspace(req);
       const {
         embeddingProviderId,
         collectionName: requestedCollectionName,
@@ -3476,7 +3710,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vectorizePageSchema.parse(req.body);
       const pageId = req.params.id;
 
-      const page = await storage.getPage(pageId, ownerScope);
+      const page = await storage.getPage(pageId, workspaceId);
       if (!page) {
         return res.status(404).json({ error: "Страница не найдена" });
       }
@@ -3490,7 +3724,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "У страницы нет чанков для отправки в Qdrant" });
       }
 
-      const provider = await storage.getEmbeddingProvider(embeddingProviderId);
+      const provider = await storage.getEmbeddingProvider(embeddingProviderId, workspaceId);
       if (!provider) {
         return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
       }
@@ -3499,11 +3733,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Выбранный сервис эмбеддингов отключён" });
       }
 
-      const site: Site | undefined = await storage.getSite(page.siteId, ownerScope);
+      const site: Site | undefined = await storage.getSite(page.siteId, workspaceId);
       const collectionName =
         requestedCollectionName && requestedCollectionName.trim().length > 0
           ? requestedCollectionName.trim()
-          : buildCollectionName(site, provider);
+          : buildCollectionName(site, provider, workspaceId);
       const chunkCharLimit = site?.maxChunkSize ?? null;
       const totalChunks = nonEmptyChunks.length;
 
@@ -3792,6 +4026,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
+      const { id: workspaceId } = getRequestWorkspace(req);
       const {
         embeddingProviderId,
         collectionName: requestedCollectionName,
@@ -3801,7 +4036,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         base,
       } = vectorizeKnowledgeDocumentSchema.parse(req.body);
 
-      const provider = await storage.getEmbeddingProvider(embeddingProviderId);
+      const provider = await storage.getEmbeddingProvider(embeddingProviderId, workspaceId);
       if (!provider) {
         return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
       }
@@ -3818,7 +4053,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const collectionName =
         requestedCollectionName && requestedCollectionName.trim().length > 0
           ? requestedCollectionName.trim()
-          : buildKnowledgeCollectionName(base ?? null, provider);
+          : buildKnowledgeCollectionName(base ?? null, provider, workspaceId);
 
       const normalizedSchemaFields: CollectionSchemaFieldInput[] = (schema?.fields ?? []).map((field) => ({
         name: field.name.trim(),
@@ -4042,7 +4277,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const ownerScope = resolveOwnerScope(user);
+      const { id: workspaceId } = getRequestWorkspace(req);
       const {
         embeddingProviderId,
         collectionName: requestedCollectionName,
@@ -4051,12 +4286,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } = vectorizePageSchema.parse(req.body);
       const siteId = req.params.id;
 
-      const site = await storage.getSite(siteId, ownerScope);
+      const site = await storage.getSite(siteId, workspaceId);
       if (!site) {
         return res.status(404).json({ error: "Проект не найден" });
       }
 
-      const pages = await storage.getPagesBySiteId(siteId, ownerScope);
+      const pages = await storage.getPagesBySiteId(siteId, workspaceId);
       const projectChunks = pages.flatMap((page) => {
         const pageChunks = Array.isArray(page.chunks)
           ? (page.chunks as ContentChunk[])
@@ -4079,7 +4314,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const provider = await storage.getEmbeddingProvider(embeddingProviderId);
+      const provider = await storage.getEmbeddingProvider(embeddingProviderId, workspaceId);
       if (!provider) {
         return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
       }
@@ -4091,7 +4326,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const collectionName =
         requestedCollectionName && requestedCollectionName.trim().length > 0
           ? requestedCollectionName.trim()
-          : buildCollectionName(site, provider);
+          : buildCollectionName(site, provider, workspaceId);
 
       const normalizedSchemaFields: CollectionSchemaFieldInput[] = (schema?.fields ?? []).map(
         (field) => ({
@@ -4189,8 +4424,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const site = await storage.getSite(req.params.id, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const site = await storage.getSite(req.params.id, workspaceId);
       if (!site) {
         return res.status(404).json({ error: "Проект не найден" });
       }
@@ -4218,8 +4453,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Требуется идентификатор страницы" });
       }
 
-      const ownerScope = resolveOwnerScope(user);
-      const deleted = await storage.deletePage(pageId, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const deleted = await storage.deletePage(pageId, workspaceId);
 
       if (!deleted) {
         return res.status(404).json({ error: "Страница не найдена" });
@@ -4244,8 +4479,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`🗑️ Bulk delete requested for ${pageIds.length} pages`);
 
-      const ownerScope = resolveOwnerScope(user);
-      const deleteResults = await storage.bulkDeletePages(pageIds, ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const deleteResults = await storage.bulkDeletePages(pageIds, workspaceId);
       
       console.log(`✅ Bulk delete completed: ${deleteResults.deletedCount} pages deleted`);
       
@@ -4275,8 +4510,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
     try {
-      const ownerScope = resolveOwnerScope(user);
-      const sites = await storage.getAllSites(ownerScope);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const sites = await storage.getAllSites(workspaceId);
       const totalSites = sites.length;
       const activeCrawls = sites.filter(s => s.status === 'crawling').length;
       const completedCrawls = sites.filter(s => s.status === 'completed').length;
@@ -4284,7 +4519,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let totalPages = 0;
       for (const site of sites) {
-        const pages = await storage.getPagesBySiteId(site.id, ownerScope);
+        const pages = await storage.getPagesBySiteId(site.id, workspaceId);
         totalPages += pages.length;
       }
 
