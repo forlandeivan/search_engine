@@ -123,11 +123,8 @@ export default function AuthPage() {
   });
 
   const isLogin = mode === "login";
-  const googleProviderInfo = providersQuery.data?.providers?.google;
-  const shouldRenderGoogleButton = providersQuery.isLoading || Boolean(googleProviderInfo);
-  const isGoogleEnabled = Boolean(googleProviderInfo?.enabled);
-  const isGoogleButtonDisabled = providersQuery.isLoading || !isGoogleEnabled;
-
+  const isGoogleEnabled = Boolean(providersQuery.data?.providers?.google?.enabled);
+  const isGoogleButtonDisabled = providersQuery.isLoading;
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authError = params.get("authError");
@@ -178,7 +175,7 @@ export default function AuthPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {shouldRenderGoogleButton && (
+            {isGoogleEnabled && (
               <>
                 <Button
                   type="button"
@@ -188,19 +185,8 @@ export default function AuthPage() {
                   disabled={isGoogleButtonDisabled}
                 >
                   <FcGoogle className="h-5 w-5" />
-                  {providersQuery.isLoading
-                    ? "Проверяем провайдера..."
-                    : isGoogleEnabled
-                      ? isLogin
-                        ? "Войти через Google"
-                        : "Продолжить через Google"
-                      : "Google временно недоступен"}
+                  {isLogin ? "Войти через Google" : "Продолжить через Google"}
                 </Button>
-                {!isGoogleEnabled && !providersQuery.isLoading && (
-                  <p className="text-xs text-center text-muted-foreground">
-                    Авторизация через Google пока не настроена. Обратитесь к администратору, если она должна быть доступна.
-                  </p>
-                )}
                 <div className="relative">
                   <div className="absolute inset-0 flex items-center">
                     <span className="w-full border-t" />

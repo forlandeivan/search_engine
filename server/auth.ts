@@ -124,9 +124,7 @@ export function configureAuth(app: Express) {
           done: VerifyCallback,
         ) => {
           try {
-            const primaryEmail = profile.emails?.find(
-              (item: NonNullable<GoogleProfile["emails"]>[number]) => typeof item?.value === "string",
-            );
+            const primaryEmail = profile.emails?.find((item) => typeof item.value === "string");
             if (!primaryEmail?.value) {
               return done(null, false, { message: "Не удалось получить email Google-профиля" });
             }
