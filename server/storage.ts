@@ -458,12 +458,20 @@ export class DatabaseStorage implements IStorage {
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_email_verified" SET DEFAULT FALSE`);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_email_verified" SET NOT NULL`);
 
-      try {
+      const googleIdUniqueConstraintCheck = await this.db.execute(sql`
+        SELECT COUNT(*)::int AS "googleIdUniqueConstraintCount"
+        FROM pg_constraint
+        WHERE conrelid = 'public.users'::regclass
+          AND conname = 'users_google_id_unique'
+      `);
+      const googleIdUniqueConstraintCount = Number(
+        googleIdUniqueConstraintCheck.rows[0]?.googleIdUniqueConstraintCount ?? 0
+      );
+
+      if (googleIdUniqueConstraintCount === 0) {
         await this.db.execute(
           sql`ALTER TABLE "users" ADD CONSTRAINT "users_google_id_unique" UNIQUE ("google_id")`
         );
-      } catch (error) {
-        swallowPgError(error, ["42710"]);
       }
 
       await this.db.execute(sql`
@@ -1404,10 +1412,18 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_email_verified" SET DEFAULT FALSE`);
     await db.execute(sql`ALTER TABLE "users" ALTER COLUMN "google_email_verified" SET NOT NULL`);
 
-    try {
+    const googleIdUniqueConstraintCheck = await db.execute(sql`
+      SELECT COUNT(*)::int AS "googleIdUniqueConstraintCount"
+      FROM pg_constraint
+      WHERE conrelid = 'public.users'::regclass
+        AND conname = 'users_google_id_unique'
+    `);
+    const googleIdUniqueConstraintCount = Number(
+      googleIdUniqueConstraintCheck.rows[0]?.googleIdUniqueConstraintCount ?? 0
+    );
+
+    if (googleIdUniqueConstraintCount === 0) {
       await db.execute(sql`ALTER TABLE "users" ADD CONSTRAINT "users_google_id_unique" UNIQUE ("google_id")`);
-    } catch (error) {
-      swallowPgError(error, ["42710"]);
     }
 
     try {
