@@ -25,6 +25,7 @@ import {
   HardDrive,
   CircleUser,
   ShieldCheck,
+  Building2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -101,6 +102,11 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
   const sections: Array<{ label?: string; items: SidebarItem[] }> = [
     {
       items: [
+        {
+          title: "Рабочие пространства",
+          url: "/admin/workspaces",
+          icon: Building2,
+        },
         {
           title: "Пользователи",
           url: "/admin/users",

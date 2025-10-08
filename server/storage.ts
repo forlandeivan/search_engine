@@ -296,6 +296,14 @@ export interface WorkspaceMemberWithUser {
   user: User;
 }
 
+export interface WorkspaceAdminSummary {
+  id: string;
+  name: string;
+  createdAt: Date;
+  usersCount: number;
+  managerFullName: string | null;
+}
+
 export interface IStorage {
   // Sites management
   createSite(site: SiteInsert): Promise<Site>;
@@ -352,6 +360,9 @@ export interface IStorage {
     search_vector_columns_exist: boolean;
     relevance_column_exists: boolean;
   }>;
+
+  // Workspaces administration
+  listAllWorkspacesWithStats(): Promise<WorkspaceAdminSummary[]>;
 
   // User management (reserved for future admin features)
   getUser(id: string): Promise<User | undefined>;
@@ -1945,6 +1956,51 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(workspaceMembers.createdAt));
 
     return rows.map((row) => ({ member: row.member, user: row.user }));
+  }
+
+  async listAllWorkspacesWithStats(): Promise<WorkspaceAdminSummary[]> {
+    await ensureWorkspacesTable();
+    await ensureWorkspaceMembersTable();
+    await this.ensureUserAuthColumns();
+
+    const workspaceRows = await this.db
+      .select({
+        id: workspaces.id,
+        name: workspaces.name,
+        createdAt: workspaces.createdAt,
+        usersCount: sql<number>`COUNT(${workspaceMembers.userId})`,
+      })
+      .from(workspaces)
+      .leftJoin(workspaceMembers, eq(workspaceMembers.workspaceId, workspaces.id))
+      .groupBy(workspaces.id)
+      .orderBy(desc(workspaces.createdAt));
+
+    type WorkspaceRow = (typeof workspaceRows)[number];
+
+    const managerRows = await this.db
+      .select({
+        workspaceId: workspaceMembers.workspaceId,
+        fullName: users.fullName,
+      })
+      .from(workspaceMembers)
+      .innerJoin(users, eq(workspaceMembers.userId, users.id))
+      .where(eq(workspaceMembers.role, "manager"))
+      .orderBy(workspaceMembers.workspaceId, workspaceMembers.createdAt);
+
+    const managerByWorkspace = new Map<string, string>();
+    for (const row of managerRows) {
+      if (!managerByWorkspace.has(row.workspaceId)) {
+        managerByWorkspace.set(row.workspaceId, row.fullName);
+      }
+    }
+
+    return workspaceRows.map((row: WorkspaceRow): WorkspaceAdminSummary => ({
+      id: row.id,
+      name: row.name,
+      createdAt: row.createdAt,
+      usersCount: Number(row.usersCount ?? 0),
+      managerFullName: managerByWorkspace.get(row.id) ?? null,
+    }));
   }
 
   async removeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {

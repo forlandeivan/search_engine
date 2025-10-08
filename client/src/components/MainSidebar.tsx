@@ -238,7 +238,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
   if (showAdminLink) {
     sections[sections.length - 1].items.push({
       title: "Администрирование",
-      url: "/admin/users",
+      url: "/admin/workspaces",
       icon: Shield,
     });
   }
