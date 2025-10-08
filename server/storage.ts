@@ -448,6 +448,9 @@ let ensuringWorkspacesTable: Promise<void> | null = null;
 let workspaceMembersTableEnsured = false;
 let ensuringWorkspaceMembersTable: Promise<void> | null = null;
 
+let workspaceCollectionsTableEnsured = false;
+let ensuringWorkspaceCollectionsTable: Promise<void> | null = null;
+
 async function ensureWorkspacesTable(): Promise<void> {
   if (workspacesTableEnsured) {
     return;
@@ -535,6 +538,108 @@ async function ensureWorkspaceMembersTable(): Promise<void> {
   })();
 
   await ensuringWorkspaceMembersTable;
+}
+
+async function ensureWorkspaceVectorCollectionsTable(): Promise<void> {
+  if (workspaceCollectionsTableEnsured) {
+    return;
+  }
+
+  if (ensuringWorkspaceCollectionsTable) {
+    await ensuringWorkspaceCollectionsTable;
+    return;
+  }
+
+  ensuringWorkspaceCollectionsTable = (async () => {
+    await ensureWorkspacesTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "workspace_vector_collections" (
+        "collection_name" text PRIMARY KEY,
+        "workspace_id" varchar NOT NULL,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "workspace_vector_collections",
+      "workspace_vector_collections_workspace_id_fkey",
+      sql`
+        ALTER TABLE "workspace_vector_collections"
+        ADD CONSTRAINT "workspace_vector_collections_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "workspace_vector_collections"
+        ADD COLUMN "created_at" timestamp DEFAULT CURRENT_TIMESTAMP
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    try {
+      await db.execute(sql`
+        UPDATE "workspace_vector_collections"
+        SET "created_at" = COALESCE("created_at", CURRENT_TIMESTAMP)
+      `);
+      await db.execute(sql`
+        ALTER TABLE "workspace_vector_collections"
+        ALTER COLUMN "created_at" SET DEFAULT CURRENT_TIMESTAMP
+      `);
+      await db.execute(sql`
+        ALTER TABLE "workspace_vector_collections"
+        ALTER COLUMN "created_at" SET NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42703", "23502"]);
+    }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "workspace_vector_collections"
+        ADD COLUMN "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    try {
+      await db.execute(sql`
+        UPDATE "workspace_vector_collections"
+        SET "updated_at" = COALESCE("updated_at", CURRENT_TIMESTAMP)
+      `);
+      await db.execute(sql`
+        ALTER TABLE "workspace_vector_collections"
+        ALTER COLUMN "updated_at" SET DEFAULT CURRENT_TIMESTAMP
+      `);
+      await db.execute(sql`
+        ALTER TABLE "workspace_vector_collections"
+        ALTER COLUMN "updated_at" SET NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42703", "23502"]);
+    }
+
+    try {
+      await db.execute(sql`
+        CREATE INDEX "workspace_vector_collections_workspace_id_idx"
+          ON "workspace_vector_collections" ("workspace_id")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07", "42710"]);
+    }
+  })();
+
+  try {
+    await ensuringWorkspaceCollectionsTable;
+    workspaceCollectionsTableEnsured = true;
+  } finally {
+    ensuringWorkspaceCollectionsTable = null;
+  }
 }
 
 async function ensureEmbeddingProvidersTable(): Promise<void> {
@@ -1269,6 +1374,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async listWorkspaceCollections(workspaceId: string): Promise<string[]> {
+    await ensureWorkspaceVectorCollectionsTable();
+
     const rows = await this.db
       .select({ collectionName: workspaceVectorCollections.collectionName })
       .from(workspaceVectorCollections)
@@ -1278,6 +1385,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCollectionWorkspace(collectionName: string): Promise<string | null> {
+    await ensureWorkspaceVectorCollectionsTable();
+
     const [row] = await this.db
       .select({ workspaceId: workspaceVectorCollections.workspaceId })
       .from(workspaceVectorCollections)
@@ -1287,6 +1396,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertCollectionWorkspace(collectionName: string, workspaceId: string): Promise<void> {
+    await ensureWorkspaceVectorCollectionsTable();
+
     await this.db
       .insert(workspaceVectorCollections)
       .values({ collectionName, workspaceId })
@@ -1297,6 +1408,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async removeCollectionWorkspace(collectionName: string): Promise<void> {
+    await ensureWorkspaceVectorCollectionsTable();
+
     await this.db
       .delete(workspaceVectorCollections)
       .where(eq(workspaceVectorCollections.collectionName, collectionName));
