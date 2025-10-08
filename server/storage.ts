@@ -2094,26 +2094,37 @@ export class DatabaseStorage implements IStorage {
       .select({
         workspaceId: workspaceMembers.workspaceId,
         fullName: users.fullName,
+        role: workspaceMembers.role,
       })
       .from(workspaceMembers)
       .innerJoin(users, eq(workspaceMembers.userId, users.id))
-      .where(eq(workspaceMembers.role, "manager"))
+      .where(inArray(workspaceMembers.role, ["manager", "owner"]))
       .orderBy(workspaceMembers.workspaceId, workspaceMembers.createdAt);
 
-    const managerByWorkspace = new Map<string, string>();
+    const managerByWorkspace = new Map<
+      string,
+      { fullName: string | null; role: WorkspaceMember["role"] }
+    >();
     for (const row of managerRows) {
-      if (!managerByWorkspace.has(row.workspaceId)) {
-        managerByWorkspace.set(row.workspaceId, row.fullName);
+      const current = managerByWorkspace.get(row.workspaceId);
+      if (!current || current.role !== "manager") {
+        managerByWorkspace.set(row.workspaceId, {
+          fullName: row.fullName ?? null,
+          role: row.role,
+        });
       }
     }
 
-    return workspaceRows.map((row: WorkspaceRow): WorkspaceAdminSummary => ({
-      id: row.id,
-      name: row.name,
-      createdAt: row.createdAt,
-      usersCount: Number(row.usersCount ?? 0),
-      managerFullName: managerByWorkspace.get(row.id) ?? null,
-    }));
+    return workspaceRows.map((row: WorkspaceRow): WorkspaceAdminSummary => {
+      const manager = managerByWorkspace.get(row.id);
+      return {
+        id: row.id,
+        name: row.name,
+        createdAt: row.createdAt,
+        usersCount: Number(row.usersCount ?? 0),
+        managerFullName: manager?.fullName ?? null,
+      };
+    });
   }
 
   async removeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
