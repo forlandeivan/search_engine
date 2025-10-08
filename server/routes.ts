@@ -2155,6 +2155,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/admin/workspaces", requireAdmin, async (_req, res, next) => {
+    try {
+      const workspaces = await storage.listAllWorkspacesWithStats();
+      res.json({
+        workspaces: workspaces.map((workspace) => ({
+          id: workspace.id,
+          name: workspace.name,
+          usersCount: workspace.usersCount,
+          managerFullName: workspace.managerFullName,
+          createdAt: workspace.createdAt,
+        })),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/admin/users", requireAdmin, async (_req, res, next) => {
     try {
       const users = await storage.listUsers();

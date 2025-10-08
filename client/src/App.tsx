@@ -20,6 +20,7 @@ import AuthSettingsPage from "@/pages/AuthSettingsPage";
 import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
+import AdminWorkspacesPage from "@/pages/AdminWorkspacesPage";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
 import ProfilePage from "@/pages/ProfilePage";
@@ -34,11 +35,12 @@ import type { CSSProperties } from "react";
 function AdminRouter() {
   return (
     <Switch>
+      <Route path="/admin/workspaces" component={AdminWorkspacesPage} />
       <Route path="/admin/auth" component={AuthSettingsPage} />
       <Route path="/admin/embeddings" component={EmbeddingServicesPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />
-      <Route path="/admin" component={AdminUsersPage} />
+      <Route path="/admin" component={AdminWorkspacesPage} />
       <Route component={NotFound} />
     </Switch>
   );
