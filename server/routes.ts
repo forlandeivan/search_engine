@@ -831,6 +831,8 @@ interface StartProjectVectorizationOptions {
   schemaFields: CollectionSchemaFieldInput[];
   client: QdrantClient;
   collectionExists: boolean;
+  workspaceId: string;
+  existingWorkspaceId: string | null;
 }
 
 class ProjectVectorizationManager {
@@ -945,11 +947,14 @@ class ProjectVectorizationManager {
     schemaFields,
     client,
     collectionExists: initialCollectionExists,
+    workspaceId,
+    existingWorkspaceId,
   }: StartProjectVectorizationOptions): Promise<void> {
     const siteId = site.id;
     const processedPageIds = new Set<string>();
     const totalChunks = projectChunks.length;
     const totalPages = new Set(projectChunks.map((entry) => entry.page.id)).size;
+    let currentWorkspaceId = existingWorkspaceId;
 
     try {
       const accessToken = await fetchAccessToken(provider);
@@ -1024,7 +1029,13 @@ class ProjectVectorizationManager {
           this.updateStatus(siteId, {
             message: `Коллекция ${collectionName} создана. Подготавливаем записи для отправки...`,
           });
+          await storage.upsertCollectionWorkspace(collectionName, workspaceId);
+          currentWorkspaceId = workspaceId;
         }
+      }
+
+      if (collectionExists && currentWorkspaceId && currentWorkspaceId !== workspaceId) {
+        throw new Error(`Коллекция ${collectionName} не принадлежит рабочему пространству`);
       }
 
       const hasCustomSchema = schemaFields.length > 0;
@@ -2753,8 +2764,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     })
     .strict();
 
-  app.get("/api/vector/collections", async (_req, res) => {
+  app.get("/api/vector/collections", async (req, res) => {
     try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const allowedCollections = await storage.listWorkspaceCollections(workspaceId);
+
+      if (allowedCollections.length === 0) {
+        return res.json({ collections: [] });
+      }
+
+      const allowedSet = new Set(allowedCollections);
       const client = getQdrantClient();
       const collectionsResponse = await client.getCollections();
       const parsedCollections = qdrantCollectionsResponseSchema.safeParse(collectionsResponse);
@@ -2772,6 +2791,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const detailedCollections = await Promise.all(
         collections.map(async ({ name }) => {
+          if (!allowedSet.has(name)) {
+            return null;
+          }
+
           try {
             const info = await client.getCollection(name);
             const vectorsConfig = info.config?.params?.vectors as
@@ -2798,7 +2821,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
-      res.json({ collections: detailedCollections });
+      const existingCollections = detailedCollections.filter(
+        (collection): collection is NonNullable<typeof collection> => collection !== null,
+      );
+      const existingNames = new Set(existingCollections.map((collection) => collection.name));
+      const missingCollections = allowedCollections
+        .filter((name) => !existingNames.has(name))
+        .map((name) => ({
+          name,
+          status: "unknown" as const,
+          optimizerStatus: "unknown" as const,
+          pointsCount: 0,
+          vectorsCount: null,
+          vectorSize: null,
+          distance: null,
+          segmentsCount: null,
+          error: "Коллекция не найдена в Qdrant",
+        }));
+
+      res.json({ collections: [...existingCollections, ...missingCollections] });
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
@@ -2844,6 +2885,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/vector/collections/:name", async (req, res) => {
     try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+        return res.status(404).json({
+          error: "Коллекция не найдена",
+        });
+      }
+
       const client = getQdrantClient();
       const info = await client.getCollection(req.params.name);
       const vectorsConfig = info.config?.params?.vectors as
@@ -2880,6 +2930,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/vector/collections/:name/points", async (req, res) => {
     try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+        return res.status(404).json({
+          error: "Коллекция не найдена",
+        });
+      }
+
       const limitParam = typeof req.query.limit === "string" ? req.query.limit.trim() : undefined;
       const limitNumber = limitParam ? Number.parseInt(limitParam, 10) : Number.NaN;
       const limit = Number.isFinite(limitNumber) && limitNumber > 0 ? Math.min(limitNumber, 100) : 20;
@@ -2932,6 +2991,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/vector/collections", async (req, res) => {
     try {
       const body = createVectorCollectionSchema.parse(req.body);
+      const { id: workspaceId } = getRequestWorkspace(req);
+
+      const existingWorkspaceId = await storage.getCollectionWorkspace(body.name);
+      if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
+        return res.status(409).json({
+          error: "Коллекция уже принадлежит другому рабочему пространству",
+        });
+      }
+
       const client = getQdrantClient();
 
       const { name, vectorSize, distance, onDiskPayload } = body;
@@ -2944,6 +3012,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const info = await client.getCollection(name);
+      await storage.upsertCollectionWorkspace(name, workspaceId);
 
       res.status(201).json({
         operation: result,
@@ -2992,8 +3061,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/vector/collections/:name", async (req, res) => {
     try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+        return res.status(404).json({
+          error: "Коллекция не найдена",
+        });
+      }
+
       const client = getQdrantClient();
       await client.deleteCollection(req.params.name);
+      await storage.removeCollectionWorkspace(req.params.name);
 
       res.json({
         message: "Коллекция удалена",
@@ -3018,6 +3097,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/vector/collections/:name/points", async (req, res) => {
     try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+        return res.status(404).json({
+          error: "Коллекция не найдена",
+        });
+      }
+
       const body = upsertPointsSchema.parse(req.body);
       const client = getQdrantClient();
 
@@ -3067,6 +3155,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/vector/collections/:name/search", async (req, res) => {
     try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+        return res.status(404).json({
+          error: "Коллекция не найдена",
+        });
+      }
+
       const body = searchPointsSchema.parse(req.body);
       const client = getQdrantClient();
 
@@ -3751,6 +3848,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       const hasCustomSchema = normalizedSchemaFields.length > 0;
 
+      const existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+      if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
+        return res.status(403).json({
+          error: "Коллекция принадлежит другому рабочему пространству",
+        });
+      }
+
       const client = getQdrantClient();
       const shouldCreateCollection = Boolean(createCollection);
       let collectionExists = false;
@@ -3777,6 +3881,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } else {
           throw collectionError;
         }
+      }
+
+      if (collectionExists && !existingWorkspaceId) {
+        return res.status(404).json({
+          error: `Коллекция ${collectionName} не найдена`,
+        });
       }
 
       const accessToken = await fetchAccessToken(provider);
@@ -3833,6 +3943,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (created) {
             collectionCreated = true;
             collectionExists = true;
+            await storage.upsertCollectionWorkspace(collectionName, workspaceId);
           }
         } catch (creationError) {
           const qdrantError = extractQdrantApiError(creationError);
@@ -4063,6 +4174,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }));
       const hasCustomSchema = normalizedSchemaFields.length > 0;
 
+      const existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+      if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
+        return res.status(403).json({
+          error: "Коллекция принадлежит другому рабочему пространству",
+        });
+      }
+
       const client = getQdrantClient();
       const shouldCreateCollection = Boolean(createCollection);
       let collectionExists = false;
@@ -4091,6 +4209,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      if (collectionExists && !existingWorkspaceId) {
+        return res.status(404).json({
+          error: `Коллекция ${collectionName} не найдена`,
+        });
+      }
+
       const accessToken = await fetchAccessToken(provider);
       const embeddingResult = await fetchEmbeddingVector(provider, accessToken, documentText);
       const { vector, usageTokens, embeddingId } = embeddingResult;
@@ -4115,6 +4239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (created) {
             collectionCreated = true;
             collectionExists = true;
+            await storage.upsertCollectionWorkspace(collectionName, workspaceId);
           }
         } catch (creationError) {
           const qdrantError = extractQdrantApiError(creationError);
@@ -4337,6 +4462,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }),
       );
 
+      const existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+      if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
+        return res.status(403).json({
+          error: "Коллекция принадлежит другому рабочему пространству",
+        });
+      }
+
       const client = getQdrantClient();
       const shouldCreateCollection = Boolean(createCollection);
       let collectionExists = false;
@@ -4371,6 +4503,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      if (collectionExists && !existingWorkspaceId) {
+        return res.status(404).json({
+          error: `Коллекция ${collectionName} не найдена`,
+        });
+      }
+
       const status = projectVectorizationManager.startProjectVectorization({
         site,
         projectChunks,
@@ -4380,6 +4518,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         schemaFields: normalizedSchemaFields,
         client,
         collectionExists,
+        workspaceId,
+        existingWorkspaceId,
       });
 
       res.status(202).json({

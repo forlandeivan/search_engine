@@ -8,6 +8,7 @@ import {
   authProviders,
   workspaces,
   workspaceMembers,
+  workspaceVectorCollections,
   workspaceMemberRoles,
   type Site,
   type SiteInsert,
@@ -335,6 +336,12 @@ export interface IStorage {
     offset?: number,
     workspaceId?: string,
   ): Promise<{ results: Page[]; total: number }>;
+
+  // Vector collections ownership
+  listWorkspaceCollections(workspaceId: string): Promise<string[]>;
+  getCollectionWorkspace(collectionName: string): Promise<string | null>;
+  upsertCollectionWorkspace(collectionName: string, workspaceId: string): Promise<void>;
+  removeCollectionWorkspace(collectionName: string): Promise<void>;
 
   // Database health diagnostics
   getDatabaseHealthInfo(): Promise<{
@@ -1094,38 +1101,37 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPage(page: InsertPage): Promise<Page> {
-    const [newPage] = await this.db.insert(pages).values(page).returning();
+    const [siteWorkspace] = await this.db
+      .select({ workspaceId: sites.workspaceId })
+      .from(sites)
+      .where(eq(sites.id, page.siteId));
+
+    if (!siteWorkspace) {
+      throw new Error(`Не удалось определить рабочее пространство для проекта ${page.siteId}`);
+    }
+
+    const [newPage] = await this.db
+      .insert(pages)
+      .values({ ...page, workspaceId: siteWorkspace.workspaceId })
+      .returning();
     return newPage;
   }
 
   async getPage(id: string, workspaceId?: string): Promise<Page | undefined> {
-    if (workspaceId) {
-      const rows = await this.db
-        .select({ page: pages })
-        .from(pages)
-        .innerJoin(sites, eq(pages.siteId, sites.id))
-        .where(and(eq(pages.id, id), eq(sites.workspaceId, workspaceId)));
+    const condition = workspaceId
+      ? and(eq(pages.id, id), eq(pages.workspaceId, workspaceId))
+      : eq(pages.id, id);
 
-      return rows[0]?.page;
-    }
-
-    const [page] = await this.db.select().from(pages).where(eq(pages.id, id));
+    const [page] = await this.db.select().from(pages).where(condition);
     return page ?? undefined;
   }
 
   async getAllPages(workspaceId?: string): Promise<Page[]> {
-    if (!workspaceId) {
-      return await this.db.select().from(pages).orderBy(desc(pages.createdAt));
-    }
+    const query = workspaceId
+      ? this.db.select().from(pages).where(eq(pages.workspaceId, workspaceId))
+      : this.db.select().from(pages);
 
-    const rows: Array<{ page: Page }> = await this.db
-      .select({ page: pages })
-      .from(pages)
-      .innerJoin(sites, eq(pages.siteId, sites.id))
-      .where(eq(sites.workspaceId, workspaceId))
-      .orderBy(desc(pages.createdAt));
-
-    return rows.map(({ page }) => page);
+    return await query.orderBy(desc(pages.createdAt));
   }
 
   async getPagesByUrl(url: string): Promise<Page[]> {
@@ -1187,8 +1193,7 @@ export class DatabaseStorage implements IStorage {
       const rows: Array<{ id: string }> = await this.db
         .select({ id: pages.id })
         .from(pages)
-        .innerJoin(sites, eq(pages.siteId, sites.id))
-        .where(and(inArray(pages.id, pageIds), eq(sites.workspaceId, workspaceId)));
+        .where(and(inArray(pages.id, pageIds), eq(pages.workspaceId, workspaceId)));
 
       accessibleIds = rows.map((row) => row.id);
     } else {
@@ -1231,7 +1236,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createSearchIndexEntry(entry: InsertSearchIndexEntry): Promise<SearchIndexEntry> {
-    const [newEntry] = await this.db.insert(searchIndex).values(entry).returning();
+    const [pageWorkspace] = await this.db
+      .select({ workspaceId: pages.workspaceId })
+      .from(pages)
+      .where(eq(pages.id, entry.pageId));
+
+    if (!pageWorkspace) {
+      throw new Error(`Не найдена страница ${entry.pageId} для добавления в индекс`);
+    }
+
+    const [newEntry] = await this.db
+      .insert(searchIndex)
+      .values({ ...entry, workspaceId: pageWorkspace.workspaceId })
+      .returning();
     return newEntry;
   }
 
@@ -1240,12 +1257,46 @@ export class DatabaseStorage implements IStorage {
     return result.rowCount ?? 0;
   }
 
+  async listWorkspaceCollections(workspaceId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ collectionName: workspaceVectorCollections.collectionName })
+      .from(workspaceVectorCollections)
+      .where(eq(workspaceVectorCollections.workspaceId, workspaceId));
+
+    return rows.map((row: { collectionName: string }) => row.collectionName);
+  }
+
+  async getCollectionWorkspace(collectionName: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ workspaceId: workspaceVectorCollections.workspaceId })
+      .from(workspaceVectorCollections)
+      .where(eq(workspaceVectorCollections.collectionName, collectionName));
+
+    return row?.workspaceId ?? null;
+  }
+
+  async upsertCollectionWorkspace(collectionName: string, workspaceId: string): Promise<void> {
+    await this.db
+      .insert(workspaceVectorCollections)
+      .values({ collectionName, workspaceId })
+      .onConflictDoUpdate({
+        target: workspaceVectorCollections.collectionName,
+        set: { workspaceId, updatedAt: sql`CURRENT_TIMESTAMP` },
+      });
+  }
+
+  async removeCollectionWorkspace(collectionName: string): Promise<void> {
+    await this.db
+      .delete(workspaceVectorCollections)
+      .where(eq(workspaceVectorCollections.collectionName, collectionName));
+  }
+
   private buildWorkspaceCondition(workspaceId?: string): SQL | undefined {
     if (!workspaceId) {
       return undefined;
     }
 
-    return sql`EXISTS (SELECT 1 FROM sites s WHERE s.id = p.site_id AND s.workspace_id = ${workspaceId})`;
+    return sql`p.workspace_id = ${workspaceId}`;
   }
 
   private async runFullTextSearch(

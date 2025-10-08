@@ -123,6 +123,15 @@ export const workspaceMembers = pgTable(
   }),
 );
 
+export const workspaceVectorCollections = pgTable("workspace_vector_collections", {
+  collectionName: text("collection_name").primaryKey(),
+  workspaceId: varchar("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 export const personalApiTokens = pgTable("personal_api_tokens", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id")
@@ -300,6 +309,9 @@ export const pages = pgTable("pages", {
   searchVectorCombined: tsvector("search_vector_combined"), // combined tsvector with weights
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  workspaceId: varchar("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
 });
 
 // Search index for fast text search
@@ -311,6 +323,9 @@ export const searchIndex = pgTable("search_index", {
   position: integer("position").notNull(),
   relevance: doublePrecision("relevance"), // Add missing relevance column
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  workspaceId: varchar("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
 });
 
 export const embeddingProviders = pgTable("embedding_providers", {
@@ -401,11 +416,13 @@ export const insertPageSchema = createInsertSchema(pages).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  workspaceId: true,
 });
 
 export const insertSearchIndexSchema = createInsertSchema(searchIndex).omit({
   id: true,
   createdAt: true,
+  workspaceId: true,
 });
 
 export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProviders)
@@ -546,6 +563,7 @@ export type Workspace = typeof workspaces.$inferSelect;
 export type WorkspaceInsert = typeof workspaces.$inferInsert;
 export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type WorkspaceMemberInsert = typeof workspaceMembers.$inferInsert;
+export type WorkspaceVectorCollection = typeof workspaceVectorCollections.$inferSelect;
 export type AuthProvider = typeof authProviders.$inferSelect;
 export type AuthProviderInsert = typeof authProviders.$inferInsert;
 export type EmbeddingProvider = typeof embeddingProviders.$inferSelect;
