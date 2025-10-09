@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { importKnowledgeArchive } from "@/lib/archive-import";
 import {
   createKnowledgeBaseEntry,
   KnowledgeBase,
@@ -77,8 +78,10 @@ export default function DashboardPage() {
   const [newBaseName, setNewBaseName] = useState("");
   const [newBaseDescription, setNewBaseDescription] = useState("");
   const [archiveFileName, setArchiveFileName] = useState("");
+  const [archiveFile, setArchiveFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [creationError, setCreationError] = useState<string | null>(null);
+  const [isCreatingBase, setIsCreatingBase] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -127,6 +130,7 @@ export default function DashboardPage() {
     setNewBaseName("");
     setNewBaseDescription("");
     setArchiveFileName("");
+    setArchiveFile(null);
     setSourceUrl("");
     setCreationMode("blank");
     if (archiveInputRef.current) {
@@ -144,18 +148,24 @@ export default function DashboardPage() {
     const file = event.target.files?.[0];
     if (file) {
       setArchiveFileName(file.name);
+      setArchiveFile(file);
     } else {
       setArchiveFileName("");
+      setArchiveFile(null);
     }
   };
 
-  const handleCreateBase = () => {
+  const handleCreateBase = async () => {
+    if (isCreatingBase) {
+      return;
+    }
+
     if (!newBaseName.trim()) {
       setCreationError("Укажите название базы знаний");
       return;
     }
 
-    if (creationMode === "archive" && !archiveFileName) {
+    if (creationMode === "archive" && (!archiveFileName || !archiveFile)) {
       setCreationError("Выберите архив документов для импорта");
       return;
     }
@@ -165,32 +175,66 @@ export default function DashboardPage() {
       return;
     }
 
-    const ingestion =
-      creationMode === "archive"
-        ? { type: "archive" as const, archiveName: archiveFileName }
-        : creationMode === "crawler"
-          ? { type: "crawler" as const, seedUrl: sourceUrl.trim() }
-          : undefined;
+    setCreationError(null);
+    setIsCreatingBase(true);
 
-    const base = createKnowledgeBaseEntry({
-      name: newBaseName,
-      description: newBaseDescription,
-      sourceType: creationMode,
-      ingestion,
-    });
+    try {
+      const ingestion =
+        creationMode === "archive"
+          ? { type: "archive" as const, archiveName: archiveFileName }
+          : creationMode === "crawler"
+            ? { type: "crawler" as const, seedUrl: sourceUrl.trim() }
+            : undefined;
 
-    const currentState = readKnowledgeBaseStorage();
-    const updatedState = {
-      knowledgeBases: [...currentState.knowledgeBases, base],
-      selectedBaseId: base.id,
-      selectedDocument: null,
-    };
+      const archiveImport =
+        creationMode === "archive" && archiveFile ? await importKnowledgeArchive(archiveFile) : null;
 
-    writeKnowledgeBaseStorage(updatedState);
-    setKnowledgeBases(updatedState.knowledgeBases);
-    setIsDialogOpen(false);
-    setLocation(`/knowledge/${base.id}`);
-    resetDialog();
+      if (archiveImport && archiveImport.summary.importedFiles === 0) {
+        throw new Error(
+          "Не удалось импортировать ни один документ из архива. Проверьте поддерживаемые форматы и структуру файлов.",
+        );
+      }
+
+      let base = createKnowledgeBaseEntry({
+        name: newBaseName,
+        description: newBaseDescription,
+        sourceType: creationMode,
+        ingestion,
+        importSummary: archiveImport?.summary,
+      });
+
+      if (archiveImport) {
+        base = {
+          ...base,
+          structure: archiveImport.structure,
+          documents: archiveImport.documents,
+          tasks: {
+            total: archiveImport.summary.totalFiles,
+            inProgress: archiveImport.summary.skippedFiles,
+            completed: archiveImport.summary.importedFiles,
+          },
+        };
+      }
+
+      const currentState = readKnowledgeBaseStorage();
+      const updatedState = {
+        knowledgeBases: [...currentState.knowledgeBases, base],
+        selectedBaseId: base.id,
+        selectedDocument: null,
+      };
+
+      writeKnowledgeBaseStorage(updatedState);
+      setKnowledgeBases(updatedState.knowledgeBases);
+      setIsDialogOpen(false);
+      setLocation(`/knowledge/${base.id}`);
+      resetDialog();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Не удалось создать базу знаний. Попробуйте снова.";
+      setCreationError(message);
+    } finally {
+      setIsCreatingBase(false);
+    }
   };
 
   return (
@@ -437,10 +481,12 @@ export default function DashboardPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreatingBase}>
               Отмена
             </Button>
-            <Button onClick={handleCreateBase}>Создать базу знаний</Button>
+            <Button onClick={handleCreateBase} disabled={isCreatingBase}>
+              {isCreatingBase ? "Создаём..." : "Создать базу знаний"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
