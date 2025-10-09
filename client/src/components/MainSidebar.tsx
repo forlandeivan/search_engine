@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -19,7 +20,6 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   Search,
-  Globe,
   Database,
   Activity,
   Webhook,
@@ -32,9 +32,11 @@ import {
   Shield,
   CircleUser,
   Users,
+  LayoutDashboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
+import { KNOWLEDGE_BASE_EVENT, readKnowledgeBaseStorage } from "@/lib/knowledge-base";
 
 interface SidebarItem {
   title: string;
@@ -46,14 +48,7 @@ interface SidebarItem {
 }
 
 interface Stats {
-  sites: { total: number; crawling: number; completed: number; failed: number; };
   pages: { total: number; };
-}
-
-interface Site {
-  id: string;
-  url: string;
-  status: string;
 }
 
 interface MainSidebarProps {
@@ -65,16 +60,32 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
   const [location] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
+  const [knowledgeBaseCount, setKnowledgeBaseCount] = useState(
+    () => readKnowledgeBaseStorage().knowledgeBases.length
+  );
 
   const { data: stats } = useQuery<Stats>({
     queryKey: ['/api/stats'],
     refetchInterval: 10000,
   });
 
-  const { data: sites } = useQuery<Site[]>({
-    queryKey: ['/api/sites/extended'],
-    refetchInterval: 10000,
-  });
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const sync = () => {
+      setKnowledgeBaseCount(readKnowledgeBaseStorage().knowledgeBases.length);
+    };
+
+    window.addEventListener(KNOWLEDGE_BASE_EVENT, sync);
+    window.addEventListener("storage", sync);
+
+    return () => {
+      window.removeEventListener(KNOWLEDGE_BASE_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
 
   const isItemActive = (item: SidebarItem) => location === item.url;
 
@@ -151,29 +162,29 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
 
   const sections: Array<{ label: string; items: SidebarItem[] }> = [
     {
-      label: "Основное",
+      label: "Навигация",
       items: [
         {
-          title: "Поиск",
+          title: "Дашборд",
           url: "/",
+          icon: LayoutDashboard,
+        },
+        {
+          title: "Глобальный поиск",
+          url: "/search",
           icon: Search,
         },
         {
-          title: "Проекты",
-          url: "/projects",
-          icon: Globe,
-          badge: sites ? sites.length.toString() : "0",
-          badgeVariant: "secondary",
-        },
-        {
-          title: "База знаний",
+          title: "Базы знаний",
           url: "/knowledge",
           icon: Brain,
+          badge: knowledgeBaseCount.toString(),
+          badgeVariant: "secondary",
         },
       ],
     },
     {
-      label: "Управление",
+      label: "Данные",
       items: [
         {
           title: "Индексированные страницы",
@@ -183,11 +194,20 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
           badgeVariant: "default",
         },
         {
-          title: "Статистика каулинга",
-          url: "/stats",
-          icon: Activity,
-          locked: true,
+          title: "Коллекции",
+          url: "/vector/collections",
+          icon: Boxes,
         },
+        {
+          title: "Документация API",
+          url: "/integrations/api",
+          icon: BookOpen,
+        },
+      ],
+    },
+    {
+      label: "Автоматизация",
+      items: [
         {
           title: "Расписание",
           url: "/schedule",
@@ -200,30 +220,21 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
           icon: Webhook,
           locked: true,
         },
-      ],
-    },
-    {
-      label: "Векторный поиск",
-      items: [
         {
-          title: "Коллекции",
-          url: "/vector/collections",
-          icon: Boxes,
+          title: "Статистика краулинга",
+          url: "/stats",
+          icon: Activity,
+          locked: true,
         },
       ],
     },
     {
-      label: "Система",
+      label: "Рабочее пространство",
       items: [
         {
           title: "Участники",
           url: "/workspaces/members",
           icon: Users,
-        },
-        {
-          title: "Документация API",
-          url: "/integrations/api",
-          icon: BookOpen,
         },
         {
           title: "Настройки",
@@ -246,16 +257,16 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
   return (
     <Sidebar collapsible="icon">
       <SidebarRail />
-      <SidebarHeader className={cn("border-b px-3 py-2", isCollapsed && "items-center p-2.5")}> 
+      <SidebarHeader className={cn("border-b px-3 py-2", isCollapsed && "items-center p-2.5")}>
         {isCollapsed ? (
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
-            ПД
+            AI
           </div>
         ) : (
           <div className="flex items-center justify-between gap-2">
             <div>
-              <h2 className="text-lg font-semibold">Поисковый движок</h2>
-              <p className="text-sm text-muted-foreground">Рабочая область</p>
+              <h2 className="text-lg font-semibold">AI KMS</h2>
+              <p className="text-sm text-muted-foreground">Рабочее пространство</p>
             </div>
             <Button
               variant="ghost"

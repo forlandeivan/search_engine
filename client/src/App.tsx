@@ -9,7 +9,6 @@ import MainSidebar from "@/components/MainSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 import SearchPage from "@/pages/SearchPage";
-import AdminPage from "@/pages/AdminPage";
 import PagesPage from "@/pages/PagesPage";
 import TildaApiPage from "@/pages/TildaApiPage";
 import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
@@ -17,8 +16,8 @@ import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
 import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
 import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
 import AuthSettingsPage from "@/pages/AuthSettingsPage";
-import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
+import DashboardPage from "@/pages/DashboardPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import AdminWorkspacesPage from "@/pages/AdminWorkspacesPage";
 import NotFound from "@/pages/not-found";
@@ -49,8 +48,7 @@ function AdminRouter() {
 function MainRouter() {
   return (
     <Switch>
-      <Route path="/projects/:siteId" component={ProjectDetailPage} />
-      <Route path="/projects" component={AdminPage} />
+      <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
       <Route path="/knowledge" component={KnowledgeBasePage} />
       <Route path="/pages" component={PagesPage} />
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
@@ -58,7 +56,8 @@ function MainRouter() {
       <Route path="/integrations/api" component={TildaApiPage} />
       <Route path="/workspaces/members" component={WorkspaceMembersPage} />
       <Route path="/profile" component={ProfilePage} />
-      <Route path="/" component={SearchPage} />
+      <Route path="/search" component={SearchPage} />
+      <Route path="/" component={DashboardPage} />
       <Route component={NotFound} />
     </Switch>
   );
