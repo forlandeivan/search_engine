@@ -1381,7 +1381,34 @@ export class DatabaseStorage implements IStorage {
       .from(workspaceVectorCollections)
       .where(eq(workspaceVectorCollections.workspaceId, workspaceId));
 
-    return rows.map((row: { collectionName: string }) => row.collectionName);
+    const collectionNames = new Set(
+      rows
+        .map((row: { collectionName: string | null }) => row.collectionName?.trim())
+        .filter((name): name is string => Boolean(name && name.length > 0)),
+    );
+
+    await ensureEmbeddingProvidersTable();
+
+    const providerRows = await this.db
+      .select({ qdrantConfig: embeddingProviders.qdrantConfig })
+      .from(embeddingProviders)
+      .where(eq(embeddingProviders.workspaceId, workspaceId));
+
+    for (const { qdrantConfig } of providerRows) {
+      const candidate =
+        qdrantConfig && typeof qdrantConfig === "object"
+          ? (qdrantConfig as Record<string, unknown>).collectionName
+          : undefined;
+
+      if (typeof candidate === "string") {
+        const normalized = candidate.trim();
+        if (normalized.length > 0) {
+          collectionNames.add(normalized);
+        }
+      }
+    }
+
+    return Array.from(collectionNames);
   }
 
   async getCollectionWorkspace(collectionName: string): Promise<string | null> {
