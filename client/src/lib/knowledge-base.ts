@@ -30,6 +30,29 @@ export type KnowledgeBaseIngestion = {
   description?: string;
 };
 
+export type KnowledgeBaseImportErrorCode =
+  | "invalid_path"
+  | "unsupported_type"
+  | "failed_conversion"
+  | "empty_document"
+  | "duplicate_path";
+
+export type KnowledgeBaseImportError = {
+  path: string;
+  message: string;
+  code: KnowledgeBaseImportErrorCode;
+};
+
+export type KnowledgeBaseImportSummary = {
+  totalFiles: number;
+  importedFiles: number;
+  skippedFiles: number;
+  errors: KnowledgeBaseImportError[];
+  archiveName?: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
 export type KnowledgeBase = {
   id: string;
   name: string;
@@ -42,6 +65,7 @@ export type KnowledgeBase = {
   lastOpenedAt?: string | null;
   ingestion?: KnowledgeBaseIngestion;
   tasks?: KnowledgeBaseTaskSummary;
+  importSummary?: KnowledgeBaseImportSummary;
 };
 
 export type SelectedDocumentState = {
@@ -182,6 +206,64 @@ const normalizeIngestion = (rawIngestion: unknown): KnowledgeBaseIngestion | und
   return { type, archiveName, seedUrl, description };
 };
 
+const normalizeImportError = (raw: unknown): KnowledgeBaseImportError | null => {
+  if (!isRecord(raw)) {
+    return null;
+  }
+
+  const path = typeof raw.path === "string" ? raw.path : "";
+  const message = typeof raw.message === "string" ? raw.message : "";
+  const code =
+    raw.code === "invalid_path" ||
+    raw.code === "unsupported_type" ||
+    raw.code === "failed_conversion" ||
+    raw.code === "empty_document" ||
+    raw.code === "duplicate_path"
+      ? raw.code
+      : "failed_conversion";
+
+  if (!path || !message) {
+    return null;
+  }
+
+  return { path, message, code };
+};
+
+const normalizeImportSummary = (raw: unknown): KnowledgeBaseImportSummary | undefined => {
+  if (!isRecord(raw)) {
+    return undefined;
+  }
+
+  const totalFiles = typeof raw.totalFiles === "number" ? raw.totalFiles : 0;
+  const importedFiles = typeof raw.importedFiles === "number" ? raw.importedFiles : 0;
+  const skippedFiles = typeof raw.skippedFiles === "number" ? raw.skippedFiles : 0;
+
+  const rawErrors = Array.isArray(raw.errors) ? raw.errors : [];
+  const errors = rawErrors
+    .map((item) => normalizeImportError(item))
+    .filter((error): error is KnowledgeBaseImportError => Boolean(error));
+
+  const archiveName = typeof raw.archiveName === "string" ? raw.archiveName : undefined;
+  const startedAt =
+    typeof raw.startedAt === "string" && !Number.isNaN(Date.parse(raw.startedAt))
+      ? raw.startedAt
+      : undefined;
+  const completedAt =
+    typeof raw.completedAt === "string" && !Number.isNaN(Date.parse(raw.completedAt))
+      ? raw.completedAt
+      : undefined;
+
+  return {
+    totalFiles,
+    importedFiles,
+    skippedFiles,
+    errors,
+    archiveName,
+    startedAt,
+    completedAt,
+  };
+};
+
 const normalizeKnowledgeBase = (raw: unknown): KnowledgeBase => {
   if (!isRecord(raw)) {
     return {
@@ -195,6 +277,7 @@ const normalizeKnowledgeBase = (raw: unknown): KnowledgeBase => {
       updatedAt: new Date().toISOString(),
       lastOpenedAt: null,
       tasks: { ...DEFAULT_TASKS },
+      importSummary: undefined,
     };
   }
 
@@ -227,6 +310,7 @@ const normalizeKnowledgeBase = (raw: unknown): KnowledgeBase => {
     lastOpenedAt,
     ingestion: normalizeIngestion(raw.ingestion),
     tasks: normalizeTasks(raw.tasks),
+    importSummary: normalizeImportSummary(raw.importSummary),
   };
 };
 
@@ -299,11 +383,13 @@ export const createKnowledgeBaseEntry = ({
   description,
   sourceType = "blank",
   ingestion,
+  importSummary,
 }: {
   name: string;
   description?: string;
   sourceType?: KnowledgeBaseSourceType;
   ingestion?: KnowledgeBaseIngestion;
+  importSummary?: KnowledgeBaseImportSummary;
 }): KnowledgeBase => {
   const timestamp = new Date().toISOString();
 
@@ -319,6 +405,7 @@ export const createKnowledgeBaseEntry = ({
     lastOpenedAt: timestamp,
     ingestion: ingestion ? { ...ingestion, type: ingestion.type } : undefined,
     tasks: { ...DEFAULT_TASKS },
+    importSummary: importSummary ? { ...importSummary } : undefined,
   };
 };
 

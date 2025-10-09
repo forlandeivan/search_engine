@@ -12,7 +12,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import DOMPurify from "dompurify";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +21,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -41,10 +41,12 @@ import {
 import { DocumentEditor } from "@/components/knowledge-base/DocumentEditor";
 import { VectorizeKnowledgeDocumentDialog } from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
 import type { PublicEmbeddingProvider } from "@shared/schema";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
-import pdfWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
-import type { PDFTextItem } from "pdfjs-dist/legacy/build/pdf";
-import mammoth from "mammoth/mammoth.browser";
+import {
+  convertFileToHtml,
+  escapeHtml,
+  extractTitleFromContent,
+  getSanitizedContent,
+} from "@/lib/document-import";
 import {
   createKnowledgeBaseEntry,
   createRandomId,
@@ -59,114 +61,19 @@ import {
   writeKnowledgeBaseStorage,
 } from "@/lib/knowledge-base";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
-
-const normalizeTitleFromFilename = (filename: string) => {
-  const baseName = filename.replace(/\.[^./\\]+$/u, "");
-  const cleaned = baseName.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
-  if (!cleaned) {
-    return "Новый документ";
+const formatSummaryTimestamp = (value?: string) => {
+  if (!value) {
+    return "только что";
   }
 
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-};
-
-const buildHtmlFromPlainText = (text: string, title: string) => {
-  const normalized = text.replace(/\r\n/g, "\n");
-  const paragraphs = normalized
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-
-  const paragraphsHtml = paragraphs
-    .map((paragraph) => `<p>${escapeHtml(paragraph.replace(/\n/g, " "))}</p>`)
-    .join("");
-
-  return `<h1>${escapeHtml(title)}</h1>${paragraphsHtml}`;
-};
-
-const decodeDocBinaryToText = (buffer: ArrayBuffer) => {
-  const view = new Uint8Array(buffer);
-  const encodings: string[] = ["utf-16le", "windows-1251", "utf-8"];
-
-  for (const encoding of encodings) {
-    try {
-      const decoder = new TextDecoder(encoding, { fatal: false });
-      const decoded = decoder.decode(view);
-      const cleaned = decoded
-        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "\n")
-        .replace(/[\r\f]+/g, "\n")
-        .split(/\n+/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .join("\n");
-      if (cleaned.length > 0) {
-        return cleaned;
-      }
-    } catch (error) {
-      // Переходим к следующей кодировке, если текущая недоступна.
-      continue;
-    }
+  try {
+    return new Intl.DateTimeFormat("ru-RU", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value));
+  } catch (error) {
+    return "только что";
   }
-
-  return "";
-};
-
-const ensureHeadingInHtml = (html: string, title: string) => {
-  if (!html.trim()) {
-    return `<h1>${escapeHtml(title)}</h1>`;
-  }
-
-  if (/<h[1-6][^>]*>/i.test(html)) {
-    return html;
-  }
-
-  return `<h1>${escapeHtml(title)}</h1>${html}`;
-};
-
-const escapeHtml = (value: string) =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-
-const getSanitizedContent = (html: string) => {
-  if (!html) {
-    return "";
-  }
-
-  if (typeof window === "undefined") {
-    return html;
-  }
-
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
-};
-
-const extractTitleFromContent = (html: string) => {
-  if (!html) {
-    return "Без названия";
-  }
-
-  if (typeof window === "undefined") {
-    return "Без названия";
-  }
-
-  const container = window.document.createElement("div");
-  container.innerHTML = html;
-
-  const heading = container.querySelector("h1, h2, h3, h4, h5, h6");
-  const headingText = heading?.textContent?.trim();
-  if (headingText) {
-    return headingText;
-  }
-
-  const textContent = container
-    .textContent?.split(/\n+/)
-    .map((line) => line.trim())
-    .find(Boolean);
-  return textContent || "Без названия";
 };
 
 const addChildNode = (
@@ -658,71 +565,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     finalizeNodeDialog();
   };
 
-  const convertPdfToHtml = async (file: File, title: string) => {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    const textChunks: string[] = [];
-
-    for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
-      const page = await pdf.getPage(pageIndex);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item: PDFTextItem) => (typeof item.str === "string" ? item.str : ""))
-        .join(" ");
-      if (pageText.trim()) {
-        textChunks.push(pageText.trim());
-      }
-    }
-
-    const plainText = textChunks.join("\n\n");
-    if (!plainText.trim()) {
-      return `<h1>${escapeHtml(title)}</h1>`;
-    }
-
-    return buildHtmlFromPlainText(plainText, title);
-  };
-
-  const convertDocFileToHtml = async (file: File, title: string) => {
-    const arrayBuffer = await file.arrayBuffer();
-
-    try {
-      const result = await mammoth.convertToHtml({ arrayBuffer });
-      const html = ensureHeadingInHtml(result.value || "", title);
-      if (html.trim()) {
-        return html;
-      }
-    } catch (error) {
-      // Переходим к эвристическому извлечению текста ниже.
-    }
-
-    const extractedText = decodeDocBinaryToText(arrayBuffer);
-    if (!extractedText) {
-      throw new Error("Не удалось прочитать содержимое документа.");
-    }
-
-    return buildHtmlFromPlainText(extractedText, title);
-  };
-
-  const convertFileToHtml = async (file: File) => {
-    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
-    const title = normalizeTitleFromFilename(file.name);
-
-    if (extension === "txt") {
-      const text = await file.text();
-      return { title, html: buildHtmlFromPlainText(text, title) };
-    }
-
-    if (extension === "pdf") {
-      return { title, html: await convertPdfToHtml(file, title) };
-    }
-
-    if (extension === "doc" || extension === "docx") {
-      return { title, html: await convertDocFileToHtml(file, title) };
-    }
-
-    throw new Error("Поддерживаются только файлы PDF, DOC/DOCX и TXT.");
-  };
-
   const handleImportDocumentClick = () => {
     if (isImportingDocument) {
       return;
@@ -823,6 +665,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     ? Object.values(selectedBase.documents).length
     : 0;
   const tasksSummary = selectedBase?.tasks ?? { total: 0, inProgress: 0, completed: 0 };
+  const importSummary = selectedBase?.importSummary;
+  const hasImportErrors = Boolean(importSummary && importSummary.skippedFiles > 0 && importSummary.errors.length > 0);
+  const displayedImportErrors = importSummary ? importSummary.errors.slice(0, 3) : [];
 
   const handleToggleNode = (nodeId: string) => {
     setExpandedNodes((prev) => ({
@@ -864,6 +709,47 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   <span className="truncate">Архив: {selectedBase.ingestion.archiveName}</span>
                 )}
               </div>
+            )}
+            {selectedBase?.sourceType === "archive" && importSummary && (
+              <Alert
+                variant={hasImportErrors ? "destructive" : "default"}
+                className="mt-3 max-w-2xl"
+              >
+                <AlertTitle>Импорт архива завершён</AlertTitle>
+                <AlertDescription>
+                  <div className="space-y-2 text-xs sm:text-sm">
+                    <p>
+                      Импортировано {importSummary.importedFiles} из {importSummary.totalFiles} файлов.
+                      {importSummary.skippedFiles > 0
+                        ? ` Пропущено ${importSummary.skippedFiles}.`
+                        : ""}
+                    </p>
+                    <p className="text-muted-foreground">
+                      Завершено: {formatSummaryTimestamp(importSummary.completedAt)}
+                    </p>
+                    {hasImportErrors && (
+                      <div className="space-y-1 text-sm">
+                        <p className="font-medium text-destructive">Ошибки импорта:</p>
+                        <ul className="list-disc space-y-1 pl-4 text-destructive">
+                          {displayedImportErrors.map((error) => (
+                            <li key={`${error.code}-${error.path}`}>
+                              <span className="font-semibold">{error.path}</span> — {error.message}
+                            </li>
+                          ))}
+                        </ul>
+                        {importSummary.errors.length > displayedImportErrors.length && (
+                          <p className="text-xs text-muted-foreground">
+                            Ещё {importSummary.errors.length - displayedImportErrors.length} ошибок скрыто.
+                          </p>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          Повторите обработку проблемных файлов вручную или обновите архив и выполните импорт заново.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </AlertDescription>
+              </Alert>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">

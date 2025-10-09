@@ -57,6 +57,7 @@
     "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
     "date-fns": "^3.6.0",
+    "jszip": "^3.10.1",
     "dompurify": "^3.1.6",
     "drizzle-orm": "^0.39.1",
     "drizzle-zod": "^0.7.0",
@@ -69,6 +70,7 @@
     "input-otp": "^1.4.2",
     "jspdf": "^3.0.3",
     "lucide-react": "^0.453.0",
+    "marked": "^15.0.11",
     "mammoth": "^1.8.0",
     "memorystore": "^1.6.7",
     "next-themes": "^0.4.6",
@@ -95,6 +97,7 @@
     "vaul": "^1.1.2",
     "wouter": "^3.3.5",
     "ws": "^8.18.0",
+    "xlsx": "^0.18.5",
     "zod": "^3.24.2",
     "zod-validation-error": "^3.4.0"
   },
