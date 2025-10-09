@@ -26,14 +26,7 @@ import {
 } from "@/lib/knowledge-base";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
-import {
-  Brain,
-  FolderArchive,
-  Globe,
-  LayoutDashboard,
-  NotebookPen,
-  Plus,
-} from "lucide-react";
+import { Brain, FolderArchive, Globe, LayoutDashboard, NotebookPen } from "lucide-react";
 
 const CREATION_OPTIONS: Array<{
   value: KnowledgeBaseSourceType;
@@ -202,7 +195,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-full flex-col gap-6 px-5 py-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <header className="flex flex-wrap items-start gap-4">
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <LayoutDashboard className="h-5 w-5" />
@@ -224,16 +217,6 @@ export default function DashboardPage() {
               Заданий: {totals.tasks}
             </Badge>
           </div>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Button onClick={() => handleOpenDialog("blank")}>
-            <Plus className="mr-2 h-4 w-4" />
-            Новая база знаний
-          </Button>
-          <Button variant="outline" onClick={() => handleOpenDialog("archive")}>
-            <FolderArchive className="mr-2 h-4 w-4" />
-            Импорт архива
-          </Button>
         </div>
       </header>
 
@@ -265,15 +248,9 @@ export default function DashboardPage() {
       </section>
 
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Ваши базы знаний
-          </h2>
-          <Button variant="ghost" size="sm" onClick={() => handleOpenDialog("crawler")}>
-            <Globe className="mr-2 h-4 w-4" />
-            Настроить краулинг сайта
-          </Button>
-        </div>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Ваши базы знаний
+        </h2>
         {orderedBases.length === 0 ? (
           <Card>
             <CardHeader className="flex flex-col items-center gap-3 text-center">
