@@ -1381,11 +1381,14 @@ export class DatabaseStorage implements IStorage {
       .from(workspaceVectorCollections)
       .where(eq(workspaceVectorCollections.workspaceId, workspaceId));
 
-    const collectionNames = new Set(
-      rows
-        .map((row: { collectionName: string | null }) => row.collectionName?.trim())
-        .filter((name): name is string => Boolean(name && name.length > 0)),
-    );
+    const collectionNames = new Set<string>();
+
+    for (const row of rows) {
+      const normalized = row.collectionName?.trim();
+      if (normalized && normalized.length > 0) {
+        collectionNames.add(normalized);
+      }
+    }
 
     await ensureEmbeddingProvidersTable();
 

@@ -1,4 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import DOMPurify from "dompurify";
@@ -43,10 +45,21 @@ import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 import pdfWorkerSrc from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import type { PDFTextItem } from "pdfjs-dist/legacy/build/pdf";
 import mammoth from "mammoth/mammoth.browser";
+import {
+  createKnowledgeBaseEntry,
+  createRandomId,
+  getKnowledgeBaseSourceLabel,
+  KnowledgeBase,
+  KnowledgeDocument,
+  readKnowledgeBaseStorage,
+  SelectedDocumentState,
+  touchKnowledgeBase,
+  TreeNode,
+  updateKnowledgeBaseTimestamp,
+  writeKnowledgeBaseStorage,
+} from "@/lib/knowledge-base";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
-
-const KNOWLEDGE_BASE_STORAGE_KEY = "knowledge-base-state";
 
 const normalizeTitleFromFilename = (filename: string) => {
   const baseName = filename.replace(/\.[^./\\]+$/u, "");
@@ -109,37 +122,6 @@ const ensureHeadingInHtml = (html: string, title: string) => {
   }
 
   return `<h1>${escapeHtml(title)}</h1>${html}`;
-};
-
-type TreeNode = {
-  id: string;
-  title: string;
-  type: "folder" | "document";
-  children?: TreeNode[];
-  documentId?: string;
-};
-
-type KnowledgeDocument = {
-  id: string;
-  title: string;
-  content: string;
-  updatedAt: string;
-};
-
-type KnowledgeBase = {
-  id: string;
-  name: string;
-  description: string;
-  structure: TreeNode[];
-  documents: Record<string, KnowledgeDocument>;
-};
-
-const createId = () => {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-
-  return Math.random().toString(36).slice(2, 10);
 };
 
 const escapeHtml = (value: string) =>
@@ -232,11 +214,6 @@ type NodeCreationState = {
   type: "folder" | "document";
 };
 
-type SelectedDocumentState = {
-  baseId: string;
-  documentId: string;
-};
-
 interface TreeProps {
   nodes: TreeNode[];
   onAddFolder: (parentId: string | null) => void;
@@ -247,6 +224,12 @@ interface TreeProps {
   onToggleNode: (nodeId: string) => void;
   level?: number;
 }
+
+type KnowledgeBasePageProps = {
+  params?: {
+    knowledgeBaseId?: string;
+  };
+};
 
 function TreeView({
   nodes,
@@ -359,7 +342,9 @@ function TreeView({
   );
 }
 
-export default function KnowledgeBasePage() {
+export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {}) {
+  const [, setLocation] = useLocation();
+  const routeBaseId = params?.knowledgeBaseId ?? null;
   const hasHydratedFromStorageRef = useRef(false);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [selectedBaseId, setSelectedBaseId] = useState<string | null>(null);
@@ -378,6 +363,7 @@ export default function KnowledgeBasePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isImportingDocument, setIsImportingDocument] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const lastVisitedBaseRef = useRef<string | null>(null);
 
   const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
     queryKey: ["/api/embedding/services"],
@@ -406,51 +392,44 @@ export default function KnowledgeBasePage() {
   }, [selectedBase, selectedDocument]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      hasHydratedFromStorageRef.current = true;
+    if (!selectedBase) {
       return;
     }
 
-    try {
-      const raw = window.localStorage.getItem(KNOWLEDGE_BASE_STORAGE_KEY);
-      if (!raw) {
-        return;
-      }
-
-      const parsed: unknown = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") {
-        return;
-      }
-
-      const { knowledgeBases: storedBases, selectedBaseId: storedBaseId, selectedDocument: storedDocument } =
-        parsed as {
-          knowledgeBases?: KnowledgeBase[];
-          selectedBaseId?: string | null;
-          selectedDocument?: SelectedDocumentState | null;
-        };
-
-      if (Array.isArray(storedBases)) {
-        setKnowledgeBases(storedBases);
-      }
-
-      if (typeof storedBaseId === "string" && storedBaseId) {
-        setSelectedBaseId(storedBaseId);
-      }
-
-      if (
-        storedDocument &&
-        typeof storedDocument === "object" &&
-        typeof storedDocument.baseId === "string" &&
-        typeof storedDocument.documentId === "string"
-      ) {
-        setSelectedDocument(storedDocument);
-      }
-    } catch (error) {
-      console.error("Не удалось загрузить базы знаний из localStorage", error);
-    } finally {
-      hasHydratedFromStorageRef.current = true;
+    if (lastVisitedBaseRef.current === selectedBase.id) {
+      return;
     }
+
+    lastVisitedBaseRef.current = selectedBase.id;
+    const now = new Date();
+
+    setKnowledgeBases((prev) =>
+      prev.map((base) => (base.id === selectedBase.id ? touchKnowledgeBase(base, now) : base))
+    );
+  }, [selectedBase?.id]);
+
+  useEffect(() => {
+    const stored = readKnowledgeBaseStorage();
+    setKnowledgeBases(stored.knowledgeBases);
+    setSelectedBaseId(stored.selectedBaseId);
+    setSelectedDocument(stored.selectedDocument);
+    hasHydratedFromStorageRef.current = true;
   }, []);
+
+  useEffect(() => {
+    if (!hasHydratedFromStorageRef.current) {
+      return;
+    }
+
+    if (!routeBaseId) {
+      return;
+    }
+
+    const exists = knowledgeBases.some((base) => base.id === routeBaseId);
+    if (exists) {
+      setSelectedBaseId(routeBaseId);
+    }
+  }, [routeBaseId, knowledgeBases]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !hasHydratedFromStorageRef.current) {
@@ -481,7 +460,7 @@ export default function KnowledgeBasePage() {
         selectedDocument: persistedSelectedDocument,
       };
 
-      window.localStorage.setItem(KNOWLEDGE_BASE_STORAGE_KEY, JSON.stringify(payload));
+      writeKnowledgeBaseStorage(payload);
     } catch (error) {
       console.error("Не удалось сохранить базы знаний в localStorage", error);
     }
@@ -530,17 +509,15 @@ export default function KnowledgeBasePage() {
       return;
     }
 
-    const id = createId();
-    const base: KnowledgeBase = {
-      id,
+    const base = createKnowledgeBaseEntry({
       name: newBaseName.trim(),
       description: newBaseDescription.trim(),
-      structure: [],
-      documents: {},
-    };
+      sourceType: "blank",
+    });
 
     setKnowledgeBases((prev) => [...prev, base]);
-    setSelectedBaseId(id);
+    setSelectedBaseId(base.id);
+    setLocation(`/knowledge/${base.id}`);
     setSelectedDocument(null);
     setExpandedNodes({});
     setNewBaseName("");
@@ -583,8 +560,9 @@ export default function KnowledgeBasePage() {
       return;
     }
 
-    const documentId = createId();
-    const now = new Date().toISOString();
+    const documentId = createRandomId();
+    const now = new Date();
+    const nowIso = now.toISOString();
     const sanitizedContent = getSanitizedContent(content);
     const resolvedTitle = extractTitleFromContent(sanitizedContent) || title;
 
@@ -599,20 +577,23 @@ export default function KnowledgeBasePage() {
       id: documentId,
       title: resolvedTitle,
       content: sanitizedContent,
-      updatedAt: now,
+      updatedAt: nowIso,
     };
 
     setKnowledgeBases((prev) =>
       prev.map((base) =>
         base.id === selectedBase.id
-          ? {
-              ...base,
-              structure: addChildNode(base.structure, parentId, documentNode),
-              documents: {
-                ...base.documents,
-                [documentId]: knowledgeDocument,
+          ? updateKnowledgeBaseTimestamp(
+              {
+                ...base,
+                structure: addChildNode(base.structure, parentId, documentNode),
+                documents: {
+                  ...base.documents,
+                  [documentId]: knowledgeDocument,
+                },
               },
-            }
+              now
+            )
           : base
       )
     );
@@ -636,16 +617,23 @@ export default function KnowledgeBasePage() {
         return;
       }
       const folderNode: TreeNode = {
-        id: createId(),
+        id: createRandomId(),
         title: nodeTitle.trim(),
         type: "folder",
         children: [],
       };
 
+      const now = new Date();
       setKnowledgeBases((prev) =>
         prev.map((base) =>
           base.id === selectedBase.id
-            ? { ...base, structure: addChildNode(base.structure, nodeCreation.parentId, folderNode) }
+            ? updateKnowledgeBaseTimestamp(
+                {
+                  ...base,
+                  structure: addChildNode(base.structure, nodeCreation.parentId, folderNode),
+                },
+                now
+              )
             : base
         )
       );
@@ -791,6 +779,7 @@ export default function KnowledgeBasePage() {
 
     const sanitizedContent = getSanitizedContent(draftContent);
     const nextTitle = extractTitleFromContent(sanitizedContent);
+    const now = new Date();
 
     setKnowledgeBases((prev) =>
       prev.map((base) => {
@@ -802,21 +791,24 @@ export default function KnowledgeBasePage() {
           ...currentDocument,
           title: nextTitle,
           content: sanitizedContent,
-          updatedAt: new Date().toISOString(),
+          updatedAt: now.toISOString(),
         };
 
-        return {
-          ...base,
-          documents: {
-            ...base.documents,
-            [currentDocument.id]: updatedDocument,
+        return updateKnowledgeBaseTimestamp(
+          {
+            ...base,
+            documents: {
+              ...base.documents,
+              [currentDocument.id]: updatedDocument,
+            },
+            structure: updateNodeTitle(
+              base.structure,
+              currentDocument.id,
+              updatedDocument.title
+            ),
           },
-          structure: updateNodeTitle(
-            base.structure,
-            currentDocument.id,
-            updatedDocument.title
-          ),
-        };
+          now
+        );
       })
     );
 
@@ -830,6 +822,7 @@ export default function KnowledgeBasePage() {
   const totalDocuments = selectedBase
     ? Object.values(selectedBase.documents).length
     : 0;
+  const tasksSummary = selectedBase?.tasks ?? { total: 0, inProgress: 0, completed: 0 };
 
   const handleToggleNode = (nodeId: string) => {
     setExpandedNodes((prev) => ({
@@ -842,6 +835,7 @@ export default function KnowledgeBasePage() {
     setSelectedBaseId(null);
     setSelectedDocument(null);
     setExpandedNodes({});
+    setLocation("/knowledge");
   };
 
   return (
@@ -850,34 +844,47 @@ export default function KnowledgeBasePage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">
-              {selectedBase ? selectedBase.name : "База знаний"}
+              {selectedBase ? selectedBase.name : "Базы знаний"}
             </h1>
             <p className="text-muted-foreground">
               {selectedBase
                 ? selectedBase.description ||
-                  "Управляйте структурой библиотеки и редактируйте документы."
-                : "Выберите библиотеку или создайте новую, чтобы начать работу с документами."}
+                  "Управляйте структурой базы знаний, поддерживайте документы и задания в актуальном состоянии."
+                : "Выберите базу знаний или создайте новую, чтобы начать структурировать контент рабочего пространства."}
             </p>
+            {selectedBase && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Badge className="border-dashed px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide" variant="outline">
+                  {getKnowledgeBaseSourceLabel(selectedBase.sourceType)}
+                </Badge>
+                {selectedBase.ingestion?.seedUrl && (
+                  <span className="truncate">Источник: {selectedBase.ingestion.seedUrl}</span>
+                )}
+                {selectedBase.ingestion?.archiveName && (
+                  <span className="truncate">Архив: {selectedBase.ingestion.archiveName}</span>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {selectedBase && (
               <Button variant="outline" onClick={handleBackToList}>
                 <ChevronLeft className="mr-2 h-4 w-4" />
-                Список библиотек
+                Все базы знаний
               </Button>
             )}
             <Dialog open={isCreateBaseOpen} onOpenChange={setIsCreateBaseOpen}>
               <DialogTrigger asChild>
                 <Button>
                   <PlusCircle className="mr-2 h-4 w-4" />
-                  Создать библиотеку
+                  Создать базу
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Новая библиотека</DialogTitle>
+                  <DialogTitle>Новая база знаний</DialogTitle>
                   <DialogDescription>
-                    Укажите название и описание, чтобы начать структурирование знаний.
+                    Укажите название и описание, чтобы запустить наполнение корпоративной базы знаний.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-2">
@@ -889,7 +896,7 @@ export default function KnowledgeBasePage() {
                       id="knowledge-name"
                       value={newBaseName}
                       onChange={(event) => setNewBaseName(event.target.value)}
-                      placeholder="Например, Библиотека по продукту"
+                      placeholder="Например, Знания по продукту"
                     />
                   </div>
                   <div className="space-y-2">
@@ -900,7 +907,7 @@ export default function KnowledgeBasePage() {
                       id="knowledge-description"
                       value={newBaseDescription}
                       onChange={(event) => setNewBaseDescription(event.target.value)}
-                      placeholder="Кратко опишите назначение библиотеки"
+                      placeholder="Опишите назначение базы знаний"
                       rows={4}
                     />
                   </div>
@@ -919,17 +926,17 @@ export default function KnowledgeBasePage() {
             <CardHeader className="space-y-3 px-5 py-4">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Library className="h-5 w-5" />
-                Выберите библиотеку
+                Выберите базу знаний
               </CardTitle>
               <CardDescription>
-                Работайте с документами, выбрав одну из существующих библиотек или создайте новую.
+                Работайте с документами и заданиями, выбрав одну из существующих баз знаний или создайте новую.
               </CardDescription>
             </CardHeader>
             <CardContent className="px-5 pb-5">
               {knowledgeBases.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 py-8 text-center text-sm text-muted-foreground">
                   <Library className="h-10 w-10" />
-                  <p>Пока что у вас нет библиотек. Создайте первую, чтобы начать работу с документами.</p>
+                  <p>Пока что у вас нет баз знаний. Создайте первую, чтобы начать работу с контентом.</p>
                 </div>
               ) : (
                 <ScrollArea className="max-h-[26rem] pr-3">
@@ -944,6 +951,7 @@ export default function KnowledgeBasePage() {
                           onClick={() => {
                             setSelectedBaseId(base.id);
                             setSelectedDocument(null);
+                            setLocation(`/knowledge/${base.id}`);
                           }}
                           className="flex h-full flex-col rounded-lg border bg-card p-3.5 text-left transition hover:border-primary/70 hover:shadow-sm"
                         >
@@ -969,12 +977,19 @@ export default function KnowledgeBasePage() {
         <div className="flex flex-1 flex-col gap-4 lg:flex-row">
           <Card className="w-full lg:w-96">
             <CardHeader className="space-y-3 px-5 py-4">
-              <CardTitle className="text-lg">Структура библиотеки</CardTitle>
+              <CardTitle className="text-lg">Структура базы знаний</CardTitle>
               <CardDescription>
                 Управляйте иерархией документов с помощью древовидной навигации.
               </CardDescription>
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span>Документов: {totalDocuments}</span>
+                <span className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                  В работе: {tasksSummary.inProgress}
+                </span>
+                <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                  Завершено: {tasksSummary.completed}
+                </span>
+                <span>Всего заданий: {tasksSummary.total}</span>
               </div>
               <div className="flex flex-wrap items-center gap-2 pt-2">
                 <Button size="sm" onClick={() => openNodeDialog("folder", null)}>
@@ -1003,7 +1018,7 @@ export default function KnowledgeBasePage() {
               ) : (
                 <div className="flex flex-col items-center justify-center gap-3 py-8 text-center text-sm text-muted-foreground">
                   <Library className="h-10 w-10" />
-                  <p>Добавьте первый раздел или документ, чтобы построить дерево библиотеки.</p>
+                  <p>Добавьте первый раздел или документ, чтобы построить структуру базы знаний.</p>
                 </div>
               )}
             </CardContent>
@@ -1093,7 +1108,7 @@ export default function KnowledgeBasePage() {
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
                   <SquarePen className="h-10 w-10" />
-                  <p>Выберите документ в структуре библиотеки или создайте новый.</p>
+                  <p>Выберите документ в структуре базы знаний или создайте новый.</p>
                 </div>
               )}
             </CardContent>
