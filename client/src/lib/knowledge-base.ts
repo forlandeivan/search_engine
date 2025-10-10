@@ -8,11 +8,25 @@ export type TreeNode = {
   documentId?: string;
 };
 
+export type KnowledgeDocumentVectorization = {
+  collectionName: string;
+  recordIds: string[];
+  providerId: string;
+  providerName?: string;
+  vectorSize: number | null;
+  chunkSize: number;
+  chunkOverlap: number;
+  pointsCount: number;
+  totalUsageTokens?: number | null;
+  vectorizedAt: string;
+};
+
 export type KnowledgeDocument = {
   id: string;
   title: string;
   content: string;
   updatedAt: string;
+  vectorization: KnowledgeDocumentVectorization | null;
 };
 
 export type KnowledgeBaseSourceType = "blank" | "archive" | "crawler" | "unknown";
@@ -146,6 +160,80 @@ const normalizeTreeNodes = (rawNodes: unknown): TreeNode[] => {
     .filter((node): node is TreeNode => Boolean(node));
 };
 
+const normalizeVectorization = (raw: unknown): KnowledgeDocumentVectorization | null => {
+  if (!isRecord(raw)) {
+    return null;
+  }
+
+  const collectionName = typeof raw.collectionName === "string" ? raw.collectionName.trim() : "";
+  const providerId = typeof raw.providerId === "string" ? raw.providerId.trim() : "";
+  const rawChunkSize = raw.chunkSize;
+  const chunkSize =
+    typeof rawChunkSize === "number" && Number.isFinite(rawChunkSize) && rawChunkSize > 0
+      ? Math.round(rawChunkSize)
+      : null;
+  const rawChunkOverlap = raw.chunkOverlap;
+  const chunkOverlap =
+    typeof rawChunkOverlap === "number" && Number.isFinite(rawChunkOverlap) && rawChunkOverlap >= 0
+      ? Math.min(Math.round(rawChunkOverlap), chunkSize ?? Math.round(rawChunkOverlap))
+      : 0;
+
+  const recordIds = Array.isArray(raw.recordIds)
+    ? raw.recordIds
+        .map((value) => {
+          if (typeof value === "number" || typeof value === "string") {
+            const stringValue = String(value).trim();
+            return stringValue.length > 0 ? stringValue : null;
+          }
+          return null;
+        })
+        .filter((value): value is string => Boolean(value))
+    : [];
+
+  if (!collectionName || !providerId || !chunkSize || recordIds.length === 0) {
+    return null;
+  }
+
+  const rawVectorSize = raw.vectorSize;
+  const vectorSize =
+    typeof rawVectorSize === "number" && Number.isFinite(rawVectorSize) && rawVectorSize > 0
+      ? Math.round(rawVectorSize)
+      : null;
+
+  const rawPointsCount = raw.pointsCount;
+  const pointsCount =
+    typeof rawPointsCount === "number" && Number.isFinite(rawPointsCount) && rawPointsCount >= 0
+      ? Math.round(rawPointsCount)
+      : recordIds.length;
+
+  const rawTotalUsageTokens = raw.totalUsageTokens;
+  const totalUsageTokens =
+    typeof rawTotalUsageTokens === "number" && Number.isFinite(rawTotalUsageTokens) && rawTotalUsageTokens >= 0
+      ? Math.round(rawTotalUsageTokens)
+      : null;
+
+  const providerName = typeof raw.providerName === "string" ? raw.providerName : undefined;
+
+  const vectorizedAtRaw = raw.vectorizedAt;
+  const vectorizedAt =
+    typeof vectorizedAtRaw === "string" && !Number.isNaN(Date.parse(vectorizedAtRaw))
+      ? vectorizedAtRaw
+      : new Date().toISOString();
+
+  return {
+    collectionName,
+    providerId,
+    providerName,
+    recordIds,
+    vectorSize,
+    chunkSize,
+    chunkOverlap,
+    pointsCount,
+    totalUsageTokens,
+    vectorizedAt,
+  };
+};
+
 const normalizeDocuments = (rawDocuments: unknown): Record<string, KnowledgeDocument> => {
   if (!isRecord(rawDocuments)) {
     return {};
@@ -171,6 +259,7 @@ const normalizeDocuments = (rawDocuments: unknown): Record<string, KnowledgeDocu
       title,
       content,
       updatedAt,
+      vectorization: normalizeVectorization(value.vectorization),
     };
   });
 

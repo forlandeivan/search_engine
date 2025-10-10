@@ -42,12 +42,14 @@ import {
 } from "@shared/vectorization";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type { PublicEmbeddingProvider } from "@shared/schema";
+import type { KnowledgeDocumentVectorization } from "@/lib/knowledge-base";
 
 interface KnowledgeDocumentForVectorization {
   id: string;
   title: string;
   content: string;
   updatedAt?: string | null;
+  vectorization?: KnowledgeDocumentVectorization | null;
 }
 
 interface KnowledgeBaseForVectorization {
@@ -71,12 +73,24 @@ interface VectorizeKnowledgeDocumentResponse {
   vectorSize?: number | null;
   totalUsageTokens?: number;
   collectionCreated?: boolean;
+  recordIds: string[];
+  chunkSize: number;
+  chunkOverlap: number;
+  documentId?: string;
+  provider?: {
+    id?: string;
+    name?: string;
+  };
 }
 
 interface VectorizeKnowledgeDocumentDialogProps {
   document: KnowledgeDocumentForVectorization;
   base: KnowledgeBaseForVectorization | null;
   providers: PublicEmbeddingProvider[];
+  onVectorizationComplete: (payload: {
+    documentId: string;
+    vectorization: KnowledgeDocumentVectorization;
+  }) => void;
 }
 
 interface VectorizeRequestPayload {
@@ -84,6 +98,8 @@ interface VectorizeRequestPayload {
   collectionName?: string;
   createCollection?: boolean;
   schema?: VectorizeCollectionSchema | null;
+  chunkSize: number;
+  chunkOverlap: number;
 }
 
 interface CollectionSchemaField extends CollectionSchemaFieldInput {
@@ -94,6 +110,8 @@ const TEMPLATE_PATH_LIMIT = 400;
 const TEMPLATE_SUGGESTION_LIMIT = 150;
 const CONTEXT_PREVIEW_VALUE_LIMIT = 160;
 const DEFAULT_NEW_COLLECTION_NAME = "New Collection";
+const DEFAULT_CHUNK_SIZE = 800;
+const DEFAULT_CHUNK_OVERLAP = 200;
 
 function generateFieldId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -296,10 +314,24 @@ function formatNumber(value: number | null | undefined): string {
   return value.toLocaleString("ru-RU");
 }
 
+function formatTimestamp(value?: string | null): string {
+  if (!value) {
+    return "недоступно";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "недоступно";
+  }
+
+  return date.toLocaleString("ru-RU");
+}
+
 export function VectorizeKnowledgeDocumentDialog({
   document,
   base,
   providers,
+  onVectorizationComplete,
 }: VectorizeKnowledgeDocumentDialogProps) {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
@@ -320,6 +352,16 @@ export function VectorizeKnowledgeDocumentDialog({
   const [activeTab, setActiveTab] = useState<"settings" | "context">("settings");
   const [activeSuggestionsFieldId, setActiveSuggestionsFieldId] = useState<string | null>(null);
   const templateFieldRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const defaultChunkSize = document.vectorization?.chunkSize ?? DEFAULT_CHUNK_SIZE;
+  const defaultChunkOverlap = document.vectorization?.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP;
+  const normalizedDefaultOverlap = Math.max(
+    0,
+    Math.min(defaultChunkOverlap, Math.max(defaultChunkSize - 1, 0)),
+  );
+  const [chunkSizeInput, setChunkSizeInput] = useState<string>(String(defaultChunkSize));
+  const [chunkOverlapInput, setChunkOverlapInput] = useState<string>(
+    String(normalizedDefaultOverlap),
+  );
 
   const { data: collectionsData, isLoading: collectionsLoading, isFetching: collectionsFetching, error: collectionsError } =
     useQuery<VectorCollectionListResponse>({
@@ -327,6 +369,15 @@ export function VectorizeKnowledgeDocumentDialog({
       enabled: isOpen,
       staleTime: 30_000,
     });
+
+  useEffect(() => {
+    if (isOpen) {
+      return;
+    }
+
+    setChunkSizeInput(String(defaultChunkSize));
+    setChunkOverlapInput(String(normalizedDefaultOverlap));
+  }, [defaultChunkSize, normalizedDefaultOverlap, document.id, isOpen]);
 
   const collections = collectionsData?.collections ?? [];
   const isCollectionsLoading = collectionsLoading || collectionsFetching;
@@ -357,6 +408,40 @@ export function VectorizeKnowledgeDocumentDialog({
   const documentWordCount = documentText
     ? documentText.split(/\s+/).filter(Boolean).length
     : 0;
+  const chunkSizeNumber = Number.parseInt(chunkSizeInput, 10);
+  const chunkOverlapNumber = Number.parseInt(chunkOverlapInput, 10);
+  const chunkSizeValid =
+    Number.isFinite(chunkSizeNumber) && chunkSizeNumber >= 200 && chunkSizeNumber <= 8000;
+  const chunkOverlapValid =
+    Number.isFinite(chunkOverlapNumber) &&
+    chunkOverlapNumber >= 0 &&
+    chunkOverlapNumber <= 4000 &&
+    (!chunkSizeValid || chunkOverlapNumber < chunkSizeNumber);
+  const chunkSettingsValid = chunkSizeValid && chunkOverlapValid;
+  const estimatedChunks = useMemo(() => {
+    if (!chunkSettingsValid) {
+      return 0;
+    }
+
+    const effectiveOverlap = Math.min(chunkOverlapNumber, chunkSizeNumber - 1);
+    const step = Math.max(1, chunkSizeNumber - effectiveOverlap);
+    const effectiveLength = Math.max(0, documentCharCount - effectiveOverlap);
+    return Math.max(1, Math.ceil(effectiveLength / step));
+  }, [chunkSettingsValid, chunkOverlapNumber, chunkSizeNumber, documentCharCount]);
+  const chunkSizeDisplay = chunkSizeValid
+    ? chunkSizeNumber.toLocaleString("ru-RU")
+    : "—";
+  const chunkOverlapDisplay = chunkOverlapValid
+    ? chunkOverlapNumber.toLocaleString("ru-RU")
+    : "—";
+  const estimatedChunksDisplay =
+    chunkSettingsValid && estimatedChunks > 0
+      ? estimatedChunks.toLocaleString("ru-RU")
+      : "—";
+  const showChunkSettingsError =
+    chunkSizeInput.trim().length > 0 &&
+    chunkOverlapInput.trim().length > 0 &&
+    !chunkSettingsValid;
   const estimatedTokens = documentCharCount > 0 ? Math.ceil(documentCharCount / 4) : 0;
   const documentPath = useMemo(
     () => `knowledge://${base?.id ?? "library"}/${document.id}`,
@@ -545,12 +630,21 @@ export function VectorizeKnowledgeDocumentDialog({
   }, [schemaFields, embeddingFieldName]);
 
   const vectorizeMutation = useMutation<VectorizeKnowledgeDocumentResponse, Error, VectorizeRequestPayload>({
-    mutationFn: async ({ providerId, collectionName, createCollection: createNew, schema }) => {
+    mutationFn: async ({
+      providerId,
+      collectionName,
+      createCollection: createNew,
+      schema,
+      chunkSize,
+      chunkOverlap,
+    }) => {
       const sanitizedName = collectionName?.trim() ?? "";
       const body: Record<string, unknown> = {
         embeddingProviderId: providerId,
         collectionName: sanitizedName || undefined,
         createCollection: createNew,
+        chunkSize,
+        chunkOverlap,
         document: {
           id: document.id,
           title: document.title ?? null,
@@ -580,14 +674,66 @@ export function VectorizeKnowledgeDocumentDialog({
       return (await response.json()) as VectorizeKnowledgeDocumentResponse;
     },
     onSuccess: (data) => {
+      const recordIds = Array.isArray(data.recordIds)
+        ? data.recordIds
+            .map((value) => {
+              if (typeof value === "number" || typeof value === "string") {
+                const trimmed = String(value).trim();
+                return trimmed.length > 0 ? trimmed : null;
+              }
+              return null;
+            })
+            .filter((value): value is string => Boolean(value))
+        : [];
+
+      const fallbackChunkSize = chunkSizeValid ? chunkSizeNumber : DEFAULT_CHUNK_SIZE;
+      const fallbackChunkOverlap = Math.min(
+        chunkOverlapValid ? chunkOverlapNumber : DEFAULT_CHUNK_OVERLAP,
+        Math.max(fallbackChunkSize - 1, 0),
+      );
+
+      const vectorization: KnowledgeDocumentVectorization = {
+        collectionName: data.collectionName,
+        providerId: data.provider?.id ?? selectedProviderId,
+        providerName: data.provider?.name ?? selectedProvider?.name,
+        recordIds,
+        vectorSize:
+          typeof data.vectorSize === "number" && Number.isFinite(data.vectorSize) && data.vectorSize > 0
+            ? data.vectorSize
+            : null,
+        chunkSize:
+          typeof data.chunkSize === "number" && Number.isFinite(data.chunkSize) && data.chunkSize > 0
+            ? data.chunkSize
+            : fallbackChunkSize,
+        chunkOverlap:
+          typeof data.chunkOverlap === "number" && Number.isFinite(data.chunkOverlap) && data.chunkOverlap >= 0
+            ? Math.min(data.chunkOverlap, Math.max(fallbackChunkSize - 1, 0))
+            : fallbackChunkOverlap,
+        pointsCount: data.pointsCount,
+        totalUsageTokens:
+          typeof data.totalUsageTokens === "number" && Number.isFinite(data.totalUsageTokens) && data.totalUsageTokens >= 0
+            ? data.totalUsageTokens
+            : null,
+        vectorizedAt: new Date().toISOString(),
+      };
+
+      onVectorizationComplete({
+        documentId: data.documentId ?? document.id,
+        vectorization,
+      });
+
       const collectionNote = data.collectionCreated
         ? `Коллекция ${data.collectionName} создана автоматически.`
         : "";
+      const chunkSummary = `Чанков: ${data.pointsCount.toLocaleString("ru-RU")} (размер ${vectorization.chunkSize.toLocaleString(
+        "ru-RU",
+      )}, перехлёст ${vectorization.chunkOverlap.toLocaleString("ru-RU")}).`;
+
       toast({
         title: "Документ отправлен",
         description:
           data.message ??
-          `Добавлено ${data.pointsCount.toLocaleString("ru-RU")} документов в коллекцию ${data.collectionName}. ${collectionNote}`.trim(),
+          `Добавлено ${data.pointsCount.toLocaleString("ru-RU")} записей в коллекцию ${data.collectionName}. ${chunkSummary} ${collectionNote}`.trim(),
       });
       setIsOpen(false);
     },
@@ -605,6 +751,7 @@ export function VectorizeKnowledgeDocumentDialog({
     disabled ||
     vectorizeMutation.isPending ||
     !selectedProviderId ||
+    !chunkSettingsValid ||
     (collectionMode === "existing"
       ? availableCollections.length === 0 || !selectedCollectionName
       : newCollectionName.trim().length === 0 || !schemaPayload);
@@ -739,6 +886,8 @@ export function VectorizeKnowledgeDocumentDialog({
       setActiveTab("settings");
       setActiveSuggestionsFieldId(null);
       templateFieldRefs.current = {};
+      setChunkSizeInput(String(defaultChunkSize));
+      setChunkOverlapInput(String(normalizedDefaultOverlap));
       return;
     }
 
@@ -750,6 +899,8 @@ export function VectorizeKnowledgeDocumentDialog({
     setActiveSuggestionsFieldId(null);
     setActiveTab("settings");
     templateFieldRefs.current = {};
+    setChunkSizeInput(String(defaultChunkSize));
+    setChunkOverlapInput(String(normalizedDefaultOverlap));
   };
 
   const handleConfirm = () => {
@@ -761,6 +912,21 @@ export function VectorizeKnowledgeDocumentDialog({
       });
       return;
     }
+
+    if (!chunkSettingsValid) {
+      toast({
+        title: "Некорректные параметры чанка",
+        description:
+          "Убедитесь, что размер находится в пределах 200–8000 символов, а перехлёст меньше размера чанка.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const normalizedChunkOverlap = Math.min(
+      chunkOverlapNumber,
+      Math.max(chunkSizeNumber - 1, 0),
+    );
 
     if (collectionMode === "existing") {
       if (!selectedCollectionName) {
@@ -776,6 +942,8 @@ export function VectorizeKnowledgeDocumentDialog({
         providerId: selectedProviderId,
         collectionName: selectedCollectionName,
         createCollection: false,
+        chunkSize: chunkSizeNumber,
+        chunkOverlap: normalizedChunkOverlap,
       });
       return;
     }
@@ -818,6 +986,8 @@ export function VectorizeKnowledgeDocumentDialog({
       collectionName: normalizedName,
       createCollection: true,
       schema: schemaPayload,
+      chunkSize: chunkSizeNumber,
+      chunkOverlap: normalizedChunkOverlap,
     });
   };
 
@@ -1051,6 +1221,54 @@ export function VectorizeKnowledgeDocumentDialog({
     </div>
   );
 
+  const renderChunkingSection = () => (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <h4 className="text-sm font-semibold">Разбиение документа</h4>
+        <p className="text-xs text-muted-foreground">
+          Управляйте количеством записей, задавая размер чанка и перехлёст символов между ними.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium" htmlFor="knowledge-chunk-size">
+            Размер чанка (символов)
+          </label>
+          <Input
+            id="knowledge-chunk-size"
+            inputMode="numeric"
+            value={chunkSizeInput}
+            onChange={(event) => setChunkSizeInput(event.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="Например, 800"
+          />
+          <p className="text-[11px] text-muted-foreground">Допустимо от 200 до 8000 символов.</p>
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium" htmlFor="knowledge-chunk-overlap">
+            Перехлёст (символов)
+          </label>
+          <Input
+            id="knowledge-chunk-overlap"
+            inputMode="numeric"
+            value={chunkOverlapInput}
+            onChange={(event) => setChunkOverlapInput(event.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="Например, 200"
+          />
+          <p className="text-[11px] text-muted-foreground">Перехлёст должен быть меньше размера чанка.</p>
+        </div>
+      </div>
+      {showChunkSettingsError ? (
+        <p className="text-[11px] text-destructive">
+          Проверьте значения: размер 200–8000, перехлёст 0–4000 и меньше размера чанка.
+        </p>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">
+          Оценочно чанков: {estimatedChunksDisplay}.
+        </p>
+      )}
+    </div>
+  );
+
   const renderInfoSection = () => (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -1076,7 +1294,31 @@ export function VectorizeKnowledgeDocumentDialog({
           <p className="break-all">{documentPath}</p>
           <p>Символов: {formatNumber(documentCharCount)}</p>
           <p>Оценка токенов: {tokensHint}</p>
+          <p>Размер чанка: {chunkSizeDisplay}</p>
+          <p>Перехлёст: {chunkOverlapDisplay}</p>
+          <p>Оценка чанков: {estimatedChunksDisplay}</p>
         </div>
+      </div>
+      <div className="space-y-2">
+        <p className="text-xs uppercase text-muted-foreground">Векторизация</p>
+        {document.vectorization ? (
+          <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground">
+              Коллекция: <code>{document.vectorization.collectionName}</code>
+            </p>
+            <p>Записей: {document.vectorization.pointsCount.toLocaleString("ru-RU")}</p>
+            <p>Размер чанка: {document.vectorization.chunkSize.toLocaleString("ru-RU")}</p>
+            <p>Перехлёст: {document.vectorization.chunkOverlap.toLocaleString("ru-RU")}</p>
+            <p>Обновлено: {formatTimestamp(document.vectorization.vectorizedAt)}</p>
+            <ScrollArea className="mt-2 max-h-28 rounded-md border bg-background/90 p-2">
+              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-snug text-foreground">
+                {document.vectorization.recordIds.join("\n") || "—"}
+              </pre>
+            </ScrollArea>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Документ ещё не отправлялся в Qdrant.</p>
+        )}
       </div>
       {base && (
         <div className="space-y-2">
@@ -1128,6 +1370,7 @@ export function VectorizeKnowledgeDocumentDialog({
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
           {renderProviderSection()}
+          {renderChunkingSection()}
           {renderCollectionsSection()}
         </div>
         {renderInfoSection()}

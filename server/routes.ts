@@ -551,6 +551,91 @@ function normalizePointId(candidate: string | number): string | number {
   return createDeterministicUuid(trimmed);
 }
 
+function normalizeDocumentText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function countPlainTextWords(text: string): number {
+  if (!text) {
+    return 0;
+  }
+
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+function buildDocumentExcerpt(text: string, maxLength = 200): string {
+  const normalized = normalizeDocumentText(text);
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength).trim()}…`;
+}
+
+interface KnowledgeDocumentChunk {
+  content: string;
+  index: number;
+  start: number;
+  end: number;
+  charCount: number;
+  wordCount: number;
+  excerpt: string;
+}
+
+function createKnowledgeDocumentChunks(
+  text: string,
+  chunkSize: number,
+  chunkOverlap: number,
+): KnowledgeDocumentChunk[] {
+  const normalizedText = normalizeDocumentText(text);
+  if (!normalizedText) {
+    return [];
+  }
+
+  const effectiveSize = Math.max(1, chunkSize);
+  const effectiveOverlap = Math.max(0, Math.min(chunkOverlap, effectiveSize - 1));
+  const step = Math.max(1, effectiveSize - effectiveOverlap);
+  const totalLength = normalizedText.length;
+  const chunks: KnowledgeDocumentChunk[] = [];
+
+  for (let start = 0, index = 0; start < totalLength; start += step, index += 1) {
+    const end = Math.min(start + effectiveSize, totalLength);
+    const slice = normalizedText.slice(start, end);
+    const trimmed = slice.trim();
+
+    if (!trimmed) {
+      if (end >= totalLength) {
+        break;
+      }
+      continue;
+    }
+
+    const charCount = trimmed.length;
+    const wordCount = countPlainTextWords(trimmed);
+    const excerpt = buildDocumentExcerpt(trimmed);
+
+    chunks.push({
+      content: trimmed,
+      index,
+      start,
+      end,
+      charCount,
+      wordCount,
+      excerpt,
+    });
+
+    if (end >= totalLength) {
+      break;
+    }
+  }
+
+  return chunks;
+}
+
 function extractEmbeddingResponse(parsedBody: unknown) {
   if (!parsedBody || typeof parsedBody !== "object") {
     throw new Error("Не удалось разобрать ответ сервиса эмбеддингов");
@@ -1278,6 +1363,8 @@ const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
     })
     .optional()
     .nullable(),
+  chunkSize: z.coerce.number().int().min(200).max(8000).default(800),
+  chunkOverlap: z.coerce.number().int().min(0).max(4000).default(0),
 });
 
 // Public search API request/response schemas
@@ -4162,6 +4249,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         schema,
         document: vectorDocument,
         base,
+        chunkSize,
+        chunkOverlap,
       } = vectorizeKnowledgeDocumentSchema.parse(req.body);
 
       const provider = await storage.getEmbeddingProvider(embeddingProviderId, workspaceId);
@@ -4173,9 +4262,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Выбранный сервис эмбеддингов отключён" });
       }
 
-      const documentText = vectorDocument.text.trim();
+      const documentTextRaw = vectorDocument.text;
+      const documentText = documentTextRaw.trim();
       if (documentText.length === 0) {
         return res.status(400).json({ error: "Документ не содержит текста для векторизации" });
+      }
+
+      const normalizedDocumentText = normalizeDocumentText(documentText);
+      const effectiveChunkSize = Math.max(200, Math.min(8000, chunkSize));
+      const effectiveChunkOverlap = Math.max(0, Math.min(chunkOverlap, effectiveChunkSize - 1));
+      const documentChunks = createKnowledgeDocumentChunks(
+        normalizedDocumentText,
+        effectiveChunkSize,
+        effectiveChunkOverlap,
+      );
+
+      if (documentChunks.length === 0) {
+        return res.status(400).json({ error: "Не удалось разбить документ на чанки" });
       }
 
       const collectionName =
@@ -4233,15 +4336,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const accessToken = await fetchAccessToken(provider);
-      const embeddingResult = await fetchEmbeddingVector(provider, accessToken, documentText);
-      const { vector, usageTokens, embeddingId } = embeddingResult;
+      const embeddingResults: Array<
+        EmbeddingVectorResult & { chunk: KnowledgeDocumentChunk; index: number }
+      > = [];
 
-      if (!Array.isArray(vector) || vector.length === 0) {
+      for (let index = 0; index < documentChunks.length; index += 1) {
+        const chunk = documentChunks[index];
+
+        try {
+          const result = await fetchEmbeddingVector(provider, accessToken, chunk.content);
+          embeddingResults.push({ ...result, chunk, index });
+        } catch (embeddingError) {
+          console.error("Ошибка эмбеддинга чанка документа базы знаний", embeddingError);
+          throw embeddingError;
+        }
+      }
+
+      if (embeddingResults.length === 0) {
+        return res.status(500).json({ error: "Не удалось получить эмбеддинги для документа" });
+      }
+
+      const firstVector = embeddingResults[0]?.vector;
+      if (!Array.isArray(firstVector) || firstVector.length === 0) {
         return res.status(500).json({ error: "Сервис эмбеддингов вернул пустой вектор" });
       }
 
       let collectionCreated = false;
-      const detectedVectorLength = vector.length;
+      const detectedVectorLength = firstVector.length;
 
       if (!collectionExists) {
         try {
@@ -4274,103 +4395,142 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const resolvedCharCount =
         typeof vectorDocument.charCount === "number" && vectorDocument.charCount >= 0
           ? vectorDocument.charCount
-          : documentText.length;
+          : normalizedDocumentText.length;
       const resolvedWordCount =
         typeof vectorDocument.wordCount === "number" && vectorDocument.wordCount >= 0
           ? vectorDocument.wordCount
-          : null;
+          : countPlainTextWords(normalizedDocumentText);
       const resolvedExcerpt =
         typeof vectorDocument.excerpt === "string" && vectorDocument.excerpt.trim().length > 0
           ? vectorDocument.excerpt
-          : documentText.slice(0, 160);
+          : normalizedDocumentText.slice(0, 160);
 
-      const templateContext = removeUndefinedDeep({
-        document: {
-          id: vectorDocument.id,
-          title: vectorDocument.title ?? null,
-          text: documentText,
-          html: vectorDocument.html ?? null,
-          path: vectorDocument.path ?? null,
-          updatedAt: vectorDocument.updatedAt ?? null,
-          charCount: resolvedCharCount,
-          wordCount: resolvedWordCount,
-          excerpt: resolvedExcerpt,
-        },
-        base: base
-          ? {
-              id: base.id,
-              name: base.name ?? null,
-              description: base.description ?? null,
-            }
-          : null,
-        provider: {
-          id: provider.id,
-          name: provider.name,
-        },
-        embedding: {
-          model: provider.model,
-          vectorSize: detectedVectorLength,
-          tokens: usageTokens ?? null,
-          id: embeddingId ?? null,
-        },
-      }) as Record<string, unknown>;
+      const totalChunks = documentChunks.length;
 
-      const rawPayload = {
-        document: {
-          id: vectorDocument.id,
-          title: vectorDocument.title ?? null,
-          text: documentText,
-          html: vectorDocument.html ?? null,
-          path: vectorDocument.path ?? null,
-          updatedAt: vectorDocument.updatedAt ?? null,
-          charCount: resolvedCharCount,
-          wordCount: resolvedWordCount,
-          excerpt: resolvedExcerpt,
-        },
-        base: base
-          ? {
-              id: base.id,
-              name: base.name ?? null,
-              description: base.description ?? null,
-            }
-          : null,
-        provider: {
-          id: provider.id,
-          name: provider.name,
-        },
-        embedding: {
-          model: provider.model,
-          vectorSize: detectedVectorLength,
-          tokens: usageTokens ?? null,
-          id: embeddingId ?? null,
-        },
-      };
+      const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
+        const { chunk, vector, usageTokens, embeddingId, index } = result;
+        const baseChunkId = `${vectorDocument.path ?? vectorDocument.id}-chunk-${index + 1}`;
+        const pointId = normalizePointId(baseChunkId);
 
-      const customPayload = hasCustomSchema
-        ? buildCustomPayloadFromSchema(normalizedSchemaFields, templateContext)
-        : null;
+        const templateContext = removeUndefinedDeep({
+          document: {
+            id: vectorDocument.id,
+            title: vectorDocument.title ?? null,
+            text: documentText,
+            html: vectorDocument.html ?? null,
+            path: vectorDocument.path ?? null,
+            updatedAt: vectorDocument.updatedAt ?? null,
+            charCount: resolvedCharCount,
+            wordCount: resolvedWordCount,
+            excerpt: resolvedExcerpt,
+            totalChunks,
+            chunkSize: effectiveChunkSize,
+            chunkOverlap: effectiveChunkOverlap,
+          },
+          base: base
+            ? {
+                id: base.id,
+                name: base.name ?? null,
+                description: base.description ?? null,
+              }
+            : null,
+          provider: {
+            id: provider.id,
+            name: provider.name,
+          },
+          chunk: {
+            id: baseChunkId,
+            index,
+            position: chunk.start,
+            start: chunk.start,
+            end: chunk.end,
+            text: chunk.content,
+            charCount: chunk.charCount,
+            wordCount: chunk.wordCount,
+            excerpt: chunk.excerpt,
+          },
+          embedding: {
+            model: provider.model,
+            vectorSize: vector.length,
+            tokens: usageTokens ?? null,
+            id: embeddingId ?? null,
+          },
+        }) as Record<string, unknown>;
 
-      const payloadSource = customPayload ?? rawPayload;
-      const payload = removeUndefinedDeep(payloadSource) as Record<string, unknown>;
+        const rawPayload = {
+          document: {
+            id: vectorDocument.id,
+            title: vectorDocument.title ?? null,
+            text: documentText,
+            html: vectorDocument.html ?? null,
+            path: vectorDocument.path ?? null,
+            updatedAt: vectorDocument.updatedAt ?? null,
+            charCount: resolvedCharCount,
+            wordCount: resolvedWordCount,
+            excerpt: resolvedExcerpt,
+            totalChunks,
+            chunkSize: effectiveChunkSize,
+            chunkOverlap: effectiveChunkOverlap,
+          },
+          base: base
+            ? {
+                id: base.id,
+                name: base.name ?? null,
+                description: base.description ?? null,
+              }
+            : null,
+          provider: {
+            id: provider.id,
+            name: provider.name,
+          },
+          chunk: {
+            id: baseChunkId,
+            index,
+            position: chunk.start,
+            start: chunk.start,
+            end: chunk.end,
+            text: chunk.content,
+            charCount: chunk.charCount,
+            wordCount: chunk.wordCount,
+            excerpt: chunk.excerpt,
+          },
+          embedding: {
+            model: provider.model,
+            vectorSize: vector.length,
+            tokens: usageTokens ?? null,
+            id: embeddingId ?? null,
+          },
+        };
 
-      const pointIdCandidate = vectorDocument.path ?? vectorDocument.id;
-      const pointId = normalizePointId(pointIdCandidate);
+        const customPayload = hasCustomSchema
+          ? buildCustomPayloadFromSchema(normalizedSchemaFields, templateContext)
+          : null;
 
-      const points: Schemas["PointStruct"][] = [
-        {
+        const payloadSource = customPayload ?? rawPayload;
+        const payload = removeUndefinedDeep(payloadSource) as Record<string, unknown>;
+
+        return {
           id: pointId,
           vector: vector as Schemas["PointStruct"]["vector"],
           payload,
-        },
-      ];
+        };
+      });
 
       const upsertResult = await client.upsert(collectionName, {
         wait: true,
         points,
       });
 
+      const totalUsageTokens = embeddingResults.reduce((sum, result) => {
+        return sum + (result.usageTokens ?? 0);
+      }, 0);
+
+      const recordIds = points.map((point) =>
+        typeof point.id === "number" ? point.id.toString() : String(point.id),
+      );
+
       res.json({
-        message: `В коллекцию ${collectionName} отправлен документ`,
+        message: `В коллекцию ${collectionName} отправлено ${points.length} чанков документа`,
         pointsCount: points.length,
         collectionName,
         vectorSize: detectedVectorLength || null,
@@ -4378,9 +4538,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: provider.id,
           name: provider.name,
         },
-        totalUsageTokens: usageTokens ?? null,
+        totalUsageTokens,
         upsertStatus: upsertResult.status ?? null,
         collectionCreated,
+        chunkSize: effectiveChunkSize,
+        chunkOverlap: effectiveChunkOverlap,
+        recordIds,
+        documentId: vectorDocument.id,
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
