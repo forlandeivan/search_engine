@@ -53,6 +53,7 @@ import {
   getKnowledgeBaseSourceLabel,
   KnowledgeBase,
   KnowledgeDocument,
+  KnowledgeDocumentVectorization,
   readKnowledgeBaseStorage,
   SelectedDocumentState,
   touchKnowledgeBase,
@@ -60,6 +61,7 @@ import {
   updateKnowledgeBaseTimestamp,
   writeKnowledgeBaseStorage,
 } from "@/lib/knowledge-base";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const formatSummaryTimestamp = (value?: string) => {
   if (!value) {
@@ -485,6 +487,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       title: resolvedTitle,
       content: sanitizedContent,
       updatedAt: nowIso,
+      vectorization: null,
     };
 
     setKnowledgeBases((prev) =>
@@ -655,6 +658,44 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     );
 
     setIsEditing(false);
+  };
+
+  const handleDocumentVectorized = (
+    documentId: string,
+    vectorization: KnowledgeDocumentVectorization,
+  ) => {
+    if (!selectedBase) {
+      return;
+    }
+
+    const vectorizedAtDate = new Date(vectorization.vectorizedAt);
+
+    setKnowledgeBases((prev) =>
+      prev.map((base) => {
+        if (base.id !== selectedBase.id) {
+          return base;
+        }
+
+        const existingDocument = base.documents[documentId];
+        if (!existingDocument) {
+          return base;
+        }
+
+        return updateKnowledgeBaseTimestamp(
+          {
+            ...base,
+            documents: {
+              ...base.documents,
+              [documentId]: {
+                ...existingDocument,
+                vectorization,
+              },
+            },
+          },
+          Number.isNaN(vectorizedAtDate.getTime()) ? new Date() : vectorizedAtDate,
+        );
+      }),
+    );
   };
 
   const computedTitle = isEditing
@@ -929,13 +970,38 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                     <span>
                       Последнее сохранение: {new Date(currentDocument.updatedAt).toLocaleString()}
                     </span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {currentDocument.vectorization ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge className="bg-emerald-100 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-500/20 dark:text-emerald-200">
+                              Векторизован
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs text-xs leading-relaxed">
+                            <div className="space-y-1">
+                              <p className="font-medium text-foreground">
+                                Коллекция: <code>{currentDocument.vectorization.collectionName}</code>
+                              </p>
+                              <p>Записей: {currentDocument.vectorization.pointsCount.toLocaleString("ru-RU")}</p>
+                              <p>
+                                Обновлено: {formatSummaryTimestamp(currentDocument.vectorization.vectorizedAt)}
+                              </p>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <Badge className="border border-dashed border-muted-foreground/60 bg-background text-muted-foreground">
+                          Не векторизован
+                        </Badge>
+                      )}
                       <VectorizeKnowledgeDocumentDialog
                         document={{
                           id: currentDocument.id,
                           title: computedTitle || currentDocument.title || "Без названия",
                           content: draftContent,
                           updatedAt: currentDocument.updatedAt,
+                          vectorization: currentDocument.vectorization,
                         }}
                         base={
                           selectedBase
@@ -947,6 +1013,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                             : null
                         }
                         providers={activeEmbeddingProviders}
+                        onVectorizationComplete={({ documentId, vectorization }) =>
+                          handleDocumentVectorized(documentId, vectorization)
+                        }
                       />
                       {isEditing ? (
                         <>
@@ -971,6 +1040,43 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                       )}
                     </div>
                   </div>
+
+                  {currentDocument.vectorization && (
+                    <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-xs text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100">
+                      <div className="flex flex-wrap items-center gap-3 text-sm">
+                        <span className="font-semibold text-emerald-900 dark:text-emerald-200">
+                          Документ векторизован
+                        </span>
+                        <span>
+                          Коллекция: <code>{currentDocument.vectorization.collectionName}</code>
+                        </span>
+                        <span>
+                          Записей: {currentDocument.vectorization.pointsCount.toLocaleString("ru-RU")}
+                        </span>
+                        <span>
+                          Чанк: {currentDocument.vectorization.chunkSize.toLocaleString("ru-RU")} символов,
+                          перехлёст {currentDocument.vectorization.chunkOverlap.toLocaleString("ru-RU")}
+                        </span>
+                        {currentDocument.vectorization.vectorSize && (
+                          <span>
+                            Размер вектора: {currentDocument.vectorization.vectorSize.toLocaleString("ru-RU")}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-3 space-y-1">
+                        <p className="text-[11px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
+                          Идентификаторы записей
+                        </p>
+                        <ScrollArea className="max-h-28 rounded-md border border-emerald-500/30 bg-background/90 p-2">
+                          <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-snug text-emerald-900 dark:text-emerald-100">
+                            {currentDocument.vectorization.recordIds.length > 0
+                              ? currentDocument.vectorization.recordIds.join("\n")
+                              : "—"}
+                          </pre>
+                        </ScrollArea>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="min-h-[20rem] flex-1 rounded-lg border bg-muted/30 p-3.5">
                     {isEditing ? (

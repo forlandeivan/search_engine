@@ -172,6 +172,7 @@ export const importKnowledgeArchive = async (file: File): Promise<ArchiveImportR
         title,
         content: sanitizedContent,
         updatedAt: new Date().toISOString(),
+        vectorization: null,
       } satisfies KnowledgeDocument;
 
       const folderSegments = segments.slice(0, -1);
