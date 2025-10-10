@@ -1,4 +1,5 @@
 import { isAfter } from "date-fns";
+import { normalizeDocumentText, type DocumentChunk } from "@/lib/knowledge-document";
 
 export type TreeNode = {
   id: string;
@@ -21,12 +22,20 @@ export type KnowledgeDocumentVectorization = {
   vectorizedAt: string;
 };
 
+export type KnowledgeDocumentChunks = {
+  chunkSize: number;
+  chunkOverlap: number;
+  generatedAt: string;
+  items: DocumentChunk[];
+};
+
 export type KnowledgeDocument = {
   id: string;
   title: string;
   content: string;
   updatedAt: string;
   vectorization: KnowledgeDocumentVectorization | null;
+  chunks: KnowledgeDocumentChunks | null;
 };
 
 export type KnowledgeBaseSourceType = "blank" | "archive" | "crawler" | "unknown";
@@ -234,6 +243,107 @@ const normalizeVectorization = (raw: unknown): KnowledgeDocumentVectorization | 
   };
 };
 
+const normalizeDocumentChunks = (raw: unknown): KnowledgeDocumentChunks | null => {
+  if (!isRecord(raw)) {
+    return null;
+  }
+
+  const rawSize = raw.chunkSize;
+  const rawOverlap = raw.chunkOverlap;
+  const size =
+    typeof rawSize === "number" && Number.isFinite(rawSize) && rawSize >= 1
+      ? Math.min(Math.round(rawSize), 8000)
+      : null;
+  if (!size) {
+    return null;
+  }
+
+  const overlapCandidate =
+    typeof rawOverlap === "number" && Number.isFinite(rawOverlap) && rawOverlap >= 0
+      ? Math.round(rawOverlap)
+      : 0;
+  const overlap = Math.max(0, Math.min(overlapCandidate, size - 1));
+
+  const itemsSource = Array.isArray((raw as { items?: unknown }).items)
+    ? ((raw as { items?: unknown }).items as unknown[])
+    : Array.isArray((raw as { chunks?: unknown }).chunks)
+    ? ((raw as { chunks?: unknown }).chunks as unknown[])
+    : [];
+
+  const items: DocumentChunk[] = [];
+
+  itemsSource.forEach((item, index) => {
+    if (!isRecord(item)) {
+      return;
+    }
+
+    const content = typeof item.content === "string" ? normalizeDocumentText(item.content) : "";
+    if (!content) {
+      return;
+    }
+
+    const rawIndex = item.index;
+    const normalizedIndex =
+      typeof rawIndex === "number" && Number.isFinite(rawIndex) && rawIndex >= 0
+        ? Math.round(rawIndex)
+        : index;
+
+    const start =
+      typeof item.start === "number" && Number.isFinite(item.start) && item.start >= 0
+        ? Math.round(item.start)
+        : 0;
+    const end =
+      typeof item.end === "number" && Number.isFinite(item.end) && item.end >= start
+        ? Math.round(item.end)
+        : start + content.length;
+
+    const charCount =
+      typeof item.charCount === "number" && Number.isFinite(item.charCount) && item.charCount >= 0
+        ? Math.round(item.charCount)
+        : content.length;
+
+    const wordCount =
+      typeof item.wordCount === "number" && Number.isFinite(item.wordCount) && item.wordCount >= 0
+        ? Math.round(item.wordCount)
+        : content.split(/\s+/).filter(Boolean).length;
+
+    const excerpt =
+      typeof item.excerpt === "string" && item.excerpt.trim().length > 0
+        ? item.excerpt.trim()
+        : content.slice(0, 200).trim();
+
+    const id = typeof item.id === "string" && item.id.trim().length > 0 ? item.id : `chunk-${normalizedIndex + 1}`;
+
+    items.push({
+      id,
+      index: normalizedIndex,
+      start,
+      end,
+      charCount,
+      wordCount,
+      excerpt,
+      content,
+    });
+  });
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  const generatedAtRaw = (raw as { generatedAt?: unknown }).generatedAt;
+  const generatedAt =
+    typeof generatedAtRaw === "string" && !Number.isNaN(Date.parse(generatedAtRaw))
+      ? generatedAtRaw
+      : new Date().toISOString();
+
+  return {
+    chunkSize: size,
+    chunkOverlap: overlap,
+    generatedAt,
+    items,
+  };
+};
+
 const normalizeDocuments = (rawDocuments: unknown): Record<string, KnowledgeDocument> => {
   if (!isRecord(rawDocuments)) {
     return {};
@@ -260,6 +370,7 @@ const normalizeDocuments = (rawDocuments: unknown): Record<string, KnowledgeDocu
       content,
       updatedAt,
       vectorization: normalizeVectorization(value.vectorization),
+      chunks: normalizeDocumentChunks(value.chunks),
     };
   });
 

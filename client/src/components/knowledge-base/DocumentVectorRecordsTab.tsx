@@ -195,12 +195,12 @@ export function DocumentVectorRecordsTab({
 
                 {documentInfo && (
                   <div className="text-xs text-muted-foreground">
-                    {documentInfo.title && (
+                    {typeof documentInfo.title === "string" && documentInfo.title.trim().length > 0 && (
                       <p>
                         Заголовок документа: <strong className="text-foreground">{String(documentInfo.title)}</strong>
                       </p>
                     )}
-                    {documentInfo.updatedAt && (
+                    {typeof documentInfo.updatedAt === "string" && documentInfo.updatedAt.trim().length > 0 && (
                       <p>
                         Обновлён: {new Date(String(documentInfo.updatedAt)).toLocaleString("ru-RU")}
                       </p>

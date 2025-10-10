@@ -1,6 +1,7 @@
 import { escapeHtml } from "@/lib/document-import";
 
 export interface DocumentChunk {
+  id: string;
   index: number;
   start: number;
   end: number;
@@ -62,10 +63,20 @@ export function extractPlainTextFromHtml(html: string): string {
     .trim();
 }
 
+interface CreateKnowledgeDocumentChunksOptions {
+  idPrefix?: string;
+}
+
+export function buildDocumentChunkId(documentId: string, index: number): string {
+  const safeIndex = Math.max(0, index);
+  return `${documentId}-chunk-${safeIndex + 1}`;
+}
+
 export function createKnowledgeDocumentChunks(
   html: string,
   chunkSize: number,
   chunkOverlap: number,
+  options?: CreateKnowledgeDocumentChunksOptions,
 ): { chunks: DocumentChunk[]; normalizedText: string } {
   const plainText = extractPlainTextFromHtml(html);
   const normalizedText = normalizeDocumentText(plainText);
@@ -101,7 +112,12 @@ export function createKnowledgeDocumentChunks(
     const wordCount = countPlainTextWords(trimmed);
     const excerpt = buildDocumentExcerpt(trimmed);
 
+    const chunkId = options?.idPrefix
+      ? buildDocumentChunkId(options.idPrefix, index)
+      : `chunk-${index + 1}`;
+
     chunks.push({
+      id: chunkId,
       content: trimmed,
       index,
       start: trimmedStart,
