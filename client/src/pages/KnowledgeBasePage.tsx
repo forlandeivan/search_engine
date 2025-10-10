@@ -24,6 +24,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import {
   ChevronDown,
@@ -39,6 +40,8 @@ import {
   SquarePen,
 } from "lucide-react";
 import { DocumentEditor } from "@/components/knowledge-base/DocumentEditor";
+import { DocumentChunksTab } from "@/components/knowledge-base/DocumentChunksTab";
+import { DocumentVectorRecordsTab } from "@/components/knowledge-base/DocumentVectorRecordsTab";
 import { VectorizeKnowledgeDocumentDialog } from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
 import type { PublicEmbeddingProvider } from "@shared/schema";
 import {
@@ -139,6 +142,11 @@ type KnowledgeBasePageProps = {
     knowledgeBaseId?: string;
   };
 };
+
+type DocumentTabKey = "document" | "chunks" | "vectors";
+
+const FALLBACK_CHUNK_SIZE = 800;
+const FALLBACK_CHUNK_OVERLAP = 200;
 
 function TreeView({
   nodes,
@@ -269,6 +277,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState("");
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
+  const [documentTab, setDocumentTab] = useState<DocumentTabKey>("document");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isImportingDocument, setIsImportingDocument] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -411,6 +420,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       setDraftContent("");
       setIsEditing(false);
     }
+    setDocumentTab("document");
   }, [currentDocument?.id]);
 
   const handleCreateKnowledgeBase = () => {
@@ -658,6 +668,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     );
 
     setIsEditing(false);
+  };
+
+  const handleChunkUpdated = (updatedHtml: string) => {
+    setDraftContent(updatedHtml);
+    setIsEditing(true);
+    setDocumentTab("document");
   };
 
   const handleDocumentVectorized = (
@@ -966,136 +982,178 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                     {computedTitle || "Без названия"}
                   </h2>
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span>
-                      Последнее сохранение: {new Date(currentDocument.updatedAt).toLocaleString()}
-                    </span>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {currentDocument.vectorization ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge className="bg-emerald-100 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-500/20 dark:text-emerald-200">
-                              Векторизован
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs text-xs leading-relaxed">
-                            <div className="space-y-1">
-                              <p className="font-medium text-foreground">
-                                Коллекция: <code>{currentDocument.vectorization.collectionName}</code>
-                              </p>
-                              <p>Записей: {currentDocument.vectorization.pointsCount.toLocaleString("ru-RU")}</p>
-                              <p>
-                                Обновлено: {formatSummaryTimestamp(currentDocument.vectorization.vectorizedAt)}
-                              </p>
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        <Badge className="border border-dashed border-muted-foreground/60 bg-background text-muted-foreground">
-                          Не векторизован
-                        </Badge>
-                      )}
-                      <VectorizeKnowledgeDocumentDialog
-                        document={{
-                          id: currentDocument.id,
-                          title: computedTitle || currentDocument.title || "Без названия",
-                          content: draftContent,
-                          updatedAt: currentDocument.updatedAt,
-                          vectorization: currentDocument.vectorization,
-                        }}
-                        base={
-                          selectedBase
-                            ? {
-                                id: selectedBase.id,
-                                name: selectedBase.name,
-                                description: selectedBase.description,
-                              }
-                            : null
+                  <Tabs
+                    value={documentTab}
+                    onValueChange={(value) => setDocumentTab(value as DocumentTabKey)}
+                    className="flex h-full flex-col"
+                  >
+                    <TabsList className="w-full justify-start">
+                      <TabsTrigger value="document">Документ</TabsTrigger>
+                      <TabsTrigger value="chunks">Чанки</TabsTrigger>
+                      <TabsTrigger
+                        value="vectors"
+                        disabled={
+                          !currentDocument.vectorization ||
+                          currentDocument.vectorization.recordIds.length === 0
                         }
-                        providers={activeEmbeddingProviders}
-                        onVectorizationComplete={({ documentId, vectorization }) =>
-                          handleDocumentVectorized(documentId, vectorization)
-                        }
-                      />
-                      {isEditing ? (
-                        <>
-                          <Button size="sm" onClick={handleSaveDocument}>
-                            Сохранить изменения
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setIsEditing(false);
-                              setDraftContent(currentDocument.content);
-                            }}
-                          >
-                            Отмена
-                          </Button>
-                        </>
-                      ) : (
-                        <Button size="sm" variant="outline" onClick={() => setIsEditing(true)}>
-                          Редактировать
-                        </Button>
-                      )}
-                    </div>
-                  </div>
+                      >
+                        Векторные записи
+                      </TabsTrigger>
+                    </TabsList>
 
-                  {currentDocument.vectorization && (
-                    <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-xs text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100">
-                      <div className="flex flex-wrap items-center gap-3 text-sm">
-                        <span className="font-semibold text-emerald-900 dark:text-emerald-200">
-                          Документ векторизован
-                        </span>
-                        <span>
-                          Коллекция: <code>{currentDocument.vectorization.collectionName}</code>
-                        </span>
-                        <span>
-                          Записей: {currentDocument.vectorization.pointsCount.toLocaleString("ru-RU")}
-                        </span>
-                        <span>
-                          Чанк: {currentDocument.vectorization.chunkSize.toLocaleString("ru-RU")} символов,
-                          перехлёст {currentDocument.vectorization.chunkOverlap.toLocaleString("ru-RU")}
-                        </span>
-                        {currentDocument.vectorization.vectorSize && (
+                    <TabsContent value="document" className="flex-1 focus-visible:outline-none">
+                      <div className="flex h-full flex-col gap-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                           <span>
-                            Размер вектора: {currentDocument.vectorization.vectorSize.toLocaleString("ru-RU")}
+                            Последнее сохранение: {new Date(currentDocument.updatedAt).toLocaleString()}
                           </span>
-                        )}
-                      </div>
-                      <div className="mt-3 space-y-1">
-                        <p className="text-[11px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
-                          Идентификаторы записей
-                        </p>
-                        <ScrollArea className="max-h-28 rounded-md border border-emerald-500/30 bg-background/90 p-2">
-                          <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-snug text-emerald-900 dark:text-emerald-100">
-                            {currentDocument.vectorization.recordIds.length > 0
-                              ? currentDocument.vectorization.recordIds.join("\n")
-                              : "—"}
-                          </pre>
-                        </ScrollArea>
-                      </div>
-                    </div>
-                  )}
+                          <div className="flex flex-wrap items-center gap-2">
+                            {currentDocument.vectorization ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Badge className="bg-emerald-100 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-500/20 dark:text-emerald-200">
+                                    Векторизован
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs text-xs leading-relaxed">
+                                  <div className="space-y-1">
+                                    <p className="font-medium text-foreground">
+                                      Коллекция: <code>{currentDocument.vectorization.collectionName}</code>
+                                    </p>
+                                    <p>Записей: {currentDocument.vectorization.pointsCount.toLocaleString("ru-RU")}</p>
+                                    <p>
+                                      Обновлено: {formatSummaryTimestamp(currentDocument.vectorization.vectorizedAt)}
+                                    </p>
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <Badge className="border border-dashed border-muted-foreground/60 bg-background text-muted-foreground">
+                                Не векторизован
+                              </Badge>
+                            )}
+                            <VectorizeKnowledgeDocumentDialog
+                              document={{
+                                id: currentDocument.id,
+                                title: computedTitle || currentDocument.title || "Без названия",
+                                content: draftContent,
+                                updatedAt: currentDocument.updatedAt,
+                                vectorization: currentDocument.vectorization,
+                              }}
+                              base={
+                                selectedBase
+                                  ? {
+                                      id: selectedBase.id,
+                                      name: selectedBase.name,
+                                      description: selectedBase.description,
+                                    }
+                                  : null
+                              }
+                              providers={activeEmbeddingProviders}
+                              onVectorizationComplete={({ documentId, vectorization }) =>
+                                handleDocumentVectorized(documentId, vectorization)
+                              }
+                            />
+                            {isEditing ? (
+                              <>
+                                <Button size="sm" onClick={handleSaveDocument}>
+                                  Сохранить изменения
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setIsEditing(false);
+                                    setDraftContent(currentDocument.content);
+                                  }}
+                                >
+                                  Отмена
+                                </Button>
+                              </>
+                            ) : (
+                              <Button size="sm" variant="outline" onClick={() => setIsEditing(true)}>
+                                Редактировать
+                              </Button>
+                            )}
+                          </div>
+                        </div>
 
-                  <div className="min-h-[20rem] flex-1 rounded-lg border bg-muted/30 p-3.5">
-                    {isEditing ? (
-                      <DocumentEditor value={draftContent} onChange={setDraftContent} />
-                    ) : draftContent ? (
-                      <ScrollArea className="h-full pr-3">
-                        <div
-                          className="prose prose-sm max-w-none dark:prose-invert"
-                          dangerouslySetInnerHTML={{
-                            __html: getSanitizedContent(currentDocument.content)
-                          }}
-                        />
-                      </ScrollArea>
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                        Документ пока пуст. Включите режим редактирования, чтобы добавить контент.
+                        {currentDocument.vectorization && (
+                          <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-xs text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100">
+                            <div className="flex flex-wrap items-center gap-3 text-sm">
+                              <span className="font-semibold text-emerald-900 dark:text-emerald-200">
+                                Документ векторизован
+                              </span>
+                              <span>
+                                Коллекция: <code>{currentDocument.vectorization.collectionName}</code>
+                              </span>
+                              <span>
+                                Записей: {currentDocument.vectorization.pointsCount.toLocaleString("ru-RU")}
+                              </span>
+                              <span>
+                                Чанк: {currentDocument.vectorization.chunkSize.toLocaleString("ru-RU")} символов,
+                                перехлёст {currentDocument.vectorization.chunkOverlap.toLocaleString("ru-RU")}
+                              </span>
+                              {currentDocument.vectorization.vectorSize && (
+                                <span>
+                                  Размер вектора: {currentDocument.vectorization.vectorSize.toLocaleString("ru-RU")}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-3 space-y-1">
+                              <p className="text-[11px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
+                                Идентификаторы записей
+                              </p>
+                              <ScrollArea className="max-h-28 rounded-md border border-emerald-500/30 bg-background/90 p-2">
+                                <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-snug text-emerald-900 dark:text-emerald-100">
+                                  {currentDocument.vectorization.recordIds.length > 0
+                                    ? currentDocument.vectorization.recordIds.join("\n")
+                                    : "—"}
+                                </pre>
+                              </ScrollArea>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="min-h-[20rem] flex-1 rounded-lg border bg-muted/30 p-3.5">
+                          {isEditing ? (
+                            <DocumentEditor value={draftContent} onChange={setDraftContent} />
+                          ) : draftContent ? (
+                            <ScrollArea className="h-full pr-3">
+                              <div
+                                className="prose prose-sm max-w-none dark:prose-invert"
+                                dangerouslySetInnerHTML={{
+                                  __html: getSanitizedContent(currentDocument.content),
+                                }}
+                              />
+                            </ScrollArea>
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                              Документ пока пуст. Включите режим редактирования, чтобы добавить контент.
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    </TabsContent>
+
+                    <TabsContent value="chunks" className="flex-1 focus-visible:outline-none">
+                      <DocumentChunksTab
+                        contentHtml={draftContent}
+                        chunkSize={currentDocument.vectorization?.chunkSize ?? FALLBACK_CHUNK_SIZE}
+                        chunkOverlap={currentDocument.vectorization?.chunkOverlap ?? FALLBACK_CHUNK_OVERLAP}
+                        onChunkUpdated={handleChunkUpdated}
+                        onSwitchToDocumentTab={() => setDocumentTab("document")}
+                      />
+                    </TabsContent>
+
+                    <TabsContent value="vectors" className="flex-1 focus-visible:outline-none">
+                      <DocumentVectorRecordsTab
+                        collectionName={currentDocument.vectorization?.collectionName ?? ""}
+                        recordIds={currentDocument.vectorization?.recordIds ?? []}
+                        documentId={currentDocument.id}
+                      />
+                    </TabsContent>
+                  </Tabs>
                 </div>
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">

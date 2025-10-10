@@ -33,6 +33,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { extractPlainTextFromHtml } from "@/lib/knowledge-document";
 import {
   castValueToType,
   normalizeArrayValue,
@@ -231,31 +232,6 @@ function parseVectorSize(value: unknown): number | null {
 function sanitizeCollectionName(source: string): string {
   const normalized = source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
   return normalized.length > 0 ? normalized.slice(0, 60) : "default";
-}
-
-function extractPlainTextFromHtml(html: string): string {
-  if (!html) {
-    return "";
-  }
-
-  const normalized = html
-    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
-    .replace(/<\s*\/(p|div|section|article|h[1-6])\s*>/gi, "\n\n");
-
-  if (typeof window === "undefined") {
-    return normalized.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-  }
-
-  const container = window.document.createElement("div");
-  container.innerHTML = normalized;
-  const text = container.textContent ?? "";
-  return text
-    .replace(/\r\n/g, "\n")
-    .replace(/\u00a0/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n[ \t]+/g, "\n")
-    .trim();
 }
 
 function buildDocumentContext(

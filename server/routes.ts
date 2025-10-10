@@ -1367,6 +1367,15 @@ const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
   chunkOverlap: z.coerce.number().int().min(0).max(4000).default(0),
 });
 
+const fetchKnowledgeVectorRecordsSchema = z.object({
+  collectionName: z.string().trim().min(1, "Укажите коллекцию"),
+  recordIds: z
+    .array(z.union([z.string().trim().min(1), z.number()]))
+    .min(1, "Передайте хотя бы один идентификатор")
+    .max(256, "За один запрос можно получить не более 256 записей"),
+  includeVector: z.boolean().optional(),
+});
+
 // Public search API request/response schemas
 const publicSearchRequestSchema = z.object({
   query: z.string().trim().min(1),
@@ -4572,6 +4581,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const message = error instanceof Error ? error.message : String(error);
       console.error("Ошибка при отправке документа базы знаний в Qdrant:", error);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.post("/api/knowledge/documents/vector-records", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const body = fetchKnowledgeVectorRecordsSchema.parse(req.body);
+      const { id: workspaceId } = getRequestWorkspace(req);
+
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(body.collectionName);
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+        return res.status(404).json({
+          error: "Коллекция не найдена",
+        });
+      }
+
+      const ids = body.recordIds.map((value) => {
+        if (typeof value === "number") {
+          return value;
+        }
+
+        const trimmed = value.trim();
+        if (/^-?\d+$/.test(trimmed)) {
+          const parsed = Number.parseInt(trimmed, 10);
+          if (Number.isSafeInteger(parsed)) {
+            return parsed;
+          }
+        }
+
+        return trimmed;
+      });
+
+      const client = getQdrantClient();
+      const includeVector = body.includeVector ?? true;
+
+      const result = await client.retrieve(body.collectionName, {
+        ids: ids as Array<string | number>,
+        with_payload: true,
+        with_vector: includeVector,
+      });
+
+      const records = result.map((point) => ({
+        id: point.id ?? null,
+        payload: point.payload ?? null,
+        vector: point.vector ?? null,
+        shardKey: (point as { shard_key?: string | number }).shard_key ?? null,
+        version: (point as { version?: number }).version ?? null,
+      }));
+
+      res.json({ records });
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректный запрос",
+          details: error.errors,
+        });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error("Ошибка Qdrant при загрузке записей документа базы знаний:", error);
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
+        });
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Ошибка при получении записей документа базы знаний:", error);
       res.status(500).json({ error: message });
     }
   });
