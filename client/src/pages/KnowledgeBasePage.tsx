@@ -56,6 +56,7 @@ import {
   getKnowledgeBaseSourceLabel,
   KnowledgeBase,
   KnowledgeDocument,
+  KnowledgeDocumentChunks,
   KnowledgeDocumentVectorization,
   readKnowledgeBaseStorage,
   SelectedDocumentState,
@@ -64,6 +65,11 @@ import {
   updateKnowledgeBaseTimestamp,
   writeKnowledgeBaseStorage,
 } from "@/lib/knowledge-base";
+import {
+  buildDocumentChunkId,
+  createKnowledgeDocumentChunks,
+  extractPlainTextFromHtml,
+} from "@/lib/knowledge-document";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const formatSummaryTimestamp = (value?: string) => {
@@ -145,8 +151,6 @@ type KnowledgeBasePageProps = {
 
 type DocumentTabKey = "document" | "chunks" | "vectors";
 
-const FALLBACK_CHUNK_SIZE = 800;
-const FALLBACK_CHUNK_OVERLAP = 200;
 
 function TreeView({
   nodes,
@@ -470,6 +474,37 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
   };
 
+  const regenerateDocumentChunks = (
+    html: string,
+    documentId: string,
+    sourceChunks: KnowledgeDocumentChunks,
+  ): KnowledgeDocumentChunks | null => {
+    const safeSize = Math.max(200, Math.min(8000, Math.round(sourceChunks.chunkSize)));
+    const safeOverlap = Math.max(
+      0,
+      Math.min(Math.round(sourceChunks.chunkOverlap), safeSize - 1, 4000),
+    );
+    const { chunks } = createKnowledgeDocumentChunks(html, safeSize, safeOverlap, {
+      idPrefix: documentId,
+    });
+
+    if (chunks.length === 0) {
+      return null;
+    }
+
+    const items = chunks.map((chunk, index) => ({
+      ...chunk,
+      id: sourceChunks.items[index]?.id ?? chunk.id ?? buildDocumentChunkId(documentId, index),
+    }));
+
+    return {
+      chunkSize: safeSize,
+      chunkOverlap: safeOverlap,
+      generatedAt: new Date().toISOString(),
+      items,
+    };
+  };
+
   const createDocumentEntry = (
     title: string,
     content: string,
@@ -498,6 +533,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       content: sanitizedContent,
       updatedAt: nowIso,
       vectorization: null,
+      chunks: null,
     };
 
     setKnowledgeBases((prev) =>
@@ -635,6 +671,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     const sanitizedContent = getSanitizedContent(draftContent);
     const nextTitle = extractTitleFromContent(sanitizedContent);
     const now = new Date();
+    const currentChunks = currentDocument.chunks;
+    const hasText = extractPlainTextFromHtml(sanitizedContent).trim().length > 0;
+    const regeneratedChunks =
+      currentChunks && hasText
+        ? regenerateDocumentChunks(sanitizedContent, currentDocument.id, currentChunks)
+        : null;
+    const nextChunks = hasText ? regeneratedChunks ?? currentChunks : null;
 
     setKnowledgeBases((prev) =>
       prev.map((base) => {
@@ -647,6 +690,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           title: nextTitle,
           content: sanitizedContent,
           updatedAt: now.toISOString(),
+          chunks: nextChunks,
+          vectorization: nextChunks ? currentDocument.vectorization : null,
         };
 
         return updateKnowledgeBaseTimestamp(
@@ -674,6 +719,117 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     setDraftContent(updatedHtml);
     setIsEditing(true);
     setDocumentTab("document");
+
+    if (!selectedBase || !currentDocument || !currentDocument.chunks) {
+      return;
+    }
+
+    const hasText = extractPlainTextFromHtml(updatedHtml).trim().length > 0;
+    const recomputedChunks = hasText
+      ? regenerateDocumentChunks(updatedHtml, currentDocument.id, currentDocument.chunks)
+      : null;
+    const nextChunks = hasText ? recomputedChunks ?? currentDocument.chunks : null;
+    const now = new Date();
+
+    setKnowledgeBases((prev) =>
+      prev.map((base) => {
+        if (base.id !== selectedBase.id) {
+          return base;
+        }
+
+        const existingDocument = base.documents[currentDocument.id];
+        if (!existingDocument) {
+          return base;
+        }
+
+        return updateKnowledgeBaseTimestamp(
+          {
+            ...base,
+            documents: {
+              ...base.documents,
+              [currentDocument.id]: {
+                ...existingDocument,
+                chunks: nextChunks,
+                vectorization: nextChunks ? existingDocument.vectorization : null,
+              },
+            },
+          },
+          now,
+        );
+      }),
+    );
+  };
+
+  const handleChunksSaved = (chunks: KnowledgeDocumentChunks) => {
+    if (!selectedBase || !currentDocument) {
+      return;
+    }
+
+    const generatedAtDate = new Date(chunks.generatedAt);
+
+    setKnowledgeBases((prev) =>
+      prev.map((base) => {
+        if (base.id !== selectedBase.id) {
+          return base;
+        }
+
+        const existingDocument = base.documents[currentDocument.id];
+        if (!existingDocument) {
+          return base;
+        }
+
+        return updateKnowledgeBaseTimestamp(
+          {
+            ...base,
+            documents: {
+              ...base.documents,
+              [currentDocument.id]: {
+                ...existingDocument,
+                chunks,
+                vectorization: null,
+              },
+            },
+          },
+          Number.isNaN(generatedAtDate.getTime()) ? new Date() : generatedAtDate,
+        );
+      }),
+    );
+  };
+
+  const handleChunksCleared = () => {
+    if (!selectedBase || !currentDocument) {
+      return;
+    }
+
+    const now = new Date();
+
+    setKnowledgeBases((prev) =>
+      prev.map((base) => {
+        if (base.id !== selectedBase.id) {
+          return base;
+        }
+
+        const existingDocument = base.documents[currentDocument.id];
+        if (!existingDocument) {
+          return base;
+        }
+
+        return updateKnowledgeBaseTimestamp(
+          {
+            ...base,
+            documents: {
+              ...base.documents,
+              [currentDocument.id]: {
+                ...existingDocument,
+                chunks: null,
+                vectorization: null,
+              },
+            },
+          },
+          now,
+        );
+      }),
+    );
   };
 
   const handleDocumentVectorized = (
@@ -1138,9 +1294,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
                     <TabsContent value="chunks" className="flex-1 focus-visible:outline-none">
                       <DocumentChunksTab
+                        documentId={currentDocument.id}
                         contentHtml={draftContent}
-                        chunkSize={currentDocument.vectorization?.chunkSize ?? FALLBACK_CHUNK_SIZE}
-                        chunkOverlap={currentDocument.vectorization?.chunkOverlap ?? FALLBACK_CHUNK_OVERLAP}
+                        storedChunks={currentDocument.chunks ?? null}
+                        onChunksSaved={handleChunksSaved}
+                        onChunksCleared={handleChunksCleared}
                         onChunkUpdated={handleChunkUpdated}
                         onSwitchToDocumentTab={() => setDocumentTab("document")}
                       />

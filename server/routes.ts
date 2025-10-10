@@ -577,6 +577,7 @@ function buildDocumentExcerpt(text: string, maxLength = 200): string {
 }
 
 interface KnowledgeDocumentChunk {
+  id?: string;
   content: string;
   index: number;
   start: number;
@@ -619,6 +620,7 @@ function createKnowledgeDocumentChunks(
     const excerpt = buildDocumentExcerpt(trimmed);
 
     chunks.push({
+      id: `chunk-${index + 1}`,
       content: trimmed,
       index,
       start,
@@ -1332,6 +1334,24 @@ const vectorizeCollectionSchemaSchema = z.object({
   embeddingFieldName: z.string().trim().min(1).max(120).optional().nullable(),
 });
 
+const knowledgeDocumentChunkInputSchema = z.object({
+  id: z.string().trim().min(1).optional(),
+  index: z.coerce.number().int().min(0),
+  start: z.coerce.number().int().min(0),
+  end: z.coerce.number().int().min(0),
+  charCount: z.coerce.number().int().min(0),
+  wordCount: z.coerce.number().int().min(0),
+  excerpt: z.string().trim().optional(),
+  content: z.string().trim().min(1, "Чанк не может быть пустым"),
+});
+
+const knowledgeDocumentChunksSchema = z.object({
+  chunkSize: z.coerce.number().int().min(1),
+  chunkOverlap: z.coerce.number().int().min(0),
+  totalCount: z.coerce.number().int().min(0).optional(),
+  items: z.array(knowledgeDocumentChunkInputSchema).min(1),
+});
+
 const vectorizePageSchema = z.object({
   embeddingProviderId: z.string().uuid("Некорректный идентификатор сервиса эмбеддингов"),
   collectionName: z
@@ -1354,6 +1374,7 @@ const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
     charCount: z.number().int().min(0).optional(),
     wordCount: z.number().int().min(0).optional(),
     excerpt: z.string().optional().nullable(),
+    chunks: knowledgeDocumentChunksSchema.optional(),
   }),
   base: z
     .object({
@@ -4278,13 +4299,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const normalizedDocumentText = normalizeDocumentText(documentText);
-      const effectiveChunkSize = Math.max(200, Math.min(8000, chunkSize));
-      const effectiveChunkOverlap = Math.max(0, Math.min(chunkOverlap, effectiveChunkSize - 1));
-      const documentChunks = createKnowledgeDocumentChunks(
-        normalizedDocumentText,
-        effectiveChunkSize,
-        effectiveChunkOverlap,
-      );
+      const defaultChunkSize = Math.max(200, Math.min(8000, chunkSize));
+      const defaultChunkOverlap = Math.max(0, Math.min(chunkOverlap, defaultChunkSize - 1));
+      const providedChunksPayload = vectorDocument.chunks;
+
+      let documentChunks: KnowledgeDocumentChunk[] = [];
+      let chunkSizeForMetadata = defaultChunkSize;
+      let chunkOverlapForMetadata = defaultChunkOverlap;
+      let totalChunksPlanned: number | null = null;
+
+      if (
+        providedChunksPayload &&
+        Array.isArray(providedChunksPayload.items) &&
+        providedChunksPayload.items.length > 0
+      ) {
+        const mappedChunks = providedChunksPayload.items.map(
+          (item): KnowledgeDocumentChunk | null => {
+            const rawContent = typeof item.content === "string" ? item.content : "";
+            const content = normalizeDocumentText(rawContent);
+            if (!content) {
+              return null;
+            }
+
+            const indexValue =
+              typeof item.index === "number" && Number.isFinite(item.index) && item.index >= 0
+                ? Math.round(item.index)
+                : 0;
+
+            const startValue =
+              typeof item.start === "number" && Number.isFinite(item.start) && item.start >= 0
+                ? Math.round(item.start)
+                : 0;
+
+            const endValue =
+              typeof item.end === "number" && Number.isFinite(item.end) && item.end >= startValue
+                ? Math.round(item.end)
+                : startValue + content.length;
+
+            const charCountValue =
+              typeof item.charCount === "number" && Number.isFinite(item.charCount) && item.charCount >= 0
+                ? Math.round(item.charCount)
+                : content.length;
+
+            const wordCountValue =
+              typeof item.wordCount === "number" && Number.isFinite(item.wordCount) && item.wordCount >= 0
+                ? Math.round(item.wordCount)
+                : countPlainTextWords(content);
+
+            const excerptValue =
+              typeof item.excerpt === "string" && item.excerpt.trim().length > 0
+                ? item.excerpt.trim()
+                : buildDocumentExcerpt(content);
+
+            const idValue =
+              typeof item.id === "string" && item.id.trim().length > 0 ? item.id.trim() : undefined;
+
+            return {
+              id: idValue,
+              content,
+              index: indexValue,
+              start: startValue,
+              end: endValue,
+              charCount: charCountValue,
+              wordCount: wordCountValue,
+              excerpt: excerptValue,
+            };
+          },
+        );
+
+        const normalizedItems = mappedChunks.filter(
+          (chunk): chunk is KnowledgeDocumentChunk => chunk !== null,
+        );
+
+        if (normalizedItems.length === 0) {
+          return res.status(400).json({ error: "Переданные чанки пустые или некорректные" });
+        }
+
+        normalizedItems.sort((a, b) => a.index - b.index);
+        documentChunks = normalizedItems;
+
+        chunkSizeForMetadata = Math.max(200, Math.min(8000, providedChunksPayload.chunkSize));
+        chunkOverlapForMetadata = Math.max(
+          0,
+          Math.min(providedChunksPayload.chunkOverlap, chunkSizeForMetadata - 1, 4000),
+        );
+
+        totalChunksPlanned =
+          typeof providedChunksPayload.totalCount === "number" &&
+          Number.isFinite(providedChunksPayload.totalCount) &&
+          providedChunksPayload.totalCount >= documentChunks.length
+            ? Math.round(providedChunksPayload.totalCount)
+            : documentChunks.length;
+      } else {
+        documentChunks = createKnowledgeDocumentChunks(
+          normalizedDocumentText,
+          defaultChunkSize,
+          defaultChunkOverlap,
+        );
+
+        chunkSizeForMetadata = defaultChunkSize;
+        chunkOverlapForMetadata = defaultChunkOverlap;
+        totalChunksPlanned = documentChunks.length;
+      }
 
       if (documentChunks.length === 0) {
         return res.status(400).json({ error: "Не удалось разбить документ на чанки" });
@@ -4414,12 +4530,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? vectorDocument.excerpt
           : normalizedDocumentText.slice(0, 160);
 
-      const totalChunks = documentChunks.length;
+      const totalChunks = totalChunksPlanned ?? documentChunks.length;
 
       const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
         const { chunk, vector, usageTokens, embeddingId, index } = result;
-        const baseChunkId = `${vectorDocument.path ?? vectorDocument.id}-chunk-${index + 1}`;
-        const pointId = normalizePointId(baseChunkId);
+        const fallbackChunkId = `${vectorDocument.path ?? vectorDocument.id}-chunk-${index + 1}`;
+        const resolvedChunkId =
+          typeof chunk.id === "string" && chunk.id.trim().length > 0 ? chunk.id.trim() : fallbackChunkId;
+        const pointId = normalizePointId(resolvedChunkId);
 
         const templateContext = removeUndefinedDeep({
           document: {
@@ -4433,8 +4551,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             wordCount: resolvedWordCount,
             excerpt: resolvedExcerpt,
             totalChunks,
-            chunkSize: effectiveChunkSize,
-            chunkOverlap: effectiveChunkOverlap,
+            chunkSize: chunkSizeForMetadata,
+            chunkOverlap: chunkOverlapForMetadata,
           },
           base: base
             ? {
@@ -4448,7 +4566,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             name: provider.name,
           },
           chunk: {
-            id: baseChunkId,
+            id: resolvedChunkId,
             index,
             position: chunk.start,
             start: chunk.start,
@@ -4478,8 +4596,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             wordCount: resolvedWordCount,
             excerpt: resolvedExcerpt,
             totalChunks,
-            chunkSize: effectiveChunkSize,
-            chunkOverlap: effectiveChunkOverlap,
+            chunkSize: chunkSizeForMetadata,
+            chunkOverlap: chunkOverlapForMetadata,
           },
           base: base
             ? {
@@ -4493,7 +4611,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             name: provider.name,
           },
           chunk: {
-            id: baseChunkId,
+            id: resolvedChunkId,
             index,
             position: chunk.start,
             start: chunk.start,
@@ -4550,8 +4668,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalUsageTokens,
         upsertStatus: upsertResult.status ?? null,
         collectionCreated,
-        chunkSize: effectiveChunkSize,
-        chunkOverlap: effectiveChunkOverlap,
+        chunkSize: chunkSizeForMetadata,
+        chunkOverlap: chunkOverlapForMetadata,
         recordIds,
         documentId: vectorDocument.id,
       });
