@@ -578,6 +578,40 @@ export const writeKnowledgeBaseStorage = (state: KnowledgeBaseStorage) => {
   }
 };
 
+export const KNOWLEDGE_BASE_STORAGE_CLEANUP_FLAG = "knowledge-base-storage-cleared-v1";
+
+export const clearKnowledgeBaseStorage = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(KNOWLEDGE_BASE_STORAGE_KEY);
+    window.dispatchEvent(new Event(KNOWLEDGE_BASE_EVENT));
+  } catch (error) {
+    console.error("Не удалось очистить базы знаний в localStorage", error);
+  }
+};
+
+export const clearLegacyKnowledgeBaseStorageOnce = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    if (window.localStorage.getItem(KNOWLEDGE_BASE_STORAGE_CLEANUP_FLAG)) {
+      return false;
+    }
+
+    clearKnowledgeBaseStorage();
+    window.localStorage.setItem(KNOWLEDGE_BASE_STORAGE_CLEANUP_FLAG, "1");
+    return true;
+  } catch (error) {
+    console.error("Не удалось выполнить миграцию баз знаний", error);
+    return false;
+  }
+};
+
 export const createKnowledgeBaseEntry = ({
   name,
   description,
