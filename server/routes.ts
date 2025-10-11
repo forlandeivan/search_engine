@@ -16,6 +16,13 @@ import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
+import {
+  listKnowledgeBases,
+  getKnowledgeNodeDetail,
+  deleteKnowledgeNode,
+  updateKnowledgeNodeParent,
+  KnowledgeBaseError,
+} from "./knowledge-base";
 import passport from "passport";
 import bcrypt from "bcryptjs";
 import {
@@ -88,6 +95,17 @@ function getNodeErrorCode(error: unknown): string | undefined {
 
   const candidate = error as { code?: unknown };
   return typeof candidate.code === "string" ? candidate.code : undefined;
+}
+
+function handleKnowledgeBaseRouteError(error: unknown, res: Response) {
+  if (error instanceof KnowledgeBaseError) {
+    return res.status(error.status).json({ error: error.message });
+  }
+
+  console.error("Knowledge base request failed", error);
+  return res
+    .status(500)
+    .json({ error: "Не удалось обработать запрос к базе знаний" });
 }
 
 function sanitizeRedirectPath(candidate: unknown): string {
@@ -4261,6 +4279,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Ошибка при отправке чанков страницы ${req.params.id} в Qdrant:`, error);
       res.status(500).json({ error: message });
+    }
+  });
+
+  app.get("/api/knowledge/bases", requireAuth, (req, res) => {
+    try {
+      const bases = listKnowledgeBases();
+      return res.json(bases);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.get("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, (req, res) => {
+    const { baseId, nodeId } = req.params;
+
+    try {
+      const detail = getKnowledgeNodeDetail(baseId, nodeId);
+      return res.json(detail);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.patch("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, (req, res) => {
+    const { baseId, nodeId } = req.params;
+    const rawParentId = req.body?.parentId as unknown;
+
+    let parentId: string | null;
+    if (rawParentId === null || rawParentId === undefined || rawParentId === "") {
+      parentId = null;
+    } else if (typeof rawParentId === "string") {
+      parentId = rawParentId;
+    } else {
+      return res.status(400).json({ error: "Некорректный идентификатор родителя" });
+    }
+
+    try {
+      updateKnowledgeNodeParent(baseId, nodeId, { parentId });
+      return res.json({ success: true });
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.delete("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, (req, res) => {
+    const { baseId, nodeId } = req.params;
+
+    try {
+      const result = deleteKnowledgeNode(baseId, nodeId);
+      return res.json(result);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
     }
   });
 
