@@ -16,6 +16,7 @@ import {
   workspaces,
 } from "@shared/schema";
 import { db } from "./db";
+import { ensureKnowledgeBaseTables } from "./storage";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 export class KnowledgeBaseError extends Error {
@@ -170,6 +171,8 @@ function collectDescendants(
 }
 
 async function fetchWorkspaceBases(workspaceId: string): Promise<KnowledgeBaseRow[]> {
+  await ensureKnowledgeBaseTables();
+
   return await db
     .select()
     .from(knowledgeBases)
@@ -178,6 +181,8 @@ async function fetchWorkspaceBases(workspaceId: string): Promise<KnowledgeBaseRo
 }
 
 async function createDefaultBase(workspaceId: string): Promise<void> {
+  await ensureKnowledgeBaseTables();
+
   const [workspace] = await db
     .select({ name: workspaces.name })
     .from(workspaces)
@@ -196,6 +201,8 @@ async function createDefaultBase(workspaceId: string): Promise<void> {
 }
 
 async function fetchBase(baseId: string, workspaceId: string): Promise<KnowledgeBaseRow | null> {
+  await ensureKnowledgeBaseTables();
+
   const [base] = await db
     .select()
     .from(knowledgeBases)
@@ -206,6 +213,8 @@ async function fetchBase(baseId: string, workspaceId: string): Promise<Knowledge
 }
 
 async function fetchBaseNodes(baseId: string): Promise<KnowledgeNodeRow[]> {
+  await ensureKnowledgeBaseTables();
+
   return await db
     .select()
     .from(knowledgeNodes)
@@ -217,6 +226,8 @@ export async function createKnowledgeBase(
   workspaceId: string,
   payload: CreateKnowledgeBasePayload,
 ): Promise<KnowledgeBaseSummary> {
+  await ensureKnowledgeBaseTables();
+
   const name = payload.name?.trim();
   if (!name) {
     throw new KnowledgeBaseError("Укажите название базы знаний", 400);

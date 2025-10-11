@@ -451,6 +451,9 @@ let ensuringWorkspaceMembersTable: Promise<void> | null = null;
 let workspaceCollectionsTableEnsured = false;
 let ensuringWorkspaceCollectionsTable: Promise<void> | null = null;
 
+let knowledgeBaseTablesEnsured = false;
+let ensuringKnowledgeBaseTables: Promise<void> | null = null;
+
 async function ensureWorkspacesTable(): Promise<void> {
   if (workspacesTableEnsured) {
     return;
@@ -538,6 +541,103 @@ async function ensureWorkspaceMembersTable(): Promise<void> {
   })();
 
   await ensuringWorkspaceMembersTable;
+}
+
+export async function ensureKnowledgeBaseTables(): Promise<void> {
+  if (knowledgeBaseTablesEnsured) {
+    return;
+  }
+
+  if (ensuringKnowledgeBaseTables) {
+    await ensuringKnowledgeBaseTables;
+    return;
+  }
+
+  ensuringKnowledgeBaseTables = (async () => {
+    await ensureWorkspacesTable();
+
+    const uuidExpression = await getUuidGenerationExpression();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_bases" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "workspace_id" varchar NOT NULL,
+        "name" text NOT NULL DEFAULT 'База знаний',
+        "description" text NOT NULL DEFAULT '',
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_bases",
+      "knowledge_bases_workspace_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_bases"
+        ADD CONSTRAINT "knowledge_bases_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_bases_workspace_idx ON knowledge_bases("workspace_id")`,
+    );
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_nodes" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "base_id" varchar NOT NULL,
+        "parent_id" varchar,
+        "title" text NOT NULL DEFAULT 'Без названия',
+        "type" text NOT NULL DEFAULT 'document',
+        "content" text,
+        "position" integer NOT NULL DEFAULT 0,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_nodes",
+      "knowledge_nodes_base_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_nodes"
+        ADD CONSTRAINT "knowledge_nodes_base_id_fkey"
+        FOREIGN KEY ("base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_nodes",
+      "knowledge_nodes_parent_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_nodes"
+        ADD CONSTRAINT "knowledge_nodes_parent_id_fkey"
+        FOREIGN KEY ("parent_id") REFERENCES "knowledge_nodes"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_nodes",
+      "knowledge_nodes_type_check",
+      sql`
+        ALTER TABLE "knowledge_nodes"
+        ADD CONSTRAINT "knowledge_nodes_type_check"
+        CHECK ("type" IN ('folder', 'document'))
+      `,
+    );
+
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_base_parent_idx ON knowledge_nodes("base_id", "parent_id")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_parent_idx ON knowledge_nodes("parent_id")`,
+    );
+
+    knowledgeBaseTablesEnsured = true;
+  })();
+
+  await ensuringKnowledgeBaseTables;
 }
 
 async function ensureWorkspaceVectorCollectionsTable(): Promise<void> {
@@ -2785,6 +2885,8 @@ export async function ensureDatabaseSchema(): Promise<void> {
     } catch (error) {
       swallowPgError(error, ["42701"]);
     }
+
+    await ensureKnowledgeBaseTables();
 
     globalUserAuthSchemaReady = true;
   } catch (error) {
