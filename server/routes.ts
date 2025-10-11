@@ -65,6 +65,7 @@ import {
   buildSessionResponse,
   getRequestWorkspace,
   getRequestWorkspaceMemberships,
+  WorkspaceContextError,
 } from "./auth";
 
 function getErrorDetails(error: unknown): string {
@@ -102,6 +103,10 @@ function getNodeErrorCode(error: unknown): string | undefined {
 
 function handleKnowledgeBaseRouteError(error: unknown, res: Response) {
   if (error instanceof KnowledgeBaseError) {
+    return res.status(error.status).json({ error: error.message });
+  }
+
+  if (error instanceof WorkspaceContextError) {
     return res.status(error.status).json({ error: error.message });
   }
 
