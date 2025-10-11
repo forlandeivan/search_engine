@@ -24,6 +24,7 @@ import {
   writeKnowledgeBaseStorage,
   KNOWLEDGE_BASE_EVENT,
   getKnowledgeBaseSourceLabel,
+  clearLegacyKnowledgeBaseStorageOnce,
 } from "@/lib/knowledge-base";
 import { apiRequest } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
@@ -84,6 +85,13 @@ export default function DashboardPage() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [creationError, setCreationError] = useState<string | null>(null);
   const [isCreatingBase, setIsCreatingBase] = useState(false);
+
+  useEffect(() => {
+    const cleared = clearLegacyKnowledgeBaseStorageOnce();
+    if (cleared) {
+      setKnowledgeBases([]);
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
