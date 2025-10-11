@@ -7,6 +7,10 @@ import {
   type UpdateKnowledgeNodeParentRequest,
   type DeleteKnowledgeNodeResponse,
   type CreateKnowledgeBasePayload,
+  type CreateKnowledgeFolderPayload,
+  type CreateKnowledgeDocumentPayload,
+  type CreateKnowledgeFolderResponse,
+  type CreateKnowledgeDocumentResponse,
 } from "@shared/knowledge-base";
 import {
   knowledgeBases,
@@ -34,6 +38,19 @@ type KnowledgeBaseInsert = typeof knowledgeBases.$inferInsert;
 type KnowledgeNodeRow = typeof knowledgeNodes.$inferSelect;
 
 const NODE_TYPE_SET = new Set<KnowledgeBaseNodeType>(knowledgeBaseNodeTypes);
+
+function getNextPosition(nodes: KnowledgeNodeRow[], parentId: string | null): number {
+  let maxPosition = -1;
+
+  for (const node of nodes) {
+    const nodeParentId = node.parentId ?? null;
+    if (nodeParentId === parentId && node.position > maxPosition) {
+      maxPosition = node.position;
+    }
+  }
+
+  return maxPosition + 1;
+}
 
 function getDatabaseErrorCode(error: unknown): string | null {
   if (!error || typeof error !== "object") {
@@ -369,6 +386,176 @@ export async function getKnowledgeNodeDetail(
     updatedAt: toIsoDate(node.updatedAt),
     breadcrumbs: buildBreadcrumbs(base, node, nodesById),
   } satisfies KnowledgeBaseNodeDetail;
+}
+
+export async function createKnowledgeFolder(
+  baseId: string,
+  workspaceId: string,
+  payload: CreateKnowledgeFolderPayload,
+): Promise<CreateKnowledgeFolderResponse> {
+  const base = await fetchBase(baseId, workspaceId);
+  if (!base) {
+    throw new KnowledgeBaseError("База знаний не найдена", 404);
+  }
+
+  const title = payload.title?.trim();
+  if (!title) {
+    throw new KnowledgeBaseError("Укажите название подраздела", 400);
+  }
+
+  const nodes = await fetchBaseNodes(baseId);
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const parentId = payload.parentId && payload.parentId.trim() ? payload.parentId.trim() : null;
+
+  if (parentId) {
+    const parent = nodesById.get(parentId);
+    if (!parent) {
+      throw new KnowledgeBaseError("Родительский раздел не найден", 404);
+    }
+
+    if (parent.type !== "folder") {
+      throw new KnowledgeBaseError("Родителем может быть только подраздел", 400);
+    }
+  }
+
+  const position = getNextPosition(nodes, parentId);
+
+  let createdNode: KnowledgeNodeRow | null = null;
+
+  await db.transaction(async (tx: typeof db) => {
+    const [created] = await tx
+      .insert(knowledgeNodes)
+      .values({
+        baseId,
+        workspaceId,
+        parentId,
+        title,
+        type: "folder",
+        position,
+      })
+      .returning();
+
+    if (!created) {
+      throw new KnowledgeBaseError("Не удалось создать подраздел", 500);
+    }
+
+    createdNode = created;
+
+    const timestamp = new Date();
+
+    if (parentId) {
+      await tx
+        .update(knowledgeNodes)
+        .set({ updatedAt: timestamp })
+        .where(and(eq(knowledgeNodes.id, parentId), eq(knowledgeNodes.baseId, baseId)));
+    }
+
+    await tx
+      .update(knowledgeBases)
+      .set({ updatedAt: timestamp })
+      .where(eq(knowledgeBases.id, baseId));
+  });
+
+  if (!createdNode) {
+    throw new KnowledgeBaseError("Не удалось создать подраздел", 500);
+  }
+
+  const node = createdNode as KnowledgeNodeRow;
+
+  return {
+    id: node.id,
+    title: node.title,
+    parentId: node.parentId ?? null,
+    type: "folder",
+    updatedAt: toIsoDate(node.updatedAt),
+  } satisfies CreateKnowledgeFolderResponse;
+}
+
+export async function createKnowledgeDocument(
+  baseId: string,
+  workspaceId: string,
+  payload: CreateKnowledgeDocumentPayload,
+): Promise<CreateKnowledgeDocumentResponse> {
+  const base = await fetchBase(baseId, workspaceId);
+  if (!base) {
+    throw new KnowledgeBaseError("База знаний не найдена", 404);
+  }
+
+  const title = payload.title?.trim();
+  if (!title) {
+    throw new KnowledgeBaseError("Укажите название документа", 400);
+  }
+
+  const content = typeof payload.content === "string" ? payload.content : "";
+
+  const nodes = await fetchBaseNodes(baseId);
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const parentId = payload.parentId && payload.parentId.trim() ? payload.parentId.trim() : null;
+
+  if (parentId) {
+    const parent = nodesById.get(parentId);
+    if (!parent) {
+      throw new KnowledgeBaseError("Родительский раздел не найден", 404);
+    }
+
+    if (parent.type !== "folder") {
+      throw new KnowledgeBaseError("Родителем может быть только подраздел", 400);
+    }
+  }
+
+  const position = getNextPosition(nodes, parentId);
+
+  let createdNode: KnowledgeNodeRow | null = null;
+
+  await db.transaction(async (tx: typeof db) => {
+    const [created] = await tx
+      .insert(knowledgeNodes)
+      .values({
+        baseId,
+        workspaceId,
+        parentId,
+        title,
+        type: "document",
+        content,
+        position,
+      })
+      .returning();
+
+    if (!created) {
+      throw new KnowledgeBaseError("Не удалось создать документ", 500);
+    }
+
+    createdNode = created;
+
+    const timestamp = new Date();
+
+    if (parentId) {
+      await tx
+        .update(knowledgeNodes)
+        .set({ updatedAt: timestamp })
+        .where(and(eq(knowledgeNodes.id, parentId), eq(knowledgeNodes.baseId, baseId)));
+    }
+
+    await tx
+      .update(knowledgeBases)
+      .set({ updatedAt: timestamp })
+      .where(eq(knowledgeBases.id, baseId));
+  });
+
+  if (!createdNode) {
+    throw new KnowledgeBaseError("Не удалось создать документ", 500);
+  }
+
+  const node = createdNode as KnowledgeNodeRow;
+
+  return {
+    id: node.id,
+    title: node.title,
+    parentId: node.parentId ?? null,
+    type: "document",
+    content: node.content ?? "",
+    updatedAt: toIsoDate(node.updatedAt),
+  } satisfies CreateKnowledgeDocumentResponse;
 }
 
 export async function deleteKnowledgeNode(

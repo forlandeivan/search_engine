@@ -176,6 +176,9 @@ export const knowledgeNodes = pgTable(
     baseId: varchar("base_id")
       .notNull()
       .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
     parentId: varchar("parent_id"),
     title: text("title").notNull().default("Без названия"),
     type: text("type").$type<KnowledgeBaseNodeType>().notNull().default("document"),
