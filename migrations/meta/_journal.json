@@ -120,6 +120,13 @@
       "when": 1758104602459,
       "tag": "0019_knowledge_bases",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1758104603459,
+      "tag": "0020_restore_forlandeivan_knowledge_bases",
+      "breakpoints": true
     }
   ]
 }
