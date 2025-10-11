@@ -26,6 +26,47 @@ CREATE TABLE "personal_api_tokens" (
     "revoked_at" timestamp
 );
 
+-- Рабочие пространства и члены рабочих пространств
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workspace_plan') THEN
+        CREATE TYPE "workspace_plan" AS ENUM ('free', 'team');
+    END IF;
+END $$;
+
+CREATE TABLE "workspaces" (
+    "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    "name" text NOT NULL,
+    "owner_id" varchar NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+    "plan" workspace_plan NOT NULL DEFAULT 'free',
+    "settings" jsonb NOT NULL DEFAULT '{}'::jsonb,
+    "created_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workspace_member_role') THEN
+        CREATE TYPE "workspace_member_role" AS ENUM ('owner', 'manager', 'user');
+    END IF;
+END $$;
+
+CREATE TABLE "workspace_members" (
+    "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+    "user_id" varchar NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+    "role" workspace_member_role NOT NULL DEFAULT 'user',
+    "created_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    PRIMARY KEY ("workspace_id", "user_id")
+);
+
+CREATE TABLE "workspace_vector_collections" (
+    "collection_name" text PRIMARY KEY,
+    "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+    "created_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
 -- Create sites table for storing crawl configurations
 CREATE TABLE "sites" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -129,6 +170,43 @@ CREATE INDEX idx_embedding_providers_provider_type ON embedding_providers(provid
 CREATE INDEX personal_api_tokens_user_id_idx ON personal_api_tokens(user_id);
 CREATE INDEX personal_api_tokens_active_idx ON personal_api_tokens(user_id) WHERE revoked_at IS NULL;
 
+CREATE INDEX workspaces_owner_idx ON workspaces(owner_id);
+CREATE INDEX workspace_members_workspace_idx ON workspace_members(workspace_id);
+CREATE INDEX workspace_members_user_idx ON workspace_members(user_id);
+
+-- Базы знаний
+CREATE TABLE "knowledge_bases" (
+    "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+    "name" text NOT NULL DEFAULT 'База знаний',
+    "description" text NOT NULL DEFAULT '',
+    "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'knowledge_node_type') THEN
+        CREATE TYPE "knowledge_node_type" AS ENUM ('folder', 'document');
+    END IF;
+END $$;
+
+CREATE TABLE "knowledge_nodes" (
+    "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    "base_id" varchar NOT NULL REFERENCES "knowledge_bases"("id") ON DELETE CASCADE,
+    "parent_id" varchar REFERENCES "knowledge_nodes"("id") ON DELETE CASCADE,
+    "title" text NOT NULL DEFAULT 'Без названия',
+    "type" knowledge_node_type NOT NULL DEFAULT 'document',
+    "content" text,
+    "position" integer NOT NULL DEFAULT 0,
+    "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX knowledge_bases_workspace_idx ON knowledge_bases(workspace_id);
+CREATE INDEX knowledge_nodes_base_parent_idx ON knowledge_nodes(base_id, parent_id);
+CREATE INDEX knowledge_nodes_parent_idx ON knowledge_nodes(parent_id);
+
 -- Triggers for automatic search vector updates
 CREATE OR REPLACE FUNCTION update_search_vectors() RETURNS TRIGGER AS $$
 BEGIN
@@ -170,6 +248,31 @@ CREATE TRIGGER trigger_sites_updated_at
 
 CREATE TRIGGER trigger_pages_updated_at
     BEFORE UPDATE ON pages
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trigger_workspaces_updated_at
+    BEFORE UPDATE ON workspaces
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trigger_workspace_members_updated_at
+    BEFORE UPDATE ON workspace_members
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trigger_workspace_vector_collections_updated_at
+    BEFORE UPDATE ON workspace_vector_collections
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trigger_knowledge_bases_updated_at
+    BEFORE UPDATE ON knowledge_bases
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trigger_knowledge_nodes_updated_at
+    BEFORE UPDATE ON knowledge_nodes
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
 
