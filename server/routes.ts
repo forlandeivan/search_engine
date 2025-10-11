@@ -4282,27 +4282,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/knowledge/bases", requireAuth, (req, res) => {
+  app.get("/api/knowledge/bases", requireAuth, async (req, res) => {
     try {
-      const bases = listKnowledgeBases();
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const bases = await listKnowledgeBases(workspaceId);
       return res.json(bases);
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
 
-  app.get("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, (req, res) => {
+  app.get("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;
 
     try {
-      const detail = getKnowledgeNodeDetail(baseId, nodeId);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const detail = await getKnowledgeNodeDetail(baseId, nodeId, workspaceId);
       return res.json(detail);
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
 
-  app.patch("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, (req, res) => {
+  app.patch("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;
     const rawParentId = req.body?.parentId as unknown;
 
@@ -4316,18 +4318,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      updateKnowledgeNodeParent(baseId, nodeId, { parentId });
+      const { id: workspaceId } = getRequestWorkspace(req);
+      await updateKnowledgeNodeParent(baseId, nodeId, { parentId }, workspaceId);
       return res.json({ success: true });
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
 
-  app.delete("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, (req, res) => {
+  app.delete("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;
 
     try {
-      const result = deleteKnowledgeNode(baseId, nodeId);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const result = await deleteKnowledgeNode(baseId, nodeId, workspaceId);
       return res.json(result);
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);

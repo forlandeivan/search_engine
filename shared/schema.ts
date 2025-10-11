@@ -10,6 +10,7 @@ import {
   doublePrecision,
   customType,
   primaryKey,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -153,6 +154,44 @@ export const authProviders = pgTable("auth_providers", {
   createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const knowledgeBaseNodeTypes = ["folder", "document"] as const;
+export type KnowledgeBaseNodeType = (typeof knowledgeBaseNodeTypes)[number];
+
+export const knowledgeBases = pgTable("knowledge_bases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  workspaceId: varchar("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull().default("База знаний"),
+  description: text("description").notNull().default(""),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const knowledgeNodes = pgTable(
+  "knowledge_nodes",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    baseId: varchar("base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    parentId: varchar("parent_id"),
+    title: text("title").notNull().default("Без названия"),
+    type: text("type").$type<KnowledgeBaseNodeType>().notNull().default("document"),
+    content: text("content"),
+    position: integer("position").notNull().default(0),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    parentReference: foreignKey({
+      columns: [table.parentId],
+      foreignColumns: [table.id],
+      name: "knowledge_nodes_parent_id_fkey",
+    }).onDelete("cascade"),
+  }),
+);
 
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
