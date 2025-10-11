@@ -598,6 +598,28 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       )
     `);
 
+    await db.execute(sql`
+      ALTER TABLE "knowledge_nodes"
+      ADD COLUMN IF NOT EXISTS "workspace_id" varchar
+    `);
+
+    await db.execute(sql`
+      UPDATE "knowledge_nodes" AS kn
+      SET "workspace_id" = kb."workspace_id"
+      FROM "knowledge_bases" AS kb
+      WHERE kn."base_id" = kb."id"
+        AND (kn."workspace_id" IS NULL OR kn."workspace_id" = '')
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "knowledge_nodes"
+        ALTER COLUMN "workspace_id" SET NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42704"]);
+    }
+
     await ensureConstraint(
       "knowledge_nodes",
       "knowledge_nodes_base_id_fkey",
