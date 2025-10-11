@@ -113,6 +113,13 @@
       "when": 1758104601459,
       "tag": "0018_workspace_collections_and_page_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1758104602459,
+      "tag": "0019_knowledge_bases",
+      "breakpoints": true
     }
   ]
 }
