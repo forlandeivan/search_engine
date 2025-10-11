@@ -93,7 +93,19 @@ SELECT COUNT(*) FROM pages;
 \q
 ```
 
-### 6. Тестирование API
+### 6. Обновление схемы после изменений
+
+Если база данных уже настроена, но после `git pull` вы не видите новые таблицы (например, `knowledge_bases` и `knowledge_nodes`), повторно примените миграции:
+
+```bash
+git pull
+npm install
+npm run db:push
+```
+
+После применения миграций перезапустите подключение в DBeaver или другом клиенте, чтобы обновить список таблиц.
+
+### 7. Тестирование API
 
 После запуска сервера на `http://localhost:5000`:
 
@@ -158,7 +170,13 @@ curl "http://localhost:5000/api/search?q=example"
    - `allow_self_signed_certificate` (boolean) - разрешение на самоподписанные сертификаты
    - `request_headers`, `request_config`, `response_config`, `qdrant_config` (jsonb) - расширенные настройки интеграции
 
-5. **users** - Пользователи (для будущих админ функций)
+5. **knowledge_bases** и **knowledge_nodes** - структуры базы знаний
+   - `knowledge_bases` хранит метаданные баз знаний и принадлежность рабочему пространству (`workspace_id`)
+   - `knowledge_nodes` описывает документы и папки внутри базы знаний, ссылается на конкретную базу через `base_id`
+   - Каждый документ или раздел хранит ссылку на родителя (`parent_id`) и порядок сортировки (`position`)
+   - Поля `created_at` и `updated_at` обновляются автоматически триггером `update_updated_at`
+
+6. **users** - Пользователи (для будущих админ функций)
    - `id` (UUID) - уникальный идентификатор
    - `email` (text) - логин пользователя
    - `password_hash` (text) - хешированный пароль
