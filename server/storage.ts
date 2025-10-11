@@ -587,6 +587,7 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       CREATE TABLE IF NOT EXISTS "knowledge_nodes" (
         "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
         "base_id" varchar NOT NULL,
+        "workspace_id" varchar NOT NULL,
         "parent_id" varchar,
         "title" text NOT NULL DEFAULT 'Без названия',
         "type" text NOT NULL DEFAULT 'document',
@@ -604,6 +605,16 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         ALTER TABLE "knowledge_nodes"
         ADD CONSTRAINT "knowledge_nodes_base_id_fkey"
         FOREIGN KEY ("base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_nodes",
+      "knowledge_nodes_workspace_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_nodes"
+        ADD CONSTRAINT "knowledge_nodes_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
       `,
     );
 
@@ -632,6 +643,12 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
     );
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_parent_idx ON knowledge_nodes("parent_id")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_workspace_idx ON knowledge_nodes("workspace_id")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_workspace_parent_idx ON knowledge_nodes("workspace_id", "parent_id")`,
     );
 
     knowledgeBaseTablesEnsured = true;

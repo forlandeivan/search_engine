@@ -23,6 +23,33 @@ export type CreateKnowledgeBasePayload = {
 
 export type CreateKnowledgeBaseResponse = KnowledgeBaseSummary;
 
+export type CreateKnowledgeFolderPayload = {
+  title: string;
+  parentId?: string | null;
+};
+
+export type CreateKnowledgeDocumentPayload = {
+  title: string;
+  content: string;
+  parentId?: string | null;
+};
+
+type KnowledgeNodeCreationBase = {
+  id: string;
+  title: string;
+  parentId: string | null;
+  updatedAt: string;
+};
+
+export type CreateKnowledgeFolderResponse = KnowledgeNodeCreationBase & {
+  type: "folder";
+};
+
+export type CreateKnowledgeDocumentResponse = KnowledgeNodeCreationBase & {
+  type: "document";
+  content: string;
+};
+
 export type KnowledgeBaseBreadcrumb = {
   id: string;
   title: string;

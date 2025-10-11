@@ -23,6 +23,8 @@ import {
   updateKnowledgeNodeParent,
   KnowledgeBaseError,
   createKnowledgeBase,
+  createKnowledgeFolder,
+  createKnowledgeDocument,
 } from "./knowledge-base";
 import passport from "passport";
 import bcrypt from "bcryptjs";
@@ -107,6 +109,23 @@ function handleKnowledgeBaseRouteError(error: unknown, res: Response) {
   return res
     .status(500)
     .json({ error: "Не удалось обработать запрос к базе знаний" });
+}
+
+function parseKnowledgeNodeParentId(raw: unknown): string | null {
+  if (raw === null || raw === undefined || raw === "") {
+    return null;
+  }
+
+  if (typeof raw !== "string") {
+    throw new KnowledgeBaseError("Некорректный идентификатор родителя", 400);
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed;
 }
 
 function sanitizeRedirectPath(candidate: unknown): string {
@@ -4302,6 +4321,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .optional(),
   });
 
+  const createKnowledgeFolderSchema = z.object({
+    title: z
+      .string()
+      .trim()
+      .min(1, "Укажите название подраздела")
+      .max(200, "Название не должно превышать 200 символов"),
+  });
+
+  const createKnowledgeDocumentSchema = z.object({
+    title: z
+      .string()
+      .trim()
+      .min(1, "Укажите название документа")
+      .max(500, "Название не должно превышать 500 символов"),
+    content: z
+      .string()
+      .max(2_000_000, "Документ слишком большой. Ограничение — 2 МБ текста")
+      .optional()
+      .default(""),
+  });
+
   app.post("/api/knowledge/bases", requireAuth, async (req, res) => {
     try {
       const payload = createKnowledgeBaseSchema.parse(req.body ?? {});
@@ -4337,6 +4377,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const detail = await getKnowledgeNodeDetail(baseId, nodeId, workspaceId);
       return res.json(detail);
     } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.post("/api/knowledge/bases/:baseId/folders", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+
+    try {
+      const payload = createKnowledgeFolderSchema.parse(req.body ?? {});
+      const parentId = parseKnowledgeNodeParentId(req.body?.parentId);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const folder = await createKnowledgeFolder(baseId, workspaceId, {
+        title: payload.title,
+        parentId,
+      });
+      return res.status(201).json(folder);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issue = error.issues.at(0);
+        const message = issue?.message ?? "Некорректные данные";
+        return res.status(400).json({ error: message });
+      }
+
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.post("/api/knowledge/bases/:baseId/documents", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+
+    try {
+      const payload = createKnowledgeDocumentSchema.parse(req.body ?? {});
+      const parentId = parseKnowledgeNodeParentId(req.body?.parentId);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const document = await createKnowledgeDocument(baseId, workspaceId, {
+        title: payload.title,
+        content: payload.content,
+        parentId,
+      });
+      return res.status(201).json(document);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issue = error.issues.at(0);
+        const message = issue?.message ?? "Некорректные данные";
+        return res.status(400).json({ error: message });
+      }
+
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
