@@ -15,6 +15,14 @@ export type KnowledgeBaseSummary = {
   rootNodes: KnowledgeBaseTreeNode[];
 };
 
+export type CreateKnowledgeBasePayload = {
+  id?: string;
+  name: string;
+  description?: string;
+};
+
+export type CreateKnowledgeBaseResponse = KnowledgeBaseSummary;
+
 export type KnowledgeBaseBreadcrumb = {
   id: string;
   title: string;

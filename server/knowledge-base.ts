@@ -6,6 +6,7 @@ import {
   type KnowledgeBaseChildNode,
   type UpdateKnowledgeNodeParentRequest,
   type DeleteKnowledgeNodeResponse,
+  type CreateKnowledgeBasePayload,
 } from "@shared/knowledge-base";
 import {
   knowledgeBases,
@@ -15,6 +16,7 @@ import {
   workspaces,
 } from "@shared/schema";
 import { db } from "./db";
+import { ensureKnowledgeBaseTables } from "./storage";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 export class KnowledgeBaseError extends Error {
@@ -28,9 +30,19 @@ export class KnowledgeBaseError extends Error {
 }
 
 type KnowledgeBaseRow = typeof knowledgeBases.$inferSelect;
+type KnowledgeBaseInsert = typeof knowledgeBases.$inferInsert;
 type KnowledgeNodeRow = typeof knowledgeNodes.$inferSelect;
 
 const NODE_TYPE_SET = new Set<KnowledgeBaseNodeType>(knowledgeBaseNodeTypes);
+
+function getDatabaseErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const candidate = error as { code?: unknown };
+  return typeof candidate.code === "string" ? candidate.code : null;
+}
 
 function toIsoDate(value: Date | string | null | undefined): string {
   if (!value) {
@@ -159,6 +171,8 @@ function collectDescendants(
 }
 
 async function fetchWorkspaceBases(workspaceId: string): Promise<KnowledgeBaseRow[]> {
+  await ensureKnowledgeBaseTables();
+
   return await db
     .select()
     .from(knowledgeBases)
@@ -167,6 +181,8 @@ async function fetchWorkspaceBases(workspaceId: string): Promise<KnowledgeBaseRo
 }
 
 async function createDefaultBase(workspaceId: string): Promise<void> {
+  await ensureKnowledgeBaseTables();
+
   const [workspace] = await db
     .select({ name: workspaces.name })
     .from(workspaces)
@@ -185,6 +201,8 @@ async function createDefaultBase(workspaceId: string): Promise<void> {
 }
 
 async function fetchBase(baseId: string, workspaceId: string): Promise<KnowledgeBaseRow | null> {
+  await ensureKnowledgeBaseTables();
+
   const [base] = await db
     .select()
     .from(knowledgeBases)
@@ -195,11 +213,61 @@ async function fetchBase(baseId: string, workspaceId: string): Promise<Knowledge
 }
 
 async function fetchBaseNodes(baseId: string): Promise<KnowledgeNodeRow[]> {
+  await ensureKnowledgeBaseTables();
+
   return await db
     .select()
     .from(knowledgeNodes)
     .where(eq(knowledgeNodes.baseId, baseId))
     .orderBy(asc(knowledgeNodes.position), asc(knowledgeNodes.createdAt));
+}
+
+export async function createKnowledgeBase(
+  workspaceId: string,
+  payload: CreateKnowledgeBasePayload,
+): Promise<KnowledgeBaseSummary> {
+  await ensureKnowledgeBaseTables();
+
+  const name = payload.name?.trim();
+  if (!name) {
+    throw new KnowledgeBaseError("Укажите название базы знаний", 400);
+  }
+
+  const description = payload.description?.trim() ?? "";
+  const insertValues: KnowledgeBaseInsert = {
+    workspaceId,
+    name,
+    description,
+  };
+
+  if (payload.id) {
+    insertValues.id = payload.id;
+  }
+
+  try {
+    const [created] = await db.insert(knowledgeBases).values(insertValues).returning();
+    if (!created) {
+      throw new KnowledgeBaseError("Не удалось создать базу знаний", 500);
+    }
+
+    return {
+      id: created.id,
+      name: created.name,
+      description: created.description,
+      updatedAt: toIsoDate(created.updatedAt),
+      rootNodes: [],
+    } satisfies KnowledgeBaseSummary;
+  } catch (error) {
+    const code = getDatabaseErrorCode(error);
+    if (code === "23505") {
+      throw new KnowledgeBaseError(
+        "База знаний с таким идентификатором уже существует",
+        409,
+      );
+    }
+
+    throw error;
+  }
 }
 
 export async function listKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSummary[]> {
