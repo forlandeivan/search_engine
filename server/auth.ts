@@ -545,7 +545,7 @@ export function buildSessionResponse(user: PublicUser, context: WorkspaceContext
 
 export function getRequestWorkspace(req: Request): { id: string; role: WorkspaceMemberRole } {
   if (!req.workspaceId || !req.workspaceRole) {
-    throw new Error("Рабочее пространство не выбрано");
+    throw new WorkspaceContextError("Рабочее пространство не выбрано", 400);
   }
   return { id: req.workspaceId, role: req.workspaceRole };
 }
