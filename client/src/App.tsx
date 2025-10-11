@@ -48,6 +48,7 @@ function AdminRouter() {
 function MainRouter() {
   return (
     <Switch>
+      <Route path="/knowledge/:knowledgeBaseId/node/:nodeId" component={KnowledgeBasePage} />
       <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
       <Route path="/knowledge" component={KnowledgeBasePage} />
       <Route path="/pages" component={PagesPage} />
