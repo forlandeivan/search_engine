@@ -22,6 +22,7 @@ import {
   deleteKnowledgeNode,
   updateKnowledgeNodeParent,
   KnowledgeBaseError,
+  createKnowledgeBase,
 } from "./knowledge-base";
 import passport from "passport";
 import bcrypt from "bcryptjs";
@@ -4279,6 +4280,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Ошибка при отправке чанков страницы ${req.params.id} в Qdrant:`, error);
       res.status(500).json({ error: message });
+    }
+  });
+
+  const createKnowledgeBaseSchema = z.object({
+    id: z
+      .string()
+      .trim()
+      .min(1, "Некорректный идентификатор базы знаний")
+      .max(191, "Слишком длинный идентификатор базы знаний")
+      .optional(),
+    name: z
+      .string()
+      .trim()
+      .min(1, "Укажите название базы знаний")
+      .max(200, "Название не должно превышать 200 символов"),
+    description: z
+      .string()
+      .trim()
+      .max(2000, "Описание не должно превышать 2000 символов")
+      .optional(),
+  });
+
+  app.post("/api/knowledge/bases", requireAuth, async (req, res) => {
+    try {
+      const payload = createKnowledgeBaseSchema.parse(req.body ?? {});
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const summary = await createKnowledgeBase(workspaceId, payload);
+      return res.status(201).json(summary);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issue = error.issues.at(0);
+        const message = issue?.message ?? "Некорректные данные";
+        return res.status(400).json({ error: message });
+      }
+
+      return handleKnowledgeBaseRouteError(error, res);
     }
   });
 

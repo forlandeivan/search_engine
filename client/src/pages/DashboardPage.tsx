@@ -25,9 +25,11 @@ import {
   KNOWLEDGE_BASE_EVENT,
   getKnowledgeBaseSourceLabel,
 } from "@/lib/knowledge-base";
+import { apiRequest } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Brain, FolderArchive, Globe, LayoutDashboard, NotebookPen } from "lucide-react";
+import type { CreateKnowledgeBaseResponse } from "@shared/knowledge-base";
 
 const CREATION_OPTIONS: Array<{
   value: KnowledgeBaseSourceType;
@@ -215,6 +217,22 @@ export default function DashboardPage() {
           },
         };
       }
+
+      const response = await apiRequest("POST", "/api/knowledge/bases", {
+        id: base.id,
+        name: base.name,
+        description: base.description,
+      });
+
+      const created = (await response.json()) as CreateKnowledgeBaseResponse;
+      base = {
+        ...base,
+        id: created.id,
+        name: created.name,
+        description: created.description,
+        createdAt: created.updatedAt,
+        updatedAt: created.updatedAt,
+      };
 
       const currentState = readKnowledgeBaseStorage();
       const updatedState = {
