@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type FormEvent,
+} from "react";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +30,7 @@ import {
   RadioGroup,
   RadioGroupItem,
 } from "@/components/ui/radio-group";
+import { convertFileToHtml, getSanitizedContent, buildHtmlFromPlainText } from "@/lib/document-import";
 import { cn } from "@/lib/utils";
 import type { KnowledgeBaseTreeNode } from "@shared/knowledge-base";
 import type { KnowledgeNodeSourceType } from "@shared/schema";
@@ -36,8 +45,12 @@ import {
 const ROOT_PARENT_VALUE = "__root__";
 const MAX_CONTENT_LENGTH = 2_000_000;
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
-const SUPPORTED_EXTENSIONS = [".txt", ".md", ".markdown", ".log", ".csv", ".json"]; // расширяем базовую поддержку
-const SUPPORTED_MIME_TYPES = ["text/plain", "text/markdown", "text/x-markdown", "application/json"];
+const ACCEPTED_FILE_TYPES =
+  ".pdf,.doc,.docx,.pptx,.xlsx,.txt,.md,.markdown,.html,.htm,.eml,.csv" +
+  ",application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" +
+  ",application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" +
+  ",text/plain,text/markdown,text/csv,text/html,message/rfc822";
+const SUPPORTED_FORMAT_LABEL = "PDF, DOC, DOCX, TXT, Markdown, HTML, CSV, EML, PPTX, XLSX";
 
 export type CreateKnowledgeDocumentFormValues = {
   title: string;
@@ -83,19 +96,6 @@ function resolveDefaultParentValue(parentId: string | null): string {
   return parentId ?? ROOT_PARENT_VALUE;
 }
 
-function isSupportedFile(file: File): boolean {
-  const lowerName = file.name.toLowerCase();
-  if (SUPPORTED_EXTENSIONS.some((ext) => lowerName.endsWith(ext))) {
-    return true;
-  }
-
-  if (file.type && SUPPORTED_MIME_TYPES.includes(file.type)) {
-    return true;
-  }
-
-  return false;
-}
-
 export function CreateKnowledgeDocumentDialog({
   open,
   onOpenChange,
@@ -111,10 +111,15 @@ export function CreateKnowledgeDocumentDialog({
   const [mode, setMode] = useState<KnowledgeNodeSourceType>("manual");
   const [manualContent, setManualContent] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
-  const [importContent, setImportContent] = useState("");
+  const [importHtml, setImportHtml] = useState("");
+  const [importDetectedTitle, setImportDetectedTitle] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isReadingFile, setIsReadingFile] = useState(false);
+  const [hasTitleBeenEdited, setHasTitleBeenEdited] = useState(false);
+  const [isDragActive, setIsDragActive] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const folderOptions = useMemo(() => buildFolderOptions(structure), [structure]);
 
@@ -125,13 +130,24 @@ export function CreateKnowledgeDocumentDialog({
       setTitle("");
       setManualContent("");
       setImportFile(null);
-      setImportContent("");
+      setImportHtml("");
+      setImportDetectedTitle(null);
       setImportError(null);
       setFormError(null);
       setMode("manual");
       setIsReadingFile(false);
+      setHasTitleBeenEdited(false);
+      setIsDragActive(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   }, [open, defaultParentId]);
+
+  const handleTitleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setTitle(event.target.value);
+    setHasTitleBeenEdited(true);
+  };
 
   const handleModeChange = (newMode: KnowledgeNodeSourceType) => {
     setMode(newMode);
@@ -139,10 +155,81 @@ export function CreateKnowledgeDocumentDialog({
 
     if (newMode === "manual") {
       setImportFile(null);
-      setImportContent("");
+      setImportHtml("");
+      setImportDetectedTitle(null);
       setImportError(null);
+      setIsDragActive(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     } else {
       setManualContent("");
+    }
+  };
+
+  const applyTitleToImportedHtml = (html: string, newTitle: string) => {
+    if (!html.trim()) {
+      return html;
+    }
+
+    if (typeof window === "undefined") {
+      return html;
+    }
+
+    const container = window.document.createElement("div");
+    container.innerHTML = html;
+    const heading = container.querySelector("h1, h2, h3, h4, h5, h6");
+
+    if (heading) {
+      heading.textContent = newTitle;
+    } else {
+      const h1 = window.document.createElement("h1");
+      h1.textContent = newTitle;
+      container.prepend(h1);
+    }
+
+    return container.innerHTML;
+  };
+
+  const processImportedFile = async (file: File) => {
+    setImportError(null);
+    setFormError(null);
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setImportError("Файл слишком большой. Максимальный размер — 2 МБ.");
+      setImportFile(null);
+      setImportHtml("");
+      setImportDetectedTitle(null);
+      return;
+    }
+
+    setIsReadingFile(true);
+    try {
+      const { title: detectedTitle, html } = await convertFileToHtml(file);
+      const sanitizedContent = getSanitizedContent(html);
+
+      if (!sanitizedContent.trim()) {
+        throw new Error("Файл не содержит текстового контента.");
+      }
+
+      if (sanitizedContent.length > MAX_CONTENT_LENGTH) {
+        throw new Error("Содержимое файла превышает допустимый размер 2 МБ.");
+      }
+
+      setImportFile(file);
+      setImportHtml(sanitizedContent);
+      setImportDetectedTitle(detectedTitle);
+      if ((!hasTitleBeenEdited && !title.trim()) || !title.trim()) {
+        setTitle(detectedTitle);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось обработать файл.";
+      setImportError(message);
+      setImportFile(null);
+      setImportHtml("");
+      setImportDetectedTitle(null);
+    } finally {
+      setIsReadingFile(false);
     }
   };
 
@@ -152,49 +239,45 @@ export function CreateKnowledgeDocumentDialog({
       return;
     }
 
-    setImportError(null);
-    setFormError(null);
+    await processImportedFile(file);
+  };
 
-    if (!isSupportedFile(file)) {
-      setImportError("Поддерживаются только текстовые файлы (TXT, MD, LOG, CSV, JSON).");
-      setImportFile(null);
-      setImportContent("");
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragActive(true);
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragActive(false);
+  };
+
+  const handleFileDrop = async (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragActive(false);
+
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) {
       return;
     }
 
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      setImportError("Файл слишком большой. Максимальный размер — 2 МБ.");
-      setImportFile(null);
-      setImportContent("");
-      return;
-    }
-
-    setIsReadingFile(true);
-    try {
-      const text = await file.text();
-      if (text.length > MAX_CONTENT_LENGTH) {
-        setImportError("Содержимое файла превышает допустимый размер 2 МБ.");
-        setImportFile(null);
-        setImportContent("");
-        return;
-      }
-
-      setImportFile(file);
-      setImportContent(text);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось прочитать файл.";
-      setImportError(message);
-      setImportFile(null);
-      setImportContent("");
-    } finally {
-      setIsReadingFile(false);
+    await processImportedFile(file);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   };
 
   const handleRemoveFile = () => {
     setImportFile(null);
-    setImportContent("");
+    setImportHtml("");
+    setImportDetectedTitle(null);
     setImportError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -215,11 +298,21 @@ export function CreateKnowledgeDocumentDialog({
         return;
       }
 
+      let sanitizedContent = "";
+
+      if (manualContent.trim()) {
+        sanitizedContent = getSanitizedContent(buildHtmlFromPlainText(manualContent, trimmedTitle));
+        if (sanitizedContent.length > MAX_CONTENT_LENGTH) {
+          setFormError("Содержимое документа превышает допустимый размер 2 МБ после обработки.");
+          return;
+        }
+      }
+
       try {
         await onSubmit({
           title: trimmedTitle,
           parentId,
-          content: manualContent,
+          content: sanitizedContent,
           sourceType: "manual",
           importFileName: null,
         });
@@ -230,21 +323,24 @@ export function CreateKnowledgeDocumentDialog({
       return;
     }
 
-    if (!importFile || importContent.length === 0) {
-      setFormError("Выберите текстовый файл для импорта.");
-      return;
-    }
-
-    if (importContent.length > MAX_CONTENT_LENGTH) {
-      setFormError("Содержимое файла превышает допустимый размер 2 МБ.");
+    if (!importFile || importHtml.length === 0) {
+      setFormError("Выберите файл для импорта или перетащите его в область загрузки.");
       return;
     }
 
     try {
+      const htmlWithTitle = applyTitleToImportedHtml(importHtml, trimmedTitle);
+      const sanitizedContent = getSanitizedContent(htmlWithTitle);
+
+      if (sanitizedContent.length > MAX_CONTENT_LENGTH) {
+        setFormError("Содержимое файла превышает допустимый размер 2 МБ.");
+        return;
+      }
+
       await onSubmit({
         title: trimmedTitle,
         parentId,
-        content: importContent,
+        content: sanitizedContent,
         sourceType: "import",
         importFileName: importFile.name,
       });
@@ -273,7 +369,7 @@ export function CreateKnowledgeDocumentDialog({
               <Input
                 id="knowledge-document-title"
                 value={title}
-                onChange={(event) => setTitle(event.target.value)}
+                onChange={handleTitleChange}
                 placeholder="Например, Руководство по продукту"
                 maxLength={500}
                 autoFocus
@@ -333,7 +429,7 @@ export function CreateKnowledgeDocumentDialog({
                     <span className="font-medium">Импорт из файла</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Загрузите текстовый файл до 2 МБ. Поддерживаются TXT, Markdown, CSV, LOG и JSON.
+                    Загрузите текстовый документ до 2 МБ. Поддерживаются {SUPPORTED_FORMAT_LABEL}.
                   </p>
                 </label>
               </RadioGroup>
@@ -357,24 +453,36 @@ export function CreateKnowledgeDocumentDialog({
             ) : (
               <div className="space-y-3">
                 <div className="space-y-2">
-                  <Label htmlFor="knowledge-document-file">Текстовый файл</Label>
-                  <div className="flex flex-col gap-2 rounded-md border border-dashed p-4 text-sm">
+                  <Label htmlFor="knowledge-document-file">Файл документа</Label>
+                  <div
+                    className={cn(
+                      "flex flex-col gap-3 rounded-md border border-dashed p-4 text-sm transition",
+                      isDragActive ? "border-primary bg-primary/5" : "border-muted-foreground/30",
+                    )}
+                    onDragOver={handleDragOver}
+                    onDragEnter={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleFileDrop}
+                  >
                     <div className="flex flex-wrap items-center gap-2">
                       <Input
+                        ref={fileInputRef}
                         id="knowledge-document-file"
                         type="file"
-                        accept=".txt,.md,.markdown,.log,.csv,.json,text/plain,text/markdown"
+                        accept={ACCEPTED_FILE_TYPES}
                         onChange={handleFileChange}
                         disabled={isSubmitting || isReadingFile}
                       />
                       {isReadingFile && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                     </div>
-                    {importFile ? (
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
+                      Перетащите файл сюда или выберите на компьютере. Максимальный размер — 2 МБ.
+                    </p>
+                    {importFile && (
+                      <div className="flex flex-wrap items-center gap-3 rounded-md border border-muted-foreground/20 bg-muted/40 p-3 text-xs text-muted-foreground">
                         <FileText className="h-4 w-4" />
                         <span>
-                          {importFile.name} · {(importFile.size / 1024).toFixed(1)} КБ ·
-                          длина {importContent.length.toLocaleString("ru-RU")} символов
+                          {importFile.name} · {(importFile.size / 1024).toFixed(1)} КБ
                         </span>
                         <Button
                           type="button"
@@ -386,10 +494,6 @@ export function CreateKnowledgeDocumentDialog({
                           <Trash2 className="mr-1 h-3.5 w-3.5" /> Удалить
                         </Button>
                       </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        Выберите файл для импорта содержимого. Максимальный размер — 2 МБ.
-                      </p>
                     )}
                     {importError && (
                       <p className="flex items-center gap-2 text-xs text-destructive">
@@ -399,11 +503,18 @@ export function CreateKnowledgeDocumentDialog({
                   </div>
                 </div>
 
-                {importContent && (
+                {importHtml && (
                   <div className="space-y-2">
                     <Label>Предпросмотр содержимого</Label>
-                    <div className="max-h-48 overflow-auto rounded-md border bg-muted/40 p-3 text-xs font-mono whitespace-pre-wrap">
-                      {importContent}
+                    <div className="prose prose-sm max-h-64 overflow-auto rounded-md border bg-muted/40 p-3">
+                      <div
+                        dangerouslySetInnerHTML={{
+                          __html: applyTitleToImportedHtml(
+                            importHtml,
+                            title.trim() || importDetectedTitle || "Документ",
+                          ),
+                        }}
+                      />
                     </div>
                   </div>
                 )}
