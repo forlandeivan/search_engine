@@ -558,6 +558,12 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
 
     const uuidExpression = await getUuidGenerationExpression();
 
+    try {
+      await db.execute(sql`CREATE EXTENSION IF NOT EXISTS ltree`);
+    } catch (error) {
+      swallowPgError(error, ["42710", "42501"]);
+    }
+
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "knowledge_bases" (
         "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
@@ -592,6 +598,8 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         "title" text NOT NULL DEFAULT 'Без названия',
         "type" text NOT NULL DEFAULT 'document',
         "content" text,
+        "slug" text NOT NULL DEFAULT '',
+        "path" ltree,
         "position" integer NOT NULL DEFAULT 0,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -626,6 +634,37 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
     `);
 
     await db.execute(sql`
+      ALTER TABLE "knowledge_nodes"
+      ADD COLUMN IF NOT EXISTS "slug" text DEFAULT ''
+    `);
+
+    await db.execute(sql`
+      UPDATE "knowledge_nodes"
+      SET "slug" = "id"
+      WHERE ("slug" IS NULL OR trim("slug") = '')
+        AND "id" IS NOT NULL
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "knowledge_nodes"
+        ALTER COLUMN "slug" SET NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["23502", "42704"]);
+    }
+
+    await db.execute(sql`
+      ALTER TABLE "knowledge_nodes"
+      ALTER COLUMN "slug" SET DEFAULT ''
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "knowledge_nodes"
+      ADD COLUMN IF NOT EXISTS "path" ltree
+    `);
+
+    await db.execute(sql`
       UPDATE "knowledge_nodes"
       SET "source_type" = 'manual'
       WHERE "source_type" IS NULL OR TRIM("source_type") = ''
@@ -649,6 +688,93 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       ALTER TABLE "knowledge_nodes"
       ADD COLUMN IF NOT EXISTS "import_file_name" text
     `);
+
+    await db.execute(sql`
+      WITH RECURSIVE normalized_nodes AS (
+        SELECT
+          kn."id",
+          kn."parent_id",
+          kn."base_id",
+          CASE
+            WHEN coalesce(nullif(kn."slug", ''), '') <> '' THEN kn."slug"
+            ELSE replace(kn."id", '-', '_')
+          END AS raw_segment
+        FROM "knowledge_nodes" AS kn
+      ),
+      processed_nodes AS (
+        SELECT
+          nn."id",
+          nn."parent_id",
+          nn."base_id",
+          CASE
+            WHEN segment_value = '' THEN CONCAT('node_', substring(replace(nn."id", '-', '_') FROM 1 FOR 24))
+            WHEN segment_value ~ '^[a-z]' THEN segment_value
+            ELSE CONCAT('n_', segment_value)
+          END AS segment
+        FROM (
+          SELECT
+            nn."id",
+            nn."parent_id",
+            nn."base_id",
+            regexp_replace(
+              regexp_replace(lower(nn.raw_segment), '[^a-z0-9_]+', '_', 'g'),
+              '^_+|_+$',
+              '',
+              'g'
+            ) AS segment_value
+          FROM normalized_nodes AS nn
+        ) AS cleaned
+      ),
+      computed_paths AS (
+        SELECT
+          pn."id",
+          pn."parent_id",
+          pn."base_id",
+          text2ltree(pn.segment) AS computed_path
+        FROM processed_nodes AS pn
+        WHERE pn."parent_id" IS NULL
+
+        UNION ALL
+
+        SELECT
+          child."id",
+          child."parent_id",
+          child."base_id",
+          parent.computed_path || text2ltree(child.segment) AS computed_path
+        FROM processed_nodes AS child
+        JOIN computed_paths AS parent ON child."parent_id" = parent."id"
+      )
+      UPDATE "knowledge_nodes" AS kn
+      SET "path" = cp.computed_path
+      FROM computed_paths AS cp
+      WHERE kn."id" = cp."id"
+        AND (kn."path" IS NULL OR nlevel(kn."path") = 0)
+    `);
+
+    await db.execute(sql`
+      UPDATE "knowledge_nodes"
+      SET "path" = text2ltree(
+          CASE
+            WHEN coalesce(nullif("slug", ''), '') <> '' THEN
+              CASE
+                WHEN regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g') ~ '^[a-z]'
+                  THEN regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g')
+                ELSE 'n_' || regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g')
+              END
+            ELSE 'node_' || substring(replace("id", '-', '_') FROM 1 FOR 24)
+          END
+        )
+      WHERE "path" IS NULL
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "knowledge_nodes"
+        ALTER COLUMN "path" SET NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42704", "23502"]);
+    }
 
     await ensureConstraint(
       "knowledge_nodes",
@@ -690,6 +816,16 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       `,
     );
 
+    await ensureConstraint(
+      "knowledge_nodes",
+      "knowledge_nodes_slug_not_empty",
+      sql`
+        ALTER TABLE "knowledge_nodes"
+        ADD CONSTRAINT "knowledge_nodes_slug_not_empty"
+        CHECK (trim("slug") <> '')
+      `,
+    );
+
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_base_parent_idx ON knowledge_nodes("base_id", "parent_id")`,
     );
@@ -701,6 +837,140 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
     );
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_workspace_parent_idx ON knowledge_nodes("workspace_id", "parent_id")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_base_parent_position_idx ON knowledge_nodes("base_id", "parent_id", "position")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_path_gin ON knowledge_nodes USING GIN("path")`,
+    );
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_documents" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "base_id" varchar NOT NULL,
+        "workspace_id" varchar NOT NULL,
+        "node_id" varchar NOT NULL,
+        "status" text NOT NULL DEFAULT 'draft',
+        "current_version_id" varchar,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_documents",
+      "knowledge_documents_base_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_documents"
+        ADD CONSTRAINT "knowledge_documents_base_id_fkey"
+        FOREIGN KEY ("base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_documents",
+      "knowledge_documents_workspace_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_documents"
+        ADD CONSTRAINT "knowledge_documents_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_documents",
+      "knowledge_documents_node_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_documents"
+        ADD CONSTRAINT "knowledge_documents_node_id_fkey"
+        FOREIGN KEY ("node_id") REFERENCES "knowledge_nodes"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_documents",
+      "knowledge_documents_status_check",
+      sql`
+        ALTER TABLE "knowledge_documents"
+        ADD CONSTRAINT "knowledge_documents_status_check"
+        CHECK ("status" IN ('draft', 'published', 'archived'))
+      `,
+    );
+
+    await db.execute(
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS knowledge_documents_node_id_key ON knowledge_documents("node_id")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_documents_workspace_idx ON knowledge_documents("workspace_id")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_documents_base_idx ON knowledge_documents("base_id")`,
+    );
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_document_versions" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "document_id" varchar NOT NULL,
+        "workspace_id" varchar NOT NULL,
+        "version_no" integer NOT NULL,
+        "author_id" varchar,
+        "content_json" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "content_text" text NOT NULL DEFAULT '',
+        "hash" text,
+        "word_count" integer NOT NULL DEFAULT 0,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_document_versions",
+      "knowledge_document_versions_document_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_versions"
+        ADD CONSTRAINT "knowledge_document_versions_document_id_fkey"
+        FOREIGN KEY ("document_id") REFERENCES "knowledge_documents"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_versions",
+      "knowledge_document_versions_workspace_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_versions"
+        ADD CONSTRAINT "knowledge_document_versions_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_versions",
+      "knowledge_document_versions_author_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_versions"
+        ADD CONSTRAINT "knowledge_document_versions_author_id_fkey"
+        FOREIGN KEY ("author_id") REFERENCES "users"("id") ON DELETE SET NULL
+      `,
+    );
+
+    await db.execute(
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS knowledge_document_versions_document_version_idx ON knowledge_document_versions("document_id", "version_no")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_versions_document_created_idx ON knowledge_document_versions("document_id", "created_at" DESC)`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_versions_workspace_idx ON knowledge_document_versions("workspace_id")`,
+    );
+
+    await ensureConstraint(
+      "knowledge_documents",
+      "knowledge_documents_current_version_fkey",
+      sql`
+        ALTER TABLE "knowledge_documents"
+        ADD CONSTRAINT "knowledge_documents_current_version_fkey"
+        FOREIGN KEY ("current_version_id") REFERENCES "knowledge_document_versions"("id") ON DELETE SET NULL
+      `,
     );
 
     knowledgeBaseTablesEnsured = true;
