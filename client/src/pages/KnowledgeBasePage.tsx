@@ -22,6 +22,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
+import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import {
   Card,
   CardContent,
@@ -34,8 +35,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -48,6 +52,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { escapeHtml, getSanitizedContent } from "@/lib/document-import";
 import type {
   KnowledgeBaseSummary,
   KnowledgeBaseTreeNode,
@@ -55,14 +60,19 @@ import type {
   KnowledgeBaseChildNode,
   DeleteKnowledgeNodeResponse,
   CreateKnowledgeDocumentResponse,
+  KnowledgeBaseDocumentDetail,
 } from "@shared/knowledge-base";
 import {
   ChevronRight,
+  FileDown,
   FileText,
+  FileType,
   Folder,
   Loader2,
   MoreVertical,
+  PencilLine,
   Plus,
+  Trash2,
 } from "lucide-react";
 
 const ROOT_PARENT_VALUE = "__root__";
@@ -171,6 +181,110 @@ const buildDescendantMap = (
   return accumulator;
 };
 
+type DocumentContentBlock =
+  | { type: "heading"; level: 1 | 2 | 3; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; ordered: boolean; items: string[] };
+
+const DOCUMENT_STATUS_LABELS: Record<string, string> = {
+  draft: "Черновик",
+  published: "Опубликован",
+  archived: "Архивирован",
+};
+
+const DOCUMENT_SOURCE_LABELS: Record<string, string> = {
+  manual: "Создан вручную",
+  import: "Импортированный документ",
+};
+
+const normalizeBlockText = (value: string): string =>
+  value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+
+const extractDocumentBlocks = (html: string): DocumentContentBlock[] => {
+  if (!html || !html.trim()) {
+    return [];
+  }
+
+  if (typeof window === "undefined") {
+    const text = normalizeBlockText(html.replace(/<[^>]+>/g, " "));
+    return text ? [{ type: "paragraph", text }] : [];
+  }
+
+  const container = window.document.createElement("div");
+  container.innerHTML = html;
+  const blocks: DocumentContentBlock[] = [];
+
+  const processElement = (element: Element) => {
+    const tag = element.tagName.toLowerCase();
+
+    if (/^h[1-6]$/.test(tag)) {
+      const text = normalizeBlockText(element.textContent ?? "");
+      if (text) {
+        const level = Number.parseInt(tag.slice(1), 10);
+        const bounded = Math.min(Math.max(level, 1), 3) as 1 | 2 | 3;
+        blocks.push({ type: "heading", level: bounded, text });
+      }
+      return;
+    }
+
+    if (tag === "p" || tag === "pre" || tag === "blockquote") {
+      const text = normalizeBlockText(element.textContent ?? "");
+      if (text) {
+        blocks.push({ type: "paragraph", text });
+      }
+      return;
+    }
+
+    if (tag === "ul" || tag === "ol") {
+      const items = Array.from(element.querySelectorAll(":scope > li"))
+        .map((item) => normalizeBlockText(item.textContent ?? ""))
+        .filter(Boolean);
+      if (items.length > 0) {
+        blocks.push({ type: "list", ordered: tag === "ol", items });
+      }
+      return;
+    }
+
+    if (tag === "div" || tag === "section" || tag === "article") {
+      const children = Array.from(element.children);
+      if (children.length === 0) {
+        const text = normalizeBlockText(element.textContent ?? "");
+        if (text) {
+          blocks.push({ type: "paragraph", text });
+        }
+      } else {
+        children.forEach(processElement);
+      }
+      return;
+    }
+
+    const text = normalizeBlockText(element.textContent ?? "");
+    if (text) {
+      blocks.push({ type: "paragraph", text });
+    }
+  };
+
+  Array.from(container.childNodes).forEach((node) => {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      processElement(node as Element);
+    } else if (node.nodeType === Node.TEXT_NODE) {
+      const text = normalizeBlockText(node.textContent ?? "");
+      if (text) {
+        blocks.push({ type: "paragraph", text });
+      }
+    }
+  });
+
+  return blocks;
+};
+
+const buildDocumentFileName = (title: string, extension: string): string => {
+  const normalized = title.replace(/[<>:"/\\|?*]+/g, "").trim();
+  const collapsed = normalized.replace(/\s+/g, "_").slice(0, 80);
+  const safeBase = collapsed || "document";
+  return `${safeBase}.${extension}`;
+};
+
 type TreeMenuProps = {
   baseId: string;
   nodes: KnowledgeBaseTreeNode[];
@@ -223,11 +337,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const { toast } = useToast();
   const knowledgeBaseId = params?.knowledgeBaseId ?? null;
   const selectedNodeId = params?.nodeId ?? null;
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    type: "folder" | "document";
+    id: string;
+    title: string;
+  } | null>(null);
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
   const [isCreateDocumentDialogOpen, setIsCreateDocumentDialogOpen] = useState(false);
   const [documentDialogParentId, setDocumentDialogParentId] = useState<string | null>(null);
   const [documentDialogParentTitle, setDocumentDialogParentTitle] = useState<string>("В корне базы");
+  const [editingDocumentId, setEditingDocumentId] = useState<string | null>(null);
+  const [documentDraftTitle, setDocumentDraftTitle] = useState<string>("");
+  const [documentDraftContent, setDocumentDraftContent] = useState<string>("");
+  const [exportingFormat, setExportingFormat] = useState<"doc" | "pdf" | null>(null);
+  const isDeleteDialogOpen = Boolean(deleteTarget);
 
   const basesQuery = useQuery({
     queryKey: ["knowledge-bases"],
@@ -284,6 +407,35 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     },
   });
 
+  const documentDetail =
+    nodeDetailQuery.data?.type === "document" ? nodeDetailQuery.data : null;
+
+  useEffect(() => {
+    if (!documentDetail) {
+      setEditingDocumentId(null);
+      setDocumentDraftTitle("");
+      setDocumentDraftContent("");
+      return;
+    }
+
+    if (editingDocumentId && editingDocumentId !== documentDetail.id) {
+      setEditingDocumentId(null);
+    }
+
+    if (editingDocumentId !== documentDetail.id) {
+      setDocumentDraftTitle(documentDetail.title);
+      setDocumentDraftContent(getSanitizedContent(documentDetail.content ?? ""));
+    }
+  }, [documentDetail?.id, documentDetail?.title, documentDetail?.content, editingDocumentId]);
+
+  const sanitizedDocumentContent = useMemo(
+    () => (documentDetail ? getSanitizedContent(documentDetail.content ?? "") : ""),
+    [documentDetail?.content],
+  );
+
+  const exportingDoc = exportingFormat === "doc";
+  const exportingPdf = exportingFormat === "pdf";
+
   const moveNodeMutation = useMutation<unknown, Error, MoveNodeVariables>({
     mutationFn: async ({ baseId, nodeId, parentId }) => {
       const res = await apiRequest("PATCH", `/api/knowledge/bases/${baseId}/nodes/${nodeId}` , {
@@ -319,8 +471,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return (await res.json()) as DeleteKnowledgeNodeResponse;
     },
     onSuccess: (_, variables) => {
-      toast({ title: "Подраздел удалён" });
-      setIsDeleteDialogOpen(false);
+      const label = deleteTarget?.type === "document" ? "Документ" : "Подраздел";
+      toast({ title: `${label ?? "Элемент"} удалён` });
+      setDeleteTarget(null);
       queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
       queryClient.invalidateQueries({
         predicate: (query) => {
@@ -331,9 +484,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       setLocation(`/knowledge/${variables.baseId}`);
     },
     onError: (error) => {
-      setIsDeleteDialogOpen(false);
+      setDeleteTarget(null);
       toast({
-        title: "Не удалось удалить подраздел",
+        title:
+          deleteTarget?.type === "document"
+            ? "Не удалось удалить документ"
+            : "Не удалось удалить подраздел",
         description: error.message,
         variant: "destructive",
       });
@@ -376,6 +532,38 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     },
   });
 
+  const updateDocumentMutation = useMutation<
+    KnowledgeBaseDocumentDetail,
+    Error,
+    { baseId: string; nodeId: string; title: string; content: string }
+  >({
+    mutationFn: async ({ baseId, nodeId, title, content }) => {
+      const res = await apiRequest("PATCH", `/api/knowledge/bases/${baseId}/documents/${nodeId}`, {
+        title,
+        content,
+      });
+      return (await res.json()) as KnowledgeBaseDocumentDetail;
+    },
+    onSuccess: (document, variables) => {
+      toast({ title: "Документ сохранён", description: "Изменения успешно сохранены." });
+      setEditingDocumentId(null);
+      setDocumentDraftTitle(document.title);
+      setDocumentDraftContent(getSanitizedContent(document.content ?? ""));
+      queryClient.setQueryData(
+        ["knowledge-node", variables.baseId, variables.nodeId],
+        document,
+      );
+      queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось сохранить документ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleOpenCreateDocument = (parentId: string | null, parentTitle: string) => {
     if (!selectedBase) {
       toast({
@@ -388,6 +576,219 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     setDocumentDialogParentId(parentId);
     setDocumentDialogParentTitle(parentTitle);
     setIsCreateDocumentDialogOpen(true);
+  };
+
+  const handleStartEditingDocument = (detail: KnowledgeBaseDocumentDetail) => {
+    setDocumentDraftTitle(detail.title);
+    setDocumentDraftContent(getSanitizedContent(detail.content ?? ""));
+    setEditingDocumentId(detail.id);
+  };
+
+  const handleCancelEditingDocument = (detail: KnowledgeBaseDocumentDetail) => {
+    setEditingDocumentId(null);
+    setDocumentDraftTitle(detail.title);
+    setDocumentDraftContent(getSanitizedContent(detail.content ?? ""));
+  };
+
+  const handleSaveDocument = async (detail: KnowledgeBaseDocumentDetail) => {
+    if (!selectedBase) {
+      toast({
+        title: "База знаний не выбрана",
+        description: "Выберите базу, чтобы сохранить документ.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const trimmedTitle = documentDraftTitle.trim();
+    if (!trimmedTitle) {
+      toast({
+        title: "Укажите название документа",
+        description: "Название документа не может быть пустым.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const sanitizedContent = getSanitizedContent(documentDraftContent);
+    await updateDocumentMutation.mutateAsync({
+      baseId: selectedBase.id,
+      nodeId: detail.id,
+      title: trimmedTitle,
+      content: sanitizedContent,
+    });
+  };
+
+  const handleDownloadDoc = async (detail: KnowledgeBaseDocumentDetail) => {
+    try {
+      setExportingFormat("doc");
+      const sanitizedHtml = getSanitizedContent(detail.content ?? "");
+      const title = detail.title?.trim() ? detail.title.trim() : "Документ";
+      const template = `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title><style>body{font-family:Arial,Helvetica,sans-serif;line-height:1.6;color:#111827;margin:1.5rem;}h1,h2,h3{color:#0f172a;}ul,ol{margin-left:1.5rem;}blockquote{border-left:4px solid #e2e8f0;padding-left:1rem;color:#475569;}</style></head><body>${sanitizedHtml || "<p></p>"}</body></html>`;
+      const blob = new Blob([template], {
+        type: "application/msword;charset=utf-8",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      link.href = url;
+      link.download = buildDocumentFileName(title, "doc");
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast({ title: "Документ выгружен", description: "Файл .doc успешно скачан." });
+    } catch (error) {
+      toast({
+        title: "Не удалось сохранить .doc",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Попробуйте выполнить выгрузку чуть позже.",
+        variant: "destructive",
+      });
+    } finally {
+      setExportingFormat(null);
+    }
+  };
+
+  const handleDownloadPdf = async (detail: KnowledgeBaseDocumentDetail) => {
+    try {
+      setExportingFormat("pdf");
+      const sanitizedHtml = getSanitizedContent(detail.content ?? "");
+      const blocks = extractDocumentBlocks(sanitizedHtml);
+      const title = detail.title?.trim() ? detail.title.trim() : "Документ";
+      const { jsPDF } = await import("jspdf");
+      const { notoSansRegularBase64, notoSansBoldBase64 } = await import("../pdfFonts/notoSans");
+
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+      doc.addFileToVFS("NotoSans-Regular.ttf", notoSansRegularBase64);
+      doc.addFont("NotoSans-Regular.ttf", "NotoSans", "normal");
+      doc.addFileToVFS("NotoSans-Bold.ttf", notoSansBoldBase64);
+      doc.addFont("NotoSans-Bold.ttf", "NotoSans", "bold");
+      doc.setFont("NotoSans", "normal");
+      doc.setFontSize(12);
+
+      const margin = 48;
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      let cursor = margin;
+
+      const ensureSpace = (lineHeight: number) => {
+        if (cursor + lineHeight > pageHeight - margin) {
+          doc.addPage();
+          doc.setFont("NotoSans", "normal");
+          cursor = margin;
+        }
+      };
+
+      const addParagraph = (
+        text: string,
+        options?: { fontSize?: number; bold?: boolean; spacingAfter?: number },
+      ) => {
+        const fontSize = options?.fontSize ?? 12;
+        const bold = options?.bold ?? false;
+        const spacingAfter = options?.spacingAfter ?? fontSize * 0.6;
+
+        if (!text) {
+          cursor += spacingAfter;
+          return;
+        }
+
+        doc.setFont("NotoSans", bold ? "bold" : "normal");
+        doc.setFontSize(fontSize);
+        const lines = doc.splitTextToSize(text, pageWidth - margin * 2);
+        const lineHeight = fontSize * 1.4;
+
+        lines.forEach((line: string) => {
+          ensureSpace(lineHeight);
+          doc.text(line, margin, cursor);
+          cursor += lineHeight;
+        });
+
+        cursor += spacingAfter;
+      };
+
+      const addList = (items: string[], ordered: boolean) => {
+        if (!items.length) {
+          return;
+        }
+
+        const fontSize = 12;
+        const lineHeight = fontSize * 1.4;
+        doc.setFont("NotoSans", "normal");
+        doc.setFontSize(fontSize);
+
+        items.forEach((item, index) => {
+          const bullet = ordered ? `${index + 1}.` : "•";
+          const lines = doc.splitTextToSize(item, pageWidth - margin * 2 - 18);
+
+          lines.forEach((line: string, lineIndex: number) => {
+            ensureSpace(lineHeight);
+            const prefix = lineIndex === 0 ? `${bullet} ` : "   ";
+            doc.text(`${prefix}${line}`, margin, cursor);
+            cursor += lineHeight;
+          });
+
+          cursor += fontSize * 0.4;
+        });
+
+        cursor += fontSize * 0.6;
+      };
+
+      addParagraph(title, { fontSize: 20, bold: true, spacingAfter: 18 });
+
+      if (detail.updatedAt) {
+        const updatedAt = new Date(detail.updatedAt);
+        if (!Number.isNaN(updatedAt.getTime())) {
+          addParagraph(`Обновлено: ${updatedAt.toLocaleString("ru-RU")}`, {
+            fontSize: 10,
+            spacingAfter: 14,
+          });
+        }
+      }
+
+      if (blocks.length === 0) {
+        addParagraph("Документ пока пуст.");
+      } else {
+        blocks.forEach((block) => {
+          switch (block.type) {
+            case "heading": {
+              const size = block.level === 1 ? 18 : block.level === 2 ? 16 : 14;
+              addParagraph(block.text, {
+                fontSize: size,
+                bold: true,
+                spacingAfter: size * 0.4,
+              });
+              break;
+            }
+            case "paragraph": {
+              addParagraph(block.text, { fontSize: 12 });
+              break;
+            }
+            case "list": {
+              addList(block.items, block.ordered);
+              break;
+            }
+            default:
+              break;
+          }
+        });
+      }
+
+      doc.save(buildDocumentFileName(title, "pdf"));
+      toast({ title: "PDF выгружен", description: "Файл успешно сохранён." });
+    } catch (error) {
+      toast({
+        title: "Не удалось сохранить PDF",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Попробуйте выполнить выгрузку чуть позже.",
+        variant: "destructive",
+      });
+    } finally {
+      setExportingFormat(null);
+    }
   };
 
   const renderBreadcrumbs = (detail: KnowledgeBaseNodeDetail) => {
@@ -468,7 +869,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => setIsDeleteDialogOpen(true)}>
+                <DropdownMenuItem
+                  onSelect={() =>
+                    setDeleteTarget({ type: "folder", id: detail.id, title: detail.title })
+                  }
+                >
                   Удалить подраздел
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -547,35 +952,147 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     );
   };
 
-  const renderDocument = (detail: Extract<KnowledgeBaseNodeDetail, { type: "document" }>) => (
-    <Card>
-      <CardHeader>
-        <CardTitle>{detail.title}</CardTitle>
-        <CardDescription>Обновлено {formatDateTime(detail.updatedAt)}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {renderBreadcrumbs(detail)}
-        <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <Badge variant="outline">
-            {detail.sourceType === "import" ? "Импортированный документ" : "Создан вручную"}
-          </Badge>
-          {detail.sourceType === "import" && detail.importFileName && (
+  const renderDocument = (detail: Extract<KnowledgeBaseNodeDetail, { type: "document" }>) => {
+    const isCurrentEditing = editingDocumentId === detail.id;
+    const sanitizedContent =
+      detail.id === documentDetail?.id
+        ? sanitizedDocumentContent
+        : getSanitizedContent(detail.content ?? "");
+    const statusLabel = DOCUMENT_STATUS_LABELS[detail.status] ?? detail.status;
+    const sourceLabel = DOCUMENT_SOURCE_LABELS[detail.sourceType] ?? "Документ";
+    const versionLabel = detail.versionNumber ? `v${detail.versionNumber}` : null;
+    const isSaving = updateDocumentMutation.isPending;
+
+    return (
+      <Card>
+        <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex-1 space-y-2">
+            {isCurrentEditing ? (
+              <div className="space-y-2">
+                <Label htmlFor="knowledge-document-edit-title">Название документа</Label>
+                <Input
+                  id="knowledge-document-edit-title"
+                  value={documentDraftTitle}
+                  onChange={(event) => setDocumentDraftTitle(event.target.value)}
+                  placeholder="Введите название документа"
+                  autoFocus
+                />
+                <p className="text-xs text-muted-foreground">
+                  Последнее обновление: {formatDateTime(detail.updatedAt)}
+                </p>
+              </div>
+            ) : (
+              <>
+                <CardTitle>{detail.title}</CardTitle>
+                <CardDescription>Обновлено {formatDateTime(detail.updatedAt)}</CardDescription>
+              </>
+            )}
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {isCurrentEditing ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleCancelEditingDocument(detail)}
+                  disabled={isSaving}
+                >
+                  Отмена
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => handleSaveDocument(detail)}
+                  disabled={isSaving || !documentDraftTitle.trim()}
+                >
+                  {isSaving ? "Сохраняем..." : "Сохранить"}
+                </Button>
+              </>
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" aria-label="Действия с документом">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => handleStartEditingDocument(detail)}>
+                    <PencilLine className="mr-2 h-4 w-4" /> Редактировать
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={exportingDoc || exportingPdf}
+                    onSelect={() => {
+                      void handleDownloadDoc(detail);
+                    }}
+                  >
+                    <FileType className="mr-2 h-4 w-4" /> Скачать .doc
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={exportingDoc || exportingPdf}
+                    onSelect={() => {
+                      void handleDownloadPdf(detail);
+                    }}
+                  >
+                    <FileDown className="mr-2 h-4 w-4" /> Скачать PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => {
+                      setDeleteTarget({ type: "document", id: detail.id, title: detail.title });
+                    }}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" /> Удалить
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {renderBreadcrumbs(detail)}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">{sourceLabel}</Badge>
+            <Badge variant="outline">{statusLabel}</Badge>
+            {versionLabel && <Badge variant="secondary">Версия {versionLabel}</Badge>}
+            {detail.sourceType === "import" && detail.importFileName && (
+              <span>
+                Файл: <code className="text-xs text-foreground">{detail.importFileName}</code>
+              </span>
+            )}
             <span>
-              Файл: <code className="text-xs text-foreground">{detail.importFileName}</code>
+              ID документа: <code className="text-xs text-foreground">{detail.documentId}</code>
             </span>
+            {detail.versionId && (
+              <span>
+                Версия ID: <code className="text-xs text-foreground">{detail.versionId}</code>
+              </span>
+            )}
+          </div>
+          {isCurrentEditing ? (
+            <div className="space-y-3">
+              <Label className="text-sm font-medium" htmlFor="knowledge-document-editor">
+                Содержимое
+              </Label>
+              <div id="knowledge-document-editor">
+                <DocumentEditor
+                  value={documentDraftContent}
+                  onChange={(value) => setDocumentDraftContent(getSanitizedContent(value))}
+                />
+              </div>
+            </div>
+          ) : sanitizedContent ? (
+            <div
+              className="prose prose-sm max-w-none dark:prose-invert"
+              dangerouslySetInnerHTML={{ __html: sanitizedContent }}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">Документ пока пуст.</p>
           )}
-        </div>
-        {detail.content ? (
-          <div
-            className="prose prose-sm max-w-none"
-            dangerouslySetInnerHTML={{ __html: detail.content }}
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground">Документ пока пуст.</p>
-        )}
-      </CardContent>
-    </Card>
-  );
+        </CardContent>
+      </Card>
+    );
+  };
 
   const renderOverview = (detail: Extract<KnowledgeBaseNodeDetail, { type: "base" }>) => (
     <Card>
@@ -735,23 +1252,34 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           await createDocumentMutation.mutateAsync({ ...values, baseId: selectedBase.id });
         }}
       />
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить подраздел?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {deleteTarget?.type === "document" ? "Удалить документ?" : "Удалить подраздел?"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Подраздел и все вложенные документы будут удалены. Это действие нельзя отменить.
+              {deleteTarget?.type === "document"
+                ? `Документ «${deleteTarget?.title}» и связанные данные будут удалены. Это действие нельзя отменить.`
+                : `Подраздел «${deleteTarget?.title ?? ""}» и все вложенные документы будут удалены. Это действие нельзя отменить.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleteNodeMutation.isPending}>Отмена</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                if (!selectedBase || nodeKey === "root") {
-                  setIsDeleteDialogOpen(false);
+                if (!selectedBase || !deleteTarget) {
+                  setDeleteTarget(null);
                   return;
                 }
-                deleteNodeMutation.mutate({ baseId: selectedBase.id, nodeId: nodeKey });
+                deleteNodeMutation.mutate({ baseId: selectedBase.id, nodeId: deleteTarget.id });
               }}
               disabled={deleteNodeMutation.isPending}
             >
