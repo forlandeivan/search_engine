@@ -322,23 +322,30 @@ export async function configureAuth(app: Express): Promise<void> {
   const sessionSecret = process.env.SESSION_SECRET || "dev-session-secret";
   const cookieSecure = app.get("env") === "production";
 
-  app.use(
-    session({
-      store: new PgSession({
-        pool,
-        createTableIfMissing: true,
-      }),
-      secret: sessionSecret,
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: cookieSecure,
-        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-      },
-    })
-  );
+  const sessionOptions: session.SessionOptions = {
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: cookieSecure,
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+    },
+  };
+
+  if (pool) {
+    sessionOptions.store = new PgSession({
+      pool,
+      createTableIfMissing: true,
+    });
+  } else {
+    console.warn(
+      "PostgreSQL pool недоступен: используется встроенное хранилище сессий. Настройте подключение к базе данных для сохранения сессий.",
+    );
+  }
+
+  app.use(session(sessionOptions));
 
   app.use(passport.initialize());
   app.use(passport.session());

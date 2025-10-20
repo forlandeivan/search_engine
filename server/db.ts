@@ -1,69 +1,126 @@
-import { Pool as NeonPool, neonConfig } from '@neondatabase/serverless';
-import { Pool as PgPool } from 'pg';
-import { drizzle as neonDrizzle } from 'drizzle-orm/neon-serverless';
-import { drizzle as pgDrizzle } from 'drizzle-orm/node-postgres';
+import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
+import { Pool as PgPool } from "pg";
+import { drizzle as neonDrizzle } from "drizzle-orm/neon-serverless";
+import { drizzle as pgDrizzle } from "drizzle-orm/node-postgres";
 import ws from "ws";
 import * as schema from "@shared/schema";
 
 neonConfig.webSocketConstructor = ws;
 
-let pool: any;
-let db: any;
+let pool: any = null;
+let db: any = null;
+let lastDatabaseError: string | null = null;
 
-// Try to connect to custom PostgreSQL server if all credentials are provided
-if (process.env.PG_HOST && process.env.PG_USER && process.env.PG_PASSWORD && process.env.PG_DATABASE) {
+function formatConnectionError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return typeof error === "string" ? error : JSON.stringify(error);
+}
+
+function createUnavailableDbProxy(message: string) {
+  const handler: ProxyHandler<any> = {
+    get() {
+      return new Proxy(() => {}, handler);
+    },
+    apply() {
+      throw new Error(message);
+    },
+  };
+
+  return new Proxy(() => {}, handler);
+}
+
+function tryConnectCustomPostgres(): void {
+  if (!process.env.PG_HOST || !process.env.PG_USER || !process.env.PG_PASSWORD || !process.env.PG_DATABASE) {
+    return;
+  }
+
   try {
     const host = process.env.PG_HOST;
-    const port = process.env.PG_PORT || '5432';
+    const port = process.env.PG_PORT || "5432";
     const user = process.env.PG_USER;
     const password = process.env.PG_PASSWORD;
     const database = process.env.PG_DATABASE;
-    
+
     const databaseUrl = `postgresql://${user}:${password}@${host}:${port}/${database}`;
     console.log(`[db] Attempting custom PostgreSQL connection: postgresql://${user}:***@${host}:${port}/${database}`);
-    
-    const customPool = new PgPool({ 
-      connectionString: databaseUrl, 
-      connectionTimeoutMillis: 5000,
-      idleTimeoutMillis: 10000,
-      max: 10
+
+    const customPool = new PgPool({
+      connectionString: databaseUrl,
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 10_000,
+      max: 10,
     });
-    
-    // Test connection with a simple query
-    const testClient = await customPool.connect();
-    await testClient.query('SELECT 1');
-    testClient.release();
-    
+
     pool = customPool;
     db = pgDrizzle({ client: customPool, schema });
-    
-    console.log(`[db] ✅ Successfully connected to custom PostgreSQL server`);
-    
+
+    console.log(`[db] ✅ Successfully configured custom PostgreSQL connection`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[db] ❌ Failed to connect to custom PostgreSQL server: ${message}`);
-    console.log(`[db] 🔄 Falling back to Replit Neon PostgreSQL`);
-    
-    // Fallback to Neon
-    if (!process.env.DATABASE_URL) {
-      throw new Error("DATABASE_URL must be set for Neon fallback");
-    }
-    
-    pool = new NeonPool({ connectionString: process.env.DATABASE_URL });
-    db = neonDrizzle({ client: pool, schema });
-    console.log(`[db] Using Replit Neon PostgreSQL as fallback`);
+    const message = formatConnectionError(error);
+    console.warn(`[db] ❌ Failed to configure custom PostgreSQL connection: ${message}`);
+    lastDatabaseError = message;
+    pool = null;
+    db = null;
   }
-} else {
-  // Use Neon if custom credentials are not provided
-  if (!process.env.DATABASE_URL) {
-    throw new Error(
-      "DATABASE_URL must be set or provide PG_HOST, PG_USER, PG_PASSWORD, PG_DATABASE environment variables",
-    );
-  }
-  
-  pool = new NeonPool({ connectionString: process.env.DATABASE_URL });
-  db = neonDrizzle({ client: pool, schema });
-  console.log(`[db] Using Replit Neon PostgreSQL (no custom credentials provided)`);
 }
 
-export { pool, db };
+function resolveDatabaseUrl(): string | null {
+  const candidates = [
+    process.env.DATABASE_URL,
+    process.env.PROD_DATABASE_URL,
+    process.env.PRODUCTION_DATABASE_URL,
+    process.env.NEON_DATABASE_URL,
+  ]
+    .map(candidate => candidate?.trim())
+    .filter((candidate): candidate is string => Boolean(candidate && candidate.length > 0));
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates[0] ?? null;
+}
+
+function tryConnectNeon(): void {
+  const databaseUrl = resolveDatabaseUrl();
+  if (!databaseUrl) {
+    return;
+  }
+
+  try {
+    pool = new NeonPool({ connectionString: databaseUrl });
+    db = neonDrizzle({ client: pool, schema });
+    console.log(`[db] Using Neon/PostgreSQL connection string`);
+  } catch (error) {
+    const message = formatConnectionError(error);
+    console.warn(`[db] ❌ Failed to configure Neon/PostgreSQL connection: ${message}`);
+    lastDatabaseError = message;
+    pool = null;
+    db = null;
+  }
+}
+
+tryConnectCustomPostgres();
+
+if (!pool || !db) {
+  tryConnectNeon();
+}
+
+if (!pool || !db) {
+  const message =
+    lastDatabaseError ??
+    "DATABASE_URL must be set or provide PG_HOST, PG_USER, PG_PASSWORD, PG_DATABASE environment variables";
+
+  console.error(`[db] ⚠️ База данных недоступна: ${message}`);
+  db = createUnavailableDbProxy(
+    `База данных недоступна: ${message}. Проверьте переменные окружения или подключение к PostgreSQL`,
+  );
+  pool = null;
+}
+
+const isDatabaseConfigured = Boolean(pool);
+
+export { pool, db, isDatabaseConfigured };
