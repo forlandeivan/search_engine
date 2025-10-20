@@ -4345,6 +4345,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .max(2_000_000, "Документ слишком большой. Ограничение — 2 МБ текста")
       .optional()
       .default(""),
+    sourceType: z.enum(["manual", "import"]).optional(),
+    importFileName: z
+      .string()
+      .trim()
+      .max(500, "Имя файла не должно превышать 500 символов")
+      .optional()
+      .nullable(),
   });
 
   app.post("/api/knowledge/bases", requireAuth, async (req, res) => {
@@ -4420,6 +4427,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: payload.title,
         content: payload.content,
         parentId,
+        sourceType: payload.sourceType,
+        importFileName: payload.importFileName ?? null,
       });
       return res.status(201).json(document);
     } catch (error) {

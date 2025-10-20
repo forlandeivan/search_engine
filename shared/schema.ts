@@ -158,6 +158,9 @@ export const authProviders = pgTable("auth_providers", {
 export const knowledgeBaseNodeTypes = ["folder", "document"] as const;
 export type KnowledgeBaseNodeType = (typeof knowledgeBaseNodeTypes)[number];
 
+export const knowledgeNodeSourceTypes = ["manual", "import"] as const;
+export type KnowledgeNodeSourceType = (typeof knowledgeNodeSourceTypes)[number];
+
 export const knowledgeBases = pgTable("knowledge_bases", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   workspaceId: varchar("workspace_id")
@@ -183,6 +186,11 @@ export const knowledgeNodes = pgTable(
     title: text("title").notNull().default("Без названия"),
     type: text("type").$type<KnowledgeBaseNodeType>().notNull().default("document"),
     content: text("content"),
+    sourceType: text("source_type")
+      .$type<KnowledgeNodeSourceType>()
+      .notNull()
+      .default("manual"),
+    importFileName: text("import_file_name"),
     position: integer("position").notNull().default(0),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),

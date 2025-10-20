@@ -1,3 +1,5 @@
+import type { KnowledgeNodeSourceType } from "./schema";
+
 export type KnowledgeBaseNodeType = "folder" | "document";
 
 export type KnowledgeBaseTreeNode = {
@@ -32,6 +34,8 @@ export type CreateKnowledgeDocumentPayload = {
   title: string;
   content: string;
   parentId?: string | null;
+  sourceType?: KnowledgeNodeSourceType;
+  importFileName?: string | null;
 };
 
 type KnowledgeNodeCreationBase = {
@@ -48,6 +52,8 @@ export type CreateKnowledgeFolderResponse = KnowledgeNodeCreationBase & {
 export type CreateKnowledgeDocumentResponse = KnowledgeNodeCreationBase & {
   type: "document";
   content: string;
+  sourceType: KnowledgeNodeSourceType;
+  importFileName: string | null;
 };
 
 export type KnowledgeBaseBreadcrumb = {
@@ -63,6 +69,8 @@ export type KnowledgeBaseChildNode = {
   parentId: string | null;
   childCount: number;
   updatedAt: string;
+  sourceType?: KnowledgeNodeSourceType;
+  importFileName?: string | null;
 };
 
 export type KnowledgeBaseOverview = {
@@ -91,6 +99,8 @@ export type KnowledgeBaseDocumentDetail = {
   content: string;
   updatedAt: string;
   breadcrumbs: KnowledgeBaseBreadcrumb[];
+  sourceType: KnowledgeNodeSourceType;
+  importFileName: string | null;
 };
 
 export type KnowledgeBaseNodeDetail =
