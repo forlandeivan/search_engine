@@ -565,9 +565,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             </span>
           )}
         </div>
-        <div className="prose prose-sm max-w-none whitespace-pre-wrap">
-          {detail.content || "Документ пока пуст."}
-        </div>
+        {detail.content ? (
+          <div
+            className="prose prose-sm max-w-none"
+            dangerouslySetInnerHTML={{ __html: detail.content }}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">Документ пока пуст.</p>
+        )}
       </CardContent>
     </Card>
   );
