@@ -4342,7 +4342,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .max(500, "Название не должно превышать 500 символов"),
     content: z
       .string()
-      .max(2_000_000, "Документ слишком большой. Ограничение — 2 МБ текста")
+      .max(20_000_000, "Документ слишком большой. Ограничение — 20 МБ текста")
       .optional()
       .default(""),
     sourceType: z.enum(["manual", "import"]).optional(),
