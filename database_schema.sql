@@ -6,6 +6,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS ltree;
 
 -- Create users table for platform authentication
 CREATE TABLE "users" (
@@ -199,6 +200,8 @@ CREATE TABLE "knowledge_nodes" (
     "title" text NOT NULL DEFAULT 'Без названия',
     "type" knowledge_node_type NOT NULL DEFAULT 'document',
     "content" text,
+    "slug" text NOT NULL DEFAULT '',
+    "path" ltree NOT NULL,
     "source_type" text NOT NULL DEFAULT 'manual',
     "import_file_name" text,
     "position" integer NOT NULL DEFAULT 0,
@@ -206,9 +209,43 @@ CREATE TABLE "knowledge_nodes" (
     "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE "knowledge_documents" (
+    "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    "base_id" varchar NOT NULL REFERENCES "knowledge_bases"("id") ON DELETE CASCADE,
+    "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+    "node_id" varchar NOT NULL UNIQUE REFERENCES "knowledge_nodes"("id") ON DELETE CASCADE,
+    "status" text NOT NULL DEFAULT 'draft' CHECK ("status" IN ('draft', 'published', 'archived')),
+    "current_version_id" varchar,
+    "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE "knowledge_document_versions" (
+    "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    "document_id" varchar NOT NULL REFERENCES "knowledge_documents"("id") ON DELETE CASCADE,
+    "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+    "version_no" integer NOT NULL,
+    "author_id" varchar REFERENCES "users"("id") ON DELETE SET NULL,
+    "content_json" jsonb NOT NULL DEFAULT '{}'::jsonb,
+    "content_text" text NOT NULL DEFAULT '',
+    "hash" text,
+    "word_count" integer NOT NULL DEFAULT 0,
+    "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX knowledge_bases_workspace_idx ON knowledge_bases(workspace_id);
+CREATE UNIQUE INDEX knowledge_nodes_base_slug_idx ON knowledge_nodes(base_id, slug);
 CREATE INDEX knowledge_nodes_base_parent_idx ON knowledge_nodes(base_id, parent_id);
 CREATE INDEX knowledge_nodes_parent_idx ON knowledge_nodes(parent_id);
+CREATE INDEX knowledge_nodes_workspace_idx ON knowledge_nodes(workspace_id);
+CREATE INDEX knowledge_nodes_workspace_parent_idx ON knowledge_nodes(workspace_id, parent_id);
+CREATE INDEX knowledge_nodes_base_parent_position_idx ON knowledge_nodes(base_id, parent_id, position);
+CREATE INDEX knowledge_nodes_path_gin ON knowledge_nodes USING gin(path);
+CREATE INDEX knowledge_documents_workspace_idx ON knowledge_documents(workspace_id);
+CREATE INDEX knowledge_documents_base_idx ON knowledge_documents(base_id);
+CREATE UNIQUE INDEX knowledge_document_versions_document_version_idx ON knowledge_document_versions(document_id, version_no);
+CREATE INDEX knowledge_document_versions_document_created_idx ON knowledge_document_versions(document_id, created_at DESC);
+CREATE INDEX knowledge_document_versions_workspace_idx ON knowledge_document_versions(workspace_id);
 
 -- Triggers for automatic search vector updates
 CREATE OR REPLACE FUNCTION update_search_vectors() RETURNS TRIGGER AS $$
