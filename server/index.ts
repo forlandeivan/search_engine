@@ -10,8 +10,10 @@ import { configureAuth } from "./auth";
 
 const app = express();
 app.set("trust proxy", 1);
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+
+const bodySizeLimit = process.env.BODY_SIZE_LIMIT ?? "20mb";
+app.use(express.json({ limit: bodySizeLimit }));
+app.use(express.urlencoded({ extended: false, limit: bodySizeLimit }));
 
 
 // Dynamic CORS configuration based on database sites with caching
