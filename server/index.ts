@@ -11,9 +11,74 @@ import { configureAuth } from "./auth";
 const app = express();
 app.set("trust proxy", 1);
 
-const bodySizeLimit = process.env.BODY_SIZE_LIMIT ?? "20mb";
-app.use(express.json({ limit: bodySizeLimit }));
-app.use(express.urlencoded({ extended: false, limit: bodySizeLimit }));
+const bodySizeLimitSetting = process.env.BODY_SIZE_LIMIT?.trim() ?? "50mb";
+
+function formatBodySizeLimit(limit: string): string {
+  const normalized = limit.trim().toLowerCase();
+  const sizeMatch = normalized.match(/^(\d+(?:\.\d+)?)(b|kb|mb|gb)?$/);
+
+  if (sizeMatch) {
+    const value = Number.parseFloat(sizeMatch[1] ?? "0");
+    const unit = sizeMatch[2] ?? "b";
+
+    if (!Number.isFinite(value) || value <= 0) {
+      return limit;
+    }
+
+    switch (unit) {
+      case "gb":
+        return `${value} ГБ`;
+      case "mb":
+        return `${value} МБ`;
+      case "kb":
+        return `${value} КБ`;
+      default:
+        return `${value} байт`;
+    }
+  }
+
+  const numeric = Number.parseInt(normalized, 10);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    if (numeric >= 1024 * 1024 * 1024) {
+      return `${(numeric / (1024 * 1024 * 1024)).toFixed(1)} ГБ`;
+    }
+    if (numeric >= 1024 * 1024) {
+      return `${(numeric / (1024 * 1024)).toFixed(1)} МБ`;
+    }
+    if (numeric >= 1024) {
+      return `${(numeric / 1024).toFixed(1)} КБ`;
+    }
+    return `${numeric} байт`;
+  }
+
+  return limit;
+}
+
+const bodySizeLimitDescription = formatBodySizeLimit(bodySizeLimitSetting);
+
+app.use(express.json({ limit: bodySizeLimitSetting }));
+app.use(express.urlencoded({ extended: false, limit: bodySizeLimitSetting }));
+
+type PayloadTooLargeError = Error & {
+  type?: string;
+  status?: number;
+  statusCode?: number;
+};
+
+app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+  const payloadError = err as PayloadTooLargeError | undefined;
+  if (payloadError && (payloadError.type === "entity.too.large" || payloadError.status === 413 || payloadError.statusCode === 413)) {
+    log(`Получен запрос, превышающий лимит тела: ${payloadError.message ?? "entity.too.large"}`);
+    if (!res.headersSent) {
+      res.status(413).json({
+        message: `Размер загружаемого файла превышает допустимый лимит ${bodySizeLimitDescription}. Уменьшите файл или обратитесь к администратору для увеличения лимита.`,
+      });
+    }
+    return;
+  }
+
+  next(err);
+});
 
 
 // Dynamic CORS configuration based on database sites with caching
