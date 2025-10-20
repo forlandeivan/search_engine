@@ -127,6 +127,20 @@
       "when": 1758104603459,
       "tag": "0020_restore_forlandeivan_knowledge_bases",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1758104604459,
+      "tag": "0021_knowledge_nodes_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1758104605459,
+      "tag": "0022_knowledge_document_sources",
+      "breakpoints": true
     }
   ]
 }

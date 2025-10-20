@@ -620,6 +620,36 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       swallowPgError(error, ["42704"]);
     }
 
+    await db.execute(sql`
+      ALTER TABLE "knowledge_nodes"
+      ADD COLUMN IF NOT EXISTS "source_type" text DEFAULT 'manual'
+    `);
+
+    await db.execute(sql`
+      UPDATE "knowledge_nodes"
+      SET "source_type" = 'manual'
+      WHERE "source_type" IS NULL OR TRIM("source_type") = ''
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "knowledge_nodes"
+        ALTER COLUMN "source_type" SET NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42704"]);
+    }
+
+    await db.execute(sql`
+      ALTER TABLE "knowledge_nodes"
+      ALTER COLUMN "source_type" SET DEFAULT 'manual'
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "knowledge_nodes"
+      ADD COLUMN IF NOT EXISTS "import_file_name" text
+    `);
+
     await ensureConstraint(
       "knowledge_nodes",
       "knowledge_nodes_base_id_fkey",

@@ -194,10 +194,13 @@ END $$;
 CREATE TABLE "knowledge_nodes" (
     "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
     "base_id" varchar NOT NULL REFERENCES "knowledge_bases"("id") ON DELETE CASCADE,
+    "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
     "parent_id" varchar REFERENCES "knowledge_nodes"("id") ON DELETE CASCADE,
     "title" text NOT NULL DEFAULT 'Без названия',
     "type" knowledge_node_type NOT NULL DEFAULT 'document',
     "content" text,
+    "source_type" text NOT NULL DEFAULT 'manual',
+    "import_file_name" text,
     "position" integer NOT NULL DEFAULT 0,
     "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP

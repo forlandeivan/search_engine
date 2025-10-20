@@ -16,7 +16,9 @@ import {
   knowledgeBases,
   knowledgeNodes,
   knowledgeBaseNodeTypes,
+  knowledgeNodeSourceTypes,
   type KnowledgeBaseNodeType,
+  type KnowledgeNodeSourceType,
   workspaces,
 } from "@shared/schema";
 import { db } from "./db";
@@ -38,6 +40,7 @@ type KnowledgeBaseInsert = typeof knowledgeBases.$inferInsert;
 type KnowledgeNodeRow = typeof knowledgeNodes.$inferSelect;
 
 const NODE_TYPE_SET = new Set<KnowledgeBaseNodeType>(knowledgeBaseNodeTypes);
+const NODE_SOURCE_SET = new Set<KnowledgeNodeSourceType>(knowledgeNodeSourceTypes);
 
 function getNextPosition(nodes: KnowledgeNodeRow[], parentId: string | null): number {
   let maxPosition = -1;
@@ -167,6 +170,8 @@ function mapChildren(
     parentId: child.parentId ?? null,
     childCount: child.type === "folder" ? (groups.get(child.id)?.length ?? 0) : 0,
     updatedAt: toIsoDate(child.updatedAt),
+    sourceType: child.type === "document" ? resolveNodeSourceType(child) : undefined,
+    importFileName: child.type === "document" ? child.importFileName ?? null : undefined,
   }));
 }
 
@@ -185,6 +190,11 @@ function collectDescendants(
   }
 
   return acc;
+}
+
+function resolveNodeSourceType(node: KnowledgeNodeRow): KnowledgeNodeSourceType {
+  const raw = (node.sourceType ?? "manual") as KnowledgeNodeSourceType;
+  return NODE_SOURCE_SET.has(raw) ? raw : "manual";
 }
 
 async function fetchWorkspaceBases(workspaceId: string): Promise<KnowledgeBaseRow[]> {
@@ -385,6 +395,8 @@ export async function getKnowledgeNodeDetail(
     content: node.content ?? "",
     updatedAt: toIsoDate(node.updatedAt),
     breadcrumbs: buildBreadcrumbs(base, node, nodesById),
+    sourceType: resolveNodeSourceType(node),
+    importFileName: node.importFileName ?? null,
   } satisfies KnowledgeBaseNodeDetail;
 }
 
@@ -487,6 +499,9 @@ export async function createKnowledgeDocument(
   }
 
   const content = typeof payload.content === "string" ? payload.content : "";
+  const sourceType =
+    payload.sourceType && NODE_SOURCE_SET.has(payload.sourceType) ? payload.sourceType : "manual";
+  const importFileName = payload.importFileName?.trim() ? payload.importFileName.trim() : null;
 
   const nodes = await fetchBaseNodes(baseId);
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
@@ -518,6 +533,8 @@ export async function createKnowledgeDocument(
         type: "document",
         content,
         position,
+        sourceType,
+        importFileName,
       })
       .returning();
 
@@ -555,6 +572,8 @@ export async function createKnowledgeDocument(
     type: "document",
     content: node.content ?? "",
     updatedAt: toIsoDate(node.updatedAt),
+    sourceType: resolveNodeSourceType(node),
+    importFileName: node.importFileName ?? null,
   } satisfies CreateKnowledgeDocumentResponse;
 }
 

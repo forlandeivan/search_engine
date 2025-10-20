@@ -29,6 +29,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { CreateKnowledgeDocumentDialog, type CreateKnowledgeDocumentFormValues } from "@/components/knowledge-base/CreateKnowledgeDocumentDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +54,7 @@ import type {
   KnowledgeBaseNodeDetail,
   KnowledgeBaseChildNode,
   DeleteKnowledgeNodeResponse,
+  CreateKnowledgeDocumentResponse,
 } from "@shared/knowledge-base";
 import {
   ChevronRight,
@@ -60,6 +62,7 @@ import {
   Folder,
   Loader2,
   MoreVertical,
+  Plus,
 } from "lucide-react";
 
 const ROOT_PARENT_VALUE = "__root__";
@@ -88,6 +91,10 @@ type MoveNodeVariables = {
 type DeleteNodeVariables = {
   baseId: string;
   nodeId: string;
+};
+
+type CreateDocumentVariables = CreateKnowledgeDocumentFormValues & {
+  baseId: string;
 };
 
 const formatDateTime = (value?: string | null) => {
@@ -218,6 +225,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const selectedNodeId = params?.nodeId ?? null;
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
+  const [isCreateDocumentDialogOpen, setIsCreateDocumentDialogOpen] = useState(false);
+  const [documentDialogParentId, setDocumentDialogParentId] = useState<string | null>(null);
+  const [documentDialogParentTitle, setDocumentDialogParentTitle] = useState<string>("В корне базы");
 
   const basesQuery = useQuery({
     queryKey: ["knowledge-bases"],
@@ -330,6 +340,56 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     },
   });
 
+  const createDocumentMutation = useMutation<
+    CreateKnowledgeDocumentResponse,
+    Error,
+    CreateDocumentVariables
+  >({
+    mutationFn: async ({ baseId, ...payload }) => {
+      const res = await apiRequest("POST", `/api/knowledge/bases/${baseId}/documents`, {
+        title: payload.title,
+        content: payload.content,
+        parentId: payload.parentId,
+        sourceType: payload.sourceType,
+        importFileName: payload.importFileName,
+      });
+      return (await res.json()) as CreateKnowledgeDocumentResponse;
+    },
+    onSuccess: (document, variables) => {
+      toast({ title: "Документ создан", description: "Документ успешно добавлен в базу знаний." });
+      setIsCreateDocumentDialogOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const [key, baseId] = query.queryKey as [unknown, unknown, ...unknown[]];
+          return key === "knowledge-node" && baseId === variables.baseId;
+        },
+      });
+      setLocation(`/knowledge/${variables.baseId}/node/${document.id}`);
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось создать документ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleOpenCreateDocument = (parentId: string | null, parentTitle: string) => {
+    if (!selectedBase) {
+      toast({
+        title: "База знаний не выбрана",
+        description: "Выберите базу, чтобы добавить документ.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setDocumentDialogParentId(parentId);
+    setDocumentDialogParentTitle(parentTitle);
+    setIsCreateDocumentDialogOpen(true);
+  };
+
   const renderBreadcrumbs = (detail: KnowledgeBaseNodeDetail) => {
     if (detail.type === "base") {
       return null;
@@ -385,7 +445,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
     return (
       <Card>
-        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle className="text-xl">{detail.title}</CardTitle>
             <CardDescription>
@@ -393,18 +453,27 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               {formatDateTime(detail.updatedAt)}.
             </CardDescription>
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="Действия с подразделом">
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => setIsDeleteDialogOpen(true)}>
-                Удалить подраздел
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+            <Button
+              type="button"
+              onClick={() => handleOpenCreateDocument(detail.id, detail.title)}
+              className="w-full sm:w-auto"
+            >
+              <Plus className="mr-2 h-4 w-4" /> Новый документ
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="Действия с подразделом">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setIsDeleteDialogOpen(true)}>
+                  Удалить подраздел
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </CardHeader>
         <CardContent>
           {renderBreadcrumbs(detail)}
@@ -418,7 +487,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             </div>
             {detail.children.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                В этом подразделе пока нет документов. Добавьте материалы, чтобы они появились в структуре.
+                В этом подразделе пока нет документов. Используйте кнопку «Новый документ», чтобы добавить материалы.
               </p>
             ) : (
               <div className="space-y-3">
@@ -486,6 +555,16 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </CardHeader>
       <CardContent>
         {renderBreadcrumbs(detail)}
+        <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <Badge variant="outline">
+            {detail.sourceType === "import" ? "Импортированный документ" : "Создан вручную"}
+          </Badge>
+          {detail.sourceType === "import" && detail.importFileName && (
+            <span>
+              Файл: <code className="text-xs text-foreground">{detail.importFileName}</code>
+            </span>
+          )}
+        </div>
         <div className="prose prose-sm max-w-none whitespace-pre-wrap">
           {detail.content || "Документ пока пуст."}
         </div>
@@ -495,9 +574,18 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
   const renderOverview = (detail: Extract<KnowledgeBaseNodeDetail, { type: "base" }>) => (
     <Card>
-      <CardHeader>
-        <CardTitle>{detail.name}</CardTitle>
-        <CardDescription>Последнее обновление: {formatDateTime(detail.updatedAt)}</CardDescription>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>{detail.name}</CardTitle>
+          <CardDescription>Последнее обновление: {formatDateTime(detail.updatedAt)}</CardDescription>
+        </div>
+        <Button
+          type="button"
+          onClick={() => handleOpenCreateDocument(null, detail.name)}
+          className="w-full sm:w-auto"
+        >
+          <Plus className="mr-2 h-4 w-4" /> Новый документ
+        </Button>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">{detail.description}</p>
@@ -506,7 +594,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           <h3 className="text-sm font-semibold mb-2">Структура базы</h3>
           {detail.rootNodes.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              В базе ещё нет документов. Добавьте их через панель управления.
+              В базе ещё нет документов. Нажмите «Новый документ», чтобы создать первый материал.
             </p>
           ) : (
             <TreeMenu baseId={detail.id} nodes={detail.rootNodes} activeNodeId={selectedNodeId} />
@@ -621,6 +709,27 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           {renderContent()}
         </div>
       </main>
+      <CreateKnowledgeDocumentDialog
+        open={isCreateDocumentDialogOpen}
+        onOpenChange={(open) => {
+          setIsCreateDocumentDialogOpen(open);
+          if (!open) {
+            setDocumentDialogParentId(null);
+            setDocumentDialogParentTitle("В корне базы");
+          }
+        }}
+        structure={selectedBase?.rootNodes ?? []}
+        defaultParentId={documentDialogParentId}
+        baseName={selectedBase?.name ?? "База знаний"}
+        parentLabel={documentDialogParentTitle}
+        isSubmitting={createDocumentMutation.isPending}
+        onSubmit={async (values) => {
+          if (!selectedBase) {
+            throw new Error("База знаний не выбрана");
+          }
+          await createDocumentMutation.mutateAsync({ ...values, baseId: selectedBase.id });
+        }}
+      />
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
