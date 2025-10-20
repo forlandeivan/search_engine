@@ -38,6 +38,11 @@ export type CreateKnowledgeDocumentPayload = {
   importFileName?: string | null;
 };
 
+export type UpdateKnowledgeDocumentPayload = {
+  title: string;
+  content?: string;
+};
+
 type KnowledgeNodeCreationBase = {
   id: string;
   title: string;
@@ -110,6 +115,8 @@ export type KnowledgeBaseDocumentDetail = {
   versionId: string | null;
   versionNumber: number | null;
 };
+
+export type UpdateKnowledgeDocumentResponse = KnowledgeBaseDocumentDetail;
 
 export type KnowledgeBaseNodeDetail =
   | KnowledgeBaseOverview

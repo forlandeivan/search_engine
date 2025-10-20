@@ -25,6 +25,7 @@ import {
   createKnowledgeBase,
   createKnowledgeFolder,
   createKnowledgeDocument,
+  updateKnowledgeDocument,
 } from "./knowledge-base";
 import passport from "passport";
 import bcrypt from "bcryptjs";
@@ -4354,6 +4355,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .nullable(),
   });
 
+  const updateKnowledgeDocumentSchema = z.object({
+    title: z
+      .string()
+      .trim()
+      .min(1, "Укажите название документа")
+      .max(500, "Название не должно превышать 500 символов"),
+    content: z
+      .string()
+      .max(20_000_000, "Документ слишком большой. Ограничение — 20 МБ текста")
+      .optional(),
+  });
+
   app.post("/api/knowledge/bases", requireAuth, async (req, res) => {
     try {
       const payload = createKnowledgeBaseSchema.parse(req.body ?? {});
@@ -4441,6 +4454,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+
+  app.patch(
+    "/api/knowledge/bases/:baseId/documents/:nodeId",
+    requireAuth,
+    async (req, res) => {
+      const { baseId, nodeId } = req.params;
+
+      try {
+        const payload = updateKnowledgeDocumentSchema.parse(req.body ?? {});
+        const { id: workspaceId } = getRequestWorkspace(req);
+        const user = getSessionUser(req);
+        const document = await updateKnowledgeDocument(
+          baseId,
+          nodeId,
+          workspaceId,
+          {
+            title: payload.title,
+            content: payload.content ?? "",
+          },
+          user?.id ?? null,
+        );
+        return res.json(document);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          const issue = error.issues.at(0);
+          const message = issue?.message ?? "Некорректные данные";
+          return res.status(400).json({ error: message });
+        }
+
+        return handleKnowledgeBaseRouteError(error, res);
+      }
+    },
+  );
 
   app.patch("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;

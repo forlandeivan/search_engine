@@ -11,6 +11,8 @@ import {
   type CreateKnowledgeDocumentPayload,
   type CreateKnowledgeFolderResponse,
   type CreateKnowledgeDocumentResponse,
+  type UpdateKnowledgeDocumentPayload,
+  type UpdateKnowledgeDocumentResponse,
 } from "@shared/knowledge-base";
 import {
   knowledgeBases,
@@ -782,6 +784,7 @@ export async function createKnowledgeDocument(
         documentId: document.id,
         workspaceId,
         versionNo: 1,
+        contentJson: { html: content },
         contentText: content,
         hash: hash ?? null,
         wordCount,
@@ -844,6 +847,112 @@ export async function createKnowledgeDocument(
     versionId,
     versionNumber: createdVersionNumber,
   } satisfies CreateKnowledgeDocumentResponse;
+}
+
+export async function updateKnowledgeDocument(
+  baseId: string,
+  nodeId: string,
+  workspaceId: string,
+  payload: UpdateKnowledgeDocumentPayload,
+  authorId?: string | null,
+): Promise<UpdateKnowledgeDocumentResponse> {
+  const base = await fetchBase(baseId, workspaceId);
+  if (!base) {
+    throw new KnowledgeBaseError("База знаний не найдена", 404);
+  }
+
+  const nodes = await fetchBaseNodes(baseId);
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const node = nodesById.get(nodeId);
+
+  if (!node) {
+    throw new KnowledgeBaseError("Документ не найден", 404);
+  }
+
+  if (node.type !== "document") {
+    throw new KnowledgeBaseError("Редактировать можно только документ", 400);
+  }
+
+  const title = payload.title?.trim();
+  if (!title) {
+    throw new KnowledgeBaseError("Укажите название документа", 400);
+  }
+
+  const content = typeof payload.content === "string" ? payload.content : "";
+
+  const [documentRow] = await db
+    .select({
+      id: knowledgeDocuments.id,
+      status: knowledgeDocuments.status,
+      versionNo: knowledgeDocumentVersions.versionNo,
+    })
+    .from(knowledgeDocuments)
+    .leftJoin(
+      knowledgeDocumentVersions,
+      eq(knowledgeDocuments.currentVersionId, knowledgeDocumentVersions.id),
+    )
+    .where(and(eq(knowledgeDocuments.nodeId, node.id), eq(knowledgeDocuments.workspaceId, workspaceId)))
+    .limit(1);
+
+  if (!documentRow?.id) {
+    throw new KnowledgeBaseError("Документ не найден", 404);
+  }
+
+  const documentId = documentRow.id;
+  const previousVersionNumber = documentRow.versionNo ?? 0;
+  const versionNumber = previousVersionNumber + 1;
+  const versionId = randomUUID();
+
+  const wordCount = countWords(content);
+  const hash = computeContentHash(content);
+
+  let versionCreatedAt: Date = new Date();
+
+  await db.transaction(async (tx: typeof db) => {
+    const [version] = await tx
+      .insert(knowledgeDocumentVersions)
+      .values({
+        id: versionId,
+        documentId,
+        workspaceId,
+        versionNo: versionNumber,
+        authorId: authorId ?? null,
+        contentJson: { html: content },
+        contentText: content,
+        hash: hash ?? null,
+        wordCount,
+      })
+      .returning();
+
+    versionCreatedAt = version?.createdAt ?? new Date();
+
+    await tx
+      .update(knowledgeDocuments)
+      .set({
+        currentVersionId: versionId,
+        updatedAt: versionCreatedAt,
+      })
+      .where(and(eq(knowledgeDocuments.id, documentId), eq(knowledgeDocuments.baseId, baseId)));
+
+    await tx
+      .update(knowledgeNodes)
+      .set({ title, updatedAt: versionCreatedAt })
+      .where(and(eq(knowledgeNodes.id, node.id), eq(knowledgeNodes.baseId, baseId)));
+
+    if (node.parentId) {
+      await tx
+        .update(knowledgeNodes)
+        .set({ updatedAt: versionCreatedAt })
+        .where(and(eq(knowledgeNodes.id, node.parentId), eq(knowledgeNodes.baseId, baseId)));
+    }
+
+    await tx
+      .update(knowledgeBases)
+      .set({ updatedAt: versionCreatedAt })
+      .where(eq(knowledgeBases.id, baseId));
+  });
+
+  return (await getKnowledgeNodeDetail(baseId, nodeId, workspaceId)) as UpdateKnowledgeDocumentResponse;
 }
 
 export async function deleteKnowledgeNode(
