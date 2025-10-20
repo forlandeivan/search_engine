@@ -43,8 +43,8 @@ import {
 } from "lucide-react";
 
 const ROOT_PARENT_VALUE = "__root__";
-const MAX_CONTENT_LENGTH = 2_000_000;
-const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
+const MAX_CONTENT_LENGTH = 20_000_000;
+const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const ACCEPTED_FILE_TYPES =
   ".pdf,.doc,.docx,.pptx,.xlsx,.txt,.md,.markdown,.html,.htm,.eml,.csv" +
   ",application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" +
@@ -196,7 +196,7 @@ export function CreateKnowledgeDocumentDialog({
     setFormError(null);
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      setImportError("Файл слишком большой. Максимальный размер — 2 МБ.");
+      setImportError("Файл слишком большой. Максимальный размер — 20 МБ.");
       setImportFile(null);
       setImportHtml("");
       setImportDetectedTitle(null);
@@ -213,7 +213,7 @@ export function CreateKnowledgeDocumentDialog({
       }
 
       if (sanitizedContent.length > MAX_CONTENT_LENGTH) {
-        throw new Error("Содержимое файла превышает допустимый размер 2 МБ.");
+        throw new Error("Содержимое файла превышает допустимый размер 20 МБ.");
       }
 
       setImportFile(file);
@@ -294,7 +294,7 @@ export function CreateKnowledgeDocumentDialog({
 
     if (mode === "manual") {
       if (manualContent.length > MAX_CONTENT_LENGTH) {
-        setFormError("Содержимое документа превышает допустимый размер 2 МБ.");
+        setFormError("Содержимое документа превышает допустимый размер 20 МБ.");
         return;
       }
 
@@ -303,7 +303,7 @@ export function CreateKnowledgeDocumentDialog({
       if (manualContent.trim()) {
         sanitizedContent = getSanitizedContent(buildHtmlFromPlainText(manualContent, trimmedTitle));
         if (sanitizedContent.length > MAX_CONTENT_LENGTH) {
-          setFormError("Содержимое документа превышает допустимый размер 2 МБ после обработки.");
+          setFormError("Содержимое документа превышает допустимый размер 20 МБ после обработки.");
           return;
         }
       }
@@ -333,7 +333,7 @@ export function CreateKnowledgeDocumentDialog({
       const sanitizedContent = getSanitizedContent(htmlWithTitle);
 
       if (sanitizedContent.length > MAX_CONTENT_LENGTH) {
-        setFormError("Содержимое файла превышает допустимый размер 2 МБ.");
+        setFormError("Содержимое файла превышает допустимый размер 20 МБ.");
         return;
       }
 
@@ -429,7 +429,7 @@ export function CreateKnowledgeDocumentDialog({
                     <span className="font-medium">Импорт из файла</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Загрузите текстовый документ до 2 МБ. Поддерживаются {SUPPORTED_FORMAT_LABEL}.
+                  Загрузите текстовый документ до 20 МБ. Поддерживаются {SUPPORTED_FORMAT_LABEL}.
                   </p>
                 </label>
               </RadioGroup>
@@ -476,7 +476,7 @@ export function CreateKnowledgeDocumentDialog({
                       {isReadingFile && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Перетащите файл сюда или выберите на компьютере. Максимальный размер — 2 МБ.
+                      Перетащите файл сюда или выберите на компьютере. Максимальный размер — 20 МБ.
                     </p>
                     {importFile && (
                       <div className="flex flex-wrap items-center gap-3 rounded-md border border-muted-foreground/20 bg-muted/40 p-3 text-xs text-muted-foreground">
