@@ -141,6 +141,13 @@
       "when": 1758104605459,
       "tag": "0022_knowledge_document_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1758104606459,
+      "tag": "0023_knowledge_hierarchy_and_versions",
+      "breakpoints": true
     }
   ]
 }
