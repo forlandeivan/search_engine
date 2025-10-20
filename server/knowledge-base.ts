@@ -15,15 +15,20 @@ import {
 import {
   knowledgeBases,
   knowledgeNodes,
+  knowledgeDocuments,
+  knowledgeDocumentVersions,
   knowledgeBaseNodeTypes,
   knowledgeNodeSourceTypes,
+  knowledgeDocumentStatuses,
   type KnowledgeBaseNodeType,
   type KnowledgeNodeSourceType,
+  type KnowledgeDocumentStatus,
   workspaces,
 } from "@shared/schema";
 import { db } from "./db";
 import { ensureKnowledgeBaseTables } from "./storage";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { createHash, randomUUID } from "crypto";
 
 export class KnowledgeBaseError extends Error {
   public status: number;
@@ -41,6 +46,154 @@ type KnowledgeNodeRow = typeof knowledgeNodes.$inferSelect;
 
 const NODE_TYPE_SET = new Set<KnowledgeBaseNodeType>(knowledgeBaseNodeTypes);
 const NODE_SOURCE_SET = new Set<KnowledgeNodeSourceType>(knowledgeNodeSourceTypes);
+const DOCUMENT_STATUS_SET = new Set<KnowledgeDocumentStatus>(knowledgeDocumentStatuses);
+
+const CYRILLIC_TO_LATIN: Record<string, string> = {
+  а: "a",
+  б: "b",
+  в: "v",
+  г: "g",
+  д: "d",
+  е: "e",
+  ё: "e",
+  ж: "zh",
+  з: "z",
+  и: "i",
+  й: "y",
+  к: "k",
+  л: "l",
+  м: "m",
+  н: "n",
+  о: "o",
+  п: "p",
+  р: "r",
+  с: "s",
+  т: "t",
+  у: "u",
+  ф: "f",
+  х: "h",
+  ц: "c",
+  ч: "ch",
+  ш: "sh",
+  щ: "sch",
+  ъ: "",
+  ы: "y",
+  ь: "",
+  э: "e",
+  ю: "yu",
+  я: "ya",
+};
+
+function transliterate(value: string): string {
+  let result = "";
+
+  for (const char of value) {
+    const lower = char.toLowerCase();
+    const mapped = CYRILLIC_TO_LATIN[lower];
+    if (mapped !== undefined) {
+      result += mapped;
+    } else {
+      result += char;
+    }
+  }
+
+  return result;
+}
+
+function normalizeForSlug(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const transliterated = transliterate(trimmed);
+  return transliterated
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-zA-Z0-9\s-]+/g, " ");
+}
+
+function generateBaseSlug(title: string, fallback: string): string {
+  const normalized = normalizeForSlug(title);
+  const collapsed = normalized
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 190);
+
+  return collapsed || fallback;
+}
+
+function ensureUniqueSlug(
+  existing: Set<string>,
+  desired: string,
+  fallback: string,
+): string {
+  const base = desired || fallback;
+  if (!existing.has(base)) {
+    existing.add(base);
+    return base;
+  }
+
+  let index = 2;
+  while (index < 1_000) {
+    const candidate = `${base}-${index}`;
+    if (!existing.has(candidate)) {
+      existing.add(candidate);
+      return candidate;
+    }
+    index += 1;
+  }
+
+  const randomSuffix = randomUUID().replace(/[^a-z0-9]/gi, "").slice(0, 6).toLowerCase();
+  const finalCandidate = `${fallback}-${randomSuffix}`;
+  existing.add(finalCandidate);
+  return finalCandidate;
+}
+
+function buildSegmentFallback(nodeId: string): string {
+  const sanitized = nodeId.replace(/[^a-z0-9]/gi, "").slice(0, 24).toLowerCase();
+  return sanitized ? `node_${sanitized}` : `node_${randomUUID().slice(0, 8).toLowerCase()}`;
+}
+
+function slugToLtreeSegment(slug: string, fallback: string): string {
+  const sanitized = slug
+    .replace(/[^a-z0-9_]+/gi, "_")
+    .replace(/_{2,}/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+
+  let segment = sanitized || fallback;
+  if (!/^[a-z]/.test(segment)) {
+    segment = `n_${segment}`;
+  }
+  if (segment.length > 255) {
+    segment = segment.slice(0, 255);
+  }
+  return segment;
+}
+
+function buildNodePath(parentPath: string | null, segment: string): string {
+  return parentPath && parentPath.length > 0 ? `${parentPath}.${segment}` : segment;
+}
+
+function countWords(content: string): number {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return 0;
+  }
+
+  return trimmed.split(/\s+/u).length;
+}
+
+function computeContentHash(content: string): string | null {
+  if (!content.trim()) {
+    return null;
+  }
+
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
 
 function getNextPosition(nodes: KnowledgeNodeRow[], parentId: string | null): number {
   let maxPosition = -1;
@@ -388,15 +541,44 @@ export async function getKnowledgeNodeDetail(
     } satisfies KnowledgeBaseNodeDetail;
   }
 
+  const [documentRow] = await db
+    .select({
+      documentId: knowledgeDocuments.id,
+      status: knowledgeDocuments.status,
+      versionId: knowledgeDocumentVersions.id,
+      versionNo: knowledgeDocumentVersions.versionNo,
+      content: knowledgeDocumentVersions.contentText,
+      versionCreatedAt: knowledgeDocumentVersions.createdAt,
+    })
+    .from(knowledgeDocuments)
+    .leftJoin(
+      knowledgeDocumentVersions,
+      eq(knowledgeDocuments.currentVersionId, knowledgeDocumentVersions.id),
+    )
+    .where(and(eq(knowledgeDocuments.nodeId, node.id), eq(knowledgeDocuments.workspaceId, workspaceId)))
+    .limit(1);
+
+  const rawStatus = (documentRow?.status ?? "draft") as KnowledgeDocumentStatus;
+  const status = DOCUMENT_STATUS_SET.has(rawStatus) ? rawStatus : "draft";
+  const documentId = documentRow?.documentId ?? node.id;
+  const versionId = documentRow?.versionId ?? null;
+  const versionNumber = documentRow?.versionNo ?? null;
+  const versionCreatedAt = documentRow?.versionCreatedAt ?? node.updatedAt;
+  const contentText = documentRow?.content ?? "";
+
   return {
     type: "document",
     id: node.id,
     title: node.title,
-    content: node.content ?? "",
-    updatedAt: toIsoDate(node.updatedAt),
+    content: contentText,
+    updatedAt: toIsoDate(versionCreatedAt),
     breadcrumbs: buildBreadcrumbs(base, node, nodesById),
     sourceType: resolveNodeSourceType(node),
     importFileName: node.importFileName ?? null,
+    documentId,
+    status,
+    versionId,
+    versionNumber,
   } satisfies KnowledgeBaseNodeDetail;
 }
 
@@ -432,18 +614,31 @@ export async function createKnowledgeFolder(
 
   const position = getNextPosition(nodes, parentId);
 
+  const nodeId = randomUUID();
+  const existingSlugs = new Set(nodes.map((node) => node.slug));
+  const fallbackSlug = `folder-${nodeId.slice(0, 6).toLowerCase()}`;
+  const desiredSlug = generateBaseSlug(title, fallbackSlug);
+  const slug = ensureUniqueSlug(existingSlugs, desiredSlug, fallbackSlug);
+  const segmentFallback = buildSegmentFallback(nodeId);
+  const parentPath = parentId ? nodesById.get(parentId)?.path ?? null : null;
+  const pathSegment = slugToLtreeSegment(slug, segmentFallback);
+  const path = buildNodePath(parentPath, pathSegment);
+
   let createdNode: KnowledgeNodeRow | null = null;
 
   await db.transaction(async (tx: typeof db) => {
     const [created] = await tx
       .insert(knowledgeNodes)
       .values({
+        id: nodeId,
         baseId,
         workspaceId,
         parentId,
         title,
         type: "folder",
         position,
+        slug,
+        path,
       })
       .returning();
 
@@ -520,21 +715,42 @@ export async function createKnowledgeDocument(
 
   const position = getNextPosition(nodes, parentId);
 
+  const nodeId = randomUUID();
+  const documentId = randomUUID();
+  const versionId = randomUUID();
+
+  const existingSlugs = new Set(nodes.map((node) => node.slug));
+  const fallbackSlug = `doc-${nodeId.slice(0, 6).toLowerCase()}`;
+  const desiredSlug = generateBaseSlug(title, fallbackSlug);
+  const slug = ensureUniqueSlug(existingSlugs, desiredSlug, fallbackSlug);
+  const segmentFallback = buildSegmentFallback(nodeId);
+  const parentPath = parentId ? nodesById.get(parentId)?.path ?? null : null;
+  const pathSegment = slugToLtreeSegment(slug, segmentFallback);
+  const path = buildNodePath(parentPath, pathSegment);
+
+  const wordCount = countWords(content);
+  const hash = computeContentHash(content);
+
   let createdNode: KnowledgeNodeRow | null = null;
+  let createdVersionTimestamp: Date | null = null;
+  let createdVersionNumber: number | null = null;
 
   await db.transaction(async (tx: typeof db) => {
     const [created] = await tx
       .insert(knowledgeNodes)
       .values({
+        id: nodeId,
         baseId,
         workspaceId,
         parentId,
         title,
         type: "document",
-        content,
         position,
+        content: null,
         sourceType,
         importFileName,
+        slug,
+        path,
       })
       .returning();
 
@@ -544,7 +760,55 @@ export async function createKnowledgeDocument(
 
     createdNode = created;
 
-    const timestamp = new Date();
+    const [document] = await tx
+      .insert(knowledgeDocuments)
+      .values({
+        id: documentId,
+        baseId,
+        workspaceId,
+        nodeId,
+        status: "draft" as KnowledgeDocumentStatus,
+      })
+      .returning();
+
+    if (!document) {
+      throw new KnowledgeBaseError("Не удалось зарегистрировать документ", 500);
+    }
+
+    const [version] = await tx
+      .insert(knowledgeDocumentVersions)
+      .values({
+        id: versionId,
+        documentId: document.id,
+        workspaceId,
+        versionNo: 1,
+        contentText: content,
+        hash: hash ?? null,
+        wordCount,
+      })
+      .returning();
+
+    if (!version) {
+      throw new KnowledgeBaseError("Не удалось сохранить версию документа", 500);
+    }
+
+    createdVersionTimestamp = version.createdAt ?? new Date();
+    createdVersionNumber = version.versionNo ?? 1;
+
+    await tx
+      .update(knowledgeDocuments)
+      .set({
+        currentVersionId: version.id,
+        updatedAt: createdVersionTimestamp,
+      })
+      .where(and(eq(knowledgeDocuments.id, document.id), eq(knowledgeDocuments.baseId, baseId)));
+
+    await tx
+      .update(knowledgeNodes)
+      .set({ updatedAt: createdVersionTimestamp })
+      .where(and(eq(knowledgeNodes.id, nodeId), eq(knowledgeNodes.baseId, baseId)));
+
+    const timestamp = createdVersionTimestamp;
 
     if (parentId) {
       await tx
@@ -564,16 +828,21 @@ export async function createKnowledgeDocument(
   }
 
   const node = createdNode as KnowledgeNodeRow;
+  const updatedAt = createdVersionTimestamp ?? node.updatedAt;
 
   return {
     id: node.id,
     title: node.title,
     parentId: node.parentId ?? null,
     type: "document",
-    content: node.content ?? "",
-    updatedAt: toIsoDate(node.updatedAt),
+    content,
+    updatedAt: toIsoDate(updatedAt),
     sourceType: resolveNodeSourceType(node),
     importFileName: node.importFileName ?? null,
+    documentId,
+    status: "draft",
+    versionId,
+    versionNumber: createdVersionNumber,
   } satisfies CreateKnowledgeDocumentResponse;
 }
 
@@ -659,29 +928,47 @@ export async function updateKnowledgeNodeParent(
     }
   }
 
+  const parentPath = newParentId ? nodesById.get(newParentId)?.path ?? null : null;
+  const segmentFallback = buildSegmentFallback(node.id);
+  const nodeSegment = slugToLtreeSegment(node.slug, segmentFallback);
+  const newPath = buildNodePath(parentPath, nodeSegment);
+  const oldPath = node.path;
+  const timestamp = new Date();
+
   await db.transaction(async (tx: typeof db) => {
     await tx
       .update(knowledgeNodes)
-      .set({ parentId: newParentId, updatedAt: new Date() })
+      .set({ parentId: newParentId, path: newPath, updatedAt: timestamp })
       .where(and(eq(knowledgeNodes.id, nodeId), eq(knowledgeNodes.baseId, baseId)));
 
     if (node.parentId) {
       await tx
         .update(knowledgeNodes)
-        .set({ updatedAt: new Date() })
+        .set({ updatedAt: timestamp })
         .where(and(eq(knowledgeNodes.id, node.parentId), eq(knowledgeNodes.baseId, baseId)));
     }
 
     if (newParentId) {
       await tx
         .update(knowledgeNodes)
-        .set({ updatedAt: new Date() })
+        .set({ updatedAt: timestamp })
         .where(and(eq(knowledgeNodes.id, newParentId), eq(knowledgeNodes.baseId, baseId)));
     }
 
     await tx
       .update(knowledgeBases)
-      .set({ updatedAt: new Date() })
+      .set({ updatedAt: timestamp })
       .where(eq(knowledgeBases.id, baseId));
+
+    await tx.execute(sql`
+      WITH params AS (
+        SELECT text2ltree(${oldPath}) AS old_path, text2ltree(${newPath}) AS new_path
+      )
+      UPDATE "knowledge_nodes" AS kn
+      SET "path" = params.new_path || subpath(kn."path", nlevel(params.old_path))
+      FROM params
+      WHERE kn."path" <@ params.old_path
+        AND kn."id" <> ${node.id}
+    `);
   });
 }

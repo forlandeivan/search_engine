@@ -11,6 +11,7 @@ import {
   customType,
   primaryKey,
   foreignKey,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -19,6 +20,12 @@ import { z } from "zod";
 const tsvector = customType<{ data: unknown; driverData: unknown }>({
   dataType() {
     return 'tsvector';
+  },
+});
+
+const ltree = customType<{ data: string; driverData: string }>({
+  dataType() {
+    return "ltree";
   },
 });
 
@@ -186,6 +193,8 @@ export const knowledgeNodes = pgTable(
     title: text("title").notNull().default("Без названия"),
     type: text("type").$type<KnowledgeBaseNodeType>().notNull().default("document"),
     content: text("content"),
+    slug: text("slug").notNull().default(""),
+    path: ltree("path").notNull(),
     sourceType: text("source_type")
       .$type<KnowledgeNodeSourceType>()
       .notNull()
@@ -201,6 +210,67 @@ export const knowledgeNodes = pgTable(
       foreignColumns: [table.id],
       name: "knowledge_nodes_parent_id_fkey",
     }).onDelete("cascade"),
+    baseSlugUnique: uniqueIndex("knowledge_nodes_base_slug_idx").on(
+      table.baseId,
+      table.slug,
+    ),
+  }),
+);
+
+export const knowledgeDocumentStatuses = ["draft", "published", "archived"] as const;
+export type KnowledgeDocumentStatus = (typeof knowledgeDocumentStatuses)[number];
+
+export const knowledgeDocuments = pgTable(
+  "knowledge_documents",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    baseId: varchar("base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    nodeId: varchar("node_id")
+      .notNull()
+      .references(() => knowledgeNodes.id, { onDelete: "cascade" }),
+    status: text("status")
+      .$type<KnowledgeDocumentStatus>()
+      .notNull()
+      .default("draft"),
+    currentVersionId: varchar("current_version_id"),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    nodeUnique: uniqueIndex("knowledge_documents_node_id_key").on(table.nodeId),
+  }),
+);
+
+export const knowledgeDocumentVersions = pgTable(
+  "knowledge_document_versions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    documentId: varchar("document_id")
+      .notNull()
+      .references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    versionNo: integer("version_no").notNull(),
+    authorId: varchar("author_id").references(() => users.id, { onDelete: "set null" }),
+    contentJson: jsonb("content_json")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    contentText: text("content_text").notNull().default(""),
+    hash: text("hash"),
+    wordCount: integer("word_count").notNull().default(0),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    documentVersionUnique: uniqueIndex(
+      "knowledge_document_versions_document_version_idx",
+    ).on(table.documentId, table.versionNo),
   }),
 );
 
