@@ -28,7 +28,7 @@ import {
   workspaces,
 } from "@shared/schema";
 import { db } from "./db";
-import { ensureKnowledgeBaseTables } from "./storage";
+import { ensureKnowledgeBaseTables, isKnowledgeBasePathLtreeEnabled } from "./storage";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
 
@@ -1037,11 +1037,13 @@ export async function updateKnowledgeNodeParent(
     }
   }
 
+  const supportsLtree = isKnowledgeBasePathLtreeEnabled();
   const parentPath = newParentId ? nodesById.get(newParentId)?.path ?? null : null;
   const segmentFallback = buildSegmentFallback(node.id);
   const nodeSegment = slugToLtreeSegment(node.slug, segmentFallback);
   const newPath = buildNodePath(parentPath, nodeSegment);
-  const oldPath = node.path;
+  const fallbackParentPath = node.parentId ? nodesById.get(node.parentId)?.path ?? null : null;
+  const oldPath = node.path ?? buildNodePath(fallbackParentPath, nodeSegment);
   const timestamp = new Date();
 
   await db.transaction(async (tx: typeof db) => {
@@ -1069,15 +1071,35 @@ export async function updateKnowledgeNodeParent(
       .set({ updatedAt: timestamp })
       .where(eq(knowledgeBases.id, baseId));
 
-    await tx.execute(sql`
-      WITH params AS (
-        SELECT text2ltree(${oldPath}) AS old_path, text2ltree(${newPath}) AS new_path
-      )
-      UPDATE "knowledge_nodes" AS kn
-      SET "path" = params.new_path || subpath(kn."path", nlevel(params.old_path))
-      FROM params
-      WHERE kn."path" <@ params.old_path
-        AND kn."id" <> ${node.id}
-    `);
+    if (supportsLtree) {
+      await tx.execute(sql`
+        WITH params AS (
+          SELECT text2ltree(${oldPath}) AS old_path, text2ltree(${newPath}) AS new_path
+        )
+        UPDATE "knowledge_nodes" AS kn
+        SET "path" = params.new_path || subpath(kn."path", nlevel(params.old_path))
+        FROM params
+        WHERE kn."path" <@ params.old_path
+          AND kn."id" <> ${node.id}
+      `);
+    } else if (oldPath && oldPath.length > 0) {
+      const oldPrefix = `${oldPath}.`;
+      const newPrefix = `${newPath}.`;
+      const substringStart = oldPrefix.length + 1;
+
+      await tx.execute(sql`
+        UPDATE "knowledge_nodes"
+        SET "path" = CASE
+            WHEN "path" = ${oldPath} THEN ${newPath}
+            ELSE ${newPrefix} || substring("path" FROM ${substringStart})
+          END
+        WHERE "base_id" = ${baseId}
+          AND "id" <> ${node.id}
+          AND (
+            "path" = ${oldPath}
+            OR "path" LIKE ${oldPrefix + "%"}
+          )
+      `);
+    }
   });
 }
