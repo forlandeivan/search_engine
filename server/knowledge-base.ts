@@ -31,6 +31,7 @@ import { db } from "./db";
 import { ensureKnowledgeBaseTables, isKnowledgeBasePathLtreeEnabled } from "./storage";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
+import { getLatestKnowledgeDocumentChunkSetForDocument } from "./knowledge-chunks";
 
 export class KnowledgeBaseError extends Error {
   public status: number;
@@ -575,6 +576,14 @@ export async function getKnowledgeNodeDetail(
   const versionCreatedAt = documentRow?.versionCreatedAt ?? node.updatedAt;
   const contentText = documentRow?.content ?? "";
 
+  const chunkSet = await getLatestKnowledgeDocumentChunkSetForDocument(documentId, workspaceId).catch((error) => {
+    if (error instanceof KnowledgeBaseError && error.status === 404) {
+      return null;
+    }
+
+    throw error;
+  });
+
   return {
     type: "document",
     id: node.id,
@@ -590,6 +599,7 @@ export async function getKnowledgeNodeDetail(
     versionNumber,
     children: mapChildren(node, groups, nodesById),
     structure: buildTreeFromGroups(groups, null),
+    chunkSet,
   } satisfies KnowledgeBaseNodeDetail;
 }
 

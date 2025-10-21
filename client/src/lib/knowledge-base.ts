@@ -1,6 +1,11 @@
 import { isAfter } from "date-fns";
-import type { KnowledgeBaseSummary, KnowledgeBaseTreeNode } from "@shared/knowledge-base";
-import { normalizeDocumentText, type DocumentChunk } from "@/lib/knowledge-document";
+import type {
+  KnowledgeBaseSummary,
+  KnowledgeBaseTreeNode,
+  KnowledgeDocumentChunkConfig,
+  KnowledgeDocumentChunkItem,
+  KnowledgeDocumentChunkSet,
+} from "@shared/knowledge-base";
 
 export type TreeNode = {
   id: string;
@@ -23,20 +28,13 @@ export type KnowledgeDocumentVectorization = {
   vectorizedAt: string;
 };
 
-export type KnowledgeDocumentChunks = {
-  chunkSize: number;
-  chunkOverlap: number;
-  generatedAt: string;
-  items: DocumentChunk[];
-};
-
 export type KnowledgeDocument = {
   id: string;
   title: string;
   content: string;
   updatedAt: string;
   vectorization: KnowledgeDocumentVectorization | null;
-  chunks: KnowledgeDocumentChunks | null;
+  chunkSet?: KnowledgeDocumentChunkSet | null;
 };
 
 export type KnowledgeBaseSourceType = "blank" | "archive" | "crawler" | "unknown";
@@ -117,6 +115,205 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isSourceType = (value: unknown): value is KnowledgeBaseSourceType =>
   value === "blank" || value === "archive" || value === "crawler" || value === "unknown";
+
+const parseNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Number(value);
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const parseDateIso = (value: unknown): string => {
+  if (typeof value === "string" && !Number.isNaN(Date.parse(value))) {
+    return value;
+  }
+
+  return new Date().toISOString();
+};
+
+const parseStringArray = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0);
+
+  return normalized.length > 0 ? normalized : undefined;
+};
+
+const ensureMetadata = (value: unknown): Record<string, unknown> => {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  return {};
+};
+
+const countTokens = (text: string): number => {
+  return text.trim().length === 0 ? 0 : text.trim().split(/\s+/u).length;
+};
+
+const fallbackChunkHash = (text: string, index: number): string => {
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash << 5) - hash + text.charCodeAt(i);
+    hash |= 0;
+  }
+  return `local-${index}-${Math.abs(hash)}`;
+};
+
+const normalizeChunkConfig = (raw: unknown): KnowledgeDocumentChunkConfig => {
+  const record = ensureMetadata(raw);
+
+  const maxTokens = parseNumber(record.maxTokens ?? record.max_tokens) ?? null;
+  const maxChars = parseNumber(record.maxChars ?? record.max_chars) ?? null;
+  const overlapTokens = parseNumber(record.overlapTokens ?? record.overlap_tokens) ?? null;
+  const overlapChars = parseNumber(record.overlapChars ?? record.overlap_chars) ?? null;
+  const splitByPagesRaw = record.splitByPages ?? record.split_by_pages;
+  const respectHeadingsRaw = record.respectHeadings ?? record.respect_headings;
+
+  return {
+    maxTokens,
+    maxChars,
+    overlapTokens,
+    overlapChars,
+    splitByPages: typeof splitByPagesRaw === "boolean" ? splitByPagesRaw : false,
+    respectHeadings: typeof respectHeadingsRaw === "boolean" ? respectHeadingsRaw : true,
+  } satisfies KnowledgeDocumentChunkConfig;
+};
+
+const normalizeChunkItems = (raw: unknown): KnowledgeDocumentChunkItem[] => {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const items: KnowledgeDocumentChunkItem[] = [];
+
+  raw.forEach((entry, arrayIndex) => {
+    if (typeof entry !== "object" || entry === null) {
+      return;
+    }
+
+    const record = entry as Record<string, unknown>;
+    const textRaw =
+      typeof record.text === "string"
+        ? record.text
+        : typeof record.content === "string"
+        ? record.content
+        : "";
+
+    const text = textRaw.replace(/\s+/gu, " ").trim();
+    if (!text) {
+      return;
+    }
+
+    const indexValue = parseNumber(record.index) ?? arrayIndex;
+    const charStart = parseNumber(record.charStart ?? record.start) ?? 0;
+    const charEnd = parseNumber(record.charEnd ?? record.end) ?? charStart + text.length;
+    const tokenCount = parseNumber(record.tokenCount) ?? countTokens(text);
+    const pageNumber = parseNumber(record.pageNumber ?? record.page) ?? null;
+    const sectionPath = parseStringArray(record.sectionPath ?? record.headingPath ?? record.hierarchy);
+    const baseMetadata = ensureMetadata(record.metadata);
+    const metadata: Record<string, unknown> = { ...baseMetadata };
+    if (sectionPath && !("sectionPath" in metadata)) {
+      metadata.sectionPath = sectionPath;
+    }
+
+    const contentHashRaw =
+      typeof record.contentHash === "string" && record.contentHash.trim().length > 0
+        ? record.contentHash.trim()
+        : null;
+
+    const idValue =
+      typeof record.id === "string" && record.id.trim().length > 0
+        ? record.id.trim()
+        : `chunk-${indexValue + 1}`;
+
+    items.push({
+      id: idValue,
+      index: indexValue,
+      text,
+      charStart,
+      charEnd,
+      tokenCount,
+      pageNumber,
+      sectionPath,
+      metadata,
+      contentHash: contentHashRaw ?? fallbackChunkHash(text, indexValue),
+    });
+  });
+
+  items.sort((a, b) => a.index - b.index);
+
+  return items;
+};
+
+const normalizeDocumentChunkSet = (raw: unknown): KnowledgeDocumentChunkSet | null => {
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+
+  const record = raw as Record<string, unknown>;
+  const documentId =
+    typeof record.documentId === "string"
+      ? record.documentId
+      : typeof record.document_id === "string"
+      ? record.document_id
+      : undefined;
+  const versionId =
+    typeof record.versionId === "string"
+      ? record.versionId
+      : typeof record.version_id === "string"
+      ? record.version_id
+      : undefined;
+
+  if (!documentId || !versionId) {
+    return null;
+  }
+
+  const items = normalizeChunkItems(record.chunks ?? record.items);
+  if (items.length === 0) {
+    return null;
+  }
+
+  const id = typeof record.id === "string" && record.id.trim().length > 0 ? record.id.trim() : `${documentId}-chunks`;
+  const config = normalizeChunkConfig(record.config ?? record);
+  const chunkCount = parseNumber(record.chunkCount) ?? items.length;
+  const totalTokens = parseNumber(record.totalTokens) ?? items.reduce((sum, item) => sum + item.tokenCount, 0);
+  const totalChars = parseNumber(record.totalChars) ?? items.reduce((sum, item) => sum + item.text.length, 0);
+  const createdAt = parseDateIso(record.createdAt ?? record.generatedAt);
+  const updatedAt = parseDateIso(record.updatedAt ?? record.generatedAt ?? record.createdAt);
+  const documentHash =
+    typeof record.documentHash === "string"
+      ? record.documentHash
+      : typeof record.document_hash === "string"
+      ? record.document_hash
+      : undefined;
+
+  return {
+    id,
+    documentId,
+    versionId,
+    documentHash,
+    chunkCount,
+    totalTokens,
+    totalChars,
+    createdAt,
+    updatedAt,
+    config,
+    chunks: items,
+  } satisfies KnowledgeDocumentChunkSet;
+};
 
 export const KNOWLEDGE_BASE_SOURCE_LABELS: Record<KnowledgeBaseSourceType, string> = {
   blank: "Пустая база",
@@ -244,107 +441,6 @@ const normalizeVectorization = (raw: unknown): KnowledgeDocumentVectorization | 
   };
 };
 
-const normalizeDocumentChunks = (raw: unknown): KnowledgeDocumentChunks | null => {
-  if (!isRecord(raw)) {
-    return null;
-  }
-
-  const rawSize = raw.chunkSize;
-  const rawOverlap = raw.chunkOverlap;
-  const size =
-    typeof rawSize === "number" && Number.isFinite(rawSize) && rawSize >= 1
-      ? Math.min(Math.round(rawSize), 8000)
-      : null;
-  if (!size) {
-    return null;
-  }
-
-  const overlapCandidate =
-    typeof rawOverlap === "number" && Number.isFinite(rawOverlap) && rawOverlap >= 0
-      ? Math.round(rawOverlap)
-      : 0;
-  const overlap = Math.max(0, Math.min(overlapCandidate, size - 1));
-
-  const itemsSource = Array.isArray((raw as { items?: unknown }).items)
-    ? ((raw as { items?: unknown }).items as unknown[])
-    : Array.isArray((raw as { chunks?: unknown }).chunks)
-    ? ((raw as { chunks?: unknown }).chunks as unknown[])
-    : [];
-
-  const items: DocumentChunk[] = [];
-
-  itemsSource.forEach((item, index) => {
-    if (!isRecord(item)) {
-      return;
-    }
-
-    const content = typeof item.content === "string" ? normalizeDocumentText(item.content) : "";
-    if (!content) {
-      return;
-    }
-
-    const rawIndex = item.index;
-    const normalizedIndex =
-      typeof rawIndex === "number" && Number.isFinite(rawIndex) && rawIndex >= 0
-        ? Math.round(rawIndex)
-        : index;
-
-    const start =
-      typeof item.start === "number" && Number.isFinite(item.start) && item.start >= 0
-        ? Math.round(item.start)
-        : 0;
-    const end =
-      typeof item.end === "number" && Number.isFinite(item.end) && item.end >= start
-        ? Math.round(item.end)
-        : start + content.length;
-
-    const charCount =
-      typeof item.charCount === "number" && Number.isFinite(item.charCount) && item.charCount >= 0
-        ? Math.round(item.charCount)
-        : content.length;
-
-    const wordCount =
-      typeof item.wordCount === "number" && Number.isFinite(item.wordCount) && item.wordCount >= 0
-        ? Math.round(item.wordCount)
-        : content.split(/\s+/).filter(Boolean).length;
-
-    const excerpt =
-      typeof item.excerpt === "string" && item.excerpt.trim().length > 0
-        ? item.excerpt.trim()
-        : content.slice(0, 200).trim();
-
-    const id = typeof item.id === "string" && item.id.trim().length > 0 ? item.id : `chunk-${normalizedIndex + 1}`;
-
-    items.push({
-      id,
-      index: normalizedIndex,
-      start,
-      end,
-      charCount,
-      wordCount,
-      excerpt,
-      content,
-    });
-  });
-
-  if (items.length === 0) {
-    return null;
-  }
-
-  const generatedAtRaw = (raw as { generatedAt?: unknown }).generatedAt;
-  const generatedAt =
-    typeof generatedAtRaw === "string" && !Number.isNaN(Date.parse(generatedAtRaw))
-      ? generatedAtRaw
-      : new Date().toISOString();
-
-  return {
-    chunkSize: size,
-    chunkOverlap: overlap,
-    generatedAt,
-    items,
-  };
-};
-
 const normalizeDocuments = (rawDocuments: unknown): Record<string, KnowledgeDocument> => {
   if (!isRecord(rawDocuments)) {
     return {};
@@ -371,7 +467,7 @@ const normalizeDocuments = (rawDocuments: unknown): Record<string, KnowledgeDocu
       content,
       updatedAt,
       vectorization: normalizeVectorization(value.vectorization),
-      chunks: normalizeDocumentChunks(value.chunks),
+      chunkSet: normalizeDocumentChunkSet((value as Record<string, unknown>).chunkSet ?? value.chunks),
     };
   });
 

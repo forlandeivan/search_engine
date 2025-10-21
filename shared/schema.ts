@@ -12,6 +12,7 @@ import {
   primaryKey,
   foreignKey,
   uniqueIndex,
+  index,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -271,6 +272,88 @@ export const knowledgeDocumentVersions = pgTable(
     documentVersionUnique: uniqueIndex(
       "knowledge_document_versions_document_version_idx",
     ).on(table.documentId, table.versionNo),
+  }),
+);
+
+export const knowledgeDocumentChunkSets = pgTable(
+  "knowledge_document_chunk_sets",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    documentId: varchar("document_id")
+      .notNull()
+      .references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+    versionId: varchar("version_id")
+      .notNull()
+      .references(() => knowledgeDocumentVersions.id, { onDelete: "cascade" }),
+    documentHash: text("document_hash"),
+    maxTokens: integer("max_tokens"),
+    maxChars: integer("max_chars"),
+    overlapTokens: integer("overlap_tokens"),
+    overlapChars: integer("overlap_chars"),
+    splitByPages: boolean("split_by_pages").notNull().default(false),
+    respectHeadings: boolean("respect_headings").notNull().default(true),
+    chunkCount: integer("chunk_count").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    totalChars: integer("total_chars").notNull().default(0),
+    isLatest: boolean("is_latest").notNull().default(true),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    documentLatestIndex: index("knowledge_document_chunk_sets_document_latest_idx").on(
+      table.documentId,
+      table.isLatest,
+    ),
+    documentCreatedIndex: index("knowledge_document_chunk_sets_document_idx").on(
+      table.documentId,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const knowledgeDocumentChunkItems = pgTable(
+  "knowledge_document_chunks",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    chunkSetId: varchar("chunk_set_id")
+      .notNull()
+      .references(() => knowledgeDocumentChunkSets.id, { onDelete: "cascade" }),
+    documentId: varchar("document_id")
+      .notNull()
+      .references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+    versionId: varchar("version_id")
+      .notNull()
+      .references(() => knowledgeDocumentVersions.id, { onDelete: "cascade" }),
+    chunkIndex: integer("chunk_index").notNull(),
+    text: text("text").notNull(),
+    charStart: integer("char_start").notNull(),
+    charEnd: integer("char_end").notNull(),
+    tokenCount: integer("token_count").notNull(),
+    pageNumber: integer("page_number"),
+    sectionPath: text("section_path").array(),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    contentHash: text("content_hash").notNull(),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    chunkSetIndex: uniqueIndex("knowledge_document_chunks_set_index_idx").on(
+      table.chunkSetId,
+      table.chunkIndex,
+    ),
+    documentIndex: index("knowledge_document_chunks_document_idx").on(
+      table.documentId,
+      table.chunkIndex,
+    ),
   }),
 );
 
@@ -694,3 +777,7 @@ export type UpsertAuthProvider = z.infer<typeof upsertAuthProviderSchema>;
 export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "authorizationKey"> & {
   hasAuthorizationKey: boolean;
 };
+export type KnowledgeDocumentChunkSet = typeof knowledgeDocumentChunkSets.$inferSelect;
+export type KnowledgeDocumentChunkSetInsert = typeof knowledgeDocumentChunkSets.$inferInsert;
+export type KnowledgeDocumentChunkItem = typeof knowledgeDocumentChunkItems.$inferSelect;
+export type KnowledgeDocumentChunkItemInsert = typeof knowledgeDocumentChunkItems.$inferInsert;

@@ -27,6 +27,10 @@ import {
   createKnowledgeDocument,
   updateKnowledgeDocument,
 } from "./knowledge-base";
+import {
+  previewKnowledgeDocumentChunks,
+  createKnowledgeDocumentChunkSet,
+} from "./knowledge-chunks";
 import passport from "passport";
 import bcrypt from "bcryptjs";
 import {
@@ -1378,22 +1382,58 @@ const vectorizeCollectionSchemaSchema = z.object({
   embeddingFieldName: z.string().trim().min(1).max(120).optional().nullable(),
 });
 
-const knowledgeDocumentChunkInputSchema = z.object({
+const knowledgeDocumentChunkConfigSchema = z
+  .object({
+    maxTokens: z.number().int().min(50).max(4_000).optional(),
+    maxChars: z.number().int().min(200).max(20_000).optional(),
+    overlapTokens: z.number().int().min(0).max(4_000).optional(),
+    overlapChars: z.number().int().min(0).max(20_000).optional(),
+    splitByPages: z.boolean().optional(),
+    respectHeadings: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.maxTokens && !value.maxChars) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maxTokens"],
+        message: "Укажите ограничение по токенам или символам",
+      });
+    }
+
+    if (value.overlapTokens && value.maxTokens && value.overlapTokens >= value.maxTokens) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["overlapTokens"],
+        message: "Перехлёст по токенам должен быть меньше лимита",
+      });
+    }
+
+    if (value.overlapChars && value.maxChars && value.overlapChars >= value.maxChars) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["overlapChars"],
+        message: "Перехлёст по символам должен быть меньше лимита",
+      });
+    }
+  });
+
+const knowledgeDocumentChunkItemSchema = z.object({
   id: z.string().trim().min(1).optional(),
   index: z.coerce.number().int().min(0),
-  start: z.coerce.number().int().min(0),
-  end: z.coerce.number().int().min(0),
-  charCount: z.coerce.number().int().min(0),
-  wordCount: z.coerce.number().int().min(0),
-  excerpt: z.string().trim().optional(),
-  content: z.string().trim().min(1, "Чанк не может быть пустым"),
+  text: z.string().trim().min(1, "Чанк не может быть пустым"),
+  charStart: z.coerce.number().int().min(0).optional(),
+  charEnd: z.coerce.number().int().min(0).optional(),
+  tokenCount: z.coerce.number().int().min(0).optional(),
+  pageNumber: z.coerce.number().int().min(0).optional().nullable(),
+  sectionPath: z.array(z.string()).optional(),
+  metadata: z.record(z.any()).optional(),
+  contentHash: z.string().trim().optional(),
 });
 
 const knowledgeDocumentChunksSchema = z.object({
-  chunkSize: z.coerce.number().int().min(1),
-  chunkOverlap: z.coerce.number().int().min(0),
+  items: z.array(knowledgeDocumentChunkItemSchema).min(1),
   totalCount: z.coerce.number().int().min(0).optional(),
-  items: z.array(knowledgeDocumentChunkInputSchema).min(1),
+  config: knowledgeDocumentChunkConfigSchema.optional(),
 });
 
 const vectorizePageSchema = z.object({
@@ -4488,6 +4528,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
+  app.post(
+    "/api/knowledge/bases/:baseId/documents/:nodeId/chunks/preview",
+    requireAuth,
+    async (req, res) => {
+      const { baseId, nodeId } = req.params;
+
+      try {
+        const rawBody = (req.body ?? {}) as Record<string, unknown>;
+        const configPayload =
+          rawBody && typeof rawBody.config === "object" && rawBody.config !== null
+            ? rawBody.config
+            : rawBody;
+        const config = knowledgeDocumentChunkConfigSchema.parse(configPayload ?? {});
+        const { id: workspaceId } = getRequestWorkspace(req);
+        const preview = await previewKnowledgeDocumentChunks(baseId, nodeId, workspaceId, config);
+        return res.json(preview);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          const issue = error.issues.at(0);
+          const message = issue?.message ?? "Некорректные параметры чанкования";
+          return res.status(400).json({ error: message });
+        }
+
+        if (error instanceof KnowledgeBaseError) {
+          return res.status(error.status).json({ error: error.message });
+        }
+
+        return handleKnowledgeBaseRouteError(error, res);
+      }
+    },
+  );
+
+  app.post(
+    "/api/knowledge/bases/:baseId/documents/:nodeId/chunks",
+    requireAuth,
+    async (req, res) => {
+      const { baseId, nodeId } = req.params;
+
+      try {
+        const rawBody = (req.body ?? {}) as Record<string, unknown>;
+        const configPayload =
+          rawBody && typeof rawBody.config === "object" && rawBody.config !== null
+            ? rawBody.config
+            : rawBody;
+        const config = knowledgeDocumentChunkConfigSchema.parse(configPayload ?? {});
+        const { id: workspaceId } = getRequestWorkspace(req);
+        const chunkSet = await createKnowledgeDocumentChunkSet(baseId, nodeId, workspaceId, config);
+        return res.status(201).json(chunkSet);
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          const issue = error.issues.at(0);
+          const message = issue?.message ?? "Некорректные параметры чанкования";
+          return res.status(400).json({ error: message });
+        }
+
+        if (error instanceof KnowledgeBaseError) {
+          return res.status(error.status).json({ error: error.message });
+        }
+
+        return handleKnowledgeBaseRouteError(error, res);
+      }
+    },
+  );
+
   app.patch("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;
     const rawParentId = req.body?.parentId as unknown;
@@ -4573,8 +4677,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ) {
         const mappedChunks = providedChunksPayload.items.map(
           (item): KnowledgeDocumentChunk | null => {
-            const rawContent = typeof item.content === "string" ? item.content : "";
-            const content = normalizeDocumentText(rawContent);
+            const rawText =
+              typeof item.text === "string"
+                ? item.text
+                : typeof (item as { content?: unknown }).content === "string"
+                ? ((item as { content: string }).content as string)
+                : "";
+            const content = normalizeDocumentText(rawText);
             if (!content) {
               return null;
             }
@@ -4585,29 +4694,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 : 0;
 
             const startValue =
-              typeof item.start === "number" && Number.isFinite(item.start) && item.start >= 0
-                ? Math.round(item.start)
+              typeof (item as { charStart?: unknown }).charStart === "number" &&
+              Number.isFinite((item as { charStart?: number }).charStart ?? 0) &&
+              ((item as { charStart?: number }).charStart ?? 0) >= 0
+                ? Math.round((item as { charStart?: number }).charStart ?? 0)
+                : typeof (item as { start?: unknown }).start === "number" &&
+                  Number.isFinite((item as { start?: number }).start ?? 0) &&
+                  ((item as { start?: number }).start ?? 0) >= 0
+                ? Math.round((item as { start?: number }).start ?? 0)
                 : 0;
 
             const endValue =
-              typeof item.end === "number" && Number.isFinite(item.end) && item.end >= startValue
-                ? Math.round(item.end)
+              typeof (item as { charEnd?: unknown }).charEnd === "number" &&
+              Number.isFinite((item as { charEnd?: number }).charEnd ?? 0) &&
+              ((item as { charEnd?: number }).charEnd ?? 0) >= startValue
+                ? Math.round((item as { charEnd?: number }).charEnd ?? 0)
+                : typeof (item as { end?: unknown }).end === "number" &&
+                  Number.isFinite((item as { end?: number }).end ?? 0) &&
+                  ((item as { end?: number }).end ?? 0) >= startValue
+                ? Math.round((item as { end?: number }).end ?? 0)
                 : startValue + content.length;
 
-            const charCountValue =
-              typeof item.charCount === "number" && Number.isFinite(item.charCount) && item.charCount >= 0
-                ? Math.round(item.charCount)
-                : content.length;
-
-            const wordCountValue =
-              typeof item.wordCount === "number" && Number.isFinite(item.wordCount) && item.wordCount >= 0
-                ? Math.round(item.wordCount)
-                : countPlainTextWords(content);
-
-            const excerptValue =
-              typeof item.excerpt === "string" && item.excerpt.trim().length > 0
-                ? item.excerpt.trim()
-                : buildDocumentExcerpt(content);
+            const charCountValue = content.length;
+            const wordCountValue = countPlainTextWords(content);
+            const excerptValue = buildDocumentExcerpt(content);
 
             const idValue =
               typeof item.id === "string" && item.id.trim().length > 0 ? item.id.trim() : undefined;
@@ -4636,11 +4746,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         normalizedItems.sort((a, b) => a.index - b.index);
         documentChunks = normalizedItems;
 
-        chunkSizeForMetadata = Math.max(200, Math.min(8000, providedChunksPayload.chunkSize));
-        chunkOverlapForMetadata = Math.max(
-          0,
-          Math.min(providedChunksPayload.chunkOverlap, chunkSizeForMetadata - 1, 4000),
-        );
+        const chunkConfig = providedChunksPayload.config ?? {};
+        const configMaxChars =
+          typeof chunkConfig?.maxChars === "number" && Number.isFinite(chunkConfig.maxChars)
+            ? Math.round(chunkConfig.maxChars)
+            : null;
+        const configMaxTokens =
+          typeof chunkConfig?.maxTokens === "number" && Number.isFinite(chunkConfig.maxTokens)
+            ? Math.round(chunkConfig.maxTokens)
+            : null;
+        const configOverlapChars =
+          typeof chunkConfig?.overlapChars === "number" && Number.isFinite(chunkConfig.overlapChars)
+            ? Math.round(chunkConfig.overlapChars)
+            : null;
+        const configOverlapTokens =
+          typeof chunkConfig?.overlapTokens === "number" && Number.isFinite(chunkConfig.overlapTokens)
+            ? Math.round(chunkConfig.overlapTokens)
+            : null;
+
+        chunkSizeForMetadata = configMaxChars ?? configMaxTokens ?? defaultChunkSize;
+        chunkOverlapForMetadata = configOverlapChars ?? configOverlapTokens ?? defaultChunkOverlap;
 
         totalChunksPlanned =
           typeof providedChunksPayload.totalCount === "number" &&
