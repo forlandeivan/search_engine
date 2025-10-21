@@ -521,6 +521,49 @@ let ensuringWorkspaceCollectionsTable: Promise<void> | null = null;
 
 let knowledgeBaseTablesEnsured = false;
 let ensuringKnowledgeBaseTables: Promise<void> | null = null;
+let knowledgeBasePathUsesLtree: boolean | null = null;
+
+function coerceDatabaseBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return value > 0;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "t" || normalized === "true" || normalized === "1";
+  }
+
+  return false;
+}
+
+async function detectLtreeSupport(): Promise<boolean> {
+  try {
+    const result = await db.execute(
+      sql`
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_type
+          WHERE typname = 'ltree'
+        ) AS "hasLtree"
+      `,
+    );
+
+    const row = result.rows?.[0];
+    const value = row?.hasLtree ?? row?.hasltree ?? row?.exists ?? row?.count;
+    return coerceDatabaseBoolean(value);
+  } catch (error) {
+    console.warn("[storage] Не удалось определить поддержку расширения ltree", error);
+    return false;
+  }
+}
+
+export function isKnowledgeBasePathLtreeEnabled(): boolean {
+  return knowledgeBasePathUsesLtree === true;
+}
 
 async function ensureWorkspacesTable(): Promise<void> {
   if (workspacesTableEnsured) {
@@ -632,6 +675,16 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       swallowPgError(error, ["42710", "42501"]);
     }
 
+    knowledgeBasePathUsesLtree = await detectLtreeSupport();
+
+    if (!knowledgeBasePathUsesLtree) {
+      console.warn(
+        "[storage] Расширение ltree недоступно. Используем текстовые пути для базы знаний",
+      );
+    }
+
+    const pathColumnType = knowledgeBasePathUsesLtree ? sql.raw("ltree") : sql.raw("text");
+
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "knowledge_bases" (
         "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
@@ -667,7 +720,7 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         "type" text NOT NULL DEFAULT 'document',
         "content" text,
         "slug" text NOT NULL DEFAULT '',
-        "path" ltree,
+        "path" ${pathColumnType},
         "position" integer NOT NULL DEFAULT 0,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -740,10 +793,12 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       ALTER COLUMN "slug" SET DEFAULT ''
     `);
 
-    await db.execute(sql`
-      ALTER TABLE "knowledge_nodes"
-      ADD COLUMN IF NOT EXISTS "path" ltree
-    `);
+    await db.execute(
+      sql`
+        ALTER TABLE "knowledge_nodes"
+        ADD COLUMN IF NOT EXISTS "path" ${pathColumnType}
+      `,
+    );
 
     await db.execute(sql`
       UPDATE "knowledge_nodes"
@@ -770,83 +825,161 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       ADD COLUMN IF NOT EXISTS "import_file_name" text
     `);
 
-    await db.execute(sql`
-      WITH RECURSIVE normalized_nodes AS (
-        SELECT
-          kn."id",
-          kn."parent_id",
-          kn."base_id",
-          CASE
-            WHEN coalesce(nullif(kn."slug", ''), '') <> '' THEN kn."slug"
-            ELSE replace(kn."id", '-', '_')
-          END AS raw_segment
-        FROM "knowledge_nodes" AS kn
-      ),
-      processed_nodes AS (
-        SELECT
-          nn."id",
-          nn."parent_id",
-          nn."base_id",
-          CASE
-            WHEN segment_value = '' THEN CONCAT('node_', substring(replace(nn."id", '-', '_') FROM 1 FOR 24))
-            WHEN segment_value ~ '^[a-z]' THEN segment_value
-            ELSE CONCAT('n_', segment_value)
-          END AS segment
-        FROM (
+    if (knowledgeBasePathUsesLtree) {
+      await db.execute(sql`
+        WITH RECURSIVE normalized_nodes AS (
+          SELECT
+            kn."id",
+            kn."parent_id",
+            kn."base_id",
+            CASE
+              WHEN coalesce(nullif(kn."slug", ''), '') <> '' THEN kn."slug"
+              ELSE replace(kn."id", '-', '_')
+            END AS raw_segment
+          FROM "knowledge_nodes" AS kn
+        ),
+        processed_nodes AS (
           SELECT
             nn."id",
             nn."parent_id",
             nn."base_id",
-            regexp_replace(
-              regexp_replace(lower(nn.raw_segment), '[^a-z0-9_]+', '_', 'g'),
-              '^_+|_+$',
-              '',
-              'g'
-            ) AS segment_value
-          FROM normalized_nodes AS nn
-        ) AS cleaned
-      ),
-      computed_paths AS (
-        SELECT
-          pn."id",
-          pn."parent_id",
-          pn."base_id",
-          text2ltree(pn.segment) AS computed_path
-        FROM processed_nodes AS pn
-        WHERE pn."parent_id" IS NULL
+            CASE
+              WHEN segment_value = '' THEN CONCAT('node_', substring(replace(nn."id", '-', '_') FROM 1 FOR 24))
+              WHEN segment_value ~ '^[a-z]' THEN segment_value
+              ELSE CONCAT('n_', segment_value)
+            END AS segment
+          FROM (
+            SELECT
+              nn."id",
+              nn."parent_id",
+              nn."base_id",
+              regexp_replace(
+                regexp_replace(lower(nn.raw_segment), '[^a-z0-9_]+', '_', 'g'),
+                '^_+|_+$',
+                '',
+                'g'
+              ) AS segment_value
+            FROM normalized_nodes AS nn
+          ) AS cleaned
+        ),
+        computed_paths AS (
+          SELECT
+            pn."id",
+            pn."parent_id",
+            pn."base_id",
+            text2ltree(pn.segment) AS computed_path
+          FROM processed_nodes AS pn
+          WHERE pn."parent_id" IS NULL
 
-        UNION ALL
+          UNION ALL
 
-        SELECT
-          child."id",
-          child."parent_id",
-          child."base_id",
-          parent.computed_path || text2ltree(child.segment) AS computed_path
-        FROM processed_nodes AS child
-        JOIN computed_paths AS parent ON child."parent_id" = parent."id"
-      )
-      UPDATE "knowledge_nodes" AS kn
-      SET "path" = cp.computed_path
-      FROM computed_paths AS cp
-      WHERE kn."id" = cp."id"
-        AND (kn."path" IS NULL OR nlevel(kn."path") = 0)
-    `);
+          SELECT
+            child."id",
+            child."parent_id",
+            child."base_id",
+            parent.computed_path || text2ltree(child.segment) AS computed_path
+          FROM processed_nodes AS child
+          JOIN computed_paths AS parent ON child."parent_id" = parent."id"
+        )
+        UPDATE "knowledge_nodes" AS kn
+        SET "path" = cp.computed_path
+        FROM computed_paths AS cp
+        WHERE kn."id" = cp."id"
+          AND (kn."path" IS NULL OR nlevel(kn."path") = 0)
+      `);
 
-    await db.execute(sql`
-      UPDATE "knowledge_nodes"
-      SET "path" = text2ltree(
-          CASE
+      await db.execute(sql`
+        UPDATE "knowledge_nodes"
+        SET "path" = text2ltree(
+            CASE
+              WHEN coalesce(nullif("slug", ''), '') <> '' THEN
+                CASE
+                  WHEN regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g') ~ '^[a-z]' 
+                    THEN regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g')
+                  ELSE 'n_' || regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g')
+                END
+              ELSE 'node_' || substring(replace("id", '-', '_') FROM 1 FOR 24)
+            END
+          )
+        WHERE "path" IS NULL
+      `);
+    } else {
+      await db.execute(sql`
+        WITH RECURSIVE normalized_nodes AS (
+          SELECT
+            kn."id",
+            kn."parent_id",
+            kn."base_id",
+            CASE
+              WHEN coalesce(nullif(kn."slug", ''), '') <> '' THEN kn."slug"
+              ELSE replace(kn."id", '-', '_')
+            END AS raw_segment
+          FROM "knowledge_nodes" AS kn
+        ),
+        processed_nodes AS (
+          SELECT
+            nn."id",
+            nn."parent_id",
+            nn."base_id",
+            CASE
+              WHEN segment_value = '' THEN CONCAT('node_', substring(replace(nn."id", '-', '_') FROM 1 FOR 24))
+              WHEN segment_value ~ '^[a-z]' THEN segment_value
+              ELSE CONCAT('n_', segment_value)
+            END AS segment
+          FROM (
+            SELECT
+              nn."id",
+              nn."parent_id",
+              nn."base_id",
+              regexp_replace(
+                regexp_replace(lower(nn.raw_segment), '[^a-z0-9_]+', '_', 'g'),
+                '^_+|_+$',
+                '',
+                'g'
+              ) AS segment_value
+            FROM normalized_nodes AS nn
+          ) AS cleaned
+        ),
+        computed_paths AS (
+          SELECT
+            pn."id",
+            pn."parent_id",
+            pn."base_id",
+            pn.segment AS computed_path
+          FROM processed_nodes AS pn
+          WHERE pn."parent_id" IS NULL
+
+          UNION ALL
+
+          SELECT
+            child."id",
+            child."parent_id",
+            child."base_id",
+            parent.computed_path || '.' || child.segment AS computed_path
+          FROM processed_nodes AS child
+          JOIN computed_paths AS parent ON child."parent_id" = parent."id"
+        )
+        UPDATE "knowledge_nodes" AS kn
+        SET "path" = cp.computed_path
+        FROM computed_paths AS cp
+        WHERE kn."id" = cp."id"
+          AND (kn."path" IS NULL OR btrim(kn."path") = '')
+      `);
+
+      await db.execute(sql`
+        UPDATE "knowledge_nodes"
+        SET "path" = CASE
             WHEN coalesce(nullif("slug", ''), '') <> '' THEN
               CASE
-                WHEN regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g') ~ '^[a-z]'
+                WHEN regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g') ~ '^[a-z]' 
                   THEN regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g')
                 ELSE 'n_' || regexp_replace(lower("slug"), '[^a-z0-9_]+', '_', 'g')
               END
             ELSE 'node_' || substring(replace("id", '-', '_') FROM 1 FOR 24)
           END
-        )
-      WHERE "path" IS NULL
-    `);
+        WHERE "path" IS NULL OR btrim("path") = ''
+      `);
+    }
 
     try {
       await db.execute(sql`
@@ -922,9 +1055,15 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_base_parent_position_idx ON knowledge_nodes("base_id", "parent_id", "position")`,
     );
-    await db.execute(
-      sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_path_gin ON knowledge_nodes USING GIN("path")`,
-    );
+    if (knowledgeBasePathUsesLtree) {
+      await db.execute(
+        sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_path_gin ON knowledge_nodes USING GIN("path")`,
+      );
+    } else {
+      await db.execute(
+        sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_path_idx ON knowledge_nodes("path")`,
+      );
+    }
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "knowledge_documents" (
