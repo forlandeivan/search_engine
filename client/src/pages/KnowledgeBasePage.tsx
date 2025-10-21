@@ -78,6 +78,7 @@ import type {
   KnowledgeBaseDocumentDetail,
 } from "@shared/knowledge-base";
 import {
+  ChevronDown,
   ChevronRight,
   FileDown,
   FileText,
@@ -319,38 +320,69 @@ type TreeMenuProps = {
   baseId: string;
   nodes: KnowledgeBaseTreeNode[];
   activeNodeId: string | null;
+  expandedNodes: Set<string>;
+  onToggle: (nodeId: string) => void;
   level?: number;
 };
 
-function TreeMenu({ baseId, nodes, activeNodeId, level = 0 }: TreeMenuProps) {
+function TreeMenu({
+  baseId,
+  nodes,
+  activeNodeId,
+  expandedNodes,
+  onToggle,
+  level = 0,
+}: TreeMenuProps) {
   return (
-    <ul className={cn("space-y-1 text-sm", level > 0 && "border-l border-border/40 pl-4")}> 
+    <ul className={cn("space-y-1 text-sm", level > 0 && "border-l border-border/40 pl-4")}>
       {nodes.map((node) => {
         const isActive = activeNodeId === node.id;
+        const children = node.children ?? [];
+        const hasChildren = children.length > 0;
+        const isExpanded = hasChildren && expandedNodes.has(node.id);
+
         return (
-          <li key={node.id}>
-            <Link
-              href={`/knowledge/${baseId}/node/${node.id}`}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-2 py-1 transition", 
-                isActive ? "bg-primary/10 text-primary" : "hover:bg-muted"
-              )}
-            >
-              {node.type === "folder" ? (
-                <Folder className="h-4 w-4" />
+          <li key={node.id} className="space-y-1">
+            <div className="flex items-center gap-1">
+              {hasChildren ? (
+                <button
+                  type="button"
+                  className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted"
+                  onClick={() => onToggle(node.id)}
+                  aria-label={isExpanded ? "Свернуть вложенные элементы" : "Развернуть вложенные элементы"}
+                  aria-expanded={isExpanded}
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </button>
               ) : (
-                <FileText className="h-4 w-4" />
+                <span className="h-6 w-6 flex-shrink-0" />
               )}
-              <span className="flex-1 truncate">{node.title}</span>
-              {node.children && node.children.length > 0 && (
-                <ChevronRight className="h-3 w-3 text-muted-foreground" />
-              )}
-            </Link>
-            {node.children && node.children.length > 0 && (
+              <Link
+                href={`/knowledge/${baseId}/node/${node.id}`}
+                className={cn(
+                  "flex flex-1 items-center gap-2 rounded-md px-2 py-1 transition",
+                  isActive ? "bg-primary/10 text-primary" : "hover:bg-muted",
+                )}
+              >
+                {node.type === "folder" ? (
+                  <Folder className="h-4 w-4" />
+                ) : (
+                  <FileText className="h-4 w-4" />
+                )}
+                <span className="flex-1 truncate">{node.title}</span>
+              </Link>
+            </div>
+            {hasChildren && isExpanded && (
               <TreeMenu
                 baseId={baseId}
-                nodes={node.children}
+                nodes={children}
                 activeNodeId={activeNodeId}
+                expandedNodes={expandedNodes}
+                onToggle={onToggle}
                 level={level + 1}
               />
             )}
@@ -392,6 +424,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   } | null>(null);
   const [hierarchySelectedParentId, setHierarchySelectedParentId] =
     useState<string>(ROOT_PARENT_VALUE);
+  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(() => new Set());
   const handleOpenCreateBase = (mode: KnowledgeBaseSourceType = "blank") => {
     setCreateBaseMode(mode);
     setIsCreateBaseDialogOpen(true);
@@ -425,6 +458,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   );
 
   useEffect(() => {
+    setExpandedNodeIds(new Set());
+  }, [selectedBase?.id]);
+
+  useEffect(() => {
     if (!bases.length) {
       return;
     }
@@ -449,6 +486,38 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       setLocation(`/knowledge/${selectedBase.id}`);
     }
   }, [selectedBase, selectedNodeId, setLocation]);
+
+  useEffect(() => {
+    if (!selectedBase || !selectedNodeId) {
+      return;
+    }
+
+    const parentMap = buildParentMap(selectedBase.rootNodes);
+    if (!parentMap.has(selectedNodeId)) {
+      return;
+    }
+
+    setExpandedNodeIds((prev) => {
+      const next = new Set(prev);
+      let current = parentMap.get(selectedNodeId) ?? null;
+      let changed = false;
+
+      while (current) {
+        if (!next.has(current)) {
+          next.add(current);
+          changed = true;
+        }
+
+        current = parentMap.get(current) ?? null;
+      }
+
+      if (!changed) {
+        return prev;
+      }
+
+      return next;
+    });
+  }, [selectedBase, selectedNodeId]);
 
   const nodeKey = selectedNodeId ?? "root";
 
@@ -687,6 +756,18 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const closeHierarchyDialog = () => {
     setHierarchyDialogState(null);
     setHierarchySelectedParentId(ROOT_PARENT_VALUE);
+  };
+
+  const handleToggleNode = (nodeId: string) => {
+    setExpandedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
   };
 
   const handleOpenHierarchyDialog = (
@@ -1274,79 +1355,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           ) : (
             <p className="text-sm text-muted-foreground">Документ пока пуст.</p>
           )}
-          {!isCurrentEditing && detail.children.length > 0 && (
-            <>
-              <Separator className="my-4" />
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-sm font-semibold">Вложенные элементы</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Изменяйте уровни вложенности документов и подразделов через выпадающий список.
-                  </p>
-                </div>
-                <div className="space-y-3">
-                  {detail.children.map((child) => {
-                    const folderOptions = collectFolderOptions(detail.structure);
-                    const descendantMap = buildDescendantMap(detail.structure);
-                    const excluded = new Set<string>([
-                      child.id,
-                      ...(descendantMap.get(child.id) ?? new Set<string>()),
-                    ]);
-                    const availableParents = folderOptions.filter((folder) => !excluded.has(folder.id));
-
-                    return (
-                      <div
-                        key={child.id}
-                        className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between"
-                      >
-                        <div>
-                          <div className="flex items-center gap-2">
-                            {child.type === "folder" ? (
-                              <Folder className="h-4 w-4 text-muted-foreground" />
-                            ) : (
-                              <FileText className="h-4 w-4 text-muted-foreground" />
-                            )}
-                            <span className="font-medium">{child.title}</span>
-                            {child.type === "folder" && (
-                              <Badge variant="outline">{child.childCount} элементов</Badge>
-                            )}
-                          </div>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Обновлено {formatDateTime(child.updatedAt)}
-                          </p>
-                        </div>
-                        <Select
-                          value={child.parentId ?? ROOT_PARENT_VALUE}
-                          onValueChange={(value) => handleChangeParent(child, value)}
-                          disabled={movingNodeId === child.id && moveNodeMutation.isPending}
-                        >
-                          <SelectTrigger className="w-full sm:w-64">
-                            <SelectValue placeholder="Выберите родительский раздел" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
-                            {availableParents.map((option) => (
-                              <SelectItem key={option.id} value={option.id}>
-                                <span className="flex items-center gap-2">
-                                  {" ".repeat(option.level * 2)}
-                                  {option.type === "folder" ? (
-                                    <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-                                  ) : (
-                                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                                  )}
-                                  {option.title}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
-          )}
         </CardContent>
       </Card>
     );
@@ -1377,7 +1385,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               В базе ещё нет документов. Нажмите «Новый документ», чтобы создать первый материал.
             </p>
           ) : (
-            <TreeMenu baseId={detail.id} nodes={detail.rootNodes} activeNodeId={selectedNodeId} />
+            <TreeMenu
+              baseId={detail.id}
+              nodes={detail.rootNodes}
+              activeNodeId={selectedNodeId}
+              expandedNodes={expandedNodeIds}
+              onToggle={handleToggleNode}
+            />
           )}
         </div>
       </CardContent>
@@ -1512,6 +1526,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               baseId={selectedBase.id}
               nodes={selectedBase.rootNodes}
               activeNodeId={selectedNodeId}
+              expandedNodes={expandedNodeIds}
+              onToggle={handleToggleNode}
             />
           )}
         </ScrollArea>
