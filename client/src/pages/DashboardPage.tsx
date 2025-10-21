@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentType } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,53 +10,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { cn } from "@/lib/utils";
-import { importKnowledgeArchive } from "@/lib/archive-import";
 import {
-  createKnowledgeBaseEntry,
   KnowledgeBase,
   KnowledgeBaseSourceType,
   readKnowledgeBaseStorage,
-  writeKnowledgeBaseStorage,
   KNOWLEDGE_BASE_EVENT,
   getKnowledgeBaseSourceLabel,
   clearLegacyKnowledgeBaseStorageOnce,
 } from "@/lib/knowledge-base";
-import { apiRequest } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
-import { Brain, FolderArchive, Globe, LayoutDashboard, NotebookPen } from "lucide-react";
-import type { CreateKnowledgeBaseResponse } from "@shared/knowledge-base";
-
-const CREATION_OPTIONS: Array<{
-  value: KnowledgeBaseSourceType;
-  title: string;
-  description: string;
-  icon: ComponentType<{ className?: string }>;
-}> = [
-  {
-    value: "blank",
-    title: "Пустая база",
-    description: "Создайте структуру с нуля и наполняйте контент вручную или с помощью AI.",
-    icon: NotebookPen,
-  },
-  {
-    value: "archive",
-    title: "Импорт архива",
-    description: "Загрузите ZIP-архив документов, чтобы автоматически разложить их в иерархию.",
-    icon: FolderArchive,
-  },
-  {
-    value: "crawler",
-    title: "Краулинг сайта",
-    description: "Подключите корпоративный портал или знания из публичного сайта для автообновления.",
-    icon: Globe,
-  },
-];
+import { Brain, LayoutDashboard } from "lucide-react";
+import {
+  CreateKnowledgeBaseDialog,
+  KNOWLEDGE_BASE_CREATION_OPTIONS,
+} from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 
 const getKnowledgeBasesFromStorage = () => readKnowledgeBaseStorage().knowledgeBases;
 
@@ -75,18 +43,9 @@ const formatRelativeDate = (value?: string | null) => {
 
 export default function DashboardPage() {
   const [, setLocation] = useLocation();
-  const queryClient = useQueryClient();
-  const archiveInputRef = useRef<HTMLInputElement | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>(() => getKnowledgeBasesFromStorage());
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [creationMode, setCreationMode] = useState<KnowledgeBaseSourceType>("blank");
-  const [newBaseName, setNewBaseName] = useState("");
-  const [newBaseDescription, setNewBaseDescription] = useState("");
-  const [archiveFileName, setArchiveFileName] = useState("");
-  const [archiveFile, setArchiveFile] = useState<File | null>(null);
-  const [sourceUrl, setSourceUrl] = useState("");
-  const [creationError, setCreationError] = useState<string | null>(null);
-  const [isCreatingBase, setIsCreatingBase] = useState(false);
 
   useEffect(() => {
     const cleared = clearLegacyKnowledgeBaseStorageOnce();
@@ -137,133 +96,13 @@ export default function DashboardPage() {
     return { baseTotal, documents, tasks };
   }, [knowledgeBases]);
 
-  const resetDialog = () => {
-    setCreationError(null);
-    setNewBaseName("");
-    setNewBaseDescription("");
-    setArchiveFileName("");
-    setArchiveFile(null);
-    setSourceUrl("");
-    setCreationMode("blank");
-    if (archiveInputRef.current) {
-      archiveInputRef.current.value = "";
-    }
-  };
-
   const handleOpenDialog = (mode: KnowledgeBaseSourceType) => {
     setCreationMode(mode);
-    setCreationError(null);
     setIsDialogOpen(true);
   };
-
-  const handleArchiveChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setArchiveFileName(file.name);
-      setArchiveFile(file);
-    } else {
-      setArchiveFileName("");
-      setArchiveFile(null);
-    }
-  };
-
-  const handleCreateBase = async () => {
-    if (isCreatingBase) {
-      return;
-    }
-
-    if (!newBaseName.trim()) {
-      setCreationError("Укажите название базы знаний");
-      return;
-    }
-
-    if (creationMode === "archive" && (!archiveFileName || !archiveFile)) {
-      setCreationError("Выберите архив документов для импорта");
-      return;
-    }
-
-    if (creationMode === "crawler" && !sourceUrl.trim()) {
-      setCreationError("Укажите ссылку на сайт для краулинга");
-      return;
-    }
-
-    setCreationError(null);
-    setIsCreatingBase(true);
-
-    try {
-      const ingestion =
-        creationMode === "archive"
-          ? { type: "archive" as const, archiveName: archiveFileName }
-          : creationMode === "crawler"
-            ? { type: "crawler" as const, seedUrl: sourceUrl.trim() }
-            : undefined;
-
-      const archiveImport =
-        creationMode === "archive" && archiveFile ? await importKnowledgeArchive(archiveFile) : null;
-
-      if (archiveImport && archiveImport.summary.importedFiles === 0) {
-        throw new Error(
-          "Не удалось импортировать ни один документ из архива. Проверьте поддерживаемые форматы и структуру файлов.",
-        );
-      }
-
-      let base = createKnowledgeBaseEntry({
-        name: newBaseName,
-        description: newBaseDescription,
-        sourceType: creationMode,
-        ingestion,
-        importSummary: archiveImport?.summary,
-      });
-
-      if (archiveImport) {
-        base = {
-          ...base,
-          structure: archiveImport.structure,
-          documents: archiveImport.documents,
-          tasks: {
-            total: archiveImport.summary.totalFiles,
-            inProgress: archiveImport.summary.skippedFiles,
-            completed: archiveImport.summary.importedFiles,
-          },
-        };
-      }
-
-      const response = await apiRequest("POST", "/api/knowledge/bases", {
-        id: base.id,
-        name: base.name,
-        description: base.description,
-      });
-
-      const created = (await response.json()) as CreateKnowledgeBaseResponse;
-      base = {
-        ...base,
-        id: created.id,
-        name: created.name,
-        description: created.description,
-        createdAt: created.updatedAt,
-        updatedAt: created.updatedAt,
-      };
-
-      const currentState = readKnowledgeBaseStorage();
-      const updatedState = {
-        knowledgeBases: [...currentState.knowledgeBases, base],
-        selectedBaseId: base.id,
-        selectedDocument: null,
-      };
-
-      writeKnowledgeBaseStorage(updatedState);
-      setKnowledgeBases(updatedState.knowledgeBases);
-      void queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
-      setIsDialogOpen(false);
-      setLocation(`/knowledge/${base.id}`);
-      resetDialog();
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Не удалось создать базу знаний. Попробуйте снова.";
-      setCreationError(message);
-    } finally {
-      setIsCreatingBase(false);
-    }
+  const handleBaseCreated = (base: KnowledgeBase) => {
+    setKnowledgeBases(getKnowledgeBasesFromStorage());
+    setLocation(`/knowledge/${base.id}`);
   };
 
   return (
@@ -300,7 +139,7 @@ export default function DashboardPage() {
           </h2>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
-          {CREATION_OPTIONS.map((option) => (
+          {KNOWLEDGE_BASE_CREATION_OPTIONS.map((option) => (
             <Card key={option.value} className="transition hover:-translate-y-1 hover:shadow-md">
               <button
                 type="button"
@@ -401,124 +240,12 @@ export default function DashboardPage() {
         )}
       </section>
 
-      <Dialog
+      <CreateKnowledgeBaseDialog
         open={isDialogOpen}
-        onOpenChange={(open) => {
-          setIsDialogOpen(open);
-          if (!open) {
-            resetDialog();
-          }
-        }}
-      >
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Создание базы знаний</DialogTitle>
-            <DialogDescription>
-              Выберите подходящий сценарий, задайте название и при необходимости укажите источники данных.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="grid gap-2 sm:grid-cols-3">
-              {CREATION_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setCreationMode(option.value)}
-                  className={cn(
-                    "flex flex-col gap-2 rounded-lg border p-3 text-left transition",
-                    creationMode === option.value ? "border-primary bg-primary/5" : "hover:border-primary/40"
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <option.icon className="h-4 w-4" />
-                    <span className="text-sm font-semibold">{option.title}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{option.description}</p>
-                </button>
-              ))}
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="dashboard-base-name">
-                Название базы знаний
-              </label>
-              <Input
-                id="dashboard-base-name"
-                placeholder="Например, База знаний по клиентской поддержке"
-                value={newBaseName}
-                onChange={(event) => setNewBaseName(event.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="dashboard-base-description">
-                Краткое описание
-              </label>
-              <Textarea
-                id="dashboard-base-description"
-                rows={3}
-                placeholder="Расскажите, для чего нужна база знаний и какие процессы она покрывает"
-                value={newBaseDescription}
-                onChange={(event) => setNewBaseDescription(event.target.value)}
-              />
-            </div>
-
-            {creationMode === "archive" && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">ZIP-архив документов</label>
-                <input
-                  ref={archiveInputRef}
-                  type="file"
-                  accept=".zip,.rar,.7z"
-                  className="hidden"
-                  onChange={handleArchiveChange}
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button type="button" variant="outline" onClick={() => archiveInputRef.current?.click()}>
-                    Выбрать архив
-                  </Button>
-                  {archiveFileName ? (
-                    <span className="text-xs text-muted-foreground">Выбрано: {archiveFileName}</span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">
-                      Поддерживаются ZIP, RAR и 7z архивы
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {creationMode === "crawler" && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium" htmlFor="dashboard-crawler-url">
-                  Ссылка для краулинга
-                </label>
-                <Input
-                  id="dashboard-crawler-url"
-                  placeholder="https://docs.company.ru"
-                  value={sourceUrl}
-                  onChange={(event) => setSourceUrl(event.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Мы обойдем вложенные страницы, создадим документы и будем отслеживать обновления автоматически.
-                </p>
-              </div>
-            )}
-
-            {creationError && <p className="text-sm text-destructive">{creationError}</p>}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreatingBase}>
-              Отмена
-            </Button>
-            <Button onClick={handleCreateBase} disabled={isCreatingBase}>
-              {isCreatingBase ? "Создаём..." : "Создать базу знаний"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setIsDialogOpen}
+        initialMode={creationMode}
+        onCreated={handleBaseCreated}
+      />
     </div>
   );
 }
