@@ -23,10 +23,12 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
+import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -53,7 +55,11 @@ import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { escapeHtml, getSanitizedContent } from "@/lib/document-import";
-import { syncKnowledgeBaseStorageFromSummaries } from "@/lib/knowledge-base";
+import {
+  syncKnowledgeBaseStorageFromSummaries,
+  type KnowledgeBase as LocalKnowledgeBase,
+  type KnowledgeBaseSourceType,
+} from "@/lib/knowledge-base";
 import type {
   KnowledgeBaseSummary,
   KnowledgeBaseTreeNode,
@@ -351,7 +357,18 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [documentDraftTitle, setDocumentDraftTitle] = useState<string>("");
   const [documentDraftContent, setDocumentDraftContent] = useState<string>("");
   const [exportingFormat, setExportingFormat] = useState<"doc" | "pdf" | null>(null);
+  const [isCreateBaseDialogOpen, setIsCreateBaseDialogOpen] = useState(false);
+  const [createBaseMode, setCreateBaseMode] = useState<KnowledgeBaseSourceType>("blank");
   const isDeleteDialogOpen = Boolean(deleteTarget);
+  const handleOpenCreateBase = (mode: KnowledgeBaseSourceType = "blank") => {
+    setCreateBaseMode(mode);
+    setIsCreateBaseDialogOpen(true);
+  };
+  const handleBaseCreated = (base: LocalKnowledgeBase) => {
+    setIsCreateBaseDialogOpen(false);
+    setLocation(`/knowledge/${base.id}`);
+    setCreateBaseMode("blank");
+  };
 
   const basesQuery = useQuery({
     queryKey: ["knowledge-bases"],
@@ -1186,25 +1203,41 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               <Loader2 className="h-4 w-4 animate-spin" /> Загрузка баз...
             </div>
           ) : bases.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Пока нет доступных баз знаний.
-            </p>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Пока нет доступных баз знаний.
+              </p>
+              <Button className="w-full" onClick={() => handleOpenCreateBase("blank")}>
+                <Plus className="mr-2 h-4 w-4" /> Создать базу знаний
+              </Button>
+            </div>
           ) : (
-            <Select
-              value={selectedBase?.id ?? ""}
-              onValueChange={(value) => setLocation(`/knowledge/${value}`)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Выберите базу" />
-              </SelectTrigger>
-              <SelectContent>
-                {bases.map((base) => (
-                  <SelectItem key={base.id} value={base.id}>
-                    {base.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="space-y-2">
+              <Select
+                value={selectedBase?.id ?? ""}
+                onValueChange={(value) => setLocation(`/knowledge/${value}`)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите базу" />
+                </SelectTrigger>
+                <SelectContent>
+                  {bases.map((base) => (
+                    <SelectItem key={base.id} value={base.id}>
+                      {base.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="w-full"
+                onClick={() => handleOpenCreateBase("blank")}
+              >
+                <Plus className="mr-2 h-4 w-4" /> Новая база знаний
+              </Button>
+            </div>
           )}
           {selectedBase && (
             <Button
@@ -1219,9 +1252,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         </div>
         <ScrollArea className="flex-1 p-4">
           {!selectedBase ? (
-            <p className="text-sm text-muted-foreground">
-              Выберите базу знаний, чтобы увидеть структуру документов.
-            </p>
+            bases.length === 0 ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Создайте базу знаний, чтобы увидеть структуру документов и загрузить материалы.
+                </p>
+                <Button className="w-full" onClick={() => handleOpenCreateBase("blank")}>
+                  <Plus className="mr-2 h-4 w-4" /> Создать базу знаний
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Выберите базу знаний, чтобы увидеть структуру документов.
+              </p>
+            )
           ) : selectedBase.rootNodes.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               В этой базе ещё нет документов.
@@ -1237,9 +1281,36 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </aside>
       <main className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto flex max-w-4xl flex-col gap-6">
-          {renderContent()}
+          {bases.length === 0 ? (
+            <Card className="border border-dashed">
+              <CardHeader className="space-y-2 text-center">
+                <CardTitle>Нет ни одной базы знаний</CardTitle>
+                <CardDescription>
+                  Создайте базу, чтобы организовать документы, сформировать структуру и подключить векторный поиск.
+                </CardDescription>
+              </CardHeader>
+              <CardFooter className="justify-center pb-6">
+                <Button onClick={() => handleOpenCreateBase("blank")}>
+                  <Plus className="mr-2 h-4 w-4" /> Создать базу знаний
+                </Button>
+              </CardFooter>
+            </Card>
+          ) : (
+            renderContent()
+          )}
         </div>
       </main>
+      <CreateKnowledgeBaseDialog
+        open={isCreateBaseDialogOpen}
+        onOpenChange={(open) => {
+          setIsCreateBaseDialogOpen(open);
+          if (!open) {
+            setCreateBaseMode("blank");
+          }
+        }}
+        initialMode={createBaseMode}
+        onCreated={handleBaseCreated}
+      />
       <CreateKnowledgeDocumentDialog
         open={isCreateDocumentDialogOpen}
         onOpenChange={(open) => {
