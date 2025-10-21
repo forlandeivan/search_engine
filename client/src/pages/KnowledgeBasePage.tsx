@@ -40,6 +40,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -75,6 +83,7 @@ import {
   FileText,
   FileType,
   Folder,
+  GitBranch,
   Loader2,
   MoreVertical,
   PencilLine,
@@ -182,6 +191,21 @@ const buildDescendantMap = (
 
   for (const node of nodes) {
     traverse(node);
+  }
+
+  return accumulator;
+};
+
+const buildParentMap = (
+  nodes: KnowledgeBaseTreeNode[],
+  parentId: string | null = null,
+  accumulator: Map<string, string | null> = new Map(),
+): Map<string, string | null> => {
+  for (const node of nodes) {
+    accumulator.set(node.id, parentId);
+    if (node.children) {
+      buildParentMap(node.children, node.id, accumulator);
+    }
   }
 
   return accumulator;
@@ -359,6 +383,15 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [isCreateBaseDialogOpen, setIsCreateBaseDialogOpen] = useState(false);
   const [createBaseMode, setCreateBaseMode] = useState<KnowledgeBaseSourceType>("blank");
   const isDeleteDialogOpen = Boolean(deleteTarget);
+  const [hierarchyDialogState, setHierarchyDialogState] = useState<{
+    nodeId: string;
+    nodeTitle: string;
+    nodeType: "folder" | "document";
+    currentParentId: string | null;
+    structure: KnowledgeBaseTreeNode[];
+  } | null>(null);
+  const [hierarchySelectedParentId, setHierarchySelectedParentId] =
+    useState<string>(ROOT_PARENT_VALUE);
   const handleOpenCreateBase = (mode: KnowledgeBaseSourceType = "blank") => {
     setCreateBaseMode(mode);
     setIsCreateBaseDialogOpen(true);
@@ -457,6 +490,54 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => (documentDetail ? getSanitizedContent(documentDetail.content ?? "") : ""),
     [documentDetail?.content],
   );
+
+  const hierarchyDialogOptions = useMemo(() => {
+    if (!hierarchyDialogState) {
+      return { allOptions: [] as FolderOption[], availableOptions: [] as FolderOption[] };
+    }
+
+    const { structure, nodeId, nodeType } = hierarchyDialogState;
+    const allOptions = collectFolderOptions(structure);
+    const descendantMap = buildDescendantMap(structure);
+    const excluded = new Set<string>([nodeId]);
+    const descendants = descendantMap.get(nodeId);
+
+    if (descendants) {
+      for (const value of descendants) {
+        excluded.add(value);
+      }
+    }
+
+    const availableOptions = allOptions.filter((option) => {
+      if (excluded.has(option.id)) {
+        return false;
+      }
+
+      if (nodeType === "folder" && option.type !== "folder") {
+        return false;
+      }
+
+      return true;
+    });
+
+    return { allOptions, availableOptions };
+  }, [hierarchyDialogState]);
+
+  const hierarchyCurrentParentLabel = useMemo(() => {
+    if (!hierarchyDialogState) {
+      return "В корне базы";
+    }
+
+    if (!hierarchyDialogState.currentParentId) {
+      return "В корне базы";
+    }
+
+    const parent = hierarchyDialogOptions.allOptions.find(
+      (option) => option.id === hierarchyDialogState.currentParentId,
+    );
+
+    return parent?.title ?? "В корне базы";
+  }, [hierarchyDialogOptions.allOptions, hierarchyDialogState]);
 
   const exportingDoc = exportingFormat === "doc";
   const exportingPdf = exportingFormat === "pdf";
@@ -601,6 +682,27 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     setDocumentDialogParentId(parentId);
     setDocumentDialogParentTitle(parentTitle);
     setIsCreateDocumentDialogOpen(true);
+  };
+
+  const closeHierarchyDialog = () => {
+    setHierarchyDialogState(null);
+    setHierarchySelectedParentId(ROOT_PARENT_VALUE);
+  };
+
+  const handleOpenHierarchyDialog = (
+    detail: Extract<KnowledgeBaseNodeDetail, { type: "folder" | "document" }>,
+  ) => {
+    const parentMap = buildParentMap(detail.structure);
+    const currentParentId = parentMap.get(detail.id) ?? null;
+
+    setHierarchyDialogState({
+      nodeId: detail.id,
+      nodeTitle: detail.title,
+      nodeType: detail.type,
+      currentParentId,
+      structure: detail.structure,
+    });
+    setHierarchySelectedParentId(currentParentId ?? ROOT_PARENT_VALUE);
   };
 
   const handleStartEditingDocument = (detail: KnowledgeBaseDocumentDetail) => {
@@ -865,6 +967,40 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     moveNodeMutation.mutate({ baseId: selectedBase.id, nodeId: child.id, parentId });
   };
 
+  const handleApplyHierarchySettings = () => {
+    if (!hierarchyDialogState) {
+      closeHierarchyDialog();
+      return;
+    }
+
+    if (!selectedBase) {
+      closeHierarchyDialog();
+      return;
+    }
+
+    const targetParentId =
+      hierarchySelectedParentId === ROOT_PARENT_VALUE ? null : hierarchySelectedParentId;
+
+    if (targetParentId === hierarchyDialogState.currentParentId) {
+      closeHierarchyDialog();
+      return;
+    }
+
+    setMovingNodeId(hierarchyDialogState.nodeId);
+    moveNodeMutation.mutate(
+      {
+        baseId: selectedBase.id,
+        nodeId: hierarchyDialogState.nodeId,
+        parentId: targetParentId,
+      },
+      {
+        onSuccess: () => {
+          closeHierarchyDialog();
+        },
+      },
+    );
+  };
+
   const renderFolderSettings = (detail: Extract<KnowledgeBaseNodeDetail, { type: "folder" }>) => {
     const folderOptions = collectFolderOptions(detail.structure);
     const descendantMap = buildDescendantMap(detail.structure);
@@ -894,6 +1030,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => handleOpenHierarchyDialog(detail)}>
+                  <GitBranch className="mr-2 h-4 w-4" /> Настройки иерархии
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onSelect={() =>
                     setDeleteTarget({ type: "folder", id: detail.id, title: detail.title })
@@ -1056,6 +1196,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => handleOpenHierarchyDialog(detail)}>
+                      <GitBranch className="mr-2 h-4 w-4" /> Настройки иерархии
+                    </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => handleStartEditingDocument(detail)}>
                       <PencilLine className="mr-2 h-4 w-4" /> Редактировать
                     </DropdownMenuItem>
@@ -1277,6 +1420,16 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     return renderOverview(detail);
   };
 
+  const normalizedHierarchySelectedParentId =
+    hierarchySelectedParentId === ROOT_PARENT_VALUE ? null : hierarchySelectedParentId;
+  const isHierarchySaving =
+    Boolean(hierarchyDialogState) &&
+    moveNodeMutation.isPending &&
+    movingNodeId === hierarchyDialogState?.nodeId;
+  const hasHierarchyChanges =
+    Boolean(hierarchyDialogState) &&
+    normalizedHierarchySelectedParentId !== hierarchyDialogState?.currentParentId;
+
   return (
     <div className="flex h-full min-h-[calc(100vh-4rem)] bg-background">
       <aside className="flex w-80 flex-col border-r">
@@ -1416,6 +1569,76 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           await createDocumentMutation.mutateAsync({ ...values, baseId: selectedBase.id });
         }}
       />
+      <Dialog
+        open={Boolean(hierarchyDialogState)}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeHierarchyDialog();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Настройки иерархии</DialogTitle>
+            <DialogDescription>
+              {hierarchyDialogState?.nodeType === "folder"
+                ? "Выберите подраздел, в который нужно переместить текущий раздел, или сделайте его корневым."
+                : "Назначьте родительскую страницу для документа или оставьте его в корне базы."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-md border bg-muted/40 p-3 text-sm">
+              <p className="font-medium">{hierarchyDialogState?.nodeTitle}</p>
+              <p className="text-muted-foreground">Текущий уровень: {hierarchyCurrentParentLabel}</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Родительская страница</Label>
+              <Select
+                value={hierarchySelectedParentId}
+                onValueChange={setHierarchySelectedParentId}
+                disabled={isHierarchySaving}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите элемент" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
+                  {hierarchyDialogOptions.availableOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="inline-block"
+                          style={{ width: option.level * 12 }}
+                          aria-hidden="true"
+                        />
+                        {option.type === "folder" ? (
+                          <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                        ) : (
+                          <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                        )}
+                        {option.title}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {hierarchyDialogState?.nodeType === "folder"
+                  ? "Подраздел можно вложить только в другой подраздел."
+                  : "Документ может находиться в подразделе или внутри другого документа."}
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeHierarchyDialog} disabled={isHierarchySaving}>
+              Отмена
+            </Button>
+            <Button type="button" onClick={handleApplyHierarchySettings} disabled={!hasHierarchyChanges || isHierarchySaving}>
+              {isHierarchySaving ? "Сохраняем..." : "Сохранить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <AlertDialog
         open={isDeleteDialogOpen}
         onOpenChange={(open) => {
