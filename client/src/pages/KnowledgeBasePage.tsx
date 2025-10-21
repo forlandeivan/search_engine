@@ -1203,13 +1203,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               <Loader2 className="h-4 w-4 animate-spin" /> Загрузка баз...
             </div>
           ) : bases.length === 0 ? (
-            <div className="space-y-3">
+            <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
                 Пока нет доступных баз знаний.
               </p>
-              <Button className="w-full" onClick={() => handleOpenCreateBase("blank")}>
-                <Plus className="mr-2 h-4 w-4" /> Создать базу знаний
-              </Button>
+              <p className="text-xs text-muted-foreground">
+                Создайте первую базу через основную панель, чтобы начать работу с документами.
+              </p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -1253,14 +1253,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         <ScrollArea className="flex-1 p-4">
           {!selectedBase ? (
             bases.length === 0 ? (
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  Создайте базу знаний, чтобы увидеть структуру документов и загрузить материалы.
-                </p>
-                <Button className="w-full" onClick={() => handleOpenCreateBase("blank")}>
-                  <Plus className="mr-2 h-4 w-4" /> Создать базу знаний
-                </Button>
-              </div>
+              <p className="text-sm text-muted-foreground">
+                Создайте базу знаний через кнопку на главной панели, чтобы увидеть структуру документов и загрузить материалы.
+              </p>
             ) : (
               <p className="text-sm text-muted-foreground">
                 Выберите базу знаний, чтобы увидеть структуру документов.

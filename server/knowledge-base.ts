@@ -448,6 +448,13 @@ export async function createKnowledgeBase(
       );
     }
 
+    if (code === "23503") {
+      throw new KnowledgeBaseError(
+        "Рабочее пространство не найдено или недоступно для создания базы знаний",
+        404,
+      );
+    }
+
     throw error;
   }
 }
