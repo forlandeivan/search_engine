@@ -43,7 +43,8 @@ import {
 } from "@shared/vectorization";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type { PublicEmbeddingProvider } from "@shared/schema";
-import type { KnowledgeDocumentChunks, KnowledgeDocumentVectorization } from "@/lib/knowledge-base";
+import type { KnowledgeDocumentChunkSet } from "@shared/knowledge-base";
+import type { KnowledgeDocumentVectorization } from "@/lib/knowledge-base";
 
 interface KnowledgeDocumentForVectorization {
   id: string;
@@ -51,7 +52,7 @@ interface KnowledgeDocumentForVectorization {
   content: string;
   updatedAt?: string | null;
   vectorization?: KnowledgeDocumentVectorization | null;
-  chunks?: KnowledgeDocumentChunks | null;
+  chunkSet?: KnowledgeDocumentChunkSet | null;
 }
 
 interface KnowledgeBaseForVectorization {
@@ -114,6 +115,22 @@ const CONTEXT_PREVIEW_VALUE_LIMIT = 160;
 const DEFAULT_NEW_COLLECTION_NAME = "New Collection";
 const DEFAULT_CHUNK_SIZE = 800;
 const DEFAULT_CHUNK_OVERLAP = 200;
+
+const pickPositiveInteger = (value?: number | null): number | null => {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.round(value);
+  }
+
+  return null;
+};
+
+const pickNonNegativeInteger = (value?: number | null): number | null => {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return Math.max(0, Math.round(value));
+  }
+
+  return null;
+};
 
 function generateFieldId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -329,19 +346,32 @@ export function VectorizeKnowledgeDocumentDialog({
   const [activeTab, setActiveTab] = useState<"settings" | "context">("settings");
   const [activeSuggestionsFieldId, setActiveSuggestionsFieldId] = useState<string | null>(null);
   const templateFieldRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const chunkSet = document.chunkSet ?? null;
+  const chunkSetConfig = chunkSet?.config ?? null;
+  const configMaxChars = pickPositiveInteger(chunkSetConfig?.maxChars);
+  const configMaxTokens = pickPositiveInteger(chunkSetConfig?.maxTokens);
+  const configOverlapChars = pickNonNegativeInteger(chunkSetConfig?.overlapChars);
+  const configOverlapTokens = pickNonNegativeInteger(chunkSetConfig?.overlapTokens);
+  const vectorizationChunkSize =
+    typeof document.vectorization?.chunkSize === "number" &&
+    Number.isFinite(document.vectorization.chunkSize) &&
+    document.vectorization.chunkSize > 0
+      ? Math.max(200, Math.min(8000, Math.round(document.vectorization.chunkSize)))
+      : null;
+  const vectorizationChunkOverlap =
+    typeof document.vectorization?.chunkOverlap === "number" &&
+    Number.isFinite(document.vectorization.chunkOverlap) &&
+    document.vectorization.chunkOverlap >= 0
+      ? Math.max(0, Math.round(document.vectorization.chunkOverlap))
+      : null;
   const defaultChunkSize =
-    document.chunks?.chunkSize ?? document.vectorization?.chunkSize ?? DEFAULT_CHUNK_SIZE;
-  const defaultChunkOverlap =
-    document.chunks?.chunkOverlap ?? document.vectorization?.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP;
-  const normalizedDefaultOverlap = Math.max(
-    0,
-    Math.min(defaultChunkOverlap, Math.max(defaultChunkSize - 1, 0)),
-  );
+    configMaxChars ?? configMaxTokens ?? vectorizationChunkSize ?? DEFAULT_CHUNK_SIZE;
+  const rawDefaultOverlap =
+    configOverlapChars ?? configOverlapTokens ?? vectorizationChunkOverlap ?? DEFAULT_CHUNK_OVERLAP;
+  const defaultChunkOverlap = Math.min(rawDefaultOverlap, Math.max(defaultChunkSize - 1, 0));
   const [chunkSizeInput, setChunkSizeInput] = useState<string>(String(defaultChunkSize));
-  const [chunkOverlapInput, setChunkOverlapInput] = useState<string>(
-    String(normalizedDefaultOverlap),
-  );
-  const availableChunks = document.chunks?.items ?? [];
+  const [chunkOverlapInput, setChunkOverlapInput] = useState<string>(String(defaultChunkOverlap));
+  const availableChunks = chunkSet?.chunks ?? [];
   const chunkSettingsLocked = availableChunks.length > 0;
   const [selectedChunkIds, setSelectedChunkIds] = useState<string[]>(() =>
     availableChunks.map((chunk) => chunk.id ?? buildDocumentChunkId(document.id, chunk.index)),
@@ -365,16 +395,16 @@ export function VectorizeKnowledgeDocumentDialog({
     }
 
     setChunkSizeInput(String(defaultChunkSize));
-    setChunkOverlapInput(String(normalizedDefaultOverlap));
+    setChunkOverlapInput(String(defaultChunkOverlap));
     setSelectedChunkIds([]);
-  }, [defaultChunkSize, normalizedDefaultOverlap, document.id, isOpen]);
+  }, [defaultChunkSize, defaultChunkOverlap, document.id, isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
       return;
     }
 
-    const items = document.chunks?.items ?? [];
+    const items = chunkSet?.chunks ?? [];
     if (items.length === 0) {
       setSelectedChunkIds([]);
       return;
@@ -383,7 +413,7 @@ export function VectorizeKnowledgeDocumentDialog({
     setSelectedChunkIds(
       items.map((chunk) => chunk.id ?? buildDocumentChunkId(document.id, chunk.index)),
     );
-  }, [document.chunks?.generatedAt, document.id, isOpen]);
+  }, [chunkSet?.updatedAt, chunkSet?.id, document.id, isOpen]);
 
   const collections = collectionsData?.collections ?? [];
   const isCollectionsLoading = collectionsLoading || collectionsFetching;
@@ -688,11 +718,11 @@ export function VectorizeKnowledgeDocumentDialog({
       chunkOverlap,
     }) => {
       const sanitizedName = collectionName?.trim() ?? "";
-      const chunkData = document.chunks;
-      const usingStoredChunks = Boolean(chunkData && chunkData.items.length > 0);
+      const chunkData = chunkSet;
+      const usingStoredChunks = Boolean(chunkData && chunkData.chunks.length > 0);
       const selectionSet = new Set(selectedChunkIds);
       const chunkItemsForRequest = usingStoredChunks
-        ? (chunkData?.items ?? []).filter((chunk) =>
+        ? (chunkData?.chunks ?? []).filter((chunk) =>
             selectionSet.has(chunk.id ?? buildDocumentChunkId(document.id, chunk.index)),
           )
         : [];
@@ -702,7 +732,7 @@ export function VectorizeKnowledgeDocumentDialog({
       }
 
       if (usingStoredChunks) {
-        const chunkIndices = (chunkData?.items ?? []).reduce<number[]>((accumulator, chunk, index) => {
+        const chunkIndices = (chunkData?.chunks ?? []).reduce<number[]>((accumulator, chunk, index) => {
           const chunkId = chunk.id ?? buildDocumentChunkId(document.id, chunk.index);
           if (selectionSet.has(chunkId)) {
             accumulator.push(index);
@@ -713,7 +743,7 @@ export function VectorizeKnowledgeDocumentDialog({
         lastVectorizationSelectionRef.current = {
           usingStoredChunks: true,
           chunkIndices,
-          totalChunks: chunkData?.items.length ?? 0,
+          totalChunks: chunkData?.chunks.length ?? 0,
         };
       } else {
         lastVectorizationSelectionRef.current = {
@@ -723,8 +753,20 @@ export function VectorizeKnowledgeDocumentDialog({
         };
       }
 
-      const effectiveChunkSize = usingStoredChunks ? chunkData!.chunkSize : chunkSize;
-      const effectiveChunkOverlap = usingStoredChunks ? chunkData!.chunkOverlap : chunkOverlap;
+      const storedChunkSize = usingStoredChunks
+        ? pickPositiveInteger(chunkData?.config?.maxChars) ??
+          pickPositiveInteger(chunkData?.config?.maxTokens) ??
+          defaultChunkSize
+        : null;
+      const storedChunkOverlap = usingStoredChunks
+        ? pickNonNegativeInteger(chunkData?.config?.overlapChars) ??
+          pickNonNegativeInteger(chunkData?.config?.overlapTokens) ??
+          defaultChunkOverlap
+        : null;
+      const effectiveChunkSize = usingStoredChunks ? storedChunkSize ?? defaultChunkSize : chunkSize;
+      const effectiveChunkOverlap = usingStoredChunks
+        ? Math.min(storedChunkOverlap ?? defaultChunkOverlap, Math.max((storedChunkSize ?? defaultChunkSize) - 1, 0))
+        : chunkOverlap;
       const body: Record<string, unknown> = {
         embeddingProviderId: providerId,
         collectionName: sanitizedName || undefined,
@@ -746,9 +788,11 @@ export function VectorizeKnowledgeDocumentDialog({
 
       if (usingStoredChunks) {
         (body.document as Record<string, unknown>).chunks = {
-          chunkSize: chunkData!.chunkSize,
-          chunkOverlap: chunkData!.chunkOverlap,
-          totalCount: chunkData!.items.length,
+          chunkSetId: chunkData?.id,
+          documentId: chunkData?.documentId,
+          versionId: chunkData?.versionId,
+          totalCount: chunkData?.chunkCount ?? chunkData?.chunks.length ?? chunkItemsForRequest.length,
+          config: chunkData?.config ?? {},
           items: chunkItemsForRequest.map((chunk) => ({
             ...chunk,
             id: chunk.id ?? buildDocumentChunkId(document.id, chunk.index),
@@ -1054,7 +1098,7 @@ export function VectorizeKnowledgeDocumentDialog({
       setActiveSuggestionsFieldId(null);
       templateFieldRefs.current = {};
       setChunkSizeInput(String(defaultChunkSize));
-      setChunkOverlapInput(String(normalizedDefaultOverlap));
+      setChunkOverlapInput(String(defaultChunkOverlap));
       return;
     }
 
@@ -1067,7 +1111,7 @@ export function VectorizeKnowledgeDocumentDialog({
     setActiveTab("settings");
     templateFieldRefs.current = {};
     setChunkSizeInput(String(defaultChunkSize));
-    setChunkOverlapInput(String(normalizedDefaultOverlap));
+    setChunkOverlapInput(String(defaultChunkOverlap));
   };
 
   const handleConfirm = () => {
@@ -1481,6 +1525,16 @@ export function VectorizeKnowledgeDocumentDialog({
               {availableChunks.map((chunk) => {
                 const chunkId = chunk.id ?? buildDocumentChunkId(document.id, chunk.index);
                 const isSelected = selectedChunkIds.includes(chunkId);
+                const charCount = chunk.text.length;
+                const tokensLabel =
+                  typeof chunk.tokenCount === "number" && Number.isFinite(chunk.tokenCount)
+                    ? `${chunk.tokenCount.toLocaleString("ru-RU")} токенов`
+                    : null;
+                const excerptSource = chunk.text.replace(/\s+/g, " ").trim();
+                const excerpt =
+                  excerptSource.length > 0
+                    ? `${excerptSource.slice(0, 200)}${excerptSource.length > 200 ? "…" : ""}`
+                    : "";
 
                 return (
                   <label
@@ -1494,9 +1548,12 @@ export function VectorizeKnowledgeDocumentDialog({
                     <div className="flex-1 space-y-1">
                       <div className="flex flex-wrap items-center justify-between text-xs font-medium text-muted-foreground">
                         <span>Чанк #{chunk.index + 1}</span>
-                        <span>{chunk.charCount.toLocaleString("ru-RU")} символов</span>
+                        <div className="flex items-center gap-2">
+                          <span>{charCount.toLocaleString("ru-RU")} символов</span>
+                          {tokensLabel && <span>{tokensLabel}</span>}
+                        </div>
                       </div>
-                      <p className="text-xs text-muted-foreground/80">{chunk.excerpt}</p>
+                      <p className="text-xs text-muted-foreground/80">{excerpt || "Чанк пуст"}</p>
                     </div>
                   </label>
                 );

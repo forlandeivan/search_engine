@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
+import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 import {
   Card,
@@ -59,6 +60,7 @@ import {
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -76,6 +78,7 @@ import type {
   DeleteKnowledgeNodeResponse,
   CreateKnowledgeDocumentResponse,
   KnowledgeBaseDocumentDetail,
+  KnowledgeDocumentChunkSet,
 } from "@shared/knowledge-base";
 import {
   ChevronDown,
@@ -411,6 +414,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [editingDocumentId, setEditingDocumentId] = useState<string | null>(null);
   const [documentDraftTitle, setDocumentDraftTitle] = useState<string>("");
   const [documentDraftContent, setDocumentDraftContent] = useState<string>("");
+  const [documentActiveTab, setDocumentActiveTab] = useState<"content" | "chunks">("content");
+  const handleDocumentTabChange = (value: string) => {
+    if (value === "content" || value === "chunks") {
+      setDocumentActiveTab(value);
+    }
+  };
   const [exportingFormat, setExportingFormat] = useState<"doc" | "pdf" | null>(null);
   const [isCreateBaseDialogOpen, setIsCreateBaseDialogOpen] = useState(false);
   const [createBaseMode, setCreateBaseMode] = useState<KnowledgeBaseSourceType>("blank");
@@ -554,6 +563,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       setDocumentDraftContent(getSanitizedContent(documentDetail.content ?? ""));
     }
   }, [documentDetail?.id, documentDetail?.title, documentDetail?.content, editingDocumentId]);
+
+  useEffect(() => {
+    setDocumentActiveTab("content");
+  }, [documentDetail?.id]);
 
   const sanitizedDocumentContent = useMemo(
     () => (documentDetail ? getSanitizedContent(documentDetail.content ?? "") : ""),
@@ -1216,6 +1229,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     const sourceLabel = DOCUMENT_SOURCE_LABELS[detail.sourceType] ?? "Документ";
     const versionLabel = detail.versionNumber ? `v${detail.versionNumber}` : null;
     const isSaving = updateDocumentMutation.isPending;
+    const handleChunkSetCreated = (chunkSet: KnowledgeDocumentChunkSet) => {
+      setDocumentActiveTab("chunks");
+      queryClient.setQueryData<KnowledgeBaseNodeDetail>(
+        ["knowledge-node", selectedBase?.id, nodeKey],
+        (previous) => {
+          if (!previous || previous.type !== "document") {
+            return previous;
+          }
+
+          return { ...previous, chunkSet };
+        },
+      );
+      void nodeDetailQuery.refetch();
+    };
 
     return (
       <Card>
@@ -1335,26 +1362,43 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               </span>
             )}
           </div>
-          {isCurrentEditing ? (
-            <div className="space-y-3">
-              <Label className="text-sm font-medium" htmlFor="knowledge-document-editor">
-                Содержимое
-              </Label>
-              <div id="knowledge-document-editor">
-                <DocumentEditor
-                  value={documentDraftContent}
-                  onChange={(value) => setDocumentDraftContent(getSanitizedContent(value))}
+          <Tabs value={documentActiveTab} onValueChange={handleDocumentTabChange} className="w-full">
+            <TabsList className="w-full justify-start">
+              <TabsTrigger value="content">Содержимое</TabsTrigger>
+              <TabsTrigger value="chunks">Чанки</TabsTrigger>
+            </TabsList>
+            <TabsContent value="content" className="mt-4">
+              {isCurrentEditing ? (
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium" htmlFor="knowledge-document-editor">
+                    Содержимое
+                  </Label>
+                  <div id="knowledge-document-editor">
+                    <DocumentEditor
+                      value={documentDraftContent}
+                      onChange={(value) => setDocumentDraftContent(getSanitizedContent(value))}
+                    />
+                  </div>
+                </div>
+              ) : sanitizedContent ? (
+                <div
+                  className="prose prose-sm max-w-none dark:prose-invert"
+                  dangerouslySetInnerHTML={{ __html: sanitizedContent }}
                 />
-              </div>
-            </div>
-          ) : sanitizedContent ? (
-            <div
-              className="prose prose-sm max-w-none dark:prose-invert"
-              dangerouslySetInnerHTML={{ __html: sanitizedContent }}
-            />
-          ) : (
-            <p className="text-sm text-muted-foreground">Документ пока пуст.</p>
-          )}
+              ) : (
+                <p className="text-sm text-muted-foreground">Документ пока пуст.</p>
+              )}
+            </TabsContent>
+            <TabsContent value="chunks" className="mt-4">
+              <DocumentChunksPanel
+                baseId={selectedBase!.id}
+                nodeId={detail.id}
+                documentId={detail.documentId}
+                chunkSet={detail.chunkSet}
+                onChunkSetCreated={handleChunkSetCreated}
+              />
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     );

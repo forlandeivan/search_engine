@@ -18,7 +18,6 @@ import {
   replaceChunkInHtml,
   type DocumentChunk,
 } from "@/lib/knowledge-document";
-import type { KnowledgeDocumentChunks } from "@/lib/knowledge-base";
 import { cn } from "@/lib/utils";
 import {
   Clipboard,
@@ -46,6 +45,13 @@ const DEFAULT_CHUNK_OVERLAP = 200;
 const MIN_CHUNK_SIZE = 200;
 const MAX_CHUNK_SIZE = 8000;
 const MAX_CHUNK_OVERLAP = 4000;
+
+type KnowledgeDocumentChunks = {
+  chunkSize: number;
+  chunkOverlap: number;
+  generatedAt: string;
+  items: DocumentChunk[];
+};
 
 export function DocumentChunksTab({
   documentId,
