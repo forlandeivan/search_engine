@@ -51,81 +51,109 @@ function swallowPgError(error: unknown, allowedCodes: string[]): void {
 }
 
 async function normalizeKnowledgeBaseWorkspaces(): Promise<void> {
-  await db.execute(sql`
-    UPDATE "knowledge_nodes" AS kn
-    SET "workspace_id" = kb."workspace_id"
-    FROM "knowledge_bases" AS kb
-    WHERE kn."base_id" = kb."id"
-      AND (kn."workspace_id" IS NULL OR btrim(kn."workspace_id") = '')
-  `);
+  try {
+    await db.execute(sql`
+      UPDATE "knowledge_nodes" AS kn
+      SET "workspace_id" = kb."workspace_id"
+      FROM "knowledge_bases" AS kb
+      WHERE kn."base_id" = kb."id"
+        AND (kn."workspace_id" IS NULL OR btrim(kn."workspace_id") = '')
+    `);
+  } catch (error) {
+    swallowPgError(error, ["42P01"]);
+  }
 
-  await db.execute(sql`
-    UPDATE "knowledge_documents" AS kd
-    SET "workspace_id" = kn."workspace_id"
-    FROM "knowledge_nodes" AS kn
-    WHERE kd."node_id" = kn."id"
-      AND (kd."workspace_id" IS NULL OR btrim(kd."workspace_id") = '')
-  `);
+  try {
+    await db.execute(sql`
+      UPDATE "knowledge_documents" AS kd
+      SET "workspace_id" = kn."workspace_id"
+      FROM "knowledge_nodes" AS kn
+      WHERE kd."node_id" = kn."id"
+        AND (kd."workspace_id" IS NULL OR btrim(kd."workspace_id") = '')
+    `);
+  } catch (error) {
+    swallowPgError(error, ["42P01"]);
+  }
 
-  await db.execute(sql`
-    UPDATE "knowledge_document_versions" AS kv
-    SET "workspace_id" = kd."workspace_id"
-    FROM "knowledge_documents" AS kd
-    WHERE kv."document_id" = kd."id"
-      AND (kv."workspace_id" IS NULL OR btrim(kv."workspace_id") = '')
-  `);
-
-  await db.execute(sql`
-    DELETE FROM "knowledge_document_versions"
-    WHERE "document_id" IN (
-      SELECT kd."id"
+  try {
+    await db.execute(sql`
+      UPDATE "knowledge_document_versions" AS kv
+      SET "workspace_id" = kd."workspace_id"
       FROM "knowledge_documents" AS kd
-      LEFT JOIN "knowledge_nodes" AS kn ON kd."node_id" = kn."id"
-      LEFT JOIN "knowledge_bases" AS kb ON kd."base_id" = kb."id"
-      WHERE kn."id" IS NULL
-        OR kb."id" IS NULL
-        OR kn."workspace_id" IS NULL
-        OR btrim(kn."workspace_id") = ''
-        OR kd."workspace_id" IS NULL
-        OR btrim(kd."workspace_id") = ''
-    )
-  `);
+      WHERE kv."document_id" = kd."id"
+        AND (kv."workspace_id" IS NULL OR btrim(kv."workspace_id") = '')
+    `);
+  } catch (error) {
+    swallowPgError(error, ["42P01"]);
+  }
 
-  await db.execute(sql`
-    DELETE FROM "knowledge_documents"
-    WHERE "id" IN (
-      SELECT kd."id"
-      FROM "knowledge_documents" AS kd
-      LEFT JOIN "knowledge_nodes" AS kn ON kd."node_id" = kn."id"
-      LEFT JOIN "knowledge_bases" AS kb ON kd."base_id" = kb."id"
-      WHERE kn."id" IS NULL
-        OR kb."id" IS NULL
-        OR kn."workspace_id" IS NULL
-        OR btrim(kn."workspace_id") = ''
-        OR kd."workspace_id" IS NULL
-        OR btrim(kd."workspace_id") = ''
-    )
-  `);
-
-  await db.execute(sql`
-    DELETE FROM "knowledge_nodes"
-    WHERE ("workspace_id" IS NULL OR btrim("workspace_id") = '')
-      OR NOT EXISTS (
-        SELECT 1
-        FROM "knowledge_bases"
-        WHERE "knowledge_bases"."id" = "knowledge_nodes"."base_id"
+  try {
+    await db.execute(sql`
+      DELETE FROM "knowledge_document_versions"
+      WHERE "document_id" IN (
+        SELECT kd."id"
+        FROM "knowledge_documents" AS kd
+        LEFT JOIN "knowledge_nodes" AS kn ON kd."node_id" = kn."id"
+        LEFT JOIN "knowledge_bases" AS kb ON kd."base_id" = kb."id"
+        WHERE kn."id" IS NULL
+          OR kb."id" IS NULL
+          OR kn."workspace_id" IS NULL
+          OR btrim(kn."workspace_id") = ''
+          OR kd."workspace_id" IS NULL
+          OR btrim(kd."workspace_id") = ''
       )
-  `);
+    `);
+  } catch (error) {
+    swallowPgError(error, ["42P01"]);
+  }
 
-  await db.execute(sql`
-    DELETE FROM "knowledge_bases"
-    WHERE ("workspace_id" IS NULL OR btrim("workspace_id") = '')
-      OR NOT EXISTS (
-        SELECT 1
-        FROM "workspaces"
-        WHERE "workspaces"."id" = "knowledge_bases"."workspace_id"
+  try {
+    await db.execute(sql`
+      DELETE FROM "knowledge_documents"
+      WHERE "id" IN (
+        SELECT kd."id"
+        FROM "knowledge_documents" AS kd
+        LEFT JOIN "knowledge_nodes" AS kn ON kd."node_id" = kn."id"
+        LEFT JOIN "knowledge_bases" AS kb ON kd."base_id" = kb."id"
+        WHERE kn."id" IS NULL
+          OR kb."id" IS NULL
+          OR kn."workspace_id" IS NULL
+          OR btrim(kn."workspace_id") = ''
+          OR kd."workspace_id" IS NULL
+          OR btrim(kd."workspace_id") = ''
       )
-  `);
+    `);
+  } catch (error) {
+    swallowPgError(error, ["42P01"]);
+  }
+
+  try {
+    await db.execute(sql`
+      DELETE FROM "knowledge_nodes"
+      WHERE ("workspace_id" IS NULL OR btrim("workspace_id") = '')
+        OR NOT EXISTS (
+          SELECT 1
+          FROM "knowledge_bases"
+          WHERE "knowledge_bases"."id" = "knowledge_nodes"."base_id"
+        )
+    `);
+  } catch (error) {
+    swallowPgError(error, ["42P01"]);
+  }
+
+  try {
+    await db.execute(sql`
+      DELETE FROM "knowledge_bases"
+      WHERE ("workspace_id" IS NULL OR btrim("workspace_id") = '')
+        OR NOT EXISTS (
+          SELECT 1
+          FROM "workspaces"
+          WHERE "workspaces"."id" = "knowledge_bases"."workspace_id"
+        )
+    `);
+  } catch (error) {
+    swallowPgError(error, ["42P01"]);
+  }
 }
 
 let cachedUuidExpression: SQL | null = null;
@@ -850,13 +878,13 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         ),
         processed_nodes AS (
           SELECT
-            nn."id",
-            nn."parent_id",
-            nn."base_id",
+            cleaned."id",
+            cleaned."parent_id",
+            cleaned."base_id",
             CASE
-              WHEN segment_value = '' THEN CONCAT('node_', substring(replace(nn."id", '-', '_') FROM 1 FOR 24))
-              WHEN segment_value ~ '^[a-z]' THEN segment_value
-              ELSE CONCAT('n_', segment_value)
+              WHEN cleaned.segment_value = '' THEN CONCAT('node_', substring(replace(cleaned."id", '-', '_') FROM 1 FOR 24))
+              WHEN cleaned.segment_value ~ '^[a-z]' THEN cleaned.segment_value
+              ELSE CONCAT('n_', cleaned.segment_value)
             END AS segment
           FROM (
             SELECT
@@ -928,13 +956,13 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         ),
         processed_nodes AS (
           SELECT
-            nn."id",
-            nn."parent_id",
-            nn."base_id",
+            cleaned."id",
+            cleaned."parent_id",
+            cleaned."base_id",
             CASE
-              WHEN segment_value = '' THEN CONCAT('node_', substring(replace(nn."id", '-', '_') FROM 1 FOR 24))
-              WHEN segment_value ~ '^[a-z]' THEN segment_value
-              ELSE CONCAT('n_', segment_value)
+              WHEN cleaned.segment_value = '' THEN CONCAT('node_', substring(replace(cleaned."id", '-', '_') FROM 1 FOR 24))
+              WHEN cleaned.segment_value ~ '^[a-z]' THEN cleaned.segment_value
+              ELSE CONCAT('n_', cleaned.segment_value)
             END AS segment
           FROM (
             SELECT
@@ -1066,9 +1094,13 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_base_parent_position_idx ON knowledge_nodes("base_id", "parent_id", "position")`,
     );
     if (knowledgeBasePathUsesLtree) {
-      await db.execute(
-        sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_path_gin ON knowledge_nodes USING GIN("path")`,
-      );
+      try {
+        await db.execute(
+          sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_path_gin ON knowledge_nodes USING GIST("path")`,
+        );
+      } catch (error) {
+        swallowPgError(error, ["42704", "42P07"]);
+      }
     } else {
       await db.execute(
         sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_path_idx ON knowledge_nodes("path")`,
@@ -3330,6 +3362,24 @@ export async function ensureDatabaseSchema(): Promise<void> {
       swallowPgError(error, ["42701"]);
     }
 
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "workspace_id" varchar
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "sites"
+        ADD COLUMN "owner_id" varchar
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
     await ensureEmbeddingProvidersTable();
 
     await db.execute(sql`
@@ -3399,7 +3449,7 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await db.execute(sql`
       UPDATE "sites"
       SET
-        "public_id" = COALESCE("public_id", ${uuidExpression}),
+        "public_id" = COALESCE("public_id", (${uuidExpression})::text),
         "public_api_key" = COALESCE("public_api_key", ${randomHex32Expression}),
         "public_api_key_generated_at" = COALESCE("public_api_key_generated_at", CURRENT_TIMESTAMP)
     `);
@@ -3424,7 +3474,7 @@ export async function ensureDatabaseSchema(): Promise<void> {
         ADD CONSTRAINT "sites_public_id_unique" UNIQUE("public_id")
       `);
     } catch (error) {
-      swallowPgError(error, ["42710"]);
+      swallowPgError(error, ["42710", "42P07"]);
     }
 
     await db.execute(sql`
