@@ -50,6 +50,74 @@ function swallowPgError(error: unknown, allowedCodes: string[]): void {
   }
 }
 
+async function normalizeKnowledgeBaseWorkspaces(): Promise<void> {
+  await db.execute(sql`
+    UPDATE "knowledge_nodes" AS kn
+    SET "workspace_id" = kb."workspace_id"
+    FROM "knowledge_bases" AS kb
+    WHERE kn."base_id" = kb."id"
+      AND (kn."workspace_id" IS NULL OR btrim(kn."workspace_id") = '')
+  `);
+
+  await db.execute(sql`
+    UPDATE "knowledge_documents" AS kd
+    SET "workspace_id" = kn."workspace_id"
+    FROM "knowledge_nodes" AS kn
+    WHERE kd."node_id" = kn."id"
+      AND (kd."workspace_id" IS NULL OR btrim(kd."workspace_id") = '')
+  `);
+
+  await db.execute(sql`
+    UPDATE "knowledge_document_versions" AS kv
+    SET "workspace_id" = kd."workspace_id"
+    FROM "knowledge_documents" AS kd
+    WHERE kv."document_id" = kd."id"
+      AND (kv."workspace_id" IS NULL OR btrim(kv."workspace_id") = '')
+  `);
+
+  await db.execute(sql`
+    DELETE FROM "knowledge_document_versions"
+    WHERE "document_id" IN (
+      SELECT kd."id"
+      FROM "knowledge_documents" AS kd
+      LEFT JOIN "knowledge_nodes" AS kn ON kd."node_id" = kn."id"
+      LEFT JOIN "knowledge_bases" AS kb ON kd."base_id" = kb."id"
+      WHERE kn."id" IS NULL
+        OR kb."id" IS NULL
+        OR kn."workspace_id" IS NULL
+        OR btrim(kn."workspace_id") = ''
+        OR kd."workspace_id" IS NULL
+        OR btrim(kd."workspace_id") = ''
+    )
+  `);
+
+  await db.execute(sql`
+    DELETE FROM "knowledge_documents"
+    WHERE "id" IN (
+      SELECT kd."id"
+      FROM "knowledge_documents" AS kd
+      LEFT JOIN "knowledge_nodes" AS kn ON kd."node_id" = kn."id"
+      LEFT JOIN "knowledge_bases" AS kb ON kd."base_id" = kb."id"
+      WHERE kn."id" IS NULL
+        OR kb."id" IS NULL
+        OR kn."workspace_id" IS NULL
+        OR btrim(kn."workspace_id") = ''
+        OR kd."workspace_id" IS NULL
+        OR btrim(kd."workspace_id") = ''
+    )
+  `);
+
+  await db.execute(sql`
+    DELETE FROM "knowledge_nodes"
+    WHERE ("workspace_id" IS NULL OR btrim("workspace_id") = '')
+      OR NOT EXISTS (
+        SELECT 1
+        FROM "knowledge_bases"
+        WHERE "knowledge_bases"."id" = "knowledge_nodes"."base_id"
+      )
+  `);
+}
+
 let cachedUuidExpression: SQL | null = null;
 let ensuringUuidExpression: Promise<SQL> | null = null;
 let loggedUuidFallbackWarning = false;
@@ -616,8 +684,10 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       SET "workspace_id" = kb."workspace_id"
       FROM "knowledge_bases" AS kb
       WHERE kn."base_id" = kb."id"
-        AND (kn."workspace_id" IS NULL OR kn."workspace_id" = '')
+        AND (kn."workspace_id" IS NULL OR btrim(kn."workspace_id") = '')
     `);
+
+    await normalizeKnowledgeBaseWorkspaces();
 
     try {
       await db.execute(sql`
@@ -625,7 +695,18 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         ALTER COLUMN "workspace_id" SET NOT NULL
       `);
     } catch (error) {
-      swallowPgError(error, ["42704"]);
+      if (isPgError(error) && error.code === "23502") {
+        console.warn(
+          "[storage] Обнаружены узлы базы знаний без workspace_id, выполняем очистку и повторяем установку NOT NULL",
+        );
+        await normalizeKnowledgeBaseWorkspaces();
+        await db.execute(sql`
+          ALTER TABLE "knowledge_nodes"
+          ALTER COLUMN "workspace_id" SET NOT NULL
+        `);
+      } else {
+        swallowPgError(error, ["42704"]);
+      }
     }
 
     await db.execute(sql`
