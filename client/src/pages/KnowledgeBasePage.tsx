@@ -53,6 +53,7 @@ import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { escapeHtml, getSanitizedContent } from "@/lib/document-import";
+import { syncKnowledgeBaseStorageFromSummaries } from "@/lib/knowledge-base";
 import type {
   KnowledgeBaseSummary,
   KnowledgeBaseTreeNode,
@@ -359,6 +360,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return (await res.json()) as KnowledgeBaseSummary[];
     },
   });
+
+  useEffect(() => {
+    if (!basesQuery.data) {
+      return;
+    }
+
+    syncKnowledgeBaseStorageFromSummaries(basesQuery.data);
+  }, [basesQuery.data]);
 
   const bases = basesQuery.data ?? [];
   const selectedBase = useMemo(

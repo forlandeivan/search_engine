@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentType } from "react";
 import { useLocation } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -74,6 +75,7 @@ const formatRelativeDate = (value?: string | null) => {
 
 export default function DashboardPage() {
   const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>(() => getKnowledgeBasesFromStorage());
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -251,6 +253,7 @@ export default function DashboardPage() {
 
       writeKnowledgeBaseStorage(updatedState);
       setKnowledgeBases(updatedState.knowledgeBases);
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
       setIsDialogOpen(false);
       setLocation(`/knowledge/${base.id}`);
       resetDialog();
