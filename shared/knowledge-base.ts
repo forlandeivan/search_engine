@@ -63,6 +63,8 @@ export type CreateKnowledgeDocumentResponse = KnowledgeNodeCreationBase & {
   status: KnowledgeDocumentStatus;
   versionId: string | null;
   versionNumber: number | null;
+  children: KnowledgeBaseChildNode[];
+  structure: KnowledgeBaseTreeNode[];
 };
 
 export type KnowledgeBaseBreadcrumb = {
@@ -114,6 +116,8 @@ export type KnowledgeBaseDocumentDetail = {
   status: KnowledgeDocumentStatus;
   versionId: string | null;
   versionNumber: number | null;
+  children: KnowledgeBaseChildNode[];
+  structure: KnowledgeBaseTreeNode[];
 };
 
 export type UpdateKnowledgeDocumentResponse = KnowledgeBaseDocumentDetail;

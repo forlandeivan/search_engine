@@ -97,6 +97,7 @@ type FolderOption = {
   id: string;
   title: string;
   level: number;
+  type: "folder" | "document";
 };
 
 type MoveNodeVariables = {
@@ -149,11 +150,9 @@ const collectFolderOptions = (
   accumulator: FolderOption[] = [],
 ): FolderOption[] => {
   for (const node of nodes) {
-    if (node.type === "folder") {
-      accumulator.push({ id: node.id, title: node.title, level });
-      if (node.children) {
-        collectFolderOptions(node.children, level + 1, accumulator);
-      }
+    accumulator.push({ id: node.id, title: node.title, level, type: node.type });
+    if (node.children) {
+      collectFolderOptions(node.children, level + 1, accumulator);
     }
   }
 
@@ -962,7 +961,15 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                           <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
                           {availableParents.map((option) => (
                             <SelectItem key={option.id} value={option.id}>
-                              {`${" ".repeat(option.level * 2)}${option.title}`}
+                              <span className="flex items-center gap-2">
+                                {" ".repeat(option.level * 2)}
+                                {option.type === "folder" ? (
+                                  <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                                ) : (
+                                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                                )}
+                                {option.title}
+                              </span>
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1034,44 +1041,53 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 </Button>
               </>
             ) : (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" aria-label="Действия с документом">
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => handleStartEditingDocument(detail)}>
-                    <PencilLine className="mr-2 h-4 w-4" /> Редактировать
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    disabled={exportingDoc || exportingPdf}
-                    onSelect={() => {
-                      void handleDownloadDoc(detail);
-                    }}
-                  >
-                    <FileType className="mr-2 h-4 w-4" /> Скачать .doc
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={exportingDoc || exportingPdf}
-                    onSelect={() => {
-                      void handleDownloadPdf(detail);
-                    }}
-                  >
-                    <FileDown className="mr-2 h-4 w-4" /> Скачать PDF
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onSelect={() => {
-                      setDeleteTarget({ type: "document", id: detail.id, title: detail.title });
-                    }}
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" /> Удалить
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <>
+                <Button
+                  type="button"
+                  onClick={() => handleOpenCreateDocument(detail.id, detail.title)}
+                  className="w-full sm:w-auto"
+                >
+                  <Plus className="mr-2 h-4 w-4" /> Новый документ
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" aria-label="Действия с документом">
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => handleStartEditingDocument(detail)}>
+                      <PencilLine className="mr-2 h-4 w-4" /> Редактировать
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      disabled={exportingDoc || exportingPdf}
+                      onSelect={() => {
+                        void handleDownloadDoc(detail);
+                      }}
+                    >
+                      <FileType className="mr-2 h-4 w-4" /> Скачать .doc
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={exportingDoc || exportingPdf}
+                      onSelect={() => {
+                        void handleDownloadPdf(detail);
+                      }}
+                    >
+                      <FileDown className="mr-2 h-4 w-4" /> Скачать PDF
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onSelect={() => {
+                        setDeleteTarget({ type: "document", id: detail.id, title: detail.title });
+                      }}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" /> Удалить
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
             )}
           </div>
         </CardHeader>
@@ -1114,6 +1130,79 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             />
           ) : (
             <p className="text-sm text-muted-foreground">Документ пока пуст.</p>
+          )}
+          {!isCurrentEditing && detail.children.length > 0 && (
+            <>
+              <Separator className="my-4" />
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-sm font-semibold">Вложенные элементы</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Изменяйте уровни вложенности документов и подразделов через выпадающий список.
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  {detail.children.map((child) => {
+                    const folderOptions = collectFolderOptions(detail.structure);
+                    const descendantMap = buildDescendantMap(detail.structure);
+                    const excluded = new Set<string>([
+                      child.id,
+                      ...(descendantMap.get(child.id) ?? new Set<string>()),
+                    ]);
+                    const availableParents = folderOptions.filter((folder) => !excluded.has(folder.id));
+
+                    return (
+                      <div
+                        key={child.id}
+                        className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            {child.type === "folder" ? (
+                              <Folder className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <FileText className="h-4 w-4 text-muted-foreground" />
+                            )}
+                            <span className="font-medium">{child.title}</span>
+                            {child.type === "folder" && (
+                              <Badge variant="outline">{child.childCount} элементов</Badge>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Обновлено {formatDateTime(child.updatedAt)}
+                          </p>
+                        </div>
+                        <Select
+                          value={child.parentId ?? ROOT_PARENT_VALUE}
+                          onValueChange={(value) => handleChangeParent(child, value)}
+                          disabled={movingNodeId === child.id && moveNodeMutation.isPending}
+                        >
+                          <SelectTrigger className="w-full sm:w-64">
+                            <SelectValue placeholder="Выберите родительский раздел" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
+                            {availableParents.map((option) => (
+                              <SelectItem key={option.id} value={option.id}>
+                                <span className="flex items-center gap-2">
+                                  {" ".repeat(option.level * 2)}
+                                  {option.type === "folder" ? (
+                                    <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                                  ) : (
+                                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                                  )}
+                                  {option.title}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

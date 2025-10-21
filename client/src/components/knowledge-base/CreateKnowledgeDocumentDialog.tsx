@@ -37,6 +37,7 @@ import type { KnowledgeNodeSourceType } from "@shared/schema";
 import {
   AlertCircle,
   FileText,
+  Folder,
   Loader2,
   Trash2,
   Upload,
@@ -75,15 +76,12 @@ type FolderOption = {
   id: string;
   title: string;
   level: number;
+  type: "folder" | "document";
 };
 
 function buildFolderOptions(nodes: KnowledgeBaseTreeNode[], level = 0, acc: FolderOption[] = []): FolderOption[] {
   for (const node of nodes) {
-    if (node.type !== "folder") {
-      continue;
-    }
-
-    acc.push({ id: node.id, title: node.title, level });
+    acc.push({ id: node.id, title: node.title, level, type: node.type });
     if (node.children && node.children.length > 0) {
       buildFolderOptions(node.children, level + 1, acc);
     }
@@ -386,7 +384,15 @@ export function CreateKnowledgeDocumentDialog({
                   <SelectItem value={ROOT_PARENT_VALUE}>В корне базы</SelectItem>
                   {folderOptions.map((option) => (
                     <SelectItem key={option.id} value={option.id}>
-                      {`${"\u00A0".repeat(option.level * 2)}${option.title}`}
+                      <span className="flex items-center gap-2">
+                        {"\u00A0".repeat(option.level * 2)}
+                        {option.type === "folder" ? (
+                          <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                        ) : (
+                          <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                        )}
+                        {option.title}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>

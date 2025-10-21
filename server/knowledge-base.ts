@@ -294,7 +294,7 @@ function buildBreadcrumbs(
 
   while (currentParentId) {
     const parent = nodesById.get(currentParentId);
-    if (!parent || parent.type !== "folder") {
+    if (!parent) {
       break;
     }
 
@@ -588,6 +588,8 @@ export async function getKnowledgeNodeDetail(
     status,
     versionId,
     versionNumber,
+    children: mapChildren(node, groups, nodesById),
+    structure: buildTreeFromGroups(groups, null),
   } satisfies KnowledgeBaseNodeDetail;
 }
 
@@ -714,11 +716,7 @@ export async function createKnowledgeDocument(
   if (parentId) {
     const parent = nodesById.get(parentId);
     if (!parent) {
-      throw new KnowledgeBaseError("Родительский раздел не найден", 404);
-    }
-
-    if (parent.type !== "folder") {
-      throw new KnowledgeBaseError("Родителем может быть только подраздел", 400);
+      throw new KnowledgeBaseError("Родительский элемент не найден", 404);
     }
   }
 
@@ -840,6 +838,11 @@ export async function createKnowledgeDocument(
   const node = createdNode as KnowledgeNodeRow;
   const updatedAt = createdVersionTimestamp ?? node.updatedAt;
 
+  const updatedNodes = [...nodes, node];
+  const groups = groupNodesByParent(updatedNodes);
+  const children = mapChildren(node, groups);
+  const structure = buildTreeFromGroups(groups, null);
+
   return {
     id: node.id,
     title: node.title,
@@ -853,6 +856,8 @@ export async function createKnowledgeDocument(
     status: "draft",
     versionId,
     versionNumber: createdVersionNumber,
+    children,
+    structure,
   } satisfies CreateKnowledgeDocumentResponse;
 }
 
@@ -1031,16 +1036,16 @@ export async function updateKnowledgeNodeParent(
   if (newParentId) {
     const parent = nodesById.get(newParentId);
     if (!parent) {
-      throw new KnowledgeBaseError("Родительский раздел не найден", 404);
+      throw new KnowledgeBaseError("Родительский элемент не найден", 404);
     }
 
-    if (parent.type !== "folder") {
-      throw new KnowledgeBaseError("Родителем может быть только подраздел", 400);
+    if (node.type === "folder" && parent.type !== "folder") {
+      throw new KnowledgeBaseError("Папка может находиться только внутри другой папки", 400);
     }
 
     const descendantIds = collectDescendants(groups, node.id, new Set<string>());
     if (descendantIds.has(newParentId) || newParentId === node.id) {
-      throw new KnowledgeBaseError("Нельзя перенести подраздел внутрь самого себя", 400);
+      throw new KnowledgeBaseError("Нельзя перенести элемент внутрь самого себя или его потомков", 400);
     }
   }
 
