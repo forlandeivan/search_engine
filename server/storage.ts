@@ -116,6 +116,16 @@ async function normalizeKnowledgeBaseWorkspaces(): Promise<void> {
         WHERE "knowledge_bases"."id" = "knowledge_nodes"."base_id"
       )
   `);
+
+  await db.execute(sql`
+    DELETE FROM "knowledge_bases"
+    WHERE ("workspace_id" IS NULL OR btrim("workspace_id") = '')
+      OR NOT EXISTS (
+        SELECT 1
+        FROM "workspaces"
+        WHERE "workspaces"."id" = "knowledge_bases"."workspace_id"
+      )
+  `);
 }
 
 let cachedUuidExpression: SQL | null = null;
