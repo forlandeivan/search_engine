@@ -1,4 +1,5 @@
 import { isAfter } from "date-fns";
+import type { KnowledgeBaseSummary, KnowledgeBaseTreeNode } from "@shared/knowledge-base";
 import { normalizeDocumentText, type DocumentChunk } from "@/lib/knowledge-document";
 
 export type TreeNode = {
@@ -610,6 +611,64 @@ export const clearLegacyKnowledgeBaseStorageOnce = () => {
     console.error("Не удалось выполнить миграцию баз знаний", error);
     return false;
   }
+};
+
+const mapSummaryTreeNodes = (nodes: KnowledgeBaseTreeNode[]): TreeNode[] =>
+  nodes.map((node) => ({
+    id: node.id,
+    title: node.title,
+    type: node.type === "folder" ? "folder" : "document",
+    children: node.children ? mapSummaryTreeNodes(node.children) : undefined,
+  }));
+
+const mergeKnowledgeBaseSummary = (
+  summary: KnowledgeBaseSummary,
+  previous?: KnowledgeBase,
+): KnowledgeBase => ({
+  id: summary.id,
+  name: summary.name,
+  description: summary.description,
+  structure: mapSummaryTreeNodes(summary.rootNodes ?? []),
+  documents: previous?.documents ? { ...previous.documents } : {},
+  sourceType: previous?.sourceType ?? "unknown",
+  createdAt: previous?.createdAt ?? summary.updatedAt,
+  updatedAt: summary.updatedAt,
+  lastOpenedAt: previous?.lastOpenedAt ?? null,
+  ingestion: previous?.ingestion,
+  tasks: previous?.tasks ? { ...previous.tasks } : { ...DEFAULT_TASKS },
+  importSummary: previous?.importSummary,
+});
+
+export const syncKnowledgeBaseStorageFromSummaries = (
+  summaries: KnowledgeBaseSummary[],
+): KnowledgeBaseStorage => {
+  const currentState = readKnowledgeBaseStorage();
+  const previousById = new Map(currentState.knowledgeBases.map((base) => [base.id, base]));
+
+  const knowledgeBases = summaries.map((summary) =>
+    mergeKnowledgeBaseSummary(summary, previousById.get(summary.id)),
+  );
+
+  const selectedBaseId =
+    currentState.selectedBaseId &&
+    knowledgeBases.some((base) => base.id === currentState.selectedBaseId)
+      ? currentState.selectedBaseId
+      : knowledgeBases[0]?.id ?? null;
+
+  const selectedDocument =
+    currentState.selectedDocument &&
+    knowledgeBases.some((base) => base.id === currentState.selectedDocument?.baseId)
+      ? currentState.selectedDocument
+      : null;
+
+  const updatedState: KnowledgeBaseStorage = {
+    knowledgeBases,
+    selectedBaseId,
+    selectedDocument,
+  };
+
+  writeKnowledgeBaseStorage(updatedState);
+  return updatedState;
 };
 
 export const createKnowledgeBaseEntry = ({

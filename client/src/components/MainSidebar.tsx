@@ -36,7 +36,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
-import { KNOWLEDGE_BASE_EVENT, readKnowledgeBaseStorage } from "@/lib/knowledge-base";
+import {
+  KNOWLEDGE_BASE_EVENT,
+  readKnowledgeBaseStorage,
+  syncKnowledgeBaseStorageFromSummaries,
+} from "@/lib/knowledge-base";
+import { apiRequest } from "@/lib/queryClient";
+import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 
 interface SidebarItem {
   title: string;
@@ -64,10 +70,27 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
     () => readKnowledgeBaseStorage().knowledgeBases.length
   );
 
+  const { data: knowledgeBases } = useQuery<KnowledgeBaseSummary[]>({
+    queryKey: ["knowledge-bases"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/knowledge/bases");
+      return (await res.json()) as KnowledgeBaseSummary[];
+    },
+  });
+
   const { data: stats } = useQuery<Stats>({
     queryKey: ['/api/stats'],
     refetchInterval: 10000,
   });
+
+  useEffect(() => {
+    if (!knowledgeBases) {
+      return;
+    }
+
+    const updated = syncKnowledgeBaseStorageFromSummaries(knowledgeBases);
+    setKnowledgeBaseCount(updated.knowledgeBases.length);
+  }, [knowledgeBases]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
