@@ -6,6 +6,13 @@ This is a lightweight search engine application designed for crawling and indexi
 
 ## Recent Changes
 
+### October 2025
+- **Hierarchical document structure**: Full support for nesting documents within other documents (like Confluence)
+- **Document parents**: Documents can now be parents for other documents (folders can only be parented by folders)
+- **Nested children management**: UI shows list of nested documents with ability to create new nested documents
+- **Tree recursion**: TreeMenu component properly displays nested documents at any depth
+- **Backend validation**: Prevents circular dependencies and self-parenting with proper ltree path management
+
 ### September 2025
 - **Re-crawl functionality implemented**: Complete system for re-crawling existing sites without creating duplicates
 - **Database flexibility**: Configurable PostgreSQL connection with automatic fallback to Neon
