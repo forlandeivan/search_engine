@@ -271,7 +271,7 @@ function buildTreeFromGroups(
     id: child.id,
     title: child.title,
     type: NODE_TYPE_SET.has(child.type) ? child.type : "document",
-    children: child.type === "folder" ? buildTreeFromGroups(groups, child.id) : undefined,
+    children: buildTreeFromGroups(groups, child.id),
   }));
 }
 
@@ -323,7 +323,7 @@ function mapChildren(
     title: child.title,
     type: NODE_TYPE_SET.has(child.type) ? child.type : "document",
     parentId: child.parentId ?? null,
-    childCount: child.type === "folder" ? (groups.get(child.id)?.length ?? 0) : 0,
+    childCount: groups.get(child.id)?.length ?? 0,
     updatedAt: toIsoDate(child.updatedAt),
     sourceType: child.type === "document" ? resolveNodeSourceType(child) : undefined,
     importFileName: child.type === "document" ? child.importFileName ?? null : undefined,
