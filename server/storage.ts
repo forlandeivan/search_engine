@@ -1235,6 +1235,135 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       `,
     );
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_document_chunk_sets" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "workspace_id" varchar NOT NULL,
+        "document_id" varchar NOT NULL,
+        "version_id" varchar NOT NULL,
+        "document_hash" text,
+        "max_tokens" integer,
+        "max_chars" integer,
+        "overlap_tokens" integer,
+        "overlap_chars" integer,
+        "split_by_pages" boolean NOT NULL DEFAULT false,
+        "respect_headings" boolean NOT NULL DEFAULT true,
+        "chunk_count" integer NOT NULL DEFAULT 0,
+        "total_tokens" integer NOT NULL DEFAULT 0,
+        "total_chars" integer NOT NULL DEFAULT 0,
+        "is_latest" boolean NOT NULL DEFAULT true,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_document_chunk_sets",
+      "knowledge_document_chunk_sets_workspace_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_chunk_sets"
+        ADD CONSTRAINT "knowledge_document_chunk_sets_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_chunk_sets",
+      "knowledge_document_chunk_sets_document_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_chunk_sets"
+        ADD CONSTRAINT "knowledge_document_chunk_sets_document_id_fkey"
+        FOREIGN KEY ("document_id") REFERENCES "knowledge_documents"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_chunk_sets",
+      "knowledge_document_chunk_sets_version_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_chunk_sets"
+        ADD CONSTRAINT "knowledge_document_chunk_sets_version_id_fkey"
+        FOREIGN KEY ("version_id") REFERENCES "knowledge_document_versions"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunk_sets_document_idx ON knowledge_document_chunk_sets("document_id", "created_at" DESC)`,
+    );
+
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunk_sets_document_latest_idx ON knowledge_document_chunk_sets("document_id", "is_latest")`,
+    );
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_document_chunks" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "workspace_id" varchar NOT NULL,
+        "chunk_set_id" varchar NOT NULL,
+        "document_id" varchar NOT NULL,
+        "version_id" varchar NOT NULL,
+        "chunk_index" integer NOT NULL,
+        "text" text NOT NULL,
+        "char_start" integer NOT NULL,
+        "char_end" integer NOT NULL,
+        "token_count" integer NOT NULL,
+        "page_number" integer,
+        "section_path" text[],
+        "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "content_hash" text NOT NULL,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_document_chunks",
+      "knowledge_document_chunks_workspace_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_chunks"
+        ADD CONSTRAINT "knowledge_document_chunks_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_chunks",
+      "knowledge_document_chunks_chunk_set_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_chunks"
+        ADD CONSTRAINT "knowledge_document_chunks_chunk_set_id_fkey"
+        FOREIGN KEY ("chunk_set_id") REFERENCES "knowledge_document_chunk_sets"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_chunks",
+      "knowledge_document_chunks_document_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_chunks"
+        ADD CONSTRAINT "knowledge_document_chunks_document_id_fkey"
+        FOREIGN KEY ("document_id") REFERENCES "knowledge_documents"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_chunks",
+      "knowledge_document_chunks_version_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_chunks"
+        ADD CONSTRAINT "knowledge_document_chunks_version_id_fkey"
+        FOREIGN KEY ("version_id") REFERENCES "knowledge_document_versions"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await db.execute(
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS knowledge_document_chunks_set_index_idx ON knowledge_document_chunks("chunk_set_id", "chunk_index")`,
+    );
+
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunks_document_idx ON knowledge_document_chunks("document_id", "chunk_index")`,
+    );
+
     knowledgeBaseTablesEnsured = true;
   })();
 
