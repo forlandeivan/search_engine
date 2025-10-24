@@ -850,7 +850,8 @@ export async function createKnowledgeDocument(
 
   const updatedNodes = [...nodes, node];
   const groups = groupNodesByParent(updatedNodes);
-  const children = mapChildren(node, groups);
+  const updatedNodesById = new Map(updatedNodes.map((entry) => [entry.id, entry]));
+  const children = mapChildren(node, groups, updatedNodesById);
   const structure = buildTreeFromGroups(groups, null);
 
   return {

@@ -1,15 +1,18 @@
 import { load } from "cheerio";
 import { createHash, randomUUID } from "crypto";
 import { and, desc, eq } from "drizzle-orm";
-import type { KnowledgeDocumentChunkConfig, KnowledgeDocumentChunkPreview } from "@shared/knowledge-base";
+import type {
+  KnowledgeDocumentChunkConfig,
+  KnowledgeDocumentChunkItem,
+  KnowledgeDocumentChunkPreview,
+  KnowledgeDocumentChunkSet,
+} from "@shared/knowledge-base";
 import {
   knowledgeDocumentChunkItems,
   knowledgeDocumentChunkSets,
   knowledgeDocumentVersions,
   knowledgeDocuments,
   knowledgeNodes,
-  type KnowledgeDocumentChunkItem,
-  type KnowledgeDocumentChunkSet,
 } from "@shared/schema";
 import { db } from "./db";
 import { KnowledgeBaseError } from "./knowledge-base";
@@ -179,8 +182,11 @@ const splitSentences = (text: string): string[] => {
     .filter((entry) => entry.length > 0);
 };
 
+type KnowledgeDocumentChunkSetRow = typeof knowledgeDocumentChunkSets.$inferSelect;
+type KnowledgeDocumentChunkItemRow = typeof knowledgeDocumentChunkItems.$inferSelect;
+
 const extractSentences = (html: string): { sentences: SentenceUnit[]; normalizedText: string } => {
-  const $ = load(html ?? "", { decodeEntities: false, normalizeWhitespace: false });
+  const $ = load(html ?? "");
   const body = $("body");
   const headingStack: Array<{ level: number; title: string }> = [];
   const sentences: SentenceUnit[] = [];
@@ -531,8 +537,8 @@ const fetchDocumentContext = async (
 };
 
 const mapChunkSet = (
-  setRow: typeof knowledgeDocumentChunkSets.$inferSelect,
-  itemRows: Array<typeof knowledgeDocumentChunkItems.$inferSelect>,
+  setRow: KnowledgeDocumentChunkSetRow,
+  itemRows: KnowledgeDocumentChunkItemRow[],
 ): KnowledgeDocumentChunkSet => {
   const config: KnowledgeDocumentChunkConfig = {
     maxTokens: setRow.maxTokens ?? null,
@@ -585,7 +591,18 @@ export const previewKnowledgeDocumentChunks = async (
   const totalTokens = generatedChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0);
   const totalChars = generatedChunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
 
-  const previewItems = generatedChunks.slice(0, 10);
+  const previewItems = generatedChunks.slice(0, 10).map((chunk): KnowledgeDocumentChunkItem => ({
+    id: chunk.id,
+    index: chunk.index,
+    text: chunk.text,
+    charStart: chunk.charStart,
+    charEnd: chunk.charEnd,
+    tokenCount: chunk.tokenCount,
+    pageNumber: chunk.pageNumber,
+    sectionPath: chunk.sectionPath,
+    metadata: chunk.metadata,
+    contentHash: chunk.contentHash,
+  }));
 
   return {
     documentId: context.documentId,
@@ -621,7 +638,7 @@ export const createKnowledgeDocumentChunkSet = async (
   const chunkSetId = randomUUID();
   const now = new Date();
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: typeof db) => {
     await tx
       .update(knowledgeDocumentChunkSets)
       .set({ isLatest: false, updatedAt: now })
