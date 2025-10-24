@@ -156,9 +156,17 @@ function createSchemaField(partial?: Partial<Omit<CollectionSchemaField, "id">>)
 
 function getDefaultSchemaFields(): CollectionSchemaField[] {
   return [
-    createSchemaField({ name: "content", template: "{{ document.text }}" }),
-    createSchemaField({ name: "title", template: "{{ document.title }}" }),
-    createSchemaField({ name: "url", template: "{{ document.path }}" }),
+    createSchemaField({ name: "content", template: "{{ chunk.text }}" }),
+    createSchemaField({
+      name: "title",
+      template: "{{ chunk.heading | default: document.title }}",
+    }),
+    createSchemaField({
+      name: "url",
+      template: "{{ chunk.deepLink | default: document.path }}",
+    }),
+    createSchemaField({ name: "chunk_id", template: "{{ chunk.id }}" }),
+    createSchemaField({ name: "chunk_index", template: "{{ chunk.index }}" }),
   ];
 }
 
