@@ -52,6 +52,17 @@ export type KnowledgeDocumentChunkPreview = {
   items: KnowledgeDocumentChunkItem[];
 };
 
+export type KnowledgeDocumentVectorizationJobStatus = {
+  id: string;
+  documentId: string;
+  status: "pending" | "running" | "completed" | "failed";
+  totalChunks: number;
+  processedChunks: number;
+  startedAt: string;
+  finishedAt: string | null;
+  error?: string | null;
+};
+
 export type KnowledgeBaseTreeNode = {
   id: string;
   title: string;

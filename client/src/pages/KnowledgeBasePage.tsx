@@ -25,6 +25,9 @@ import { Button } from "@/components/ui/button";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
 import VectorizeKnowledgeDocumentDialog from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
+import DocumentVectorizationProgress, {
+  type DocumentVectorizationProgressStatus,
+} from "@/components/knowledge-base/DocumentVectorizationProgress";
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 import {
   Card,
@@ -80,6 +83,7 @@ import type {
   CreateKnowledgeDocumentResponse,
   KnowledgeBaseDocumentDetail,
   KnowledgeDocumentChunkSet,
+  KnowledgeDocumentVectorizationJobStatus,
 } from "@shared/knowledge-base";
 import type { PublicEmbeddingProvider } from "@shared/schema";
 import {
@@ -130,6 +134,16 @@ type DeleteNodeVariables = {
 
 type CreateDocumentVariables = CreateKnowledgeDocumentFormValues & {
   baseId: string;
+};
+
+type DocumentVectorizationProgressState = {
+  documentId: string;
+  documentTitle: string;
+  jobId: string | null;
+  totalChunks: number;
+  processedChunks: number;
+  status: DocumentVectorizationProgressStatus;
+  errorMessage: string | null;
 };
 
 const formatDateTime = (value?: string | null) => {
@@ -422,7 +436,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [vectorizeDialogState, setVectorizeDialogState] = useState<{
     document: KnowledgeBaseDocumentDetail;
     base: KnowledgeBaseSummary | null;
+    isOpen: boolean;
   } | null>(null);
+  const [documentVectorizationProgress, setDocumentVectorizationProgress] =
+    useState<DocumentVectorizationProgressState | null>(null);
+  const [shouldPollVectorizationJob, setShouldPollVectorizationJob] = useState(false);
   const [chunkDialogSignal, setChunkDialogSignal] = useState(0);
   const handleDocumentTabChange = (value: string) => {
     if (value === "content" || value === "chunks") {
@@ -581,6 +599,23 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
   const documentDetail =
     nodeDetailQuery.data?.type === "document" ? nodeDetailQuery.data : null;
+  const vectorizationJobId = documentVectorizationProgress?.jobId ?? null;
+  const vectorizationJobQuery = useQuery<{ job: KnowledgeDocumentVectorizationJobStatus }>({
+    queryKey: ["knowledge-document-vectorize-job", vectorizationJobId ?? ""],
+    enabled: Boolean(vectorizationJobId),
+    refetchInterval: shouldPollVectorizationJob ? 1500 : false,
+    queryFn: async () => {
+      if (!vectorizationJobId) {
+        throw new Error("Нет идентификатора задачи");
+      }
+
+      const response = await apiRequest(
+        "GET",
+        `/api/knowledge/documents/vectorize/jobs/${encodeURIComponent(vectorizationJobId)}`,
+      );
+      return (await response.json()) as { job: KnowledgeDocumentVectorizationJobStatus };
+    },
+  });
 
   useEffect(() => {
     if (!documentDetail) {
@@ -603,6 +638,65 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   useEffect(() => {
     setDocumentActiveTab("content");
   }, [documentDetail?.id]);
+
+  useEffect(() => {
+    if (!documentVectorizationProgress?.jobId) {
+      setShouldPollVectorizationJob(false);
+      return;
+    }
+
+    const job = vectorizationJobQuery.data?.job;
+    if (!job) {
+      return;
+    }
+
+    setDocumentVectorizationProgress((current) => {
+      if (!current || current.jobId !== job.id) {
+        return current;
+      }
+
+      return {
+        ...current,
+        totalChunks: job.totalChunks,
+        processedChunks: job.processedChunks,
+        status: job.status,
+        errorMessage: job.error ?? null,
+      };
+    });
+
+    if (job.status === "completed" || job.status === "failed") {
+      setShouldPollVectorizationJob(false);
+    }
+  }, [documentVectorizationProgress?.jobId, vectorizationJobQuery.data]);
+
+  useEffect(() => {
+    if (!documentVectorizationProgress?.jobId && documentVectorizationProgress) {
+      setShouldPollVectorizationJob(false);
+    }
+  }, [documentVectorizationProgress]);
+
+  useEffect(() => {
+    if (!documentVectorizationProgress?.jobId) {
+      return;
+    }
+
+    if (!vectorizationJobQuery.isError) {
+      return;
+    }
+
+    setShouldPollVectorizationJob(false);
+    setDocumentVectorizationProgress((current) => {
+      if (!current || current.jobId !== documentVectorizationProgress.jobId) {
+        return current;
+      }
+
+      return {
+        ...current,
+        status: "failed",
+        errorMessage: "Не удалось обновить прогресс векторизации",
+      };
+    });
+  }, [documentVectorizationProgress?.jobId, vectorizationJobQuery.isError]);
 
   const sanitizedDocumentContent = useMemo(
     () => (documentDetail ? getSanitizedContent(documentDetail.content ?? "") : ""),
@@ -1301,7 +1395,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         return;
       }
 
-      setVectorizeDialogState({ document: detail, base: selectedBase });
+      setVectorizeDialogState({ document: detail, base: selectedBase, isOpen: true });
     };
 
     return (
@@ -1669,7 +1763,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </main>
       {vectorizeDialogState && (
         <VectorizeKnowledgeDocumentDialog
-          open
+          open={vectorizeDialogState.isOpen}
           hideTrigger
           document={{
             id: vectorizeDialogState.document.documentId ?? vectorizeDialogState.document.id,
@@ -1688,14 +1782,114 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               : null
           }
           providers={activeEmbeddingProviders}
-          onVectorizationComplete={(_payload) => {
+          onVectorizationStart={(info) => {
+            setVectorizeDialogState((current) => {
+              if (!current || current.document.id !== info.documentId) {
+                return current;
+              }
+
+              return { ...current, isOpen: false };
+            });
+            setDocumentVectorizationProgress({
+              documentId: info.documentId,
+              documentTitle: info.documentTitle,
+              jobId: null,
+              totalChunks: info.totalChunks > 0 ? info.totalChunks : 0,
+              processedChunks: 0,
+              status: "pending",
+              errorMessage: null,
+            });
+            setShouldPollVectorizationJob(false);
+          }}
+          onVectorizationJobCreated={(info) => {
+            setDocumentVectorizationProgress((current) => {
+              if (!current || current.documentId !== info.documentId) {
+                return current;
+              }
+
+              return {
+                ...current,
+                jobId: info.jobId,
+                totalChunks:
+                  info.totalChunks > 0
+                    ? info.totalChunks
+                    : Math.max(current.totalChunks, current.processedChunks),
+                status: current.status === "pending" ? "running" : current.status,
+              };
+            });
+            setShouldPollVectorizationJob(true);
+          }}
+          onVectorizationError={(payload) => {
+            setDocumentVectorizationProgress((current) => {
+              if (!current || current.documentId !== payload.documentId) {
+                return current;
+              }
+
+              return {
+                ...current,
+                status: "failed",
+                errorMessage: payload.error.message,
+              };
+            });
+            setShouldPollVectorizationJob(false);
+            setVectorizeDialogState((current) => {
+              if (!current || current.document.id !== payload.documentId) {
+                return current;
+              }
+
+              return { ...current, isOpen: true };
+            });
+          }}
+          onVectorizationComplete={(payload) => {
             setVectorizeDialogState(null);
+            setDocumentVectorizationProgress((current) => {
+              if (!current || current.documentId !== payload.documentId) {
+                return current;
+              }
+
+              return {
+                ...current,
+                status: "completed",
+                processedChunks: payload.vectorization.pointsCount,
+                totalChunks: Math.max(
+                  current.totalChunks,
+                  payload.vectorization.pointsCount,
+                ),
+                errorMessage: null,
+              };
+            });
+            setShouldPollVectorizationJob(false);
             void nodeDetailQuery.refetch();
           }}
           onOpenChange={(open) => {
-            if (!open) {
-              setVectorizeDialogState(null);
+            if (open) {
+              setVectorizeDialogState((current) => {
+                if (!current) {
+                  return current;
+                }
+
+                return { ...current, isOpen: true };
+              });
+              return;
             }
+
+            setVectorizeDialogState((current) => {
+              if (!current) {
+                return current;
+              }
+
+              const isVectorizingCurrent =
+                documentVectorizationProgress &&
+                documentVectorizationProgress.documentId === current.document.id &&
+                (documentVectorizationProgress.status === "pending" ||
+                  documentVectorizationProgress.status === "running");
+
+              if (isVectorizingCurrent) {
+                return { ...current, isOpen: false };
+              }
+
+              return null;
+            });
           }}
         />
       )}
@@ -1837,6 +2031,23 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {documentVectorizationProgress && (
+        <DocumentVectorizationProgress
+          title={`Векторизация: ${documentVectorizationProgress.documentTitle}`}
+          totalChunks={Math.max(
+            documentVectorizationProgress.totalChunks,
+            documentVectorizationProgress.processedChunks,
+          )}
+          processedChunks={documentVectorizationProgress.processedChunks}
+          status={documentVectorizationProgress.status}
+          errorMessage={documentVectorizationProgress.errorMessage}
+          dismissible={
+            documentVectorizationProgress.status === "completed" ||
+            documentVectorizationProgress.status === "failed"
+          }
+          onDismiss={() => setDocumentVectorizationProgress(null)}
+        />
+      )}
     </div>
   );
 }

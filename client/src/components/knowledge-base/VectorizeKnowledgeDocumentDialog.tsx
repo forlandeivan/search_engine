@@ -84,6 +84,7 @@ interface VectorizeKnowledgeDocumentResponse {
     id?: string;
     name?: string;
   };
+  jobId?: string;
 }
 
 interface VectorizeKnowledgeDocumentDialogProps {
@@ -94,6 +95,17 @@ interface VectorizeKnowledgeDocumentDialogProps {
     documentId: string;
     vectorization: KnowledgeDocumentVectorization;
   }) => void;
+  onVectorizationStart?: (payload: {
+    documentId: string;
+    documentTitle: string;
+    totalChunks: number;
+  }) => void;
+  onVectorizationJobCreated?: (payload: {
+    documentId: string;
+    jobId: string;
+    totalChunks: number;
+  }) => void;
+  onVectorizationError?: (payload: { documentId: string; error: Error }) => void;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   hideTrigger?: boolean;
@@ -422,6 +434,9 @@ export function VectorizeKnowledgeDocumentDialog({
   base,
   providers,
   onVectorizationComplete,
+  onVectorizationStart,
+  onVectorizationJobCreated,
+  onVectorizationError,
   open,
   onOpenChange,
   hideTrigger = false,
@@ -488,6 +503,7 @@ export function VectorizeKnowledgeDocumentDialog({
     chunkIndices: number[];
     totalChunks: number;
   } | null>(null);
+  const jobReportedRef = useRef(false);
 
   const { data: collectionsData, isLoading: collectionsLoading, isFetching: collectionsFetching, error: collectionsError } =
     useQuery<VectorCollectionListResponse>({
@@ -833,6 +849,7 @@ export function VectorizeKnowledgeDocumentDialog({
             selectionSet.has(chunk.id ?? buildDocumentChunkId(document.id, chunk.index)),
           )
         : [];
+      const totalChunksForRequest = usingStoredChunks ? chunkItemsForRequest.length : estimatedChunks;
 
       if (usingStoredChunks && chunkItemsForRequest.length === 0) {
         throw new Error("Не удалось определить выбранные чанки. Обновите список и попробуйте снова.");
@@ -928,9 +945,39 @@ export function VectorizeKnowledgeDocumentDialog({
       }
 
       const response = await apiRequest("POST", "/api/knowledge/documents/vectorize", body);
-      return (await response.json()) as VectorizeKnowledgeDocumentResponse;
+      const jobId = response.headers.get("x-vectorization-job-id")?.trim() ?? "";
+      const totalChunksHeader = response.headers.get("x-vectorization-total-chunks");
+
+      if (jobId) {
+        const parsedTotal = totalChunksHeader ? Number.parseInt(totalChunksHeader, 10) : Number.NaN;
+        const normalizedTotal = Number.isFinite(parsedTotal) && parsedTotal > 0 ? parsedTotal : totalChunksForRequest;
+
+        onVectorizationJobCreated?.({
+          documentId: document.id,
+          jobId,
+          totalChunks: normalizedTotal > 0 ? normalizedTotal : totalChunksForRequest,
+        });
+        jobReportedRef.current = true;
+      }
+
+      const payload = (await response.json()) as VectorizeKnowledgeDocumentResponse;
+      if (jobId) {
+        payload.jobId = jobId;
+      }
+
+      return payload;
     },
     onSuccess: (data) => {
+      if (data.jobId && typeof onVectorizationJobCreated === "function" && !jobReportedRef.current) {
+        const completedTotal = data.pointsCount > 0 ? data.pointsCount : estimatedChunks;
+        onVectorizationJobCreated({
+          documentId: data.documentId ?? document.id,
+          jobId: data.jobId,
+          totalChunks: completedTotal > 0 ? completedTotal : estimatedChunks,
+        });
+        jobReportedRef.current = true;
+      }
+
       const rawRecordIds = Array.isArray(data.recordIds) ? data.recordIds : [];
       const orderedRecordIds = rawRecordIds.map((value) => {
         if (typeof value === "number" || typeof value === "string") {
@@ -1061,6 +1108,9 @@ export function VectorizeKnowledgeDocumentDialog({
     },
     onError: (error) => {
       lastVectorizationSelectionRef.current = null;
+      if (typeof onVectorizationError === "function") {
+        onVectorizationError({ documentId: document.id, error });
+      }
       toast({
         title: "Не удалось отправить документ",
         description: error.message,
@@ -1262,6 +1312,19 @@ export function VectorizeKnowledgeDocumentDialog({
       chunkOverlapNumber,
       Math.max(chunkSizeNumber - 1, 0),
     );
+
+    const totalChunksToProcess = chunkSettingsLocked ? selectedChunkIds.length : estimatedChunks;
+    if (typeof onVectorizationStart === "function") {
+      const safeTotalChunks = Number.isFinite(totalChunksToProcess)
+        ? Math.max(0, totalChunksToProcess)
+        : 0;
+      onVectorizationStart({
+        documentId: document.id,
+        documentTitle: document.title?.trim() ? document.title : "Без названия",
+        totalChunks: safeTotalChunks,
+      });
+    }
+    jobReportedRef.current = false;
 
     if (collectionMode === "existing") {
       if (!selectedCollectionName) {

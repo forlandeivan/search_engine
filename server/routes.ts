@@ -52,6 +52,7 @@ import {
   workspaceMemberRoles,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
+import type { KnowledgeDocumentVectorizationJobStatus } from "@shared/knowledge-base";
 import {
   castValueToType,
   collectionFieldTypes,
@@ -1477,6 +1478,42 @@ const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
   chunkSize: z.coerce.number().int().min(200).max(8000).default(800),
   chunkOverlap: z.coerce.number().int().min(0).max(4000).default(0),
 });
+
+type KnowledgeDocumentVectorizationJobInternal = KnowledgeDocumentVectorizationJobStatus & {
+  workspaceId: string;
+};
+
+const knowledgeDocumentVectorizationJobs = new Map<string, KnowledgeDocumentVectorizationJobInternal>();
+const knowledgeDocumentVectorizationJobCleanup = new Map<string, NodeJS.Timeout>();
+
+function updateKnowledgeDocumentVectorizationJob(
+  jobId: string,
+  patch: Partial<KnowledgeDocumentVectorizationJobInternal>,
+) {
+  const current = knowledgeDocumentVectorizationJobs.get(jobId);
+  if (!current) {
+    return;
+  }
+
+  knowledgeDocumentVectorizationJobs.set(jobId, {
+    ...current,
+    ...patch,
+  });
+}
+
+function scheduleKnowledgeDocumentVectorizationJobCleanup(jobId: string) {
+  const existing = knowledgeDocumentVectorizationJobCleanup.get(jobId);
+  if (existing) {
+    clearTimeout(existing);
+  }
+
+  const timeout = setTimeout(() => {
+    knowledgeDocumentVectorizationJobs.delete(jobId);
+    knowledgeDocumentVectorizationJobCleanup.delete(jobId);
+  }, 60_000);
+
+  knowledgeDocumentVectorizationJobCleanup.set(jobId, timeout);
+}
 
 const fetchKnowledgeVectorRecordsSchema = z.object({
   collectionName: z.string().trim().min(1, "Укажите коллекцию"),
@@ -4638,6 +4675,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
 
+    let jobId: string | null = null;
+
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
       const {
@@ -4650,6 +4689,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         chunkSize,
         chunkOverlap,
       } = vectorizeKnowledgeDocumentSchema.parse(req.body);
+
 
       const provider = await storage.getEmbeddingProvider(embeddingProviderId, workspaceId);
       if (!provider) {
@@ -4823,6 +4863,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Не удалось разбить документ на чанки" });
       }
 
+      const totalChunks = totalChunksPlanned ?? documentChunks.length;
+
+      if (totalChunks > 0 && !jobId) {
+        const startedAtIso = new Date().toISOString();
+        const newJob: KnowledgeDocumentVectorizationJobInternal = {
+          id: randomUUID(),
+          workspaceId,
+          documentId: vectorDocument.id,
+          status: "pending",
+          totalChunks,
+          processedChunks: 0,
+          startedAt: startedAtIso,
+          finishedAt: null,
+          error: null,
+        };
+
+        jobId = newJob.id;
+        knowledgeDocumentVectorizationJobs.set(newJob.id, newJob);
+        res.setHeader("X-Vectorization-Job-Id", newJob.id);
+        res.setHeader("X-Vectorization-Total-Chunks", String(totalChunks));
+      }
+
+      const markImmediateFailure = (message: string) => {
+        if (!jobId) {
+          return;
+        }
+
+        updateKnowledgeDocumentVectorizationJob(jobId, {
+          status: "failed",
+          error: message,
+          finishedAt: new Date().toISOString(),
+        });
+        scheduleKnowledgeDocumentVectorizationJobCleanup(jobId);
+      };
+
       const collectionName =
         requestedCollectionName && requestedCollectionName.trim().length > 0
           ? requestedCollectionName.trim()
@@ -4838,6 +4913,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
       if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
+        markImmediateFailure("Коллекция принадлежит другому рабочему пространству");
         return res.status(403).json({
           error: "Коллекция принадлежит другому рабочему пространству",
         });
@@ -4855,6 +4931,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (qdrantError) {
           if (qdrantError.status === 404) {
             if (!shouldCreateCollection) {
+              markImmediateFailure(`Коллекция ${collectionName} не найдена`);
               return res.status(404).json({
                 error: `Коллекция ${collectionName} не найдена`,
                 details: qdrantError.details,
@@ -4872,12 +4949,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (collectionExists && !existingWorkspaceId) {
+        markImmediateFailure(`Коллекция ${collectionName} не найдена`);
         return res.status(404).json({
           error: `Коллекция ${collectionName} не найдена`,
         });
       }
 
       const accessToken = await fetchAccessToken(provider);
+      if (jobId) {
+        updateKnowledgeDocumentVectorizationJob(jobId, { status: "running" });
+      }
       const embeddingResults: Array<
         EmbeddingVectorResult & { chunk: KnowledgeDocumentChunk; index: number }
       > = [];
@@ -4888,6 +4969,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const result = await fetchEmbeddingVector(provider, accessToken, chunk.content);
           embeddingResults.push({ ...result, chunk, index });
+          if (jobId) {
+            updateKnowledgeDocumentVectorizationJob(jobId, {
+              status: "running",
+              processedChunks: embeddingResults.length,
+            });
+          }
         } catch (embeddingError) {
           console.error("Ошибка эмбеддинга чанка документа базы знаний", embeddingError);
           throw embeddingError;
@@ -4895,11 +4982,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (embeddingResults.length === 0) {
+        markImmediateFailure("Не удалось получить эмбеддинги для документа");
         return res.status(500).json({ error: "Не удалось получить эмбеддинги для документа" });
       }
 
       const firstVector = embeddingResults[0]?.vector;
       if (!Array.isArray(firstVector) || firstVector.length === 0) {
+        markImmediateFailure("Сервис эмбеддингов вернул пустой вектор");
         return res.status(500).json({ error: "Сервис эмбеддингов вернул пустой вектор" });
       }
 
@@ -4946,8 +5035,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         typeof vectorDocument.excerpt === "string" && vectorDocument.excerpt.trim().length > 0
           ? vectorDocument.excerpt
           : normalizedDocumentText.slice(0, 160);
-
-      const totalChunks = totalChunksPlanned ?? documentChunks.length;
 
       const vectorRecordMappings: Array<{ chunkId: string; vectorRecordId: string }> = [];
 
@@ -5095,6 +5182,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      if (jobId) {
+        updateKnowledgeDocumentVectorizationJob(jobId, {
+          status: "completed",
+          processedChunks: points.length,
+          totalChunks,
+          finishedAt: new Date().toISOString(),
+          error: null,
+        });
+        scheduleKnowledgeDocumentVectorizationJobCleanup(jobId);
+      }
+
       res.json({
         message: `В коллекцию ${collectionName} отправлено ${points.length} чанков документа`,
         pointsCount: points.length,
@@ -5113,7 +5211,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         documentId: vectorDocument.id,
       });
     } catch (error) {
+      const markJobFailed = (message: string) => {
+        if (jobId) {
+          updateKnowledgeDocumentVectorizationJob(jobId, {
+            status: "failed",
+            error: message,
+            finishedAt: new Date().toISOString(),
+          });
+          scheduleKnowledgeDocumentVectorizationJobCleanup(jobId);
+        }
+      };
+
       if (error instanceof z.ZodError) {
+        markJobFailed("Некорректные данные запроса");
         return res.status(400).json({
           error: "Некорректные данные запроса",
           details: error.errors,
@@ -5121,6 +5231,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (error instanceof QdrantConfigurationError) {
+        markJobFailed(error.message);
         return res.status(503).json({
           error: "Qdrant не настроен",
           details: error.message,
@@ -5130,6 +5241,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
         console.error("Ошибка Qdrant при отправке документа базы знаний в коллекцию", error);
+        markJobFailed(qdrantError.message);
         return res.status(qdrantError.status).json({
           error: qdrantError.message,
           details: qdrantError.details,
@@ -5138,6 +5250,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const message = error instanceof Error ? error.message : String(error);
       console.error("Ошибка при отправке документа базы знаний в Qdrant:", error);
+      markJobFailed(message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  app.get("/api/knowledge/documents/vectorize/jobs/:jobId", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    const { jobId } = req.params;
+    if (!jobId || !jobId.trim()) {
+      res.status(400).json({ error: "Некорректный идентификатор задачи" });
+      return;
+    }
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const job = knowledgeDocumentVectorizationJobs.get(jobId);
+
+      if (!job || job.workspaceId !== workspaceId) {
+        res.status(404).json({ error: "Задача не найдена" });
+        return;
+      }
+
+      const { workspaceId: _workspaceId, ...publicJob } = job;
+      res.json({ job: publicJob });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: message });
     }
   });
