@@ -24,6 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
+import VectorizeKnowledgeDocumentDialog from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 import {
   Card,
@@ -80,6 +81,7 @@ import type {
   KnowledgeBaseDocumentDetail,
   KnowledgeDocumentChunkSet,
 } from "@shared/knowledge-base";
+import type { PublicEmbeddingProvider } from "@shared/schema";
 import {
   ChevronDown,
   ChevronRight,
@@ -92,6 +94,8 @@ import {
   MoreVertical,
   PencilLine,
   Plus,
+  SquareStack,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 
@@ -415,6 +419,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [documentDraftTitle, setDocumentDraftTitle] = useState<string>("");
   const [documentDraftContent, setDocumentDraftContent] = useState<string>("");
   const [documentActiveTab, setDocumentActiveTab] = useState<"content" | "chunks">("content");
+  const [vectorizeDialogState, setVectorizeDialogState] = useState<{
+    document: KnowledgeBaseDocumentDetail;
+    base: KnowledgeBaseSummary | null;
+  } | null>(null);
+  const [chunkDialogSignal, setChunkDialogSignal] = useState(0);
   const handleDocumentTabChange = (value: string) => {
     if (value === "content" || value === "chunks") {
       setDocumentActiveTab(value);
@@ -461,6 +470,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   }, [basesQuery.data]);
 
   const bases = basesQuery.data ?? [];
+  const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
+    queryKey: ["/api/embedding/services"],
+  });
+  const activeEmbeddingProviders = useMemo(
+    () => (embeddingServices?.providers ?? []).filter((provider) => provider.isActive),
+    [embeddingServices?.providers],
+  );
   const selectedBase = useMemo(
     () => bases.find((base) => base.id === knowledgeBaseId) ?? null,
     [bases, knowledgeBaseId],
@@ -495,6 +511,26 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       setLocation(`/knowledge/${selectedBase.id}`);
     }
   }, [selectedBase, selectedNodeId, setLocation]);
+
+  useEffect(() => {
+    if (!vectorizeDialogState) {
+      return;
+    }
+
+    if (!selectedNodeId || vectorizeDialogState.document.id !== selectedNodeId) {
+      setVectorizeDialogState(null);
+    }
+  }, [selectedNodeId, vectorizeDialogState]);
+
+  useEffect(() => {
+    if (!vectorizeDialogState) {
+      return;
+    }
+
+    if (selectedBase?.id !== vectorizeDialogState.base?.id) {
+      setVectorizeDialogState(null);
+    }
+  }, [selectedBase?.id, vectorizeDialogState]);
 
   useEffect(() => {
     if (!selectedBase || !selectedNodeId) {
@@ -1229,6 +1265,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     const sourceLabel = DOCUMENT_SOURCE_LABELS[detail.sourceType] ?? "Документ";
     const versionLabel = detail.versionNumber ? `v${detail.versionNumber}` : null;
     const isSaving = updateDocumentMutation.isPending;
+    const chunkSet = detail.chunkSet ?? null;
+    const hasChunks = Boolean(chunkSet && chunkSet.chunks.length > 0);
     const handleChunkSetCreated = (chunkSet: KnowledgeDocumentChunkSet) => {
       setDocumentActiveTab("chunks");
       queryClient.setQueryData<KnowledgeBaseNodeDetail>(
@@ -1242,6 +1280,28 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         },
       );
       void nodeDetailQuery.refetch();
+      setVectorizeDialogState((current) => {
+        if (!current || current.document.id !== detail.id) {
+          return current;
+        }
+
+        return {
+          ...current,
+          document: { ...current.document, chunkSet },
+        };
+      });
+    };
+    const handleOpenChunksDialogFromMenu = () => {
+      setDocumentActiveTab("chunks");
+      setChunkDialogSignal((value) => value + 1);
+    };
+    const handleOpenVectorizeDialog = () => {
+      if (!hasChunks) {
+        handleOpenChunksDialogFromMenu();
+        return;
+      }
+
+      setVectorizeDialogState({ document: detail, base: selectedBase });
     };
 
     return (
@@ -1310,6 +1370,15 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                     <DropdownMenuItem onSelect={() => handleStartEditingDocument(detail)}>
                       <PencilLine className="mr-2 h-4 w-4" /> Редактировать
                     </DropdownMenuItem>
+                    {hasChunks ? (
+                      <DropdownMenuItem onSelect={handleOpenVectorizeDialog}>
+                        <Sparkles className="mr-2 h-4 w-4" /> Векторизовать документ
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onSelect={handleOpenChunksDialogFromMenu}>
+                        <SquareStack className="mr-2 h-4 w-4" /> Создать чанки
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       disabled={exportingDoc || exportingPdf}
@@ -1396,6 +1465,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 documentId={detail.documentId}
                 chunkSet={detail.chunkSet}
                 onChunkSetCreated={handleChunkSetCreated}
+                externalOpenDialogSignal={chunkDialogSignal}
               />
             </TabsContent>
           </Tabs>
@@ -1597,6 +1667,38 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           )}
         </div>
       </main>
+      {vectorizeDialogState && (
+        <VectorizeKnowledgeDocumentDialog
+          open
+          hideTrigger
+          document={{
+            id: vectorizeDialogState.document.documentId ?? vectorizeDialogState.document.id,
+            title: vectorizeDialogState.document.title,
+            content: vectorizeDialogState.document.content,
+            updatedAt: vectorizeDialogState.document.updatedAt,
+            chunkSet: vectorizeDialogState.document.chunkSet ?? undefined,
+          }}
+          base={
+            vectorizeDialogState.base
+              ? {
+                  id: vectorizeDialogState.base.id,
+                  name: vectorizeDialogState.base.name,
+                  description: vectorizeDialogState.base.description,
+                }
+              : null
+          }
+          providers={activeEmbeddingProviders}
+          onVectorizationComplete={(_payload) => {
+            setVectorizeDialogState(null);
+            void nodeDetailQuery.refetch();
+          }}
+          onOpenChange={(open) => {
+            if (!open) {
+              setVectorizeDialogState(null);
+            }
+          }}
+        />
+      )}
       <CreateKnowledgeBaseDialog
         open={isCreateBaseDialogOpen}
         onOpenChange={(open) => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,7 @@ interface DocumentChunksPanelProps {
   documentId: string;
   chunkSet?: KnowledgeDocumentChunkSet | null;
   onChunkSetCreated: (chunkSet: KnowledgeDocumentChunkSet) => void;
+  externalOpenDialogSignal?: number;
 }
 
 interface ChunkConfigState {
@@ -150,11 +151,13 @@ export function DocumentChunksPanel({
   documentId,
   chunkSet,
   onChunkSetCreated,
+  externalOpenDialogSignal,
 }: DocumentChunksPanelProps) {
   const { toast } = useToast();
   const [configState, setConfigState] = useState<ChunkConfigState>(INITIAL_CONFIG);
   const [sizeMode, setSizeMode] = useState<ChunkSizeMode>("tokens");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const externalOpenSignalRef = useRef<number | undefined>(externalOpenDialogSignal);
   const [preview, setPreview] = useState<KnowledgeDocumentChunkPreview | null>(null);
   const [chunksPage, setChunksPage] = useState(1);
   const [chunksPerPage, setChunksPerPage] = useState(10);
@@ -211,7 +214,7 @@ export function DocumentChunksPanel({
       return (await response.json()) as KnowledgeDocumentChunkSet;
     },
     onSuccess: (data) => {
-      setIsDialogOpen(false);
+      setDialogOpen(false);
       setPreview(null);
       onChunkSetCreated(data);
       toast({
@@ -224,6 +227,10 @@ export function DocumentChunksPanel({
       toast({ title: "Ошибка", description: message, variant: "destructive" });
     },
   });
+
+  const setDialogOpen = (open: boolean) => {
+    setIsDialogOpen(open);
+  };
 
   const handleOpenDialog = () => {
     if (chunkSet) {
@@ -244,7 +251,7 @@ export function DocumentChunksPanel({
       setSizeMode("tokens");
     }
     setPreview(null);
-    setIsDialogOpen(true);
+    setDialogOpen(true);
   };
 
   const handlePreview = () => {
@@ -333,6 +340,20 @@ export function DocumentChunksPanel({
       </span>
     );
   }, [chunkSet, chunksPage, chunksPerPage]);
+
+  useEffect(() => {
+    if (externalOpenDialogSignal === undefined) {
+      externalOpenSignalRef.current = externalOpenDialogSignal;
+      return;
+    }
+
+    if (externalOpenSignalRef.current === externalOpenDialogSignal) {
+      return;
+    }
+
+    externalOpenSignalRef.current = externalOpenDialogSignal;
+    handleOpenDialog();
+  }, [externalOpenDialogSignal, handleOpenDialog]);
 
   return (
     <div className="space-y-4">
@@ -429,7 +450,7 @@ export function DocumentChunksPanel({
         </div>
       )}
 
-      <Dialog open={isDialogOpen} onOpenChange={(open) => (!open ? setIsDialogOpen(false) : setIsDialogOpen(true))}>
+      <Dialog open={isDialogOpen} onOpenChange={(open) => setDialogOpen(open)}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>Настройка чанков</DialogTitle>
@@ -605,7 +626,7 @@ export function DocumentChunksPanel({
                 type="button"
                 variant="outline"
                 onClick={() => {
-                  setIsDialogOpen(false);
+                  setDialogOpen(false);
                   setPreview(null);
                 }}
                 disabled={previewMutation.isPending || createMutation.isPending}
