@@ -22,6 +22,7 @@ export type KnowledgeDocumentChunkItem = {
   sectionPath?: string[];
   contentHash: string;
   metadata: Record<string, unknown>;
+  vectorRecordId?: string | null;
 };
 
 export type KnowledgeDocumentChunkSet = {

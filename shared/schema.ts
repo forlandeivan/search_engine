@@ -342,6 +342,7 @@ export const knowledgeDocumentChunkItems = pgTable(
       .notNull()
       .default(sql`'{}'::jsonb`),
     contentHash: text("content_hash").notNull(),
+    vectorRecordId: text("vector_record_id"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },

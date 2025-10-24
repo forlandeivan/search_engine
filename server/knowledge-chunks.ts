@@ -560,6 +560,7 @@ const mapChunkSet = (
     sectionPath: Array.isArray(item.sectionPath) ? (item.sectionPath as string[]) : undefined,
     metadata: (item.metadata ?? {}) as Record<string, unknown>,
     contentHash: item.contentHash,
+    vectorRecordId: item.vectorRecordId ?? null,
   }));
 
   return {
@@ -602,6 +603,7 @@ export const previewKnowledgeDocumentChunks = async (
     sectionPath: chunk.sectionPath,
     metadata: chunk.metadata,
     contentHash: chunk.contentHash,
+    vectorRecordId: chunk.vectorRecordId ?? null,
   }));
 
   return {
@@ -681,6 +683,7 @@ export const createKnowledgeDocumentChunkSet = async (
           sectionPath: chunk.sectionPath && chunk.sectionPath.length > 0 ? chunk.sectionPath : null,
           metadata: chunk.metadata,
           contentHash: chunk.contentHash,
+          vectorRecordId: chunk.vectorRecordId ?? null,
           createdAt: now,
           updatedAt: now,
         })),
@@ -755,4 +758,65 @@ export async function getLatestKnowledgeDocumentChunkSet(
   }
 
   return getLatestKnowledgeDocumentChunkSetForDocument(context.documentId, workspaceId);
+}
+
+export async function updateKnowledgeDocumentChunkVectorRecords({
+  workspaceId,
+  chunkSetId,
+  chunkRecords,
+}: {
+  workspaceId: string;
+  chunkSetId: string;
+  chunkRecords: Array<{ chunkId: string; vectorRecordId: string | null }>;
+}): Promise<void> {
+  if (!chunkRecords || chunkRecords.length === 0) {
+    return;
+  }
+
+  const normalizedRecords = new Map<string, string | null>();
+
+  for (const record of chunkRecords) {
+    const rawChunkId = typeof record.chunkId === "string" ? record.chunkId.trim() : "";
+    if (!rawChunkId) {
+      continue;
+    }
+
+    const vectorRecordId =
+      typeof record.vectorRecordId === "string" && record.vectorRecordId.trim().length > 0
+        ? record.vectorRecordId.trim()
+        : null;
+
+    normalizedRecords.set(rawChunkId, vectorRecordId);
+  }
+
+  if (normalizedRecords.size === 0) {
+    return;
+  }
+
+  const now = new Date();
+
+  await db.transaction(async (tx: typeof db) => {
+    for (const [chunkId, vectorRecordId] of normalizedRecords.entries()) {
+      await tx
+        .update(knowledgeDocumentChunkItems)
+        .set({ vectorRecordId, updatedAt: now })
+        .where(
+          and(
+            eq(knowledgeDocumentChunkItems.id, chunkId),
+            eq(knowledgeDocumentChunkItems.workspaceId, workspaceId),
+            eq(knowledgeDocumentChunkItems.chunkSetId, chunkSetId),
+          ),
+        );
+    }
+
+    await tx
+      .update(knowledgeDocumentChunkSets)
+      .set({ updatedAt: now })
+      .where(
+        and(
+          eq(knowledgeDocumentChunkSets.id, chunkSetId),
+          eq(knowledgeDocumentChunkSets.workspaceId, workspaceId),
+        ),
+      );
+  });
 }

@@ -30,6 +30,7 @@ import {
 import {
   previewKnowledgeDocumentChunks,
   createKnowledgeDocumentChunkSet,
+  updateKnowledgeDocumentChunkVectorRecords,
 } from "./knowledge-chunks";
 import passport from "passport";
 import bcrypt from "bcryptjs";
@@ -633,6 +634,7 @@ interface KnowledgeDocumentChunk {
   charCount: number;
   wordCount: number;
   excerpt: string;
+  vectorRecordId?: string | null;
 }
 
 function createKnowledgeDocumentChunks(
@@ -1428,9 +1430,13 @@ const knowledgeDocumentChunkItemSchema = z.object({
   sectionPath: z.array(z.string()).optional(),
   metadata: z.record(z.any()).optional(),
   contentHash: z.string().trim().optional(),
+  vectorRecordId: z.union([z.string(), z.number()]).optional(),
 });
 
 const knowledgeDocumentChunksSchema = z.object({
+  chunkSetId: z.string().trim().min(1).optional(),
+  documentId: z.string().trim().min(1).optional(),
+  versionId: z.string().trim().min(1).optional(),
   items: z.array(knowledgeDocumentChunkItemSchema).min(1),
   totalCount: z.coerce.number().int().min(0).optional(),
   config: knowledgeDocumentChunkConfigSchema.optional(),
@@ -4669,6 +4675,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let chunkSizeForMetadata = defaultChunkSize;
       let chunkOverlapForMetadata = defaultChunkOverlap;
       let totalChunksPlanned: number | null = null;
+      const storedChunkIds = new Set<string>();
+      let chunkSetIdForUpdate: string | null = null;
 
       if (
         providedChunksPayload &&
@@ -4725,6 +4733,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const idValue =
               typeof item.id === "string" && item.id.trim().length > 0 ? item.id.trim() : undefined;
 
+            if (idValue) {
+              storedChunkIds.add(idValue);
+            }
+
+            const vectorRecordCandidate = (item as { vectorRecordId?: unknown }).vectorRecordId;
+            const vectorRecordId =
+              typeof vectorRecordCandidate === "string" && vectorRecordCandidate.trim().length > 0
+                ? vectorRecordCandidate.trim()
+                : typeof vectorRecordCandidate === "number" && Number.isFinite(vectorRecordCandidate)
+                ? String(vectorRecordCandidate)
+                : null;
+
             return {
               id: idValue,
               content,
@@ -4734,6 +4754,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               charCount: charCountValue,
               wordCount: wordCountValue,
               excerpt: excerptValue,
+              vectorRecordId,
             };
           },
         );
@@ -4748,6 +4769,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         normalizedItems.sort((a, b) => a.index - b.index);
         documentChunks = normalizedItems;
+
+        const providedChunkSetId =
+          typeof providedChunksPayload.chunkSetId === "string" &&
+          providedChunksPayload.chunkSetId.trim().length > 0
+            ? providedChunksPayload.chunkSetId.trim()
+            : null;
+
+        if (providedChunkSetId) {
+          chunkSetIdForUpdate = providedChunkSetId;
+        }
 
         const chunkConfig = providedChunksPayload.config ?? {};
         const configMaxChars =
@@ -4918,12 +4949,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const totalChunks = totalChunksPlanned ?? documentChunks.length;
 
+      const vectorRecordMappings: Array<{ chunkId: string; vectorRecordId: string }> = [];
+
       const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
         const { chunk, vector, usageTokens, embeddingId, index } = result;
         const fallbackChunkId = `${vectorDocument.path ?? vectorDocument.id}-chunk-${index + 1}`;
         const resolvedChunkId =
           typeof chunk.id === "string" && chunk.id.trim().length > 0 ? chunk.id.trim() : fallbackChunkId;
         const pointId = normalizePointId(resolvedChunkId);
+
+        if (storedChunkIds.has(resolvedChunkId)) {
+          const recordIdValue = typeof pointId === "number" ? pointId.toString() : String(pointId);
+          vectorRecordMappings.push({ chunkId: resolvedChunkId, vectorRecordId: recordIdValue });
+        }
 
         const templateContext = removeUndefinedDeep({
           document: {
@@ -5041,6 +5079,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const recordIds = points.map((point) =>
         typeof point.id === "number" ? point.id.toString() : String(point.id),
       );
+
+      if (chunkSetIdForUpdate && vectorRecordMappings.length > 0) {
+        try {
+          await updateKnowledgeDocumentChunkVectorRecords({
+            workspaceId,
+            chunkSetId: chunkSetIdForUpdate,
+            chunkRecords: vectorRecordMappings,
+          });
+        } catch (updateError) {
+          console.error(
+            "Не удалось обновить связи чанков документа с записями векторной базы",
+            updateError,
+          );
+        }
+      }
 
       res.json({
         message: `В коллекцию ${collectionName} отправлено ${points.length} чанков документа`,
