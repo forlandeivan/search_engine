@@ -94,6 +94,9 @@ interface VectorizeKnowledgeDocumentDialogProps {
     documentId: string;
     vectorization: KnowledgeDocumentVectorization;
   }) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
 }
 
 interface VectorizeRequestPayload {
@@ -326,9 +329,20 @@ export function VectorizeKnowledgeDocumentDialog({
   base,
   providers,
   onVectorizationComplete,
+  open,
+  onOpenChange,
+  hideTrigger = false,
 }: VectorizeKnowledgeDocumentDialogProps) {
   const { toast } = useToast();
-  const [isOpen, setIsOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = typeof open === "boolean";
+  const isOpen = isControlled ? open : internalOpen;
+  const setOpenState = (next: boolean) => {
+    if (!isControlled) {
+      setInternalOpen(next);
+    }
+    onOpenChange?.(next);
+  };
   const [selectedProviderId, setSelectedProviderId] = useState<string>("");
   const [collectionMode, setCollectionMode] = useState<"existing" | "new">("existing");
   const [selectedCollectionName, setSelectedCollectionName] = useState<string>("");
@@ -942,7 +956,7 @@ export function VectorizeKnowledgeDocumentDialog({
           data.message ??
           `Добавлено ${data.pointsCount.toLocaleString("ru-RU")} записей в коллекцию ${data.collectionName}. ${chunkSummary} ${collectionNote}`.trim(),
       });
-      setIsOpen(false);
+      setOpenState(false);
     },
     onError: (error) => {
       lastVectorizationSelectionRef.current = null;
@@ -1092,7 +1106,7 @@ export function VectorizeKnowledgeDocumentDialog({
   };
 
   const handleOpenChange = (open: boolean) => {
-    setIsOpen(open);
+    setOpenState(open);
     if (open) {
       setActiveTab("settings");
       setActiveSuggestionsFieldId(null);
@@ -1748,12 +1762,14 @@ export function VectorizeKnowledgeDocumentDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm" disabled={disabled} className="whitespace-nowrap">
-          <Sparkles className="mr-1 h-4 w-4" />
-          Векторизация
-        </Button>
-      </DialogTrigger>
+      {!hideTrigger && (
+        <DialogTrigger asChild>
+          <Button variant="outline" size="sm" disabled={disabled} className="whitespace-nowrap">
+            <Sparkles className="mr-1 h-4 w-4" />
+            Векторизация
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-4xl lg:max-w-5xl gap-0 p-0">
         <div className="flex max-h-[inherit] min-h-0 flex-col">
           {renderDialogHeader()}
