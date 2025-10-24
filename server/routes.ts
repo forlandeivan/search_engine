@@ -4677,12 +4677,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ) {
         const mappedChunks = providedChunksPayload.items.map(
           (item): KnowledgeDocumentChunk | null => {
-            const rawText =
-              typeof item.text === "string"
-                ? item.text
-                : typeof (item as { content?: unknown }).content === "string"
-                ? ((item as { content: string }).content as string)
-                : "";
+            let rawText = "";
+            if (typeof item.text === "string") {
+              rawText = item.text;
+            } else {
+              const candidate = item as { content?: unknown };
+              if (typeof candidate.content === "string") {
+                rawText = candidate.content;
+              }
+            }
             const content = normalizeDocumentText(rawText);
             if (!content) {
               return null;
