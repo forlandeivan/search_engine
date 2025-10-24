@@ -230,6 +230,91 @@ function removeUndefinedDeep<T>(value: T): T {
   return value;
 }
 
+function sanitizeChunkConfigForRequest(
+  config: KnowledgeDocumentChunkSet["config"] | null | undefined,
+): Record<string, unknown> | undefined {
+  if (!config) {
+    return undefined;
+  }
+
+  const sanitized: Record<string, unknown> = {};
+
+  const maxTokens = pickPositiveInteger(config.maxTokens);
+  if (maxTokens !== null) {
+    sanitized.maxTokens = maxTokens;
+  }
+
+  const maxChars = pickPositiveInteger(config.maxChars);
+  if (maxChars !== null) {
+    sanitized.maxChars = maxChars;
+  }
+
+  const overlapTokens = pickNonNegativeInteger(config.overlapTokens);
+  if (overlapTokens !== null) {
+    sanitized.overlapTokens = overlapTokens;
+  }
+
+  const overlapChars = pickNonNegativeInteger(config.overlapChars);
+  if (overlapChars !== null) {
+    sanitized.overlapChars = overlapChars;
+  }
+
+  if (typeof config.splitByPages === "boolean") {
+    sanitized.splitByPages = config.splitByPages;
+  }
+
+  if (typeof config.respectHeadings === "boolean") {
+    sanitized.respectHeadings = config.respectHeadings;
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+function sanitizeChunkItemForRequest(
+  chunk: KnowledgeDocumentChunkSet["chunks"][number],
+  fallbackId: string,
+): Record<string, unknown> {
+  const normalizedId =
+    typeof chunk.id === "string" && chunk.id.trim().length > 0 ? chunk.id.trim() : fallbackId;
+
+  const normalizedSectionPath = Array.isArray(chunk.sectionPath)
+    ? chunk.sectionPath
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter((entry) => entry.length > 0)
+    : undefined;
+
+  const metadata = chunk.metadata && Object.keys(chunk.metadata).length > 0 ? chunk.metadata : undefined;
+
+  const vectorRecordId =
+    typeof chunk.vectorRecordId === "string"
+      ? chunk.vectorRecordId.trim()
+      : typeof chunk.vectorRecordId === "number" && Number.isFinite(chunk.vectorRecordId)
+      ? String(chunk.vectorRecordId)
+      : "";
+
+  const payload: Record<string, unknown> = {
+    id: normalizedId,
+    index: Math.max(0, Math.round(chunk.index ?? 0)),
+    text: chunk.text,
+    charStart: pickNonNegativeInteger(chunk.charStart) ?? undefined,
+    charEnd: pickNonNegativeInteger(chunk.charEnd) ?? undefined,
+    tokenCount: pickNonNegativeInteger(chunk.tokenCount) ?? undefined,
+    pageNumber: pickNonNegativeInteger(chunk.pageNumber ?? null) ?? undefined,
+    sectionPath: normalizedSectionPath,
+    metadata,
+    contentHash:
+      typeof chunk.contentHash === "string" && chunk.contentHash.trim().length > 0
+        ? chunk.contentHash.trim()
+        : undefined,
+  };
+
+  if (vectorRecordId.length > 0) {
+    payload.vectorRecordId = vectorRecordId;
+  }
+
+  return removeUndefinedDeep(payload);
+}
+
 function parseVectorSize(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return value;
@@ -801,17 +886,25 @@ export function VectorizeKnowledgeDocumentDialog({
       };
 
       if (usingStoredChunks) {
-        (body.document as Record<string, unknown>).chunks = {
+        const chunkPayload: Record<string, unknown> = {
           chunkSetId: chunkData?.id,
           documentId: chunkData?.documentId,
           versionId: chunkData?.versionId,
           totalCount: chunkData?.chunkCount ?? chunkData?.chunks.length ?? chunkItemsForRequest.length,
-          config: chunkData?.config ?? {},
-          items: chunkItemsForRequest.map((chunk) => ({
-            ...chunk,
-            id: chunk.id ?? buildDocumentChunkId(document.id, chunk.index),
-          })),
+          items: chunkItemsForRequest.map((chunk) =>
+            sanitizeChunkItemForRequest(
+              chunk,
+              chunk.id ?? buildDocumentChunkId(document.id, chunk.index),
+            ),
+          ),
         };
+
+        const sanitizedConfig = sanitizeChunkConfigForRequest(chunkData?.config);
+        if (sanitizedConfig) {
+          chunkPayload.config = sanitizedConfig;
+        }
+
+        (body.document as Record<string, unknown>).chunks = chunkPayload;
       }
 
       if (base) {
