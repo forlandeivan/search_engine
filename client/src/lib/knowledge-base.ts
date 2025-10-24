@@ -234,6 +234,16 @@ const normalizeChunkItems = (raw: unknown): KnowledgeDocumentChunkItem[] => {
         ? record.contentHash.trim()
         : null;
 
+    const vectorRecordIdRaw = record.vectorRecordId ?? record.vectorId ?? null;
+    const vectorRecordId =
+      typeof vectorRecordIdRaw === "string"
+        ? vectorRecordIdRaw.trim().length > 0
+          ? vectorRecordIdRaw.trim()
+          : null
+        : typeof vectorRecordIdRaw === "number" && Number.isFinite(vectorRecordIdRaw)
+        ? String(vectorRecordIdRaw)
+        : null;
+
     const idValue =
       typeof record.id === "string" && record.id.trim().length > 0
         ? record.id.trim()
@@ -250,6 +260,7 @@ const normalizeChunkItems = (raw: unknown): KnowledgeDocumentChunkItem[] => {
       sectionPath,
       metadata,
       contentHash: contentHashRaw ?? fallbackChunkHash(text, indexValue),
+      vectorRecordId,
     });
   });
 

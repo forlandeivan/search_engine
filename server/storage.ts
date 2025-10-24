@@ -1311,6 +1311,7 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         "section_path" text[],
         "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "content_hash" text NOT NULL,
+        "vector_record_id" text,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
@@ -1362,6 +1363,10 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
 
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunks_document_idx ON knowledge_document_chunks("document_id", "chunk_index")`,
+    );
+
+    await db.execute(
+      sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "vector_record_id" text`,
     );
 
     knowledgeBaseTablesEnsured = true;
