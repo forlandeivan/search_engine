@@ -748,12 +748,19 @@ export default function TildaApiPage() {
 
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">
-                    Эндпоинт принимает массив чисел такой же размерности, как вектор в выбранной коллекции Qdrant. Параметр
-                    <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">limit</code> играет роль <strong>topK</strong> — количество ближайших документов, которые нужно вернуть.
+                    Эндпоинт принимает массив чисел такой же размерности, как вектор в выбранной коллекции Qdrant.
+                    Параметр <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">limit</code> играет роль
+                    <strong>topK</strong> — количество ближайших документов, которые нужно вернуть.
                   </p>
                   <p className="text-sm text-muted-foreground">
                     Название коллекции можно посмотреть в разделе «Векторный поиск → Коллекции». По умолчанию пример использует
                     идентификатор выбранного сайта: <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">{vectorExampleCollection}</code>.
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Поле <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">vector</code> поддерживает плотные массивы,
+                    именованные векторы (<code>{`{ name: "my-vector", vector: [...] }`}</code>) и разреженные структуры
+                    (<code>{`{ indices: [...], values: [...] }`}</code> либо их именованные варианты). Это соответствует форматам Qdrant
+                    для multi-vector и sparse-запросов.
                   </p>
                 </div>
 
@@ -776,15 +783,15 @@ export default function TildaApiPage() {
                     <Separator />
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                       <code>vector</code>
-                      <span>number[]</span>
+                      <span>number[] | NamedVector | SparseVector</span>
                       <Badge variant="destructive" className="w-fit">Да</Badge>
-                      <span>Вектор запроса (длина должна совпадать с размерностью коллекции).</span>
+                      <span>Вектор запроса. Поддерживаются плотные массивы, именованные и разреженные векторы Qdrant.</span>
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                       <code>limit</code>
                       <span>number</span>
                       <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>TopK — количество ближайших результатов. По умолчанию 10.</span>
+                      <span>TopK — количество ближайших результатов. По умолчанию 10 (максимум 100).</span>
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                       <code>offset</code>
@@ -799,6 +806,12 @@ export default function TildaApiPage() {
                       <span>Ограничение по payload (например, конкретный сайт, язык или тег).</span>
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>params</code>
+                      <span>Qdrant search params</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>Дополнительные настройки запроса (например, hnsw_ef, exact).</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                       <code>withPayload</code>
                       <span>boolean | object</span>
                       <Badge variant="secondary" className="w-fit">Нет</Badge>
@@ -806,9 +819,33 @@ export default function TildaApiPage() {
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                       <code>withVector</code>
-                      <span>boolean</span>
+                      <span>boolean | object | string[]</span>
                       <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Вернуть ли исходные векторы документов.</span>
+                      <span>Вернуть ли исходные векторы документов или конкретные именованные векторы.</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>scoreThreshold</code>
+                      <span>number</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>Минимальное значение score, ниже которого результаты отбрасываются.</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>shardKey</code>
+                      <span>string | string[] | object</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>Явный выбор шарда при шардированной коллекции.</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>consistency</code>
+                      <span>number | "majority" | "quorum" | "all"</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>Уровень согласованности чтения (см. Qdrant API).</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                      <code>timeout</code>
+                      <span>number</span>
+                      <Badge variant="secondary" className="w-fit">Нет</Badge>
+                      <span>Таймаут выполнения запроса в секундах.</span>
                     </div>
                   </div>
                 </div>
@@ -824,7 +861,7 @@ export default function TildaApiPage() {
                       className="absolute top-2 right-2"
                       onClick={() =>
                         copyToClipboard(
-                          `POST ${vectorSearchEndpoint}\nContent-Type: application/json\n\n{\n  "vector": [0.12, -0.03, 0.87, ...],\n  "limit": 5,\n  "filter": {\n    "must": [\n      {\n        "key": "metadata.siteId",\n        "match": { "value": "${selectedSite?.id ?? "site-123"}" }\n      }\n    ]\n  },\n  "withPayload": true\n}`,
+                          `POST ${vectorSearchEndpoint}\nContent-Type: application/json\n\n{\n  "vector": [0.12, -0.03, 0.87, ...],\n  "limit": 5,\n  "filter": {\n    "must": [\n      {\n        "key": "metadata.siteId",\n        "match": { "value": "${selectedSite?.id ?? "site-123"}" }\n      }\n    ]\n  },\n  "params": { "hnsw_ef": 128 },\n  "scoreThreshold": 0.4,\n  "withPayload": true\n}`,
                           "Векторный поиск"
                         )
                       }
@@ -846,6 +883,8 @@ Content-Type: application/json
       }
     ]
   },
+  "params": { "hnsw_ef": 128 },
+  "scoreThreshold": 0.4,
   "withPayload": true
 }`}
                     </pre>
