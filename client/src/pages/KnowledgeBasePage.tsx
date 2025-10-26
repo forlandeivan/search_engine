@@ -24,7 +24,9 @@ import {
 import { Button } from "@/components/ui/button";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
-import VectorizeKnowledgeDocumentDialog from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
+import VectorizeKnowledgeDocumentDialog, {
+  type KnowledgeDocumentVectorizationSelection,
+} from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
 import DocumentVectorizationProgress, {
   type DocumentVectorizationProgressStatus,
 } from "@/components/knowledge-base/DocumentVectorizationProgress";
@@ -144,6 +146,7 @@ type DocumentVectorizationProgressState = {
   processedChunks: number;
   status: DocumentVectorizationProgressStatus;
   errorMessage: string | null;
+  selection?: KnowledgeDocumentVectorizationSelection | null;
 };
 
 const formatDateTime = (value?: string | null) => {
@@ -696,7 +699,91 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         errorMessage: "Не удалось обновить прогресс векторизации",
       };
     });
-  }, [documentVectorizationProgress?.jobId, vectorizationJobQuery.isError]);
+  }, [
+    documentVectorizationProgress?.jobId,
+    setDocumentVectorizationProgress,
+    setShouldPollVectorizationJob,
+    vectorizationJobQuery.isError,
+  ]);
+
+  useEffect(() => {
+    if (!documentVectorizationProgress?.jobId) {
+      return;
+    }
+
+    const job = vectorizationJobQuery.data?.job;
+    if (!job || job.id !== documentVectorizationProgress.jobId) {
+      return;
+    }
+
+    if (job.status === "completed" && job.result) {
+      setVectorizeDialogState(null);
+      setDocumentVectorizationProgress((current) => {
+        if (!current || current.jobId !== job.id) {
+          return current;
+        }
+
+        if (current.status === "completed") {
+          return current;
+        }
+
+        const processed = job.result?.pointsCount ?? job.processedChunks ?? 0;
+        return {
+          ...current,
+          status: "completed",
+          processedChunks: processed,
+          totalChunks: Math.max(current.totalChunks, processed),
+          errorMessage: null,
+        };
+      });
+      setShouldPollVectorizationJob(false);
+
+      const processed = job.result?.pointsCount ?? job.processedChunks ?? 0;
+      const collectionName = job.result?.collectionName ?? "коллекцию";
+      const completionMessage = job.result?.message?.trim().length
+        ? job.result?.message
+        : `Добавлено ${processed.toLocaleString("ru-RU")} записей в коллекцию ${collectionName}.`;
+      toast({
+        title: "Документ отправлен",
+        description: completionMessage ?? undefined,
+      });
+
+      void nodeDetailQuery.refetch();
+      return;
+    }
+
+    if (job.status === "failed" && job.error) {
+      setShouldPollVectorizationJob(false);
+      setDocumentVectorizationProgress((current) => {
+        if (!current || current.jobId !== job.id) {
+          return current;
+        }
+
+        if (current.status === "failed") {
+          return current;
+        }
+
+        return {
+          ...current,
+          status: "failed",
+          errorMessage: job.error ?? "Не удалось завершить векторизацию",
+        };
+      });
+
+      toast({
+        title: "Не удалось завершить векторизацию",
+        description: job.error ?? "Не удалось завершить векторизацию",
+        variant: "destructive",
+      });
+    }
+  }, [
+    documentVectorizationProgress?.jobId,
+    nodeDetailQuery,
+    setDocumentVectorizationProgress,
+    setShouldPollVectorizationJob,
+    toast,
+    vectorizationJobQuery.data?.job,
+  ]);
 
   const sanitizedDocumentContent = useMemo(
     () => (documentDetail ? getSanitizedContent(documentDetail.content ?? "") : ""),
@@ -1798,6 +1885,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               processedChunks: 0,
               status: "pending",
               errorMessage: null,
+              selection: info.selection ?? null,
             });
             setShouldPollVectorizationJob(false);
           }}

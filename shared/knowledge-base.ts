@@ -52,6 +52,23 @@ export type KnowledgeDocumentChunkPreview = {
   items: KnowledgeDocumentChunkItem[];
 };
 
+export type KnowledgeDocumentVectorizationJobResult = {
+  message?: string | null;
+  pointsCount: number;
+  collectionName: string;
+  vectorSize?: number | null;
+  totalUsageTokens?: number | null;
+  collectionCreated?: boolean;
+  recordIds: string[];
+  chunkSize: number;
+  chunkOverlap: number;
+  documentId?: string | null;
+  provider?: {
+    id?: string;
+    name?: string;
+  } | null;
+};
+
 export type KnowledgeDocumentVectorizationJobStatus = {
   id: string;
   documentId: string;
@@ -61,6 +78,7 @@ export type KnowledgeDocumentVectorizationJobStatus = {
   startedAt: string;
   finishedAt: string | null;
   error?: string | null;
+  result?: KnowledgeDocumentVectorizationJobResult | null;
 };
 
 export type KnowledgeBaseTreeNode = {

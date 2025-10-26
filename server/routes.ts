@@ -52,7 +52,10 @@ import {
   workspaceMemberRoles,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
-import type { KnowledgeDocumentVectorizationJobStatus } from "@shared/knowledge-base";
+import type {
+  KnowledgeDocumentVectorizationJobStatus,
+  KnowledgeDocumentVectorizationJobResult,
+} from "@shared/knowledge-base";
 import {
   castValueToType,
   collectionFieldTypes,
@@ -106,6 +109,17 @@ function getNodeErrorCode(error: unknown): string | undefined {
 
   const candidate = error as { code?: unknown };
   return typeof candidate.code === "string" ? candidate.code : undefined;
+}
+
+class HttpError extends Error {
+  status: number;
+  details?: unknown;
+
+  constructor(status: number, message: string, details?: unknown) {
+    super(message);
+    this.status = status;
+    this.details = details;
+  }
 }
 
 function handleKnowledgeBaseRouteError(error: unknown, res: Response) {
@@ -1481,6 +1495,7 @@ const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
 
 type KnowledgeDocumentVectorizationJobInternal = KnowledgeDocumentVectorizationJobStatus & {
   workspaceId: string;
+  result: KnowledgeDocumentVectorizationJobResult | null;
 };
 
 const knowledgeDocumentVectorizationJobs = new Map<string, KnowledgeDocumentVectorizationJobInternal>();
@@ -4676,6 +4691,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     let jobId: string | null = null;
+    let responseSent = false;
+    const preferHeader = req.get("prefer");
+    const preferAsync =
+      typeof preferHeader === "string" &&
+      preferHeader
+        .toLowerCase()
+        .split(",")
+        .map((value) => value.trim())
+        .includes("respond-async");
 
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
@@ -4877,15 +4901,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           startedAt: startedAtIso,
           finishedAt: null,
           error: null,
+          result: null,
         };
 
         jobId = newJob.id;
         knowledgeDocumentVectorizationJobs.set(newJob.id, newJob);
         res.setHeader("X-Vectorization-Job-Id", newJob.id);
         res.setHeader("X-Vectorization-Total-Chunks", String(totalChunks));
+
+        if (preferAsync) {
+          responseSent = true;
+          res.status(202).json({
+            message: "Документ отправлен на векторизацию", 
+            jobId: newJob.id,
+            totalChunks,
+            status: "accepted",
+          });
+        }
       }
 
-      const markImmediateFailure = (message: string) => {
+      const markImmediateFailure = (message: string, status = 500, details?: unknown) => {
         if (!jobId) {
           return;
         }
@@ -4896,6 +4931,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           finishedAt: new Date().toISOString(),
         });
         scheduleKnowledgeDocumentVectorizationJobCleanup(jobId);
+        if (responseSent) {
+          throw new HttpError(status, message, details);
+        }
       };
 
       const collectionName =
@@ -4913,7 +4951,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
       if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
-        markImmediateFailure("Коллекция принадлежит другому рабочему пространству");
+        markImmediateFailure("Коллекция принадлежит другому рабочему пространству", 403);
         return res.status(403).json({
           error: "Коллекция принадлежит другому рабочему пространству",
         });
@@ -4931,7 +4969,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (qdrantError) {
           if (qdrantError.status === 404) {
             if (!shouldCreateCollection) {
-              markImmediateFailure(`Коллекция ${collectionName} не найдена`);
+              markImmediateFailure(`Коллекция ${collectionName} не найдена`, 404, qdrantError.details);
               return res.status(404).json({
                 error: `Коллекция ${collectionName} не найдена`,
                 details: qdrantError.details,
@@ -4949,7 +4987,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (collectionExists && !existingWorkspaceId) {
-        markImmediateFailure(`Коллекция ${collectionName} не найдена`);
+        markImmediateFailure(`Коллекция ${collectionName} не найдена`, 404);
         return res.status(404).json({
           error: `Коллекция ${collectionName} не найдена`,
         });
@@ -5182,6 +5220,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      const jobResult: KnowledgeDocumentVectorizationJobResult = {
+        message: `В коллекцию ${collectionName} отправлено ${points.length} чанков документа`,
+        pointsCount: points.length,
+        collectionName,
+        vectorSize: detectedVectorLength || null,
+        totalUsageTokens,
+        collectionCreated,
+        recordIds,
+        chunkSize: chunkSizeForMetadata,
+        chunkOverlap: chunkOverlapForMetadata,
+        documentId: vectorDocument.id,
+        provider: {
+          id: provider.id,
+          name: provider.name,
+        },
+      };
+
       if (jobId) {
         updateKnowledgeDocumentVectorizationJob(jobId, {
           status: "completed",
@@ -5189,26 +5244,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalChunks,
           finishedAt: new Date().toISOString(),
           error: null,
+          result: jobResult,
         });
         scheduleKnowledgeDocumentVectorizationJobCleanup(jobId);
       }
 
+      if (responseSent) {
+        return;
+      }
+
       res.json({
-        message: `В коллекцию ${collectionName} отправлено ${points.length} чанков документа`,
-        pointsCount: points.length,
-        collectionName,
-        vectorSize: detectedVectorLength || null,
-        provider: {
-          id: provider.id,
-          name: provider.name,
-        },
-        totalUsageTokens,
+        ...jobResult,
+        vectorSize: jobResult.vectorSize ?? null,
+        provider: jobResult.provider ?? undefined,
         upsertStatus: upsertResult.status ?? null,
-        collectionCreated,
-        chunkSize: chunkSizeForMetadata,
-        chunkOverlap: chunkOverlapForMetadata,
-        recordIds,
-        documentId: vectorDocument.id,
+        jobId: jobId ?? undefined,
       });
     } catch (error) {
       const markJobFailed = (message: string) => {
@@ -5222,8 +5272,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       };
 
+      if (error instanceof HttpError) {
+        markJobFailed(error.message);
+        if (responseSent) {
+          console.warn("Фоновая векторизация документа завершилась с ошибкой:", error.message);
+          return;
+        }
+
+        const payload: Record<string, unknown> = { error: error.message };
+        if (error.details !== undefined) {
+          payload.details = error.details;
+        }
+
+        return res.status(error.status).json(payload);
+      }
+
       if (error instanceof z.ZodError) {
         markJobFailed("Некорректные данные запроса");
+        if (responseSent) {
+          console.warn("Некорректные данные запроса для фоновой векторизации", error.errors);
+          return;
+        }
         return res.status(400).json({
           error: "Некорректные данные запроса",
           details: error.errors,
@@ -5232,6 +5301,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (error instanceof QdrantConfigurationError) {
         markJobFailed(error.message);
+        if (responseSent) {
+          console.warn("Qdrant не настроен для фоновой векторизации:", error.message);
+          return;
+        }
         return res.status(503).json({
           error: "Qdrant не настроен",
           details: error.message,
@@ -5242,6 +5315,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (qdrantError) {
         console.error("Ошибка Qdrant при отправке документа базы знаний в коллекцию", error);
         markJobFailed(qdrantError.message);
+        if (responseSent) {
+          return;
+        }
         return res.status(qdrantError.status).json({
           error: qdrantError.message,
           details: qdrantError.details,
@@ -5251,6 +5327,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const message = error instanceof Error ? error.message : String(error);
       console.error("Ошибка при отправке документа базы знаний в Qdrant:", error);
       markJobFailed(message);
+      if (responseSent) {
+        return;
+      }
       res.status(500).json({ error: message });
     }
   });
