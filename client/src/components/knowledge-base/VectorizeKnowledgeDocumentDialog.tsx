@@ -69,22 +69,30 @@ interface VectorCollectionListResponse {
   }>;
 }
 
+export type KnowledgeDocumentVectorizationSelection = {
+  usingStoredChunks: boolean;
+  chunkIndices: number[];
+  totalChunks: number;
+};
+
 interface VectorizeKnowledgeDocumentResponse {
   message?: string;
-  pointsCount: number;
-  collectionName: string;
+  status?: string;
+  pointsCount?: number;
+  collectionName?: string;
   vectorSize?: number | null;
   totalUsageTokens?: number;
   collectionCreated?: boolean;
-  recordIds: string[];
-  chunkSize: number;
-  chunkOverlap: number;
+  recordIds?: string[];
+  chunkSize?: number;
+  chunkOverlap?: number;
   documentId?: string;
   provider?: {
     id?: string;
     name?: string;
   };
   jobId?: string;
+  totalChunks?: number;
 }
 
 interface VectorizeKnowledgeDocumentDialogProps {
@@ -99,6 +107,7 @@ interface VectorizeKnowledgeDocumentDialogProps {
     documentId: string;
     documentTitle: string;
     totalChunks: number;
+    selection?: KnowledgeDocumentVectorizationSelection;
   }) => void;
   onVectorizationJobCreated?: (payload: {
     documentId: string;
@@ -498,11 +507,7 @@ export function VectorizeKnowledgeDocumentDialog({
   const [selectedChunkIds, setSelectedChunkIds] = useState<string[]>(() =>
     availableChunks.map((chunk) => chunk.id ?? buildDocumentChunkId(document.id, chunk.index)),
   );
-  const lastVectorizationSelectionRef = useRef<{
-    usingStoredChunks: boolean;
-    chunkIndices: number[];
-    totalChunks: number;
-  } | null>(null);
+  const lastVectorizationSelectionRef = useRef<KnowledgeDocumentVectorizationSelection | null>(null);
   const jobReportedRef = useRef(false);
 
   const { data: collectionsData, isLoading: collectionsLoading, isFetching: collectionsFetching, error: collectionsError } =
@@ -850,10 +855,17 @@ export function VectorizeKnowledgeDocumentDialog({
           )
         : [];
       const totalChunksForRequest = usingStoredChunks ? chunkItemsForRequest.length : estimatedChunks;
+      const totalChunksToProcess = chunkSettingsLocked ? selectedChunkIds.length : estimatedChunks;
 
       if (usingStoredChunks && chunkItemsForRequest.length === 0) {
         throw new Error("Не удалось определить выбранные чанки. Обновите список и попробуйте снова.");
       }
+
+      let selectionDetails: KnowledgeDocumentVectorizationSelection = {
+        usingStoredChunks: false,
+        chunkIndices: [],
+        totalChunks: 0,
+      };
 
       if (usingStoredChunks) {
         const chunkIndices = (chunkData?.chunks ?? []).reduce<number[]>((accumulator, chunk, index) => {
@@ -864,17 +876,25 @@ export function VectorizeKnowledgeDocumentDialog({
           return accumulator;
         }, []);
 
-        lastVectorizationSelectionRef.current = {
+        selectionDetails = {
           usingStoredChunks: true,
           chunkIndices,
           totalChunks: chunkData?.chunks.length ?? 0,
         };
-      } else {
-        lastVectorizationSelectionRef.current = {
-          usingStoredChunks: false,
-          chunkIndices: [],
-          totalChunks: 0,
-        };
+      }
+
+      lastVectorizationSelectionRef.current = selectionDetails;
+
+      if (typeof onVectorizationStart === "function") {
+        const safeTotalChunks = Number.isFinite(totalChunksToProcess)
+          ? Math.max(0, totalChunksToProcess)
+          : 0;
+        onVectorizationStart({
+          documentId: document.id,
+          documentTitle: document.title?.trim() ? document.title : "Без названия",
+          totalChunks: safeTotalChunks,
+          selection: selectionDetails,
+        });
       }
 
       const storedChunkSize = usingStoredChunks
@@ -944,7 +964,14 @@ export function VectorizeKnowledgeDocumentDialog({
         body.schema = schema;
       }
 
-      const response = await apiRequest("POST", "/api/knowledge/documents/vectorize", body);
+      const response = await apiRequest(
+        "POST",
+        "/api/knowledge/documents/vectorize",
+        body,
+        {
+          Prefer: "respond-async",
+        },
+      );
       const jobId = response.headers.get("x-vectorization-job-id")?.trim() ?? "";
       const totalChunksHeader = response.headers.get("x-vectorization-total-chunks");
 
@@ -969,13 +996,36 @@ export function VectorizeKnowledgeDocumentDialog({
     },
     onSuccess: (data) => {
       if (data.jobId && typeof onVectorizationJobCreated === "function" && !jobReportedRef.current) {
-        const completedTotal = data.pointsCount > 0 ? data.pointsCount : estimatedChunks;
+        const completedTotal = typeof data.totalChunks === "number" && data.totalChunks > 0
+          ? data.totalChunks
+          : typeof data.pointsCount === "number" && data.pointsCount > 0
+            ? data.pointsCount
+            : estimatedChunks;
         onVectorizationJobCreated({
           documentId: data.documentId ?? document.id,
           jobId: data.jobId,
           totalChunks: completedTotal > 0 ? completedTotal : estimatedChunks,
         });
         jobReportedRef.current = true;
+      }
+
+      const hasImmediateResult =
+        typeof data.pointsCount === "number" &&
+        data.pointsCount >= 0 &&
+        typeof data.collectionName === "string" &&
+        data.collectionName.trim().length > 0 &&
+        Array.isArray(data.recordIds);
+
+      if (!hasImmediateResult) {
+        const asyncMessage = data.message?.trim().length
+          ? data.message
+          : "Документ отправлен на векторизацию. Следите за прогрессом в уведомлении.";
+        toast({
+          title: "Документ отправлен",
+          description: asyncMessage,
+        });
+        setOpenState(false);
+        return;
       }
 
       const rawRecordIds = Array.isArray(data.recordIds) ? data.recordIds : [];
@@ -992,7 +1042,7 @@ export function VectorizeKnowledgeDocumentDialog({
       lastVectorizationSelectionRef.current = null;
 
       let recordIds = orderedRecordIds.filter((value) => value.length > 0);
-      let pointsCount = data.pointsCount;
+      let pointsCount = data.pointsCount ?? 0;
 
       if (selectionInfo?.usingStoredChunks && selectionInfo.totalChunks > 0) {
         const totalChunks = selectionInfo.totalChunks > 0 ? selectionInfo.totalChunks : availableChunks.length;
@@ -1045,7 +1095,7 @@ export function VectorizeKnowledgeDocumentDialog({
           recordIds = deduplicated;
           pointsCount = deduplicated.length;
         } else {
-          pointsCount = Math.max(data.pointsCount, 0);
+          pointsCount = Math.max(pointsCount, 0);
         }
       }
 
@@ -1055,8 +1105,10 @@ export function VectorizeKnowledgeDocumentDialog({
         Math.max(fallbackChunkSize - 1, 0),
       );
 
+      const resolvedCollectionName = data.collectionName ?? "";
+
       const vectorization: KnowledgeDocumentVectorization = {
-        collectionName: data.collectionName,
+        collectionName: resolvedCollectionName,
         providerId: data.provider?.id ?? selectedProviderId,
         providerName: data.provider?.name ?? selectedProvider?.name,
         recordIds,
@@ -1086,15 +1138,15 @@ export function VectorizeKnowledgeDocumentDialog({
       });
 
       const collectionNote = data.collectionCreated
-        ? `Коллекция ${data.collectionName} создана автоматически.`
+        ? `Коллекция ${resolvedCollectionName} создана автоматически.`
         : "";
       const chunkSummary = chunkSettingsLocked
-        ? `Выбранных чанков: ${data.pointsCount.toLocaleString("ru-RU")} из ${availableChunks.length.toLocaleString(
+        ? `Выбранных чанков: ${pointsCount.toLocaleString("ru-RU")} из ${availableChunks.length.toLocaleString(
             "ru-RU",
           )} (размер ${vectorization.chunkSize.toLocaleString("ru-RU")}, перехлёст ${vectorization.chunkOverlap.toLocaleString(
             "ru-RU",
           )}).`
-        : `Чанков: ${data.pointsCount.toLocaleString("ru-RU")} (размер ${vectorization.chunkSize.toLocaleString(
+        : `Чанков: ${pointsCount.toLocaleString("ru-RU")} (размер ${vectorization.chunkSize.toLocaleString(
             "ru-RU",
           )}, перехлёст ${vectorization.chunkOverlap.toLocaleString("ru-RU")}).`;
 
@@ -1102,7 +1154,7 @@ export function VectorizeKnowledgeDocumentDialog({
         title: "Документ отправлен",
         description:
           data.message ??
-          `Добавлено ${data.pointsCount.toLocaleString("ru-RU")} записей в коллекцию ${data.collectionName}. ${chunkSummary} ${collectionNote}`.trim(),
+          `Добавлено ${pointsCount.toLocaleString("ru-RU")} записей в коллекцию ${resolvedCollectionName}. ${chunkSummary} ${collectionNote}`.trim(),
       });
       setOpenState(false);
     },
@@ -1312,18 +1364,6 @@ export function VectorizeKnowledgeDocumentDialog({
       chunkOverlapNumber,
       Math.max(chunkSizeNumber - 1, 0),
     );
-
-    const totalChunksToProcess = chunkSettingsLocked ? selectedChunkIds.length : estimatedChunks;
-    if (typeof onVectorizationStart === "function") {
-      const safeTotalChunks = Number.isFinite(totalChunksToProcess)
-        ? Math.max(0, totalChunksToProcess)
-        : 0;
-      onVectorizationStart({
-        documentId: document.id,
-        documentTitle: document.title?.trim() ? document.title : "Без названия",
-        totalChunks: safeTotalChunks,
-      });
-    }
     jobReportedRef.current = false;
 
     if (collectionMode === "existing") {
