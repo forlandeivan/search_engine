@@ -16,6 +16,7 @@ import {
   Search,
   X,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,7 +25,6 @@ import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -68,6 +68,12 @@ interface CollectionPointsResponse {
 const POINTS_PAGE_SIZE = 24;
 
 type SearchMode = "semantic" | "filter" | "vector";
+
+const searchModeOptions: Array<{ value: SearchMode; label: string; icon: LucideIcon }> = [
+  { value: "semantic", label: "Текст", icon: Search },
+  { value: "filter", label: "Фильтр", icon: Filter },
+  { value: "vector", label: "Вектор", icon: Maximize2 },
+];
 
 type FilterOperator = "eq" | "neq" | "contains" | "gt" | "gte" | "lt" | "lte";
 
@@ -1188,349 +1194,354 @@ export default function VectorCollectionDetailPage() {
         <p className="mt-2 text-sm text-muted-foreground">
           Векторизуйте запрос, применяйте фильтры по payload или вставляйте готовый вектор.
         </p>
-        <Tabs
-          value={searchMode}
-          onValueChange={(value) => {
-            setSearchMode(value as SearchMode);
-            setSearchError(null);
-          }}
-        >
-          <TabsList className="mt-4 grid grid-cols-3">
-            <TabsTrigger value="semantic" className="gap-2">
-              <Search className="h-4 w-4" />
-              Текст
-            </TabsTrigger>
-            <TabsTrigger value="filter" className="gap-2">
-              <Filter className="h-4 w-4" />
-              Фильтр
-            </TabsTrigger>
-            <TabsTrigger value="vector" className="gap-2">
-              <Maximize2 className="h-4 w-4" />
-              Вектор
-            </TabsTrigger>
-          </TabsList>
 
-          <TabsContent value="semantic" className="mt-4 space-y-4">
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_160px]">
-              <div className="grid gap-2">
-                <Label htmlFor="collection-text-query">Запрос</Label>
-                <Input
-                  id="collection-text-query"
-                  value={textQuery}
-                  onChange={(event) => setTextQuery(event.target.value)}
-                  placeholder="Например, инструкция по сервису"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="collection-text-limit">Top K</Label>
-                <Input
-                  id="collection-text-limit"
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={textSearchLimit}
-                  onChange={(event) => {
-                    const next = Number.parseInt(event.target.value, 10);
-                    setTextSearchLimit(Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next)));
-                  }}
-                />
-              </div>
+        <div className="mt-4 space-y-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs uppercase text-muted-foreground">Вариант поиска</span>
+              <Select
+                value={searchMode}
+                onValueChange={(value) => {
+                  setSearchMode(value as SearchMode);
+                  setSearchError(null);
+                }}
+              >
+                <SelectTrigger className="h-9 w-[160px] min-w-[140px]">
+                  <SelectValue placeholder="Выберите режим" />
+                </SelectTrigger>
+                <SelectContent>
+                  {searchModeOptions.map(({ value, label, icon: Icon }) => (
+                    <SelectItem key={value} value={value}>
+                      <div className="flex items-center gap-2">
+                        <Icon className="h-4 w-4" />
+                        {label}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="grid gap-2">
-                <Label>Сервис эмбеддингов</Label>
-                {matchingProviders.length > 0 ? (
-                  <Select
-                    value={selectedProvider?.id ?? matchingProviders[0].id}
-                    onValueChange={(value) => setSelectedProviderId(value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Выберите сервис" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {matchingProviders.map((provider) => {
-                        const size = resolveProviderVectorSize(provider);
-                        return (
-                          <SelectItem key={provider.id} value={provider.id}>
-                            {provider.name}
-                            {size ? ` · ${size.toLocaleString("ru-RU")}` : ""}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <div className="rounded-md border border-dashed border-border/60 bg-muted/20 p-3 text-sm text-muted-foreground">
-                    Нет активных сервисов подходящей размерности.
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  {collectionVectorSizeValue
-                    ? `Коллекция ожидает вектор длиной ${collectionVectorSizeValue.toLocaleString("ru-RU")}.`
-                    : "Размерность коллекции неизвестна — доступны все сервисы."}
-                </p>
-              </div>
-              <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="collection-text-with-payload" className="text-xs uppercase text-muted-foreground">
-                      Метаданные
-                    </Label>
-                    <p className="text-xs text-muted-foreground">Вернуть payload записей</p>
-                  </div>
-                  <Switch
-                    id="collection-text-with-payload"
-                    checked={textSearchWithPayload}
-                    onCheckedChange={(checked) => setTextSearchWithPayload(Boolean(checked))}
+
+            {searchMode === "semantic" && (
+              <Fragment>
+                <div className="flex min-w-[220px] flex-1 flex-col gap-1">
+                  <Label htmlFor="collection-text-query" className="text-xs uppercase text-muted-foreground">
+                    Запрос
+                  </Label>
+                  <Input
+                    id="collection-text-query"
+                    value={textQuery}
+                    onChange={(event) => setTextQuery(event.target.value)}
+                    placeholder="Например, инструкция по сервису"
+                    className="h-9"
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="collection-text-with-vector" className="text-xs uppercase text-muted-foreground">
-                      Векторы точек
-                    </Label>
-                    <p className="text-xs text-muted-foreground">Добавить исходные векторы документов</p>
-                  </div>
-                  <Switch
-                    id="collection-text-with-vector"
-                    checked={textSearchWithVector}
-                    onCheckedChange={(checked) => setTextSearchWithVector(Boolean(checked))}
+                <div className="flex w-24 flex-col gap-1">
+                  <Label htmlFor="collection-text-limit" className="text-xs uppercase text-muted-foreground">
+                    Top K
+                  </Label>
+                  <Input
+                    id="collection-text-limit"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={textSearchLimit}
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value, 10);
+                      setTextSearchLimit(Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next)));
+                    }}
+                    className="h-9"
                   />
                 </div>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                type="button"
-                onClick={handleTextSearch}
-                disabled={
-                  searchLoading || matchingProviders.length === 0 || textQuery.trim().length === 0
-                }
-              >
-                {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Найти
-              </Button>
-              {selectedProvider && (
-                <Badge variant="outline">
-                  {selectedProvider.name}
-                  {selectedProviderSize ? ` · ${selectedProviderSize.toLocaleString("ru-RU")}` : ""}
-                </Badge>
-              )}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="filter" className="mt-4 space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs uppercase text-muted-foreground">Связка условий</span>
-              <Button
-                type="button"
-                size="sm"
-                variant={filterCombineMode === "and" ? "secondary" : "outline"}
-                onClick={() => setFilterCombineMode("and")}
-              >
-                AND
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={filterCombineMode === "or" ? "secondary" : "outline"}
-                onClick={() => setFilterCombineMode("or")}
-              >
-                OR
-              </Button>
-            </div>
-            <div className="space-y-3">
-              {filterConditions.map((condition) => (
-                <div
-                  key={condition.id}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/20 p-3"
-                >
-                  <div className="flex min-w-[160px] flex-1 flex-col gap-2">
-                    <Label className="text-xs uppercase text-muted-foreground">Поле</Label>
-                    <Input
-                      list="collection-search-fields"
-                      value={condition.field}
-                      onChange={(event) => updateFilterCondition(condition.id, { field: event.target.value })}
-                      placeholder="Название поля"
-                    />
-                  </div>
-                  <div className="flex min-w-[140px] flex-col gap-2">
-                    <Label className="text-xs uppercase text-muted-foreground">Оператор</Label>
+                <div className="flex min-w-[200px] flex-col gap-1">
+                  <Label className="text-xs uppercase text-muted-foreground">Эмбеддинги</Label>
+                  {matchingProviders.length > 0 ? (
                     <Select
-                      value={condition.operator}
-                      onValueChange={(value) => updateFilterCondition(condition.id, { operator: value as FilterOperator })}
+                      value={selectedProvider?.id ?? matchingProviders[0].id}
+                      onValueChange={(value) => setSelectedProviderId(value)}
                     >
-                      <SelectTrigger>
-                        <SelectValue />
+                      <SelectTrigger className="h-9 min-w-[200px]">
+                        <SelectValue placeholder="Выберите сервис" />
                       </SelectTrigger>
                       <SelectContent>
-                        {filterOperatorOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
+                        {matchingProviders.map((provider) => {
+                          const size = resolveProviderVectorSize(provider);
+                          return (
+                            <SelectItem key={provider.id} value={provider.id}>
+                              {provider.name}
+                              {size ? ` · ${size.toLocaleString("ru-RU")}` : ""}
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div className="flex min-w-[160px] flex-1 flex-col gap-2">
-                    <Label className="text-xs uppercase text-muted-foreground">Значение</Label>
-                    <Input
-                      value={condition.value}
-                      onChange={(event) => updateFilterCondition(condition.id, { value: event.target.value })}
-                      placeholder="Введите значение"
+                  ) : (
+                    <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
+                      Нет подходящих сервисов
+                    </div>
+                  )}
+                </div>
+                <div className="flex h-9 flex-wrap items-center gap-3 rounded-md border border-border/60 px-3 text-xs uppercase text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="collection-text-with-payload"
+                      aria-label="Вернуть payload записей"
+                      checked={textSearchWithPayload}
+                      onCheckedChange={(checked) => setTextSearchWithPayload(Boolean(checked))}
                     />
+                    <span>Payload</span>
                   </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="collection-text-with-vector"
+                      aria-label="Добавить исходные векторы документов"
+                      checked={textSearchWithVector}
+                      onCheckedChange={(checked) => setTextSearchWithVector(Boolean(checked))}
+                    />
+                    <span>Вектор</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
                   <Button
                     type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground hover:text-destructive"
-                    onClick={() => removeFilterCondition(condition.id)}
+                    className="h-9"
+                    onClick={handleTextSearch}
+                    disabled={
+                      searchLoading || matchingProviders.length === 0 || textQuery.trim().length === 0
+                    }
                   >
-                    <X className="h-4 w-4" />
+                    {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Найти
                   </Button>
+                  {selectedProvider && (
+                    <Badge variant="outline" className="flex h-9 items-center gap-1 px-3 text-xs uppercase">
+                      {selectedProvider.name}
+                      {selectedProviderSize ? ` · ${selectedProviderSize.toLocaleString("ru-RU")}` : ""}
+                    </Badge>
+                  )}
                 </div>
-              ))}
-              <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addFilterCondition}>
-                <Plus className="h-4 w-4" />
-                Добавить условие
-              </Button>
-            </div>
-            <datalist id="collection-search-fields">
-              {availableFields.map((field) => (
-                <option key={field} value={field} />
-              ))}
-            </datalist>
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_160px]">
-              <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="filter-with-payload" className="text-xs uppercase text-muted-foreground">
-                      Метаданные
-                    </Label>
-                    <p className="text-xs text-muted-foreground">Вернуть payload записей</p>
-                  </div>
-                  <Switch
-                    id="filter-with-payload"
-                    checked={filterWithPayload}
-                    onCheckedChange={(checked) => setFilterWithPayload(Boolean(checked))}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="filter-with-vector" className="text-xs uppercase text-muted-foreground">
-                      Векторы точек
-                    </Label>
-                    <p className="text-xs text-muted-foreground">Добавить вектор записей</p>
-                  </div>
-                  <Switch
-                    id="filter-with-vector"
-                    checked={filterWithVector}
-                    onCheckedChange={(checked) => setFilterWithVector(Boolean(checked))}
-                  />
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="filter-limit">Ограничение</Label>
-                <Input
-                  id="filter-limit"
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={filterLimit}
-                  onChange={(event) => {
-                    const next = Number.parseInt(event.target.value, 10);
-                    setFilterLimit(Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next)));
-                  }}
-                />
-              </div>
-            </div>
-            <Button type="button" onClick={handleFilterSearch} disabled={searchLoading}>
-              {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Применить фильтр
-            </Button>
-          </TabsContent>
+              </Fragment>
+            )}
+          </div>
 
-          <TabsContent value="vector" className="mt-4 space-y-4">
-            <div className="grid gap-2">
-              <Label htmlFor="vector-search-input">Вектор запроса</Label>
-              <Textarea
-                id="vector-search-input"
-                value={vectorInput}
-                onChange={(event) => setVectorInput(event.target.value)}
-                placeholder="0.12 0.34 0.56"
-                rows={4}
-              />
-            </div>
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_160px]">
-              <div className="grid gap-2">
-                <Label htmlFor="vector-limit">Top K</Label>
-                <Input
-                  id="vector-limit"
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={vectorLimit}
-                  onChange={(event) => {
-                    const next = Number.parseInt(event.target.value, 10);
-                    setVectorLimit(Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next)));
-                  }}
-                />
+          {searchMode === "semantic" && (
+            <p className="text-xs text-muted-foreground">
+              {collectionVectorSizeValue
+                ? `Коллекция ожидает вектор длиной ${collectionVectorSizeValue.toLocaleString("ru-RU")}.`
+                : "Размерность коллекции неизвестна — доступны все сервисы."}
+            </p>
+          )}
+
+          {searchMode === "filter" && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs uppercase text-muted-foreground">
+                <span>Связка условий</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={filterCombineMode === "and" ? "secondary" : "outline"}
+                  onClick={() => setFilterCombineMode("and")}
+                >
+                  AND
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={filterCombineMode === "or" ? "secondary" : "outline"}
+                  onClick={() => setFilterCombineMode("or")}
+                >
+                  OR
+                </Button>
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="vector-threshold">Порог (опционально)</Label>
-                <Input
-                  id="vector-threshold"
-                  type="number"
-                  value={vectorScoreThreshold}
-                  onChange={(event) => setVectorScoreThreshold(event.target.value)}
-                  placeholder="Например, 0.4"
-                />
+              <div className="space-y-2">
+                {filterConditions.map((condition) => (
+                  <div
+                    key={condition.id}
+                    className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/20 p-3"
+                  >
+                    <div className="flex min-w-[160px] flex-1 flex-col gap-1">
+                      <Label className="text-xs uppercase text-muted-foreground">Поле</Label>
+                      <Input
+                        list="collection-search-fields"
+                        value={condition.field}
+                        onChange={(event) => updateFilterCondition(condition.id, { field: event.target.value })}
+                        placeholder="Название поля"
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="flex min-w-[140px] flex-col gap-1">
+                      <Label className="text-xs uppercase text-muted-foreground">Оператор</Label>
+                      <Select
+                        value={condition.operator}
+                        onValueChange={(value) => updateFilterCondition(condition.id, { operator: value as FilterOperator })}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {filterOperatorOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex min-w-[160px] flex-1 flex-col gap-1">
+                      <Label className="text-xs uppercase text-muted-foreground">Значение</Label>
+                      <Input
+                        value={condition.value}
+                        onChange={(event) => updateFilterCondition(condition.id, { value: event.target.value })}
+                        placeholder="Введите значение"
+                        className="h-9"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => removeFilterCondition(condition.id)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button type="button" variant="outline" size="sm" className="gap-2" onClick={addFilterCondition}>
+                  <Plus className="h-4 w-4" />
+                  Добавить условие
+                </Button>
               </div>
-            </div>
-            <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="vector-with-payload" className="text-xs uppercase text-muted-foreground">
-                    Метаданные
-                  </Label>
-                  <p className="text-xs text-muted-foreground">Вернуть payload записей</p>
+              <datalist id="collection-search-fields">
+                {availableFields.map((field) => (
+                  <option key={field} value={field} />
+                ))}
+              </datalist>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex items-center gap-3 rounded-md border border-border/60 px-3 py-2 text-xs uppercase text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="filter-with-payload"
+                      aria-label="Вернуть payload записей"
+                      checked={filterWithPayload}
+                      onCheckedChange={(checked) => setFilterWithPayload(Boolean(checked))}
+                    />
+                    <span>Payload</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="filter-with-vector"
+                      aria-label="Добавить вектор записей"
+                      checked={filterWithVector}
+                      onCheckedChange={(checked) => setFilterWithVector(Boolean(checked))}
+                    />
+                    <span>Вектор</span>
+                  </div>
                 </div>
-                <Switch
-                  id="vector-with-payload"
-                  checked={vectorWithPayload}
-                  onCheckedChange={(checked) => setVectorWithPayload(Boolean(checked))}
+                <div className="flex w-24 flex-col gap-1">
+                  <Label htmlFor="filter-limit" className="text-xs uppercase text-muted-foreground">
+                    Ограничение
+                  </Label>
+                  <Input
+                    id="filter-limit"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={filterLimit}
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value, 10);
+                      setFilterLimit(Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next)));
+                    }}
+                    className="h-9"
+                  />
+                </div>
+                <Button type="button" className="h-9" onClick={handleFilterSearch} disabled={searchLoading}>
+                  {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Применить фильтр
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {searchMode === "vector" && (
+            <div className="space-y-3">
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="vector-search-input" className="text-xs uppercase text-muted-foreground">
+                  Вектор запроса
+                </Label>
+                <Textarea
+                  id="vector-search-input"
+                  value={vectorInput}
+                  onChange={(event) => setVectorInput(event.target.value)}
+                  placeholder="0.12 0.34 0.56"
+                  rows={3}
                 />
               </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="vector-with-vector" className="text-xs uppercase text-muted-foreground">
-                    Векторы точек
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex w-24 flex-col gap-1">
+                  <Label htmlFor="vector-limit" className="text-xs uppercase text-muted-foreground">
+                    Top K
                   </Label>
-                  <p className="text-xs text-muted-foreground">Добавить исходные векторы найденных точек</p>
+                  <Input
+                    id="vector-limit"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={vectorLimit}
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value, 10);
+                      setVectorLimit(Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next)));
+                    }}
+                    className="h-9"
+                  />
                 </div>
-                <Switch
-                  id="vector-with-vector"
-                  checked={vectorWithVector}
-                  onCheckedChange={(checked) => setVectorWithVector(Boolean(checked))}
-                />
+                <div className="flex w-32 flex-col gap-1">
+                  <Label htmlFor="vector-threshold" className="text-xs uppercase text-muted-foreground">
+                    Порог (опционально)
+                  </Label>
+                  <Input
+                    id="vector-threshold"
+                    type="number"
+                    value={vectorScoreThreshold}
+                    onChange={(event) => setVectorScoreThreshold(event.target.value)}
+                    placeholder="Например, 0.4"
+                    className="h-9"
+                  />
+                </div>
+                <div className="flex items-center gap-3 rounded-md border border-border/60 px-3 py-2 text-xs uppercase text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="vector-with-payload"
+                      aria-label="Вернуть payload записей"
+                      checked={vectorWithPayload}
+                      onCheckedChange={(checked) => setVectorWithPayload(Boolean(checked))}
+                    />
+                    <span>Payload</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="vector-with-vector"
+                      aria-label="Добавить вектор записей"
+                      checked={vectorWithVector}
+                      onCheckedChange={(checked) => setVectorWithVector(Boolean(checked))}
+                    />
+                    <span>Вектор</span>
+                  </div>
+                </div>
+                <Button type="button" className="h-9" onClick={handleVectorSearch} disabled={searchLoading}>
+                  {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Выполнить поиск
+                </Button>
               </div>
               <p className="text-xs text-muted-foreground">
                 {collectionVectorSizeValue
-                  ? `Ожидается ${collectionVectorSizeValue.toLocaleString("ru-RU")} компонентов вектора.`
+                  ? `Ожидается ${collectionVectorSizeValue.toLocaleString("ru-RU")} значений вектора.`
                   : "Количество значений должно совпадать с размерностью коллекции."}
               </p>
             </div>
-            <Button
-              type="button"
-              onClick={handleVectorSearch}
-              disabled={searchLoading || vectorInput.trim().length === 0}
-            >
-              {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Искать по вектору
-            </Button>
-          </TabsContent>
-        </Tabs>
+          )}
+        </div>
+
 
         {isSearchActive && activeSearch && (
           <div className="mt-4 rounded-lg border border-border/60 bg-muted/20 p-3 text-sm text-muted-foreground">
