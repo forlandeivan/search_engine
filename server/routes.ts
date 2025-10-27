@@ -1380,9 +1380,38 @@ const searchPointsSchema = z.object({
     z.number().int().positive(),
     z.literal("majority"),
     z.literal("quorum"),
-    z.literal("all")
+    z.literal("all"),
   ]).optional(),
   timeout: z.number().positive().optional(),
+});
+
+const textSearchPointsSchema = z.object({
+  query: z.string().trim().min(1, "Введите поисковый запрос"),
+  embeddingProviderId: z.string().trim().min(1, "Укажите сервис эмбеддингов"),
+  limit: z.number().int().positive().max(100).default(10),
+  offset: z.number().int().min(0).optional(),
+  filter: z.unknown().optional(),
+  params: z.unknown().optional(),
+  withPayload: z.unknown().optional(),
+  withVector: z.unknown().optional(),
+  scoreThreshold: z.number().optional(),
+  shardKey: z.unknown().optional(),
+  consistency: z.union([
+    z.number().int().positive(),
+    z.literal("majority"),
+    z.literal("quorum"),
+    z.literal("all"),
+  ]).optional(),
+  timeout: z.number().positive().optional(),
+});
+
+const scrollCollectionSchema = z.object({
+  limit: z.number().int().positive().max(100).default(20),
+  offset: z.union([z.string(), z.number()]).optional(),
+  filter: z.unknown().optional(),
+  withPayload: z.unknown().optional(),
+  withVector: z.unknown().optional(),
+  orderBy: z.unknown().optional(),
 });
 
 const vectorizeCollectionSchemaFieldSchema = z.object({
@@ -3264,6 +3293,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/vector/collections/:name/scroll", async (req, res) => {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+        return res.status(404).json({
+          error: "Коллекция не найдена",
+        });
+      }
+
+      const body = scrollCollectionSchema.parse(req.body);
+      const client = getQdrantClient();
+
+      const scrollPayload: Record<string, unknown> = {
+        limit: body.limit,
+      };
+
+      if (body.withPayload !== undefined) {
+        scrollPayload["with_payload"] = body.withPayload;
+      }
+
+      if (body.withVector !== undefined) {
+        scrollPayload["with_vector"] = body.withVector;
+      }
+
+      if (body.offset !== undefined) {
+        scrollPayload["offset"] = body.offset;
+      }
+
+      if (body.filter !== undefined) {
+        scrollPayload["filter"] = body.filter;
+      }
+
+      if (body.orderBy !== undefined) {
+        scrollPayload["order_by"] = body.orderBy;
+      }
+
+      const result = await client.scroll(
+        req.params.name,
+        scrollPayload as Parameters<QdrantClient["scroll"]>[1],
+      );
+
+      const points = result.points.map(({ vector, payload, ...rest }) => ({
+        ...rest,
+        vector: vector ?? null,
+        payload: payload ?? null,
+      }));
+
+      res.json({
+        points,
+        nextPageOffset: result.next_page_offset ?? null,
+      });
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные параметры фильтрации",
+          details: error.errors,
+        });
+      }
+
+      const details = getErrorDetails(error);
+      console.error(`Ошибка при фильтрации коллекции ${req.params.name}:`, error);
+      res.status(500).json({
+        error: "Не удалось выполнить фильтрацию",
+        details,
+      });
+    }
+  });
+
   app.post("/api/vector/collections", async (req, res) => {
     try {
       const body = createVectorCollectionSchema.parse(req.body);
@@ -3424,6 +3530,150 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error(`Ошибка при загрузке точек в коллекцию ${req.params.name}:`, error);
       res.status(500).json({
         error: "Не удалось загрузить данные в коллекцию",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/vector/collections/:name/search/text", async (req, res) => {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+        return res.status(404).json({
+          error: "Коллекция не найдена",
+        });
+      }
+
+      const body = textSearchPointsSchema.parse(req.body);
+      const provider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
+
+      if (!provider) {
+        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+      }
+
+      if (!provider.isActive) {
+        throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+      }
+
+      const client = getQdrantClient();
+      const collectionInfo = await client.getCollection(req.params.name);
+      const vectorsConfig = collectionInfo.config?.params?.vectors as
+        | { size?: number | null; distance?: string | null }
+        | undefined;
+
+      const collectionVectorSize = vectorsConfig?.size ?? null;
+      const providerVectorSize = parseVectorSize(provider.qdrantConfig?.vectorSize);
+
+      if (
+        collectionVectorSize &&
+        providerVectorSize &&
+        Number(collectionVectorSize) !== Number(providerVectorSize)
+      ) {
+        throw new HttpError(
+          400,
+          `Размер вектора коллекции (${collectionVectorSize}) не совпадает с настройкой сервиса (${providerVectorSize}).`,
+        );
+      }
+
+      const accessToken = await fetchAccessToken(provider);
+      const embeddingResult = await fetchEmbeddingVector(provider, accessToken, body.query);
+
+      if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
+        throw new HttpError(
+          400,
+          `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+        );
+      }
+
+      const searchPayload: Parameters<QdrantClient["search"]>[1] = {
+        vector: embeddingResult.vector as unknown as Schemas["NamedVectorStruct"],
+        limit: body.limit,
+      };
+
+      if (body.offset !== undefined) {
+        searchPayload.offset = body.offset;
+      }
+
+      if (body.filter !== undefined) {
+        searchPayload.filter = body.filter as Parameters<QdrantClient["search"]>[1]["filter"];
+      }
+
+      if (body.params !== undefined) {
+        searchPayload.params = body.params as Parameters<QdrantClient["search"]>[1]["params"];
+      }
+
+      if (body.withPayload !== undefined) {
+        searchPayload.with_payload = body.withPayload as Parameters<QdrantClient["search"]>[1]["with_payload"];
+      }
+
+      if (body.withVector !== undefined) {
+        searchPayload.with_vector = body.withVector as Parameters<QdrantClient["search"]>[1]["with_vector"];
+      }
+
+      if (body.scoreThreshold !== undefined) {
+        searchPayload.score_threshold = body.scoreThreshold;
+      }
+
+      if (body.shardKey !== undefined) {
+        searchPayload.shard_key = body.shardKey as Parameters<QdrantClient["search"]>[1]["shard_key"];
+      }
+
+      if (body.consistency !== undefined) {
+        searchPayload.consistency = body.consistency;
+      }
+
+      if (body.timeout !== undefined) {
+        searchPayload.timeout = body.timeout;
+      }
+
+      const results = await client.search(req.params.name, searchPayload);
+
+      res.json({
+        results,
+        queryVector: embeddingResult.vector,
+        vectorLength: embeddingResult.vector.length,
+        usageTokens: embeddingResult.usageTokens ?? null,
+        provider: {
+          id: provider.id,
+          name: provider.name,
+        },
+      });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({
+          error: error.message,
+          details: error.details,
+        });
+      }
+
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные параметры поиска",
+          details: error.errors,
+        });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error(`Ошибка Qdrant при текстовом поиске в коллекции ${req.params.name}:`, error);
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
+        });
+      }
+
+      console.error(`Ошибка при текстовом поиске в коллекции ${req.params.name}:`, error);
+      res.status(500).json({
+        error: "Не удалось выполнить текстовый поиск",
         details: error instanceof Error ? error.message : String(error),
       });
     }
