@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -6,6 +6,7 @@ import { Sparkles, Loader2, Trash2, Eye, EyeOff } from "lucide-react";
 
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 import {
   Card,
@@ -41,8 +42,8 @@ import {
   llmProviderTypes,
   DEFAULT_LLM_REQUEST_CONFIG,
   DEFAULT_LLM_RESPONSE_CONFIG,
-  type InsertLlmProvider,
   type PublicLlmProvider,
+  type UpdateLlmProvider,
 } from "@shared/schema";
 
 const requestHeadersSchema = z.record(z.string());
@@ -57,62 +58,57 @@ const formatFloat = (value: number | null | undefined) => {
   return value.toLocaleString("ru-RU", { maximumFractionDigits: 3 });
 };
 
-const formatInteger = (value: number | null | undefined) => {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return "—";
-  }
-
-  return value.toLocaleString("ru-RU");
-};
-
-const hasEntries = (value: Record<string, unknown> | null | undefined) => {
-  if (!value) {
-    return false;
-  }
-
-  return Object.keys(value).length > 0;
-};
-
 const defaultRequestHeaders: Record<string, string> = {};
 
-const defaultFormValues = {
-  providerType: "gigachat" as (typeof llmProviderTypes)[number],
-  name: "GigaChat",
+type FormValues = {
+  providerType: (typeof llmProviderTypes)[number];
+  name: string;
+  description: string;
+  isActive: boolean;
+  tokenUrl: string;
+  completionUrl: string;
+  authorizationKey: string;
+  scope: string;
+  model: string;
+  availableModels: { label: string; value: string }[];
+  allowSelfSignedCertificate: boolean;
+  requestHeaders: string;
+  systemPrompt: string;
+  temperature: string;
+  maxTokens: string;
+  topP: string;
+  presencePenalty: string;
+  frequencyPenalty: string;
+};
+
+const emptyFormValues: FormValues = {
+  providerType: "gigachat",
+  name: "",
   description: "",
-  isActive: true,
-  tokenUrl: "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-  completionUrl: "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+  isActive: false,
+  tokenUrl: "",
+  completionUrl: "",
   authorizationKey: "",
-  scope: "GIGACHAT_API_PERS",
-  model: "GigaChat",
-  availableModels: [
-    { label: "Lite", value: "GigaChat-Lite" },
-    { label: "Pro", value: "GigaChat-Pro" },
-    { label: "Max", value: "GigaChat-Max" },
-  ],
-  allowSelfSignedCertificate: true,
+  scope: "",
+  model: "",
+  availableModels: [],
+  allowSelfSignedCertificate: false,
   requestHeaders: formatJson(defaultRequestHeaders),
-  systemPrompt:
-    "Ты — помощник для базы знаний. Отвечай на вопросы пользователя на основе предоставленных фрагментов контента. Если в фрагментах нет ответа, честно сообщи об этом.",
-  temperature: "0.2",
-  maxTokens: "1024",
+  systemPrompt: "",
+  temperature: "",
+  maxTokens: "",
   topP: "",
   presencePenalty: "",
   frequencyPenalty: "",
 };
 
-type FormValues = typeof defaultFormValues;
-
 type ProvidersResponse = { providers: PublicLlmProvider[] };
 
-type CreateLlmProviderVariables = {
-  payload: InsertLlmProvider;
+type UpdateLlmProviderVariables = {
+  id: string;
+  payload: UpdateLlmProvider;
   formattedRequestHeaders: string;
 };
-
-type ToggleProviderVariables = { id: string; isActive: boolean };
-
-type DeleteProviderVariables = { id: string };
 
 const parseJsonField = <T,>(
   value: string,
@@ -137,12 +133,44 @@ const parseJsonField = <T,>(
   }
 };
 
+const mapProviderToFormValues = (provider: PublicLlmProvider): FormValues => {
+  const requestConfig = {
+    ...DEFAULT_LLM_REQUEST_CONFIG,
+    ...(provider.requestConfig ?? {}),
+  };
+
+  const toStringOrEmpty = (value: number | null | undefined) =>
+    typeof value === "number" && !Number.isNaN(value) ? String(value) : "";
+
+  return {
+    providerType: provider.providerType,
+    name: provider.name,
+    description: provider.description ?? "",
+    isActive: provider.isActive,
+    tokenUrl: provider.tokenUrl,
+    completionUrl: provider.completionUrl,
+    authorizationKey: "",
+    scope: provider.scope ?? "",
+    model: provider.model ?? "",
+    availableModels: provider.availableModels ?? [],
+    allowSelfSignedCertificate: provider.allowSelfSignedCertificate ?? false,
+    requestHeaders: formatJson(provider.requestHeaders ?? defaultRequestHeaders),
+    systemPrompt:
+      typeof requestConfig.systemPrompt === "string" ? requestConfig.systemPrompt : "",
+    temperature: toStringOrEmpty(requestConfig.temperature),
+    maxTokens: toStringOrEmpty(requestConfig.maxTokens),
+    topP: toStringOrEmpty(requestConfig.topP),
+    presencePenalty: toStringOrEmpty(requestConfig.presencePenalty),
+    frequencyPenalty: toStringOrEmpty(requestConfig.frequencyPenalty),
+  } satisfies FormValues;
+};
+
 export default function LlmProvidersPage() {
   const { toast } = useToast();
   const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
 
   const form = useForm<FormValues>({
-    defaultValues: defaultFormValues,
+    defaultValues: emptyFormValues,
   });
 
   const modelsArray = useFieldArray({ control: form.control, name: "availableModels" });
@@ -151,95 +179,86 @@ export default function LlmProvidersPage() {
     queryKey: ["/api/llm/providers"],
   });
 
-  const createProviderMutation = useMutation<
+  const providers = useMemo(() => providersQuery.data?.providers ?? [], [providersQuery.data]);
+
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+
+  const selectedProvider = useMemo(
+    () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
+    [providers, selectedProviderId],
+  );
+
+  useEffect(() => {
+    if (providers.length === 0) {
+      setSelectedProviderId(null);
+      return;
+    }
+
+    if (selectedProviderId && providers.some((provider) => provider.id === selectedProviderId)) {
+      return;
+    }
+
+    setSelectedProviderId(providers[0].id);
+  }, [providers, selectedProviderId]);
+
+  useEffect(() => {
+    if (selectedProvider) {
+      const values = mapProviderToFormValues(selectedProvider);
+      form.reset(values);
+      setIsAuthorizationVisible(false);
+      return;
+    }
+
+    form.reset(emptyFormValues);
+    setIsAuthorizationVisible(false);
+  }, [selectedProvider, form]);
+
+  const updateProviderMutation = useMutation<
     { provider: PublicLlmProvider },
     Error,
-    CreateLlmProviderVariables
+    UpdateLlmProviderVariables
   >({
-    mutationFn: async ({ payload }) => {
-      const response = await apiRequest("POST", "/api/llm/providers", payload);
+    mutationFn: async ({ id, payload }) => {
+      const response = await apiRequest("PUT", `/api/llm/providers/${id}`, payload);
       if (!response.ok) {
         const body = (await response.json()) as { message?: string };
-        throw new Error(body.message ?? "Не удалось создать провайдера LLM");
+        throw new Error(body.message ?? "Не удалось обновить провайдера LLM");
       }
       return (await response.json()) as { provider: PublicLlmProvider };
     },
-    onSuccess: (_data, variables) => {
+    onSuccess: ({ provider }, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/llm/providers"] });
       toast({
-        title: "Провайдер сохранён",
-        description: "Настройки LLM успешно добавлены.",
+        title: "Изменения сохранены",
+        description: "Настройки провайдера обновлены.",
       });
 
-      const currentValues = form.getValues();
-      form.reset({
-        ...currentValues,
-        description: "",
-        authorizationKey: currentValues.authorizationKey,
+      const updatedValues = {
+        ...mapProviderToFormValues(provider),
         requestHeaders: variables.formattedRequestHeaders,
-      });
+      } satisfies FormValues;
+      form.reset(updatedValues);
       setIsAuthorizationVisible(false);
     },
     onError: (error) => {
       toast({
-        title: "Не удалось сохранить провайдера",
+        title: "Не удалось сохранить изменения",
         description: error.message,
         variant: "destructive",
       });
     },
   });
 
-  const toggleProviderMutation = useMutation<
-    { provider: PublicLlmProvider },
-    Error,
-    ToggleProviderVariables
-  >({
-    mutationFn: async ({ id, isActive }) => {
-      const response = await apiRequest("PUT", `/api/llm/providers/${id}`, { isActive });
-      if (!response.ok) {
-        const body = (await response.json()) as { message?: string };
-        throw new Error(body.message ?? "Не удалось обновить статус провайдера");
-      }
-      return (await response.json()) as { provider: PublicLlmProvider };
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/llm/providers"] });
-    },
-    onError: (error) => {
+  const handleUpdate = form.handleSubmit((values) => {
+    if (!selectedProvider) {
       toast({
-        title: "Ошибка",
-        description: error.message,
+        title: "Не выбран провайдер",
+        description: "Выберите провайдера из списка слева, чтобы изменить его настройки.",
         variant: "destructive",
       });
-    },
-  });
+      return;
+    }
 
-  const deleteProviderMutation = useMutation<
-    void,
-    Error,
-    DeleteProviderVariables
-  >({
-    mutationFn: async ({ id }) => {
-      const response = await apiRequest("DELETE", `/api/llm/providers/${id}`);
-      if (!response.ok) {
-        const body = (await response.json()) as { message?: string };
-        throw new Error(body.message ?? "Не удалось удалить провайдера");
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/llm/providers"] });
-      toast({ title: "Провайдер удалён" });
-    },
-    onError: (error) => {
-      toast({
-        title: "Ошибка",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleCreate = form.handleSubmit((values) => {
     form.clearErrors();
 
     try {
@@ -271,14 +290,15 @@ export default function LlmProvidersPage() {
         throw new Error("Укажите модель по умолчанию или добавьте варианты в список моделей.");
       }
 
-      const payload: InsertLlmProvider = {
+      const trimmedAuthorizationKey = values.authorizationKey.trim();
+
+      const payload: UpdateLlmProvider = {
         providerType: values.providerType,
         name: values.name.trim(),
         description: values.description.trim() ? values.description.trim() : undefined,
         isActive: values.isActive,
         tokenUrl: values.tokenUrl.trim(),
         completionUrl: values.completionUrl.trim(),
-        authorizationKey: values.authorizationKey.trim(),
         scope: values.scope.trim(),
         model: modelName,
         allowSelfSignedCertificate: values.allowSelfSignedCertificate,
@@ -287,8 +307,8 @@ export default function LlmProvidersPage() {
           modelField: "model",
           messagesField: "messages",
           systemPrompt: values.systemPrompt.trim(),
-          temperature: Number.isNaN(temperature) ? 0.2 : temperature,
-          maxTokens: Number.isNaN(maxTokens) ? 1024 : maxTokens,
+          temperature: Number.isNaN(temperature) ? DEFAULT_LLM_REQUEST_CONFIG.temperature : temperature,
+          maxTokens: Number.isNaN(maxTokens) ? DEFAULT_LLM_REQUEST_CONFIG.maxTokens : maxTokens,
           topP: topP && !Number.isNaN(topP) ? topP : undefined,
           presencePenalty:
             presencePenalty && !Number.isNaN(presencePenalty) ? presencePenalty : undefined,
@@ -298,11 +318,19 @@ export default function LlmProvidersPage() {
         },
         responseConfig: { ...DEFAULT_LLM_RESPONSE_CONFIG },
         availableModels: sanitizedAvailableModels,
-      } satisfies InsertLlmProvider;
+      } satisfies UpdateLlmProvider;
+
+      if (trimmedAuthorizationKey.length > 0) {
+        payload.authorizationKey = trimmedAuthorizationKey;
+      }
 
       const formattedRequestHeaders = formatJson(requestHeaders);
 
-      createProviderMutation.mutate({ payload, formattedRequestHeaders });
+      updateProviderMutation.mutate({
+        id: selectedProvider.id,
+        payload,
+        formattedRequestHeaders,
+      });
     } catch (error) {
       toast({
         title: "Не удалось подготовить данные",
@@ -312,424 +340,22 @@ export default function LlmProvidersPage() {
     }
   });
 
-  const providers = useMemo(() => providersQuery.data?.providers ?? [], [providersQuery.data]);
-
   return (
     <div className="space-y-6 p-6">
-      <div className="space-y-2">
+      <div className="space-y-1">
         <h1 className="flex items-center gap-2 text-2xl font-semibold">
           <Sparkles className="h-5 w-5 text-primary" /> Управление LLM
         </h1>
         <p className="text-muted-foreground max-w-3xl">
-          Подключите внешние LLM по API, чтобы формировать ответы на основе результатов поиска в Qdrant. Первый шаблон
-          настроен для GigaChat от СберБанка.
+          Настройте токены, модели и системные промпты для подключённых LLM. Провайдеры создаются администратором и доступны здесь для редактирования.
         </p>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Новый провайдер LLM</CardTitle>
-            <CardDescription>
-              Укажите параметры авторизации и подключения. Системный промпт и параметры генерации можно адаптировать под ваши задачи.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Form {...form}>
-              <form onSubmit={handleCreate} className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <FormField
-                    control={form.control}
-                    name="providerType"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Провайдер</FormLabel>
-                        <FormControl>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Выберите провайдера" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {llmProviderTypes.map((type) => (
-                                <SelectItem key={type} value={type}>
-                                  {type === "gigachat" ? "GigaChat" : "Другой сервис"}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </FormControl>
-                        <FormDescription>Определяет преднастроенные значения формы.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="isActive"
-                    render={({ field }) => (
-                      <FormItem className="flex items-center justify-between rounded-lg border p-3">
-                        <div className="space-y-1">
-                          <FormLabel className="text-sm">Статус провайдера</FormLabel>
-                          <FormDescription className="text-xs">
-                            Только активные провайдеры доступны в интерфейсе поиска.
-                          </FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch checked={field.value} onCheckedChange={field.onChange} />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Название</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Например, GigaChat Prod" required />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="description"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Описание</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Необязательно" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="tokenUrl"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Endpoint получения токена</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="https://.../oauth" required />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="completionUrl"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Endpoint генерации ответа</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="https://.../chat/completions" required />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="authorizationKey"
-                    render={({ field }) => (
-                      <FormItem className="md:col-span-2">
-                        <FormLabel>Authorization key</FormLabel>
-                        <FormControl>
-                          <div className="relative">
-                            <Input
-                              {...field}
-                              type={isAuthorizationVisible ? "text" : "password"}
-                              placeholder="Base64(client_id:client_secret)"
-                              required
-                              autoComplete="new-password"
-                              className="pr-10"
-                            />
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
-                              onClick={() => setIsAuthorizationVisible((previous) => !previous)}
-                              aria-label={
-                                isAuthorizationVisible
-                                  ? "Скрыть Authorization key"
-                                  : "Показать Authorization key"
-                              }
-                            >
-                              {isAuthorizationVisible ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </div>
-                        </FormControl>
-                        <FormDescription>
-                          Ключ используется для запроса access_token. Формат зависит от провайдера (Basic, Bearer и т.д.).
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="scope"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>OAuth scope</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="GIGACHAT_API_PERS" required />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="model"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Модель по умолчанию</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Например, GigaChat" required />
-                        </FormControl>
-                        <FormDescription className="text-xs">
-                          Эта модель будет использоваться, если пользователь не выберет другой вариант.
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <div className="md:col-span-2 space-y-3">
-                    <FormLabel>Доступные модели для выбора</FormLabel>
-                    <FormDescription>
-                      Список отображается в интерфейсе генеративного поиска. Пользователь сможет выбрать нужный вариант модели.
-                    </FormDescription>
-                    <div className="space-y-3">
-                      {modelsArray.fields.map((modelField, index) => (
-                        <div
-                          key={modelField.id}
-                          className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
-                        >
-                          <FormField
-                            control={form.control}
-                            name={`availableModels.${index}.label`}
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="text-xs uppercase text-muted-foreground">Название</FormLabel>
-                                <FormControl>
-                                  <Input {...field} placeholder="Например, Lite" />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={form.control}
-                            name={`availableModels.${index}.value`}
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel className="text-xs uppercase text-muted-foreground">Идентификатор</FormLabel>
-                                <FormControl>
-                                  <Input {...field} placeholder="Например, GigaChat-Lite" />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="mt-6 h-9 w-9 text-muted-foreground hover:text-destructive"
-                            onClick={() => modelsArray.remove(index)}
-                            aria-label="Удалить модель"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
-                      {modelsArray.fields.length === 0 && (
-                        <div className="rounded-md border border-dashed border-border/60 px-3 py-2 text-sm text-muted-foreground">
-                          Добавьте хотя бы одну модель.
-                        </div>
-                      )}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-2"
-                      onClick={() => modelsArray.append({ label: "", value: "" })}
-                    >
-                      Добавить модель
-                    </Button>
-                  </div>
-                </div>
-
-                <FormField
-                  control={form.control}
-                  name="allowSelfSignedCertificate"
-                  render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="space-y-1">
-                        <FormLabel className="text-sm">Доверять самоподписанным сертификатам</FormLabel>
-                        <FormDescription className="text-xs">
-                          Включите, если LLM размещён во внутреннем контуре с self-signed SSL.
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <Separator />
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <FormField
-                    control={form.control}
-                    name="systemPrompt"
-                    render={({ field }) => (
-                      <FormItem className="md:col-span-2">
-                        <FormLabel>Системный промпт</FormLabel>
-                        <FormControl>
-                          <Textarea {...field} rows={3} />
-                        </FormControl>
-                        <FormDescription>
-                          LLM будет использовать этот текст как инструкцию перед обработкой пользовательского запроса.
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="temperature"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Температура</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="number" step="0.1" min="0" max="2" />
-                        </FormControl>
-                        <FormDescription>Управляет вариативностью ответов.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="maxTokens"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Максимум токенов</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="number" min="128" max="4096" />
-                        </FormControl>
-                        <FormDescription>Сколько токенов можно потратить на ответ.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="topP"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Top P (опционально)</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="number" step="0.05" min="0" max="1" placeholder="Например, 0.9" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="presencePenalty"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Presence penalty</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="number" step="0.1" min="-2" max="2" placeholder="0" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="frequencyPenalty"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Frequency penalty</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="number" step="0.1" min="-2" max="2" placeholder="0" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <FormField
-                  control={form.control}
-                  name="requestHeaders"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Дополнительные заголовки</FormLabel>
-                      <FormControl>
-                        <Textarea {...field} rows={4} />
-                      </FormControl>
-                      <FormDescription>JSON-объект с заголовками, которые будут добавлены к запросам LLM.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <div className="flex items-center gap-2">
-                  <Button type="submit" className="min-w-[140px]" disabled={createProviderMutation.isPending}>
-                    {createProviderMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Сохранить провайдера
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => form.reset(defaultFormValues)}
-                    disabled={createProviderMutation.isPending}
-                  >
-                    Сбросить значения
-                  </Button>
-                </div>
-              </form>
-            </Form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Подключённые провайдеры</CardTitle>
-            <CardDescription>
-              Управляйте активностью и удаляйте провайдеров. Секреты хранятся в базе данных.
-            </CardDescription>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.9fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <Card className="h-fit">
+          <CardHeader className="pb-4">
+            <CardTitle>Провайдеры LLM</CardTitle>
+            <CardDescription>Выберите сервис, чтобы изменить его параметры.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {providersQuery.isLoading ? (
@@ -743,155 +369,497 @@ export default function LlmProvidersPage() {
               </div>
             ) : providers.length === 0 ? (
               <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                Провайдеры ещё не настроены.
+                Провайдеры ещё не настроены. Обратитесь к администратору.
               </div>
             ) : (
-              providers.map((provider) => {
-                const requestConfig = {
-                  ...DEFAULT_LLM_REQUEST_CONFIG,
-                  ...(provider.requestConfig ?? {}),
-                };
+              <div className="space-y-3">
+                {providers.map((provider) => {
+                  const isSelected = provider.id === selectedProviderId;
+                  const requestConfig = {
+                    ...DEFAULT_LLM_REQUEST_CONFIG,
+                    ...(provider.requestConfig ?? {}),
+                  };
 
-                const systemPrompt =
-                  typeof requestConfig.systemPrompt === "string" && requestConfig.systemPrompt.trim().length > 0
-                    ? requestConfig.systemPrompt.trim()
-                    : null;
-
-                const configBadges: Array<{ key: string; label: string }> = [
-                  { key: "temperature", label: `Температура: ${formatFloat(requestConfig.temperature)}` },
-                  { key: "maxTokens", label: `Max tokens: ${formatInteger(requestConfig.maxTokens)}` },
-                ];
-
-                if (typeof requestConfig.topP === "number" && !Number.isNaN(requestConfig.topP)) {
-                  configBadges.push({ key: "topP", label: `Top P: ${formatFloat(requestConfig.topP)}` });
-                }
-
-                if (typeof requestConfig.presencePenalty === "number" && !Number.isNaN(requestConfig.presencePenalty)) {
-                  configBadges.push({
-                    key: "presencePenalty",
-                    label: `Presence penalty: ${formatFloat(requestConfig.presencePenalty)}`,
-                  });
-                }
-
-                if (typeof requestConfig.frequencyPenalty === "number" && !Number.isNaN(requestConfig.frequencyPenalty)) {
-                  configBadges.push({
-                    key: "frequencyPenalty",
-                    label: `Frequency penalty: ${formatFloat(requestConfig.frequencyPenalty)}`,
-                  });
-                }
-
-                const requestHeaders = provider.requestHeaders ?? {};
-                const hasRequestHeaders = hasEntries(requestHeaders);
-
-                return (
-                  <div key={provider.id} className="rounded-lg border p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-2">
-                          <span className="text-base font-semibold text-foreground">{provider.name}</span>
-                          <Badge variant="outline">{provider.providerType}</Badge>
-                          <Badge variant={provider.isActive ? "default" : "secondary"}>
-                            {provider.isActive ? "Активен" : "Отключён"}
-                          </Badge>
-                          <Badge variant="outline">
-                            По умолчанию: {provider.model}
-                          </Badge>
-                          <Badge variant="outline">
-                            SSL: {provider.allowSelfSignedCertificate ? "self-signed" : "строгая проверка"}
+                  return (
+                    <button
+                      key={provider.id}
+                      type="button"
+                      onClick={() => setSelectedProviderId(provider.id)}
+                      className={cn(
+                        "w-full rounded-lg border px-4 py-3 text-left transition",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                        isSelected
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/60 hover:shadow-sm",
+                        !provider.isActive && "opacity-90",
+                      )}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-foreground">{provider.name}</span>
+                          <Badge variant="outline" className="text-[11px] uppercase">
+                            {provider.providerType}
                           </Badge>
                         </div>
-                        {provider.availableModels.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1 text-xs text-muted-foreground">
-                            {provider.availableModels.map((model) => (
-                              <Badge key={model.value} variant="secondary" className="bg-muted text-foreground">
-                                {model.label} · {model.value}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-                        {provider.description && (
-                          <p className="text-sm text-muted-foreground">{provider.description}</p>
-                        )}
+                        <Badge variant={provider.isActive ? "default" : "secondary"}>
+                          {provider.isActive ? "Активен" : "Отключён"}
+                        </Badge>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={provider.isActive}
-                          onCheckedChange={(checked) =>
-                            toggleProviderMutation.mutate({ id: provider.id, isActive: Boolean(checked) })
-                          }
-                          disabled={toggleProviderMutation.isPending}
-                        />
+                      {provider.description && (
+                        <p className="mt-2 text-xs text-muted-foreground">{provider.description}</p>
+                      )}
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <Badge variant="outline" className="text-[11px] font-normal">
+                          Модель: {provider.model}
+                        </Badge>
+                        <Badge variant="outline" className="text-[11px] font-normal">
+                          SSL: {provider.allowSelfSignedCertificate ? "self-signed" : "строгая проверка"}
+                        </Badge>
+                        <Badge variant="outline" className="text-[11px] font-normal">
+                          Token: {provider.hasAuthorizationKey ? "сохранён" : "не указан"}
+                        </Badge>
+                        <Badge variant="outline" className="text-[11px] font-normal">
+                          Температура: {formatFloat(requestConfig.temperature)}
+                        </Badge>
+                      </div>
+                      {provider.availableModels.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {provider.availableModels.slice(0, 4).map((model) => (
+                            <Badge
+                              key={`${provider.id}-${model.value}`}
+                              variant="secondary"
+                              className="text-[11px] font-normal"
+                            >
+                              {model.label}
+                            </Badge>
+                          ))}
+                          {provider.availableModels.length > 4 && (
+                            <Badge variant="secondary" className="text-[11px] font-normal">
+                              +{provider.availableModels.length - 4}
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle>{selectedProvider ? selectedProvider.name : "Настройки провайдера"}</CardTitle>
+            <CardDescription>
+              {selectedProvider
+                ? "Отредактируйте авторизацию, список моделей и параметры генерации."
+                : "Выберите провайдера слева, чтобы изменить его настройки."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form {...form}>
+              <form onSubmit={handleUpdate} className="space-y-6">
+                {!selectedProvider ? (
+                  <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                    Нет доступных провайдеров для настройки.
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="providerType"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Провайдер</FormLabel>
+                            <FormControl>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Выберите провайдера" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {llmProviderTypes.map((type) => (
+                                    <SelectItem key={type} value={type}>
+                                      {type === "gigachat" ? "GigaChat" : "Другой сервис"}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </FormControl>
+                            <FormDescription>Определяет преднастроенные значения формы.</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="isActive"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                            <div className="space-y-1">
+                              <FormLabel className="text-sm">Статус провайдера</FormLabel>
+                              <FormDescription className="text-xs">
+                                Только активные провайдеры доступны в интерфейсе поиска.
+                              </FormDescription>
+                            </div>
+                            <FormControl>
+                              <Switch checked={field.value} onCheckedChange={field.onChange} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Название</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Например, GigaChat Prod" required />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="description"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Описание</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Необязательно" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="tokenUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Endpoint получения токена</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="https://.../oauth" required />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="completionUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Endpoint генерации ответа</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="https://.../chat/completions" required />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="authorizationKey"
+                        render={({ field }) => (
+                          <FormItem className="md:col-span-2">
+                            <FormLabel>Authorization key</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <Input
+                                  {...field}
+                                  type={isAuthorizationVisible ? "text" : "password"}
+                                  placeholder="Base64(client_id:client_secret)"
+                                  autoComplete="new-password"
+                                  className="pr-10"
+                                />
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
+                                  onClick={() => setIsAuthorizationVisible((previous) => !previous)}
+                                  aria-label={
+                                    isAuthorizationVisible
+                                      ? "Скрыть Authorization key"
+                                      : "Показать Authorization key"
+                                  }
+                                >
+                                  {isAuthorizationVisible ? (
+                                    <EyeOff className="h-4 w-4" />
+                                  ) : (
+                                    <Eye className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              </div>
+                            </FormControl>
+                            <FormDescription>
+                              {selectedProvider.hasAuthorizationKey
+                                ? "Секрет сохранён. Оставьте поле пустым, если не требуется обновление."
+                                : "Укажите ключ, который будет использоваться для запроса access_token."}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="scope"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>OAuth scope</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="GIGACHAT_API_PERS" required />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="model"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Модель по умолчанию</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Например, GigaChat" required />
+                            </FormControl>
+                            <FormDescription className="text-xs">
+                              Используется, если пользователь не выбрал конкретную модель.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="md:col-span-2 space-y-3">
+                        <FormLabel>Доступные модели для выбора</FormLabel>
+                        <FormDescription>
+                          Отображаются в интерфейсе генеративного поиска. Добавьте варианты, которые будут доступны пользователю.
+                        </FormDescription>
+                        <div className="space-y-3">
+                          {modelsArray.fields.map((modelField, index) => (
+                            <div
+                              key={modelField.id}
+                              className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                            >
+                              <FormField
+                                control={form.control}
+                                name={`availableModels.${index}.label`}
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel className="text-xs uppercase text-muted-foreground">Название</FormLabel>
+                                    <FormControl>
+                                      <Input {...field} placeholder="Например, Lite" />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                              <FormField
+                                control={form.control}
+                                name={`availableModels.${index}.value`}
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel className="text-xs uppercase text-muted-foreground">Идентификатор</FormLabel>
+                                    <FormControl>
+                                      <Input {...field} placeholder="Например, GigaChat-Lite" />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="mt-6 h-9 w-9 text-muted-foreground hover:text-destructive"
+                                onClick={() => modelsArray.remove(index)}
+                                aria-label="Удалить модель"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                          {modelsArray.fields.length === 0 && (
+                            <div className="rounded-md border border-dashed border-border/60 px-3 py-2 text-sm text-muted-foreground">
+                              Добавьте хотя бы одну модель.
+                            </div>
+                          )}
+                        </div>
                         <Button
                           type="button"
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => {
-                            if (deleteProviderMutation.isPending) {
-                              return;
-                            }
-                            if (window.confirm(`Удалить провайдера «${provider.name}»?`)) {
-                              deleteProviderMutation.mutate({ id: provider.id });
-                            }
-                          }}
-                          aria-label={`Удалить провайдера ${provider.name}`}
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => modelsArray.append({ label: "", value: "" })}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          Добавить модель
                         </Button>
                       </div>
                     </div>
 
-                    <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
-                      <div className="space-y-1">
-                        <span className="font-medium text-foreground">Endpoint токена</span>
-                        <p className="break-all">{provider.tokenUrl}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <span className="font-medium text-foreground">Endpoint LLM</span>
-                        <p className="break-all">{provider.completionUrl}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <span className="font-medium text-foreground">Scope</span>
-                        <p>{provider.scope}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <span className="font-medium text-foreground">Секрет</span>
-                        <p>{provider.hasAuthorizationKey ? "Сохранён" : "Не указан"}</p>
-                      </div>
+                    <FormField
+                      control={form.control}
+                      name="allowSelfSignedCertificate"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                          <div className="space-y-1">
+                            <FormLabel className="text-sm">Доверять самоподписанным сертификатам</FormLabel>
+                            <FormDescription className="text-xs">
+                              Включите, если LLM размещён во внутреннем контуре с self-signed SSL.
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch checked={field.value} onCheckedChange={field.onChange} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+
+                    <Separator />
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="systemPrompt"
+                        render={({ field }) => (
+                          <FormItem className="md:col-span-2">
+                            <FormLabel>Системный промпт</FormLabel>
+                            <FormControl>
+                              <Textarea {...field} rows={3} />
+                            </FormControl>
+                            <FormDescription>
+                              LLM будет использовать этот текст как инструкцию перед обработкой пользовательского запроса.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="temperature"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Температура</FormLabel>
+                            <FormControl>
+                              <Input {...field} type="number" step="0.1" min="0" max="2" />
+                            </FormControl>
+                            <FormDescription>Управляет вариативностью ответов.</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="maxTokens"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Max tokens</FormLabel>
+                            <FormControl>
+                              <Input {...field} type="number" min="1" step="1" placeholder="1024" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="topP"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Top P</FormLabel>
+                            <FormControl>
+                              <Input {...field} type="number" step="0.05" min="0" max="1" placeholder="1" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="presencePenalty"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Presence penalty</FormLabel>
+                            <FormControl>
+                              <Input {...field} type="number" step="0.1" min="-2" max="2" placeholder="0" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="frequencyPenalty"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Frequency penalty</FormLabel>
+                            <FormControl>
+                              <Input {...field} type="number" step="0.1" min="-2" max="2" placeholder="0" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     </div>
 
-                    <div className="mt-3 space-y-3 rounded-lg border border-border/60 bg-muted/10 p-3">
-                      {configBadges.length > 0 && (
-                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                          {configBadges.map((badge) => (
-                            <Badge key={badge.key} variant="outline" className="bg-background text-foreground">
-                              {badge.label}
-                            </Badge>
-                          ))}
-                        </div>
+                    <FormField
+                      control={form.control}
+                      name="requestHeaders"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Дополнительные заголовки</FormLabel>
+                          <FormControl>
+                            <Textarea {...field} rows={4} />
+                          </FormControl>
+                          <FormDescription>
+                            JSON-объект с заголовками, которые будут добавлены к запросам LLM.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
                       )}
+                    />
 
-                      {systemPrompt && (
-                        <div className="space-y-1 text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">Системный промпт</span>
-                          <p className="whitespace-pre-line rounded-md bg-background/60 p-2 text-muted-foreground">
-                            {systemPrompt}
-                          </p>
-                        </div>
-                      )}
-
-                      {hasRequestHeaders && (
-                        <div className="space-y-1 text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">Дополнительные заголовки</span>
-                          <pre className="whitespace-pre-wrap rounded-md bg-background/60 p-2 text-[11px] leading-relaxed text-muted-foreground">
-                            {JSON.stringify(requestHeaders, null, 2)}
-                          </pre>
-                        </div>
-                      )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="submit"
+                        className="min-w-[180px]"
+                        disabled={updateProviderMutation.isPending}
+                      >
+                        {updateProviderMutation.isPending && (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        )}
+                        Сохранить изменения
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => form.reset(mapProviderToFormValues(selectedProvider))}
+                        disabled={updateProviderMutation.isPending}
+                      >
+                        Сбросить изменения
+                      </Button>
                     </div>
-                  </div>
-                );
-              })
-            )}
+                  </>
+                )}
+              </form>
+            </Form>
           </CardContent>
         </Card>
       </div>
