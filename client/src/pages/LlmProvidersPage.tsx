@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Sparkles, Loader2, Trash2 } from "lucide-react";
@@ -60,6 +60,11 @@ const defaultFormValues = {
   authorizationKey: "",
   scope: "GIGACHAT_API_PERS",
   model: "GigaChat",
+  availableModels: [
+    { label: "Lite", value: "GigaChat-Lite" },
+    { label: "Pro", value: "GigaChat-Pro" },
+    { label: "Max", value: "GigaChat-Max" },
+  ],
   allowSelfSignedCertificate: true,
   requestHeaders: formatJson(defaultRequestHeaders),
   systemPrompt:
@@ -113,6 +118,8 @@ export default function LlmProvidersPage() {
   const form = useForm<FormValues>({
     defaultValues: defaultFormValues,
   });
+
+  const modelsArray = useFieldArray({ control: form.control, name: "availableModels" });
 
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/llm/providers"],
@@ -226,6 +233,17 @@ export default function LlmProvidersPage() {
         ? Number.parseFloat(values.frequencyPenalty.trim())
         : undefined;
 
+      const sanitizedAvailableModels = (values.availableModels ?? [])
+        .map((model) => ({ label: model.label.trim(), value: model.value.trim() }))
+        .filter((model) => model.label.length > 0 && model.value.length > 0);
+
+      const modelName = values.model.trim().length > 0
+        ? values.model.trim()
+        : sanitizedAvailableModels[0]?.value ?? "";
+      if (!modelName) {
+        throw new Error("Укажите модель по умолчанию или добавьте варианты в список моделей.");
+      }
+
       const payload: InsertLlmProvider = {
         providerType: values.providerType,
         name: values.name.trim(),
@@ -235,7 +253,7 @@ export default function LlmProvidersPage() {
         completionUrl: values.completionUrl.trim(),
         authorizationKey: values.authorizationKey.trim(),
         scope: values.scope.trim(),
-        model: values.model.trim(),
+        model: modelName,
         allowSelfSignedCertificate: values.allowSelfSignedCertificate,
         requestHeaders,
         requestConfig: {
@@ -252,6 +270,7 @@ export default function LlmProvidersPage() {
           additionalBodyFields: {},
         },
         responseConfig: { ...DEFAULT_LLM_RESPONSE_CONFIG },
+        availableModels: sanitizedAvailableModels,
       } satisfies InsertLlmProvider;
 
       const formattedRequestHeaders = formatJson(requestHeaders);
@@ -428,14 +447,82 @@ export default function LlmProvidersPage() {
                     name="model"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Модель</FormLabel>
+                        <FormLabel>Модель по умолчанию</FormLabel>
                         <FormControl>
                           <Input {...field} placeholder="Например, GigaChat" required />
                         </FormControl>
+                        <FormDescription className="text-xs">
+                          Эта модель будет использоваться, если пользователь не выберет другой вариант.
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
+                  <div className="md:col-span-2 space-y-3">
+                    <FormLabel>Доступные модели для выбора</FormLabel>
+                    <FormDescription>
+                      Список отображается в интерфейсе генеративного поиска. Пользователь сможет выбрать нужный вариант модели.
+                    </FormDescription>
+                    <div className="space-y-3">
+                      {modelsArray.fields.map((modelField, index) => (
+                        <div
+                          key={modelField.id}
+                          className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                        >
+                          <FormField
+                            control={form.control}
+                            name={`availableModels.${index}.label`}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs uppercase text-muted-foreground">Название</FormLabel>
+                                <FormControl>
+                                  <Input {...field} placeholder="Например, Lite" />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name={`availableModels.${index}.value`}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs uppercase text-muted-foreground">Идентификатор</FormLabel>
+                                <FormControl>
+                                  <Input {...field} placeholder="Например, GigaChat-Lite" />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="mt-6 h-9 w-9 text-muted-foreground hover:text-destructive"
+                            onClick={() => modelsArray.remove(index)}
+                            aria-label="Удалить модель"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      {modelsArray.fields.length === 0 && (
+                        <div className="rounded-md border border-dashed border-border/60 px-3 py-2 text-sm text-muted-foreground">
+                          Добавьте хотя бы одну модель.
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => modelsArray.append({ label: "", value: "" })}
+                    >
+                      Добавить модель
+                    </Button>
+                  </div>
                 </div>
 
                 <FormField
@@ -617,9 +704,18 @@ export default function LlmProvidersPage() {
                             {provider.isActive ? "Активен" : "Отключён"}
                           </Badge>
                           <Badge variant="outline">
-                            Модель: {provider.model}
+                            По умолчанию: {provider.model}
                           </Badge>
                         </div>
+                        {provider.availableModels.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1 text-xs text-muted-foreground">
+                            {provider.availableModels.map((model) => (
+                              <Badge key={model.value} variant="secondary" className="bg-muted text-foreground">
+                                {model.label} · {model.value}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
                         {provider.description && (
                           <p className="text-sm text-muted-foreground">{provider.description}</p>
                         )}

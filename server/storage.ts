@@ -1732,6 +1732,29 @@ async function ensureLlmProvidersTable(): Promise<void> {
     try {
       await db.execute(sql`
         ALTER TABLE "llm_providers"
+        ADD COLUMN "available_models" jsonb
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await db.execute(sql`
+      UPDATE "llm_providers"
+      SET "available_models" = COALESCE("available_models", '[]'::jsonb)
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "llm_providers"
+        ALTER COLUMN "available_models" SET DEFAULT '[]'::jsonb
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42704"]);
+    }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "llm_providers"
         ADD COLUMN "workspace_id" varchar
       `);
     } catch (error) {

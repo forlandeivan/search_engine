@@ -48,6 +48,7 @@ import {
   type PublicLlmProvider,
   type EmbeddingProvider,
   type LlmProvider,
+  type LlmModelOption,
   type LlmRequestConfig,
   type LlmResponseConfig,
   type AuthProviderInsert,
@@ -463,8 +464,34 @@ function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbedding
   };
 }
 
+function sanitizeLlmModelOptions(models: unknown): LlmModelOption[] {
+  if (!Array.isArray(models)) {
+    return [];
+  }
+
+  const sanitized: LlmModelOption[] = [];
+
+  for (const entry of models) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const raw = entry as Record<string, unknown>;
+    const label = typeof raw.label === "string" ? raw.label.trim() : "";
+    const value = typeof raw.value === "string" ? raw.value.trim() : "";
+
+    if (label.length === 0 || value.length === 0) {
+      continue;
+    }
+
+    sanitized.push({ label, value });
+  }
+
+  return sanitized;
+}
+
 function toPublicLlmProvider(provider: LlmProvider): PublicLlmProvider {
-  const { authorizationKey, ...rest } = provider;
+  const { authorizationKey, availableModels, ...rest } = provider;
   const rawRequestConfig =
     rest.requestConfig && typeof rest.requestConfig === "object"
       ? (rest.requestConfig as Record<string, unknown>)
@@ -489,6 +516,7 @@ function toPublicLlmProvider(provider: LlmProvider): PublicLlmProvider {
     requestConfig,
     responseConfig,
     hasAuthorizationKey: Boolean(authorizationKey && authorizationKey.length > 0),
+    availableModels: sanitizeLlmModelOptions(availableModels),
   };
 }
 
@@ -1099,6 +1127,7 @@ function buildLlmRequestBody(
   provider: LlmProvider,
   query: string,
   context: LlmContextRecord[],
+  modelOverride?: string,
 ) {
   const requestConfig = mergeLlmRequestConfig(provider);
   const messages: Array<{ role: string; content: string }> = [];
@@ -1124,8 +1153,10 @@ function buildLlmRequestBody(
 
   messages.push({ role: "user", content: userParts.join("\n\n") });
 
+  const effectiveModel = modelOverride && modelOverride.trim().length > 0 ? modelOverride.trim() : provider.model;
+
   const body: Record<string, unknown> = {
-    [requestConfig.modelField]: provider.model,
+    [requestConfig.modelField]: effectiveModel,
     [requestConfig.messagesField]: messages,
   };
 
@@ -1163,8 +1194,9 @@ async function fetchLlmCompletion(
   accessToken: string,
   query: string,
   context: LlmContextRecord[],
+  modelOverride?: string,
 ): Promise<LlmCompletionResult> {
-  const requestBody = buildLlmRequestBody(provider, query, context);
+  const requestBody = buildLlmRequestBody(provider, query, context, modelOverride);
   const llmHeaders = new Headers();
   llmHeaders.set("Content-Type", "application/json");
   llmHeaders.set("Accept", "application/json");
@@ -1713,6 +1745,7 @@ const textSearchPointsSchema = z.object({
 
 const generativeSearchPointsSchema = textSearchPointsSchema.extend({
   llmProviderId: z.string().trim().min(1, "Укажите провайдера LLM"),
+  llmModel: z.string().trim().min(1, "Укажите модель LLM").optional(),
   contextLimit: z.number().int().positive().max(50).optional(),
 });
 
@@ -3387,6 +3420,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: payload.description ?? null,
         requestConfig: payload.requestConfig ?? { ...DEFAULT_LLM_REQUEST_CONFIG },
         responseConfig: payload.responseConfig ?? { ...DEFAULT_LLM_RESPONSE_CONFIG },
+        availableModels: payload.availableModels ?? [],
       });
 
       res.status(201).json({ provider: toPublicLlmProvider(provider) });
@@ -3409,7 +3443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const providerId = req.params.id;
       const payload = updateLlmProviderSchema.parse(req.body);
 
-      const updates: Partial<LlmProvider> = {};
+      const updates: Partial<LlmProvider> & { availableModels?: LlmModelOption[] } = {};
 
       if (payload.name !== undefined) updates.name = payload.name;
       if (payload.providerType !== undefined) updates.providerType = payload.providerType;
@@ -4119,6 +4153,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new HttpError(400, "Выбранный провайдер LLM отключён");
       }
 
+      const sanitizedModels = sanitizeLlmModelOptions(llmProvider.availableModels);
+      const requestedModel = typeof body.llmModel === "string" ? body.llmModel.trim() : "";
+      const normalizedModelFromList =
+        sanitizedModels.find((model) => model.value === requestedModel)?.value ??
+        sanitizedModels.find((model) => model.label === requestedModel)?.value ??
+        null;
+      const selectedModelValue =
+        (normalizedModelFromList && normalizedModelFromList.trim().length > 0
+          ? normalizedModelFromList.trim()
+          : undefined) ??
+        (requestedModel.length > 0 ? requestedModel : undefined) ??
+        llmProvider.model;
+      const selectedModelMeta =
+        sanitizedModels.find((model) => model.value === selectedModelValue) ?? null;
+
       const client = getQdrantClient();
       const collectionInfo = await client.getCollection(req.params.name);
       const vectorsConfig = collectionInfo.config?.params?.vectors as
@@ -4223,7 +4272,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const llmAccessToken = await fetchAccessToken(llmProvider);
-      const completion = await fetchLlmCompletion(llmProvider, llmAccessToken, body.query, contextRecords);
+      const completion = await fetchLlmCompletion(
+        llmProvider,
+        llmAccessToken,
+        body.query,
+        contextRecords,
+        selectedModelValue,
+      );
 
       res.json({
         answer: completion.answer,
@@ -4234,6 +4289,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         provider: {
           id: llmProvider.id,
           name: llmProvider.name,
+          model: selectedModelValue,
+          modelLabel: selectedModelMeta?.label ?? selectedModelValue,
         },
         embeddingProvider: {
           id: embeddingProvider.id,
