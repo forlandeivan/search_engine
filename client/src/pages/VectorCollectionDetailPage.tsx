@@ -730,10 +730,6 @@ export default function VectorCollectionDetailPage() {
       badges.push({ key: "top-k", label: `Top K: ${textSearchLimit}` });
     }
 
-    if (selectedProvider) {
-      badges.push({ key: "provider", label: `Эмбеддинги: ${selectedProvider.name}` });
-    }
-
     if (!textSearchWithPayload) {
       badges.push({ key: "payload", label: "Payload: выкл" });
     }
@@ -743,7 +739,7 @@ export default function VectorCollectionDetailPage() {
     }
 
     return badges;
-  }, [selectedProvider, textSearchLimit, textSearchWithPayload, textSearchWithVector]);
+  }, [textSearchLimit, textSearchWithPayload, textSearchWithVector]);
 
   const generativeSettingsBadges = useMemo(() => {
     const badges: Array<{ key: string; label: string }> = [];
@@ -756,16 +752,12 @@ export default function VectorCollectionDetailPage() {
       badges.push({ key: "context", label: `Контекст: ${llmContextLimit}` });
     }
 
-    if (selectedProvider) {
-      badges.push({ key: "provider", label: `Эмбеддинги: ${selectedProvider.name}` });
-    }
-
     if (selectedLlmProvider) {
       badges.push({ key: "llm", label: `LLM: ${selectedLlmProvider.name}` });
     }
 
     return badges;
-  }, [generativeLimit, llmContextLimit, selectedLlmProvider, selectedProvider]);
+  }, [generativeLimit, llmContextLimit, selectedLlmProvider]);
 
   const curlCommand = useMemo(() => {
     if (!collectionName) {
@@ -1702,7 +1694,6 @@ export default function VectorCollectionDetailPage() {
                     </PopoverContent>
                   </Popover>
                 </div>
-                <p className="text-xs text-muted-foreground">Нажмите Enter, чтобы запустить поиск.</p>
                 {semanticSettingsBadges.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2">
                     {semanticSettingsBadges.map((badge) => (
@@ -1867,15 +1858,6 @@ export default function VectorCollectionDetailPage() {
               </div>
             )}
           </div>
-
-          {searchMode === "semantic" && (
-            <p className="text-xs text-muted-foreground">
-              {collectionVectorSizeValue
-                ? `Коллекция ожидает вектор длиной ${collectionVectorSizeValue.toLocaleString("ru-RU")}.`
-                : "Размерность коллекции неизвестна — доступны все сервисы."}
-            </p>
-          )}
-
           {searchMode === "generative" && (
             <div className="space-y-2 text-xs text-muted-foreground">
               <p>
