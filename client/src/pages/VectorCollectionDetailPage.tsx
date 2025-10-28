@@ -1571,9 +1571,9 @@ export default function VectorCollectionDetailPage() {
         </p>
 
         <div className="mt-4 space-y-4">
-          <div className="flex w-full flex-col gap-3 md:flex-row md:items-end md:gap-4">
-            <div className="flex w-full flex-col gap-1 md:w-auto md:flex-row md:items-center md:gap-2">
-              <span className="text-xs uppercase text-muted-foreground md:min-w-[124px]">Вариант поиска</span>
+          <div className="flex w-full flex-col gap-3 md:flex-row md:items-start md:gap-4">
+            <div className="flex w-full flex-col gap-2 md:max-w-xs">
+              <span className="text-xs uppercase text-muted-foreground">Вариант поиска</span>
               <Select
                 value={searchMode}
                 onValueChange={(value) => {
@@ -1581,7 +1581,7 @@ export default function VectorCollectionDetailPage() {
                   setSearchError(null);
                 }}
               >
-                <SelectTrigger className="h-9 w-full min-w-[140px] md:w-[180px]" aria-label="Вариант поиска">
+                <SelectTrigger className="h-9 w-full min-w-[140px]" aria-label="Вариант поиска">
                   <SelectValue placeholder="Выберите режим" />
                 </SelectTrigger>
                 <SelectContent>
