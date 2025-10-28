@@ -837,11 +837,31 @@ export const insertLlmProviderSchema = createInsertSchema(llmProviders)
     requestConfig: z
       .any()
       .optional()
-      .transform(() => ({ ...DEFAULT_LLM_REQUEST_CONFIG } as LlmRequestConfig)),
+      .transform((value) => {
+        const config =
+          value && typeof value === "object" && !Array.isArray(value)
+            ? (value as Record<string, unknown>)
+            : {};
+
+        return {
+          ...DEFAULT_LLM_REQUEST_CONFIG,
+          ...config,
+        } as LlmRequestConfig;
+      }),
     responseConfig: z
       .any()
       .optional()
-      .transform(() => ({ ...DEFAULT_LLM_RESPONSE_CONFIG } as LlmResponseConfig)),
+      .transform((value) => {
+        const config =
+          value && typeof value === "object" && !Array.isArray(value)
+            ? (value as Record<string, unknown>)
+            : {};
+
+        return {
+          ...DEFAULT_LLM_RESPONSE_CONFIG,
+          ...config,
+        } as LlmResponseConfig;
+      }),
   });
 
 export const updateLlmProviderSchema = z
