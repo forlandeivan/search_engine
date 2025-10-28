@@ -78,6 +78,7 @@ const DEFAULT_TOP_K = 5;
 const DEFAULT_GENERATIVE_CONTEXT_LIMIT = 5;
 const DEFAULT_SEMANTIC_WITH_PAYLOAD = true;
 const DEFAULT_SEMANTIC_WITH_VECTOR = false;
+const GENERATIVE_TYPING_INTERVAL_MS = 18;
 
 const clampTopK = (value: number) => {
   if (!Number.isFinite(value)) {
@@ -515,6 +516,45 @@ export default function VectorCollectionDetailPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isLoadingMoreSearchResults, setIsLoadingMoreSearchResults] = useState(false);
+  const [animatedGenerativeAnswer, setAnimatedGenerativeAnswer] = useState("");
+  const animatedAnswerRef = useRef("");
+  const generativeAnswerTargetRef = useRef("");
+  const generativeTypingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const stopGenerativeTyping = useCallback(() => {
+    if (generativeTypingTimeoutRef.current !== null) {
+      clearTimeout(generativeTypingTimeoutRef.current);
+      generativeTypingTimeoutRef.current = null;
+    }
+  }, []);
+
+  const scheduleGenerativeTyping = useCallback(() => {
+    if (generativeTypingTimeoutRef.current !== null) {
+      return;
+    }
+
+    const step = () => {
+      const target = generativeAnswerTargetRef.current;
+      const current = animatedAnswerRef.current;
+
+      if (current === target) {
+        generativeTypingTimeoutRef.current = null;
+        return;
+      }
+
+      const nextCharacter = target.slice(current.length, current.length + 1);
+      animatedAnswerRef.current = current + nextCharacter;
+      setAnimatedGenerativeAnswer(animatedAnswerRef.current);
+
+      const delay = nextCharacter === "\n"
+        ? GENERATIVE_TYPING_INTERVAL_MS * 2
+        : GENERATIVE_TYPING_INTERVAL_MS;
+
+      generativeTypingTimeoutRef.current = setTimeout(step, delay);
+    };
+
+    generativeTypingTimeoutRef.current = setTimeout(step, GENERATIVE_TYPING_INTERVAL_MS);
+  }, []);
 
   const [textQuery, setTextQuery] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
@@ -669,6 +709,52 @@ export default function VectorCollectionDetailPage() {
       return !providerSize || providerSize === collectionVectorSizeValue;
     });
   }, [activeEmbeddingProviders, collectionVectorSizeValue]);
+
+  useEffect(() => {
+    return () => {
+      stopGenerativeTyping();
+    };
+  }, [stopGenerativeTyping]);
+
+  useEffect(() => {
+    if (activeSearch?.mode !== "generative") {
+      generativeAnswerTargetRef.current = "";
+      animatedAnswerRef.current = "";
+      setAnimatedGenerativeAnswer("");
+      stopGenerativeTyping();
+      return;
+    }
+
+    const target = activeSearch.answer ?? "";
+    const current = animatedAnswerRef.current;
+
+    if (current && !target.startsWith(current)) {
+      animatedAnswerRef.current = "";
+      setAnimatedGenerativeAnswer("");
+    }
+
+    generativeAnswerTargetRef.current = target;
+
+    if (target.length === 0) {
+      stopGenerativeTyping();
+      return;
+    }
+
+    scheduleGenerativeTyping();
+  }, [
+    activeSearch?.answer,
+    activeSearch?.mode,
+    scheduleGenerativeTyping,
+    stopGenerativeTyping,
+  ]);
+
+  const fullGenerativeAnswer =
+    activeSearch?.mode === "generative" ? activeSearch.answer ?? "" : "";
+  const hasGenerativeAnswerContent = fullGenerativeAnswer.trim().length > 0;
+  const isGenerativeTyping =
+    activeSearch?.mode === "generative" &&
+    fullGenerativeAnswer.length > 0 &&
+    animatedGenerativeAnswer.length < fullGenerativeAnswer.length;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2533,11 +2619,21 @@ export default function VectorCollectionDetailPage() {
             {searchLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
           <div className="mt-2 min-h-[1.5rem] whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-            {activeSearch.answer && activeSearch.answer.trim().length > 0
-              ? activeSearch.answer
-              : searchLoading
-                ? "Модель формирует ответ..."
-                : "Ответ отсутствует."}
+            {hasGenerativeAnswerContent ? (
+              <span className="inline-flex items-center gap-1">
+                <span>{animatedGenerativeAnswer}</span>
+                {isGenerativeTyping && (
+                  <span
+                    aria-hidden="true"
+                    className="h-4 w-[2px] animate-pulse bg-primary/80"
+                  />
+                )}
+              </span>
+            ) : searchLoading ? (
+              "Модель формирует ответ..."
+            ) : (
+              "Ответ отсутствует."
+            )}
           </div>
         </div>
       )}
