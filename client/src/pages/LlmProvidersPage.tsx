@@ -1,8 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Sparkles, Loader2, Trash2 } from "lucide-react";
+import { Sparkles, Loader2, Trash2, Eye, EyeOff } from "lucide-react";
 
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -114,6 +114,7 @@ const parseJsonField = <T,>(
 
 export default function LlmProvidersPage() {
   const { toast } = useToast();
+  const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
 
   const form = useForm<FormValues>({
     defaultValues: defaultFormValues,
@@ -152,6 +153,7 @@ export default function LlmProvidersPage() {
         authorizationKey: currentValues.authorizationKey,
         requestHeaders: variables.formattedRequestHeaders,
       });
+      setIsAuthorizationVisible(false);
     },
     onError: (error) => {
       toast({
@@ -418,7 +420,34 @@ export default function LlmProvidersPage() {
                       <FormItem className="md:col-span-2">
                         <FormLabel>Authorization key</FormLabel>
                         <FormControl>
-                          <Textarea {...field} placeholder="Base64(client_id:client_secret)" rows={2} required />
+                          <div className="relative">
+                            <Input
+                              {...field}
+                              type={isAuthorizationVisible ? "text" : "password"}
+                              placeholder="Base64(client_id:client_secret)"
+                              required
+                              autoComplete="new-password"
+                              className="pr-10"
+                            />
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
+                              onClick={() => setIsAuthorizationVisible((previous) => !previous)}
+                              aria-label={
+                                isAuthorizationVisible
+                                  ? "Скрыть Authorization key"
+                                  : "Показать Authorization key"
+                              }
+                            >
+                              {isAuthorizationVisible ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </div>
                         </FormControl>
                         <FormDescription>
                           Ключ используется для запроса access_token. Формат зависит от провайдера (Basic, Bearer и т.д.).
