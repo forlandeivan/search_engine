@@ -39,6 +39,7 @@ import { Separator } from "@/components/ui/separator";
 
 import {
   llmProviderTypes,
+  DEFAULT_LLM_REQUEST_CONFIG,
   DEFAULT_LLM_RESPONSE_CONFIG,
   type InsertLlmProvider,
   type PublicLlmProvider,
@@ -47,6 +48,30 @@ import {
 const requestHeadersSchema = z.record(z.string());
 
 const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
+
+const formatFloat = (value: number | null | undefined) => {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "—";
+  }
+
+  return value.toLocaleString("ru-RU", { maximumFractionDigits: 3 });
+};
+
+const formatInteger = (value: number | null | undefined) => {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "—";
+  }
+
+  return value.toLocaleString("ru-RU");
+};
+
+const hasEntries = (value: Record<string, unknown> | null | undefined) => {
+  if (!value) {
+    return false;
+  }
+
+  return Object.keys(value).length > 0;
+};
 
 const defaultRequestHeaders: Record<string, string> = {};
 
@@ -722,6 +747,42 @@ export default function LlmProvidersPage() {
               </div>
             ) : (
               providers.map((provider) => {
+                const requestConfig = {
+                  ...DEFAULT_LLM_REQUEST_CONFIG,
+                  ...(provider.requestConfig ?? {}),
+                };
+
+                const systemPrompt =
+                  typeof requestConfig.systemPrompt === "string" && requestConfig.systemPrompt.trim().length > 0
+                    ? requestConfig.systemPrompt.trim()
+                    : null;
+
+                const configBadges: Array<{ key: string; label: string }> = [
+                  { key: "temperature", label: `Температура: ${formatFloat(requestConfig.temperature)}` },
+                  { key: "maxTokens", label: `Max tokens: ${formatInteger(requestConfig.maxTokens)}` },
+                ];
+
+                if (typeof requestConfig.topP === "number" && !Number.isNaN(requestConfig.topP)) {
+                  configBadges.push({ key: "topP", label: `Top P: ${formatFloat(requestConfig.topP)}` });
+                }
+
+                if (typeof requestConfig.presencePenalty === "number" && !Number.isNaN(requestConfig.presencePenalty)) {
+                  configBadges.push({
+                    key: "presencePenalty",
+                    label: `Presence penalty: ${formatFloat(requestConfig.presencePenalty)}`,
+                  });
+                }
+
+                if (typeof requestConfig.frequencyPenalty === "number" && !Number.isNaN(requestConfig.frequencyPenalty)) {
+                  configBadges.push({
+                    key: "frequencyPenalty",
+                    label: `Frequency penalty: ${formatFloat(requestConfig.frequencyPenalty)}`,
+                  });
+                }
+
+                const requestHeaders = provider.requestHeaders ?? {};
+                const hasRequestHeaders = hasEntries(requestHeaders);
+
                 return (
                   <div key={provider.id} className="rounded-lg border p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -734,6 +795,9 @@ export default function LlmProvidersPage() {
                           </Badge>
                           <Badge variant="outline">
                             По умолчанию: {provider.model}
+                          </Badge>
+                          <Badge variant="outline">
+                            SSL: {provider.allowSelfSignedCertificate ? "self-signed" : "строгая проверка"}
                           </Badge>
                         </div>
                         {provider.availableModels.length > 0 && (
@@ -793,6 +857,36 @@ export default function LlmProvidersPage() {
                         <span className="font-medium text-foreground">Секрет</span>
                         <p>{provider.hasAuthorizationKey ? "Сохранён" : "Не указан"}</p>
                       </div>
+                    </div>
+
+                    <div className="mt-3 space-y-3 rounded-lg border border-border/60 bg-muted/10 p-3">
+                      {configBadges.length > 0 && (
+                        <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          {configBadges.map((badge) => (
+                            <Badge key={badge.key} variant="outline" className="bg-background text-foreground">
+                              {badge.label}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+
+                      {systemPrompt && (
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">Системный промпт</span>
+                          <p className="whitespace-pre-line rounded-md bg-background/60 p-2 text-muted-foreground">
+                            {systemPrompt}
+                          </p>
+                        </div>
+                      )}
+
+                      {hasRequestHeaders && (
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">Дополнительные заголовки</span>
+                          <pre className="whitespace-pre-wrap rounded-md bg-background/60 p-2 text-[11px] leading-relaxed text-muted-foreground">
+                            {JSON.stringify(requestHeaders, null, 2)}
+                          </pre>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

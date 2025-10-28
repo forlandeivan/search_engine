@@ -88,6 +88,37 @@ const clampTopK = (value: number) => {
   return Math.min(100, Math.max(1, rounded));
 };
 
+const GenerativeLoadingDots = () => {
+  return (
+    <span className="flex items-center gap-1 text-primary" aria-hidden>
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" style={{ animationDelay: "0ms" }} />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" style={{ animationDelay: "150ms" }} />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" style={{ animationDelay: "300ms" }} />
+    </span>
+  );
+};
+
+const GenerativeLoadingState = () => {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/40 p-3"
+    >
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10">
+          <Sparkles className="h-4 w-4 text-primary" />
+        </div>
+        <div className="flex flex-col">
+          <span className="text-sm font-semibold text-foreground">Генерируем ответ...</span>
+          <span className="text-xs text-muted-foreground">Запрос отправлен в LLM, подождите немного.</span>
+        </div>
+      </div>
+      <GenerativeLoadingDots />
+    </div>
+  );
+};
+
 type SearchMode = "semantic" | "filter" | "vector" | "generative";
 
 const searchModeOptions: Array<{ value: SearchMode; label: string; icon: LucideIcon }> = [
@@ -811,6 +842,12 @@ export default function VectorCollectionDetailPage() {
   }, [searchMode]);
 
   useEffect(() => {
+    if (searchLoading) {
+      setIsSettingsPopoverOpen(false);
+    }
+  }, [searchLoading]);
+
+  useEffect(() => {
     setLlmContextLimit((previous) => Math.min(previous, generativeLimit));
   }, [generativeLimit]);
 
@@ -1289,6 +1326,8 @@ export default function VectorCollectionDetailPage() {
 
       const modelLabel = llmOption?.model.label ?? data.provider?.modelLabel ?? null;
 
+      setSelectedPoint(null);
+
       setActiveSearch({
         mode: "generative",
         description: `Генеративный ответ на запрос «${sanitizedQuery}»`,
@@ -1309,10 +1348,6 @@ export default function VectorCollectionDetailPage() {
         nextPageOffset: null,
         contextLimit: safeContextLimit,
       });
-
-      if (mapped.length > 0) {
-        setSelectedPoint(mapped[0]);
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setSearchError(message);
@@ -1801,135 +1836,141 @@ export default function VectorCollectionDetailPage() {
                 <Label htmlFor="collection-generative-query" className="text-xs uppercase text-muted-foreground">
                   Запрос
                 </Label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input
-                    id="collection-generative-query"
-                    value={textQuery}
-                    onChange={(event) => setTextQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        if (canSubmitGenerativeSearch) {
-                          void handleGenerativeSearch();
+                {searchLoading ? (
+                  <GenerativeLoadingState />
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      id="collection-generative-query"
+                      value={textQuery}
+                      onChange={(event) => setTextQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          if (canSubmitGenerativeSearch) {
+                            void handleGenerativeSearch();
+                          }
                         }
-                      }
-                    }}
-                    placeholder="Например, как работает тариф"
-                    className="h-9 min-w-[220px] flex-1"
-                  />
-                  <Popover open={isSettingsPopoverOpen} onOpenChange={setIsSettingsPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 shrink-0 text-muted-foreground"
-                        aria-label="Открыть настройки поиска"
-                      >
-                        <Settings2 className="h-4 w-4" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="end" className="w-80 p-4">
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="collection-generative-limit" className="text-xs uppercase text-muted-foreground">
-                            Top K
-                          </Label>
-                          <Input
-                            id="collection-generative-limit"
-                            type="number"
-                            min={1}
-                            max={100}
-                            value={generativeLimit}
-                            onChange={(event) => {
-                              const next = clampTopK(Number.parseInt(event.target.value, 10));
-                              setGenerativeLimit(next);
-                              setLlmContextLimit((previous) => Math.min(previous, next));
-                            }}
-                            className="h-9"
-                          />
+                      }}
+                      placeholder="Например, как работает тариф"
+                      className="h-9 min-w-[220px] flex-1"
+                      disabled={searchLoading}
+                    />
+                    <Popover open={isSettingsPopoverOpen} onOpenChange={setIsSettingsPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 shrink-0 text-muted-foreground"
+                          aria-label="Открыть настройки поиска"
+                          disabled={searchLoading}
+                        >
+                          <Settings2 className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-80 p-4">
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="collection-generative-limit" className="text-xs uppercase text-muted-foreground">
+                              Top K
+                            </Label>
+                            <Input
+                              id="collection-generative-limit"
+                              type="number"
+                              min={1}
+                              max={100}
+                              value={generativeLimit}
+                              onChange={(event) => {
+                                const next = clampTopK(Number.parseInt(event.target.value, 10));
+                                setGenerativeLimit(next);
+                                setLlmContextLimit((previous) => Math.min(previous, next));
+                              }}
+                              className="h-9"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="collection-generative-context" className="text-xs uppercase text-muted-foreground">
+                              Контекст
+                            </Label>
+                            <Input
+                              id="collection-generative-context"
+                              type="number"
+                              min={1}
+                              max={generativeLimit}
+                              value={llmContextLimit}
+                              onChange={(event) => {
+                                const next = clampTopK(Number.parseInt(event.target.value, 10));
+                                setLlmContextLimit(Math.min(next, generativeLimit));
+                              }}
+                              className="h-9"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs uppercase text-muted-foreground">Эмбеддинги</Label>
+                            {matchingProviders.length > 0 ? (
+                              <Select
+                                value={selectedProvider?.id ?? matchingProviders[0].id}
+                                onValueChange={(value) => setSelectedProviderId(value)}
+                              >
+                                <SelectTrigger className="h-9 w-full">
+                                  <SelectValue placeholder="Выберите сервис" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {matchingProviders.map((provider) => {
+                                    const size = resolveProviderVectorSize(provider);
+                                    return (
+                                      <SelectItem key={provider.id} value={provider.id}>
+                                        {provider.name}
+                                        {size ? ` · ${size.toLocaleString("ru-RU")}` : ""}
+                                      </SelectItem>
+                                    );
+                                  })}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
+                                Нет подходящих сервисов
+                              </div>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs uppercase text-muted-foreground">LLM</Label>
+                            {llmModelOptions.length > 0 ? (
+                              <Select
+                                value={selectedLlmOption?.key ?? llmModelOptions[0].key}
+                                onValueChange={(value) => setSelectedLlmModelKey(value)}
+                              >
+                                <SelectTrigger className="h-9 w-full">
+                                  <SelectValue placeholder="Выберите модель" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {llmModelGroups.map(({ provider, models }) => (
+                                    <SelectGroup key={provider.id}>
+                                      <SelectLabel>{provider.name}</SelectLabel>
+                                      {models.map((model) => {
+                                        const optionKey = `${provider.id}::${model.value}`;
+                                        return (
+                                          <SelectItem key={optionKey} value={optionKey}>
+                                            {model.label}
+                                          </SelectItem>
+                                        );
+                                      })}
+                                    </SelectGroup>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
+                                Нет активных LLM
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="collection-generative-context" className="text-xs uppercase text-muted-foreground">
-                            Контекст
-                          </Label>
-                          <Input
-                            id="collection-generative-context"
-                            type="number"
-                            min={1}
-                            max={generativeLimit}
-                            value={llmContextLimit}
-                            onChange={(event) => {
-                              const next = clampTopK(Number.parseInt(event.target.value, 10));
-                              setLlmContextLimit(Math.min(next, generativeLimit));
-                            }}
-                            className="h-9"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs uppercase text-muted-foreground">Эмбеддинги</Label>
-                          {matchingProviders.length > 0 ? (
-                            <Select
-                              value={selectedProvider?.id ?? matchingProviders[0].id}
-                              onValueChange={(value) => setSelectedProviderId(value)}
-                            >
-                              <SelectTrigger className="h-9 w-full">
-                                <SelectValue placeholder="Выберите сервис" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {matchingProviders.map((provider) => {
-                                  const size = resolveProviderVectorSize(provider);
-                                  return (
-                                    <SelectItem key={provider.id} value={provider.id}>
-                                      {provider.name}
-                                      {size ? ` · ${size.toLocaleString("ru-RU")}` : ""}
-                                    </SelectItem>
-                                  );
-                                })}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
-                              Нет подходящих сервисов
-                            </div>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs uppercase text-muted-foreground">LLM</Label>
-                          {llmModelOptions.length > 0 ? (
-                            <Select
-                              value={selectedLlmOption?.key ?? llmModelOptions[0].key}
-                              onValueChange={(value) => setSelectedLlmModelKey(value)}
-                            >
-                              <SelectTrigger className="h-9 w-full">
-                                <SelectValue placeholder="Выберите модель" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {llmModelGroups.map(({ provider, models }) => (
-                                  <SelectGroup key={provider.id}>
-                                    <SelectLabel>{provider.name}</SelectLabel>
-                                    {models.map((model) => {
-                                      const optionKey = `${provider.id}::${model.value}`;
-                                      return (
-                                        <SelectItem key={optionKey} value={optionKey}>
-                                          {model.label}
-                                        </SelectItem>
-                                      );
-                                    })}
-                                  </SelectGroup>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
-                              Нет активных LLM
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                )}
               </div>
             )}
           </div>
