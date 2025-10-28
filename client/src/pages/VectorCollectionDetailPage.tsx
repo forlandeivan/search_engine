@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent } from "react";
+import type { KeyboardEvent, MouseEvent } from "react";
 import { Link, useRoute } from "wouter";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
@@ -665,6 +665,20 @@ export default function VectorCollectionDetailPage() {
     return activeLlmProviders[0] ?? null;
   }, [activeLlmProviders, selectedLlmProviderId]);
 
+  const canSubmitSemanticSearch = useMemo(() => {
+    return !searchLoading && matchingProviders.length > 0 && textQuery.trim().length > 0;
+  }, [matchingProviders.length, searchLoading, textQuery]);
+
+  const canSubmitGenerativeSearch = useMemo(() => {
+    const sanitizedQuery = textQuery.trim();
+    return (
+      !searchLoading &&
+      sanitizedQuery.length > 0 &&
+      matchingProviders.length > 0 &&
+      activeLlmProviders.length > 0
+    );
+  }, [activeLlmProviders.length, matchingProviders.length, searchLoading, textQuery]);
+
   useEffect(() => {
     if (!searchSettingsLoaded || typeof window === "undefined") {
       return;
@@ -1133,6 +1147,19 @@ export default function VectorCollectionDetailPage() {
     buildScoreMap,
   ]);
 
+  const handleSemanticInputKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+
+        if (canSubmitSemanticSearch) {
+          void handleTextSearch();
+        }
+      }
+    },
+    [canSubmitSemanticSearch, handleTextSearch],
+  );
+
   const handleGenerativeSearch = useCallback(async () => {
     if (!collectionName) {
       return;
@@ -1225,7 +1252,7 @@ export default function VectorCollectionDetailPage() {
   ]);
 
   const handleFilterSearch = useCallback(async () => {
-    if (!collectionName) {
+    if (!collectionName || searchLoading) {
       return;
     }
 
@@ -1285,6 +1312,7 @@ export default function VectorCollectionDetailPage() {
     filterLimit,
     filterWithPayload,
     filterWithVector,
+    searchLoading,
     buildScoreMap,
   ]);
 
@@ -1543,9 +1571,9 @@ export default function VectorCollectionDetailPage() {
         </p>
 
         <div className="mt-4 space-y-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs uppercase text-muted-foreground">Вариант поиска</span>
+          <div className="flex w-full flex-col gap-3 md:flex-row md:items-end md:gap-4">
+            <div className="flex w-full flex-col gap-1 md:w-auto md:flex-row md:items-center md:gap-2">
+              <span className="text-xs uppercase text-muted-foreground md:min-w-[124px]">Вариант поиска</span>
               <Select
                 value={searchMode}
                 onValueChange={(value) => {
@@ -1553,7 +1581,7 @@ export default function VectorCollectionDetailPage() {
                   setSearchError(null);
                 }}
               >
-                <SelectTrigger className="h-9 w-[160px] min-w-[140px]">
+                <SelectTrigger className="h-9 w-full min-w-[140px] md:w-[180px]" aria-label="Вариант поиска">
                   <SelectValue placeholder="Выберите режим" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1570,18 +1598,24 @@ export default function VectorCollectionDetailPage() {
             </div>
 
             {searchMode === "semantic" && (
-              <div className="flex min-w-[260px] flex-1 flex-col gap-2">
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
                 <Label htmlFor="collection-text-query" className="text-xs uppercase text-muted-foreground">
                   Запрос
                 </Label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input
-                    id="collection-text-query"
-                    value={textQuery}
-                    onChange={(event) => setTextQuery(event.target.value)}
-                    placeholder="Например, инструкция по сервису"
-                    className="h-9 min-w-[220px] flex-1"
-                  />
+                <div className="flex w-full flex-wrap items-center gap-2 md:flex-nowrap">
+                  <div className="relative flex min-w-[240px] flex-1">
+                    <Input
+                      id="collection-text-query"
+                      value={textQuery}
+                      onChange={(event) => setTextQuery(event.target.value)}
+                      onKeyDown={handleSemanticInputKeyDown}
+                      placeholder="Например, инструкция по сервису"
+                      className="h-9 flex-1 pr-10"
+                    />
+                    {searchLoading && (
+                      <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
                   <Popover open={isSettingsPopoverOpen} onOpenChange={setIsSettingsPopoverOpen}>
                     <PopoverTrigger asChild>
                       <Button
@@ -1667,16 +1701,8 @@ export default function VectorCollectionDetailPage() {
                       </div>
                     </PopoverContent>
                   </Popover>
-                  <Button
-                    type="button"
-                    className="h-9"
-                    onClick={handleTextSearch}
-                    disabled={searchLoading || matchingProviders.length === 0 || textQuery.trim().length === 0}
-                  >
-                    {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Найти
-                  </Button>
                 </div>
+                <p className="text-xs text-muted-foreground">Нажмите Enter, чтобы запустить поиск.</p>
                 {semanticSettingsBadges.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2">
                     {semanticSettingsBadges.map((badge) => (
@@ -1690,7 +1716,7 @@ export default function VectorCollectionDetailPage() {
             )}
 
             {searchMode === "generative" && (
-              <div className="flex min-w-[260px] flex-1 flex-col gap-2">
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
                 <Label htmlFor="collection-generative-query" className="text-xs uppercase text-muted-foreground">
                   Запрос
                 </Label>
@@ -1699,6 +1725,14 @@ export default function VectorCollectionDetailPage() {
                     id="collection-generative-query"
                     value={textQuery}
                     onChange={(event) => setTextQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        if (canSubmitGenerativeSearch) {
+                          void handleGenerativeSearch();
+                        }
+                      }
+                    }}
                     placeholder="Например, как работает тариф"
                     className="h-9 min-w-[220px] flex-1"
                   />
@@ -1851,14 +1885,15 @@ export default function VectorCollectionDetailPage() {
             </div>
           )}
           {searchMode === "filter" && (
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               <div className="flex flex-wrap items-center gap-2 text-xs uppercase text-muted-foreground">
-                <span>Связка условий</span>
+                <span className="font-medium text-foreground">Связка</span>
                 <Button
                   type="button"
                   size="sm"
                   variant={filterCombineMode === "and" ? "secondary" : "outline"}
                   onClick={() => setFilterCombineMode("and")}
+                  className="h-7"
                 >
                   AND
                 </Button>
@@ -1867,6 +1902,7 @@ export default function VectorCollectionDetailPage() {
                   size="sm"
                   variant={filterCombineMode === "or" ? "secondary" : "outline"}
                   onClick={() => setFilterCombineMode("or")}
+                  className="h-7"
                 >
                   OR
                 </Button>
@@ -1875,26 +1911,39 @@ export default function VectorCollectionDetailPage() {
                 {filterConditions.map((condition) => (
                   <div
                     key={condition.id}
-                    className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/20 p-3"
+                    className="grid w-full gap-2.5 rounded-lg border border-border/50 bg-muted/5 p-2.5 md:grid-cols-[minmax(150px,0.8fr)_minmax(120px,0.6fr)_minmax(160px,1fr)_auto]"
                   >
-                    <div className="flex min-w-[160px] flex-1 flex-col gap-1">
+                    <div className="flex flex-col gap-1">
                       <Label className="text-xs uppercase text-muted-foreground">Поле</Label>
                       <Input
                         list="collection-search-fields"
                         value={condition.field}
                         onChange={(event) => updateFilterCondition(condition.id, { field: event.target.value })}
-                        placeholder="Название поля"
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void handleFilterSearch();
+                          }
+                        }}
+                        placeholder="payload.category"
                         className="h-9"
                       />
                     </div>
-                    <div className="flex min-w-[140px] flex-col gap-1">
+                    <div className="flex flex-col gap-1 md:w-[140px]">
                       <Label className="text-xs uppercase text-muted-foreground">Оператор</Label>
                       <Select
                         value={condition.operator}
                         onValueChange={(value) => updateFilterCondition(condition.id, { operator: value as FilterOperator })}
                       >
                         <SelectTrigger className="h-9">
-                          <SelectValue />
+                          <SelectValue>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-foreground">{filterOperatorSymbols[condition.operator]}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {filterOperatorOptions.find((option) => option.value === condition.operator)?.label}
+                              </span>
+                            </div>
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {filterOperatorOptions.map((option) => (
@@ -1905,11 +1954,17 @@ export default function VectorCollectionDetailPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="flex min-w-[160px] flex-1 flex-col gap-1">
+                    <div className="flex flex-col gap-1">
                       <Label className="text-xs uppercase text-muted-foreground">Значение</Label>
                       <Input
                         value={condition.value}
                         onChange={(event) => updateFilterCondition(condition.id, { value: event.target.value })}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void handleFilterSearch();
+                          }
+                        }}
                         placeholder="Введите значение"
                         className="h-9"
                       />
@@ -1918,7 +1973,7 @@ export default function VectorCollectionDetailPage() {
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="text-muted-foreground hover:text-destructive"
+                      className="h-8 w-8 self-center text-muted-foreground hover:text-destructive"
                       onClick={() => removeFilterCondition(condition.id)}
                     >
                       <X className="h-4 w-4" />
@@ -1935,9 +1990,9 @@ export default function VectorCollectionDetailPage() {
                   <option key={field} value={field} />
                 ))}
               </datalist>
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="flex items-center gap-3 rounded-md border border-border/60 px-3 py-2 text-xs uppercase text-muted-foreground">
-                  <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-end gap-2.5 md:gap-3">
+                <div className="flex items-center gap-3 rounded-md border border-border/50 bg-muted/5 px-3 py-2 text-xs uppercase text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
                     <Switch
                       id="filter-with-payload"
                       aria-label="Вернуть payload записей"
@@ -1946,7 +2001,7 @@ export default function VectorCollectionDetailPage() {
                     />
                     <span>Payload</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <Switch
                       id="filter-with-vector"
                       aria-label="Добавить вектор записей"
@@ -1969,6 +2024,12 @@ export default function VectorCollectionDetailPage() {
                     onChange={(event) => {
                       const next = Number.parseInt(event.target.value, 10);
                       setFilterLimit(Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next)));
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void handleFilterSearch();
+                      }
                     }}
                     className="h-9"
                   />
