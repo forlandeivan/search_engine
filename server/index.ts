@@ -133,7 +133,12 @@ app.use(cors({
         callback(null, true);
       } else {
         log(`CORS: Blocked unauthorized origin: ${origin} (hostname: ${originHostname})`);
-        callback(new Error('Not allowed by CORS'));
+        const corsError = new Error(
+          `Запрос отклонён политикой CORS для домена ${originHostname}. ` +
+          "Добавьте домен в список сайтов или установите переменную STATIC_ALLOWED_HOSTNAMES",
+        );
+        (corsError as Error & { status?: number }).status = 403;
+        callback(corsError);
       }
     } catch (error) {
       log(`CORS error: ${error}`);

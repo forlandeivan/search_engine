@@ -63,6 +63,18 @@ Preferred communication style: Simple, everyday language.
 - **UI Components**: Radix UI primitives for accessible component foundation
 - **Styling**: Tailwind CSS with PostCSS processing
 
+## Настройка CORS для кастомных доменов
+
+При подключении своего домена убедитесь, что Express-сервер разрешает запросы с этого хоста. Для этого есть два варианта:
+
+1. Добавьте домен в список сайтов в админ-панели (таблица `sites`). Тогда домен автоматически попадёт в CORS-кэш.
+2. Если база данных временно недоступна (например, на холодном старте), задайте переменную окружения `STATIC_ALLOWED_HOSTNAMES` (или `STATIC_ALLOWED_ORIGINS`) со списком доменов через запятую. Пример значения:
+   ```env
+   STATIC_ALLOWED_HOSTNAMES=aiknowledge.ru,www.aiknowledge.ru
+   ```
+
+Статический список учитывается при каждом обновлении CORS-кэша, поэтому домен будет доступен даже если база данных не успела ответить. В логах сервера появится сообщение с перечнем статически разрешённых доменов.
+
 ## External Dependencies
 
 ### Core Dependencies
