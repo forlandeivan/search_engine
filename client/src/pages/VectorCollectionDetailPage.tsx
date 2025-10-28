@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Settings2,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -38,6 +39,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 
 interface VectorCollectionDetail {
@@ -67,6 +69,22 @@ interface CollectionPointsResponse {
 }
 
 const POINTS_PAGE_SIZE = 24;
+
+const SEARCH_SETTINGS_STORAGE_KEY = "vector-collection-search-settings";
+
+const DEFAULT_TOP_K = 5;
+const DEFAULT_GENERATIVE_CONTEXT_LIMIT = 5;
+const DEFAULT_SEMANTIC_WITH_PAYLOAD = true;
+const DEFAULT_SEMANTIC_WITH_VECTOR = false;
+
+const clampTopK = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+
+  const rounded = Math.round(value);
+  return Math.min(100, Math.max(1, rounded));
+};
 
 type SearchMode = "semantic" | "filter" | "vector" | "generative";
 
@@ -106,6 +124,21 @@ interface ActiveSearchState {
   filterPayload?: Record<string, unknown> | null;
   nextPageOffset?: string | number | null;
   contextLimit?: number;
+}
+
+interface SearchSettingsStorage {
+  semantic?: {
+    topK?: number;
+    providerId?: string | null;
+    withPayload?: boolean;
+    withVector?: boolean;
+  };
+  generative?: {
+    topK?: number;
+    contextLimit?: number;
+    embeddingProviderId?: string | null;
+    llmProviderId?: string | null;
+  };
 }
 
 interface TextSearchResponse {
@@ -418,12 +451,14 @@ export default function VectorCollectionDetailPage() {
 
   const [textQuery, setTextQuery] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  const [textSearchLimit, setTextSearchLimit] = useState(10);
-  const [textSearchWithPayload, setTextSearchWithPayload] = useState(true);
-  const [textSearchWithVector, setTextSearchWithVector] = useState(false);
+  const [textSearchLimit, setTextSearchLimit] = useState(DEFAULT_TOP_K);
+  const [textSearchWithPayload, setTextSearchWithPayload] = useState(DEFAULT_SEMANTIC_WITH_PAYLOAD);
+  const [textSearchWithVector, setTextSearchWithVector] = useState(DEFAULT_SEMANTIC_WITH_VECTOR);
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string | null>(null);
-  const [generativeLimit, setGenerativeLimit] = useState(8);
-  const [llmContextLimit, setLlmContextLimit] = useState(5);
+  const [generativeLimit, setGenerativeLimit] = useState(DEFAULT_TOP_K);
+  const [llmContextLimit, setLlmContextLimit] = useState(DEFAULT_GENERATIVE_CONTEXT_LIMIT);
+  const [searchSettingsLoaded, setSearchSettingsLoaded] = useState(false);
+  const [isSettingsPopoverOpen, setIsSettingsPopoverOpen] = useState(false);
 
   const [filterConditions, setFilterConditions] = useState<FilterCondition[]>([
     { id: generateConditionId(), field: "", operator: "eq", value: "" },
@@ -434,7 +469,7 @@ export default function VectorCollectionDetailPage() {
   const [filterWithVector, setFilterWithVector] = useState(false);
 
   const [vectorInput, setVectorInput] = useState("");
-  const [vectorLimit, setVectorLimit] = useState(10);
+  const [vectorLimit, setVectorLimit] = useState(DEFAULT_TOP_K);
   const [vectorWithPayload, setVectorWithPayload] = useState(true);
   const [vectorWithVector, setVectorWithVector] = useState(false);
   const [vectorScoreThreshold, setVectorScoreThreshold] = useState("");
@@ -527,6 +562,70 @@ export default function VectorCollectionDetailPage() {
   }, [activeEmbeddingProviders, collectionVectorSizeValue]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(SEARCH_SETTINGS_STORAGE_KEY);
+      if (!raw) {
+        setSearchSettingsLoaded(true);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as SearchSettingsStorage;
+
+      if (parsed.semantic) {
+        if (typeof parsed.semantic.topK === "number") {
+          setTextSearchLimit(clampTopK(parsed.semantic.topK));
+        }
+        if (typeof parsed.semantic.withPayload === "boolean") {
+          setTextSearchWithPayload(parsed.semantic.withPayload);
+        }
+        if (typeof parsed.semantic.withVector === "boolean") {
+          setTextSearchWithVector(parsed.semantic.withVector);
+        }
+      }
+
+      const storedEmbeddingProviderId =
+        typeof parsed.semantic?.providerId === "string"
+          ? parsed.semantic.providerId
+          : typeof parsed.generative?.embeddingProviderId === "string"
+            ? parsed.generative.embeddingProviderId
+            : null;
+
+      if (storedEmbeddingProviderId) {
+        setSelectedProviderId(storedEmbeddingProviderId);
+      }
+
+      let nextGenerativeTopK: number | null = null;
+
+      if (parsed.generative) {
+        if (typeof parsed.generative.topK === "number") {
+          nextGenerativeTopK = clampTopK(parsed.generative.topK);
+          setGenerativeLimit(nextGenerativeTopK);
+        }
+
+        if (typeof parsed.generative.contextLimit === "number") {
+          const safeContext = clampTopK(parsed.generative.contextLimit);
+          const cap = nextGenerativeTopK ?? DEFAULT_GENERATIVE_CONTEXT_LIMIT;
+          setLlmContextLimit(Math.min(safeContext, cap));
+        } else if (nextGenerativeTopK !== null) {
+          setLlmContextLimit((previous) => Math.min(previous, nextGenerativeTopK!));
+        }
+
+        if (typeof parsed.generative.llmProviderId === "string") {
+          setSelectedLlmProviderId(parsed.generative.llmProviderId);
+        }
+      }
+    } catch (error) {
+      console.error("Не удалось загрузить настройки поиска", error);
+    } finally {
+      setSearchSettingsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
     if (selectedProviderId && !matchingProviders.some((provider) => provider.id === selectedProviderId)) {
       setSelectedProviderId(null);
     }
@@ -565,6 +664,94 @@ export default function VectorCollectionDetailPage() {
 
     return activeLlmProviders[0] ?? null;
   }, [activeLlmProviders, selectedLlmProviderId]);
+
+  useEffect(() => {
+    if (!searchSettingsLoaded || typeof window === "undefined") {
+      return;
+    }
+
+    const payload: SearchSettingsStorage = {
+      semantic: {
+        topK: textSearchLimit,
+        providerId: selectedProviderId,
+        withPayload: textSearchWithPayload,
+        withVector: textSearchWithVector,
+      },
+      generative: {
+        topK: generativeLimit,
+        contextLimit: llmContextLimit,
+        embeddingProviderId: selectedProviderId,
+        llmProviderId: selectedLlmProviderId,
+      },
+    };
+
+    try {
+      window.localStorage.setItem(SEARCH_SETTINGS_STORAGE_KEY, JSON.stringify(payload));
+    } catch (error) {
+      console.error("Не удалось сохранить настройки поиска", error);
+    }
+  }, [
+    generativeLimit,
+    llmContextLimit,
+    searchSettingsLoaded,
+    selectedLlmProviderId,
+    selectedProviderId,
+    textSearchLimit,
+    textSearchWithPayload,
+    textSearchWithVector,
+  ]);
+
+  useEffect(() => {
+    setIsSettingsPopoverOpen(false);
+  }, [searchMode]);
+
+  useEffect(() => {
+    setLlmContextLimit((previous) => Math.min(previous, generativeLimit));
+  }, [generativeLimit]);
+
+  const semanticSettingsBadges = useMemo(() => {
+    const badges: Array<{ key: string; label: string }> = [];
+
+    if (textSearchLimit !== DEFAULT_TOP_K) {
+      badges.push({ key: "top-k", label: `Top K: ${textSearchLimit}` });
+    }
+
+    if (selectedProvider) {
+      badges.push({ key: "provider", label: `Эмбеддинги: ${selectedProvider.name}` });
+    }
+
+    if (!textSearchWithPayload) {
+      badges.push({ key: "payload", label: "Payload: выкл" });
+    }
+
+    if (textSearchWithVector) {
+      badges.push({ key: "vector", label: "Вектор: вкл" });
+    }
+
+    return badges;
+  }, [selectedProvider, textSearchLimit, textSearchWithPayload, textSearchWithVector]);
+
+  const generativeSettingsBadges = useMemo(() => {
+    const badges: Array<{ key: string; label: string }> = [];
+
+    if (generativeLimit !== DEFAULT_TOP_K) {
+      badges.push({ key: "top-k", label: `Top K: ${generativeLimit}` });
+    }
+
+    if (llmContextLimit !== DEFAULT_GENERATIVE_CONTEXT_LIMIT) {
+      badges.push({ key: "context", label: `Контекст: ${llmContextLimit}` });
+    }
+
+    if (selectedProvider) {
+      badges.push({ key: "provider", label: `Эмбеддинги: ${selectedProvider.name}` });
+    }
+
+    if (selectedLlmProvider) {
+      badges.push({ key: "llm", label: `LLM: ${selectedLlmProvider.name}` });
+    }
+
+    return badges;
+  }, [generativeLimit, llmContextLimit, selectedLlmProvider, selectedProvider]);
 
   const curlCommand = useMemo(() => {
     if (!collectionName) {
@@ -1260,8 +1447,6 @@ export default function VectorCollectionDetailPage() {
   const isSearchActive = Boolean(activeSearch);
   const listPoints = isSearchActive ? activeSearch?.results ?? [] : points;
   const listScores = isSearchActive ? activeSearch?.scores ?? {} : {};
-  const selectedProviderSize = selectedProvider ? resolveProviderVectorSize(selectedProvider) : null;
-
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1385,212 +1570,242 @@ export default function VectorCollectionDetailPage() {
             </div>
 
             {searchMode === "semantic" && (
-              <Fragment>
-                <div className="flex min-w-[220px] flex-1 flex-col gap-1">
-                  <Label htmlFor="collection-text-query" className="text-xs uppercase text-muted-foreground">
-                    Запрос
-                  </Label>
+              <div className="flex min-w-[260px] flex-1 flex-col gap-2">
+                <Label htmlFor="collection-text-query" className="text-xs uppercase text-muted-foreground">
+                  Запрос
+                </Label>
+                <div className="flex flex-wrap items-center gap-2">
                   <Input
                     id="collection-text-query"
                     value={textQuery}
                     onChange={(event) => setTextQuery(event.target.value)}
                     placeholder="Например, инструкция по сервису"
-                    className="h-9"
+                    className="h-9 min-w-[220px] flex-1"
                   />
-                </div>
-                <div className="flex w-24 flex-col gap-1">
-                  <Label htmlFor="collection-text-limit" className="text-xs uppercase text-muted-foreground">
-                    Top K
-                  </Label>
-                  <Input
-                    id="collection-text-limit"
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={textSearchLimit}
-                    onChange={(event) => {
-                      const next = Number.parseInt(event.target.value, 10);
-                      setTextSearchLimit(Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next)));
-                    }}
-                    className="h-9"
-                  />
-                </div>
-                <div className="flex min-w-[200px] flex-col gap-1">
-                  <Label className="text-xs uppercase text-muted-foreground">Эмбеддинги</Label>
-                  {matchingProviders.length > 0 ? (
-                    <Select
-                      value={selectedProvider?.id ?? matchingProviders[0].id}
-                      onValueChange={(value) => setSelectedProviderId(value)}
-                    >
-                      <SelectTrigger className="h-9 min-w-[200px]">
-                        <SelectValue placeholder="Выберите сервис" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {matchingProviders.map((provider) => {
-                          const size = resolveProviderVectorSize(provider);
-                          return (
-                            <SelectItem key={provider.id} value={provider.id}>
-                              {provider.name}
-                              {size ? ` · ${size.toLocaleString("ru-RU")}` : ""}
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
-                      Нет подходящих сервисов
-                    </div>
-                  )}
-                </div>
-                <div className="flex h-9 flex-wrap items-center gap-3 rounded-md border border-border/60 px-3 text-xs uppercase text-muted-foreground">
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      id="collection-text-with-payload"
-                      aria-label="Вернуть payload записей"
-                      checked={textSearchWithPayload}
-                      onCheckedChange={(checked) => setTextSearchWithPayload(Boolean(checked))}
-                    />
-                    <span>Payload</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      id="collection-text-with-vector"
-                      aria-label="Добавить исходные векторы документов"
-                      checked={textSearchWithVector}
-                      onCheckedChange={(checked) => setTextSearchWithVector(Boolean(checked))}
-                    />
-                    <span>Вектор</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
+                  <Popover open={isSettingsPopoverOpen} onOpenChange={setIsSettingsPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 shrink-0 text-muted-foreground"
+                        aria-label="Открыть настройки поиска"
+                      >
+                        <Settings2 className="h-4 w-4" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-80 p-4">
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="collection-text-limit" className="text-xs uppercase text-muted-foreground">
+                            Top K
+                          </Label>
+                          <Input
+                            id="collection-text-limit"
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={textSearchLimit}
+                            onChange={(event) => {
+                              const next = clampTopK(Number.parseInt(event.target.value, 10));
+                              setTextSearchLimit(next);
+                            }}
+                            className="h-9"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs uppercase text-muted-foreground">Эмбеддинги</Label>
+                          {matchingProviders.length > 0 ? (
+                            <Select
+                              value={selectedProvider?.id ?? matchingProviders[0].id}
+                              onValueChange={(value) => setSelectedProviderId(value)}
+                            >
+                              <SelectTrigger className="h-9 w-full">
+                                <SelectValue placeholder="Выберите сервис" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {matchingProviders.map((provider) => {
+                                  const size = resolveProviderVectorSize(provider);
+                                  return (
+                                    <SelectItem key={provider.id} value={provider.id}>
+                                      {provider.name}
+                                      {size ? ` · ${size.toLocaleString("ru-RU")}` : ""}
+                                    </SelectItem>
+                                  );
+                                })}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
+                              Нет подходящих сервисов
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <span className="text-xs uppercase text-muted-foreground">Возвращать</span>
+                          <div className="space-y-2 rounded-lg border border-border/60 p-3 text-sm text-foreground">
+                            <div className="flex items-center justify-between gap-3">
+                              <span>Payload</span>
+                              <Switch
+                                id="semantic-with-payload"
+                                aria-label="Вернуть payload записей"
+                                checked={textSearchWithPayload}
+                                onCheckedChange={(checked) => setTextSearchWithPayload(Boolean(checked))}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span>Вектор</span>
+                              <Switch
+                                id="semantic-with-vector"
+                                aria-label="Добавить вектор записей"
+                                checked={textSearchWithVector}
+                                onCheckedChange={(checked) => setTextSearchWithVector(Boolean(checked))}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                   <Button
                     type="button"
                     className="h-9"
                     onClick={handleTextSearch}
-                    disabled={
-                      searchLoading || matchingProviders.length === 0 || textQuery.trim().length === 0
-                    }
+                    disabled={searchLoading || matchingProviders.length === 0 || textQuery.trim().length === 0}
                   >
                     {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Найти
                   </Button>
-                  {selectedProvider && (
-                    <Badge variant="outline" className="flex h-9 items-center gap-1 px-3 text-xs uppercase">
-                      {selectedProvider.name}
-                      {selectedProviderSize ? ` · ${selectedProviderSize.toLocaleString("ru-RU")}` : ""}
-                    </Badge>
-                  )}
                 </div>
-              </Fragment>
+                {semanticSettingsBadges.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {semanticSettingsBadges.map((badge) => (
+                      <Badge key={badge.key} variant="outline" className="h-6 px-2 text-[11px] uppercase">
+                        {badge.label}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
 
             {searchMode === "generative" && (
-              <Fragment>
-                <div className="flex min-w-[220px] flex-1 flex-col gap-1">
-                  <Label htmlFor="collection-generative-query" className="text-xs uppercase text-muted-foreground">
-                    Запрос
-                  </Label>
+              <div className="flex min-w-[260px] flex-1 flex-col gap-2">
+                <Label htmlFor="collection-generative-query" className="text-xs uppercase text-muted-foreground">
+                  Запрос
+                </Label>
+                <div className="flex flex-wrap items-center gap-2">
                   <Input
                     id="collection-generative-query"
                     value={textQuery}
                     onChange={(event) => setTextQuery(event.target.value)}
                     placeholder="Например, как работает тариф"
-                    className="h-9"
+                    className="h-9 min-w-[220px] flex-1"
                   />
-                </div>
-                <div className="flex w-24 flex-col gap-1">
-                  <Label htmlFor="collection-generative-limit" className="text-xs uppercase text-muted-foreground">
-                    Top K
-                  </Label>
-                  <Input
-                    id="collection-generative-limit"
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={generativeLimit}
-                    onChange={(event) => {
-                      const next = Number.parseInt(event.target.value, 10);
-                      const safe = Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next));
-                      setGenerativeLimit(safe);
-                      setLlmContextLimit((previous) => Math.min(previous, safe));
-                    }}
-                    className="h-9"
-                  />
-                </div>
-                <div className="flex w-28 flex-col gap-1">
-                  <Label htmlFor="collection-generative-context" className="text-xs uppercase text-muted-foreground">
-                    Контекст
-                  </Label>
-                  <Input
-                    id="collection-generative-context"
-                    type="number"
-                    min={1}
-                    max={generativeLimit}
-                    value={llmContextLimit}
-                    onChange={(event) => {
-                      const next = Number.parseInt(event.target.value, 10);
-                      const safe = Number.isNaN(next)
-                        ? 1
-                        : Math.min(generativeLimit, Math.max(1, next));
-                      setLlmContextLimit(safe);
-                    }}
-                    className="h-9"
-                  />
-                </div>
-                <div className="flex min-w-[200px] flex-col gap-1">
-                  <Label className="text-xs uppercase text-muted-foreground">Эмбеддинги</Label>
-                  {matchingProviders.length > 0 ? (
-                    <Select
-                      value={selectedProvider?.id ?? matchingProviders[0].id}
-                      onValueChange={(value) => setSelectedProviderId(value)}
-                    >
-                      <SelectTrigger className="h-9 min-w-[200px]">
-                        <SelectValue placeholder="Выберите сервис" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {matchingProviders.map((provider) => {
-                          const size = resolveProviderVectorSize(provider);
-                          return (
-                            <SelectItem key={provider.id} value={provider.id}>
-                              {provider.name}
-                              {size ? ` · ${size.toLocaleString("ru-RU")}` : ""}
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
-                      Нет подходящих сервисов
-                    </div>
-                  )}
-                </div>
-                <div className="flex min-w-[200px] flex-col gap-1">
-                  <Label className="text-xs uppercase text-muted-foreground">LLM</Label>
-                  {activeLlmProviders.length > 0 ? (
-                    <Select
-                      value={selectedLlmProvider?.id ?? activeLlmProviders[0].id}
-                      onValueChange={(value) => setSelectedLlmProviderId(value)}
-                    >
-                      <SelectTrigger className="h-9 min-w-[200px]">
-                        <SelectValue placeholder="Выберите LLM" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {activeLlmProviders.map((provider) => (
-                          <SelectItem key={provider.id} value={provider.id}>
-                            {provider.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
-                      Нет активных LLM
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
+                  <Popover open={isSettingsPopoverOpen} onOpenChange={setIsSettingsPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 shrink-0 text-muted-foreground"
+                        aria-label="Открыть настройки поиска"
+                      >
+                        <Settings2 className="h-4 w-4" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-80 p-4">
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="collection-generative-limit" className="text-xs uppercase text-muted-foreground">
+                            Top K
+                          </Label>
+                          <Input
+                            id="collection-generative-limit"
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={generativeLimit}
+                            onChange={(event) => {
+                              const next = clampTopK(Number.parseInt(event.target.value, 10));
+                              setGenerativeLimit(next);
+                              setLlmContextLimit((previous) => Math.min(previous, next));
+                            }}
+                            className="h-9"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="collection-generative-context" className="text-xs uppercase text-muted-foreground">
+                            Контекст
+                          </Label>
+                          <Input
+                            id="collection-generative-context"
+                            type="number"
+                            min={1}
+                            max={generativeLimit}
+                            value={llmContextLimit}
+                            onChange={(event) => {
+                              const next = clampTopK(Number.parseInt(event.target.value, 10));
+                              setLlmContextLimit(Math.min(next, generativeLimit));
+                            }}
+                            className="h-9"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs uppercase text-muted-foreground">Эмбеддинги</Label>
+                          {matchingProviders.length > 0 ? (
+                            <Select
+                              value={selectedProvider?.id ?? matchingProviders[0].id}
+                              onValueChange={(value) => setSelectedProviderId(value)}
+                            >
+                              <SelectTrigger className="h-9 w-full">
+                                <SelectValue placeholder="Выберите сервис" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {matchingProviders.map((provider) => {
+                                  const size = resolveProviderVectorSize(provider);
+                                  return (
+                                    <SelectItem key={provider.id} value={provider.id}>
+                                      {provider.name}
+                                      {size ? ` · ${size.toLocaleString("ru-RU")}` : ""}
+                                    </SelectItem>
+                                  );
+                                })}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
+                              Нет подходящих сервисов
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs uppercase text-muted-foreground">LLM</Label>
+                          {activeLlmProviders.length > 0 ? (
+                            <Select
+                              value={selectedLlmProvider?.id ?? activeLlmProviders[0].id}
+                              onValueChange={(value) => setSelectedLlmProviderId(value)}
+                            >
+                              <SelectTrigger className="h-9 w-full">
+                                <SelectValue placeholder="Выберите LLM" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {activeLlmProviders.map((provider) => (
+                                  <SelectItem key={provider.id} value={provider.id}>
+                                    {provider.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
+                              Нет активных LLM
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                   <Button
                     type="button"
                     className="h-9"
@@ -1605,18 +1820,17 @@ export default function VectorCollectionDetailPage() {
                     {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Сгенерировать ответ
                   </Button>
-                  {selectedProvider && (
-                    <Badge variant="outline" className="flex h-9 items-center gap-1 px-3 text-xs uppercase">
-                      Эмбеддинги: {selectedProvider.name}
-                    </Badge>
-                  )}
-                  {selectedLlmProvider && (
-                    <Badge variant="outline" className="flex h-9 items-center gap-1 px-3 text-xs uppercase">
-                      LLM: {selectedLlmProvider.name}
-                    </Badge>
-                  )}
                 </div>
-              </Fragment>
+                {generativeSettingsBadges.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {generativeSettingsBadges.map((badge) => (
+                      <Badge key={badge.key} variant="outline" className="h-6 px-2 text-[11px] uppercase">
+                        {badge.label}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -1629,12 +1843,13 @@ export default function VectorCollectionDetailPage() {
           )}
 
           {searchMode === "generative" && (
-            <p className="text-xs text-muted-foreground">
-              Будет найдено до {generativeLimit.toLocaleString("ru-RU")} записей, из которых LLM получит
-              контекст из {Math.min(llmContextLimit, generativeLimit).toLocaleString("ru-RU")} лучших.
-            </p>
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <p>
+                Будет найдено до {generativeLimit.toLocaleString("ru-RU")} записей, из которых LLM получит контекст из{" "}
+                {Math.min(llmContextLimit, generativeLimit).toLocaleString("ru-RU")} лучших.
+              </p>
+            </div>
           )}
-
           {searchMode === "filter" && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2 text-xs uppercase text-muted-foreground">
