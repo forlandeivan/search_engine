@@ -217,6 +217,31 @@ interface GenerativeSearchResponse {
   vectorLength?: number;
 }
 
+type GenerativeStreamMetadata = {
+  context?: GenerativeSearchResponse["context"];
+  usage?: GenerativeSearchResponse["usage"];
+  provider?: GenerativeSearchResponse["provider"];
+  embeddingProvider?: GenerativeSearchResponse["embeddingProvider"];
+  queryVector?: number[];
+  vectorLength?: number;
+  limit?: number;
+  contextLimit?: number;
+};
+
+type GenerativeStreamToken = {
+  delta?: string;
+  text?: string;
+};
+
+type GenerativeStreamCompletion = {
+  answer?: string;
+  usage?: GenerativeSearchResponse["usage"];
+};
+
+type GenerativeStreamError = {
+  message?: string;
+};
+
 const filterOperatorOptions: Array<{ value: FilterOperator; label: string }> = [
   { value: "eq", label: "Равно" },
   { value: "neq", label: "Не равно" },
@@ -1293,21 +1318,263 @@ export default function VectorCollectionDetailPage() {
 
     setSearchLoading(true);
     setSearchError(null);
+    setSelectedPoint(null);
+
+    const safeLimit = Math.max(1, generativeLimit);
+    const safeContextLimit = Math.max(1, Math.min(llmContextLimit, safeLimit));
+    const requestPayload = {
+      query: sanitizedQuery,
+      embeddingProviderId,
+      llmProviderId,
+      llmModel: llmModelValueToSend,
+      limit: safeLimit,
+      contextLimit: safeContextLimit,
+    };
+
+    const isGigachatProvider = llmOption?.provider.providerType === "gigachat";
+
+    if (isGigachatProvider) {
+      try {
+        const response = await fetch(
+          `/api/vector/collections/${encodeURIComponent(collectionName)}/search/generative`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "text/event-stream",
+            },
+            body: JSON.stringify(requestPayload),
+            credentials: "include",
+          },
+        );
+
+        if (!response.ok) {
+          const rawText = await response.text();
+          const trimmed = rawText.trim();
+          let message = trimmed || response.statusText || "Не удалось получить ответ LLM";
+
+          if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+              const parsed = JSON.parse(trimmed) as { error?: string; details?: string };
+              const parts: string[] = [];
+              if (parsed.error) {
+                parts.push(parsed.error);
+              }
+              if (parsed.details) {
+                parts.push(parsed.details);
+              }
+              if (parts.length > 0) {
+                message = parts.join(" — ");
+              }
+            } catch {
+              // Игнорируем ошибки парсинга
+            }
+          } else if (trimmed.startsWith("<")) {
+            message = response.statusText || "Не удалось получить ответ LLM";
+          }
+
+          throw new Error(message);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("Поток SSE недоступен для ответа LLM.");
+        }
+
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        let aggregatedAnswer = "";
+        let metadataReceived = false;
+        let currentLlmTokens: number | null = null;
+
+        const updateAnswer = (next: string) => {
+          aggregatedAnswer = next;
+          if (!metadataReceived) {
+            return;
+          }
+          setActiveSearch((prev) => {
+            if (!prev || prev.mode !== "generative") {
+              return prev;
+            }
+            return { ...prev, answer: next };
+          });
+        };
+
+        const applyMetadata = (metadata: GenerativeStreamMetadata) => {
+          const mapped = (metadata.context ?? []).map((entry) => mapGenerativePoint(entry));
+          const scores = buildScoreMap(mapped);
+          const providerFromStream = metadata.provider;
+          const providerDisplayName = llmOption
+            ? `${llmOption.provider.name} · ${llmOption.model.label}`
+            : providerFromStream
+              ? `${providerFromStream.name}${
+                  providerFromStream.modelLabel ? ` · ${providerFromStream.modelLabel}` : ""
+                }`
+              : undefined;
+          const modelLabel = llmOption?.model.label ?? providerFromStream?.modelLabel ?? null;
+          currentLlmTokens = metadata.usage?.llmTokens ?? currentLlmTokens ?? null;
+          metadataReceived = true;
+
+          setActiveSearch({
+            mode: "generative",
+            description: `Генеративный ответ на запрос «${sanitizedQuery}»`,
+            results: mapped,
+            scores,
+            vectorLength: metadata.vectorLength ?? metadata.queryVector?.length ?? undefined,
+            usageTokens: metadata.usage?.embeddingTokens ?? null,
+            llmUsageTokens: currentLlmTokens,
+            providerName: selectedProvider?.name ?? metadata.embeddingProvider?.name,
+            llmProviderName: providerDisplayName ?? undefined,
+            llmModelLabel: modelLabel ?? undefined,
+            answer: aggregatedAnswer,
+            queryVectorPreview: metadata.queryVector ? formatVectorPreview(metadata.queryVector) : undefined,
+            limit: metadata.limit ?? safeLimit,
+            withPayload: true,
+            withVector: false,
+            filterPayload: null,
+            nextPageOffset: null,
+            contextLimit: metadata.contextLimit ?? safeContextLimit,
+          });
+        };
+
+        let completed = false;
+        let streamErrorMessage: string | null = null;
+
+        while (!completed) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+
+          let boundaryIndex = buffer.indexOf("\n\n");
+          while (boundaryIndex !== -1) {
+            const rawEvent = buffer.slice(0, boundaryIndex).replace(/\r/g, "");
+            buffer = buffer.slice(boundaryIndex + 2);
+            boundaryIndex = buffer.indexOf("\n\n");
+
+            if (!rawEvent.trim()) {
+              continue;
+            }
+
+            const lines = rawEvent.split("\n");
+            let eventName = "message";
+            const dataLines: string[] = [];
+
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                eventName = line.slice(6).trim();
+              } else if (line.startsWith("data:")) {
+                dataLines.push(line.slice(5).trim());
+              }
+            }
+
+            const dataPayload = dataLines.join("\n");
+            if (!dataPayload) {
+              continue;
+            }
+
+            if (eventName === "error") {
+              try {
+                const parsed = JSON.parse(dataPayload) as GenerativeStreamError;
+                streamErrorMessage = parsed.message ?? "Не удалось получить ответ LLM";
+              } catch {
+                streamErrorMessage = "Не удалось получить ответ LLM";
+              }
+              completed = true;
+              break;
+            }
+
+            if (dataPayload === "[DONE]") {
+              completed = true;
+              break;
+            }
+
+            let parsedData: unknown;
+            try {
+              parsedData = JSON.parse(dataPayload);
+            } catch {
+              continue;
+            }
+
+            if (eventName === "metadata") {
+              applyMetadata(parsedData as GenerativeStreamMetadata);
+              continue;
+            }
+
+            if (eventName === "complete") {
+              const completionPayload = parsedData as GenerativeStreamCompletion;
+              const finalAnswer = completionPayload.answer ?? aggregatedAnswer;
+              aggregatedAnswer = finalAnswer;
+              currentLlmTokens = completionPayload.usage?.llmTokens ?? currentLlmTokens ?? null;
+              if (!metadataReceived) {
+                applyMetadata({});
+              }
+              setActiveSearch((prev) => {
+                if (!prev || prev.mode !== "generative") {
+                  return prev;
+                }
+                return {
+                  ...prev,
+                  answer: finalAnswer,
+                  llmUsageTokens: currentLlmTokens ?? prev.llmUsageTokens ?? null,
+                  usageTokens: completionPayload.usage?.embeddingTokens ?? prev.usageTokens ?? null,
+                };
+              });
+              completed = true;
+              break;
+            }
+
+            const tokenPayload = parsedData as GenerativeStreamToken;
+            const delta = tokenPayload.delta ?? tokenPayload.text ?? "";
+            if (delta) {
+              updateAnswer(aggregatedAnswer + delta);
+            }
+          }
+
+          if (streamErrorMessage || completed) {
+            break;
+          }
+        }
+
+        try {
+          reader.releaseLock();
+        } catch {
+          // Игнорируем ошибки при освобождении ридера
+        }
+
+        if (streamErrorMessage) {
+          throw new Error(streamErrorMessage);
+        }
+
+        if (metadataReceived) {
+          setActiveSearch((prev) => {
+            if (!prev || prev.mode !== "generative") {
+              return prev;
+            }
+            return {
+              ...prev,
+              answer: aggregatedAnswer,
+              llmUsageTokens: currentLlmTokens ?? prev.llmUsageTokens ?? null,
+            };
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setSearchError(message);
+      } finally {
+        setSearchLoading(false);
+      }
+
+      return;
+    }
 
     try {
-      const safeLimit = Math.max(1, generativeLimit);
-      const safeContextLimit = Math.max(1, Math.min(llmContextLimit, safeLimit));
       const response = await apiRequest(
         "POST",
         `/api/vector/collections/${encodeURIComponent(collectionName)}/search/generative`,
-        {
-          query: sanitizedQuery,
-          embeddingProviderId,
-          llmProviderId,
-          llmModel: llmModelValueToSend,
-          limit: safeLimit,
-          contextLimit: safeContextLimit,
-        },
+        requestPayload,
       );
       const data = (await response.json()) as (GenerativeSearchResponse & { error?: string });
 
@@ -1325,8 +1592,6 @@ export default function VectorCollectionDetailPage() {
           : undefined;
 
       const modelLabel = llmOption?.model.label ?? data.provider?.modelLabel ?? null;
-
-      setSelectedPoint(null);
 
       setActiveSearch({
         mode: "generative",
@@ -2233,6 +2498,11 @@ export default function VectorCollectionDetailPage() {
                   Сервис: {activeSearch.providerName}
                 </Badge>
               )}
+              {activeSearch.llmProviderName && (
+                <Badge variant="secondary" className="bg-primary/10 text-primary">
+                  LLM: {activeSearch.llmProviderName}
+                </Badge>
+              )}
               {typeof activeSearch.vectorLength === "number" && (
                 <Badge variant="secondary" className="bg-muted text-foreground">
                   Длина вектора: {activeSearch.vectorLength.toLocaleString("ru-RU")}
@@ -2256,12 +2526,19 @@ export default function VectorCollectionDetailPage() {
         )}
       </div>
 
-      {isSearchActive && activeSearch?.mode === "generative" && activeSearch.answer && (
+      {isSearchActive && activeSearch?.mode === "generative" && (
         <div className="rounded-lg border border-border/70 bg-muted/30 p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Sparkles className="h-4 w-4 text-primary" /> Ответ LLM
+            <Sparkles className="h-4 w-4 text-primary" /> <span>Ответ LLM</span>
+            {searchLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{activeSearch.answer}</p>
+          <div className="mt-2 min-h-[1.5rem] whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
+            {activeSearch.answer && activeSearch.answer.trim().length > 0
+              ? activeSearch.answer
+              : searchLoading
+                ? "Модель формирует ответ..."
+                : "Ответ отсутствует."}
+          </div>
         </div>
       )}
 

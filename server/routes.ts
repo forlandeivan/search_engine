@@ -1049,6 +1049,324 @@ interface LlmCompletionResult {
   rawResponse: unknown;
 }
 
+type GenerativeContextEntry = {
+  id: string | number;
+  payload: Record<string, unknown> | null;
+  score?: number | null;
+  shard_key?: unknown;
+  order_value?: unknown;
+};
+
+type GigachatStreamOptions = {
+  req: Request;
+  res: Response;
+  provider: LlmProvider;
+  accessToken: string;
+  query: string;
+  context: LlmContextRecord[];
+  sanitizedResults: GenerativeContextEntry[];
+  embeddingResult: EmbeddingVectorResult;
+  embeddingProvider: EmbeddingProvider;
+  selectedModelValue?: string | null;
+  selectedModelMeta: LlmModelOption | null;
+  limit: number;
+  contextLimit: number;
+};
+
+function sendSseEvent(res: Response, eventName: string, data?: unknown) {
+  const body =
+    typeof data === "string" || data === undefined ? data ?? "" : JSON.stringify(data);
+  res.write(`event: ${eventName}\n`);
+  res.write(`data: ${body}\n\n`);
+
+  const flusher = (res as Response & { flush?: () => void }).flush;
+  if (typeof flusher === "function") {
+    flusher.call(res);
+  }
+}
+
+function extractTextDeltaFromChunk(chunk: unknown): string {
+  if (!chunk || typeof chunk !== "object") {
+    return "";
+  }
+
+  const record = chunk as Record<string, unknown>;
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  const parts: string[] = [];
+
+  for (const choice of choices) {
+    if (!choice || typeof choice !== "object") {
+      continue;
+    }
+
+    const choiceRecord = choice as Record<string, unknown>;
+    const delta = choiceRecord.delta;
+    if (delta && typeof delta === "object") {
+      const content = (delta as Record<string, unknown>).content;
+      if (typeof content === "string") {
+        parts.push(content);
+      }
+    }
+
+    const text = choiceRecord.text;
+    if (typeof text === "string") {
+      parts.push(text);
+    }
+
+    const message = choiceRecord.message;
+    if (message && typeof message === "object") {
+      const content = (message as Record<string, unknown>).content;
+      if (typeof content === "string") {
+        parts.push(content);
+      }
+    }
+  }
+
+  return parts.join("");
+}
+
+function extractUsageTokensFromChunk(chunk: unknown): number | null {
+  if (!chunk || typeof chunk !== "object") {
+    return null;
+  }
+
+  const usage = (chunk as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== "object") {
+    return null;
+  }
+
+  const usageRecord = usage as Record<string, unknown>;
+  if (typeof usageRecord.total_tokens === "number") {
+    return usageRecord.total_tokens;
+  }
+
+  if (typeof usageRecord.completion_tokens === "number") {
+    return usageRecord.completion_tokens;
+  }
+
+  return null;
+}
+
+async function streamGigachatCompletion(options: GigachatStreamOptions): Promise<void> {
+  const {
+    req,
+    res,
+    provider,
+    accessToken,
+    query,
+    context,
+    sanitizedResults,
+    embeddingResult,
+    embeddingProvider,
+    selectedModelValue,
+    selectedModelMeta,
+    limit,
+    contextLimit,
+  } = options;
+
+  const streamHeaders = new Headers();
+  streamHeaders.set("Content-Type", "application/json");
+  streamHeaders.set("Accept", "text/event-stream");
+
+  if (!streamHeaders.has("RqUID")) {
+    streamHeaders.set("RqUID", randomUUID());
+  }
+
+  for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+    streamHeaders.set(key, value);
+  }
+
+  if (!streamHeaders.has("Authorization")) {
+    streamHeaders.set("Authorization", `Bearer ${accessToken}`);
+  }
+
+  const requestBody = buildLlmRequestBody(provider, query, context, selectedModelValue ?? undefined, {
+    stream: true,
+  });
+
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+
+  const flushHeaders = (res as Response & { flushHeaders?: () => void }).flushHeaders;
+  if (typeof flushHeaders === "function") {
+    flushHeaders.call(res);
+  }
+
+  const abortController = new AbortController();
+  req.on("close", () => {
+    abortController.abort();
+  });
+
+  sendSseEvent(res, "metadata", {
+    context: sanitizedResults,
+    usage: { embeddingTokens: embeddingResult.usageTokens ?? null },
+    provider: {
+      id: provider.id,
+      name: provider.name,
+      model: selectedModelValue ?? provider.model,
+      modelLabel: selectedModelMeta?.label ?? selectedModelValue ?? provider.model,
+    },
+    embeddingProvider: {
+      id: embeddingProvider.id,
+      name: embeddingProvider.name,
+    },
+    queryVector: embeddingResult.vector,
+    vectorLength: embeddingResult.vector.length,
+    limit,
+    contextLimit,
+  });
+
+  let completionResponse: FetchResponse;
+
+  try {
+    const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+      {
+        method: "POST",
+        headers: streamHeaders,
+        body: JSON.stringify(requestBody),
+        signal: abortController.signal,
+      },
+      provider.allowSelfSignedCertificate,
+    );
+
+    completionResponse = await fetch(provider.completionUrl, requestOptions);
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      return;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    sendSseEvent(res, "error", {
+      message: `Не удалось выполнить запрос к LLM: ${errorMessage}`,
+    });
+    res.end();
+    return;
+  }
+
+  if (!completionResponse.ok) {
+    const rawBody = await completionResponse.text();
+    let message = `LLM вернул статус ${completionResponse.status}`;
+
+    const parsedBody = parseJson(rawBody);
+    if (parsedBody && typeof parsedBody === "object") {
+      const body = parsedBody as Record<string, unknown>;
+      if (typeof body.error_description === "string") {
+        message = body.error_description;
+      } else if (typeof body.message === "string") {
+        message = body.message;
+      }
+    } else if (typeof parsedBody === "string" && parsedBody.trim()) {
+      message = parsedBody.trim();
+    }
+
+    sendSseEvent(res, "error", { message: `Ошибка на этапе генерации ответа: ${message}` });
+    res.end();
+    return;
+  }
+
+  if (!completionResponse.body) {
+    sendSseEvent(res, "error", {
+      message: "LLM не вернул поток данных",
+    });
+    res.end();
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let aggregatedAnswer = "";
+  let llmUsageTokens: number | null = null;
+
+  try {
+    for await (const chunk of completionResponse.body as unknown as AsyncIterable<Uint8Array>) {
+      if (abortController.signal.aborted) {
+        return;
+      }
+
+      buffer += decoder.decode(chunk, { stream: true });
+
+      let boundaryIndex = buffer.indexOf("\n\n");
+      while (boundaryIndex >= 0) {
+        const rawEvent = buffer.slice(0, boundaryIndex).replace(/\r/g, "");
+        buffer = buffer.slice(boundaryIndex + 2);
+        boundaryIndex = buffer.indexOf("\n\n");
+
+        if (!rawEvent.trim()) {
+          continue;
+        }
+
+        const lines = rawEvent.split("\n");
+        let eventName = "message";
+        const dataLines: string[] = [];
+
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            eventName = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trim());
+          }
+        }
+
+        const dataPayload = dataLines.join("\n");
+        if (!dataPayload) {
+          continue;
+        }
+
+        if (dataPayload === "[DONE]") {
+          sendSseEvent(res, "complete", {
+            answer: aggregatedAnswer,
+            usage: {
+              embeddingTokens: embeddingResult.usageTokens ?? null,
+              llmTokens: llmUsageTokens,
+            },
+          });
+          res.end();
+          return;
+        }
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(dataPayload);
+        } catch {
+          continue;
+        }
+
+        const delta = extractTextDeltaFromChunk(parsed);
+        if (delta) {
+          aggregatedAnswer += delta;
+          sendSseEvent(res, eventName === "message" ? "token" : eventName, { delta });
+        }
+
+        const maybeUsage = extractUsageTokensFromChunk(parsed);
+        if (typeof maybeUsage === "number") {
+          llmUsageTokens = maybeUsage;
+        }
+      }
+    }
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      return;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    sendSseEvent(res, "error", {
+      message: `Ошибка при чтении потока LLM: ${errorMessage}`,
+    });
+    res.end();
+    return;
+  }
+
+  sendSseEvent(res, "complete", {
+    answer: aggregatedAnswer,
+    usage: {
+      embeddingTokens: embeddingResult.usageTokens ?? null,
+      llmTokens: llmUsageTokens,
+    },
+  });
+  res.end();
+}
+
 function mergeLlmRequestConfig(provider: LlmProvider): LlmRequestConfig {
   const config =
     provider.requestConfig && typeof provider.requestConfig === "object"
@@ -1128,6 +1446,7 @@ function buildLlmRequestBody(
   query: string,
   context: LlmContextRecord[],
   modelOverride?: string,
+  options?: { stream?: boolean },
 ) {
   const requestConfig = mergeLlmRequestConfig(provider);
   const messages: Array<{ role: string; content: string }> = [];
@@ -1184,6 +1503,10 @@ function buildLlmRequestBody(
     if (body[key] === undefined) {
       body[key] = value;
     }
+  }
+
+  if (options?.stream !== undefined) {
+    body.stream = options.stream;
   }
 
   return body;
@@ -4272,6 +4595,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const llmAccessToken = await fetchAccessToken(llmProvider);
+      const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
+      const wantsStreamingResponse =
+        llmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
+
+      if (wantsStreamingResponse) {
+        await streamGigachatCompletion({
+          req,
+          res,
+          provider: llmProvider,
+          accessToken: llmAccessToken,
+          query: body.query,
+          context: contextRecords,
+          sanitizedResults,
+          embeddingResult,
+          embeddingProvider,
+          selectedModelValue,
+          selectedModelMeta,
+          limit: body.limit,
+          contextLimit,
+        });
+        return;
+      }
+
       const completion = await fetchLlmCompletion(
         llmProvider,
         llmAccessToken,
