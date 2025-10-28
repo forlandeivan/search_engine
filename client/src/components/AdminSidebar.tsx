@@ -26,6 +26,7 @@ import {
   CircleUser,
   ShieldCheck,
   Building2,
+  Bot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -126,6 +127,16 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
           title: "Эмбеддинги",
           url: "/admin/embeddings",
           icon: Sparkles,
+        },
+      ],
+    },
+    {
+      label: "Управление LLM",
+      items: [
+        {
+          title: "Провайдеры LLM",
+          url: "/admin/llm",
+          icon: Bot,
         },
       ],
     },

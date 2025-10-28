@@ -5,6 +5,7 @@ import {
   users,
   personalApiTokens,
   embeddingProviders,
+  llmProviders,
   authProviders,
   workspaces,
   workspaceMembers,
@@ -21,6 +22,8 @@ import {
   type InsertUser,
   type EmbeddingProvider,
   type EmbeddingProviderInsert,
+  type LlmProvider,
+  type LlmProviderInsert,
   type Workspace,
   type WorkspaceMember,
   type AuthProvider,
@@ -212,13 +215,13 @@ async function getUuidGenerationExpression(): Promise<SQL> {
 
   ensuringUuidExpression = (async () => {
     if (await hasGenRandomUuidFunction()) {
-      return sql.raw("gen_random_uuid()");
+      return sql.raw("gen_random_uuid()::text");
     }
 
     await ensurePgcryptoExtensionAvailable();
 
     if (await hasGenRandomUuidFunction()) {
-      return sql.raw("gen_random_uuid()");
+      return sql.raw("gen_random_uuid()::text");
     }
 
     if (!loggedUuidFallbackWarning) {
@@ -533,6 +536,17 @@ export interface IStorage {
     workspaceId?: string,
   ): Promise<EmbeddingProvider | undefined>;
   deleteEmbeddingProvider(id: string, workspaceId?: string): Promise<boolean>;
+
+  // LLM services
+  listLlmProviders(workspaceId?: string): Promise<LlmProvider[]>;
+  getLlmProvider(id: string, workspaceId?: string): Promise<LlmProvider | undefined>;
+  createLlmProvider(provider: LlmProviderInsert): Promise<LlmProvider>;
+  updateLlmProvider(
+    id: string,
+    updates: Partial<LlmProviderInsert>,
+    workspaceId?: string,
+  ): Promise<LlmProvider | undefined>;
+  deleteLlmProvider(id: string, workspaceId?: string): Promise<boolean>;
 }
 
 function buildWhereClause(conditions: SQL[]): SQL {
@@ -544,6 +558,9 @@ function buildWhereClause(conditions: SQL[]): SQL {
 
 let embeddingProvidersTableEnsured = false;
 let ensuringEmbeddingProvidersTable: Promise<void> | null = null;
+
+let llmProvidersTableEnsured = false;
+let ensuringLlmProvidersTable: Promise<void> | null = null;
 
 let authProvidersTableEnsured = false;
 let ensuringAuthProvidersTable: Promise<void> | null = null;
@@ -1627,6 +1644,146 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
   }
 }
 
+async function ensureLlmProvidersTable(): Promise<void> {
+  if (llmProvidersTableEnsured) {
+    return;
+  }
+
+  if (ensuringLlmProvidersTable) {
+    await ensuringLlmProvidersTable;
+    return;
+  }
+
+  ensuringLlmProvidersTable = (async () => {
+    await ensureWorkspacesTable();
+    await ensureWorkspaceMembersTable();
+    const uuidExpression = await getUuidGenerationExpression();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "llm_providers" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "name" text NOT NULL,
+        "provider_type" text NOT NULL DEFAULT 'gigachat',
+        "description" text,
+        "is_active" boolean NOT NULL DEFAULT true,
+        "token_url" text NOT NULL,
+        "completion_url" text NOT NULL,
+        "authorization_key" text NOT NULL DEFAULT '',
+        "scope" text NOT NULL,
+        "model" text NOT NULL,
+        "allow_self_signed_certificate" boolean NOT NULL DEFAULT FALSE,
+        "request_headers" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "request_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "response_config" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "workspace_id" varchar NOT NULL,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "llm_providers"
+        ADD COLUMN "authorization_key" text DEFAULT ''
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await db.execute(sql`
+      UPDATE "llm_providers"
+      SET "authorization_key" = COALESCE("authorization_key", '')
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "llm_providers"
+      ALTER COLUMN "authorization_key" SET DEFAULT ''
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "llm_providers"
+      ALTER COLUMN "authorization_key" SET NOT NULL
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "llm_providers"
+        ADD COLUMN "allow_self_signed_certificate" boolean DEFAULT FALSE
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await db.execute(sql`
+      UPDATE "llm_providers"
+      SET "allow_self_signed_certificate" = COALESCE("allow_self_signed_certificate", FALSE)
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "llm_providers"
+      ALTER COLUMN "allow_self_signed_certificate" SET DEFAULT FALSE
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "llm_providers"
+      ALTER COLUMN "allow_self_signed_certificate" SET NOT NULL
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "llm_providers"
+        ADD COLUMN "workspace_id" varchar
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    await ensureConstraint(
+      "llm_providers",
+      "llm_providers_workspace_id_fkey",
+      sql`
+        ALTER TABLE "llm_providers"
+        ADD CONSTRAINT "llm_providers_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "llm_providers"
+        ALTER COLUMN "workspace_id" SET NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["23502"]);
+    }
+
+    try {
+      await db.execute(sql`
+        CREATE INDEX "llm_providers_active_idx"
+          ON "llm_providers" ("is_active")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07", "42710"]);
+    }
+
+    try {
+      await db.execute(sql`
+        CREATE INDEX "llm_providers_provider_type_idx"
+          ON "llm_providers" ("provider_type")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07", "42710"]);
+    }
+  })();
+
+  try {
+    await ensuringLlmProvidersTable;
+    llmProvidersTableEnsured = true;
+  } finally {
+    ensuringLlmProvidersTable = null;
+  }
+}
+
 async function ensureAuthProvidersTable(): Promise<void> {
   if (authProvidersTableEnsured) {
     return;
@@ -2509,6 +2666,70 @@ export class DatabaseStorage implements IStorage {
       .delete(embeddingProviders)
       .where(condition)
       .returning({ id: embeddingProviders.id });
+
+    return deleted.length > 0;
+  }
+
+  async listLlmProviders(workspaceId?: string): Promise<LlmProvider[]> {
+    await ensureLlmProvidersTable();
+    let query = this.db.select().from(llmProviders);
+    if (workspaceId) {
+      query = query.where(eq(llmProviders.workspaceId, workspaceId));
+    }
+    return await query.orderBy(desc(llmProviders.createdAt));
+  }
+
+  async getLlmProvider(id: string, workspaceId?: string): Promise<LlmProvider | undefined> {
+    await ensureLlmProvidersTable();
+    const condition = workspaceId
+      ? and(eq(llmProviders.id, id), eq(llmProviders.workspaceId, workspaceId))
+      : eq(llmProviders.id, id);
+    const [provider] = await this.db.select().from(llmProviders).where(condition);
+    return provider ?? undefined;
+  }
+
+  async createLlmProvider(provider: LlmProviderInsert): Promise<LlmProvider> {
+    await ensureLlmProvidersTable();
+    const [created] = await this.db.insert(llmProviders).values(provider).returning();
+    return created;
+  }
+
+  async updateLlmProvider(
+    id: string,
+    updates: Partial<LlmProviderInsert>,
+    workspaceId?: string,
+  ): Promise<LlmProvider | undefined> {
+    await ensureLlmProvidersTable();
+    const sanitizedUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([, value]) => value !== undefined),
+    ) as Partial<LlmProviderInsert>;
+
+    if (Object.keys(sanitizedUpdates).length === 0) {
+      return await this.getLlmProvider(id, workspaceId);
+    }
+
+    const condition = workspaceId
+      ? and(eq(llmProviders.id, id), eq(llmProviders.workspaceId, workspaceId))
+      : eq(llmProviders.id, id);
+
+    const [updated] = await this.db
+      .update(llmProviders)
+      .set({ ...sanitizedUpdates, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(condition)
+      .returning();
+
+    return updated ?? undefined;
+  }
+
+  async deleteLlmProvider(id: string, workspaceId?: string): Promise<boolean> {
+    await ensureLlmProvidersTable();
+    const condition = workspaceId
+      ? and(eq(llmProviders.id, id), eq(llmProviders.workspaceId, workspaceId))
+      : eq(llmProviders.id, id);
+    const deleted = await this.db
+      .delete(llmProviders)
+      .where(condition)
+      .returning({ id: llmProviders.id });
 
     return deleted.length > 0;
   }

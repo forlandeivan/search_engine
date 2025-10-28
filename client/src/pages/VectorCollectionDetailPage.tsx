@@ -14,6 +14,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Sparkles,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -37,7 +38,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import type { PublicEmbeddingProvider } from "@shared/schema";
+import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 
 interface VectorCollectionDetail {
   name: string;
@@ -67,10 +68,11 @@ interface CollectionPointsResponse {
 
 const POINTS_PAGE_SIZE = 24;
 
-type SearchMode = "semantic" | "filter" | "vector";
+type SearchMode = "semantic" | "filter" | "vector" | "generative";
 
 const searchModeOptions: Array<{ value: SearchMode; label: string; icon: LucideIcon }> = [
   { value: "semantic", label: "Текст", icon: Search },
+  { value: "generative", label: "LLM", icon: Sparkles },
   { value: "filter", label: "Фильтр", icon: Filter },
   { value: "vector", label: "Вектор", icon: Maximize2 },
 ];
@@ -94,12 +96,16 @@ interface ActiveSearchState {
   vectorLength?: number;
   usageTokens?: number | null;
   providerName?: string;
+  llmProviderName?: string;
+  llmUsageTokens?: number | null;
+  answer?: string;
   queryVectorPreview?: string;
   limit: number;
   withPayload?: unknown;
   withVector?: unknown;
   filterPayload?: Record<string, unknown> | null;
   nextPageOffset?: string | number | null;
+  contextLimit?: number;
 }
 
 interface TextSearchResponse {
@@ -116,6 +122,25 @@ interface TextSearchResponse {
   vectorLength?: number;
   usageTokens?: number | null;
   provider?: { id: string; name: string };
+}
+
+interface GenerativeSearchResponse {
+  answer: string;
+  usage?: {
+    embeddingTokens: number | null;
+    llmTokens: number | null;
+  };
+  provider: { id: string; name: string };
+  embeddingProvider: { id: string; name: string };
+  context: Array<{
+    id: string | number;
+    payload: Record<string, unknown> | null;
+    score?: number | null;
+    shard_key?: unknown;
+    order_value?: unknown;
+  }>;
+  queryVector?: number[];
+  vectorLength?: number;
 }
 
 const filterOperatorOptions: Array<{ value: FilterOperator; label: string }> = [
@@ -396,6 +421,9 @@ export default function VectorCollectionDetailPage() {
   const [textSearchLimit, setTextSearchLimit] = useState(10);
   const [textSearchWithPayload, setTextSearchWithPayload] = useState(true);
   const [textSearchWithVector, setTextSearchWithVector] = useState(false);
+  const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string | null>(null);
+  const [generativeLimit, setGenerativeLimit] = useState(8);
+  const [llmContextLimit, setLlmContextLimit] = useState(5);
 
   const [filterConditions, setFilterConditions] = useState<FilterCondition[]>([
     { id: generateConditionId(), field: "", operator: "eq", value: "" },
@@ -424,6 +452,10 @@ export default function VectorCollectionDetailPage() {
 
   const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
     queryKey: ["/api/embedding/services"],
+  });
+
+  const { data: llmProvidersData } = useQuery<{ providers: PublicLlmProvider[] }>({
+    queryKey: ["/api/llm/providers"],
   });
 
   const {
@@ -473,6 +505,10 @@ export default function VectorCollectionDetailPage() {
     return (embeddingServices?.providers ?? []).filter((provider) => provider.isActive);
   }, [embeddingServices]);
 
+  const activeLlmProviders = useMemo(() => {
+    return (llmProvidersData?.providers ?? []).filter((provider) => provider.isActive);
+  }, [llmProvidersData]);
+
   const collectionVectorSizeValue = collection?.vectorSize ?? null;
 
   const matchingProviders = useMemo(() => {
@@ -509,6 +545,26 @@ export default function VectorCollectionDetailPage() {
 
     return matchingProviders[0] ?? null;
   }, [matchingProviders, selectedProviderId]);
+
+  useEffect(() => {
+    if (selectedLlmProviderId && !activeLlmProviders.some((provider) => provider.id === selectedLlmProviderId)) {
+      setSelectedLlmProviderId(null);
+    }
+  }, [activeLlmProviders, selectedLlmProviderId]);
+
+  useEffect(() => {
+    if (!selectedLlmProviderId && activeLlmProviders.length > 0) {
+      setSelectedLlmProviderId(activeLlmProviders[0].id);
+    }
+  }, [activeLlmProviders, selectedLlmProviderId]);
+
+  const selectedLlmProvider = useMemo(() => {
+    if (selectedLlmProviderId) {
+      return activeLlmProviders.find((provider) => provider.id === selectedLlmProviderId) ?? null;
+    }
+
+    return activeLlmProviders[0] ?? null;
+  }, [activeLlmProviders, selectedLlmProviderId]);
 
   const curlCommand = useMemo(() => {
     if (!collectionName) {
@@ -762,6 +818,20 @@ export default function VectorCollectionDetailPage() {
     [],
   );
 
+  const mapGenerativePoint = useCallback(
+    (point: GenerativeSearchResponse["context"][number]): CollectionPoint => {
+      return {
+        id: point.id,
+        payload: (point.payload ?? null) as Record<string, unknown> | null,
+        vector: null,
+        score: typeof point.score === "number" && Number.isFinite(point.score) ? point.score : undefined,
+        shard_key: point.shard_key,
+        order_value: point.order_value,
+      };
+    },
+    [],
+  );
+
   const buildScoreMap = useCallback((entries: CollectionPoint[]) => {
     return entries.reduce<Record<string, number>>((acc, entry) => {
       if (typeof entry.score === "number" && Number.isFinite(entry.score)) {
@@ -799,6 +869,7 @@ export default function VectorCollectionDetailPage() {
     setSearchError(null);
     setSearchLoading(false);
     setIsLoadingMoreSearchResults(false);
+    setSelectedPoint(null);
   }, []);
 
   const handleTextSearch = useCallback(async () => {
@@ -872,6 +943,97 @@ export default function VectorCollectionDetailPage() {
     textSearchWithPayload,
     textSearchWithVector,
     mapSearchPoint,
+    buildScoreMap,
+  ]);
+
+  const handleGenerativeSearch = useCallback(async () => {
+    if (!collectionName) {
+      return;
+    }
+
+    const embeddingProviderId = selectedProvider?.id ?? matchingProviders[0]?.id;
+    if (!embeddingProviderId) {
+      setSearchError("Нет активных сервисов эмбеддингов подходящей размерности.");
+      return;
+    }
+
+    const llmProviderId = selectedLlmProvider?.id ?? activeLlmProviders[0]?.id;
+    if (!llmProviderId) {
+      setSearchError("Нет активных провайдеров LLM.");
+      return;
+    }
+
+    const sanitizedQuery = textQuery.trim();
+    if (!sanitizedQuery) {
+      setSearchError("Введите поисковый запрос.");
+      return;
+    }
+
+    setSearchLoading(true);
+    setSearchError(null);
+
+    try {
+      const safeLimit = Math.max(1, generativeLimit);
+      const safeContextLimit = Math.max(1, Math.min(llmContextLimit, safeLimit));
+      const response = await apiRequest(
+        "POST",
+        `/api/vector/collections/${encodeURIComponent(collectionName)}/search/generative`,
+        {
+          query: sanitizedQuery,
+          embeddingProviderId,
+          llmProviderId,
+          limit: safeLimit,
+          contextLimit: safeContextLimit,
+        },
+      );
+      const data = (await response.json()) as (GenerativeSearchResponse & { error?: string });
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Не удалось получить ответ LLM");
+      }
+
+      const mapped = (data.context ?? []).map((entry) => mapGenerativePoint(entry));
+      const scores = buildScoreMap(mapped);
+
+      setActiveSearch({
+        mode: "generative",
+        description: `Генеративный ответ на запрос «${sanitizedQuery}»`,
+        results: mapped,
+        scores,
+        vectorLength: data.vectorLength ?? data.queryVector?.length ?? undefined,
+        usageTokens: data.usage?.embeddingTokens ?? null,
+        llmUsageTokens: data.usage?.llmTokens ?? null,
+        providerName: selectedProvider?.name ?? data.embeddingProvider?.name,
+        llmProviderName: selectedLlmProvider?.name ?? data.provider?.name,
+        answer: data.answer,
+        queryVectorPreview: data.queryVector ? formatVectorPreview(data.queryVector) : undefined,
+        limit: safeLimit,
+        withPayload: true,
+        withVector: false,
+        filterPayload: null,
+        nextPageOffset: null,
+        contextLimit: safeContextLimit,
+      });
+
+      if (mapped.length > 0) {
+        setSelectedPoint(mapped[0]);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSearchError(message);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [
+    collectionName,
+    selectedProvider,
+    matchingProviders,
+    selectedLlmProvider,
+    activeLlmProviders,
+    textQuery,
+    generativeLimit,
+    llmContextLimit,
+    mapGenerativePoint,
     buildScoreMap,
   ]);
 
@@ -1322,6 +1484,140 @@ export default function VectorCollectionDetailPage() {
                 </div>
               </Fragment>
             )}
+
+            {searchMode === "generative" && (
+              <Fragment>
+                <div className="flex min-w-[220px] flex-1 flex-col gap-1">
+                  <Label htmlFor="collection-generative-query" className="text-xs uppercase text-muted-foreground">
+                    Запрос
+                  </Label>
+                  <Input
+                    id="collection-generative-query"
+                    value={textQuery}
+                    onChange={(event) => setTextQuery(event.target.value)}
+                    placeholder="Например, как работает тариф"
+                    className="h-9"
+                  />
+                </div>
+                <div className="flex w-24 flex-col gap-1">
+                  <Label htmlFor="collection-generative-limit" className="text-xs uppercase text-muted-foreground">
+                    Top K
+                  </Label>
+                  <Input
+                    id="collection-generative-limit"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={generativeLimit}
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value, 10);
+                      const safe = Number.isNaN(next) ? 1 : Math.min(100, Math.max(1, next));
+                      setGenerativeLimit(safe);
+                      setLlmContextLimit((previous) => Math.min(previous, safe));
+                    }}
+                    className="h-9"
+                  />
+                </div>
+                <div className="flex w-28 flex-col gap-1">
+                  <Label htmlFor="collection-generative-context" className="text-xs uppercase text-muted-foreground">
+                    Контекст
+                  </Label>
+                  <Input
+                    id="collection-generative-context"
+                    type="number"
+                    min={1}
+                    max={generativeLimit}
+                    value={llmContextLimit}
+                    onChange={(event) => {
+                      const next = Number.parseInt(event.target.value, 10);
+                      const safe = Number.isNaN(next)
+                        ? 1
+                        : Math.min(generativeLimit, Math.max(1, next));
+                      setLlmContextLimit(safe);
+                    }}
+                    className="h-9"
+                  />
+                </div>
+                <div className="flex min-w-[200px] flex-col gap-1">
+                  <Label className="text-xs uppercase text-muted-foreground">Эмбеддинги</Label>
+                  {matchingProviders.length > 0 ? (
+                    <Select
+                      value={selectedProvider?.id ?? matchingProviders[0].id}
+                      onValueChange={(value) => setSelectedProviderId(value)}
+                    >
+                      <SelectTrigger className="h-9 min-w-[200px]">
+                        <SelectValue placeholder="Выберите сервис" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {matchingProviders.map((provider) => {
+                          const size = resolveProviderVectorSize(provider);
+                          return (
+                            <SelectItem key={provider.id} value={provider.id}>
+                              {provider.name}
+                              {size ? ` · ${size.toLocaleString("ru-RU")}` : ""}
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
+                      Нет подходящих сервисов
+                    </div>
+                  )}
+                </div>
+                <div className="flex min-w-[200px] flex-col gap-1">
+                  <Label className="text-xs uppercase text-muted-foreground">LLM</Label>
+                  {activeLlmProviders.length > 0 ? (
+                    <Select
+                      value={selectedLlmProvider?.id ?? activeLlmProviders[0].id}
+                      onValueChange={(value) => setSelectedLlmProviderId(value)}
+                    >
+                      <SelectTrigger className="h-9 min-w-[200px]">
+                        <SelectValue placeholder="Выберите LLM" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeLlmProviders.map((provider) => (
+                          <SelectItem key={provider.id} value={provider.id}>
+                            {provider.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="flex h-9 items-center rounded-md border border-dashed border-border/60 px-3 text-xs text-muted-foreground">
+                      Нет активных LLM
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    className="h-9"
+                    onClick={handleGenerativeSearch}
+                    disabled={
+                      searchLoading ||
+                      matchingProviders.length === 0 ||
+                      activeLlmProviders.length === 0 ||
+                      textQuery.trim().length === 0
+                    }
+                  >
+                    {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Сгенерировать ответ
+                  </Button>
+                  {selectedProvider && (
+                    <Badge variant="outline" className="flex h-9 items-center gap-1 px-3 text-xs uppercase">
+                      Эмбеддинги: {selectedProvider.name}
+                    </Badge>
+                  )}
+                  {selectedLlmProvider && (
+                    <Badge variant="outline" className="flex h-9 items-center gap-1 px-3 text-xs uppercase">
+                      LLM: {selectedLlmProvider.name}
+                    </Badge>
+                  )}
+                </div>
+              </Fragment>
+            )}
           </div>
 
           {searchMode === "semantic" && (
@@ -1329,6 +1625,13 @@ export default function VectorCollectionDetailPage() {
               {collectionVectorSizeValue
                 ? `Коллекция ожидает вектор длиной ${collectionVectorSizeValue.toLocaleString("ru-RU")}.`
                 : "Размерность коллекции неизвестна — доступны все сервисы."}
+            </p>
+          )}
+
+          {searchMode === "generative" && (
+            <p className="text-xs text-muted-foreground">
+              Будет найдено до {generativeLimit.toLocaleString("ru-RU")} записей, из которых LLM получит
+              контекст из {Math.min(llmContextLimit, generativeLimit).toLocaleString("ru-RU")} лучших.
             </p>
           )}
 
@@ -1549,9 +1852,11 @@ export default function VectorCollectionDetailPage() {
               <Badge variant="outline">
                 {activeSearch.mode === "semantic"
                   ? "Векторный поиск"
-                  : activeSearch.mode === "filter"
-                    ? "Фильтры"
-                    : "Ручной вектор"}
+                  : activeSearch.mode === "generative"
+                    ? "Генеративный ответ"
+                    : activeSearch.mode === "filter"
+                      ? "Фильтры"
+                      : "Ручной вектор"}
               </Badge>
               <span>{activeSearch.description}</span>
             </div>
@@ -1559,6 +1864,11 @@ export default function VectorCollectionDetailPage() {
               {activeSearch.providerName && (
                 <Badge variant="secondary" className="bg-primary/10 text-primary">
                   Сервис: {activeSearch.providerName}
+                </Badge>
+              )}
+              {activeSearch.llmProviderName && (
+                <Badge variant="secondary" className="bg-primary/10 text-primary">
+                  LLM: {activeSearch.llmProviderName}
                 </Badge>
               )}
               {typeof activeSearch.vectorLength === "number" && (
@@ -1570,10 +1880,28 @@ export default function VectorCollectionDetailPage() {
               {typeof activeSearch.usageTokens === "number" && (
                 <Badge variant="outline">Токены: {activeSearch.usageTokens.toLocaleString("ru-RU")}</Badge>
               )}
+              {typeof activeSearch.llmUsageTokens === "number" && (
+                <Badge variant="outline">LLM токены: {activeSearch.llmUsageTokens.toLocaleString("ru-RU")}</Badge>
+              )}
+              {activeSearch.mode === "generative" && (
+                <Badge variant="secondary" className="bg-muted text-foreground">
+                  Контекст: {activeSearch.results.length.toLocaleString("ru-RU")} из{" "}
+                  {(activeSearch.contextLimit ?? activeSearch.limit).toLocaleString("ru-RU")}
+                </Badge>
+              )}
             </div>
           </div>
         )}
       </div>
+
+      {isSearchActive && activeSearch?.mode === "generative" && activeSearch.answer && (
+        <div className="rounded-lg border border-border/70 bg-muted/30 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Sparkles className="h-4 w-4 text-primary" /> Ответ LLM
+          </div>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{activeSearch.answer}</p>
+        </div>
+      )}
 
       {searchError && (
         <Alert variant="destructive">
