@@ -16,6 +16,7 @@ import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
 import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
 import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
 import LlmProvidersPage from "@/pages/LlmProvidersPage";
+import WidgetScriptPage from "@/pages/WidgetScriptPage";
 import AuthSettingsPage from "@/pages/AuthSettingsPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -56,6 +57,7 @@ function MainRouter() {
       <Route path="/pages" component={PagesPage} />
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
+      <Route path="/integrations/widget" component={WidgetScriptPage} />
       <Route path="/integrations/api" component={TildaApiPage} />
       <Route path="/workspaces/members" component={WorkspaceMembersPage} />
       <Route path="/profile" component={ProfilePage} />

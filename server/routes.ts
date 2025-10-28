@@ -120,6 +120,75 @@ function getNodeErrorCode(error: unknown): string | undefined {
   return typeof candidate.code === "string" ? candidate.code : undefined;
 }
 
+function pickFirstString(...candidates: Array<unknown>): string | null {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string") {
+      const trimmed = candidate.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function resolveGenerativeWorkspace(
+  req: Request,
+  res: Response,
+): Promise<{ workspaceId: string; site?: Site | null; isPublic: boolean } | null> {
+  const bodySource: Record<string, unknown> =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body) ? { ...(req.body as Record<string, unknown>) } : {};
+
+  const headerKey = req.headers["x-api-key"];
+  const apiKey = pickFirstString(
+    Array.isArray(headerKey) ? headerKey[0] : headerKey,
+    bodySource.apiKey,
+    req.query.apiKey,
+    req.query.apikey,
+  );
+
+  if (!apiKey) {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      return { workspaceId, site: null, isPublic: false };
+    } catch (error) {
+      if (error instanceof WorkspaceContextError) {
+        res.status(401).json({ error: "Требуется авторизация" });
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  const publicId = pickFirstString(
+    bodySource.publicId,
+    bodySource.sitePublicId,
+    req.query.publicId,
+    req.query.sitePublicId,
+    req.query.siteId,
+  );
+
+  if (!publicId) {
+    res.status(400).json({ error: "Для публичного запроса укажите publicId проекта" });
+    return null;
+  }
+
+  const site = await storage.getSiteByPublicId(publicId);
+
+  if (!site) {
+    res.status(404).json({ error: "Коллекция не найдена" });
+    return null;
+  }
+
+  if (site.publicApiKey !== apiKey) {
+    res.status(401).json({ error: "Некорректный API-ключ" });
+    return null;
+  }
+
+  return { workspaceId: site.workspaceId, site, isPublic: true };
+}
+
 class HttpError extends Error {
   status: number;
   details?: unknown;
@@ -4446,7 +4515,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/vector/collections/:name/search/generative", async (req, res) => {
     try {
-      const { id: workspaceId } = getRequestWorkspace(req);
+      const workspaceContext = await resolveGenerativeWorkspace(req, res);
+      if (!workspaceContext) {
+        return;
+      }
+
+      const { workspaceId } = workspaceContext;
       const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
@@ -4455,7 +4529,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const body = generativeSearchPointsSchema.parse(req.body);
+      const payloadSource: Record<string, unknown> =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+          ? { ...(req.body as Record<string, unknown>) }
+          : {};
+
+      delete payloadSource.apiKey;
+      delete payloadSource.publicId;
+      delete payloadSource.sitePublicId;
+
+      const body = generativeSearchPointsSchema.parse(payloadSource);
       const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
 
       if (!embeddingProvider) {

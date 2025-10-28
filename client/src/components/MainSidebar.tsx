@@ -21,9 +21,6 @@ import { cn } from "@/lib/utils";
 import {
   Search,
   Database,
-  Activity,
-  Webhook,
-  Calendar,
   BookOpen,
   Boxes,
   Brain,
@@ -33,6 +30,7 @@ import {
   CircleUser,
   Users,
   LayoutDashboard,
+  Bot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -229,25 +227,12 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
       ],
     },
     {
-      label: "Автоматизация",
+      label: "Виджеты",
       items: [
         {
-          title: "Расписание",
-          url: "/schedule",
-          icon: Calendar,
-          locked: true,
-        },
-        {
-          title: "Вебхуки",
-          url: "/integrations/webhooks",
-          icon: Webhook,
-          locked: true,
-        },
-        {
-          title: "Статистика краулинга",
-          url: "/stats",
-          icon: Activity,
-          locked: true,
+          title: "Чат-виджет",
+          url: "/integrations/widget",
+          icon: Bot,
         },
       ],
     },
