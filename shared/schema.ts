@@ -376,6 +376,9 @@ export const insertUserSchema = createInsertSchema(users).omit({
 export const embeddingProviderTypes = ["gigachat", "custom"] as const;
 export type EmbeddingProviderType = (typeof embeddingProviderTypes)[number];
 
+export const llmProviderTypes = ["gigachat", "custom"] as const;
+export type LlmProviderType = (typeof llmProviderTypes)[number];
+
 export const authProviderTypes = ["google", "yandex"] as const;
 export type AuthProviderType = (typeof authProviderTypes)[number];
 
@@ -420,6 +423,39 @@ export const qdrantIntegrationConfigSchema = z.object({
 export type EmbeddingRequestConfig = z.infer<typeof embeddingRequestConfigSchema>;
 export type EmbeddingResponseConfig = z.infer<typeof embeddingResponseConfigSchema>;
 export type QdrantIntegrationConfig = z.infer<typeof qdrantIntegrationConfigSchema>;
+export type LlmRequestConfig = z.infer<typeof llmRequestConfigSchema>;
+export type LlmResponseConfig = z.infer<typeof llmResponseConfigSchema>;
+
+export const llmRequestConfigSchema = z
+  .object({
+    modelField: z.string().trim().min(1, "Укажите ключ модели").default("model"),
+    messagesField: z.string().trim().min(1, "Укажите ключ массива сообщений").default("messages"),
+    systemPrompt: z
+      .string()
+      .trim()
+      .max(4000, "Слишком длинный системный промпт")
+      .optional()
+      .nullable(),
+    temperature: z.number().min(0).max(2).default(0.2),
+    maxTokens: z.number().int().positive().optional(),
+    topP: z.number().min(0).max(1).optional(),
+    presencePenalty: z.number().min(-2).max(2).optional(),
+    frequencyPenalty: z.number().min(-2).max(2).optional(),
+    additionalBodyFields: z
+      .record(z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.any()), z.record(z.any())]))
+      .default({}),
+  })
+  .default({ messagesField: "messages", modelField: "model", temperature: 0.2, additionalBodyFields: {} });
+
+export const llmResponseConfigSchema = z
+  .object({
+    messagePath: z
+      .string()
+      .trim()
+      .min(1, "Укажите JSON-путь до текста ответа"),
+    usageTokensPath: z.string().trim().min(1).optional(),
+  })
+  .default({ messagePath: "choices[0].message.content" });
 
 export const DEFAULT_EMBEDDING_REQUEST_CONFIG: EmbeddingRequestConfig = {
   inputField: "input",
@@ -441,6 +477,23 @@ export const DEFAULT_QDRANT_CONFIG: QdrantIntegrationConfig = {
   payloadFields: {},
   upsertMode: "replace",
 };
+
+export const DEFAULT_LLM_REQUEST_CONFIG = {
+  modelField: "model",
+  messagesField: "messages",
+  temperature: 0.2,
+  systemPrompt:
+    "Ты — помощник для базы знаний. Отвечай на вопросы пользователя на основе предоставленных фрагментов контента. Если в фрагментах нет ответа, честно сообщи об этом.",
+  maxTokens: 1024,
+  additionalBodyFields: {
+    stream: false,
+  },
+} as const satisfies z.infer<typeof llmRequestConfigSchema>;
+
+export const DEFAULT_LLM_RESPONSE_CONFIG = {
+  messagePath: "choices[0].message.content",
+  usageTokensPath: "usage.total_tokens",
+} as const satisfies z.infer<typeof llmResponseConfigSchema>;
 
 export const registerUserSchema = z
   .object({
@@ -548,6 +601,28 @@ export const embeddingProviders = pgTable("embedding_providers", {
   requestConfig: jsonb("request_config").$type<EmbeddingRequestConfig>().notNull().default(sql`'{}'::jsonb`),
   responseConfig: jsonb("response_config").$type<EmbeddingResponseConfig>().notNull().default(sql`'{}'::jsonb`),
   qdrantConfig: jsonb("qdrant_config").$type<QdrantIntegrationConfig>().notNull().default(sql`'{}'::jsonb`),
+  workspaceId: varchar("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const llmProviders = pgTable("llm_providers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+  name: text("name").notNull(),
+  providerType: text("provider_type").$type<LlmProviderType>().notNull().default("gigachat"),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  tokenUrl: text("token_url").notNull(),
+  completionUrl: text("completion_url").notNull(),
+  authorizationKey: text("authorization_key").notNull(),
+  scope: text("scope").notNull(),
+  model: text("model").notNull(),
+  allowSelfSignedCertificate: boolean("allow_self_signed_certificate").notNull().default(false),
+  requestHeaders: jsonb("request_headers").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+  requestConfig: jsonb("request_config").$type<LlmRequestConfig>().notNull().default(sql`'{}'::jsonb`),
+  responseConfig: jsonb("response_config").$type<LlmResponseConfig>().notNull().default(sql`'{}'::jsonb`),
   workspaceId: varchar("workspace_id")
     .notNull()
     .references(() => workspaces.id, { onDelete: "cascade" }),
@@ -704,6 +779,79 @@ export const updateEmbeddingProviderSchema = z
     message: "Нет данных для обновления",
   });
 
+export const insertLlmProviderSchema = createInsertSchema(llmProviders)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+    workspaceId: true,
+  })
+  .extend({
+    name: z.string().trim().min(1, "Укажите название сервиса").max(200, "Слишком длинное название"),
+    providerType: z.enum(llmProviderTypes).default("gigachat"),
+    isActive: z.boolean().default(true),
+    description: z
+      .string()
+      .trim()
+      .max(1000, "Описание слишком длинное")
+      .optional()
+      .transform((value) => (value && value.length > 0 ? value : undefined)),
+    tokenUrl: z
+      .string()
+      .trim()
+      .url("Некорректный URL для получения Access Token"),
+    completionUrl: z
+      .string()
+      .trim()
+      .url("Некорректный URL сервиса LLM"),
+    authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
+    scope: z.string().trim().min(1, "Укажите OAuth scope"),
+    model: z.string().trim().min(1, "Укажите модель"),
+    allowSelfSignedCertificate: z.boolean().default(false),
+    requestHeaders: z.record(z.string()).default({}),
+    requestConfig: z
+      .any()
+      .optional()
+      .transform(() => ({ ...DEFAULT_LLM_REQUEST_CONFIG } as LlmRequestConfig)),
+    responseConfig: z
+      .any()
+      .optional()
+      .transform(() => ({ ...DEFAULT_LLM_RESPONSE_CONFIG } as LlmResponseConfig)),
+  });
+
+export const updateLlmProviderSchema = z
+  .object({
+    name: z.string().trim().min(1, "Укажите название сервиса").max(200, "Слишком длинное название").optional(),
+    providerType: z.enum(llmProviderTypes).optional(),
+    description: z
+      .string()
+      .trim()
+      .max(1000, "Описание слишком длинное")
+      .optional()
+      .transform((value) => (value && value.length > 0 ? value : undefined)),
+    isActive: z.boolean().optional(),
+    tokenUrl: z
+      .string()
+      .trim()
+      .url("Некорректный URL для получения Access Token")
+      .optional(),
+    completionUrl: z
+      .string()
+      .trim()
+      .url("Некорректный URL сервиса LLM")
+      .optional(),
+    authorizationKey: z.string().trim().min(1, "Укажите Authorization key").optional(),
+    scope: z.string().trim().min(1, "Укажите OAuth scope").optional(),
+    model: z.string().trim().min(1, "Укажите модель").optional(),
+    allowSelfSignedCertificate: z.boolean().optional(),
+    requestHeaders: z.record(z.string()).optional(),
+    requestConfig: z.record(z.any()).optional(),
+    responseConfig: z.record(z.any()).optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "Нет данных для обновления",
+  });
+
 const callbackUrlSchema = z
   .string()
   .trim()
@@ -776,6 +924,13 @@ export type InsertEmbeddingProvider = z.infer<typeof insertEmbeddingProviderSche
 export type UpdateEmbeddingProvider = z.infer<typeof updateEmbeddingProviderSchema>;
 export type UpsertAuthProvider = z.infer<typeof upsertAuthProviderSchema>;
 export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "authorizationKey"> & {
+  hasAuthorizationKey: boolean;
+};
+export type LlmProvider = typeof llmProviders.$inferSelect;
+export type LlmProviderInsert = typeof llmProviders.$inferInsert;
+export type InsertLlmProvider = z.infer<typeof insertLlmProviderSchema>;
+export type UpdateLlmProvider = z.infer<typeof updateLlmProviderSchema>;
+export type PublicLlmProvider = Omit<LlmProvider, "authorizationKey"> & {
   hasAuthorizationKey: boolean;
 };
 export type KnowledgeDocumentChunkSet = typeof knowledgeDocumentChunkSets.$inferSelect;

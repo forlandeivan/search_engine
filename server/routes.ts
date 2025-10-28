@@ -41,14 +41,22 @@ import {
   userRoles,
   insertEmbeddingProviderSchema,
   updateEmbeddingProviderSchema,
+  insertLlmProviderSchema,
+  updateLlmProviderSchema,
   upsertAuthProviderSchema,
   type PublicEmbeddingProvider,
+  type PublicLlmProvider,
   type EmbeddingProvider,
+  type LlmProvider,
+  type LlmRequestConfig,
+  type LlmResponseConfig,
   type AuthProviderInsert,
   type ContentChunk,
   type Page,
   type Site,
   DEFAULT_QDRANT_CONFIG,
+  DEFAULT_LLM_REQUEST_CONFIG,
+  DEFAULT_LLM_RESPONSE_CONFIG,
   workspaceMemberRoles,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
@@ -455,6 +463,35 @@ function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbedding
   };
 }
 
+function toPublicLlmProvider(provider: LlmProvider): PublicLlmProvider {
+  const { authorizationKey, ...rest } = provider;
+  const rawRequestConfig =
+    rest.requestConfig && typeof rest.requestConfig === "object"
+      ? (rest.requestConfig as Record<string, unknown>)
+      : undefined;
+  const rawResponseConfig =
+    rest.responseConfig && typeof rest.responseConfig === "object"
+      ? (rest.responseConfig as Record<string, unknown>)
+      : undefined;
+
+  const requestConfig = {
+    ...DEFAULT_LLM_REQUEST_CONFIG,
+    ...(rawRequestConfig ?? {}),
+  };
+
+  const responseConfig = {
+    ...DEFAULT_LLM_RESPONSE_CONFIG,
+    ...(rawResponseConfig ?? {}),
+  };
+
+  return {
+    ...rest,
+    requestConfig,
+    responseConfig,
+    hasAuthorizationKey: Boolean(authorizationKey && authorizationKey.length > 0),
+  };
+}
+
 type NodeFetchOptions = FetchRequestInit & { agent?: HttpsAgent };
 
 const insecureTlsAgent = new HttpsAgent({ rejectUnauthorized: false });
@@ -808,7 +845,19 @@ function buildCustomPayloadFromSchema(
   }, {});
 }
 
-async function fetchAccessToken(provider: EmbeddingProvider): Promise<string> {
+interface EmbeddingVectorResult {
+  vector: number[];
+  usageTokens?: number;
+  embeddingId?: string | number;
+  rawResponse: unknown;
+}
+
+type OAuthProviderConfig = Pick<
+  EmbeddingProvider | LlmProvider,
+  "tokenUrl" | "authorizationKey" | "scope" | "requestHeaders" | "allowSelfSignedCertificate"
+>;
+
+async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> {
   const tokenHeaders = new Headers();
   const rawAuthorizationKey = provider.authorizationKey.trim();
   const hasAuthScheme = /^(?:[A-Za-z]+)\s+\S+/.test(rawAuthorizationKey);
@@ -854,7 +903,7 @@ async function fetchAccessToken(provider: EmbeddingProvider): Promise<string> {
       errorMessage.toLowerCase().includes("self-signed certificate")
     ) {
       throw new Error(
-        "Не удалось подключиться к сервису эмбеддингов: сертификат не прошёл проверку. Включите доверие самоподписанным сертификатам и повторите попытку.",
+        "Не удалось подключиться к сервису: сертификат не прошёл проверку. Включите доверие самоподписанным сертификатам и повторите попытку.",
       );
     }
 
@@ -891,13 +940,6 @@ async function fetchAccessToken(provider: EmbeddingProvider): Promise<string> {
   }
 
   throw new Error("Сервис не вернул access_token");
-}
-
-interface EmbeddingVectorResult {
-  vector: number[];
-  usageTokens?: number;
-  embeddingId?: string | number;
-  rawResponse: unknown;
 }
 
 async function fetchEmbeddingVector(
@@ -963,6 +1005,270 @@ async function fetchEmbeddingVector(
     vector,
     usageTokens,
     embeddingId,
+    rawResponse: parsedBody,
+  };
+}
+
+type LlmContextRecord = {
+  index: number;
+  score?: number | null;
+  payload: Record<string, unknown> | null;
+};
+
+interface LlmCompletionResult {
+  answer: string;
+  usageTokens?: number | null;
+  rawResponse: unknown;
+}
+
+function mergeLlmRequestConfig(provider: LlmProvider): LlmRequestConfig {
+  const config =
+    provider.requestConfig && typeof provider.requestConfig === "object"
+      ? (provider.requestConfig as Partial<LlmRequestConfig>)
+      : undefined;
+
+  return {
+    ...DEFAULT_LLM_REQUEST_CONFIG,
+    ...(config ?? {}),
+  };
+}
+
+function mergeLlmResponseConfig(provider: LlmProvider): LlmResponseConfig {
+  const config =
+    provider.responseConfig && typeof provider.responseConfig === "object"
+      ? (provider.responseConfig as Partial<LlmResponseConfig>)
+      : undefined;
+
+  return {
+    ...DEFAULT_LLM_RESPONSE_CONFIG,
+    ...(config ?? {}),
+  };
+}
+
+function getValueByJsonPath(source: unknown, path: string): unknown {
+  if (!path || typeof path !== "string") {
+    return undefined;
+  }
+
+  const normalized = path
+    .replace(/\[(\d+)\]/g, ".$1")
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  let current: unknown = source;
+
+  for (const segment of normalized) {
+    if (current === null || current === undefined) {
+      return undefined;
+    }
+
+    if (Array.isArray(current)) {
+      const index = Number(segment);
+      if (Number.isNaN(index) || index < 0 || index >= current.length) {
+        return undefined;
+      }
+      current = current[index];
+      continue;
+    }
+
+    if (typeof current !== "object") {
+      return undefined;
+    }
+
+    current = (current as Record<string, unknown>)[segment];
+  }
+
+  return current;
+}
+
+function stringifyPayloadForContext(payload: Record<string, unknown> | null): string {
+  if (!payload || Object.keys(payload).length === 0) {
+    return "Нет данных";
+  }
+
+  try {
+    const serialized = JSON.stringify(payload, null, 2);
+    return serialized.length > 4000 ? `${serialized.slice(0, 4000)}…` : serialized;
+  } catch {
+    return String(payload);
+  }
+}
+
+function buildLlmRequestBody(
+  provider: LlmProvider,
+  query: string,
+  context: LlmContextRecord[],
+) {
+  const requestConfig = mergeLlmRequestConfig(provider);
+  const messages: Array<{ role: string; content: string }> = [];
+
+  if (requestConfig.systemPrompt && requestConfig.systemPrompt.trim()) {
+    messages.push({ role: "system", content: requestConfig.systemPrompt.trim() });
+  }
+
+  const contextText = context
+    .map(({ index, score, payload }) => {
+      const scoreText = typeof score === "number" ? ` (score: ${score.toFixed(4)})` : "";
+      return `Источник ${index}${scoreText}:\n${stringifyPayloadForContext(payload)}`;
+    })
+    .join("\n\n");
+
+  const userParts = [
+    `Вопрос: ${query}`,
+    context.length > 0
+      ? `Контекст:\n${contextText}`
+      : "Контекст отсутствует. Если ответ не найден, честно сообщи об этом.",
+    "Сформируй понятный ответ на русском языке, опираясь только на предоставленный контекст. Если ответ не найден, сообщи об этом. Не придумывай фактов.",
+  ];
+
+  messages.push({ role: "user", content: userParts.join("\n\n") });
+
+  const body: Record<string, unknown> = {
+    [requestConfig.modelField]: provider.model,
+    [requestConfig.messagesField]: messages,
+  };
+
+  if (requestConfig.temperature !== undefined) {
+    body.temperature = requestConfig.temperature;
+  }
+
+  if (requestConfig.maxTokens !== undefined) {
+    body.max_tokens = requestConfig.maxTokens;
+  }
+
+  if (requestConfig.topP !== undefined) {
+    body.top_p = requestConfig.topP;
+  }
+
+  if (requestConfig.presencePenalty !== undefined) {
+    body.presence_penalty = requestConfig.presencePenalty;
+  }
+
+  if (requestConfig.frequencyPenalty !== undefined) {
+    body.frequency_penalty = requestConfig.frequencyPenalty;
+  }
+
+  for (const [key, value] of Object.entries(requestConfig.additionalBodyFields ?? {})) {
+    if (body[key] === undefined) {
+      body[key] = value;
+    }
+  }
+
+  return body;
+}
+
+async function fetchLlmCompletion(
+  provider: LlmProvider,
+  accessToken: string,
+  query: string,
+  context: LlmContextRecord[],
+): Promise<LlmCompletionResult> {
+  const requestBody = buildLlmRequestBody(provider, query, context);
+  const llmHeaders = new Headers();
+  llmHeaders.set("Content-Type", "application/json");
+  llmHeaders.set("Accept", "application/json");
+
+  if (!llmHeaders.has("RqUID")) {
+    llmHeaders.set("RqUID", randomUUID());
+  }
+
+  for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+    llmHeaders.set(key, value);
+  }
+
+  if (!llmHeaders.has("Authorization")) {
+    llmHeaders.set("Authorization", `Bearer ${accessToken}`);
+  }
+
+  let completionResponse: FetchResponse;
+
+  try {
+    const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+      {
+        method: "POST",
+        headers: llmHeaders,
+        body: JSON.stringify(requestBody),
+      },
+      provider.allowSelfSignedCertificate,
+    );
+
+    completionResponse = await fetch(provider.completionUrl, requestOptions);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Не удалось выполнить запрос к LLM: ${errorMessage}`);
+  }
+
+  const rawBody = await completionResponse.text();
+  const parsedBody = parseJson(rawBody);
+
+  if (!completionResponse.ok) {
+    let message = `LLM вернул статус ${completionResponse.status}`;
+
+    if (parsedBody && typeof parsedBody === "object") {
+      const body = parsedBody as Record<string, unknown>;
+      if (typeof body.error_description === "string") {
+        message = body.error_description;
+      } else if (typeof body.message === "string") {
+        message = body.message;
+      }
+    } else if (typeof parsedBody === "string" && parsedBody.trim()) {
+      message = parsedBody.trim();
+    }
+
+    throw new Error(`Ошибка на этапе генерации ответа: ${message}`);
+  }
+
+  const responseConfig = mergeLlmResponseConfig(provider);
+  const messageValue = getValueByJsonPath(parsedBody, responseConfig.messagePath);
+
+  let answer: string | null = null;
+  if (typeof messageValue === "string") {
+    answer = messageValue.trim();
+  } else if (Array.isArray(messageValue)) {
+    answer = messageValue
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+        if (item && typeof item === "object" && typeof (item as Record<string, unknown>).text === "string") {
+          return (item as Record<string, unknown>).text as string;
+        }
+        return "";
+      })
+      .filter((part) => part.trim().length > 0)
+      .join("\n");
+    if (answer) {
+      answer = answer.trim();
+    }
+  } else if (
+    messageValue &&
+    typeof messageValue === "object" &&
+    typeof (messageValue as Record<string, unknown>).content === "string"
+  ) {
+    answer = ((messageValue as Record<string, unknown>).content as string).trim();
+  }
+
+  if (!answer) {
+    throw new Error("LLM не вернул текст ответа");
+  }
+
+  let usageTokens: number | null = null;
+  if (responseConfig.usageTokensPath) {
+    const usageValue = getValueByJsonPath(parsedBody, responseConfig.usageTokensPath);
+    if (typeof usageValue === "number" && Number.isFinite(usageValue)) {
+      usageTokens = usageValue;
+    } else if (typeof usageValue === "string" && usageValue.trim()) {
+      const parsedNumber = Number.parseFloat(usageValue);
+      if (!Number.isNaN(parsedNumber)) {
+        usageTokens = parsedNumber;
+      }
+    }
+  }
+
+  return {
+    answer,
+    usageTokens,
     rawResponse: parsedBody,
   };
 }
@@ -1403,6 +1709,11 @@ const textSearchPointsSchema = z.object({
     z.literal("all"),
   ]).optional(),
   timeout: z.number().positive().optional(),
+});
+
+const generativeSearchPointsSchema = textSearchPointsSchema.extend({
+  llmProviderId: z.string().trim().min(1, "Укажите провайдера LLM"),
+  contextLimit: z.number().int().positive().max(50).optional(),
 });
 
 const scrollCollectionSchema = z.object({
@@ -3056,6 +3367,103 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/llm/providers", requireAdmin, async (req, res, next) => {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const providers = await storage.listLlmProviders(workspaceId);
+      res.json({ providers: providers.map(toPublicLlmProvider) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/llm/providers", requireAdmin, async (req, res) => {
+    try {
+      const payload = insertLlmProviderSchema.parse(req.body);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const provider = await storage.createLlmProvider({
+        ...payload,
+        workspaceId,
+        description: payload.description ?? null,
+        requestConfig: payload.requestConfig ?? { ...DEFAULT_LLM_REQUEST_CONFIG },
+        responseConfig: payload.responseConfig ?? { ...DEFAULT_LLM_RESPONSE_CONFIG },
+      });
+
+      res.status(201).json({ provider: toPublicLlmProvider(provider) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      const errorDetails = getErrorDetails(error);
+      console.error(`[LLM Providers] Ошибка при создании провайдера: ${errorDetails}`, error);
+      return res.status(500).json({
+        message: "Не удалось создать провайдера LLM",
+        details: errorDetails,
+      });
+    }
+  });
+
+  app.put("/api/llm/providers/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const providerId = req.params.id;
+      const payload = updateLlmProviderSchema.parse(req.body);
+
+      const updates: Partial<LlmProvider> = {};
+
+      if (payload.name !== undefined) updates.name = payload.name;
+      if (payload.providerType !== undefined) updates.providerType = payload.providerType;
+      if (payload.description !== undefined) updates.description = payload.description ?? null;
+      if (payload.isActive !== undefined) updates.isActive = payload.isActive;
+      if (payload.tokenUrl !== undefined) updates.tokenUrl = payload.tokenUrl;
+      if (payload.completionUrl !== undefined) updates.completionUrl = payload.completionUrl;
+      if (payload.authorizationKey !== undefined) updates.authorizationKey = payload.authorizationKey;
+      if (payload.scope !== undefined) updates.scope = payload.scope;
+      if (payload.model !== undefined) updates.model = payload.model;
+      if (payload.requestHeaders !== undefined) updates.requestHeaders = payload.requestHeaders;
+      if (payload.allowSelfSignedCertificate !== undefined)
+        updates.allowSelfSignedCertificate = payload.allowSelfSignedCertificate;
+      if (payload.requestConfig !== undefined)
+        updates.requestConfig = {
+          ...DEFAULT_LLM_REQUEST_CONFIG,
+          ...(payload.requestConfig as Record<string, unknown>),
+        } as LlmProvider["requestConfig"];
+      if (payload.responseConfig !== undefined)
+        updates.responseConfig = {
+          ...DEFAULT_LLM_RESPONSE_CONFIG,
+          ...(payload.responseConfig as Record<string, unknown>),
+        } as LlmProvider["responseConfig"];
+
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const updated = await storage.updateLlmProvider(providerId, updates, workspaceId);
+      if (!updated) {
+        return res.status(404).json({ message: "Провайдер не найден" });
+      }
+
+      res.json({ provider: toPublicLlmProvider(updated) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      next(error);
+    }
+  });
+
+  app.delete("/api/llm/providers/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const deleted = await storage.deleteLlmProvider(req.params.id, workspaceId);
+      if (!deleted) {
+        return res.status(404).json({ message: "Провайдер не найден" });
+      }
+
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // Vector search endpoints
   const qdrantCollectionsResponseSchema = z
     .object({
@@ -3674,6 +4082,201 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error(`Ошибка при текстовом поиске в коллекции ${req.params.name}:`, error);
       res.status(500).json({
         error: "Не удалось выполнить текстовый поиск",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/vector/collections/:name/search/generative", async (req, res) => {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+        return res.status(404).json({
+          error: "Коллекция не найдена",
+        });
+      }
+
+      const body = generativeSearchPointsSchema.parse(req.body);
+      const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
+
+      if (!embeddingProvider) {
+        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+      }
+
+      if (!embeddingProvider.isActive) {
+        throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+      }
+
+      const llmProvider = await storage.getLlmProvider(body.llmProviderId, workspaceId);
+
+      if (!llmProvider) {
+        return res.status(404).json({ error: "Провайдер LLM не найден" });
+      }
+
+      if (!llmProvider.isActive) {
+        throw new HttpError(400, "Выбранный провайдер LLM отключён");
+      }
+
+      const client = getQdrantClient();
+      const collectionInfo = await client.getCollection(req.params.name);
+      const vectorsConfig = collectionInfo.config?.params?.vectors as
+        | { size?: number | null; distance?: string | null }
+        | undefined;
+
+      const collectionVectorSize = vectorsConfig?.size ?? null;
+      const providerVectorSize = parseVectorSize(embeddingProvider.qdrantConfig?.vectorSize);
+
+      if (
+        collectionVectorSize &&
+        providerVectorSize &&
+        Number(collectionVectorSize) !== Number(providerVectorSize)
+      ) {
+        throw new HttpError(
+          400,
+          `Размер вектора коллекции (${collectionVectorSize}) не совпадает с настройкой сервиса (${providerVectorSize}).`,
+        );
+      }
+
+      const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
+      const embeddingResult = await fetchEmbeddingVector(embeddingProvider, embeddingAccessToken, body.query);
+
+      if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
+        throw new HttpError(
+          400,
+          `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+        );
+      }
+
+      const searchPayload: Parameters<QdrantClient["search"]>[1] = {
+        vector: embeddingResult.vector as unknown as Schemas["NamedVectorStruct"],
+        limit: body.limit,
+      };
+
+      if (body.offset !== undefined) {
+        searchPayload.offset = body.offset;
+      }
+
+      if (body.filter !== undefined) {
+        searchPayload.filter = body.filter as Parameters<QdrantClient["search"]>[1]["filter"];
+      }
+
+      if (body.params !== undefined) {
+        searchPayload.params = body.params as Parameters<QdrantClient["search"]>[1]["params"];
+      }
+
+      searchPayload.with_payload = (body.withPayload ?? true) as Parameters<
+        QdrantClient["search"]
+      >[1]["with_payload"];
+
+      if (body.withVector !== undefined) {
+        searchPayload.with_vector = body.withVector as Parameters<QdrantClient["search"]>[1]["with_vector"];
+      }
+
+      if (body.scoreThreshold !== undefined) {
+        searchPayload.score_threshold = body.scoreThreshold;
+      }
+
+      if (body.shardKey !== undefined) {
+        searchPayload.shard_key = body.shardKey as Parameters<QdrantClient["search"]>[1]["shard_key"];
+      }
+
+      if (body.consistency !== undefined) {
+        searchPayload.consistency = body.consistency;
+      }
+
+      if (body.timeout !== undefined) {
+        searchPayload.timeout = body.timeout;
+      }
+
+      const results = await client.search(req.params.name, searchPayload);
+
+      const sanitizedResults = results.map((result) => {
+        const payload = result.payload ?? null;
+        return {
+          id: result.id,
+          payload,
+          score: result.score ?? null,
+          shard_key: result.shard_key ?? null,
+          order_value: result.order_value ?? null,
+        };
+      });
+
+      const desiredContext = body.contextLimit ?? sanitizedResults.length;
+      const contextLimit = Math.max(0, Math.min(desiredContext, sanitizedResults.length));
+      const contextRecords: LlmContextRecord[] = sanitizedResults.slice(0, contextLimit).map((entry, index) => {
+        const basePayload = entry.payload;
+        let contextPayload: Record<string, unknown> | null = null;
+
+        if (basePayload && typeof basePayload === "object" && !Array.isArray(basePayload)) {
+          contextPayload = { ...(basePayload as Record<string, unknown>) };
+        } else if (basePayload !== null && basePayload !== undefined) {
+          contextPayload = { value: basePayload };
+        }
+
+        return {
+          index: index + 1,
+          score: typeof entry.score === "number" ? entry.score : null,
+          payload: contextPayload,
+        } satisfies LlmContextRecord;
+      });
+
+      const llmAccessToken = await fetchAccessToken(llmProvider);
+      const completion = await fetchLlmCompletion(llmProvider, llmAccessToken, body.query, contextRecords);
+
+      res.json({
+        answer: completion.answer,
+        usage: {
+          embeddingTokens: embeddingResult.usageTokens ?? null,
+          llmTokens: completion.usageTokens ?? null,
+        },
+        provider: {
+          id: llmProvider.id,
+          name: llmProvider.name,
+        },
+        embeddingProvider: {
+          id: embeddingProvider.id,
+          name: embeddingProvider.name,
+        },
+        context: sanitizedResults,
+        queryVector: embeddingResult.vector,
+        vectorLength: embeddingResult.vector.length,
+      });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({
+          error: error.message,
+          details: error.details,
+        });
+      }
+
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные параметры поиска",
+          details: error.errors,
+        });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error(`Ошибка Qdrant при генеративном поиске в коллекции ${req.params.name}:`, error);
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
+        });
+      }
+
+      console.error(`Ошибка при генеративном поиске в коллекции ${req.params.name}:`, error);
+      res.status(500).json({
+        error: "Не удалось выполнить генеративный поиск",
         details: error instanceof Error ? error.message : String(error),
       });
     }

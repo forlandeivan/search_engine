@@ -15,6 +15,7 @@ import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
 import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
 import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
 import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
+import LlmProvidersPage from "@/pages/LlmProvidersPage";
 import AuthSettingsPage from "@/pages/AuthSettingsPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -37,6 +38,7 @@ function AdminRouter() {
       <Route path="/admin/workspaces" component={AdminWorkspacesPage} />
       <Route path="/admin/auth" component={AuthSettingsPage} />
       <Route path="/admin/embeddings" component={EmbeddingServicesPage} />
+      <Route path="/admin/llm" component={LlmProvidersPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />
       <Route path="/admin" component={AdminWorkspacesPage} />
