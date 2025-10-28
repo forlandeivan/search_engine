@@ -426,6 +426,11 @@ export type QdrantIntegrationConfig = z.infer<typeof qdrantIntegrationConfigSche
 export type LlmRequestConfig = z.infer<typeof llmRequestConfigSchema>;
 export type LlmResponseConfig = z.infer<typeof llmResponseConfigSchema>;
 
+export interface LlmModelOption {
+  label: string;
+  value: string;
+}
+
 export const llmRequestConfigSchema = z
   .object({
     modelField: z.string().trim().min(1, "Укажите ключ модели").default("model"),
@@ -619,6 +624,9 @@ export const llmProviders = pgTable("llm_providers", {
   authorizationKey: text("authorization_key").notNull(),
   scope: text("scope").notNull(),
   model: text("model").notNull(),
+  availableModels: jsonb("available_models")
+    .$type<LlmModelOption[] | null>()
+    .default(sql`'[]'::jsonb`),
   allowSelfSignedCertificate: boolean("allow_self_signed_certificate").notNull().default(false),
   requestHeaders: jsonb("request_headers").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
   requestConfig: jsonb("request_config").$type<LlmRequestConfig>().notNull().default(sql`'{}'::jsonb`),
@@ -807,6 +815,23 @@ export const insertLlmProviderSchema = createInsertSchema(llmProviders)
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
     scope: z.string().trim().min(1, "Укажите OAuth scope"),
     model: z.string().trim().min(1, "Укажите модель"),
+    availableModels: z
+      .array(
+        z.object({
+          label: z.string().trim().min(1, "Введите название модели"),
+          value: z.string().trim().min(1, "Введите идентификатор модели"),
+        }),
+      )
+      .max(50, "Слишком много моделей")
+      .optional()
+      .transform((models) =>
+        (models ?? [])
+          .map((model) => ({
+            label: model.label.trim(),
+            value: model.value.trim(),
+          }))
+          .filter((model) => model.label.length > 0 && model.value.length > 0),
+      ),
     allowSelfSignedCertificate: z.boolean().default(false),
     requestHeaders: z.record(z.string()).default({}),
     requestConfig: z
@@ -843,6 +868,23 @@ export const updateLlmProviderSchema = z
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key").optional(),
     scope: z.string().trim().min(1, "Укажите OAuth scope").optional(),
     model: z.string().trim().min(1, "Укажите модель").optional(),
+    availableModels: z
+      .array(
+        z.object({
+          label: z.string().trim().min(1, "Введите название модели"),
+          value: z.string().trim().min(1, "Введите идентификатор модели"),
+        }),
+      )
+      .max(50, "Слишком много моделей")
+      .optional()
+      .transform((models) =>
+        (models ?? [])
+          .map((model) => ({
+            label: model.label.trim(),
+            value: model.value.trim(),
+          }))
+          .filter((model) => model.label.length > 0 && model.value.length > 0),
+      ),
     allowSelfSignedCertificate: z.boolean().optional(),
     requestHeaders: z.record(z.string()).optional(),
     requestConfig: z.record(z.any()).optional(),
@@ -930,8 +972,9 @@ export type LlmProvider = typeof llmProviders.$inferSelect;
 export type LlmProviderInsert = typeof llmProviders.$inferInsert;
 export type InsertLlmProvider = z.infer<typeof insertLlmProviderSchema>;
 export type UpdateLlmProvider = z.infer<typeof updateLlmProviderSchema>;
-export type PublicLlmProvider = Omit<LlmProvider, "authorizationKey"> & {
+export type PublicLlmProvider = Omit<LlmProvider, "authorizationKey" | "availableModels"> & {
   hasAuthorizationKey: boolean;
+  availableModels: LlmModelOption[];
 };
 export type KnowledgeDocumentChunkSet = typeof knowledgeDocumentChunkSets.$inferSelect;
 export type KnowledgeDocumentChunkSetInsert = typeof knowledgeDocumentChunkSets.$inferInsert;

@@ -32,7 +32,9 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -106,6 +108,12 @@ interface FilterCondition {
   value: string;
 }
 
+type LlmModelSelectionOption = {
+  key: string;
+  provider: PublicLlmProvider;
+  model: { label: string; value: string };
+};
+
 interface ActiveSearchState {
   mode: SearchMode;
   description: string;
@@ -115,6 +123,7 @@ interface ActiveSearchState {
   usageTokens?: number | null;
   providerName?: string;
   llmProviderName?: string;
+  llmModelLabel?: string;
   llmUsageTokens?: number | null;
   answer?: string;
   queryVectorPreview?: string;
@@ -138,6 +147,7 @@ interface SearchSettingsStorage {
     contextLimit?: number;
     embeddingProviderId?: string | null;
     llmProviderId?: string | null;
+    llmModel?: string | null;
   };
 }
 
@@ -163,7 +173,7 @@ interface GenerativeSearchResponse {
     embeddingTokens: number | null;
     llmTokens: number | null;
   };
-  provider: { id: string; name: string };
+  provider: { id: string; name: string; model?: string; modelLabel?: string };
   embeddingProvider: { id: string; name: string };
   context: Array<{
     id: string | number;
@@ -441,6 +451,7 @@ export default function VectorCollectionDetailPage() {
   const [isCurlCopied, setIsCurlCopied] = useState(false);
   const [isPointPreviewFullScreen, setIsPointPreviewFullScreen] = useState(false);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const pendingLlmSelection = useRef<{ providerId: string | null; modelValue: string | null } | null>(null);
   const { toast } = useToast();
 
   const [searchMode, setSearchMode] = useState<SearchMode>("semantic");
@@ -454,7 +465,7 @@ export default function VectorCollectionDetailPage() {
   const [textSearchLimit, setTextSearchLimit] = useState(DEFAULT_TOP_K);
   const [textSearchWithPayload, setTextSearchWithPayload] = useState(DEFAULT_SEMANTIC_WITH_PAYLOAD);
   const [textSearchWithVector, setTextSearchWithVector] = useState(DEFAULT_SEMANTIC_WITH_VECTOR);
-  const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string | null>(null);
+  const [selectedLlmModelKey, setSelectedLlmModelKey] = useState<string | null>(null);
   const [generativeLimit, setGenerativeLimit] = useState(DEFAULT_TOP_K);
   const [llmContextLimit, setLlmContextLimit] = useState(DEFAULT_GENERATIVE_CONTEXT_LIMIT);
   const [searchSettingsLoaded, setSearchSettingsLoaded] = useState(false);
@@ -544,6 +555,48 @@ export default function VectorCollectionDetailPage() {
     return (llmProvidersData?.providers ?? []).filter((provider) => provider.isActive);
   }, [llmProvidersData]);
 
+  const llmModelGroups = useMemo(() => {
+    return activeLlmProviders.map((provider) => {
+      const seenValues = new Set<string>();
+      const models: Array<{ label: string; value: string }> = [];
+
+      for (const rawModel of provider.availableModels ?? []) {
+        const value = (rawModel?.value ?? "").trim();
+        if (!value || seenValues.has(value)) {
+          continue;
+        }
+
+        const label = (rawModel.label ?? "").trim() || value;
+        models.push({ label, value });
+        seenValues.add(value);
+      }
+
+      const defaultModel = (provider.model ?? "").trim();
+      if (defaultModel && !seenValues.has(defaultModel)) {
+        models.push({ label: defaultModel, value: defaultModel });
+        seenValues.add(defaultModel);
+      }
+
+      if (models.length === 0) {
+        models.push({ label: provider.model, value: provider.model });
+      }
+
+      return { provider, models };
+    });
+  }, [activeLlmProviders]);
+
+  const llmModelOptions = useMemo<LlmModelSelectionOption[]>(() => {
+    return llmModelGroups.flatMap(({ provider, models }) =>
+      models
+        .filter((model) => model.value.trim().length > 0)
+        .map((model) => ({
+          key: `${provider.id}::${model.value}`,
+          provider,
+          model,
+        })),
+    );
+  }, [llmModelGroups]);
+
   const collectionVectorSizeValue = collection?.vectorSize ?? null;
 
   const matchingProviders = useMemo(() => {
@@ -614,8 +667,15 @@ export default function VectorCollectionDetailPage() {
           setLlmContextLimit((previous) => Math.min(previous, nextGenerativeTopK!));
         }
 
-        if (typeof parsed.generative.llmProviderId === "string") {
-          setSelectedLlmProviderId(parsed.generative.llmProviderId);
+        const storedLlmProviderId =
+          typeof parsed.generative.llmProviderId === "string"
+            ? parsed.generative.llmProviderId
+            : null;
+        const storedLlmModel =
+          typeof parsed.generative.llmModel === "string" ? parsed.generative.llmModel : null;
+
+        if (storedLlmProviderId || storedLlmModel) {
+          pendingLlmSelection.current = { providerId: storedLlmProviderId, modelValue: storedLlmModel };
         }
       }
     } catch (error) {
@@ -646,24 +706,52 @@ export default function VectorCollectionDetailPage() {
   }, [matchingProviders, selectedProviderId]);
 
   useEffect(() => {
-    if (selectedLlmProviderId && !activeLlmProviders.some((provider) => provider.id === selectedLlmProviderId)) {
-      setSelectedLlmProviderId(null);
-    }
-  }, [activeLlmProviders, selectedLlmProviderId]);
+    if (pendingLlmSelection.current && llmModelOptions.length > 0) {
+      const { providerId, modelValue } = pendingLlmSelection.current;
 
-  useEffect(() => {
-    if (!selectedLlmProviderId && activeLlmProviders.length > 0) {
-      setSelectedLlmProviderId(activeLlmProviders[0].id);
-    }
-  }, [activeLlmProviders, selectedLlmProviderId]);
+      const matchedOption =
+        llmModelOptions.find((option) => {
+          const providerMatches = providerId ? option.provider.id === providerId : true;
+          const modelMatches = modelValue ? option.model.value === modelValue : true;
+          return providerMatches && modelMatches;
+        }) ??
+        (providerId ? llmModelOptions.find((option) => option.provider.id === providerId) : null);
 
-  const selectedLlmProvider = useMemo(() => {
-    if (selectedLlmProviderId) {
-      return activeLlmProviders.find((provider) => provider.id === selectedLlmProviderId) ?? null;
+      if (matchedOption) {
+        if (matchedOption.key !== selectedLlmModelKey) {
+          setSelectedLlmModelKey(matchedOption.key);
+        }
+        pendingLlmSelection.current = null;
+        return;
+      }
+
+      pendingLlmSelection.current = null;
     }
 
-    return activeLlmProviders[0] ?? null;
-  }, [activeLlmProviders, selectedLlmProviderId]);
+    if (llmModelOptions.length === 0) {
+      if (selectedLlmModelKey !== null) {
+        setSelectedLlmModelKey(null);
+      }
+      return;
+    }
+
+    if (!selectedLlmModelKey || !llmModelOptions.some((option) => option.key === selectedLlmModelKey)) {
+      setSelectedLlmModelKey(llmModelOptions[0].key);
+    }
+  }, [llmModelOptions, selectedLlmModelKey]);
+
+  const selectedLlmOption = useMemo<LlmModelSelectionOption | null>(() => {
+    if (!selectedLlmModelKey) {
+      return llmModelOptions[0] ?? null;
+    }
+
+    return llmModelOptions.find((option) => option.key === selectedLlmModelKey) ?? llmModelOptions[0] ?? null;
+  }, [llmModelOptions, selectedLlmModelKey]);
+
+  const selectedLlmProvider = selectedLlmOption?.provider ?? null;
+  const selectedLlmModel = selectedLlmOption?.model ?? null;
+  const selectedLlmProviderIdValue = selectedLlmProvider?.id ?? null;
+  const selectedLlmModelValue = selectedLlmModel?.value ?? null;
 
   const canSubmitSemanticSearch = useMemo(() => {
     return !searchLoading && matchingProviders.length > 0 && textQuery.trim().length > 0;
@@ -675,9 +763,9 @@ export default function VectorCollectionDetailPage() {
       !searchLoading &&
       sanitizedQuery.length > 0 &&
       matchingProviders.length > 0 &&
-      activeLlmProviders.length > 0
+      llmModelOptions.length > 0
     );
-  }, [activeLlmProviders.length, matchingProviders.length, searchLoading, textQuery]);
+  }, [llmModelOptions.length, matchingProviders.length, searchLoading, textQuery]);
 
   useEffect(() => {
     if (!searchSettingsLoaded || typeof window === "undefined") {
@@ -695,7 +783,8 @@ export default function VectorCollectionDetailPage() {
         topK: generativeLimit,
         contextLimit: llmContextLimit,
         embeddingProviderId: selectedProviderId,
-        llmProviderId: selectedLlmProviderId,
+        llmProviderId: selectedLlmProviderIdValue,
+        llmModel: selectedLlmModelValue,
       },
     };
 
@@ -708,7 +797,9 @@ export default function VectorCollectionDetailPage() {
     generativeLimit,
     llmContextLimit,
     searchSettingsLoaded,
-    selectedLlmProviderId,
+    selectedLlmModelKey,
+    selectedLlmProviderIdValue,
+    selectedLlmModelValue,
     selectedProviderId,
     textSearchLimit,
     textSearchWithPayload,
@@ -740,24 +831,6 @@ export default function VectorCollectionDetailPage() {
 
     return badges;
   }, [textSearchLimit, textSearchWithPayload, textSearchWithVector]);
-
-  const generativeSettingsBadges = useMemo(() => {
-    const badges: Array<{ key: string; label: string }> = [];
-
-    if (generativeLimit !== DEFAULT_TOP_K) {
-      badges.push({ key: "top-k", label: `Top K: ${generativeLimit}` });
-    }
-
-    if (llmContextLimit !== DEFAULT_GENERATIVE_CONTEXT_LIMIT) {
-      badges.push({ key: "context", label: `Контекст: ${llmContextLimit}` });
-    }
-
-    if (selectedLlmProvider) {
-      badges.push({ key: "llm", label: `LLM: ${selectedLlmProvider.name}` });
-    }
-
-    return badges;
-  }, [generativeLimit, llmContextLimit, selectedLlmProvider]);
 
   const curlCommand = useMemo(() => {
     if (!collectionName) {
@@ -1163,8 +1236,14 @@ export default function VectorCollectionDetailPage() {
       return;
     }
 
-    const llmProviderId = selectedLlmProvider?.id ?? activeLlmProviders[0]?.id;
-    if (!llmProviderId) {
+    const llmOption = selectedLlmOption ?? llmModelOptions[0] ?? null;
+    const llmProviderId = llmOption?.provider.id ?? null;
+    const llmModelValueToSend =
+      (selectedLlmModelValue && selectedLlmModelValue.trim().length > 0
+        ? selectedLlmModelValue.trim()
+        : (llmOption?.provider.model ?? "").trim()) || null;
+
+    if (!llmProviderId || !llmModelValueToSend) {
       setSearchError("Нет активных провайдеров LLM.");
       return;
     }
@@ -1188,6 +1267,7 @@ export default function VectorCollectionDetailPage() {
           query: sanitizedQuery,
           embeddingProviderId,
           llmProviderId,
+          llmModel: llmModelValueToSend,
           limit: safeLimit,
           contextLimit: safeContextLimit,
         },
@@ -1201,6 +1281,14 @@ export default function VectorCollectionDetailPage() {
       const mapped = (data.context ?? []).map((entry) => mapGenerativePoint(entry));
       const scores = buildScoreMap(mapped);
 
+      const providerDisplayName = llmOption
+        ? `${llmOption.provider.name} · ${llmOption.model.label}`
+        : data.provider
+          ? `${data.provider.name}${data.provider.modelLabel ? ` · ${data.provider.modelLabel}` : ""}`
+          : undefined;
+
+      const modelLabel = llmOption?.model.label ?? data.provider?.modelLabel ?? null;
+
       setActiveSearch({
         mode: "generative",
         description: `Генеративный ответ на запрос «${sanitizedQuery}»`,
@@ -1210,7 +1298,8 @@ export default function VectorCollectionDetailPage() {
         usageTokens: data.usage?.embeddingTokens ?? null,
         llmUsageTokens: data.usage?.llmTokens ?? null,
         providerName: selectedProvider?.name ?? data.embeddingProvider?.name,
-        llmProviderName: selectedLlmProvider?.name ?? data.provider?.name,
+        llmProviderName: providerDisplayName ?? undefined,
+        llmModelLabel: modelLabel ?? undefined,
         answer: data.answer,
         queryVectorPreview: data.queryVector ? formatVectorPreview(data.queryVector) : undefined,
         limit: safeLimit,
@@ -1234,8 +1323,9 @@ export default function VectorCollectionDetailPage() {
     collectionName,
     selectedProvider,
     matchingProviders,
-    selectedLlmProvider,
-    activeLlmProviders,
+    selectedLlmOption,
+    llmModelOptions,
+    selectedLlmModelValue,
     textQuery,
     generativeLimit,
     llmContextLimit,
@@ -1564,8 +1654,8 @@ export default function VectorCollectionDetailPage() {
 
         <div className="mt-4 space-y-4">
           <div className="flex w-full flex-col gap-3 md:flex-row md:items-start md:gap-4">
-            <div className="flex w-full flex-col gap-2 md:max-w-xs">
-              <span className="text-xs uppercase text-muted-foreground">Вариант поиска</span>
+            <div className="flex w-full flex-col gap-2 md:w-[220px]">
+              <span className="text-xs uppercase text-muted-foreground">Тип поиска</span>
               <Select
                 value={searchMode}
                 onValueChange={(value) => {
@@ -1573,7 +1663,7 @@ export default function VectorCollectionDetailPage() {
                   setSearchError(null);
                 }}
               >
-                <SelectTrigger className="h-9 w-full min-w-[140px]" aria-label="Вариант поиска">
+                <SelectTrigger className="h-9 w-full md:w-[220px]" aria-label="Тип поиска">
                   <SelectValue placeholder="Выберите режим" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1806,19 +1896,27 @@ export default function VectorCollectionDetailPage() {
                         </div>
                         <div className="space-y-2">
                           <Label className="text-xs uppercase text-muted-foreground">LLM</Label>
-                          {activeLlmProviders.length > 0 ? (
+                          {llmModelOptions.length > 0 ? (
                             <Select
-                              value={selectedLlmProvider?.id ?? activeLlmProviders[0].id}
-                              onValueChange={(value) => setSelectedLlmProviderId(value)}
+                              value={selectedLlmOption?.key ?? llmModelOptions[0].key}
+                              onValueChange={(value) => setSelectedLlmModelKey(value)}
                             >
                               <SelectTrigger className="h-9 w-full">
-                                <SelectValue placeholder="Выберите LLM" />
+                                <SelectValue placeholder="Выберите модель" />
                               </SelectTrigger>
                               <SelectContent>
-                                {activeLlmProviders.map((provider) => (
-                                  <SelectItem key={provider.id} value={provider.id}>
-                                    {provider.name}
-                                  </SelectItem>
+                                {llmModelGroups.map(({ provider, models }) => (
+                                  <SelectGroup key={provider.id}>
+                                    <SelectLabel>{provider.name}</SelectLabel>
+                                    {models.map((model) => {
+                                      const optionKey = `${provider.id}::${model.value}`;
+                                      return (
+                                        <SelectItem key={optionKey} value={optionKey}>
+                                          {model.label}
+                                        </SelectItem>
+                                      );
+                                    })}
+                                  </SelectGroup>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -1831,41 +1929,11 @@ export default function VectorCollectionDetailPage() {
                       </div>
                     </PopoverContent>
                   </Popover>
-                  <Button
-                    type="button"
-                    className="h-9"
-                    onClick={handleGenerativeSearch}
-                    disabled={
-                      searchLoading ||
-                      matchingProviders.length === 0 ||
-                      activeLlmProviders.length === 0 ||
-                      textQuery.trim().length === 0
-                    }
-                  >
-                    {searchLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Сгенерировать ответ
-                  </Button>
                 </div>
-                {generativeSettingsBadges.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {generativeSettingsBadges.map((badge) => (
-                      <Badge key={badge.key} variant="outline" className="h-6 px-2 text-[11px] uppercase">
-                        {badge.label}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
           </div>
-          {searchMode === "generative" && (
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <p>
-                Будет найдено до {generativeLimit.toLocaleString("ru-RU")} записей, из которых LLM получит контекст из{" "}
-                {Math.min(llmContextLimit, generativeLimit).toLocaleString("ru-RU")} лучших.
-              </p>
-            </div>
-          )}
+
           {searchMode === "filter" && (
             <div className="space-y-2.5">
               <div className="flex flex-wrap items-center gap-2 text-xs uppercase text-muted-foreground">
@@ -2122,11 +2190,6 @@ export default function VectorCollectionDetailPage() {
               {activeSearch.providerName && (
                 <Badge variant="secondary" className="bg-primary/10 text-primary">
                   Сервис: {activeSearch.providerName}
-                </Badge>
-              )}
-              {activeSearch.llmProviderName && (
-                <Badge variant="secondary" className="bg-primary/10 text-primary">
-                  LLM: {activeSearch.llmProviderName}
                 </Badge>
               )}
               {typeof activeSearch.vectorLength === "number" && (
