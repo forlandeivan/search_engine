@@ -133,6 +133,93 @@ function pickFirstString(...candidates: Array<unknown>): string | null {
   return null;
 }
 
+function normalizeResponseFormat(
+  value: unknown,
+): RagResponseFormat | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized === "md" || normalized === "markdown") {
+    return "markdown";
+  }
+
+  if (normalized === "html") {
+    return "html";
+  }
+
+  if (normalized === "text" || normalized === "plain") {
+    return "text";
+  }
+
+  return null;
+}
+
+async function resolvePublicCollectionRequest(
+  req: Request,
+  res: Response,
+): Promise<{ site: Site; apiKey: string } | null> {
+  const bodySource: Record<string, unknown> =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? { ...(req.body as Record<string, unknown>) }
+      : {};
+
+  const headerKey = req.headers["x-api-key"];
+  const apiKey = pickFirstString(
+    Array.isArray(headerKey) ? headerKey[0] : headerKey,
+    bodySource.apiKey,
+    req.query.apiKey,
+    req.query.apikey,
+  );
+
+  if (!apiKey) {
+    res.status(401).json({ error: "Укажите X-API-Key в заголовке или apiKey в запросе" });
+    return null;
+  }
+
+  const paramPublicId = typeof req.params?.publicId === "string" ? req.params.publicId : undefined;
+  const publicId = pickFirstString(
+    paramPublicId,
+    bodySource.publicId,
+    bodySource.sitePublicId,
+    req.query.publicId,
+    req.query.sitePublicId,
+    req.query.siteId,
+  );
+
+  if (!publicId) {
+    res.status(400).json({ error: "Для публичного запроса укажите publicId проекта" });
+    return null;
+  }
+
+  const site = await storage.getSiteByPublicId(publicId);
+
+  if (!site) {
+    res.status(404).json({ error: "Коллекция не найдена" });
+    return null;
+  }
+
+  if (site.publicApiKey !== apiKey) {
+    res.status(401).json({ error: "Некорректный API-ключ" });
+    return null;
+  }
+
+  return { site, apiKey };
+}
+
 async function resolveGenerativeWorkspace(
   req: Request,
   res: Response,
@@ -161,32 +248,12 @@ async function resolveGenerativeWorkspace(
     }
   }
 
-  const publicId = pickFirstString(
-    bodySource.publicId,
-    bodySource.sitePublicId,
-    req.query.publicId,
-    req.query.sitePublicId,
-    req.query.siteId,
-  );
-
-  if (!publicId) {
-    res.status(400).json({ error: "Для публичного запроса укажите publicId проекта" });
+  const publicContext = await resolvePublicCollectionRequest(req, res);
+  if (!publicContext) {
     return null;
   }
 
-  const site = await storage.getSiteByPublicId(publicId);
-
-  if (!site) {
-    res.status(404).json({ error: "Коллекция не найдена" });
-    return null;
-  }
-
-  if (site.publicApiKey !== apiKey) {
-    res.status(401).json({ error: "Некорректный API-ключ" });
-    return null;
-  }
-
-  return { workspaceId: site.workspaceId, site, isPublic: true };
+  return { workspaceId: publicContext.site.workspaceId, site: publicContext.site, isPublic: true };
 }
 
 class HttpError extends Error {
@@ -1140,7 +1207,10 @@ type GigachatStreamOptions = {
   selectedModelMeta: LlmModelOption | null;
   limit: number;
   contextLimit: number;
+  responseFormat?: RagResponseFormat;
 };
+
+type RagResponseFormat = "text" | "markdown" | "html";
 
 function sendSseEvent(res: Response, eventName: string, data?: unknown) {
   const body =
@@ -1231,6 +1301,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     selectedModelMeta,
     limit,
     contextLimit,
+    responseFormat,
   } = options;
 
   const streamHeaders = new Headers();
@@ -1251,6 +1322,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
 
   const requestBody = buildLlmRequestBody(provider, query, context, selectedModelValue ?? undefined, {
     stream: true,
+    responseFormat,
   });
 
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -1284,6 +1356,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     vectorLength: embeddingResult.vector.length,
     limit,
     contextLimit,
+    format: responseFormat ?? "text",
   });
 
   let completionResponse: FetchResponse;
@@ -1515,7 +1588,7 @@ function buildLlmRequestBody(
   query: string,
   context: LlmContextRecord[],
   modelOverride?: string,
-  options?: { stream?: boolean },
+  options?: { stream?: boolean; responseFormat?: RagResponseFormat },
 ) {
   const requestConfig = mergeLlmRequestConfig(provider);
   const messages: Array<{ role: string; content: string }> = [];
@@ -1531,12 +1604,23 @@ function buildLlmRequestBody(
     })
     .join("\n\n");
 
+  const responseFormat = options?.responseFormat ?? "text";
+  let formatInstruction = "Ответ верни в виде обычного текста.";
+
+  if (responseFormat === "markdown") {
+    formatInstruction =
+      "Используй Markdown-разметку (заголовки, списки, ссылки) для структурирования ответа. Не добавляй внешний CSS.";
+  } else if (responseFormat === "html") {
+    formatInstruction =
+      "Верни ответ в виде чистого HTML без внешних стилей. Используй семантичные теги <p>, <ul>, <li>, <strong>, <a>.";
+  }
+
   const userParts = [
     `Вопрос: ${query}`,
     context.length > 0
       ? `Контекст:\n${contextText}`
       : "Контекст отсутствует. Если ответ не найден, честно сообщи об этом.",
-    "Сформируй понятный ответ на русском языке, опираясь только на предоставленный контекст. Если ответ не найден, сообщи об этом. Не придумывай фактов.",
+    `Сформируй понятный ответ на русском языке, опираясь только на предоставленный контекст. Если ответ не найден, сообщи об этом. Не придумывай фактов. ${formatInstruction}`.trim(),
   ];
 
   messages.push({ role: "user", content: userParts.join("\n\n") });
@@ -1587,8 +1671,11 @@ async function fetchLlmCompletion(
   query: string,
   context: LlmContextRecord[],
   modelOverride?: string,
+  options?: { responseFormat?: RagResponseFormat },
 ): Promise<LlmCompletionResult> {
-  const requestBody = buildLlmRequestBody(provider, query, context, modelOverride);
+  const requestBody = buildLlmRequestBody(provider, query, context, modelOverride, {
+    responseFormat: options?.responseFormat,
+  });
   const llmHeaders = new Headers();
   llmHeaders.set("Content-Type", "application/json");
   llmHeaders.set("Accept", "application/json");
@@ -2139,6 +2226,21 @@ const generativeSearchPointsSchema = textSearchPointsSchema.extend({
   llmProviderId: z.string().trim().min(1, "Укажите провайдера LLM"),
   llmModel: z.string().trim().min(1, "Укажите модель LLM").optional(),
   contextLimit: z.number().int().positive().max(50).optional(),
+  responseFormat: z.string().optional(),
+});
+
+const publicVectorSearchSchema = searchPointsSchema.extend({
+  collection: z.string().trim().min(1, "Укажите коллекцию Qdrant"),
+});
+
+const publicVectorizeSchema = z.object({
+  text: z.string().trim().min(1, "Текст для векторизации не может быть пустым"),
+  embeddingProviderId: z.string().trim().min(1, "Укажите сервис эмбеддингов"),
+  collection: z.string().trim().min(1, "Укажите коллекцию Qdrant").optional(),
+});
+
+const publicGenerativeSearchSchema = generativeSearchPointsSchema.extend({
+  collection: z.string().trim().min(1, "Укажите коллекцию Qdrant"),
 });
 
 const scrollCollectionSchema = z.object({
@@ -2394,33 +2496,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/public/collections/:publicId/search", async (req, res) => {
     try {
-      const headerKey = req.headers["x-api-key"];
-      const apiKeyCandidates: Array<unknown> = [
-        Array.isArray(headerKey) ? headerKey[0] : headerKey,
-        req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>).apiKey : undefined,
-        req.query.apiKey,
-        req.query.apikey,
-      ];
-
-      const apiKey = apiKeyCandidates.find((value): value is string => typeof value === "string" && value.trim().length > 0);
-
-      if (!apiKey) {
-        return res.status(401).json({ error: "Укажите X-API-Key в заголовке или apiKey в запросе" });
+      const publicContext = await resolvePublicCollectionRequest(req, res);
+      if (!publicContext) {
+        return;
       }
 
-      const site = await storage.getSiteByPublicId(req.params.publicId);
-      if (!site) {
-        return res.status(404).json({ error: "Коллекция не найдена" });
-      }
-
-      if (site.publicApiKey !== apiKey) {
-        return res.status(401).json({ error: "Некорректный API-ключ" });
-      }
+      const { site } = publicContext;
 
       const payloadSource: Record<string, unknown> = {};
       if (req.body && typeof req.body === "object") {
         Object.assign(payloadSource, req.body as Record<string, unknown>);
       }
+
+      delete payloadSource.apiKey;
+      delete payloadSource.publicId;
+      delete payloadSource.sitePublicId;
 
       if (!("query" in payloadSource)) {
         if (typeof req.query.q === "string" && req.query.q.trim()) {
@@ -2540,6 +2630,485 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.error("Ошибка публичного поиска:", error);
       res.status(500).json({ error: "Не удалось выполнить поиск" });
+    }
+  });
+
+  app.post("/api/public/collections/:publicId/search/vector", async (req, res) => {
+    try {
+      const publicContext = await resolvePublicCollectionRequest(req, res);
+      if (!publicContext) {
+        return;
+      }
+
+      const { site } = publicContext;
+      const body = publicVectorSearchSchema.parse(req.body);
+      const { collection, ...searchOptions } = body;
+
+      const collectionName = collection.trim();
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== site.workspaceId) {
+        return res.status(404).json({ error: "Коллекция не найдена" });
+      }
+
+      const client = getQdrantClient();
+      const searchPayload: Parameters<QdrantClient["search"]>[1] = {
+        vector: searchOptions.vector as Schemas["NamedVectorStruct"],
+        limit: searchOptions.limit,
+      };
+
+      if (searchOptions.offset !== undefined) {
+        searchPayload.offset = searchOptions.offset;
+      }
+
+      if (searchOptions.filter !== undefined) {
+        searchPayload.filter = searchOptions.filter as Parameters<QdrantClient["search"]>[1]["filter"];
+      }
+
+      if (searchOptions.params !== undefined) {
+        searchPayload.params = searchOptions.params as Parameters<QdrantClient["search"]>[1]["params"];
+      }
+
+      if (searchOptions.withPayload !== undefined) {
+        searchPayload.with_payload = searchOptions.withPayload as Parameters<
+          QdrantClient["search"]
+        >[1]["with_payload"];
+      }
+
+      if (searchOptions.withVector !== undefined) {
+        searchPayload.with_vector = searchOptions.withVector as Parameters<
+          QdrantClient["search"]
+        >[1]["with_vector"];
+      }
+
+      if (searchOptions.scoreThreshold !== undefined) {
+        searchPayload.score_threshold = searchOptions.scoreThreshold;
+      }
+
+      if (searchOptions.shardKey !== undefined) {
+        searchPayload.shard_key = searchOptions.shardKey as Parameters<QdrantClient["search"]>[1]["shard_key"];
+      }
+
+      if (searchOptions.consistency !== undefined) {
+        searchPayload.consistency = searchOptions.consistency;
+      }
+
+      if (searchOptions.timeout !== undefined) {
+        searchPayload.timeout = searchOptions.timeout;
+      }
+
+      const results = await client.search(collectionName, searchPayload);
+
+      res.json({ collection: collectionName, results });
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные параметры поиска",
+          details: error.errors,
+        });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error(
+          `Ошибка Qdrant при публичном векторном поиске в коллекции ${req.body?.collection ?? "<unknown>"}:`,
+          error,
+        );
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
+        });
+      }
+
+      console.error("Ошибка публичного векторного поиска:", error);
+      res.status(500).json({ error: "Не удалось выполнить векторный поиск" });
+    }
+  });
+
+  app.post("/api/public/collections/:publicId/vectorize", async (req, res) => {
+    try {
+      const publicContext = await resolvePublicCollectionRequest(req, res);
+      if (!publicContext) {
+        return;
+      }
+
+      const { site } = publicContext;
+      const body = publicVectorizeSchema.parse(req.body);
+      const provider = await storage.getEmbeddingProvider(body.embeddingProviderId, site.workspaceId);
+
+      if (!provider) {
+        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+      }
+
+      if (!provider.isActive) {
+        throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+      }
+
+      let collectionVectorSize: number | null = null;
+      let collectionName: string | null = null;
+
+      if (body.collection) {
+        collectionName = body.collection.trim();
+        if (collectionName.length === 0) {
+          collectionName = null;
+        }
+      }
+
+      if (collectionName) {
+        const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+        if (!ownerWorkspaceId || ownerWorkspaceId !== site.workspaceId) {
+          return res.status(404).json({ error: "Коллекция не найдена" });
+        }
+
+        try {
+          const client = getQdrantClient();
+          const info = await client.getCollection(collectionName);
+          const vectorsConfig = info.config?.params?.vectors as
+            | { size?: number | null }
+            | undefined;
+          collectionVectorSize = vectorsConfig?.size ?? null;
+        } catch (error) {
+          const qdrantError = extractQdrantApiError(error);
+          if (qdrantError) {
+            return res.status(qdrantError.status).json({
+              error: qdrantError.message,
+              details: qdrantError.details,
+            });
+          }
+
+          throw error;
+        }
+      }
+
+      const accessToken = await fetchAccessToken(provider);
+      const embeddingResult = await fetchEmbeddingVector(provider, accessToken, body.text);
+
+      if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
+        throw new HttpError(
+          400,
+          `Полученный вектор имеет длину ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+        );
+      }
+
+      res.json({
+        vector: embeddingResult.vector,
+        vectorLength: embeddingResult.vector.length,
+        embeddingId: embeddingResult.embeddingId ?? null,
+        usage: { embeddingTokens: embeddingResult.usageTokens ?? null },
+        embeddingProvider: {
+          id: provider.id,
+          name: provider.name,
+          model: provider.model,
+        },
+        collection: collectionName
+          ? {
+              name: collectionName,
+              vectorSize: collectionVectorSize,
+            }
+          : null,
+      });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({
+          error: error.message,
+          details: error.details,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные параметры векторизации",
+          details: error.errors,
+        });
+      }
+
+      console.error("Ошибка публичной векторизации текста:", error);
+      res.status(500).json({ error: "Не удалось выполнить векторизацию" });
+    }
+  });
+
+  app.post("/api/public/collections/:publicId/search/rag", async (req, res) => {
+    let collectionName = "";
+    try {
+      const publicContext = await resolvePublicCollectionRequest(req, res);
+      if (!publicContext) {
+        return;
+      }
+
+      const { site } = publicContext;
+
+      const payloadSource: Record<string, unknown> =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+          ? { ...(req.body as Record<string, unknown>) }
+          : {};
+
+      delete payloadSource.apiKey;
+      delete payloadSource.publicId;
+      delete payloadSource.sitePublicId;
+
+      if (!("collection" in payloadSource) && typeof req.query.collection === "string") {
+        const candidate = req.query.collection.trim();
+        if (candidate) {
+          payloadSource.collection = candidate;
+        }
+      }
+
+      if (!("responseFormat" in payloadSource) && typeof req.query.format === "string") {
+        const candidate = req.query.format.trim();
+        if (candidate) {
+          payloadSource.responseFormat = candidate;
+        }
+      }
+
+      const body = publicGenerativeSearchSchema.parse(payloadSource);
+      collectionName = body.collection.trim();
+
+      const responseFormatCandidate = normalizeResponseFormat(body.responseFormat);
+      if (responseFormatCandidate === null) {
+        return res.status(400).json({
+          error: "Некорректный формат ответа",
+          details: "Поддерживаются значения text, md/markdown или html",
+        });
+      }
+
+      const responseFormat: RagResponseFormat = responseFormatCandidate ?? "text";
+
+      const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+      if (!ownerWorkspaceId || ownerWorkspaceId !== site.workspaceId) {
+        return res.status(404).json({ error: "Коллекция не найдена" });
+      }
+
+      const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, site.workspaceId);
+      if (!embeddingProvider) {
+        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+      }
+
+      if (!embeddingProvider.isActive) {
+        throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+      }
+
+      const llmProvider = await storage.getLlmProvider(body.llmProviderId, site.workspaceId);
+      if (!llmProvider) {
+        return res.status(404).json({ error: "Провайдер LLM не найден" });
+      }
+
+      if (!llmProvider.isActive) {
+        throw new HttpError(400, "Выбранный провайдер LLM отключён");
+      }
+
+      const sanitizedModels = sanitizeLlmModelOptions(llmProvider.availableModels);
+      const requestedModel = typeof body.llmModel === "string" ? body.llmModel.trim() : "";
+      const normalizedModelFromList =
+        sanitizedModels.find((model) => model.value === requestedModel)?.value ??
+        sanitizedModels.find((model) => model.label === requestedModel)?.value ??
+        null;
+      const selectedModelValue =
+        (normalizedModelFromList && normalizedModelFromList.trim().length > 0
+          ? normalizedModelFromList.trim()
+          : undefined) ??
+        (requestedModel.length > 0 ? requestedModel : undefined) ??
+        llmProvider.model;
+      const selectedModelMeta =
+        sanitizedModels.find((model) => model.value === selectedModelValue) ?? null;
+
+      const client = getQdrantClient();
+      const collectionInfo = await client.getCollection(collectionName);
+      const vectorsConfig = collectionInfo.config?.params?.vectors as
+        | { size?: number | null }
+        | undefined;
+      const collectionVectorSize = vectorsConfig?.size ?? null;
+      const providerVectorSize = parseVectorSize(embeddingProvider.qdrantConfig?.vectorSize);
+
+      if (
+        collectionVectorSize &&
+        providerVectorSize &&
+        Number(collectionVectorSize) !== Number(providerVectorSize)
+      ) {
+        throw new HttpError(
+          400,
+          `Размер вектора коллекции (${collectionVectorSize}) не совпадает с настройкой сервиса (${providerVectorSize}).`,
+        );
+      }
+
+      const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
+      const embeddingResult = await fetchEmbeddingVector(embeddingProvider, embeddingAccessToken, body.query);
+
+      if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
+        throw new HttpError(
+          400,
+          `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+        );
+      }
+
+      const searchPayload: Parameters<QdrantClient["search"]>[1] = {
+        vector: embeddingResult.vector as unknown as Schemas["NamedVectorStruct"],
+        limit: body.limit,
+      };
+
+      if (body.offset !== undefined) {
+        searchPayload.offset = body.offset;
+      }
+
+      if (body.filter !== undefined) {
+        searchPayload.filter = body.filter as Parameters<QdrantClient["search"]>[1]["filter"];
+      }
+
+      if (body.params !== undefined) {
+        searchPayload.params = body.params as Parameters<QdrantClient["search"]>[1]["params"];
+      }
+
+      searchPayload.with_payload = (body.withPayload ?? true) as Parameters<QdrantClient["search"]>[1]["with_payload"];
+
+      if (body.withVector !== undefined) {
+        searchPayload.with_vector = body.withVector as Parameters<QdrantClient["search"]>[1]["with_vector"];
+      }
+
+      if (body.scoreThreshold !== undefined) {
+        searchPayload.score_threshold = body.scoreThreshold;
+      }
+
+      if (body.shardKey !== undefined) {
+        searchPayload.shard_key = body.shardKey as Parameters<QdrantClient["search"]>[1]["shard_key"];
+      }
+
+      if (body.consistency !== undefined) {
+        searchPayload.consistency = body.consistency;
+      }
+
+      if (body.timeout !== undefined) {
+        searchPayload.timeout = body.timeout;
+      }
+
+      const results = await client.search(collectionName, searchPayload);
+      const sanitizedResults = results.map((result) => {
+        const payload = result.payload ?? null;
+        return {
+          id: result.id,
+          payload,
+          score: result.score ?? null,
+          shard_key: result.shard_key ?? null,
+          order_value: result.order_value ?? null,
+        };
+      });
+
+      const desiredContext = body.contextLimit ?? sanitizedResults.length;
+      const contextLimit = Math.max(0, Math.min(desiredContext, sanitizedResults.length));
+      const contextRecords: LlmContextRecord[] = sanitizedResults.slice(0, contextLimit).map((entry, index) => {
+        const basePayload = entry.payload;
+        let contextPayload: Record<string, unknown> | null = null;
+
+        if (basePayload && typeof basePayload === "object" && !Array.isArray(basePayload)) {
+          contextPayload = { ...(basePayload as Record<string, unknown>) };
+        } else if (basePayload !== null && basePayload !== undefined) {
+          contextPayload = { value: basePayload };
+        }
+
+        return {
+          index: index + 1,
+          score: typeof entry.score === "number" ? entry.score : null,
+          payload: contextPayload,
+        } satisfies LlmContextRecord;
+      });
+
+      const llmAccessToken = await fetchAccessToken(llmProvider);
+      const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
+      const wantsStreamingResponse =
+        llmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
+
+      if (wantsStreamingResponse) {
+        await streamGigachatCompletion({
+          req,
+          res,
+          provider: llmProvider,
+          accessToken: llmAccessToken,
+          query: body.query,
+          context: contextRecords,
+          sanitizedResults,
+          embeddingResult,
+          embeddingProvider,
+          selectedModelValue,
+          selectedModelMeta,
+          limit: body.limit,
+          contextLimit,
+          responseFormat,
+        });
+        return;
+      }
+
+      const completion = await fetchLlmCompletion(
+        llmProvider,
+        llmAccessToken,
+        body.query,
+        contextRecords,
+        selectedModelValue,
+        { responseFormat },
+      );
+
+      res.json({
+        answer: completion.answer,
+        format: responseFormat,
+        usage: {
+          embeddingTokens: embeddingResult.usageTokens ?? null,
+          llmTokens: completion.usageTokens ?? null,
+        },
+        provider: {
+          id: llmProvider.id,
+          name: llmProvider.name,
+          model: selectedModelValue,
+          modelLabel: selectedModelMeta?.label ?? selectedModelValue,
+        },
+        embeddingProvider: {
+          id: embeddingProvider.id,
+          name: embeddingProvider.name,
+        },
+        collection: collectionName,
+        context: sanitizedResults,
+        queryVector: embeddingResult.vector,
+        vectorLength: embeddingResult.vector.length,
+      });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({
+          error: error.message,
+          details: error.details,
+        });
+      }
+
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({
+          error: "Qdrant не настроен",
+          details: error.message,
+        });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          error: "Некорректные параметры генеративного поиска",
+          details: error.errors,
+        });
+      }
+
+      const qdrantError = extractQdrantApiError(error);
+      if (qdrantError) {
+        console.error(
+          `Ошибка Qdrant при публичном генеративном поиске в коллекции ${collectionName}:`,
+          error,
+        );
+        return res.status(qdrantError.status).json({
+          error: qdrantError.message,
+          details: qdrantError.details,
+        });
+      }
+
+      console.error("Ошибка публичного RAG-поиска:", error);
+      res.status(500).json({ error: "Не удалось получить ответ от LLM" });
     }
   });
 
@@ -4539,6 +5108,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete payloadSource.sitePublicId;
 
       const body = generativeSearchPointsSchema.parse(payloadSource);
+      const responseFormatCandidate = normalizeResponseFormat(body.responseFormat);
+      if (responseFormatCandidate === null) {
+        return res.status(400).json({
+          error: "Некорректный формат ответа",
+          details: "Поддерживаются значения text, md/markdown или html",
+        });
+      }
+
+      const responseFormat: RagResponseFormat = responseFormatCandidate ?? "text";
       const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
 
       if (!embeddingProvider) {
@@ -4697,6 +5275,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           selectedModelMeta,
           limit: body.limit,
           contextLimit,
+          responseFormat,
         });
         return;
       }
@@ -4707,10 +5286,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         body.query,
         contextRecords,
         selectedModelValue,
+        { responseFormat },
       );
 
       res.json({
         answer: completion.answer,
+        format: responseFormat,
         usage: {
           embeddingTokens: embeddingResult.usageTokens ?? null,
           llmTokens: completion.usageTokens ?? null,
