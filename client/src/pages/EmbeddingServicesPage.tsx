@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { MouseEvent, useEffect, useMemo, useState } from "react";
 import { useForm, type FieldPath } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -59,7 +59,7 @@ const defaultRequestHeaders: Record<string, string> = {};
 
 const formatBoolean = (value: boolean) => (value ? "да" : "нет");
 
-const buildCopySuccessMessage = (id: string) => `Идентификатор ${id} скопирован`;
+const buildCopyDescription = (label: string, value: string) => `${label} «${value}» скопирован в буфер обмена.`;
 
 type DebugStage = "token-request" | "token-response" | "embedding-request" | "embedding-response";
 
@@ -487,15 +487,15 @@ export default function EmbeddingServicesPage() {
 
   const hasActiveDebugSteps = debugSteps.some((step) => step.status !== "idle");
 
-  const handleCopyId = async (id: string) => {
+  const handleCopyValue = async (value: string, label: string) => {
     try {
-      await navigator.clipboard.writeText(id);
-      toast({ title: "Скопировано", description: buildCopySuccessMessage(id) });
+      await navigator.clipboard.writeText(value);
+      toast({ title: "Скопировано", description: buildCopyDescription(label, value) });
     } catch (error) {
-      console.error("Не удалось скопировать embeddingProviderId", error);
+      console.error("Не удалось скопировать значение", error);
       toast({
         title: "Не удалось скопировать",
-        description: "Попробуйте вручную выделить и скопировать идентификатор.",
+        description: "Попробуйте вручную выделить и скопировать значение.",
         variant: "destructive",
       });
     }
@@ -581,18 +581,29 @@ export default function EmbeddingServicesPage() {
                           OAuth: {provider.tokenUrl}
                         </Badge>
                       </div>
-
-                      <div className="mt-3">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 text-[11px] font-medium uppercase text-primary"
-                          onClick={(event) => {
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        <Badge
+                          variant="outline"
+                          onClick={(event: MouseEvent<HTMLDivElement>) => {
                             event.stopPropagation();
-                            void handleCopyId(provider.id);
+                            void handleCopyValue(provider.id, "embeddingProviderId");
                           }}
+                          className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
                         >
                           <Copy className="h-3.5 w-3.5" /> embeddingProviderId: {provider.id}
-                        </button>
+                        </Badge>
+                        {provider.model ? (
+                          <Badge
+                            variant="outline"
+                            onClick={(event: MouseEvent<HTMLDivElement>) => {
+                              event.stopPropagation();
+                              void handleCopyValue(provider.model, "Модель эмбеддингов");
+                            }}
+                            className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
+                          >
+                            <Copy className="h-3.5 w-3.5" /> model: {provider.model}
+                          </Badge>
+                        ) : null}
                       </div>
                     </button>
                   );
@@ -610,6 +621,26 @@ export default function EmbeddingServicesPage() {
                 ? "Обновите ключи доступа, модель эмбеддингов и дополнительные параметры."
                 : "Выберите сервис слева, чтобы изменить его настройки."}
             </CardDescription>
+            {selectedProvider ? (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <Badge
+                  variant="outline"
+                  onClick={() => void handleCopyValue(selectedProvider.id, "embeddingProviderId")}
+                  className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
+                >
+                  <Copy className="h-3.5 w-3.5" /> embeddingProviderId: {selectedProvider.id}
+                </Badge>
+                {selectedProvider.model ? (
+                  <Badge
+                    variant="outline"
+                    onClick={() => void handleCopyValue(selectedProvider.model, "Модель эмбеддингов")}
+                    className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
+                  >
+                    <Copy className="h-3.5 w-3.5" /> model: {selectedProvider.model}
+                  </Badge>
+                ) : null}
+              </div>
+            ) : null}
           </CardHeader>
           <CardContent>
             <Form {...form}>
