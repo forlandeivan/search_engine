@@ -1,10 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm, type FieldPath } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  Sparkles,
+  Loader2,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  ShieldCheck,
+  Copy,
+} from "lucide-react";
 
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 import {
   Card,
@@ -13,18 +23,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
   Form,
+  FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
-  FormControl,
-  FormDescription,
   FormMessage,
 } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -34,15 +44,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import {
   embeddingProviderTypes,
-  insertEmbeddingProviderSchema,
   type PublicEmbeddingProvider,
+  type UpdateEmbeddingProvider,
 } from "@shared/schema";
 
-import { AlertCircle, Eye, EyeOff, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+const requestHeadersSchema = z.record(z.string());
+
+const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
+
+const defaultRequestHeaders: Record<string, string> = {};
+
+const formatBoolean = (value: boolean) => (value ? "да" : "нет");
+
+const buildCopySuccessMessage = (id: string) => `Идентификатор ${id} скопирован`;
 
 type DebugStage = "token-request" | "token-response" | "embedding-request" | "embedding-response";
 
@@ -70,28 +87,55 @@ type TestCredentialsError = Error & {
   steps?: TestCredentialsDebugStep[];
 };
 
+type ProvidersResponse = { providers: PublicEmbeddingProvider[] };
+
+type UpdateEmbeddingProviderVariables = {
+  id: string;
+  payload: UpdateEmbeddingProvider;
+  formattedRequestHeaders: string;
+};
+
+type FormValues = {
+  providerType: (typeof embeddingProviderTypes)[number];
+  name: string;
+  description: string;
+  isActive: boolean;
+  tokenUrl: string;
+  embeddingsUrl: string;
+  authorizationKey: string;
+  scope: string;
+  model: string;
+  allowSelfSignedCertificate: boolean;
+  requestHeaders: string;
+};
+
+const emptyFormValues: FormValues = {
+  providerType: "gigachat",
+  name: "",
+  description: "",
+  isActive: false,
+  tokenUrl: "",
+  embeddingsUrl: "",
+  authorizationKey: "",
+  scope: "",
+  model: "",
+  allowSelfSignedCertificate: false,
+  requestHeaders: formatJson(defaultRequestHeaders),
+};
+
 const debugStepDefinitions: Array<Pick<DebugStep, "stage" | "title">> = [
-  {
-    stage: "token-request",
-    title: "Запрос access_token",
-  },
-  {
-    stage: "token-response",
-    title: "Обработка ответа OAuth",
-  },
-  {
-    stage: "embedding-request",
-    title: "Запрос эмбеддингов",
-  },
-  {
-    stage: "embedding-response",
-    title: "Проверка ответа сервиса",
-  },
+  { stage: "token-request", title: "Запрос access_token" },
+  { stage: "token-response", title: "Обработка ответа OAuth" },
+  { stage: "embedding-request", title: "Запрос эмбеддингов" },
+  { stage: "embedding-response", title: "Проверка ответа сервиса" },
 ];
 
 const stageOrder = debugStepDefinitions.map((step) => step.stage);
 
-const buildDebugSteps = (statusByStage?: TestCredentialsDebugStep[], fallbackToError = false): DebugStep[] => {
+const buildDebugSteps = (
+  statusByStage?: TestCredentialsDebugStep[],
+  fallbackToError = false,
+): DebugStep[] => {
   if (!statusByStage || statusByStage.length === 0) {
     return debugStepDefinitions.map((step) => ({
       ...step,
@@ -110,214 +154,198 @@ const buildDebugSteps = (statusByStage?: TestCredentialsDebugStep[], fallbackToE
         ...step,
         status: matched.status,
         detail: matched.detail,
-      } as DebugStep;
+      } satisfies DebugStep;
     }
 
     if (!hasError && index === highestIndex + 1) {
       return {
         ...step,
         status: "pending",
-      } as DebugStep;
+      } satisfies DebugStep;
     }
 
     return {
       ...step,
-      status: "idle",
-    } as DebugStep;
+      status: fallbackToError ? "error" : "idle",
+    } satisfies DebugStep;
   });
 };
 
-type ProvidersResponse = {
-  providers: PublicEmbeddingProvider[];
-};
-
-type EmbeddingProviderPayload = z.input<typeof insertEmbeddingProviderSchema>;
-
-type CreateEmbeddingServiceVariables = {
-  payload: EmbeddingProviderPayload;
-  formattedRequestHeaders: string;
-};
-
-type ToggleEmbeddingServiceVariables = {
-  id: string;
-  isActive: boolean;
-};
-
-type FormValues = {
-  providerType: (typeof embeddingProviderTypes)[number];
-  name: string;
-  description: string;
-  isActive: boolean;
-  tokenUrl: string;
-  embeddingsUrl: string;
-  authorizationKey: string;
-  scope: string;
-  model: string;
-  allowSelfSignedCertificate: boolean;
-  requestHeaders: string;
-};
-
-const requestHeadersSchema = z.record(z.string());
-
-const defaultRequestHeaders: Record<string, string> = {};
-
-const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
-
-const defaultFormValues: FormValues = {
-  providerType: "gigachat",
-  name: "GigaChat Embeddings",
-  description: "",
-  isActive: true,
-  tokenUrl: "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
-  embeddingsUrl: "https://gigachat.devices.sberbank.ru/api/v1/embeddings",
+const mapProviderToFormValues = (provider: PublicEmbeddingProvider): FormValues => ({
+  providerType: provider.providerType,
+  name: provider.name,
+  description: provider.description ?? "",
+  isActive: provider.isActive,
+  tokenUrl: provider.tokenUrl,
+  embeddingsUrl: provider.embeddingsUrl,
   authorizationKey: "",
-  scope: "GIGACHAT_API_PERS",
-  model: "embeddings",
-  allowSelfSignedCertificate: true,
-  requestHeaders: formatJson(defaultRequestHeaders),
-};
-
-const EMBEDDING_FORM_STORAGE_KEY = "embeddingService.formDraft";
-const EMBEDDING_TOKEN_STORAGE_KEY = "embeddingService.authorizationKey";
+  scope: provider.scope,
+  model: provider.model,
+  allowSelfSignedCertificate: provider.allowSelfSignedCertificate ?? false,
+  requestHeaders: formatJson(provider.requestHeaders ?? defaultRequestHeaders),
+});
 
 export default function EmbeddingServicesPage() {
   const { toast } = useToast();
-
-  const form = useForm<FormValues>({
-    defaultValues: defaultFormValues,
-  });
-
-  const hasHydratedStoredValues = useRef(false);
+  const form = useForm<FormValues>({ defaultValues: emptyFormValues });
   const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      hasHydratedStoredValues.current = true;
-      return;
-    }
-
-    let storedFormValues: Partial<Omit<FormValues, "authorizationKey">> | null = null;
-    try {
-      const rawDraft = window.localStorage.getItem(EMBEDDING_FORM_STORAGE_KEY);
-      if (rawDraft) {
-        const parsedDraft = JSON.parse(rawDraft) as unknown;
-        if (parsedDraft && typeof parsedDraft === "object") {
-          storedFormValues = parsedDraft as Partial<Omit<FormValues, "authorizationKey">>;
-        }
-      }
-    } catch (error) {
-      console.error("Не удалось загрузить сохранённые параметры эмбеддингов", error);
-    }
-
-    let storedAuthorizationKey: string | null = null;
-    try {
-      storedAuthorizationKey = window.localStorage.getItem(EMBEDDING_TOKEN_STORAGE_KEY);
-    } catch (error) {
-      console.error("Не удалось загрузить сохранённый Authorization key", error);
-    }
-
-    if (storedFormValues || storedAuthorizationKey !== null) {
-      const nextValues: FormValues = {
-        ...defaultFormValues,
-        ...storedFormValues,
-        authorizationKey:
-          storedAuthorizationKey !== null
-            ? storedAuthorizationKey
-            : defaultFormValues.authorizationKey,
-      };
-
-      form.reset(nextValues);
-    }
-
-    hasHydratedStoredValues.current = true;
-  }, [form]);
-
-  useEffect(() => {
-    const subscription = form.watch((values) => {
-      if (!hasHydratedStoredValues.current || typeof window === "undefined") {
-        return;
-      }
-
-      const { authorizationKey, ...rest } = values;
-
-      try {
-        window.localStorage.setItem(EMBEDDING_FORM_STORAGE_KEY, JSON.stringify(rest));
-      } catch (error) {
-        console.error("Не удалось сохранить параметры эмбеддингов", error);
-      }
-
-      if (authorizationKey !== undefined) {
-        try {
-          window.localStorage.setItem(EMBEDDING_TOKEN_STORAGE_KEY, authorizationKey);
-        } catch (error) {
-          console.error("Не удалось сохранить Authorization key", error);
-        }
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [form]);
-
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [debugSteps, setDebugSteps] = useState<DebugStep[]>(() => buildDebugSteps());
 
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/embedding/services"],
   });
 
-  const createServiceMutation = useMutation<
+  const providers = useMemo(() => providersQuery.data?.providers ?? [], [providersQuery.data]);
+
+  const selectedProvider = useMemo(
+    () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
+    [providers, selectedProviderId],
+  );
+
+  useEffect(() => {
+    if (providers.length === 0) {
+      setSelectedProviderId(null);
+      return;
+    }
+
+    if (selectedProviderId && providers.some((provider) => provider.id === selectedProviderId)) {
+      return;
+    }
+
+    setSelectedProviderId(providers[0].id);
+  }, [providers, selectedProviderId]);
+
+  useEffect(() => {
+    if (selectedProvider) {
+      form.reset(mapProviderToFormValues(selectedProvider));
+      setIsAuthorizationVisible(false);
+      setDebugSteps(buildDebugSteps());
+      return;
+    }
+
+    form.reset(emptyFormValues);
+    setIsAuthorizationVisible(false);
+    setDebugSteps(buildDebugSteps());
+  }, [selectedProvider, form]);
+
+  const updateProviderMutation = useMutation<
     { provider: PublicEmbeddingProvider },
     Error,
-    CreateEmbeddingServiceVariables
+    UpdateEmbeddingProviderVariables
   >({
-    mutationFn: async ({ payload }: CreateEmbeddingServiceVariables) => {
-      const response = await apiRequest("POST", "/api/embedding/services", payload);
+    mutationFn: async ({ id, payload }) => {
+      const response = await apiRequest("PUT", `/api/embedding/services/${id}`, payload);
+      if (!response.ok) {
+        const body = (await response.json()) as { message?: string };
+        throw new Error(body.message ?? "Не удалось обновить сервис эмбеддингов");
+      }
       return (await response.json()) as { provider: PublicEmbeddingProvider };
     },
-    onSuccess: (_data, variables) => {
+    onSuccess: ({ provider }, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/embedding/services"] });
       toast({
-        title: "Сервис сохранён",
-        description: "Настройки подключения к эмбеддингам успешно добавлены.",
+        title: "Изменения сохранены",
+        description: "Настройки сервиса эмбеддингов обновлены.",
       });
 
-      const currentValues = form.getValues();
-
-      form.reset({
-        ...currentValues,
-        description: "",
-        authorizationKey: currentValues.authorizationKey,
+      const updatedValues = {
+        ...mapProviderToFormValues(provider),
         requestHeaders: variables.formattedRequestHeaders,
-      });
+      } satisfies FormValues;
+
+      form.reset(updatedValues);
+      setIsAuthorizationVisible(false);
     },
-    onError: (error: Error) => {
+    onError: (error) => {
       toast({
-        title: "Не удалось сохранить сервис",
+        title: "Не удалось сохранить изменения",
         description: error.message,
         variant: "destructive",
       });
     },
   });
 
-  const toggleServiceMutation = useMutation<
-    { provider: PublicEmbeddingProvider },
-    Error,
-    ToggleEmbeddingServiceVariables
-  >({
-    mutationFn: async ({ id, isActive }: ToggleEmbeddingServiceVariables) => {
-      const response = await apiRequest("PUT", `/api/embedding/services/${id}`, { isActive });
-      return (await response.json()) as { provider: PublicEmbeddingProvider };
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/embedding/services"] });
-      toast({ title: "Статус сервиса обновлён" });
-    },
-    onError: (error: Error) => {
+  const parseJsonField = <T,>(
+    value: string,
+    schema: z.ZodType<T>,
+    field: FieldPath<FormValues>,
+    errorMessage: string,
+    allowEmptyObject = true,
+  ): T => {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      if (allowEmptyObject) {
+        return schema.parse({});
+      }
+
+      form.setError(field, { type: "manual", message: errorMessage });
+      throw new Error(errorMessage);
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return schema.parse(parsed);
+    } catch (error) {
+      form.setError(field, { type: "manual", message: errorMessage });
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  };
+
+  const handleUpdate = form.handleSubmit((values) => {
+    if (!selectedProvider) {
       toast({
-        title: "Не удалось изменить статус",
-        description: error.message,
+        title: "Не выбран сервис",
+        description: "Выберите сервис эмбеддингов слева, чтобы изменить его настройки.",
         variant: "destructive",
       });
-    },
+      return;
+    }
+
+    form.clearErrors();
+
+    try {
+      const requestHeaders = parseJsonField(
+        values.requestHeaders,
+        requestHeadersSchema,
+        "requestHeaders",
+        "Укажите заголовки запроса в формате JSON",
+      );
+
+      const trimmedAuthorizationKey = values.authorizationKey.trim();
+
+      const payload: UpdateEmbeddingProvider = {
+        providerType: values.providerType,
+        name: values.name.trim(),
+        description: values.description.trim() ? values.description.trim() : undefined,
+        isActive: values.isActive,
+        tokenUrl: values.tokenUrl.trim(),
+        embeddingsUrl: values.embeddingsUrl.trim(),
+        scope: values.scope.trim(),
+        model: values.model.trim(),
+        allowSelfSignedCertificate: values.allowSelfSignedCertificate,
+        requestHeaders,
+      } satisfies UpdateEmbeddingProvider;
+
+      if (trimmedAuthorizationKey.length > 0) {
+        payload.authorizationKey = trimmedAuthorizationKey;
+      }
+
+      const formattedRequestHeaders = formatJson(requestHeaders);
+
+      updateProviderMutation.mutate({
+        id: selectedProvider.id,
+        payload,
+        formattedRequestHeaders,
+      });
+    } catch (error) {
+      toast({
+        title: "Не удалось подготовить данные",
+        description: error instanceof Error ? error.message : "Исправьте ошибки и попробуйте снова.",
+        variant: "destructive",
+      });
+    }
   });
 
   const testCredentialsMutation = useMutation<TestCredentialsResult, TestCredentialsError>({
@@ -366,7 +394,6 @@ export default function EmbeddingServicesPage() {
         requestHeadersSchema,
         "requestHeaders",
         "Укажите заголовки запроса в формате JSON",
-        true,
       );
 
       setDebugSteps(
@@ -436,7 +463,7 @@ export default function EmbeddingServicesPage() {
         : [];
       const message = parsed?.message ?? "Авторизация подтверждена";
       setDebugSteps(buildDebugSteps(steps));
-      return { message, steps };
+      return { message, steps } satisfies TestCredentialsResult;
     },
     onSuccess: (result) => {
       toast({
@@ -458,443 +485,444 @@ export default function EmbeddingServicesPage() {
     },
   });
 
-  const providers = providersQuery.data?.providers ?? [];
-
-  const totalActive = useMemo(
-    () => providers.filter((provider) => provider.isActive).length,
-    [providers],
-  );
-
   const hasActiveDebugSteps = debugSteps.some((step) => step.status !== "idle");
 
-  const parseJsonField = <T,>(
-    value: string,
-    schema: z.ZodType<T>,
-    field: FieldPath<FormValues>,
-    errorMessage: string,
-    allowEmptyObject = false,
-  ): T => {
-    const trimmed = value.trim();
-
-    let parsed: unknown = {};
-
-    if (!trimmed) {
-      if (!allowEmptyObject) {
-        form.setError(field, {
-          type: "manual",
-          message: errorMessage,
-        });
-        throw new Error(errorMessage);
-      }
-    } else {
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch (error) {
-        form.setError(field, {
-          type: "manual",
-          message: "Неверный формат JSON",
-        });
-        throw error instanceof Error ? error : new Error(String(error));
-      }
-    }
-
+  const handleCopyId = async (id: string) => {
     try {
-      return schema.parse(parsed);
+      await navigator.clipboard.writeText(id);
+      toast({ title: "Скопировано", description: buildCopySuccessMessage(id) });
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        form.setError(field, {
-          type: "manual",
-          message: error.issues[0]?.message ?? errorMessage,
-        });
-      } else {
-        form.setError(field, {
-          type: "manual",
-          message: errorMessage,
-        });
-      }
-      throw error instanceof Error ? error : new Error(String(error));
-    }
-  };
-
-  const handleCreate = form.handleSubmit((values) => {
-    form.clearErrors();
-
-    try {
-      const requestHeaders = parseJsonField(
-        values.requestHeaders,
-        requestHeadersSchema,
-        "requestHeaders",
-        "Укажите заголовки запроса в формате JSON",
-        true,
-      ) as z.infer<typeof requestHeadersSchema>;
-
-      const payload: EmbeddingProviderPayload = {
-        providerType: values.providerType,
-        name: values.name.trim(),
-        description: values.description.trim() ? values.description.trim() : undefined,
-        isActive: values.isActive,
-        tokenUrl: values.tokenUrl.trim(),
-        embeddingsUrl: values.embeddingsUrl.trim(),
-        authorizationKey: values.authorizationKey.trim(),
-        scope: values.scope.trim(),
-        model: values.model.trim(),
-        allowSelfSignedCertificate: values.allowSelfSignedCertificate,
-      };
-
-      if (Object.keys(requestHeaders).length > 0) {
-        payload.requestHeaders = requestHeaders;
-      }
-
-      const formattedRequestHeaders = formatJson(requestHeaders);
-
-      createServiceMutation.mutate({ payload, formattedRequestHeaders });
-    } catch (_error) {
+      console.error("Не удалось скопировать embeddingProviderId", error);
       toast({
-        title: "Не удалось подготовить данные",
-        description: "Исправьте ошибки в форме и попробуйте снова.",
+        title: "Не удалось скопировать",
+        description: "Попробуйте вручную выделить и скопировать идентификатор.",
         variant: "destructive",
       });
     }
-  });
+  };
 
   return (
     <div className="space-y-6 p-6">
-      <div className="space-y-2">
-        <h1 className="text-2xl font-semibold">Эмбеддинги</h1>
+      <div className="space-y-1">
+        <h1 className="flex items-center gap-2 text-2xl font-semibold">
+          <Sparkles className="h-5 w-5 text-primary" /> Управление эмбеддингами
+        </h1>
         <p className="text-muted-foreground max-w-3xl">
-          Настройте сервисы преобразования текста в вектора, чтобы использовать внешний API для наполнения коллекций
-          Qdrant. Первый преднастроенный сценарий рассчитан на подключение GigaChat Embeddings от СберБанка.
+          Выберите подключённый сервис и настройте ключи, модель и дополнительные заголовки. Добавление новых сервисов
+          выполняется программно, здесь доступны только правки существующих конфигураций.
         </p>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.9fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <Card className="h-fit">
+          <CardHeader className="pb-4">
+            <CardTitle>Сервисы эмбеддингов</CardTitle>
+            <CardDescription>Выберите сервис, чтобы изменить его параметры.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {providersQuery.isLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Загружаем список сервисов...
+              </div>
+            ) : providersQuery.isError ? (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+                {(providersQuery.error as Error).message ?? "Не удалось загрузить сервисы"}
+              </div>
+            ) : providers.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                Сервисы ещё не настроены. Обратитесь к администратору.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {providers.map((provider) => {
+                  const isSelected = provider.id === selectedProviderId;
+
+                  return (
+                    <button
+                      key={provider.id}
+                      type="button"
+                      onClick={() => setSelectedProviderId(provider.id)}
+                      className={cn(
+                        "w-full rounded-lg border px-4 py-3 text-left transition",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                        isSelected
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border bg-background hover:border-primary/60 hover:shadow-sm",
+                        !provider.isActive && "opacity-90",
+                      )}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-foreground">{provider.name}</span>
+                            <Badge variant="outline" className="text-[11px] uppercase">
+                              {provider.providerType}
+                            </Badge>
+                            <Badge variant={provider.isActive ? "default" : "secondary"}>
+                              {provider.isActive ? "Активен" : "Отключён"}
+                            </Badge>
+                          </div>
+                          {provider.description ? (
+                            <p className="text-xs text-muted-foreground">{provider.description}</p>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-col items-end gap-2 text-xs text-muted-foreground">
+                          <span>Модель: {provider.model}</span>
+                          <span>Token: {formatBoolean(provider.hasAuthorizationKey)}</span>
+                          <span>SSL: {provider.allowSelfSignedCertificate ? "self-signed" : "строгая проверка"}</span>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <Badge variant="outline" className="text-[11px] font-normal">
+                          Scope: {provider.scope}
+                        </Badge>
+                        <Badge variant="outline" className="text-[11px] font-normal">
+                          OAuth: {provider.tokenUrl}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-[11px] font-medium uppercase text-primary"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleCopyId(provider.id);
+                          }}
+                        >
+                          <Copy className="h-3.5 w-3.5" /> embeddingProviderId: {provider.id}
+                        </button>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <Card>
-          <CardHeader>
-            <CardTitle>Новый сервис эмбеддингов</CardTitle>
+          <CardHeader className="pb-4">
+            <CardTitle>{selectedProvider ? selectedProvider.name : "Настройки сервиса"}</CardTitle>
             <CardDescription>
-              Укажите параметры авторизации и подключения к API. Схема обращения к сервису и запись чанков в Qdrant
-              настроены автоматически и подходят для GigaChat Embeddings от СберБанка.
+              {selectedProvider
+                ? "Обновите ключи доступа, модель эмбеддингов и дополнительные параметры."
+                : "Выберите сервис слева, чтобы изменить его настройки."}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Form {...form}>
-              <form onSubmit={handleCreate} className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <FormField
-                    control={form.control}
-                    name="providerType"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Провайдер</FormLabel>
-                        <FormControl>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Выберите провайдера" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {embeddingProviderTypes.map((type) => (
-                                <SelectItem key={type} value={type}>
-                                  {type === "gigachat" ? "GigaChat" : "Другой сервис"}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </FormControl>
-                        <FormDescription>От выбранного провайдера могут зависеть подсказки и дефолтные значения.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+              <form onSubmit={handleUpdate} className="space-y-6">
+                {!selectedProvider ? (
+                  <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                    Нет доступных сервисов для настройки.
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="providerType"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Провайдер</FormLabel>
+                            <FormControl>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Выберите провайдера" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {embeddingProviderTypes.map((type) => (
+                                    <SelectItem key={type} value={type}>
+                                      {type === "gigachat" ? "GigaChat" : type}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </FormControl>
+                            <FormDescription>Определяет преднастроенные параметры интеграции.</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="name"
-                    rules={{ required: "Название обязательно" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Название сервиса</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="Например, GigaChat Embeddings" required />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <FormField
-                  control={form.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Описание</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          placeholder="Добавьте краткое описание или примечание для коллег"
-                          rows={3}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="isActive"
-                  render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-lg border p-4">
-                      <div className="space-y-1">
-                        <FormLabel className="text-base">Активировать сразу</FormLabel>
-                        <FormDescription>
-                          Если выключить, сервис сохранится в черновиках и не будет использоваться пользователями.
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="allowSelfSignedCertificate"
-                  render={({ field }) => (
-                    <FormItem className="flex items-center justify-between rounded-lg border p-4">
-                      <div className="space-y-1 pr-4">
-                        <FormLabel className="text-base">Доверять самоподписанным сертификатам</FormLabel>
-                        <FormDescription>
-                          Отключает проверку TLS. Используйте только для доверенных провайдеров, например корпоративного API
-                          GigaChat.
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <FormField
-                    control={form.control}
-                    name="tokenUrl"
-                    rules={{ required: "Укажите URL получения токена" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Endpoint для Access Token</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="https://ngw.devices.sberbank.ru:9443/api/v2/oauth" required />
-                        </FormControl>
-                        <FormDescription>
-                          Сервис GigaChat требует предварительный запрос для получения токена доступа.
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="embeddingsUrl"
-                    rules={{ required: "Укажите URL сервиса эмбеддингов" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Endpoint эмбеддингов</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="https://gigachat.devices.sberbank.ru/api/v1/embeddings" required />
-                        </FormControl>
-                        <FormDescription>Именно сюда будет отправляться текст для расчёта векторов.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <div className="grid gap-4">
-                  <FormField
-                    control={form.control}
-                    name="authorizationKey"
-                    rules={{ required: "Укажите Authorization key" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Authorization key</FormLabel>
-                        <FormControl>
-                          <div className="relative">
-                            <Input
-                              {...field}
-                              type={isAuthorizationVisible ? "text" : "password"}
-                              placeholder="Значение заголовка Authorization"
-                              required
-                              autoComplete="new-password"
-                              className="pr-10"
-                            />
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
-                              onClick={() => setIsAuthorizationVisible((previous) => !previous)}
-                              aria-label={
-                                isAuthorizationVisible
-                                  ? "Скрыть Authorization key"
-                                  : "Показать Authorization key"
-                              }
-                            >
-                              {isAuthorizationVisible ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </div>
-                        </FormControl>
-                        <FormDescription>
-                          Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
-                        </FormDescription>
-                        <div className="flex flex-col gap-3 pt-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => testCredentialsMutation.mutate()}
-                              disabled={testCredentialsMutation.isPending}
-                            >
-                              {testCredentialsMutation.isPending ? (
-                                <>
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверяем...
-                                </>
-                              ) : (
-                                <>
-                                  <ShieldCheck className="mr-2 h-4 w-4" /> Проверить авторизацию
-                                </>
-                              )}
-                            </Button>
-                            {testCredentialsMutation.isSuccess && !testCredentialsMutation.isPending ? (
-                              <span className="flex items-center gap-1 text-sm text-emerald-600">
-                                <ShieldCheck className="h-4 w-4" /> {testCredentialsMutation.data?.message}
-                              </span>
-                            ) : null}
-                            {testCredentialsMutation.isError && !testCredentialsMutation.isPending ? (
-                              <span className="flex items-center gap-1 text-sm text-destructive">
-                                <AlertCircle className="h-4 w-4" /> {testCredentialsMutation.error?.message}
-                              </span>
-                            ) : null}
-                          </div>
-
-                          {hasActiveDebugSteps ? (
-                            <div className="rounded-lg border bg-muted/50 p-4">
-                              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                Ход проверки
-                              </p>
-                              <div className="mt-3 space-y-2">
-                                {debugSteps.map((step) => {
-                                  const statusColor =
-                                    step.status === "error"
-                                      ? "text-destructive"
-                                      : step.status === "success"
-                                        ? "text-emerald-600"
-                                        : "text-muted-foreground";
-
-                                  return (
-                                    <div key={step.stage} className="flex items-start gap-2 text-sm">
-                                      {step.status === "pending" ? (
-                                        <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-muted-foreground" />
-                                      ) : step.status === "success" ? (
-                                        <ShieldCheck className="mt-0.5 h-4 w-4 text-emerald-600" />
-                                      ) : step.status === "error" ? (
-                                        <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
-                                      ) : (
-                                        <Sparkles className="mt-0.5 h-4 w-4 text-muted-foreground" />
-                                      )}
-                                      <div className="space-y-1">
-                                        <div className={`font-medium ${statusColor}`}>{step.title}</div>
-                                        {step.detail ? (
-                                          <div className={`text-sm ${statusColor}`}>{step.detail}</div>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                      <FormField
+                        control={form.control}
+                        name="isActive"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                            <div className="space-y-1">
+                              <FormLabel className="text-sm">Статус сервиса</FormLabel>
+                              <FormDescription className="text-xs">
+                                Только активные сервисы доступны в настройках векторизации.
+                              </FormDescription>
                             </div>
-                          ) : null}
-                        </div>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                            <FormControl>
+                              <Switch checked={field.value} onCheckedChange={field.onChange} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <FormField
-                    control={form.control}
-                    name="scope"
-                    rules={{ required: "Укажите scope" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>OAuth scope</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="GIGACHAT_API_PERS" required />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormField
+                        control={form.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Название</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Например, GigaChat Embeddings Prod" required />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="model"
-                    rules={{ required: "Укажите модель" }}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Модель эмбеддингов</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="embeddings" required />
-                        </FormControl>
-                        <FormDescription>Посмотрите актуальные названия моделей в документации провайдера.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                      <FormField
+                        control={form.control}
+                        name="description"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Описание</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Для чего используется этот сервис" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
 
-                <FormField
-                  control={form.control}
-                  name="requestHeaders"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Дополнительные заголовки</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          {...field}
-                          spellCheck={false}
-                          rows={4}
-                          placeholder='{"Accept": "application/json"}'
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        JSON-объект со строковыми значениями. Добавьте заголовки только если они требуются вашим API.
-                        Например, провайдер GigaChat может запросить идентификатор
-                        <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">X-Client-Id</code>.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="tokenUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Endpoint для Access Token</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder="https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+                                required
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              Сервис GigaChat требует предварительный запрос для получения токена доступа.
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="embeddingsUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Endpoint эмбеддингов</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder="https://gigachat.devices.sberbank.ru/api/v1/embeddings"
+                                required
+                              />
+                            </FormControl>
+                            <FormDescription>Именно сюда будет отправляться текст для расчёта векторов.</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <FormField
+                      control={form.control}
+                      name="authorizationKey"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Authorization key</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <Input
+                                {...field}
+                                type={isAuthorizationVisible ? "text" : "password"}
+                                placeholder="Значение заголовка Authorization"
+                                autoComplete="new-password"
+                                className="pr-10"
+                              />
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
+                                onClick={() => setIsAuthorizationVisible((previous) => !previous)}
+                                aria-label={
+                                  isAuthorizationVisible
+                                    ? "Скрыть Authorization key"
+                                    : "Показать Authorization key"
+                                }
+                              >
+                                {isAuthorizationVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                              </Button>
+                            </div>
+                          </FormControl>
+                          <FormDescription>
+                            Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
+                          </FormDescription>
+                          <div className="flex flex-col gap-3 pt-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => testCredentialsMutation.mutate()}
+                                disabled={testCredentialsMutation.isPending}
+                              >
+                                {testCredentialsMutation.isPending ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверяем...
+                                  </>
+                                ) : (
+                                  <>
+                                    <ShieldCheck className="mr-2 h-4 w-4" /> Проверить авторизацию
+                                  </>
+                                )}
+                              </Button>
+                              {testCredentialsMutation.isSuccess && !testCredentialsMutation.isPending ? (
+                                <span className="flex items-center gap-1 text-sm text-emerald-600">
+                                  <ShieldCheck className="h-4 w-4" /> {testCredentialsMutation.data?.message}
+                                </span>
+                              ) : null}
+                              {testCredentialsMutation.isError && !testCredentialsMutation.isPending ? (
+                                <span className="flex items-center gap-1 text-sm text-destructive">
+                                  <AlertCircle className="h-4 w-4" /> {testCredentialsMutation.error?.message}
+                                </span>
+                              ) : null}
+                            </div>
+
+                            {hasActiveDebugSteps ? (
+                              <div className="rounded-lg border bg-muted/50 p-4">
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  Ход проверки
+                                </p>
+                                <div className="mt-3 space-y-2">
+                                  {debugSteps.map((step) => {
+                                    const statusColor =
+                                      step.status === "error"
+                                        ? "text-destructive"
+                                        : step.status === "success"
+                                          ? "text-emerald-600"
+                                          : "text-muted-foreground";
+
+                                    return (
+                                      <div key={step.stage} className="flex items-start gap-2 text-sm">
+                                        {step.status === "pending" ? (
+                                          <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-muted-foreground" />
+                                        ) : step.status === "success" ? (
+                                          <ShieldCheck className="mt-0.5 h-4 w-4 text-emerald-600" />
+                                        ) : step.status === "error" ? (
+                                          <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
+                                        ) : (
+                                          <Sparkles className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                                        )}
+                                        <div className="space-y-1">
+                                          <div className={cn("font-medium", statusColor)}>{step.title}</div>
+                                          {step.detail ? <div className={cn("text-sm", statusColor)}>{step.detail}</div> : null}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="scope"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>OAuth scope</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="GIGACHAT_API_PERS" required />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="model"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Модель эмбеддингов</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="embeddings" required />
+                            </FormControl>
+                            <FormDescription>Посмотрите актуальные названия моделей в документации провайдера.</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <FormField
+                      control={form.control}
+                      name="allowSelfSignedCertificate"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                          <div className="space-y-1">
+                            <FormLabel className="text-sm">Доверять самоподписанным сертификатам</FormLabel>
+                            <FormDescription className="text-xs">
+                              Включите, если сервис размещён во внутреннем контуре с self-signed SSL.
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch checked={field.value} onCheckedChange={field.onChange} />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="requestHeaders"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Дополнительные заголовки</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              {...field}
+                              spellCheck={false}
+                              rows={4}
+                              placeholder='{"Accept": "application/json"}'
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            JSON-объект со строковыми значениями. Добавьте заголовки только если они требуются вашим API.
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
 
                 <div className="flex justify-end">
-                  <Button type="submit" disabled={createServiceMutation.isPending}>
-                    {createServiceMutation.isPending ? (
+                  <Button type="submit" disabled={!selectedProvider || updateProviderMutation.isPending}>
+                    {updateProviderMutation.isPending ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Сохраняем...
                       </>
                     ) : (
-                      "Сохранить сервис"
+                      "Сохранить изменения"
                     )}
                   </Button>
                 </div>
@@ -902,202 +930,7 @@ export default function EmbeddingServicesPage() {
             </Form>
           </CardContent>
         </Card>
-
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-primary" />
-                Схема интеграции с GigaChat
-              </CardTitle>
-              <CardDescription>
-                Последовательность шагов, которые будет выполнять платформа при обращении к сервису эмбеддингов.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm">
-              <ol className="list-decimal space-y-2 pl-5">
-                <li>
-                  Сформировать уникальный идентификатор <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">RqUID</code>
-                  и отправить запрос на получение токена доступа по адресу
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">{defaultFormValues.tokenUrl}</code>.
-                </li>
-                <li>
-                  Передать заголовок <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">Authorization</code> со значением, указанным в поле
-                  Authorization key (например, <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">Basic &lt;token&gt;</code>), и тело запроса
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">scope={defaultFormValues.scope}</code>.
-                </li>
-                <li>
-                  Полученный <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">access_token</code> использовать для обращения к
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">{defaultFormValues.embeddingsUrl}</code> с заголовками
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">Authorization: Bearer &lt;token&gt;</code> и
-                  <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">X-Client-Id</code>.
-                </li>
-                  <li>
-                    Передать текстовую нагрузку в поле
-                    <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">input</code> (массив строк) и указать модель в поле
-                    <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">model</code>.
-                  </li>
-                  <li>
-                    Распарсить ответ и извлечь вектор по пути
-                    <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">data[0].embedding</code>. Полученный массив чисел сохраняется
-                    в коллекцию Qdrant, название которой формируется автоматически на основе проекта.
-                  </li>
-              </ol>
-
-              <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-                Пример тела запроса:
-                <pre className="mt-2 overflow-auto rounded bg-background p-3">
-  {`{
-    "model": "embeddings",
-    "input": ["Здесь размещаем текст чанка"],
-    "encoding_format": "float"
-  }`}
-                </pre>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-primary" />
-                Требования к сохранению данных
-              </CardTitle>
-            </CardHeader>
-              <CardContent className="space-y-3 text-sm text-muted-foreground">
-                <p>
-                  Authorization ключи хранятся в зашифрованном виде на стороне сервера и не отображаются повторно после
-                  сохранения. Проверьте корректность данных до отправки формы.
-                </p>
-                <p>
-                  JSON в поле дополнительных заголовков должен быть валидным. Коллекция и payload для Qdrant формируются
-                  автоматически, дополнительно настраивать их не требуется.
-                </p>
-              </CardContent>
-          </Card>
-        </div>
       </div>
-
-      <Card>
-        <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <CardTitle>Подключённые сервисы</CardTitle>
-            <CardDescription>
-              {providers.length > 0
-                ? `Всего ${providers.length} сервис(ов), активных — ${totalActive}.`
-                : "После сохранения первого сервиса он появится в списке ниже."}
-            </CardDescription>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => providersQuery.refetch()}
-            disabled={providersQuery.isFetching}
-          >
-            {providersQuery.isFetching ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Обновляем...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4" /> Обновить список
-              </>
-            )}
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {providersQuery.isError && (
-            <Alert variant="destructive">
-              <AlertTitle>Не удалось загрузить сервисы</AlertTitle>
-              <AlertDescription>
-                Попробуйте обновить страницу позже. Если ошибка повторяется, проверьте настройки подключения к базе.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {providersQuery.isLoading ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Загружаем список сервисов...
-            </div>
-          ) : providers.length === 0 ? (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-              Пока нет сохранённых сервисов. Добавьте GigaChat или другой провайдер с помощью формы выше.
-            </div>
-          ) : (
-            providers.map((provider) => {
-              const isToggling =
-                toggleServiceMutation.isPending && toggleServiceMutation.variables?.id === provider.id;
-
-              return (
-                <div key={provider.id} className="space-y-3 rounded-lg border p-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-semibold">{provider.name}</h3>
-                        <Badge variant={provider.isActive ? "default" : "secondary"}>
-                          {provider.isActive ? "Активен" : "Выключен"}
-                        </Badge>
-                        <Badge variant="outline">{provider.providerType}</Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        Модель: {provider.model} · Scope: {provider.scope}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm text-muted-foreground">Включить</span>
-                      <Switch
-                        checked={provider.isActive}
-                        onCheckedChange={(checked) =>
-                          toggleServiceMutation.mutate({ id: provider.id, isActive: checked })
-                        }
-                        disabled={isToggling}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 text-sm text-muted-foreground md:grid-cols-2">
-                    <div>
-                      <p className="font-medium text-foreground">OAuth endpoint</p>
-                      <p className="break-all">{provider.tokenUrl}</p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">Endpoint эмбеддингов</p>
-                      <p className="break-all">{provider.embeddingsUrl}</p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">Коллекция Qdrant</p>
-                      <p className="text-sm text-muted-foreground">
-                        Название и структура коллекции формируются автоматически на этапе отправки чанков.
-                      </p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">Статус ключа</p>
-                      <p>{provider.hasAuthorizationKey ? "Ключ сохранён" : "Ключ не задан"}</p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">Проверка TLS</p>
-                      <p>
-                        {provider.allowSelfSignedCertificate
-                          ? "Самоподписанные сертификаты разрешены"
-                          : "Требуется доверенный сертификат"}
-                      </p>
-                    </div>
-                  </div>
-
-                  {provider.description && (
-                    <p className="text-sm text-muted-foreground">{provider.description}</p>
-                  )}
-
-                  <p className="text-xs text-muted-foreground">
-                    Обновлён: {new Date(provider.updatedAt).toLocaleString("ru-RU")}
-                  </p>
-                </div>
-              );
-            })
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
-
