@@ -83,7 +83,7 @@ GET /api/search?q=веб разработка&limit=5&page=1
 {
   "sites": {
     "total": 5,
-    "crawling": 0, 
+    "crawling": 0,
     "completed": 3,
     "failed": 1
   },
@@ -96,8 +96,102 @@ GET /api/search?q=веб разработка&limit=5&page=1
 ### GET /api/sites
 Список всех индексированных сайтов.
 
-### GET /api/pages  
+### GET /api/pages
 Список всех индексированных страниц.
+
+## Публичный RAG-поиск с LLM
+
+> ⚠️ Все публичные векторные endpoints требуют двух значений из настроек сайта: `publicId` (идентификатор проекта) и `publicApiKey`.
+> `publicApiKey` передаётся в заголовке `X-API-Key`, а `publicId` — в пути (`:publicId`) или в параметре `sitePublicId`. Ошибка 401 означает неверный или отсутствующий ключ, 404 — неверный `publicId` либо коллекция не привязана к сайту.
+
+### POST /api/public/collections/:publicId/search/rag
+
+Генеративный RAG-поиск: сервис находит релевантные документы в Qdrant и формирует ответ через выбранную LLM.
+
+**Заголовки:**
+
+- `Content-Type: application/json`
+- `X-API-Key: <publicApiKey из настроек сайта>`
+
+**Параметры пути:**
+
+- `:publicId` — публичный идентификатор сайта (тот же, что в админке или в коде виджета).
+
+**Тело запроса:**
+
+```json
+{
+  "collection": "YOUR_QDRANT_COLLECTION",
+  "query": "Как оформить возврат товара?",
+  "embeddingProviderId": "EMBEDDING_PROVIDER_ID",
+  "llmProviderId": "LLM_PROVIDER_ID",
+  "llmModel": "gpt-4o-mini",          // опционально: переопределяет модель по умолчанию
+  "limit": 6,                           // опционально: количество документов в ответе
+  "contextLimit": 4,                    // опционально: сколько документов попадёт в контекст для LLM (<= limit)
+  "responseFormat": "md"               // text (по умолчанию) | md/markdown | html
+}
+```
+
+**Пример запроса:**
+
+```bash
+curl -X POST "https://ваш-домен.replit.dev/api/public/collections/PROJECT_PUBLIC_ID/search/rag" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: PUBLIC_API_KEY" \
+  -d '{
+    "collection": "support_faq",
+    "query": "Как оформить возврат товара?",
+    "embeddingProviderId": "gigachat-embeddings",
+    "llmProviderId": "gigachat-llm",
+    "llmModel": "GigaChat-Pro",
+    "limit": 5,
+    "contextLimit": 3,
+    "responseFormat": "md"
+  }'
+```
+
+**Пример успешного ответа:**
+
+```json
+{
+  "answer": "### Возврат товара\n\n1. ...",
+  "format": "markdown",
+  "usage": {
+    "embeddingTokens": 120,
+    "llmTokens": 256
+  },
+  "provider": {
+    "id": "gigachat-llm",
+    "name": "GigaChat",
+    "model": "GigaChat-Pro",
+    "modelLabel": "GigaChat-Pro"
+  },
+  "embeddingProvider": {
+    "id": "gigachat-embeddings",
+    "name": "GigaChat"
+  },
+  "collection": "support_faq",
+  "context": [
+    {
+      "id": "point-001",
+      "score": 0.81,
+      "payload": {
+        "title": "Политика возвратов",
+        "url": "https://example.com/refund"
+      }
+    }
+  ],
+  "queryVector": [0.19, -0.04, 0.52, 0.28],
+  "vectorLength": 1536
+}
+```
+
+**Особенности:**
+
+- Если у провайдера LLM включена поддержка SSE-стриминга (например, GigaChat), можно указать заголовок `Accept: text/event-stream`, тогда ответ придёт постепенно.
+- Поле `context` содержит усечённый список документов, который реально попал в контекст LLM (определяется `contextLimit`).
+- Значения `limit` и `contextLimit` ограничены сервером: максимум 100 результатов и 50 контекстных записей.
+- Для генеративного поиска коллекция Qdrant должна принадлежать тому же workspace, что и сайт, иначе вернётся 404.
 
 ## Интеграция с Zero Блоком Тильды
 
