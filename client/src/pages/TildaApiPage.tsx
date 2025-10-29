@@ -6,7 +6,18 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Copy, ExternalLink, Search, Globe, Code2, RefreshCw, Loader2, Database } from "lucide-react";
+import {
+  Copy,
+  ExternalLink,
+  Search,
+  Globe,
+  Code2,
+  RefreshCw,
+  Loader2,
+  Database,
+  Sparkles,
+  ScanText,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
@@ -61,8 +72,15 @@ export default function TildaApiPage() {
   const publicSearchEndpoint = selectedSite
     ? `${publicApiBase}/collections/${selectedSite.publicId}/search`
     : `${publicApiBase}/collections/YOUR_COLLECTION_ID/search`;
-  const vectorExampleCollection = selectedSite?.publicId ?? "COLLECTION_NAME";
-  const vectorSearchEndpoint = `${currentDomain}/api/vector/collections/${vectorExampleCollection}/search`;
+  const publicVectorSearchEndpoint = selectedSite
+    ? `${publicApiBase}/collections/${selectedSite.publicId}/search/vector`
+    : `${publicApiBase}/collections/YOUR_COLLECTION_ID/search/vector`;
+  const publicVectorizeEndpoint = selectedSite
+    ? `${publicApiBase}/collections/${selectedSite.publicId}/vectorize`
+    : `${publicApiBase}/collections/YOUR_COLLECTION_ID/vectorize`;
+  const publicRagEndpoint = selectedSite
+    ? `${publicApiBase}/collections/${selectedSite.publicId}/search/rag`
+    : `${publicApiBase}/collections/YOUR_COLLECTION_ID/search/rag`;
 
   const rotateApiKey = useMutation<{ site: Site; apiKey: string }, Error, string>({
     mutationFn: async (siteId: string) => {
@@ -730,169 +748,50 @@ export default function TildaApiPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Database className="h-5 w-5" />
-                  Векторный поиск по коллекциям
+                  Векторный поиск (готовый вектор)
                 </CardTitle>
                 <CardDescription>
-                  Используйте заранее загруженные эмбеддинги, чтобы находить релевантные документы по близости вектора запроса.
+                  Передайте собственный вектор и получите ближайшие документы из вашей коллекции Qdrant.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-4">
                 <Alert className="border border-muted-foreground/30 bg-muted/40">
-                  <AlertTitle>Авторизация запросов</AlertTitle>
+                  <AlertTitle>Как авторизоваться</AlertTitle>
                   <AlertDescription>
-                    Для доступа к эндпоинту используйте персональный токен из раздела «Профиль». Добавьте заголовок
-                    <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">Authorization: Bearer &lt;ваш_токен&gt;</code>
-                    ко всем запросам векторного поиска и другим приватным API.
+                    В каждом запросе передавайте заголовок <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">X-API-Key</code>
+                    со значением публичного ключа коллекции. В теле запроса укажите поле <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">collection</code>
+                    — это имя коллекции в Qdrant, которое можно посмотреть в разделе «Векторный поиск → Коллекции».
                   </AlertDescription>
                 </Alert>
 
                 <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    Эндпоинт принимает массив чисел такой же размерности, как вектор в выбранной коллекции Qdrant.
-                    Параметр <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">limit</code> играет роль
-                    <strong>topK</strong> — количество ближайших документов, которые нужно вернуть.
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Название коллекции можно посмотреть в разделе «Векторный поиск → Коллекции». По умолчанию пример использует
-                    идентификатор выбранного сайта: <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">{vectorExampleCollection}</code>.
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Поле <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">vector</code> поддерживает плотные массивы,
-                    именованные векторы (<code>{`{ name: "my-vector", vector: [...] }`}</code>) и разреженные структуры
-                    (<code>{`{ indices: [...], values: [...] }`}</code> либо их именованные варианты). Это соответствует форматам Qdrant
-                    для multi-vector и sparse-запросов.
-                  </p>
-                </div>
-
-                <div className="rounded-lg border p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="default">POST</Badge>
-                    <code className="text-sm break-all">/api/vector/collections/{'{collectionName}'}/search</code>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <h4 className="font-semibold">Тело запроса</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="grid grid-cols-1 gap-2 font-medium sm:grid-cols-4">
-                      <span>Поле</span>
-                      <span>Тип</span>
-                      <span>Обязательное</span>
-                      <span>Описание</span>
-                    </div>
-                    <Separator />
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>vector</code>
-                      <span>number[] | NamedVector | SparseVector</span>
-                      <Badge variant="destructive" className="w-fit">Да</Badge>
-                      <span>Вектор запроса. Поддерживаются плотные массивы, именованные и разреженные векторы Qdrant.</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>limit</code>
-                      <span>number</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>TopK — количество ближайших результатов. По умолчанию 10 (максимум 100).</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>offset</code>
-                      <span>number</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Пропустить первые N результатов.</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>filter</code>
-                      <span>Qdrant filter</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Ограничение по payload (например, конкретный сайт, язык или тег).</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>params</code>
-                      <span>Qdrant search params</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Дополнительные настройки запроса (например, hnsw_ef, exact).</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>withPayload</code>
-                      <span>boolean | object</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Управляет возвратом payload в ответе.</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>withVector</code>
-                      <span>boolean | object | string[]</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Вернуть ли исходные векторы документов или конкретные именованные векторы.</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>scoreThreshold</code>
-                      <span>number</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Минимальное значение score, ниже которого результаты отбрасываются.</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>shardKey</code>
-                      <span>string | string[] | object</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Явный выбор шарда при шардированной коллекции.</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>consistency</code>
-                      <span>number | "majority" | "quorum" | "all"</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Уровень согласованности чтения (см. Qdrant API).</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <code>timeout</code>
-                      <span>number</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Таймаут выполнения запроса в секундах.</span>
-                    </div>
-                  </div>
-                </div>
-
-                <Separator />
-
-                <div>
-                  <h4 className="font-semibold mb-2">Пример запроса</h4>
-                  <div className="relative rounded-lg bg-muted p-4">
+                  <h4 className="font-semibold">Endpoint</h4>
+                  <div className="flex items-center gap-2">
+                    <code className="bg-muted rounded px-2 py-1 text-sm break-all flex-1">{publicVectorSearchEndpoint}</code>
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="absolute top-2 right-2"
-                      onClick={() =>
-                        copyToClipboard(
-                          `POST ${vectorSearchEndpoint}\nContent-Type: application/json\n\n{\n  "vector": [0.12, -0.03, 0.87, ...],\n  "limit": 5,\n  "filter": {\n    "must": [\n      {\n        "key": "metadata.siteId",\n        "match": { "value": "${selectedSite?.id ?? "site-123"}" }\n      }\n    ]\n  },\n  "params": { "hnsw_ef": 128 },\n  "scoreThreshold": 0.4,\n  "withPayload": true\n}`,
-                          "Векторный поиск"
-                        )
-                      }
+                      onClick={() => copyToClipboard(publicVectorSearchEndpoint, "Векторный endpoint")}
                     >
                       <Copy className="h-4 w-4" />
                     </Button>
-                    <pre className="text-sm whitespace-pre-wrap break-words">
-{`POST ${vectorSearchEndpoint}
-Content-Type: application/json
+                  </div>
+                </div>
 
-{
-  "vector": [0.12, -0.03, 0.87, ...],
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Пример тела запроса</h4>
+                  <ScrollArea className="bg-muted p-4 rounded-lg h-48">
+                    <pre className="text-xs whitespace-pre-wrap break-words">{`{
+  "collection": "YOUR_QDRANT_COLLECTION",
+  "vector": [0.12, -0.03, 0.87, 0.44, -0.58, 0.91],
   "limit": 5,
-  "filter": {
-    "must": [
-      {
-        "key": "metadata.siteId",
-        "match": { "value": "${selectedSite?.id ?? "site-123"}" }
-      }
-    ]
-  },
-  "params": { "hnsw_ef": 128 },
-  "scoreThreshold": 0.4,
   "withPayload": true
-}`}
-                    </pre>
-                  </div>
+}`}</pre>
+                  </ScrollArea>
                 </div>
 
-                <div>
-                  <h4 className="font-semibold mb-2">Пример ответа</h4>
+                <div className="space-y-2">
+                  <h4 className="font-semibold">cURL для Postman</h4>
                   <div className="relative rounded-lg bg-muted p-4">
                     <Button
                       variant="ghost"
@@ -900,47 +799,220 @@ Content-Type: application/json
                       className="absolute top-2 right-2"
                       onClick={() =>
                         copyToClipboard(
-                          `{
-  "results": [
-    {
-      "id": "point-001",
-      "score": 0.842,
-      "payload": {
-        "title": "FAQ по доставке",
-        "url": "https://example.com/faq/delivery",
-        "metadata": {
-          "siteId": "${selectedSite?.id ?? "site-123"}",
-          "language": "ru"
-        }
-      }
-    }
-  ]
-}`,
-                          "Ответ векторного поиска"
+                          `curl -X POST '${publicVectorSearchEndpoint}' \\\n+  -H 'Content-Type: application/json' \\\n+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\\n+  -d '{\\n    "collection": "YOUR_QDRANT_COLLECTION",\\n    "vector": [0.12, -0.03, 0.87, 0.44, -0.58, 0.91],\\n    "limit": 5,\\n    "withPayload": true\\n  }'`,
+                          "cURL векторный поиск"
                         )
                       }
                     >
                       <Copy className="h-4 w-4" />
                     </Button>
-                    <pre className="text-sm whitespace-pre-wrap break-words">
-{`{
+                    <pre className="text-xs whitespace-pre-wrap break-words">{`curl -X POST '${publicVectorSearchEndpoint}' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \
+  -d '{
+    "collection": "YOUR_QDRANT_COLLECTION",
+    "vector": [0.12, -0.03, 0.87, 0.44, -0.58, 0.91],
+    "limit": 5,
+    "withPayload": true
+  }'`}</pre>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Пример ответа</h4>
+                  <ScrollArea className="bg-muted p-4 rounded-lg h-48">
+                    <pre className="text-xs whitespace-pre-wrap break-words">{`{
+  "collection": "YOUR_QDRANT_COLLECTION",
   "results": [
     {
       "id": "point-001",
       "score": 0.842,
       "payload": {
         "title": "FAQ по доставке",
-        "url": "https://example.com/faq/delivery",
-        "metadata": {
-          "siteId": "${selectedSite?.id ?? "site-123"}",
-          "language": "ru"
-        }
+        "url": "https://example.com/faq/delivery"
       }
     }
   ]
-}`}
-                    </pre>
+}`}</pre>
+                  </ScrollArea>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ScanText className="h-5 w-5" />
+                  Векторизация текста
+                </CardTitle>
+                <CardDescription>
+                  Преобразуйте любой текст в числовой вектор выбранной эмбеддинговой моделью.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Укажите идентификатор сервиса эмбеддингов (<code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">embeddingProviderId</code>)
+                  и сам текст. Поле <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">collection</code> опционально — его можно передать, чтобы
+                  мы проверили совпадение размерности с конкретной коллекцией Qdrant.
+                </p>
+
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Endpoint</h4>
+                  <div className="flex items-center gap-2">
+                    <code className="bg-muted rounded px-2 py-1 text-sm break-all flex-1">{publicVectorizeEndpoint}</code>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => copyToClipboard(publicVectorizeEndpoint, "Endpoint векторизации")}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="font-semibold">cURL для Postman</h4>
+                  <div className="relative rounded-lg bg-muted p-4">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute top-2 right-2"
+                      onClick={() =>
+                        copyToClipboard(
+                          `curl -X POST '${publicVectorizeEndpoint}' \\\n+  -H 'Content-Type: application/json' \\\n+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\\n+  -d '{\\n    "embeddingProviderId": "EMBEDDING_PROVIDER_ID",\\n    "text": "Как оформить возврат товара?",\\n    "collection": "YOUR_QDRANT_COLLECTION"\\n  }'`,
+                          "cURL векторизация"
+                        )
+                      }
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                    <pre className="text-xs whitespace-pre-wrap break-words">{`curl -X POST '${publicVectorizeEndpoint}' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \
+  -d '{
+    "embeddingProviderId": "EMBEDDING_PROVIDER_ID",
+    "text": "Как оформить возврат товара?",
+    "collection": "YOUR_QDRANT_COLLECTION"
+  }'`}</pre>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Пример ответа</h4>
+                  <ScrollArea className="bg-muted p-4 rounded-lg h-48">
+                    <pre className="text-xs whitespace-pre-wrap break-words">{`{
+  "vectorLength": 1536,
+  "vector": [0.08, -0.02, 0.64, 0.11],
+  "embeddingId": null,
+  "usage": { "embeddingTokens": 56 },
+  "embeddingProvider": {
+    "id": "EMBEDDING_PROVIDER_ID",
+    "name": "GigaChat",
+    "model": "gigachat-embeddings"
+  },
+  "collection": {
+    "name": "YOUR_QDRANT_COLLECTION",
+    "vectorSize": 1536
+  }
+}`}</pre>
+                  </ScrollArea>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Sparkles className="h-5 w-5" />
+                  RAG-поиск с LLM
+                </CardTitle>
+                <CardDescription>
+                  Задайте естественный вопрос — сервис сам найдёт контекст в коллекции и сформирует ответ выбранной LLM.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Укажите идентификаторы провайдера эмбеддингов и LLM. Опционально задайте формат ответа через поле
+                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">responseFormat</code>: <strong>md</strong> (Markdown),
+                  <strong>html</strong> или <strong>text</strong>. Параметры <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">limit</code> и
+                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">contextLimit</code> управляют количеством документов в ответе и контексте LLM.
+                </p>
+
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Endpoint</h4>
+                  <div className="flex items-center gap-2">
+                    <code className="bg-muted rounded px-2 py-1 text-sm break-all flex-1">{publicRagEndpoint}</code>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => copyToClipboard(publicRagEndpoint, "Endpoint RAG")}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="font-semibold">cURL для Postman</h4>
+                  <div className="relative rounded-lg bg-muted p-4">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute top-2 right-2"
+                      onClick={() =>
+                        copyToClipboard(
+                          `curl -X POST '${publicRagEndpoint}' \\\n+  -H 'Content-Type: application/json' \\\n+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\\n+  -d '{\\n    "collection": "YOUR_QDRANT_COLLECTION",\\n    "embeddingProviderId": "EMBEDDING_PROVIDER_ID",\\n    "llmProviderId": "LLM_PROVIDER_ID",\\n    "llmModel": "LLM_MODEL",\\n    "query": "Как оформить возврат товара?",\\n    "responseFormat": "md",\\n    "limit": 6,\\n    "contextLimit": 4\\n  }'`,
+                          "cURL RAG"
+                        )
+                      }
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                    <pre className="text-xs whitespace-pre-wrap break-words">{`curl -X POST '${publicRagEndpoint}' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \
+  -d '{
+    "collection": "YOUR_QDRANT_COLLECTION",
+    "embeddingProviderId": "EMBEDDING_PROVIDER_ID",
+    "llmProviderId": "LLM_PROVIDER_ID",
+    "llmModel": "LLM_MODEL",
+    "query": "Как оформить возврат товара?",
+    "responseFormat": "md",
+    "limit": 6,
+    "contextLimit": 4
+  }'`}</pre>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Пример ответа</h4>
+                  <ScrollArea className="bg-muted p-4 rounded-lg h-64">
+                    <pre className="text-xs whitespace-pre-wrap break-words">{`{
+  "answer": "### Возврат товара\n\n- Заполните форму на сайте...",
+  "format": "markdown",
+  "usage": { "embeddingTokens": 120, "llmTokens": 256 },
+  "provider": {
+    "id": "LLM_PROVIDER_ID",
+    "name": "GigaChat",
+    "model": "LLM_MODEL",
+    "modelLabel": "LLM_MODEL"
+  },
+  "embeddingProvider": {
+    "id": "EMBEDDING_PROVIDER_ID",
+    "name": "GigaChat"
+  },
+  "collection": "YOUR_QDRANT_COLLECTION",
+  "context": [
+    {
+      "id": "point-001",
+      "score": 0.81,
+      "payload": { "title": "Политика возвратов", "url": "https://example.com/refund" }
+    }
+  ],
+  "queryVector": [0.19, -0.04, 0.52, 0.28],
+  "vectorLength": 1536
+}`}</pre>
+                  </ScrollArea>
                 </div>
               </CardContent>
             </Card>
