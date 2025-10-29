@@ -38,7 +38,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -522,34 +521,6 @@ export default function VectorCollectionDetailPage() {
   const generativeAnswerTargetRef = useRef("");
   const generativeTypingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleCopyCollectionId = useCallback(async () => {
-    const resolvedId = collection?.name ?? collectionName;
-
-    if (!resolvedId) {
-      toast({
-        title: "Не удалось скопировать",
-        description: "Идентификатор коллекции пока неизвестен.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(resolvedId);
-      toast({
-        title: "ID коллекции скопирован",
-        description: `Идентификатор «${resolvedId}» добавлен в буфер обмена.`,
-      });
-    } catch (error) {
-      console.error("Не удалось скопировать идентификатор коллекции", error);
-      toast({
-        title: "Ошибка копирования",
-        description: "Попробуйте выделить идентификатор вручную и повторите попытку.",
-        variant: "destructive",
-      });
-    }
-  }, [collection?.name, collectionName, toast]);
-
   const stopGenerativeTyping = useCallback(() => {
     if (generativeTypingTimeoutRef.current !== null) {
       clearTimeout(generativeTypingTimeoutRef.current);
@@ -661,6 +632,34 @@ export default function VectorCollectionDetailPage() {
     },
     getNextPageParam: (lastPage) => lastPage.nextPageOffset ?? undefined,
   });
+
+  const handleCopyCollectionId = useCallback(async () => {
+    const resolvedId = collection?.name ?? collectionName;
+
+    if (!resolvedId) {
+      toast({
+        title: "Не удалось скопировать",
+        description: "Идентификатор коллекции пока неизвестен.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(resolvedId);
+      toast({
+        title: "ID коллекции скопирован",
+        description: `Идентификатор «${resolvedId}» добавлен в буфер обмена.`,
+      });
+    } catch (error) {
+      console.error("Не удалось скопировать идентификатор коллекции", error);
+      toast({
+        title: "Ошибка копирования",
+        description: "Попробуйте выделить идентификатор вручную и повторите попытку.",
+        variant: "destructive",
+      });
+    }
+  }, [collection?.name, collectionName, toast]);
 
   const isRefreshing = collectionFetching || pointsFetching;
 
