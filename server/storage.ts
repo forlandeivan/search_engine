@@ -2430,14 +2430,49 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCollectionWorkspace(collectionName: string): Promise<string | null> {
+    const normalized = collectionName.trim();
+    if (!normalized) {
+      return null;
+    }
+
     await ensureWorkspaceVectorCollectionsTable();
 
     const [row] = await this.db
       .select({ workspaceId: workspaceVectorCollections.workspaceId })
       .from(workspaceVectorCollections)
-      .where(eq(workspaceVectorCollections.collectionName, collectionName));
+      .where(eq(workspaceVectorCollections.collectionName, normalized));
 
-    return row?.workspaceId ?? null;
+    if (row?.workspaceId) {
+      return row.workspaceId;
+    }
+
+    await ensureEmbeddingProvidersTable();
+
+    const [fallback] = await this.db
+      .select({
+        workspaceId: embeddingProviders.workspaceId,
+        storedCollectionName: sql<string | null>`NULLIF(btrim(${embeddingProviders.qdrantConfig} ->> 'collectionName'), '')`,
+      })
+      .from(embeddingProviders)
+      .where(sql`btrim(${embeddingProviders.qdrantConfig} ->> 'collectionName') = ${normalized}`)
+      .limit(1);
+
+    const fallbackWorkspaceId = fallback?.storedCollectionName ? fallback.workspaceId : null;
+
+    if (!fallbackWorkspaceId) {
+      return null;
+    }
+
+    try {
+      await this.db
+        .insert(workspaceVectorCollections)
+        .values({ collectionName: normalized, workspaceId: fallbackWorkspaceId })
+        .onConflictDoNothing();
+    } catch (error) {
+      swallowPgError(error, ["23505"]);
+    }
+
+    return fallbackWorkspaceId;
   }
 
   async upsertCollectionWorkspace(collectionName: string, workspaceId: string): Promise<void> {
