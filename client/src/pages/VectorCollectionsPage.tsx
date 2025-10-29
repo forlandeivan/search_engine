@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { MouseEvent, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,6 +41,7 @@ import {
   AlertTriangle,
   CircleSlash,
   Loader2,
+  Copy,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -217,6 +218,26 @@ export default function VectorCollectionsPage() {
   const collections = data?.collections ?? [];
   const isInitialLoading = isLoading && !data;
   const isRefreshing = isFetching || isLoading;
+
+  const handleCopyCollectionId = async (event: MouseEvent<HTMLDivElement>, collectionId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    try {
+      await navigator.clipboard.writeText(collectionId);
+      toast({
+        title: "ID коллекции скопирован",
+        description: `Идентификатор «${collectionId}» добавлен в буфер обмена.`,
+      });
+    } catch (error) {
+      console.error("Не удалось скопировать идентификатор коллекции", error);
+      toast({
+        title: "Ошибка копирования",
+        description: "Попробуйте выделить идентификатор вручную и повторите попытку.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -429,13 +450,22 @@ export default function VectorCollectionsPage() {
                   {collections.map((collection) => (
                     <TableRow key={collection.name}>
                       <TableCell className="font-medium">
-                        <div className="flex flex-col">
+                        <div className="flex flex-col gap-1">
                           <Link
                             href={`/vector/collections/${encodeURIComponent(collection.name)}`}
                             className="text-primary hover:underline"
                           >
                             {collection.name}
                           </Link>
+                          <div className="flex flex-wrap gap-1.5">
+                            <Badge
+                              variant="outline"
+                              onClick={(event) => void handleCopyCollectionId(event, collection.name)}
+                              className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
+                            >
+                              <Copy className="h-3.5 w-3.5" /> ID: {collection.name}
+                            </Badge>
+                          </div>
                           {collection.error && (
                             <span className="text-xs text-destructive">{collection.error}</span>
                           )}

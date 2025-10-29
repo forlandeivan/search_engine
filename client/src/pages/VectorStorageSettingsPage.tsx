@@ -1,9 +1,11 @@
-import { useMemo } from "react";
+import { MouseEvent, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, Copy } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
 
 interface VectorCollectionInfo {
   name: string;
@@ -61,6 +63,28 @@ export default function VectorStorageSettingsPage() {
   } = useQuery<CollectionsResponse>({
     queryKey: ["/api/vector/collections"],
   });
+
+  const { toast } = useToast();
+
+  const handleCopyCollectionId = async (event: MouseEvent<HTMLDivElement>, collectionId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    try {
+      await navigator.clipboard.writeText(collectionId);
+      toast({
+        title: "ID коллекции скопирован",
+        description: `Идентификатор «${collectionId}» добавлен в буфер обмена.`,
+      });
+    } catch (copyError) {
+      console.error("Не удалось скопировать идентификатор коллекции", copyError);
+      toast({
+        title: "Ошибка копирования",
+        description: "Попробуйте выделить идентификатор вручную и повторите попытку.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const stats: AggregatedStats = useMemo(() => {
     const collections = data?.collections ?? [];
@@ -185,8 +209,19 @@ export default function VectorStorageSettingsPage() {
                 return (
                   <div key={collection.name} className="border rounded-lg p-4">
                     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <h3 className="text-lg font-semibold">{collection.name}</h3>
+                      <div className="flex flex-col gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-semibold">{collection.name}</h3>
+                          <Badge
+                            variant="outline"
+                            onClick={(event: MouseEvent<HTMLDivElement>) =>
+                              void handleCopyCollectionId(event, collection.name)
+                            }
+                            className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
+                          >
+                            <Copy className="h-3.5 w-3.5" /> ID: {collection.name}
+                          </Badge>
+                        </div>
                         <p className="text-sm text-muted-foreground">
                           Статус: {collection.status}
                           {optimizerStatus ? ` · Оптимизатор: ${optimizerStatus}` : ""}

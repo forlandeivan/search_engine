@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { MouseEvent, useEffect, useMemo, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Sparkles, Loader2, Trash2, Eye, EyeOff } from "lucide-react";
+import { Sparkles, Loader2, Trash2, Eye, EyeOff, Copy } from "lucide-react";
 
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -59,6 +59,8 @@ const formatFloat = (value: number | null | undefined) => {
 };
 
 const defaultRequestHeaders: Record<string, string> = {};
+
+const buildCopyDescription = (label: string, value: string) => `${label} «${value}» скопирован в буфер обмена.`;
 
 type FormValues = {
   providerType: (typeof llmProviderTypes)[number];
@@ -187,6 +189,20 @@ export default function LlmProvidersPage() {
     () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
     [providers, selectedProviderId],
   );
+
+  const handleCopyValue = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast({ title: "Скопировано", description: buildCopyDescription(label, value) });
+    } catch (error) {
+      console.error("Не удалось скопировать значение", error);
+      toast({
+        title: "Не удалось скопировать",
+        description: "Попробуйте вручную выделить и скопировать значение.",
+        variant: "destructive",
+      });
+    }
+  };
 
   useEffect(() => {
     if (providers.length === 0) {
@@ -408,10 +424,31 @@ export default function LlmProvidersPage() {
                       {provider.description && (
                         <p className="mt-2 text-xs text-muted-foreground">{provider.description}</p>
                       )}
-                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <Badge variant="outline" className="text-[11px] font-normal">
-                          Модель: {provider.model}
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        <Badge
+                          variant="outline"
+                          onClick={(event: MouseEvent<HTMLDivElement>) => {
+                            event.stopPropagation();
+                            void handleCopyValue(provider.id, "llmProviderId");
+                          }}
+                          className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
+                        >
+                          <Copy className="h-3.5 w-3.5" /> llmProviderId: {provider.id}
                         </Badge>
+                        {provider.model ? (
+                          <Badge
+                            variant="outline"
+                            onClick={(event: MouseEvent<HTMLDivElement>) => {
+                              event.stopPropagation();
+                              void handleCopyValue(provider.model, "Модель LLM");
+                            }}
+                            className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
+                          >
+                            <Copy className="h-3.5 w-3.5" /> model: {provider.model}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         <Badge variant="outline" className="text-[11px] font-normal">
                           SSL: {provider.allowSelfSignedCertificate ? "self-signed" : "строгая проверка"}
                         </Badge>
@@ -456,6 +493,26 @@ export default function LlmProvidersPage() {
                 ? "Отредактируйте авторизацию, список моделей и параметры генерации."
                 : "Выберите провайдера слева, чтобы изменить его настройки."}
             </CardDescription>
+            {selectedProvider ? (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <Badge
+                  variant="outline"
+                  onClick={() => void handleCopyValue(selectedProvider.id, "llmProviderId")}
+                  className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
+                >
+                  <Copy className="h-3.5 w-3.5" /> llmProviderId: {selectedProvider.id}
+                </Badge>
+                {selectedProvider.model ? (
+                  <Badge
+                    variant="outline"
+                    onClick={() => void handleCopyValue(selectedProvider.model, "Модель LLM")}
+                    className="cursor-pointer gap-1 text-[10px] uppercase tracking-wide"
+                  >
+                    <Copy className="h-3.5 w-3.5" /> model: {selectedProvider.model}
+                  </Badge>
+                ) : null}
+              </div>
+            ) : null}
           </CardHeader>
           <CardContent>
             <Form {...form}>
