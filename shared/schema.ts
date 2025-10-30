@@ -782,6 +782,7 @@ export const updateEmbeddingProviderSchema = z
     model: z.string().trim().min(1, "Укажите модель").optional(),
     allowSelfSignedCertificate: z.boolean().optional(),
     requestHeaders: z.record(z.string()).optional(),
+    qdrantConfig: z.record(z.any()).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нет данных для обновления",
