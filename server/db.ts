@@ -32,8 +32,18 @@ function createUnavailableDbProxy(message: string) {
   return new Proxy(() => {}, handler);
 }
 
+function hasCustomPostgresConfig(): boolean {
+  return Boolean(
+    process.env.PG_HOST &&
+    process.env.PG_USER &&
+    process.env.PG_PASSWORD &&
+    process.env.PG_DATABASE
+  );
+}
+
 function tryConnectCustomPostgres(): void {
-  if (!process.env.PG_HOST || !process.env.PG_USER || !process.env.PG_PASSWORD || !process.env.PG_DATABASE) {
+  if (!hasCustomPostgresConfig()) {
+    console.log(`[db] Custom PostgreSQL config not found (PG_HOST, PG_USER, PG_PASSWORD, PG_DATABASE required)`);
     return;
   }
 
@@ -85,15 +95,21 @@ function resolveDatabaseUrl(): string | null {
 }
 
 function tryConnectNeon(): void {
+  if (hasCustomPostgresConfig()) {
+    console.log(`[db] Skipping Neon connection - custom PostgreSQL config is present`);
+    return;
+  }
+
   const databaseUrl = resolveDatabaseUrl();
   if (!databaseUrl) {
+    console.log(`[db] No DATABASE_URL found for Neon connection`);
     return;
   }
 
   try {
     pool = new NeonPool({ connectionString: databaseUrl });
     db = neonDrizzle({ client: pool, schema });
-    console.log(`[db] Using Neon/PostgreSQL connection string`);
+    console.log(`[db] ✅ Using Neon/PostgreSQL connection string`);
   } catch (error) {
     const message = formatConnectionError(error);
     console.warn(`[db] ❌ Failed to configure Neon/PostgreSQL connection: ${message}`);
@@ -102,6 +118,8 @@ function tryConnectNeon(): void {
     db = null;
   }
 }
+
+console.log(`[db] Environment check: PG_HOST=${process.env.PG_HOST ? 'set' : 'not set'}, DATABASE_URL=${process.env.DATABASE_URL ? 'set' : 'not set'}`);
 
 tryConnectCustomPostgres();
 
