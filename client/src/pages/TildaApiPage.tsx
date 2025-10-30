@@ -954,7 +954,9 @@ export default function TildaApiPage() {
                   Укажите идентификаторы провайдера эмбеддингов и LLM. Опционально задайте формат ответа через поле
                   <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">responseFormat</code>: <strong>md</strong> (Markdown),
                   <strong>html</strong> или <strong>text</strong>. Параметры <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">limit</code> и
-                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">contextLimit</code> управляют количеством документов в ответе и контексте LLM.
+                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">contextLimit</code> управляют количеством документов в ответе и контексте LLM. Необязательные флаги
+                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">includeContext</code> и
+                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">includeQueryVector</code> позволяют убрать контекст и вектор запроса из итогового ответа при сохранении RAG-логики.
                 </p>
 
                 <div className="space-y-2">
@@ -984,7 +986,10 @@ export default function TildaApiPage() {
                       className="absolute top-2 right-2"
                       onClick={() =>
                         copyToClipboard(
-                          `curl -X POST '${publicRagEndpoint}' \\\n+  -H 'Content-Type: application/json' \\\n+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\\n+  -d '{\\n    "collection": "YOUR_QDRANT_COLLECTION",\\n    "embeddingProviderId": "EMBEDDING_PROVIDER_ID",\\n    "llmProviderId": "LLM_PROVIDER_ID",\\n    "llmModel": "LLM_MODEL",\\n    "query": "Как оформить возврат товара?",\\n    "responseFormat": "md",\\n    "limit": 6,\\n    "contextLimit": 4\\n  }'`,
+                          `curl -X POST '${publicRagEndpoint}' \\
++  -H 'Content-Type: application/json' \\
++  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\
++  -d '{\\n    "collection": "YOUR_QDRANT_COLLECTION",\\n    "workspaceId": "YOUR_WORKSPACE_ID",\\n    "embeddingProviderId": "EMBEDDING_PROVIDER_ID",\\n    "llmProviderId": "LLM_PROVIDER_ID",\\n    "llmModel": "LLM_MODEL",\\n    "query": "Как оформить возврат товара?",\\n    "responseFormat": "md",\\n    "limit": 6,\\n    "contextLimit": 4,\\n    "includeContext": false,\\n    "includeQueryVector": false\\n  }'`,
                           "cURL RAG"
                         )
                       }
@@ -996,19 +1001,35 @@ export default function TildaApiPage() {
   -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \
   -d '{
     "collection": "YOUR_QDRANT_COLLECTION",
+    "workspaceId": "YOUR_WORKSPACE_ID",
     "embeddingProviderId": "EMBEDDING_PROVIDER_ID",
     "llmProviderId": "LLM_PROVIDER_ID",
     "llmModel": "LLM_MODEL",
     "query": "Как оформить возврат товара?",
     "responseFormat": "md",
     "limit": 6,
-    "contextLimit": 4
+    "contextLimit": 4,
+    "includeContext": false,
+    "includeQueryVector": false
   }'`}</pre>
                   </div>
                 </div>
 
+                <p className="text-xs text-muted-foreground">
+                  Чтобы сделать ответ компактнее, добавьте в тело запроса поля
+                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">"includeContext": false</code> и/или
+                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">"includeQueryVector": false</code> — контекст и вектор будут исключены из JSON, но LLM продолжит использовать найденные документы.
+                </p>
+
                 <div className="space-y-2">
                   <h4 className="font-semibold">Пример ответа</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Поля <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">context</code>,
+                    <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">queryVector</code> и
+                    <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">vectorLength</code> возвращаются только если они не отключены флагами
+                    <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">includeContext</code> и
+                    <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">includeQueryVector</code>.
+                  </p>
                   <ScrollArea className="bg-muted p-4 rounded-lg h-64">
                     <pre className="text-xs whitespace-pre-wrap break-words">{`{
   "answer": "### Возврат товара\n\n- Заполните форму на сайте...",
