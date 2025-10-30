@@ -332,6 +332,7 @@ export const knowledgeDocumentChunkItems = pgTable(
       .references(() => knowledgeDocumentVersions.id, { onDelete: "cascade" }),
     chunkIndex: integer("chunk_index").notNull(),
     text: text("text").notNull(),
+    textTsv: tsvector("text_tsv"),
     charStart: integer("char_start").notNull(),
     charEnd: integer("char_end").notNull(),
     tokenCount: integer("token_count").notNull(),

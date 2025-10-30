@@ -196,6 +196,11 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
           icon: Search,
         },
         {
+          title: "Песочница поиска",
+          url: "/search/playground",
+          icon: Bot,
+        },
+        {
           title: "Базы знаний",
           url: "/knowledge",
           icon: Brain,

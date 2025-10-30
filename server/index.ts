@@ -158,7 +158,7 @@ const restrictedCors = cors({
 });
 
 app.use((req, res, next) => {
-  if (req.path.startsWith("/api/public/")) {
+  if (req.path.startsWith("/api/public/") || req.path.startsWith("/public/")) {
     publicCors(req, res, next);
     return;
   }
