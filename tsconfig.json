@@ -18,6 +18,7 @@
     "types": ["node", "vite/client"],
     "paths": {
       "@/*": ["./client/src/*"],
+      "@shared/schema": ["./shared/schema.ts"],
       "@shared/*": ["./shared/*"],
       "@tiptap/react": ["./types/tiptap-react"],
       "@tiptap/starter-kit": ["./types/tiptap-starter-kit"],

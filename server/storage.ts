@@ -71,6 +71,45 @@ function swallowPgError(error: unknown, allowedCodes: string[]): void {
   }
 }
 
+function getRowString(row: Record<string, unknown>, key: string): string {
+  const value = row[key];
+  return typeof value === "string" ? value : "";
+}
+
+function sanitizeWorkspaceNameCandidate(source: string): string {
+  const normalized = source.normalize("NFKC");
+  let result = "";
+
+  for (const char of normalized) {
+    if (char === "_" || char === "-") {
+      result += char;
+      continue;
+    }
+
+    if (char >= "0" && char <= "9") {
+      result += char;
+      continue;
+    }
+
+    if (char.trim().length === 0) {
+      result += " ";
+      continue;
+    }
+
+    const lower = char.toLocaleLowerCase();
+    const upper = char.toLocaleUpperCase();
+
+    if (lower !== upper) {
+      result += char;
+      continue;
+    }
+
+    result += " ";
+  }
+
+  return result.trim();
+}
+
 async function normalizeKnowledgeBaseWorkspaces(): Promise<void> {
   try {
     await db.execute(sql`
@@ -404,7 +443,7 @@ function resolveNamesFromProfile(options: {
 
 function generatePersonalWorkspaceName(user: User): string {
   const emailPrefix = typeof user.email === "string" ? user.email.split("@")[0] ?? "" : "";
-  const cleaned = emailPrefix.replace(/[^\p{L}\p{N}\s_-]/gu, " ").trim();
+  const cleaned = sanitizeWorkspaceNameCandidate(emailPrefix);
   if (cleaned.length > 0) {
     return cleaned;
   }
@@ -2715,31 +2754,28 @@ export class DatabaseStorage implements IStorage {
     const combined = new Map<string, KnowledgeChunkSearchEntry>();
 
     for (const row of sectionsResult.rows ?? []) {
-      const chunkId = String((row as Record<string, unknown>).chunk_id ?? "").trim();
+      const rowRecord = row as Record<string, unknown>;
+      const chunkId = getRowString(rowRecord, "chunk_id").trim();
       if (!chunkId) {
         continue;
       }
 
-      const docTitle = typeof (row as Record<string, unknown>).doc_title === "string"
-        ? ((row as Record<string, unknown>).doc_title as string)
-        : "";
+      const docTitle = getRowString(rowRecord, "doc_title");
 
-      const sectionTitleRaw = (row as Record<string, unknown>).section_title;
+      const sectionTitleRaw = rowRecord.section_title;
       const resolvedTitle =
         typeof sectionTitleRaw === "string" && sectionTitleRaw.trim().length > 0
           ? sectionTitleRaw.trim()
           : docTitle;
 
-      const text = typeof (row as Record<string, unknown>).text === "string"
-        ? (row as Record<string, unknown>).text
-        : "";
+      const text = getRowString(rowRecord, "text");
 
       const snippet = text.length > 320 ? `${text.slice(0, 320)}…` : text;
-      const score = Number((row as Record<string, unknown>).score ?? 0) || 0;
+      const score = Number(rowRecord.score ?? 0) || 0;
 
       combined.set(chunkId, {
         chunkId,
-        documentId: String((row as Record<string, unknown>).document_id ?? ""),
+        documentId: String(rowRecord.document_id ?? ""),
         docTitle,
         sectionTitle: resolvedTitle,
         snippet,
@@ -2750,38 +2786,39 @@ export class DatabaseStorage implements IStorage {
     }
 
     for (const row of contentRows) {
-      const chunkId = String((row as Record<string, unknown>).chunk_id ?? "").trim();
+      const rowRecord = row as Record<string, unknown>;
+      const chunkId = getRowString(rowRecord, "chunk_id").trim();
       if (!chunkId) {
         continue;
       }
 
-      const docTitle = typeof (row as Record<string, unknown>).doc_title === "string"
-        ? ((row as Record<string, unknown>).doc_title as string)
-        : "";
+      const docTitle = getRowString(rowRecord, "doc_title");
+      const text = getRowString(rowRecord, "text");
 
-      const text = typeof (row as Record<string, unknown>).text === "string"
-        ? (row as Record<string, unknown>).text
-        : "";
+      const snippetValue = (() => {
+        const snippet = getRowString(rowRecord, "snippet");
+        if (snippet) {
+          return snippet;
+        }
 
-      const snippetValue = typeof (row as Record<string, unknown>).snippet === "string"
-        ? ((row as Record<string, unknown>).snippet as string)
-        : text.length > 320
+        return text.length > 320
           ? `${text.slice(0, 320)}…`
           : text;
+      })();
 
-      const sectionTitleRaw = (row as Record<string, unknown>).section_title;
+      const sectionTitleRaw = rowRecord.section_title;
       const resolvedTitle =
         typeof sectionTitleRaw === "string" && sectionTitleRaw.trim().length > 0
           ? sectionTitleRaw.trim()
           : docTitle;
 
-      const rank = Number((row as Record<string, unknown>).rank ?? 0) || 0;
+      const rank = Number(rowRecord.rank ?? 0) || 0;
       const existing = combined.get(chunkId);
 
       if (!existing || rank > existing.score) {
         combined.set(chunkId, {
           chunkId,
-          documentId: String((row as Record<string, unknown>).document_id ?? ""),
+          documentId: String(rowRecord.document_id ?? ""),
           docTitle,
           sectionTitle: resolvedTitle,
           snippet: snippetValue,
@@ -2844,7 +2881,7 @@ export class DatabaseStorage implements IStorage {
         ),
       );
 
-    return rows.map((row) => {
+    return rows.map((row: typeof rows[number]) => {
       const metadata = row.metadata as Record<string, unknown> | null;
       const sectionTitle = this.resolveSectionTitle(metadata ?? null, row.sectionPath, row.docTitle ?? "");
 
@@ -2905,7 +2942,7 @@ export class DatabaseStorage implements IStorage {
         ),
       );
 
-    return rows.map((row) => {
+    return rows.map((row: typeof rows[number]) => {
       const metadata = row.metadata as Record<string, unknown> | null;
       const sectionTitle = this.resolveSectionTitle(metadata ?? null, row.sectionPath, row.docTitle ?? "");
 
