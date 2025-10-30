@@ -503,6 +503,7 @@ export interface IStorage {
 
   // Workspaces
   getWorkspace(id: string): Promise<Workspace | undefined>;
+  isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean>;
   ensurePersonalWorkspace(user: User): Promise<Workspace>;
   listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
   getOrCreateUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
@@ -3088,6 +3089,17 @@ export class DatabaseStorage implements IStorage {
     await ensureWorkspacesTable();
     const [workspace] = await this.db.select().from(workspaces).where(eq(workspaces.id, id));
     return workspace ?? undefined;
+  }
+
+  async isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
+    await ensureWorkspaceMembersTable();
+    const [row] = await this.db
+      .select({ userId: workspaceMembers.userId })
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+      .limit(1);
+
+    return Boolean(row);
   }
 
   async ensurePersonalWorkspace(user: User): Promise<Workspace> {

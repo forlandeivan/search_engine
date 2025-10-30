@@ -561,6 +561,10 @@ export function getRequestWorkspaceMemberships(req: Request): WorkspaceWithRole[
   return req.workspaceMemberships ?? [];
 }
 
+export async function resolveOptionalUser(req: Request): Promise<PublicUser | null> {
+  return await resolveAuthenticatedUser(req);
+}
+
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
     const user = await resolveAuthenticatedUser(req);
