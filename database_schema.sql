@@ -240,7 +240,7 @@ CREATE INDEX knowledge_nodes_parent_idx ON knowledge_nodes(parent_id);
 CREATE INDEX knowledge_nodes_workspace_idx ON knowledge_nodes(workspace_id);
 CREATE INDEX knowledge_nodes_workspace_parent_idx ON knowledge_nodes(workspace_id, parent_id);
 CREATE INDEX knowledge_nodes_base_parent_position_idx ON knowledge_nodes(base_id, parent_id, position);
-CREATE INDEX knowledge_nodes_path_gin ON knowledge_nodes USING gin(path);
+CREATE INDEX knowledge_nodes_path_gist ON knowledge_nodes USING gist(path);
 CREATE INDEX knowledge_documents_workspace_idx ON knowledge_documents(workspace_id);
 CREATE INDEX knowledge_documents_base_idx ON knowledge_documents(base_id);
 CREATE UNIQUE INDEX knowledge_document_versions_document_version_idx ON knowledge_document_versions(document_id, version_no);

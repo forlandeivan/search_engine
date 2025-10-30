@@ -1113,7 +1113,7 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
     if (knowledgeBasePathUsesLtree) {
       try {
         await db.execute(
-          sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_path_gin ON knowledge_nodes USING GIST("path")`,
+          sql`CREATE INDEX IF NOT EXISTS knowledge_nodes_path_gist ON knowledge_nodes USING GIST("path")`,
         );
       } catch (error) {
         swallowPgError(error, ["42704", "42P07"]);

@@ -4032,6 +4032,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         qdrantConfig: normalizedQdrantConfig,
       });
 
+      const rawCollectionName =
+        typeof normalizedQdrantConfig?.collectionName === "string"
+          ? normalizedQdrantConfig.collectionName.trim()
+          : "";
+
+      if (rawCollectionName && rawCollectionName.toLowerCase() !== "auto") {
+        try {
+          await storage.upsertCollectionWorkspace(rawCollectionName, workspaceId);
+        } catch (mappingError) {
+          console.error(
+            `Не удалось привязать коллекцию ${rawCollectionName} к рабочему пространству ${workspaceId} при создании сервиса эмбеддингов`,
+            mappingError,
+          );
+          return res.status(500).json({
+            message: "Не удалось привязать коллекцию к рабочему пространству",
+          });
+        }
+      }
+
       res.status(201).json({ provider: toPublicEmbeddingProvider(provider) });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -4316,6 +4335,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const providerId = req.params.id;
       const payload = updateEmbeddingProviderSchema.parse(req.body);
 
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const existingProvider = await storage.getEmbeddingProvider(providerId, workspaceId);
+      if (!existingProvider) {
+        return res.status(404).json({ message: "Сервис не найден" });
+      }
+
       const updates: Partial<EmbeddingProvider> = {};
 
       if (payload.name !== undefined) updates.name = payload.name;
@@ -4331,10 +4356,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (payload.allowSelfSignedCertificate !== undefined)
         updates.allowSelfSignedCertificate = payload.allowSelfSignedCertificate;
 
-      const { id: workspaceId } = getRequestWorkspace(req);
+      if (payload.qdrantConfig !== undefined) {
+        const targetProviderType = updates.providerType ?? existingProvider.providerType;
+        const currentConfig =
+          existingProvider.qdrantConfig &&
+          typeof existingProvider.qdrantConfig === "object" &&
+          !Array.isArray(existingProvider.qdrantConfig)
+            ? { ...(existingProvider.qdrantConfig as Record<string, unknown>) }
+            : {};
+        const incomingConfig =
+          payload.qdrantConfig && typeof payload.qdrantConfig === "object" && !Array.isArray(payload.qdrantConfig)
+            ? { ...(payload.qdrantConfig as Record<string, unknown>) }
+            : {};
+        const mergedConfig = removeUndefinedDeep({ ...currentConfig, ...incomingConfig });
+
+        if (targetProviderType === "gigachat") {
+          const baseConfig = Object.keys(mergedConfig).length > 0 ? mergedConfig : { ...DEFAULT_QDRANT_CONFIG };
+          const normalizedSize = parseVectorSize(baseConfig.vectorSize);
+          updates.qdrantConfig = {
+            ...baseConfig,
+            vectorSize: normalizedSize ?? GIGACHAT_EMBEDDING_VECTOR_SIZE,
+          } as EmbeddingProvider["qdrantConfig"];
+        } else {
+          updates.qdrantConfig = mergedConfig as EmbeddingProvider["qdrantConfig"];
+        }
+      }
+
       const updated = await storage.updateEmbeddingProvider(providerId, updates, workspaceId);
       if (!updated) {
         return res.status(404).json({ message: "Сервис не найден" });
+      }
+
+      const rawCollectionName =
+        typeof updated.qdrantConfig?.collectionName === "string"
+          ? updated.qdrantConfig.collectionName.trim()
+          : "";
+
+      if (rawCollectionName && rawCollectionName.toLowerCase() !== "auto") {
+        try {
+          await storage.upsertCollectionWorkspace(rawCollectionName, workspaceId);
+        } catch (mappingError) {
+          console.error(
+            `Не удалось привязать коллекцию ${rawCollectionName} к рабочему пространству ${workspaceId} при обновлении сервиса эмбеддингов`,
+            mappingError,
+          );
+          return res.status(500).json({
+            message: "Не удалось привязать коллекцию к рабочему пространству",
+          });
+        }
       }
 
       res.json({ provider: toPublicEmbeddingProvider(updated) });
@@ -6044,7 +6113,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       const hasCustomSchema = normalizedSchemaFields.length > 0;
 
-      const existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+      let existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
       if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
         return res.status(403).json({
           error: "Коллекция принадлежит другому рабочему пространству",
@@ -6080,9 +6149,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (collectionExists && !existingWorkspaceId) {
-        return res.status(404).json({
-          error: `Коллекция ${collectionName} не найдена`,
-        });
+        try {
+          await storage.upsertCollectionWorkspace(collectionName, workspaceId);
+          existingWorkspaceId = workspaceId;
+        } catch (mappingError) {
+          console.error(
+            `Не удалось привязать существующую коллекцию ${collectionName} к рабочему пространству ${workspaceId}:`,
+            mappingError,
+          );
+          return res.status(500).json({
+            error: "Не удалось привязать коллекцию к рабочему пространству",
+          });
+        }
       }
 
       const accessToken = await fetchAccessToken(provider);
@@ -6869,7 +6947,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }));
       const hasCustomSchema = normalizedSchemaFields.length > 0;
 
-      const existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+      let existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
       if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
         markImmediateFailure("Коллекция принадлежит другому рабочему пространству", 403);
         return res.status(403).json({
@@ -6907,10 +6985,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (collectionExists && !existingWorkspaceId) {
-        markImmediateFailure(`Коллекция ${collectionName} не найдена`, 404);
-        return res.status(404).json({
-          error: `Коллекция ${collectionName} не найдена`,
-        });
+        try {
+          await storage.upsertCollectionWorkspace(collectionName, workspaceId);
+          existingWorkspaceId = workspaceId;
+        } catch (mappingError) {
+          const message =
+            mappingError instanceof Error
+              ? mappingError.message
+              : "Не удалось привязать коллекцию к рабочему пространству";
+          console.error(
+            `Не удалось привязать существующую коллекцию ${collectionName} к рабочему пространству ${workspaceId}:`,
+            mappingError,
+          );
+          markImmediateFailure(message, 500);
+          return res.status(500).json({
+            error: message,
+          });
+        }
       }
 
       const accessToken = await fetchAccessToken(provider);
@@ -7431,7 +7522,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }),
       );
 
-      const existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+      let existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
       if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
         return res.status(403).json({
           error: "Коллекция принадлежит другому рабочему пространству",
@@ -7473,9 +7564,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (collectionExists && !existingWorkspaceId) {
-        return res.status(404).json({
-          error: `Коллекция ${collectionName} не найдена`,
-        });
+        try {
+          await storage.upsertCollectionWorkspace(collectionName, workspaceId);
+          existingWorkspaceId = workspaceId;
+        } catch (mappingError) {
+          console.error(
+            `Не удалось привязать существующую коллекцию ${collectionName} к рабочему пространству ${workspaceId}:`,
+            mappingError,
+          );
+          return res.status(500).json({
+            error: "Не удалось привязать коллекцию к рабочему пространству",
+          });
+        }
       }
 
       const status = projectVectorizationManager.startProjectVectorization({
