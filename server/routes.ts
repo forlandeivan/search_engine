@@ -213,6 +213,8 @@ async function resolvePublicCollectionRequest(
     return null;
   }
 
+  console.log(`[RAG DEBUG] API Key: ${apiKey.substring(0, 10)}..., Workspace ID: ${workspaceId}, Public ID: ${publicId || 'none'}`);
+
   const workspaceMemberships = getRequestWorkspaceMemberships(req);
   if (workspaceMemberships.length > 0) {
     const hasAccess = workspaceMemberships.some((entry) => entry.id === workspaceId);
@@ -252,7 +254,10 @@ async function resolvePublicCollectionRequest(
     return { site, apiKey };
   }
 
+  console.log(`[RAG DEBUG] Looking up site by API key...`);
   const site = await storage.getSiteByPublicApiKey(apiKey);
+
+  console.log(`[RAG DEBUG] getSiteByPublicApiKey result: ${site ? `found site ${site.id}, workspace ${site.workspaceId}` : 'NOT FOUND'}`);
 
   if (!site) {
     res.status(404).json({ error: "Коллекция не найдена" });
@@ -2967,7 +2972,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const responseFormat: RagResponseFormat = responseFormatCandidate ?? "text";
 
+      console.log(`[RAG DEBUG] Looking up collection "${collectionName}" workspace...`);
       const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
+      console.log(`[RAG DEBUG] Collection workspace: ${ownerWorkspaceId || 'NOT FOUND'}, Site workspace: ${site.workspaceId}, Match: ${ownerWorkspaceId === site.workspaceId}`);
+      
       if (!ownerWorkspaceId || ownerWorkspaceId !== site.workspaceId) {
         return res.status(404).json({ error: "Коллекция не найдена" });
       }
