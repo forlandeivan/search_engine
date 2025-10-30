@@ -82,7 +82,15 @@ app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
 
 
 // Dynamic CORS configuration based on database sites with caching
-app.use(cors({
+const publicCors = cors({
+  origin: (_origin, callback) => {
+    callback(null, true);
+  },
+  credentials: true,
+  optionsSuccessStatus: 200,
+});
+
+const restrictedCors = cors({
   origin: async (origin, callback) => {
     try {
       // Allow same-origin requests
@@ -146,8 +154,17 @@ app.use(cors({
     }
   },
   credentials: true,
-  optionsSuccessStatus: 200
-}));
+  optionsSuccessStatus: 200,
+});
+
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/public/")) {
+    publicCors(req, res, next);
+    return;
+  }
+
+  restrictedCors(req, res, next);
+});
 
 void configureAuth(app);
 
