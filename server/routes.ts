@@ -84,6 +84,7 @@ import {
   buildSessionResponse,
   getRequestWorkspace,
   getRequestWorkspaceMemberships,
+  resolveOptionalUser,
   WorkspaceContextError,
 } from "./auth";
 
@@ -205,10 +206,45 @@ async function resolvePublicCollectionRequest(
     return null;
   }
 
+  const workspaceId = pickFirstString(
+    bodySource.workspaceId,
+    bodySource.workspace_id,
+    req.query.workspaceId,
+    req.query.workspace_id,
+  );
+
+  if (!workspaceId) {
+    res.status(400).json({ error: "Передайте workspace_id в теле запроса" });
+    return null;
+  }
+
+  const workspaceMemberships = getRequestWorkspaceMemberships(req);
+  if (workspaceMemberships.length > 0) {
+    const hasAccess = workspaceMemberships.some((entry) => entry.id === workspaceId);
+    if (!hasAccess) {
+      res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+      return null;
+    }
+  } else {
+    const user = await resolveOptionalUser(req);
+    if (user) {
+      const isMember = await storage.isWorkspaceMember(workspaceId, user.id);
+      if (!isMember) {
+        res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+        return null;
+      }
+    }
+  }
+
   const site = await storage.getSiteByPublicId(publicId);
 
   if (!site) {
     res.status(404).json({ error: "Коллекция не найдена" });
+    return null;
+  }
+
+  if (site.workspaceId !== workspaceId) {
+    res.status(403).json({ error: "Нет доступа к рабочему пространству" });
     return null;
   }
 
@@ -2511,6 +2547,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete payloadSource.apiKey;
       delete payloadSource.publicId;
       delete payloadSource.sitePublicId;
+      delete payloadSource.workspaceId;
+      delete payloadSource.workspace_id;
 
       if (!("query" in payloadSource)) {
         if (typeof req.query.q === "string" && req.query.q.trim()) {
@@ -2641,7 +2679,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { site } = publicContext;
-      const body = publicVectorSearchSchema.parse(req.body);
+      const bodySource: Record<string, unknown> =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+          ? { ...(req.body as Record<string, unknown>) }
+          : {};
+      delete bodySource.workspaceId;
+      delete bodySource.workspace_id;
+      const body = publicVectorSearchSchema.parse(bodySource);
       const { collection, ...searchOptions } = body;
 
       const collectionName = collection.trim();
@@ -2740,7 +2784,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { site } = publicContext;
-      const body = publicVectorizeSchema.parse(req.body);
+      const bodySource: Record<string, unknown> =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+          ? { ...(req.body as Record<string, unknown>) }
+          : {};
+      delete bodySource.workspaceId;
+      delete bodySource.workspace_id;
+      const body = publicVectorizeSchema.parse(bodySource);
       const provider = await storage.getEmbeddingProvider(body.embeddingProviderId, site.workspaceId);
 
       if (!provider) {
@@ -2852,6 +2902,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete payloadSource.apiKey;
       delete payloadSource.publicId;
       delete payloadSource.sitePublicId;
+      delete payloadSource.workspaceId;
+      delete payloadSource.workspace_id;
 
       if (!("collection" in payloadSource) && typeof req.query.collection === "string") {
         const candidate = req.query.collection.trim();
@@ -5175,6 +5227,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete payloadSource.apiKey;
       delete payloadSource.publicId;
       delete payloadSource.sitePublicId;
+      delete payloadSource.workspaceId;
+      delete payloadSource.workspace_id;
 
       const body = generativeSearchPointsSchema.parse(payloadSource);
       const responseFormatCandidate = normalizeResponseFormat(body.responseFormat);
