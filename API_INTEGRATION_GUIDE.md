@@ -199,6 +199,54 @@ curl -X POST "https://ваш-домен.replit.dev/api/public/collections/search
 - Значения `limit` и `contextLimit` ограничены сервером: максимум 100 результатов и 50 контекстных записей.
 - Для генеративного поиска коллекция Qdrant должна принадлежать тому же workspace, что и сайт, иначе вернётся 404.
 
+### Управление объёмом ответа
+
+Если вам не требуется получать полный контекст и/или вектор запроса, можно добавить в тело запроса опциональные флаги:
+
+- `"includeContext": false` — не возвращать массив `context` в ответе (LLM при этом по-прежнему использует найденные документы).
+- `"includeQueryVector": false` — не включать `queryVector` и `vectorLength` в ответ.
+
+**Пример компактного запроса:**
+
+```bash
+curl -X POST 'https://search.example.com/api/public/collections/search/rag' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: YOUR_API_KEY' \
+  -d '{
+    "collection": "support_faq",
+    "embeddingProviderId": "gigachat-embeddings",
+    "llmProviderId": "gigachat-llm",
+    "query": "Как оформить возврат товара?",
+    "limit": 5,
+    "includeContext": false,
+    "includeQueryVector": false
+  }'
+```
+
+**Ответ без контекста и вектора:**
+
+```json
+{
+  "answer": "### Возврат товара\n\n1. ...",
+  "format": "markdown",
+  "usage": {
+    "embeddingTokens": 120,
+    "llmTokens": 256
+  },
+  "provider": {
+    "id": "gigachat-llm",
+    "name": "GigaChat",
+    "model": "GigaChat-Pro",
+    "modelLabel": "GigaChat-Pro"
+  },
+  "embeddingProvider": {
+    "id": "gigachat-embeddings",
+    "name": "GigaChat"
+  },
+  "collection": "support_faq"
+}
+```
+
 ## Интеграция с Zero Блоком Тильды
 
 ### HTML Структура

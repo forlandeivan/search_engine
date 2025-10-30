@@ -1265,6 +1265,8 @@ type GigachatStreamOptions = {
   limit: number;
   contextLimit: number;
   responseFormat?: RagResponseFormat;
+  includeContextInResponse: boolean;
+  includeQueryVectorInResponse: boolean;
 };
 
 type RagResponseFormat = "text" | "markdown" | "html";
@@ -1359,6 +1361,8 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     limit,
     contextLimit,
     responseFormat,
+    includeContextInResponse,
+    includeQueryVectorInResponse,
   } = options;
 
   const streamHeaders = new Headers();
@@ -1396,8 +1400,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     abortController.abort();
   });
 
-  sendSseEvent(res, "metadata", {
-    context: sanitizedResults,
+  const metadataPayload: Record<string, unknown> = {
     usage: { embeddingTokens: embeddingResult.usageTokens ?? null },
     provider: {
       id: provider.id,
@@ -1409,12 +1412,21 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
       id: embeddingProvider.id,
       name: embeddingProvider.name,
     },
-    queryVector: embeddingResult.vector,
-    vectorLength: embeddingResult.vector.length,
     limit,
     contextLimit,
     format: responseFormat ?? "text",
-  });
+  };
+
+  if (includeContextInResponse) {
+    metadataPayload.context = sanitizedResults;
+  }
+
+  if (includeQueryVectorInResponse) {
+    metadataPayload.queryVector = embeddingResult.vector;
+    metadataPayload.vectorLength = embeddingResult.vector.length;
+  }
+
+  sendSseEvent(res, "metadata", metadataPayload);
 
   let completionResponse: FetchResponse;
 
@@ -2284,6 +2296,8 @@ const generativeSearchPointsSchema = textSearchPointsSchema.extend({
   llmModel: z.string().trim().min(1, "Укажите модель LLM").optional(),
   contextLimit: z.number().int().positive().max(50).optional(),
   responseFormat: z.string().optional(),
+  includeContext: z.boolean().optional(),
+  includeQueryVector: z.boolean().optional(),
 });
 
 const publicVectorSearchSchema = searchPointsSchema.extend({
@@ -2971,6 +2985,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const responseFormat: RagResponseFormat = responseFormatCandidate ?? "text";
+      const includeContextInResponse = body.includeContext ?? true;
+      const includeQueryVectorInResponse = body.includeQueryVector ?? true;
 
       console.log(`[RAG DEBUG] Looking up collection "${collectionName}" workspace...`);
       const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
@@ -3133,6 +3149,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           limit: body.limit,
           contextLimit,
           responseFormat,
+          includeContextInResponse,
+          includeQueryVectorInResponse,
         });
         return;
       }
@@ -3146,7 +3164,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         { responseFormat },
       );
 
-      res.json({
+      const responsePayload: Record<string, unknown> = {
         answer: completion.answer,
         format: responseFormat,
         usage: {
@@ -3164,10 +3182,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: embeddingProvider.name,
         },
         collection: collectionName,
-        context: sanitizedResults,
-        queryVector: embeddingResult.vector,
-        vectorLength: embeddingResult.vector.length,
-      });
+      };
+
+      if (includeContextInResponse) {
+        responsePayload.context = sanitizedResults;
+      }
+
+      if (includeQueryVectorInResponse) {
+        responsePayload.queryVector = embeddingResult.vector;
+        responsePayload.vectorLength = embeddingResult.vector.length;
+      }
+
+      res.json(responsePayload);
     } catch (error) {
       if (error instanceof HttpError) {
         return res.status(error.status).json({
@@ -5289,6 +5315,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const responseFormat: RagResponseFormat = responseFormatCandidate ?? "text";
+      const includeContextInResponse = body.includeContext ?? true;
+      const includeQueryVectorInResponse = body.includeQueryVector ?? true;
       const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
 
       if (!embeddingProvider) {
@@ -5448,6 +5476,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           limit: body.limit,
           contextLimit,
           responseFormat,
+          includeContextInResponse,
+          includeQueryVectorInResponse,
         });
         return;
       }
@@ -5461,7 +5491,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         { responseFormat },
       );
 
-      res.json({
+      const responsePayload: Record<string, unknown> = {
         answer: completion.answer,
         format: responseFormat,
         usage: {
@@ -5478,10 +5508,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: embeddingProvider.id,
           name: embeddingProvider.name,
         },
-        context: sanitizedResults,
-        queryVector: embeddingResult.vector,
-        vectorLength: embeddingResult.vector.length,
-      });
+      };
+
+      if (includeContextInResponse) {
+        responsePayload.context = sanitizedResults;
+      }
+
+      if (includeQueryVectorInResponse) {
+        responsePayload.queryVector = embeddingResult.vector;
+        responsePayload.vectorLength = embeddingResult.vector.length;
+      }
+
+      res.json(responsePayload);
     } catch (error) {
       if (error instanceof HttpError) {
         return res.status(error.status).json({
