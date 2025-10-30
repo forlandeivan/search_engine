@@ -119,7 +119,14 @@ function tryConnectNeon(): void {
   }
 }
 
-console.log(`[db] Environment check: PG_HOST=${process.env.PG_HOST ? 'set' : 'not set'}, DATABASE_URL=${process.env.DATABASE_URL ? 'set' : 'not set'}`);
+console.log(`[db] ===== DATABASE CONNECTION DIAGNOSTICS =====`);
+console.log(`[db] NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
+console.log(`[db] PG_HOST: ${process.env.PG_HOST ? `set (${process.env.PG_HOST})` : 'NOT SET'}`);
+console.log(`[db] PG_USER: ${process.env.PG_USER ? 'set' : 'NOT SET'}`);
+console.log(`[db] PG_PASSWORD: ${process.env.PG_PASSWORD ? 'set' : 'NOT SET'}`);
+console.log(`[db] PG_DATABASE: ${process.env.PG_DATABASE ? `set (${process.env.PG_DATABASE})` : 'NOT SET'}`);
+console.log(`[db] DATABASE_URL: ${process.env.DATABASE_URL ? 'set' : 'NOT SET'}`);
+console.log(`[db] ============================================`);
 
 tryConnectCustomPostgres();
 
