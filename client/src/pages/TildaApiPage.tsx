@@ -69,18 +69,22 @@ export default function TildaApiPage() {
     typeof window !== "undefined" ? window.location.origin : "https://ваш-домен.replit.dev";
   const publicApiBase = `${currentDomain}/api/public`;
   const apiEndpoint = publicApiBase;
-  const publicSearchEndpoint = selectedSite
+  const publicSearchEndpoint = `${publicApiBase}/collections/search`;
+  const publicVectorSearchEndpoint = `${publicApiBase}/collections/search/vector`;
+  const publicVectorizeEndpoint = `${publicApiBase}/collections/vectorize`;
+  const publicRagEndpoint = `${publicApiBase}/collections/search/rag`;
+  const legacyPublicSearchEndpoint = selectedSite
     ? `${publicApiBase}/collections/${selectedSite.publicId}/search`
-    : `${publicApiBase}/collections/YOUR_COLLECTION_ID/search`;
-  const publicVectorSearchEndpoint = selectedSite
+    : `${publicApiBase}/collections/:publicId/search`;
+  const legacyPublicVectorSearchEndpoint = selectedSite
     ? `${publicApiBase}/collections/${selectedSite.publicId}/search/vector`
-    : `${publicApiBase}/collections/YOUR_COLLECTION_ID/search/vector`;
-  const publicVectorizeEndpoint = selectedSite
+    : `${publicApiBase}/collections/:publicId/search/vector`;
+  const legacyPublicVectorizeEndpoint = selectedSite
     ? `${publicApiBase}/collections/${selectedSite.publicId}/vectorize`
-    : `${publicApiBase}/collections/YOUR_COLLECTION_ID/vectorize`;
-  const publicRagEndpoint = selectedSite
+    : `${publicApiBase}/collections/:publicId/vectorize`;
+  const legacyPublicRagEndpoint = selectedSite
     ? `${publicApiBase}/collections/${selectedSite.publicId}/search/rag`
-    : `${publicApiBase}/collections/YOUR_COLLECTION_ID/search/rag`;
+    : `${publicApiBase}/collections/:publicId/search/rag`;
 
   const rotateApiKey = useMutation<{ site: Site; apiKey: string }, Error, string>({
     mutationFn: async (siteId: string) => {
@@ -583,7 +587,8 @@ export default function TildaApiPage() {
                 ) : (
                   <div className="space-y-4">
                     {sites.map((site) => {
-                      const endpoint = `${publicApiBase}/collections/${site.publicId}/search`;
+                      const endpoint = publicSearchEndpoint;
+                      const legacyEndpoint = `${publicApiBase}/collections/${site.publicId}/search`;
                       const isActive = selectedSite?.id === site.id;
                       return (
                         <div
@@ -669,6 +674,10 @@ export default function TildaApiPage() {
                                 <Copy className="h-4 w-4" />
                               </Button>
                             </div>
+                            <p className="text-xs text-muted-foreground">
+                              Для обратной совместимости доступен путь
+                              <code className="mx-1">{legacyEndpoint}</code>
+                            </p>
                           </div>
                         </div>
                       );
@@ -776,6 +785,11 @@ export default function TildaApiPage() {
                       <Copy className="h-4 w-4" />
                     </Button>
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    Совместимость: старый путь
+                    <code className="mx-1">{legacyPublicVectorSearchEndpoint}</code>
+                    также доступен.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -868,6 +882,11 @@ export default function TildaApiPage() {
                       <Copy className="h-4 w-4" />
                     </Button>
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    Старый путь
+                    <code className="mx-1">{legacyPublicVectorizeEndpoint}</code>
+                    остаётся рабочим.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -950,6 +969,10 @@ export default function TildaApiPage() {
                       <Copy className="h-4 w-4" />
                     </Button>
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    Поддерживается и старый маршрут
+                    <code className="mx-1">{legacyPublicRagEndpoint}</code>.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -1128,12 +1151,15 @@ export default function TildaApiPage() {
               <div>
                 <div className="flex flex-wrap items-center gap-2 mb-2">
                   <Badge variant="default">POST</Badge>
-                  <code className="text-sm break-all">
-                    /api/public/collections/{selectedSite ? selectedSite.publicId : ":collectionId"}/search
-                  </code>
+                  <code className="text-sm break-all">/api/public/collections/search</code>
                 </div>
                 <p className="text-sm text-muted-foreground">
                   Выполняет поиск по страницам выбранной коллекции. Передайте API-ключ в заголовке <code>X-API-Key</code>.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Совместимость: старый путь
+                  <code className="mx-1">{legacyPublicSearchEndpoint}</code>
+                  продолжает работать.
                 </p>
               </div>
 

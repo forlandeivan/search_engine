@@ -101,11 +101,13 @@ GET /api/search?q=веб разработка&limit=5&page=1
 
 ## Публичный RAG-поиск с LLM
 
-> ⚠️ Все публичные векторные endpoints требуют двух значений из настроек сайта: `publicId` (идентификатор проекта) и `publicApiKey`.
+> ⚠️ Все публичные векторные endpoints требуют публичного API-ключа (`publicApiKey`) и идентификатора рабочего пространства (`workspace_id`).
 
-> `publicApiKey` передаётся в заголовке `X-API-Key`, а `publicId` — в пути (`:publicId`) или в параметре `sitePublicId`. Ошибка 401 означает неверный или отсутствующий ключ, 404 — неверный `publicId` либо коллекция не привязана к сайту.
+> `publicApiKey` передаётся в заголовке `X-API-Key`, `workspace_id` — в теле запроса. Для обратной совместимости можно дополнительно указать `publicId` в пути (`:publicId`) или параметрах, но теперь это необязательно. Ошибка 401 означает неверный или отсутствующий ключ, 404 — отсутствие коллекции в рабочем пространстве.
 
-### POST /api/public/collections/:publicId/search/rag
+### POST /api/public/collections/search/rag
+
+> Legacy-версия `POST /api/public/collections/:publicId/search/rag` остаётся доступной и ведёт себя так же.
 
 Генеративный RAG-поиск: сервис находит релевантные документы в Qdrant и формирует ответ через выбранную LLM.
 
@@ -114,15 +116,16 @@ GET /api/search?q=веб разработка&limit=5&page=1
 - `Content-Type: application/json`
 - `X-API-Key: <publicApiKey из настроек сайта>`
 
-**Параметры пути:**
+**Параметры пути (только для legacy-версии):**
 
-- `:publicId` — публичный идентификатор сайта (тот же, что в админке или в коде виджета).
+- `:publicId` — публичный идентификатор сайта (тот же, что в админке или в коде виджета). В новом маршруте это поле не требуется.
 
 **Тело запроса:**
 
 ```json
 {
   "collection": "YOUR_QDRANT_COLLECTION",
+  "workspace_id": "WORKSPACE_ID",
   "query": "Как оформить возврат товара?",
   "embeddingProviderId": "EMBEDDING_PROVIDER_ID",
   "llmProviderId": "LLM_PROVIDER_ID",
@@ -133,14 +136,17 @@ GET /api/search?q=веб разработка&limit=5&page=1
 }
 ```
 
+> `workspace_id` — обязательное поле: оно определяет рабочее пространство, к которому относится коллекция и публичный ключ.
+
 **Пример запроса:**
 
 ```bash
-curl -X POST "https://ваш-домен.replit.dev/api/public/collections/PROJECT_PUBLIC_ID/search/rag" \
+curl -X POST "https://ваш-домен.replit.dev/api/public/collections/search/rag" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: PUBLIC_API_KEY" \
   -d '{
     "collection": "support_faq",
+    "workspace_id": "WORKSPACE_ID",
     "query": "Как оформить возврат товара?",
     "embeddingProviderId": "gigachat-embeddings",
     "llmProviderId": "gigachat-llm",
