@@ -986,7 +986,10 @@ export default function TildaApiPage() {
                       className="absolute top-2 right-2"
                       onClick={() =>
                         copyToClipboard(
-                          `curl -X POST '${publicRagEndpoint}' \\\n+  -H 'Content-Type: application/json' \\\n+  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\\n+  -d '{\\n    "collection": "YOUR_QDRANT_COLLECTION",\\n    "embeddingProviderId": "EMBEDDING_PROVIDER_ID",\\n    "llmProviderId": "LLM_PROVIDER_ID",\\n    "llmModel": "LLM_MODEL",\\n    "query": "Как оформить возврат товара?",\\n    "responseFormat": "md",\\n    "limit": 6,\\n    "contextLimit": 4\\n  }'`,
+                          `curl -X POST '${publicRagEndpoint}' \\
++  -H 'Content-Type: application/json' \\
++  -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \\
++  -d '{\\n    "collection": "YOUR_QDRANT_COLLECTION",\\n    "workspaceId": "YOUR_WORKSPACE_ID",\\n    "embeddingProviderId": "EMBEDDING_PROVIDER_ID",\\n    "llmProviderId": "LLM_PROVIDER_ID",\\n    "llmModel": "LLM_MODEL",\\n    "query": "Как оформить возврат товара?",\\n    "responseFormat": "md",\\n    "limit": 6,\\n    "contextLimit": 4,\\n    "includeContext": false,\\n    "includeQueryVector": false\\n  }'`,
                           "cURL RAG"
                         )
                       }
@@ -998,13 +1001,16 @@ export default function TildaApiPage() {
   -H 'X-API-Key: ${selectedSite?.publicApiKey ?? "YOUR_API_KEY"}' \
   -d '{
     "collection": "YOUR_QDRANT_COLLECTION",
+    "workspaceId": "YOUR_WORKSPACE_ID",
     "embeddingProviderId": "EMBEDDING_PROVIDER_ID",
     "llmProviderId": "LLM_PROVIDER_ID",
     "llmModel": "LLM_MODEL",
     "query": "Как оформить возврат товара?",
     "responseFormat": "md",
     "limit": 6,
-    "contextLimit": 4
+    "contextLimit": 4,
+    "includeContext": false,
+    "includeQueryVector": false
   }'`}</pre>
                   </div>
                 </div>
