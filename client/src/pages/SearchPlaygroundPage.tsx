@@ -156,6 +156,8 @@ const extractErrorMessage = async (response: Response): Promise<string | null> =
   return null;
 };
 
+const EMPTY_SELECT_VALUE = "__empty__";
+
 const DEFAULT_SETTINGS: PlaygroundSettings = {
   knowledgeBaseId: "",
   suggestLimit: 3,
@@ -928,14 +930,19 @@ export default function SearchPlaygroundPage() {
                           description="Коллекция с векторным индексом текущего пространства. Пример: `workspace-support`. Пустое значение отключит векторный слой."
                         />
                         <Select
-                          value={settings.rag.collection}
-                          onValueChange={(value) => handleRagSettingsChange("collection", value)}
+                          value={settings.rag.collection || EMPTY_SELECT_VALUE}
+                          onValueChange={(value) =>
+                            handleRagSettingsChange(
+                              "collection",
+                              value === EMPTY_SELECT_VALUE ? "" : value,
+                            )
+                          }
                         >
                           <SelectTrigger id="playground-collection">
                             <SelectValue placeholder="Без коллекции" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">Без коллекции (только BM25)</SelectItem>
+                            <SelectItem value={EMPTY_SELECT_VALUE}>Без коллекции (только BM25)</SelectItem>
                             {vectorCollections.map((collection) => (
                               <SelectItem key={collection.name} value={collection.name}>
                                 {collection.name}
@@ -970,8 +977,13 @@ export default function SearchPlaygroundPage() {
                           description="Конкретная модель выбранного провайдера. Пример: `gigachat-pro` для развёрнутых ответов."
                         />
                         <Select
-                          value={settings.rag.llmModel}
-                          onValueChange={(value) => handleRagSettingsChange("llmModel", value)}
+                          value={settings.rag.llmModel || EMPTY_SELECT_VALUE}
+                          onValueChange={(value) =>
+                            handleRagSettingsChange(
+                              "llmModel",
+                              value === EMPTY_SELECT_VALUE ? "" : value,
+                            )
+                          }
                           disabled={availableLlmModels.length === 0}
                         >
                           <SelectTrigger id="playground-llm-model">
@@ -979,7 +991,7 @@ export default function SearchPlaygroundPage() {
                           </SelectTrigger>
                           <SelectContent>
                             {availableLlmModels.length === 0 ? (
-                              <SelectItem value="">Модель по умолчанию</SelectItem>
+                              <SelectItem value={EMPTY_SELECT_VALUE}>Модель по умолчанию</SelectItem>
                             ) : (
                               availableLlmModels.map((model) => (
                                 <SelectItem key={model.value} value={model.value}>
