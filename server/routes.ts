@@ -2477,6 +2477,58 @@ const fetchKnowledgeVectorRecordsSchema = z.object({
   includeVector: z.boolean().optional(),
 });
 
+const knowledgeSuggestQuerySchema = z.object({
+  q: z.string().trim().min(1, "Укажите запрос"),
+  kb_id: z.string().trim().min(1, "Укажите базу знаний"),
+  limit: z
+    .union([z.string(), z.number()])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) {
+        return undefined;
+      }
+
+      const numeric = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+      if (!Number.isFinite(numeric)) {
+        return undefined;
+      }
+
+      return numeric;
+    }),
+});
+
+const knowledgeRagRequestSchema = z.object({
+  q: z.string().trim().min(1, "Укажите запрос"),
+  kb_id: z.string().trim().min(1, "Укажите базу знаний"),
+  top_k: z.coerce.number().int().min(1).max(20).default(6),
+  hybrid: z
+    .object({
+      bm25: z
+        .object({
+          weight: z.coerce.number().min(0).max(1).optional(),
+          limit: z.coerce.number().int().min(1).max(50).optional(),
+        })
+        .default({}),
+      vector: z
+        .object({
+          weight: z.coerce.number().min(0).max(1).optional(),
+          limit: z.coerce.number().int().min(1).max(50).optional(),
+          collection: z.string().trim().optional(),
+          embedding_provider_id: z.string().trim().optional(),
+        })
+        .default({}),
+    })
+    .default({ bm25: {}, vector: {} }),
+  llm: z.object({
+    provider: z.string().trim().min(1, "Укажите провайдера LLM"),
+    model: z.string().trim().optional(),
+    temperature: z.coerce.number().min(0).max(2).optional(),
+    max_tokens: z.coerce.number().int().min(16).max(4096).optional(),
+    system_prompt: z.string().optional(),
+    response_format: z.string().optional(),
+  }),
+});
+
 // Public search API request/response schemas
 const publicSearchRequestSchema = z.object({
   query: z.string().trim().min(1),
@@ -2564,6 +2616,516 @@ function buildExcerpt(content: string | null | undefined, query: string, maxLeng
 export async function registerRoutes(app: Express): Promise<Server> {
   const isGoogleAuthEnabled = () => Boolean(app.get("googleAuthConfigured"));
   const isYandexAuthEnabled = () => Boolean(app.get("yandexAuthConfigured"));
+
+  app.get("/public/search/suggest", async (req, res) => {
+    const parsed = knowledgeSuggestQuerySchema.safeParse({
+      q:
+        typeof req.query.q === "string"
+          ? req.query.q
+          : typeof req.query.query === "string"
+            ? req.query.query
+            : "",
+      kb_id:
+        typeof req.query.kb_id === "string"
+          ? req.query.kb_id
+          : typeof req.query.kbId === "string"
+            ? req.query.kbId
+            : "",
+      limit: req.query.limit,
+    });
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Некорректные параметры запроса",
+        details: parsed.error.format(),
+      });
+    }
+
+    const { q, kb_id, limit } = parsed.data;
+    const query = q.trim();
+    const knowledgeBaseId = kb_id.trim();
+    const limitValue = limit !== undefined ? Math.max(1, Math.min(Number(limit), 10)) : 3;
+
+    if (!query) {
+      return res.status(400).json({ error: "Укажите поисковый запрос" });
+    }
+
+    try {
+      const base = await storage.getKnowledgeBase(knowledgeBaseId);
+      if (!base) {
+        return res.status(404).json({ error: "База знаний не найдена" });
+      }
+
+      const startedAt = performance.now();
+      const suggestions = await storage.searchKnowledgeBaseSuggestions(
+        knowledgeBaseId,
+        query,
+        limitValue,
+      );
+      const duration = performance.now() - startedAt;
+
+      const sections = suggestions.sections.map((entry) => ({
+        chunk_id: entry.chunkId,
+        doc_id: entry.documentId,
+        doc_title: entry.docTitle,
+        section_title: entry.sectionTitle,
+        snippet: entry.snippet,
+        score: entry.score,
+        source: entry.source,
+      }));
+
+      res.json({
+        query,
+        kb_id: knowledgeBaseId,
+        normalized_query: suggestions.normalizedQuery || query,
+        ask_ai: {
+          label: "Спросить AI",
+          query: suggestions.normalizedQuery || query,
+        },
+        sections,
+        timings: {
+          total_ms: Number(duration.toFixed(2)),
+        },
+      });
+    } catch (error) {
+      console.error("Ошибка подсказок по базе знаний:", error);
+      res.status(500).json({ error: "Не удалось получить подсказки" });
+    }
+  });
+
+  app.post("/public/rag/answer", async (req, res) => {
+    const parsed = knowledgeRagRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Некорректные параметры RAG-запроса",
+        details: parsed.error.format(),
+      });
+    }
+
+    const body = parsed.data;
+    const query = body.q.trim();
+    const knowledgeBaseId = body.kb_id.trim();
+
+    if (!query) {
+      return res.status(400).json({ error: "Укажите поисковый запрос" });
+    }
+
+    try {
+      const base = await storage.getKnowledgeBase(knowledgeBaseId);
+      if (!base) {
+        return res.status(404).json({ error: "База знаний не найдена" });
+      }
+
+      const workspaceId = base.workspaceId;
+      const bm25Limit = body.hybrid.bm25.limit ?? body.top_k;
+      const vectorLimit = body.hybrid.vector.limit ?? body.top_k;
+      const vectorConfigured = Boolean(
+        body.hybrid.vector.collection && body.hybrid.vector.embedding_provider_id,
+      );
+
+      let bm25Weight = body.hybrid.bm25.weight ?? (vectorConfigured ? 0.5 : 1);
+      let vectorWeight = vectorConfigured ? body.hybrid.vector.weight ?? 0.5 : 0;
+
+      if (!vectorConfigured) {
+        vectorWeight = 0;
+        if (bm25Weight <= 0) {
+          bm25Weight = 1;
+        }
+      }
+
+      const weightSum = bm25Weight + vectorWeight;
+      if (weightSum > 0) {
+        bm25Weight /= weightSum;
+        vectorWeight /= weightSum;
+      } else {
+        bm25Weight = 1;
+        vectorWeight = 0;
+      }
+
+      const totalStart = performance.now();
+      const retrievalStart = performance.now();
+      const suggestionLimit = Math.max(bm25Limit, vectorLimit, body.top_k);
+
+      const bm25Start = performance.now();
+      const bm25Suggestions = await storage.searchKnowledgeBaseSuggestions(
+        knowledgeBaseId,
+        query,
+        suggestionLimit,
+      );
+      const bm25Duration = performance.now() - bm25Start;
+      const normalizedQuery = bm25Suggestions.normalizedQuery || query;
+      const bm25Candidates = bm25Suggestions.sections
+        .filter((entry) => entry.source === "content")
+        .slice(0, bm25Limit);
+
+      const vectorChunks: Array<{
+        chunkId: string;
+        score: number;
+        recordId: string | null;
+        payload: Record<string, unknown> | null;
+      }> = [];
+      let vectorDuration = 0;
+      let embeddingUsageTokens: number | null = null;
+      let vectorSearchDetails: Array<Record<string, unknown>> | null = null;
+
+      if (vectorWeight > 0) {
+        try {
+          const vectorStart = performance.now();
+          const embeddingProvider = await storage.getEmbeddingProvider(
+            body.hybrid.vector.embedding_provider_id!,
+            workspaceId,
+          );
+
+          if (!embeddingProvider) {
+            throw new HttpError(404, "Сервис эмбеддингов не найден");
+          }
+
+          if (!embeddingProvider.isActive) {
+            throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+          }
+
+          const client = getQdrantClient();
+          const collectionName = body.hybrid.vector.collection!.trim();
+          const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
+          const embeddingResult = await fetchEmbeddingVector(
+            embeddingProvider,
+            embeddingAccessToken,
+            normalizedQuery,
+          );
+          embeddingUsageTokens = embeddingResult.usageTokens ?? null;
+
+          const searchPayload: Parameters<QdrantClient["search"]>[1] = {
+            vector: embeddingResult.vector as Schemas["NamedVectorStruct"],
+            limit: vectorLimit,
+            with_payload: true,
+            filter: {
+              must: [
+                {
+                  key: "base.id",
+                  match: { value: knowledgeBaseId },
+                },
+              ],
+            },
+          };
+
+          const vectorResults = await client.search(collectionName, searchPayload);
+          vectorDuration = performance.now() - vectorStart;
+          vectorSearchDetails = vectorResults.map((item) => ({
+            id: item.id,
+            score: item.score ?? null,
+            payload: item.payload ?? null,
+          }));
+
+          for (const item of vectorResults) {
+            const payload = (item.payload ?? null) as Record<string, unknown> | null;
+            let chunkId: string | null = null;
+            if (payload && typeof payload === "object") {
+              const chunkInfo = (payload as { chunk?: { id?: unknown } }).chunk;
+              if (chunkInfo && typeof chunkInfo.id === "string" && chunkInfo.id.trim().length > 0) {
+                chunkId = chunkInfo.id.trim();
+              }
+            }
+
+            const recordId =
+              typeof item.id === "string"
+                ? item.id
+                : typeof item.id === "number" && Number.isFinite(item.id)
+                  ? String(item.id)
+                  : null;
+
+            const score = Number(item.score ?? 0) || 0;
+            vectorChunks.push({ chunkId: chunkId ?? "", score, recordId, payload });
+          }
+        } catch (error) {
+          console.error("Ошибка векторного поиска для RAG:", error);
+          vectorWeight = 0;
+          bm25Weight = 1;
+        }
+      }
+
+      const retrievalDuration = performance.now() - retrievalStart;
+
+      const vectorChunkIds = new Set<string>();
+      const vectorRecordIds: string[] = [];
+      for (const entry of vectorChunks) {
+        if (entry.chunkId) {
+          vectorChunkIds.add(entry.chunkId);
+        } else if (entry.recordId) {
+          vectorRecordIds.push(entry.recordId);
+        }
+      }
+
+      const chunkDetailsFromVector = await storage.getKnowledgeChunksByIds(
+        knowledgeBaseId,
+        Array.from(vectorChunkIds),
+      );
+      const chunkDetailsFromRecords =
+        vectorRecordIds.length > 0
+          ? await storage.getKnowledgeChunksByVectorRecords(knowledgeBaseId, vectorRecordIds)
+          : [];
+
+      const chunkDetailsMap = new Map<
+        string,
+        { documentId: string; docTitle: string; sectionTitle: string | null; text: string }
+      >();
+      const recordToChunk = new Map<string, string>();
+
+      for (const detail of chunkDetailsFromVector) {
+        chunkDetailsMap.set(detail.chunkId, {
+          documentId: detail.documentId,
+          docTitle: detail.docTitle,
+          sectionTitle: detail.sectionTitle,
+          text: detail.text,
+        });
+      }
+
+      for (const detail of chunkDetailsFromRecords) {
+        chunkDetailsMap.set(detail.chunkId, {
+          documentId: detail.documentId,
+          docTitle: detail.docTitle,
+          sectionTitle: detail.sectionTitle,
+          text: detail.text,
+        });
+
+        if (detail.vectorRecordId) {
+          recordToChunk.set(detail.vectorRecordId, detail.chunkId);
+        }
+      }
+
+      const aggregated = new Map<
+        string,
+        {
+          chunkId: string;
+          documentId: string;
+          docTitle: string;
+          sectionTitle: string | null;
+          text: string;
+          snippet: string;
+          bm25Score: number;
+          vectorScore: number;
+        }
+      >();
+
+      const buildSnippet = (text: string) => {
+        const trimmed = text.trim();
+        if (trimmed.length <= 320) {
+          return trimmed;
+        }
+        return `${trimmed.slice(0, 320)}…`;
+      };
+
+      for (const entry of bm25Candidates) {
+        const snippet = entry.snippet || buildSnippet(entry.text);
+        aggregated.set(entry.chunkId, {
+          chunkId: entry.chunkId,
+          documentId: entry.documentId,
+          docTitle: entry.docTitle,
+          sectionTitle: entry.sectionTitle,
+          text: entry.text,
+          snippet,
+          bm25Score: entry.score,
+          vectorScore: 0,
+        });
+      }
+
+      for (const entry of vectorChunks) {
+        let chunkId = entry.chunkId;
+        if (!chunkId && entry.recordId) {
+          chunkId = recordToChunk.get(entry.recordId) ?? "";
+        }
+
+        if (!chunkId) {
+          continue;
+        }
+
+        const detail = chunkDetailsMap.get(chunkId);
+        if (!detail) {
+          continue;
+        }
+
+        const existing = aggregated.get(chunkId);
+        const baseSnippet =
+          entry.payload && typeof entry.payload === "object"
+            ? (() => {
+                const chunkPayload = (entry.payload as { chunk?: { excerpt?: unknown } }).chunk;
+                if (chunkPayload && typeof chunkPayload.excerpt === "string") {
+                  return chunkPayload.excerpt;
+                }
+                return null;
+              })()
+            : null;
+
+        const snippet = baseSnippet ?? existing?.snippet ?? buildSnippet(detail.text);
+
+        aggregated.set(chunkId, {
+          chunkId,
+          documentId: detail.documentId,
+          docTitle: detail.docTitle,
+          sectionTitle: detail.sectionTitle,
+          text: detail.text,
+          snippet,
+          bm25Score: existing?.bm25Score ?? 0,
+          vectorScore: Math.max(existing?.vectorScore ?? 0, entry.score),
+        });
+      }
+
+      const bm25Max = Math.max(...Array.from(aggregated.values()).map((item) => item.bm25Score), 0);
+      const vectorMax = Math.max(...Array.from(aggregated.values()).map((item) => item.vectorScore), 0);
+
+      const combinedResults = Array.from(aggregated.values())
+        .map((item) => {
+          const bm25Normalized = bm25Max > 0 ? item.bm25Score / bm25Max : 0;
+          const vectorNormalized = vectorMax > 0 ? item.vectorScore / vectorMax : 0;
+          const combinedScore = bm25Normalized * bm25Weight + vectorNormalized * vectorWeight;
+
+          return {
+            ...item,
+            combinedScore,
+            bm25Normalized,
+            vectorNormalized,
+          };
+        })
+        .sort((a, b) => b.combinedScore - a.combinedScore)
+        .slice(0, body.top_k);
+
+      const contextRecords: LlmContextRecord[] = combinedResults.map((item, index) => ({
+        index,
+        score: item.combinedScore,
+        payload: {
+          chunk: {
+            id: item.chunkId,
+            text: item.text,
+            snippet: item.snippet,
+            sectionTitle: item.sectionTitle,
+          },
+          document: {
+            id: item.documentId,
+            title: item.docTitle,
+          },
+          scores: {
+            bm25: item.bm25Score,
+            vector: item.vectorScore,
+            bm25Normalized: item.bm25Normalized,
+            vectorNormalized: item.vectorNormalized,
+          },
+        },
+      }));
+
+      const ragResponseFormat = normalizeResponseFormat(body.llm.response_format);
+      if (ragResponseFormat === null) {
+        return res.status(400).json({
+          error: "Некорректный формат ответа",
+          details: "Поддерживаются значения text, md/markdown или html",
+        });
+      }
+      const responseFormat: RagResponseFormat = ragResponseFormat ?? "text";
+
+      const llmProvider = await storage.getLlmProvider(body.llm.provider, workspaceId);
+      if (!llmProvider) {
+        return res.status(404).json({ error: "Провайдер LLM не найден" });
+      }
+
+      if (!llmProvider.isActive) {
+        throw new HttpError(400, "Выбранный провайдер LLM отключён");
+      }
+
+      const requestConfig = mergeLlmRequestConfig(llmProvider);
+
+      if (body.llm.system_prompt !== undefined) {
+        requestConfig.systemPrompt = body.llm.system_prompt || undefined;
+      }
+
+      if (body.llm.temperature !== undefined) {
+        requestConfig.temperature = body.llm.temperature;
+      }
+
+      if (body.llm.max_tokens !== undefined) {
+        requestConfig.maxTokens = body.llm.max_tokens;
+      }
+
+      const configuredProvider: LlmProvider = {
+        ...llmProvider,
+        requestConfig,
+      };
+
+      const llmAccessToken = await fetchAccessToken(configuredProvider);
+      const llmStart = performance.now();
+      const completion = await fetchLlmCompletion(
+        configuredProvider,
+        llmAccessToken,
+        normalizedQuery,
+        contextRecords,
+        body.llm.model,
+        { responseFormat },
+      );
+      const llmDuration = performance.now() - llmStart;
+
+      const totalDuration = performance.now() - totalStart;
+
+      const citations = combinedResults.map((item) => ({
+        chunk_id: item.chunkId,
+        doc_id: item.documentId,
+        doc_title: item.docTitle,
+        section_title: item.sectionTitle,
+        snippet: item.snippet,
+        score: item.combinedScore,
+        scores: {
+          bm25: item.bm25Score,
+          vector: item.vectorScore,
+        },
+      }));
+
+      res.json({
+        query,
+        kb_id: knowledgeBaseId,
+        normalized_query: normalizedQuery,
+        answer: completion.answer,
+        citations,
+        chunks: combinedResults.map((item) => ({
+          chunk_id: item.chunkId,
+          doc_id: item.documentId,
+          doc_title: item.docTitle,
+          section_title: item.sectionTitle,
+          snippet: item.snippet,
+          text: item.text,
+          score: item.combinedScore,
+          scores: {
+            bm25: item.bm25Score,
+            vector: item.vectorScore,
+          },
+        })),
+        usage: {
+          embeddingTokens: embeddingUsageTokens,
+          llmTokens: completion.usageTokens ?? null,
+        },
+        timings: {
+          total_ms: Number(totalDuration.toFixed(2)),
+          retrieval_ms: Number(retrievalDuration.toFixed(2)),
+          bm25_ms: Number(bm25Duration.toFixed(2)),
+          vector_ms: Number(vectorDuration.toFixed(2)),
+          llm_ms: Number(llmDuration.toFixed(2)),
+        },
+        debug: {
+          vectorSearch: vectorSearchDetails,
+        },
+      });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ error: error.message, details: error.details ?? null });
+      }
+
+      if (error instanceof QdrantConfigurationError) {
+        return res.status(503).json({ error: "Qdrant не настроен", details: error.message });
+      }
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Некорректные параметры RAG-запроса", details: error.errors });
+      }
+
+      console.error("Ошибка RAG-поиска по базе знаний:", error);
+      res.status(500).json({ error: "Не удалось получить ответ от LLM" });
+    }
+  });
 
   const registerPublicCollectionRoute = (path: string, handler: RequestHandler) => {
     app.post(path, handler);

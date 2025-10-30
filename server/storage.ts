@@ -11,6 +11,11 @@ import {
   workspaceMembers,
   workspaceVectorCollections,
   workspaceMemberRoles,
+  knowledgeBases,
+  knowledgeNodes,
+  knowledgeDocuments,
+  knowledgeDocumentChunkItems,
+  knowledgeDocumentChunkSets,
   type Site,
   type SiteInsert,
   type Page,
@@ -41,6 +46,19 @@ type PgError = Error & { code?: string };
 function isPgError(error: unknown): error is PgError {
   return typeof error === "object" && error !== null && "message" in error;
 }
+
+type KnowledgeBaseRow = typeof knowledgeBases.$inferSelect;
+
+export type KnowledgeChunkSearchEntry = {
+  chunkId: string;
+  documentId: string;
+  docTitle: string;
+  sectionTitle: string | null;
+  snippet: string;
+  text: string;
+  score: number;
+  source: "sections" | "content";
+};
 
 function swallowPgError(error: unknown, allowedCodes: string[]): void {
   if (!isPgError(error)) {
@@ -1387,6 +1405,46 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "vector_record_id" text`,
     );
 
+    try {
+      await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+    } catch (error) {
+      swallowPgError(error, ["42710", "0A000"]);
+    }
+
+    try {
+      await db.execute(sql`CREATE EXTENSION IF NOT EXISTS unaccent`);
+    } catch (error) {
+      swallowPgError(error, ["42710", "0A000"]);
+    }
+
+    await db.execute(sql`
+      ALTER TABLE "knowledge_document_chunks"
+      ADD COLUMN IF NOT EXISTS "text_tsv" tsvector
+        GENERATED ALWAYS AS (
+          setweight(to_tsvector('simple', COALESCE("metadata"->>'heading', '')), 'A') ||
+          setweight(to_tsvector('russian', COALESCE("metadata"->>'firstSentence', '')), 'B') ||
+          setweight(to_tsvector('russian', COALESCE("text", '')), 'C')
+        ) STORED
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS knowledge_document_chunks_text_tsv_idx
+      ON "knowledge_document_chunks"
+      USING GIN ("text_tsv")
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS knowledge_document_chunks_heading_trgm_idx
+      ON "knowledge_document_chunks"
+      USING GIN (("metadata"->>'heading') gin_trgm_ops)
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS knowledge_nodes_title_trgm_idx
+      ON "knowledge_nodes"
+      USING GIN ("title" gin_trgm_ops)
+    `);
+
     knowledgeBaseTablesEnsured = true;
   })();
 
@@ -2508,6 +2566,358 @@ export class DatabaseStorage implements IStorage {
     await this.db
       .delete(workspaceVectorCollections)
       .where(eq(workspaceVectorCollections.collectionName, collectionName));
+  }
+
+  async getKnowledgeBase(baseId: string): Promise<KnowledgeBaseRow | null> {
+    await ensureKnowledgeBaseTables();
+
+    const [row] = await this.db
+      .select()
+      .from(knowledgeBases)
+      .where(eq(knowledgeBases.id, baseId))
+      .limit(1);
+
+    return row ?? null;
+  }
+
+  private resolveSectionTitle(
+    metadata: Record<string, unknown> | null,
+    sectionPath: string[] | null | undefined,
+    fallback: string,
+  ): string | null {
+    const heading =
+      typeof metadata?.heading === "string" && metadata.heading.trim().length > 0
+        ? metadata.heading.trim()
+        : typeof metadata?.Heading === "string" && metadata.Heading.trim().length > 0
+          ? metadata.Heading.trim()
+          : null;
+
+    if (heading) {
+      return heading;
+    }
+
+    if (sectionPath && sectionPath.length > 0) {
+      const candidate = sectionPath[sectionPath.length - 1];
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        return candidate.trim();
+      }
+    }
+
+    if (fallback.trim().length > 0) {
+      return fallback.trim();
+    }
+
+    return null;
+  }
+
+  async searchKnowledgeBaseSuggestions(
+    baseId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ normalizedQuery: string; sections: KnowledgeChunkSearchEntry[] }> {
+    await ensureKnowledgeBaseTables();
+
+    const cleanQuery = query.trim();
+    if (!cleanQuery) {
+      return { normalizedQuery: "", sections: [] };
+    }
+
+    let normalizedQuery = cleanQuery;
+    try {
+      const normalized = await this.db.execute(sql`SELECT unaccent(${cleanQuery}) AS value`);
+      const candidate = normalized.rows?.[0]?.value;
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        normalizedQuery = candidate.trim();
+      }
+    } catch (error) {
+      console.warn("[storage] Не удалось нормализовать запрос через unaccent", error);
+    }
+
+    const effectiveLimit = Math.max(1, Math.min(limit, 10));
+
+    const sectionsResult = await this.db.execute(sql`
+      WITH search_input AS (
+        SELECT
+          ${cleanQuery}::text AS raw_query,
+          unaccent(${cleanQuery})::text AS normalized_query
+      )
+      SELECT
+        chunk.id AS chunk_id,
+        chunk.document_id,
+        node.title AS doc_title,
+        COALESCE(chunk.metadata->>'heading', (chunk.section_path[array_length(chunk.section_path, 1)])) AS section_title,
+        chunk.text,
+        GREATEST(
+          similarity(unaccent(COALESCE(chunk.metadata->>'heading', '')), search_input.normalized_query),
+          similarity(unaccent(node.title), search_input.normalized_query)
+        ) AS score
+      FROM knowledge_document_chunks AS chunk
+      INNER JOIN knowledge_document_chunk_sets AS chunk_set
+        ON chunk_set.id = chunk.chunk_set_id AND chunk_set.is_latest = TRUE
+      INNER JOIN knowledge_documents AS doc ON doc.id = chunk.document_id
+      INNER JOIN knowledge_nodes AS node ON node.id = doc.node_id
+      CROSS JOIN search_input
+      WHERE doc.base_id = ${baseId}
+        AND (
+          unaccent(COALESCE(chunk.metadata->>'heading', '')) ILIKE search_input.normalized_query || '%'
+          OR unaccent(node.title) ILIKE search_input.normalized_query || '%'
+          OR similarity(unaccent(COALESCE(chunk.metadata->>'heading', '')), search_input.normalized_query) > 0.25
+          OR similarity(unaccent(node.title), search_input.normalized_query) > 0.25
+        )
+      ORDER BY score DESC
+      LIMIT ${effectiveLimit}
+    `);
+
+    let contentRows: Array<Record<string, unknown>> = [];
+    try {
+      const contentResult = await this.db.execute(sql`
+        WITH search_input AS (
+          SELECT
+            ${cleanQuery}::text AS raw_query,
+            websearch_to_tsquery('russian', unaccent(${cleanQuery})) AS ts_query
+        ), ranked AS (
+          SELECT
+            chunk.id AS chunk_id,
+            chunk.document_id,
+            node.title AS doc_title,
+            COALESCE(chunk.metadata->>'heading', (chunk.section_path[array_length(chunk.section_path, 1)])) AS section_title,
+            chunk.text,
+            ts_rank(chunk.text_tsv, search_input.ts_query) AS rank
+          FROM knowledge_document_chunks AS chunk
+          INNER JOIN knowledge_document_chunk_sets AS chunk_set
+            ON chunk_set.id = chunk.chunk_set_id AND chunk_set.is_latest = TRUE
+          INNER JOIN knowledge_documents AS doc ON doc.id = chunk.document_id
+          INNER JOIN knowledge_nodes AS node ON node.id = doc.node_id
+          CROSS JOIN search_input
+          WHERE doc.base_id = ${baseId}
+            AND search_input.ts_query IS NOT NULL
+            AND chunk.text_tsv @@ search_input.ts_query
+          ORDER BY rank DESC
+          LIMIT ${effectiveLimit}
+        )
+        SELECT
+          ranked.chunk_id,
+          ranked.document_id,
+          ranked.doc_title,
+          ranked.section_title,
+          ranked.text,
+          ranked.rank,
+          ts_headline('russian', ranked.text, search_input.ts_query, 'MaxFragments=2, MinWords=5, MaxWords=20') AS snippet
+        FROM ranked
+        CROSS JOIN search_input
+        ORDER BY ranked.rank DESC
+      `);
+      contentRows = (contentResult.rows ?? []) as Array<Record<string, unknown>>;
+    } catch (error) {
+      console.warn("[storage] Не удалось выполнить полнотекстовый поиск по чанкам базы знаний", error);
+    }
+
+    const combined = new Map<string, KnowledgeChunkSearchEntry>();
+
+    for (const row of sectionsResult.rows ?? []) {
+      const chunkId = String((row as Record<string, unknown>).chunk_id ?? "").trim();
+      if (!chunkId) {
+        continue;
+      }
+
+      const docTitle = typeof (row as Record<string, unknown>).doc_title === "string"
+        ? ((row as Record<string, unknown>).doc_title as string)
+        : "";
+
+      const sectionTitleRaw = (row as Record<string, unknown>).section_title;
+      const resolvedTitle =
+        typeof sectionTitleRaw === "string" && sectionTitleRaw.trim().length > 0
+          ? sectionTitleRaw.trim()
+          : docTitle;
+
+      const text = typeof (row as Record<string, unknown>).text === "string"
+        ? (row as Record<string, unknown>).text
+        : "";
+
+      const snippet = text.length > 320 ? `${text.slice(0, 320)}…` : text;
+      const score = Number((row as Record<string, unknown>).score ?? 0) || 0;
+
+      combined.set(chunkId, {
+        chunkId,
+        documentId: String((row as Record<string, unknown>).document_id ?? ""),
+        docTitle,
+        sectionTitle: resolvedTitle,
+        snippet,
+        text,
+        score,
+        source: "sections",
+      });
+    }
+
+    for (const row of contentRows) {
+      const chunkId = String((row as Record<string, unknown>).chunk_id ?? "").trim();
+      if (!chunkId) {
+        continue;
+      }
+
+      const docTitle = typeof (row as Record<string, unknown>).doc_title === "string"
+        ? ((row as Record<string, unknown>).doc_title as string)
+        : "";
+
+      const text = typeof (row as Record<string, unknown>).text === "string"
+        ? (row as Record<string, unknown>).text
+        : "";
+
+      const snippetValue = typeof (row as Record<string, unknown>).snippet === "string"
+        ? ((row as Record<string, unknown>).snippet as string)
+        : text.length > 320
+          ? `${text.slice(0, 320)}…`
+          : text;
+
+      const sectionTitleRaw = (row as Record<string, unknown>).section_title;
+      const resolvedTitle =
+        typeof sectionTitleRaw === "string" && sectionTitleRaw.trim().length > 0
+          ? sectionTitleRaw.trim()
+          : docTitle;
+
+      const rank = Number((row as Record<string, unknown>).rank ?? 0) || 0;
+      const existing = combined.get(chunkId);
+
+      if (!existing || rank > existing.score) {
+        combined.set(chunkId, {
+          chunkId,
+          documentId: String((row as Record<string, unknown>).document_id ?? ""),
+          docTitle,
+          sectionTitle: resolvedTitle,
+          snippet: snippetValue,
+          text,
+          score: rank,
+          source: "content",
+        });
+      }
+    }
+
+    const sections = Array.from(combined.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+    return { normalizedQuery, sections };
+  }
+
+  async getKnowledgeChunksByIds(
+    baseId: string,
+    chunkIds: string[],
+  ): Promise<Array<{
+    chunkId: string;
+    documentId: string;
+    docTitle: string;
+    sectionTitle: string | null;
+    text: string;
+  }>> {
+    if (chunkIds.length === 0) {
+      return [];
+    }
+
+    await ensureKnowledgeBaseTables();
+
+    const rows = await this.db
+      .select({
+        chunkId: knowledgeDocumentChunkItems.id,
+        documentId: knowledgeDocumentChunkItems.documentId,
+        text: knowledgeDocumentChunkItems.text,
+        metadata: knowledgeDocumentChunkItems.metadata,
+        sectionPath: knowledgeDocumentChunkItems.sectionPath,
+        docTitle: knowledgeNodes.title,
+      })
+      .from(knowledgeDocumentChunkItems)
+      .innerJoin(
+        knowledgeDocumentChunkSets,
+        and(
+          eq(knowledgeDocumentChunkSets.id, knowledgeDocumentChunkItems.chunkSetId),
+          eq(knowledgeDocumentChunkSets.isLatest, true),
+        ),
+      )
+      .innerJoin(
+        knowledgeDocuments,
+        eq(knowledgeDocuments.id, knowledgeDocumentChunkItems.documentId),
+      )
+      .innerJoin(knowledgeNodes, eq(knowledgeNodes.id, knowledgeDocuments.nodeId))
+      .where(
+        and(
+          eq(knowledgeDocuments.baseId, baseId),
+          inArray(knowledgeDocumentChunkItems.id, chunkIds),
+        ),
+      );
+
+    return rows.map((row) => {
+      const metadata = row.metadata as Record<string, unknown> | null;
+      const sectionTitle = this.resolveSectionTitle(metadata ?? null, row.sectionPath, row.docTitle ?? "");
+
+      return {
+        chunkId: row.chunkId,
+        documentId: row.documentId,
+        docTitle: row.docTitle ?? "",
+        sectionTitle,
+        text: row.text ?? "",
+      };
+    });
+  }
+
+  async getKnowledgeChunksByVectorRecords(
+    baseId: string,
+    recordIds: string[],
+  ): Promise<Array<{
+    chunkId: string;
+    documentId: string;
+    docTitle: string;
+    sectionTitle: string | null;
+    text: string;
+    vectorRecordId: string | null;
+  }>> {
+    if (recordIds.length === 0) {
+      return [];
+    }
+
+    await ensureKnowledgeBaseTables();
+
+    const rows = await this.db
+      .select({
+        chunkId: knowledgeDocumentChunkItems.id,
+        documentId: knowledgeDocumentChunkItems.documentId,
+        text: knowledgeDocumentChunkItems.text,
+        metadata: knowledgeDocumentChunkItems.metadata,
+        sectionPath: knowledgeDocumentChunkItems.sectionPath,
+        docTitle: knowledgeNodes.title,
+        vectorRecordId: knowledgeDocumentChunkItems.vectorRecordId,
+      })
+      .from(knowledgeDocumentChunkItems)
+      .innerJoin(
+        knowledgeDocumentChunkSets,
+        and(
+          eq(knowledgeDocumentChunkSets.id, knowledgeDocumentChunkItems.chunkSetId),
+          eq(knowledgeDocumentChunkSets.isLatest, true),
+        ),
+      )
+      .innerJoin(
+        knowledgeDocuments,
+        eq(knowledgeDocuments.id, knowledgeDocumentChunkItems.documentId),
+      )
+      .innerJoin(knowledgeNodes, eq(knowledgeNodes.id, knowledgeDocuments.nodeId))
+      .where(
+        and(
+          eq(knowledgeDocuments.baseId, baseId),
+          inArray(knowledgeDocumentChunkItems.vectorRecordId, recordIds),
+        ),
+      );
+
+    return rows.map((row) => {
+      const metadata = row.metadata as Record<string, unknown> | null;
+      const sectionTitle = this.resolveSectionTitle(metadata ?? null, row.sectionPath, row.docTitle ?? "");
+
+      return {
+        chunkId: row.chunkId,
+        documentId: row.documentId,
+        docTitle: row.docTitle ?? "",
+        sectionTitle,
+        text: row.text ?? "",
+        vectorRecordId: row.vectorRecordId ?? null,
+      };
+    });
   }
 
   private buildWorkspaceCondition(workspaceId?: string): SQL | undefined {
