@@ -6,6 +6,12 @@ This is a lightweight search engine application designed for crawling and indexi
 
 ## Recent Changes
 
+### October 30, 2025
+- **Database schema synchronized**: Full schema migration with ltree extension enabled for hierarchical structures
+- **RAG API infrastructure created**: Public RAG search endpoint configured and ready for deployment
+- **Production deployment prepared**: Chromium system dependency installed for Puppeteer support
+- **Demo workspace initialized**: Created test workspace with embedding and LLM providers
+
 ### October 2025
 - **Hierarchical document structure**: Full support for nesting documents within other documents (like Confluence)
 - **Document parents**: Documents can now be parents for other documents (folders can only be parented by folders)
@@ -102,3 +108,83 @@ Preferred communication style: Simple, everyday language.
 - **wouter**: Lightweight React router
 - **date-fns**: Date manipulation and formatting utilities
 - **cmdk**: Command palette component for enhanced UX
+
+## RAG API Configuration
+
+### Public RAG Search Endpoint
+
+API endpoint for Retrieval-Augmented Generation (RAG) search is available at:
+```
+POST https://aiknowledge.ru/api/public/collections/search/rag
+```
+
+### Current Infrastructure
+
+**Workspace:**
+- ID: `eb3ecef0-2e4a-464c-843a-9ce5d24d8051`
+- Name: AI Knowledge Workspace
+
+**API Key:**
+- `1a76fe18f9ee4ba571e2310ea973489aaa7d5b357463eca297269cf0facd05a3`
+
+**Registered Collections:**
+- `new2222222222222222222` (registered in workspace)
+
+**Embedding Provider:**
+- ID: `269022b8-4980-4f6c-8583-a70f73b3e98b`
+- Type: GigaChat
+- Vector Size: 1024
+
+**LLM Provider:**
+- ID: `59f44b6d-0fef-4082-9d76-ffb922c41825`
+- Type: GigaChat
+- Default Model: GigaChat-Max
+- Available Models: GigaChat, GigaChat-Plus, GigaChat-Pro, GigaChat-Max
+
+### ⚠️ Important: API Keys Configuration
+
+The embedding and LLM providers were created with placeholder authorization keys (`'your-authorization-key-here'`). Before using the RAG API in production, you **must** update these providers with real GigaChat API credentials:
+
+**Option 1: Update via SQL**
+```sql
+-- Update Embedding Provider
+UPDATE embedding_providers 
+SET authorization_key = 'YOUR_REAL_GIGACHAT_KEY'
+WHERE id = '269022b8-4980-4f6c-8583-a70f73b3e98b';
+
+-- Update LLM Provider
+UPDATE llm_providers 
+SET authorization_key = 'YOUR_REAL_GIGACHAT_KEY'
+WHERE id = '59f44b6d-0fef-4082-9d76-ffb922c41825';
+```
+
+**Option 2: Update via Admin Interface**
+Navigate to the providers management page in the admin interface and update the authorization keys there.
+
+### Example Request
+
+```bash
+curl -X POST 'https://aiknowledge.ru/api/public/collections/search/rag' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: 1a76fe18f9ee4ba571e2310ea973489aaa7d5b357463eca297269cf0facd05a3' \
+  -d '{
+    "collection": "new2222222222222222222",
+    "workspaceId": "eb3ecef0-2e4a-464c-843a-9ce5d24d8051",
+    "embeddingProviderId": "269022b8-4980-4f6c-8583-a70f73b3e98b",
+    "llmProviderId": "59f44b6d-0fef-4082-9d76-ffb922c41825",
+    "llmModel": "GigaChat-Max",
+    "query": "чем полезен сервис?",
+    "responseFormat": "md",
+    "limit": 5,
+    "contextLimit": 4
+  }'
+```
+
+## Production Deployment Notes
+
+### Chromium for Puppeteer
+
+Chromium is installed as a system dependency for web crawling functionality:
+- Path: `/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium`
+- Environment variable: Set `PUPPETEER_EXECUTABLE_PATH` in Replit Secrets for production deployment
+- Fallback: Application will use node-fetch if Chromium is unavailable
