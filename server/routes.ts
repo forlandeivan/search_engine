@@ -1,4 +1,4 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import fetch, {
@@ -201,11 +201,6 @@ async function resolvePublicCollectionRequest(
     req.query.siteId,
   );
 
-  if (!publicId) {
-    res.status(400).json({ error: "Для публичного запроса укажите publicId проекта" });
-    return null;
-  }
-
   const workspaceId = pickFirstString(
     bodySource.workspaceId,
     bodySource.workspace_id,
@@ -236,7 +231,28 @@ async function resolvePublicCollectionRequest(
     }
   }
 
-  const site = await storage.getSiteByPublicId(publicId);
+  if (publicId) {
+    const site = await storage.getSiteByPublicId(publicId);
+
+    if (!site) {
+      res.status(404).json({ error: "Коллекция не найдена" });
+      return null;
+    }
+
+    if (site.workspaceId !== workspaceId) {
+      res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+      return null;
+    }
+
+    if (site.publicApiKey !== apiKey) {
+      res.status(401).json({ error: "Некорректный API-ключ" });
+      return null;
+    }
+
+    return { site, apiKey };
+  }
+
+  const site = await storage.getSiteByPublicApiKey(apiKey);
 
   if (!site) {
     res.status(404).json({ error: "Коллекция не найдена" });
@@ -2530,7 +2546,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const isGoogleAuthEnabled = () => Boolean(app.get("googleAuthConfigured"));
   const isYandexAuthEnabled = () => Boolean(app.get("yandexAuthConfigured"));
 
-  app.post("/api/public/collections/:publicId/search", async (req, res) => {
+  const registerPublicCollectionRoute = (path: string, handler: RequestHandler) => {
+    app.post(path, handler);
+  };
+
+  const publicSearchHandler: RequestHandler = async (req, res) => {
     try {
       const publicContext = await resolvePublicCollectionRequest(req, res);
       if (!publicContext) {
@@ -2669,9 +2689,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Ошибка публичного поиска:", error);
       res.status(500).json({ error: "Не удалось выполнить поиск" });
     }
-  });
+  };
 
-  app.post("/api/public/collections/:publicId/search/vector", async (req, res) => {
+  registerPublicCollectionRoute("/api/public/collections/:publicId/search", publicSearchHandler);
+  registerPublicCollectionRoute("/api/public/collections/search", publicSearchHandler);
+
+  const publicVectorSearchHandler: RequestHandler = async (req, res) => {
     try {
       const publicContext = await resolvePublicCollectionRequest(req, res);
       if (!publicContext) {
@@ -2774,9 +2797,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Ошибка публичного векторного поиска:", error);
       res.status(500).json({ error: "Не удалось выполнить векторный поиск" });
     }
-  });
+  };
 
-  app.post("/api/public/collections/:publicId/vectorize", async (req, res) => {
+  registerPublicCollectionRoute(
+    "/api/public/collections/:publicId/search/vector",
+    publicVectorSearchHandler,
+  );
+  registerPublicCollectionRoute("/api/public/collections/search/vector", publicVectorSearchHandler);
+
+  const publicVectorizeHandler: RequestHandler = async (req, res) => {
     try {
       const publicContext = await resolvePublicCollectionRequest(req, res);
       if (!publicContext) {
@@ -2882,9 +2911,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Ошибка публичной векторизации текста:", error);
       res.status(500).json({ error: "Не удалось выполнить векторизацию" });
     }
-  });
+  };
 
-  app.post("/api/public/collections/:publicId/search/rag", async (req, res) => {
+  registerPublicCollectionRoute(
+    "/api/public/collections/:publicId/vectorize",
+    publicVectorizeHandler,
+  );
+  registerPublicCollectionRoute("/api/public/collections/vectorize", publicVectorizeHandler);
+
+  const publicRagSearchHandler: RequestHandler = async (req, res) => {
     let collectionName = "";
     try {
       const publicContext = await resolvePublicCollectionRequest(req, res);
@@ -3162,7 +3197,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Ошибка публичного RAG-поиска:", error);
       res.status(500).json({ error: "Не удалось получить ответ от LLM" });
     }
-  });
+  };
+
+  registerPublicCollectionRoute(
+    "/api/public/collections/:publicId/search/rag",
+    publicRagSearchHandler,
+  );
+  registerPublicCollectionRoute("/api/public/collections/search/rag", publicRagSearchHandler);
 
   app.get("/api/auth/providers", (_req, res) => {
     const googleAuthEnabled = isGoogleAuthEnabled();

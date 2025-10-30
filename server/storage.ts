@@ -2178,6 +2178,20 @@ export class DatabaseStorage implements IStorage {
     return site ?? undefined;
   }
 
+  async getSiteByPublicApiKey(apiKey: string): Promise<Site | undefined> {
+    const normalized = apiKey.trim();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const [site] = await this.db
+      .select()
+      .from(sites)
+      .where(eq(sites.publicApiKey, normalized))
+      .limit(1);
+    return site ?? undefined;
+  }
+
   async getAllSites(workspaceId?: string): Promise<Site[]> {
     let query = this.db.select().from(sites);
     if (workspaceId) {
