@@ -21,6 +21,7 @@ import {
   knowledgeNodes,
   knowledgeDocuments,
   knowledgeDocumentVersions,
+  knowledgeDocumentChunkSets,
   knowledgeBaseNodeTypes,
   knowledgeNodeSourceTypes,
   knowledgeDocumentStatuses,
@@ -407,6 +408,78 @@ async function fetchBaseNodes(baseId: string): Promise<KnowledgeNodeRow[]> {
     .orderBy(asc(knowledgeNodes.position), asc(knowledgeNodes.createdAt));
 }
 
+async function fetchDocumentIdsByNodeIds(
+  baseId: string,
+  workspaceId: string,
+  nodeIds: readonly string[],
+): Promise<string[]> {
+  if (!nodeIds || nodeIds.length === 0) {
+    return [];
+  }
+
+  const rows = await db
+    .select({ id: knowledgeDocuments.id })
+    .from(knowledgeDocuments)
+    .where(
+      and(
+        eq(knowledgeDocuments.baseId, baseId),
+        eq(knowledgeDocuments.workspaceId, workspaceId),
+        inArray(knowledgeDocuments.nodeId, nodeIds as string[]),
+      ),
+    );
+
+  return rows.map((row: (typeof rows)[number]) => row.id);
+}
+
+async function fetchDocumentIdsByBase(
+  baseId: string,
+  workspaceId: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: knowledgeDocuments.id })
+    .from(knowledgeDocuments)
+    .where(and(eq(knowledgeDocuments.baseId, baseId), eq(knowledgeDocuments.workspaceId, workspaceId)));
+
+  return rows.map((row: (typeof rows)[number]) => row.id);
+}
+
+async function deleteDocumentsWithChunks(
+  tx: typeof db,
+  documentIds: readonly string[],
+  workspaceId: string,
+): Promise<void> {
+  if (!documentIds || documentIds.length === 0) {
+    return;
+  }
+
+  await tx
+    .delete(knowledgeDocumentChunkSets)
+    .where(
+      and(
+        eq(knowledgeDocumentChunkSets.workspaceId, workspaceId),
+        inArray(knowledgeDocumentChunkSets.documentId, documentIds as string[]),
+      ),
+    );
+
+  await tx
+    .delete(knowledgeDocumentVersions)
+    .where(
+      and(
+        eq(knowledgeDocumentVersions.workspaceId, workspaceId),
+        inArray(knowledgeDocumentVersions.documentId, documentIds as string[]),
+      ),
+    );
+
+  await tx
+    .delete(knowledgeDocuments)
+    .where(
+      and(
+        eq(knowledgeDocuments.workspaceId, workspaceId),
+        inArray(knowledgeDocuments.id, documentIds as string[]),
+      ),
+    );
+}
+
 export async function createKnowledgeBase(
   workspaceId: string,
   payload: CreateKnowledgeBasePayload,
@@ -489,7 +562,13 @@ export async function deleteKnowledgeBase(
     );
   }
 
+  const documentIds = await fetchDocumentIdsByBase(baseId, workspaceId);
+
   await db.transaction(async (tx: typeof db) => {
+    if (documentIds.length > 0) {
+      await deleteDocumentsWithChunks(tx, documentIds, workspaceId);
+    }
+
     await tx
       .delete(knowledgeBases)
       .where(and(eq(knowledgeBases.id, baseId), eq(knowledgeBases.workspaceId, workspaceId)));
@@ -1037,7 +1116,13 @@ export async function deleteKnowledgeNode(
   toDeleteSet.add(nodeId);
   const toDelete = Array.from(toDeleteSet);
 
+  const documentIds = await fetchDocumentIdsByNodeIds(baseId, workspaceId, toDelete);
+
   await db.transaction(async (tx: typeof db) => {
+    if (documentIds.length > 0) {
+      await deleteDocumentsWithChunks(tx, documentIds, workspaceId);
+    }
+
     await tx.delete(knowledgeNodes).where(inArray(knowledgeNodes.id, toDelete));
 
     if (node.parentId) {
