@@ -501,6 +501,9 @@ export async function ensureWorkspaceContext(req: Request, user: PublicUser): Pr
     throw new WorkspaceContextError();
   }
 
+  const workspaceIds = memberships.map((workspace) => workspace.id);
+  const knowledgeBaseCounts = await storage.getWorkspaceKnowledgeBaseCounts(workspaceIds);
+
   const headerWorkspaceRaw = req.headers["x-workspace-id"];
   const headerWorkspaceId = Array.isArray(headerWorkspaceRaw)
     ? headerWorkspaceRaw[0]
@@ -515,9 +518,30 @@ export async function ensureWorkspaceContext(req: Request, user: PublicUser): Pr
   let active = requestedWorkspaceId
     ? memberships.find((workspace) => workspace.id === requestedWorkspaceId)
     : undefined;
+  let selectedByDefault = false;
 
   if (!active && memberships.length > 0) {
     active = memberships[0];
+    selectedByDefault = true;
+  }
+
+  if (selectedByDefault) {
+    const sortedByKnowledge = [...memberships].sort((a, b) => {
+      const countA = knowledgeBaseCounts.get(a.id) ?? 0;
+      const countB = knowledgeBaseCounts.get(b.id) ?? 0;
+      if (countA === countB) {
+        return 0;
+      }
+      return countB - countA;
+    });
+
+    const workspaceWithData = sortedByKnowledge.find((workspace) => {
+      return (knowledgeBaseCounts.get(workspace.id) ?? 0) > 0;
+    });
+
+    if (workspaceWithData) {
+      active = workspaceWithData;
+    }
   }
 
   if (!active) {
