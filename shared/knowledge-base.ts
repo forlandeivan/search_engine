@@ -1,5 +1,79 @@
 import type { KnowledgeNodeSourceType, KnowledgeDocumentStatus } from "./schema";
 
+export type KnowledgeBaseCrawlSelectorConfig = {
+  title?: string | null;
+  content?: string | null;
+};
+
+export type KnowledgeBaseCrawlAuthHeaders = Record<string, string>;
+
+export type KnowledgeBaseCrawlAuthConfig = {
+  headers?: KnowledgeBaseCrawlAuthHeaders;
+};
+
+export type KnowledgeBaseCrawlConfig = {
+  startUrls: string[];
+  sitemapUrl?: string | null;
+  allowedDomains?: string[];
+  include?: string[];
+  exclude?: string[];
+  maxPages?: number | null;
+  maxDepth?: number | null;
+  rateLimitRps?: number | null;
+  robotsTxt?: boolean;
+  userAgent?: string | null;
+  selectors?: KnowledgeBaseCrawlSelectorConfig | null;
+  language?: string | null;
+  version?: string | null;
+  auth?: KnowledgeBaseCrawlAuthConfig | null;
+};
+
+export type KnowledgeBaseCrawlJobPhase =
+  | "created"
+  | "crawling"
+  | "extracting"
+  | "chunking"
+  | "embedding"
+  | "indexing"
+  | "paused"
+  | "canceled"
+  | "done"
+  | "failed";
+
+export type KnowledgeBaseCrawlJobStatus = {
+  jobId: string;
+  baseId: string;
+  workspaceId: string;
+  phase: KnowledgeBaseCrawlJobPhase;
+  percent: number;
+  discovered: number;
+  queued: number;
+  fetched: number;
+  extracted: number;
+  saved: number;
+  failed: number;
+  etaSec?: number | null;
+  lastUrl?: string | null;
+  lastError?: string | null;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt?: string | null;
+  pagesTotal?: number | null;
+  pagesNew?: number | null;
+  pagesUpdated?: number | null;
+  pagesSkipped?: number | null;
+  errorsCount?: number | null;
+  durationSec?: number | null;
+  status: "running" | "paused" | "canceled" | "failed" | "done";
+};
+
+export type KnowledgeBaseCrawlJobEvent = KnowledgeBaseCrawlJobStatus;
+
+export type KnowledgeBaseCrawlJobResponse = {
+  kbId: string;
+  jobId: string;
+};
+
 export type KnowledgeBaseNodeType = "folder" | "document";
 
 export type KnowledgeDocumentChunkConfig = {

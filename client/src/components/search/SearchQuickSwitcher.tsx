@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { BookOpen, FileText, Layers, Link as LinkIcon, Search, Sparkles, Tag } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -305,7 +305,7 @@ export function SearchQuickSwitcher({
 
   const virtualizer = useVirtualizer({
     count: rows.length,
-    estimateSize: (index) => {
+    estimateSize: (index: number) => {
       const row = rows[index];
       if (row.type === "group") {
         return 32;
@@ -722,7 +722,7 @@ export function SearchQuickSwitcher({
 
                   {groups.length > 0 && (
                     <div className="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-                      {virtualizer.getVirtualItems().map((virtualRow) => (
+                      {virtualizer.getVirtualItems().map((virtualRow: VirtualItem) => (
                         <div
                           key={virtualRow.key}
                           data-index={virtualRow.index}

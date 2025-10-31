@@ -11,23 +11,42 @@ import {
   type KnowledgeBaseTaskSummary,
 } from "@/lib/knowledge-base";
 import { apiRequest } from "@/lib/queryClient";
-import type { CreateKnowledgeBaseResponse } from "@shared/knowledge-base";
+import type {
+  CreateKnowledgeBaseResponse,
+  KnowledgeBaseCrawlJobStatus,
+} from "@shared/knowledge-base";
 
 export type CreateKnowledgeBaseInput = {
   name: string;
   description?: string;
   mode: KnowledgeBaseSourceType;
   archiveFile?: File | null;
-  sourceUrl?: string;
+  crawlerConfig?: CreateKnowledgeBaseCrawlerConfig;
 };
 
 export type CreateKnowledgeBaseResult = KnowledgeBase;
+
+export type CreateKnowledgeBaseCrawlerConfig = {
+  startUrls: string[];
+  sitemapUrl?: string;
+  allowedDomains?: string[];
+  include?: string[];
+  exclude?: string[];
+  maxPages?: number;
+  maxDepth?: number;
+  rateLimitRps?: number;
+  robotsTxt?: boolean;
+  selectors?: { title?: string; content?: string };
+  language?: string;
+  version?: string;
+  authHeaders?: Record<string, string>;
+};
 
 export function useCreateKnowledgeBase() {
   const queryClient = useQueryClient();
 
   return useMutation<CreateKnowledgeBaseResult, Error, CreateKnowledgeBaseInput>({
-    mutationFn: async ({ name, description, mode, archiveFile, sourceUrl }) => {
+    mutationFn: async ({ name, description, mode, archiveFile, crawlerConfig }) => {
       const trimmedName = name.trim();
       if (!trimmedName) {
         throw new Error("Укажите название базы знаний");
@@ -38,6 +57,7 @@ export function useCreateKnowledgeBase() {
       let structure: ArchiveImportResult["structure"] | undefined;
       let documents: ArchiveImportResult["documents"] | undefined;
       let tasks: KnowledgeBaseTaskSummary | undefined;
+      let crawlJob: KnowledgeBaseCrawlJobStatus | undefined;
       if (mode === "archive") {
         if (!archiveFile) {
           throw new Error("Выберите архив документов для импорта");
@@ -60,12 +80,11 @@ export function useCreateKnowledgeBase() {
           completed: archiveImport.summary.importedFiles,
         };
       } else if (mode === "crawler") {
-        const trimmedUrl = sourceUrl?.trim();
-        if (!trimmedUrl) {
-          throw new Error("Укажите ссылку на сайт для краулинга");
+        if (!crawlerConfig || crawlerConfig.startUrls.length === 0) {
+          throw new Error("Укажите стартовые URL для краулинга");
         }
 
-        ingestion = { type: "crawler", seedUrl: trimmedUrl };
+        ingestion = { type: "crawler", seedUrl: crawlerConfig.startUrls[0] };
       }
 
       let base = createKnowledgeBaseEntry({
@@ -88,21 +107,63 @@ export function useCreateKnowledgeBase() {
         base = { ...base, tasks };
       }
 
-      const response = await apiRequest("POST", "/api/knowledge/bases", {
-        id: base.id,
-        name: base.name,
-        description: base.description,
-      });
+      if (mode === "crawler" && crawlerConfig) {
+        const payload: Record<string, unknown> = {
+          name: base.name,
+          description: base.description,
+          source: "crawl",
+          crawl_config: {
+            start_urls: crawlerConfig.startUrls,
+            sitemap_url: crawlerConfig.sitemapUrl,
+            allowed_domains: crawlerConfig.allowedDomains,
+            include: crawlerConfig.include,
+            exclude: crawlerConfig.exclude,
+            max_pages: crawlerConfig.maxPages,
+            max_depth: crawlerConfig.maxDepth,
+            rate_limit_rps: crawlerConfig.rateLimitRps,
+            robots_txt: crawlerConfig.robotsTxt,
+            selectors: crawlerConfig.selectors,
+            language: crawlerConfig.language,
+            version: crawlerConfig.version,
+            auth: crawlerConfig.authHeaders ? { headers: crawlerConfig.authHeaders } : undefined,
+          },
+        };
 
-      const created = (await response.json()) as CreateKnowledgeBaseResponse;
-      base = {
-        ...base,
-        id: created.id,
-        name: created.name,
-        description: created.description,
-        createdAt: created.updatedAt,
-        updatedAt: created.updatedAt,
-      };
+        const response = await apiRequest("POST", "/api/kb", payload);
+        const created = (await response.json()) as {
+          kb_id: string;
+          knowledge_base: CreateKnowledgeBaseResponse;
+          job?: KnowledgeBaseCrawlJobStatus;
+        };
+
+        const summary = created.knowledge_base;
+        base = {
+          ...base,
+          id: summary.id,
+          name: summary.name,
+          description: summary.description,
+          createdAt: summary.updatedAt,
+          updatedAt: summary.updatedAt,
+        };
+
+        crawlJob = created.job;
+      } else {
+        const response = await apiRequest("POST", "/api/knowledge/bases", {
+          id: base.id,
+          name: base.name,
+          description: base.description,
+        });
+
+        const created = (await response.json()) as CreateKnowledgeBaseResponse;
+        base = {
+          ...base,
+          id: created.id,
+          name: created.name,
+          description: created.description,
+          createdAt: created.updatedAt,
+          updatedAt: created.updatedAt,
+        };
+      }
 
       const currentState = readKnowledgeBaseStorage();
       const updatedState = {
@@ -112,6 +173,10 @@ export function useCreateKnowledgeBase() {
       };
 
       writeKnowledgeBaseStorage(updatedState);
+
+      if (crawlJob) {
+        return { ...base, crawlJob } as KnowledgeBase;
+      }
 
       return base;
     },
