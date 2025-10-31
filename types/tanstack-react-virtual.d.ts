@@ -1,29 +1,16 @@
 declare module "@tanstack/react-virtual" {
-  export interface VirtualItem {
-    key: number;
+  export type VirtualItem = {
+    key: number | string;
     index: number;
     start: number;
     size: number;
-  }
+  };
 
-  export interface ScrollToIndexOptions {
-    align?: "auto" | "start" | "center" | "end";
-  }
-
-  export interface VirtualizerOptions<TScrollElement extends Element | Window, TItemElement extends Element> {
-    count: number;
-    estimateSize: (index: number) => number;
-    getScrollElement: () => TScrollElement | null;
-    overscan?: number;
-  }
-
-  export interface Virtualizer<TScrollElement extends Element | Window, TItemElement extends Element> {
+  export type UseVirtualizerReturn = {
     getVirtualItems(): VirtualItem[];
     getTotalSize(): number;
-    scrollToIndex: (index: number, options?: ScrollToIndexOptions) => void;
-  }
+    scrollToIndex(index: number, options?: Record<string, unknown>): void;
+  } & Record<string, unknown>;
 
-  export function useVirtualizer<TScrollElement extends Element | Window, TItemElement extends Element>(
-    options: VirtualizerOptions<TScrollElement, TItemElement>,
-  ): Virtualizer<TScrollElement, TItemElement>;
+  export function useVirtualizer(options: Record<string, unknown>): UseVirtualizerReturn;
 }

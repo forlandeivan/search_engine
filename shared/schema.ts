@@ -166,7 +166,7 @@ export const authProviders = pgTable("auth_providers", {
 export const knowledgeBaseNodeTypes = ["folder", "document"] as const;
 export type KnowledgeBaseNodeType = (typeof knowledgeBaseNodeTypes)[number];
 
-export const knowledgeNodeSourceTypes = ["manual", "import"] as const;
+export const knowledgeNodeSourceTypes = ["manual", "import", "crawl"] as const;
 export type KnowledgeNodeSourceType = (typeof knowledgeNodeSourceTypes)[number];
 
 export const knowledgeBases = pgTable("knowledge_bases", {
@@ -200,6 +200,8 @@ export const knowledgeNodes = pgTable(
       .$type<KnowledgeNodeSourceType>()
       .notNull()
       .default("manual"),
+    sourceConfig: jsonb("source_config")
+      .$type<Record<string, unknown> | null>(),
     importFileName: text("import_file_name"),
     position: integer("position").notNull().default(0),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -239,6 +241,12 @@ export const knowledgeDocuments = pgTable(
       .notNull()
       .default("draft"),
     currentVersionId: varchar("current_version_id"),
+    sourceUrl: text("source_url"),
+    contentHash: text("content_hash"),
+    language: text("language"),
+    versionTag: text("version_tag"),
+    crawledAt: timestamp("crawled_at", { withTimezone: true }),
+    metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },

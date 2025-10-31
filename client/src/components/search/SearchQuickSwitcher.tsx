@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { Search, Sparkles } from "lucide-react";
+
+import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
+import { BookOpen, FileText, Layers, Link as LinkIcon, Search, Sparkles, Tag } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -779,7 +779,7 @@ export function SearchQuickSwitcher({
 
                   {groups.length > 0 && (
                     <div className="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
-                      {virtualItems.map((virtualRow) => (
+                      {virtualizer.getVirtualItems().map((virtualRow: VirtualItem) => (
                         <div
                           key={virtualRow.key}
                           data-index={virtualRow.index}

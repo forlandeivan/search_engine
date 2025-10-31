@@ -5,6 +5,7 @@ import type {
   KnowledgeDocumentChunkConfig,
   KnowledgeDocumentChunkItem,
   KnowledgeDocumentChunkSet,
+  KnowledgeBaseCrawlJobStatus,
 } from "@shared/knowledge-base";
 
 export type TreeNode = {
@@ -88,6 +89,7 @@ export type KnowledgeBase = {
   ingestion?: KnowledgeBaseIngestion;
   tasks?: KnowledgeBaseTaskSummary;
   importSummary?: KnowledgeBaseImportSummary;
+  crawlJob?: KnowledgeBaseCrawlJobStatus;
 };
 
 export type SelectedDocumentState = {

@@ -12,6 +12,14 @@ import { Agent as HttpsAgent } from "https";
 import { storage } from "./storage";
 import type { WorkspaceMemberWithUser } from "./storage";
 import { crawler, type CrawlLogEvent } from "./crawler";
+import {
+  startKnowledgeBaseCrawl,
+  getKnowledgeBaseCrawlJob,
+  subscribeKnowledgeBaseCrawlJob,
+  pauseKnowledgeBaseCrawl,
+  resumeKnowledgeBaseCrawl,
+  cancelKnowledgeBaseCrawl,
+} from "./kb-crawler";
 import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
@@ -65,6 +73,8 @@ import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type {
   KnowledgeDocumentVectorizationJobStatus,
   KnowledgeDocumentVectorizationJobResult,
+  KnowledgeBaseCrawlJobStatus,
+  KnowledgeBaseCrawlConfig,
 } from "@shared/knowledge-base";
 import {
   castValueToType,
@@ -7108,6 +7118,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const crawlSelectorsSchema = z
+    .object({
+      title: z.string().trim().min(1).optional(),
+      content: z.string().trim().min(1).optional(),
+    })
+    .partial();
+
+  const crawlAuthSchema = z
+    .object({
+      headers: z.record(z.string()).optional(),
+    })
+    .partial();
+
+  const crawlConfigSchema = z.object({
+    start_urls: z.array(z.string().trim().min(1)).min(1),
+    sitemap_url: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .transform((value) => (value && value.length > 0 ? value : undefined)),
+    allowed_domains: z.array(z.string().trim().min(1)).optional(),
+    include: z.array(z.string().trim().min(1)).optional(),
+    exclude: z.array(z.string().trim().min(1)).optional(),
+    max_pages: z.number().int().positive().optional(),
+    max_depth: z.number().int().min(0).optional(),
+    rate_limit: z.number().positive().optional(),
+    rate_limit_rps: z.number().positive().optional(),
+    robots_txt: z.boolean().optional(),
+    selectors: crawlSelectorsSchema.optional(),
+    language: z.string().trim().min(1).optional(),
+    version: z.string().trim().min(1).optional(),
+    auth: crawlAuthSchema.optional(),
+  });
+
   const createKnowledgeBaseSchema = z.object({
     id: z
       .string()
@@ -7126,6 +7171,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .max(2000, "Описание не должно превышать 2000 символов")
       .optional(),
   });
+
+  const createKnowledgeBaseWithCrawlSchema = z.object({
+    name: z
+      .string()
+      .trim()
+      .min(1, "Укажите название базы знаний")
+      .max(200, "Название не должно превышать 200 символов"),
+    description: z.string().trim().max(2000).optional(),
+    source: z.literal("crawl"),
+    crawl_config: crawlConfigSchema,
+  });
+
+  const restartKnowledgeBaseCrawlSchema = z.object({
+    crawl_config: crawlConfigSchema,
+  });
+
+  function mapCrawlConfig(input: z.infer<typeof crawlConfigSchema>): KnowledgeBaseCrawlConfig {
+    const normalizeArray = (value?: string[]) =>
+      value
+        ?.map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+
+    const startUrls = normalizeArray(input.start_urls) ?? [];
+
+    const rateLimit =
+      (typeof input.rate_limit_rps === "number" && Number.isFinite(input.rate_limit_rps)
+        ? input.rate_limit_rps
+        : undefined) ??
+      (typeof input.rate_limit === "number" && Number.isFinite(input.rate_limit)
+        ? input.rate_limit
+        : undefined) ??
+      null;
+
+    return {
+      startUrls,
+      sitemapUrl: input.sitemap_url ?? null,
+      allowedDomains: normalizeArray(input.allowed_domains) ?? undefined,
+      include: normalizeArray(input.include) ?? undefined,
+      exclude: normalizeArray(input.exclude) ?? undefined,
+      maxPages: input.max_pages ?? null,
+      maxDepth: input.max_depth ?? null,
+      rateLimitRps: rateLimit,
+      robotsTxt: input.robots_txt ?? true,
+      selectors: input.selectors
+        ? {
+            title: input.selectors.title?.trim() || null,
+            content: input.selectors.content?.trim() || null,
+          }
+        : null,
+      language: input.language?.trim() || null,
+      version: input.version?.trim() || null,
+      auth: input.auth?.headers
+        ? {
+            headers: Object.fromEntries(
+              Object.entries(input.auth.headers)
+                .filter(([key, value]) => key.trim().length > 0 && value.trim().length > 0)
+                .map(([key, value]) => [key, value.trim()]),
+            ),
+          }
+        : null,
+    } satisfies KnowledgeBaseCrawlConfig;
+  }
 
   const deleteKnowledgeBaseSchema = z.object({
     confirmation: z
@@ -7174,6 +7281,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .optional(),
   });
 
+  app.post("/api/kb", requireAuth, async (req, res) => {
+    try {
+      const payload = createKnowledgeBaseWithCrawlSchema.parse(req.body ?? {});
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const summary = await createKnowledgeBase(workspaceId, {
+        name: payload.name,
+        description: payload.description,
+      });
+
+      const config = mapCrawlConfig(payload.crawl_config);
+      const job = startKnowledgeBaseCrawl(workspaceId, summary.id, config);
+
+      return res.status(201).json({
+        kb_id: summary.id,
+        job_id: job.jobId,
+        knowledge_base: summary,
+        job,
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issue = error.issues.at(0);
+        const message = issue?.message ?? "Некорректные данные";
+        return res.status(400).json({ error: message });
+      }
+
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.post("/api/kb/:baseId/crawl", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+
+    try {
+      const payload = restartKnowledgeBaseCrawlSchema.parse(req.body ?? {});
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const bases = await listKnowledgeBases(workspaceId);
+      const summary = bases.find((base) => base.id === baseId);
+      if (!summary) {
+        return res.status(404).json({ error: "База знаний не найдена" });
+      }
+
+      const config = mapCrawlConfig(payload.crawl_config);
+      const job = startKnowledgeBaseCrawl(workspaceId, baseId, config);
+
+      return res.status(201).json({
+        kb_id: baseId,
+        job_id: job.jobId,
+        job,
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issue = error.issues.at(0);
+        const message = issue?.message ?? "Некорректные данные";
+        return res.status(400).json({ error: message });
+      }
+
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
   app.post("/api/knowledge/bases", requireAuth, async (req, res) => {
     try {
       const payload = createKnowledgeBaseSchema.parse(req.body ?? {});
@@ -7218,6 +7385,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);
     }
+  });
+
+  app.get("/api/jobs/:jobId", requireAuth, (req, res) => {
+    const { jobId } = req.params;
+    const job = getKnowledgeBaseCrawlJob(jobId);
+    if (!job) {
+      return res.status(404).json({ error: "Задача не найдена" });
+    }
+
+    return res.json({ job });
+  });
+
+  app.post("/api/jobs/:jobId/pause", requireAuth, (req, res) => {
+    const { jobId } = req.params;
+    const job = pauseKnowledgeBaseCrawl(jobId);
+    if (!job) {
+      return res.status(404).json({ error: "Задача не найдена" });
+    }
+
+    return res.json({ job });
+  });
+
+  app.post("/api/jobs/:jobId/resume", requireAuth, (req, res) => {
+    const { jobId } = req.params;
+    const job = resumeKnowledgeBaseCrawl(jobId);
+    if (!job) {
+      return res.status(404).json({ error: "Задача не найдена" });
+    }
+
+    return res.json({ job });
+  });
+
+  app.post("/api/jobs/:jobId/cancel", requireAuth, (req, res) => {
+    const { jobId } = req.params;
+    const job = cancelKnowledgeBaseCrawl(jobId);
+    if (!job) {
+      return res.status(404).json({ error: "Задача не найдена" });
+    }
+
+    return res.json({ job });
+  });
+
+  app.get("/api/jobs/:jobId/sse", requireAuth, (req, res) => {
+    const { jobId } = req.params;
+    const job = getKnowledgeBaseCrawlJob(jobId);
+    if (!job) {
+      return res.status(404).json({ error: "Задача не найдена" });
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    res.flushHeaders?.();
+
+    const sendEvent = (event: KnowledgeBaseCrawlJobStatus) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    sendEvent(job);
+
+    const unsubscribe = subscribeKnowledgeBaseCrawlJob(jobId, sendEvent);
+    if (!unsubscribe) {
+      res.end();
+      return;
+    }
+
+    req.on("close", () => {
+      unsubscribe();
+      res.end();
+    });
   });
 
   app.get("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
