@@ -199,25 +199,8 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  try {
-    await ensureDatabaseSchema();
-    log("Проверка схемы базы данных выполнена");
-  } catch (error) {
-    log(`Не удалось подготовить схему базы данных: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  // Reset any stuck crawling sites on server startup
-  try {
-    const sites = await storage.getAllSites();
-    const stuckSites = sites.filter(site => site.status === 'crawling');
-    for (const site of stuckSites) {
-      await storage.updateSite(site.id, { status: 'idle' });
-      log(`Reset stuck crawling status for site: ${site.url ?? 'без URL'}`);
-    }
-  } catch (error) {
-    log(`Warning: Failed to reset stuck crawling sites: ${error}`);
-  }
-
+  // CRITICAL: Register routes and start server FIRST (before database init)
+  // This ensures port 5000 opens immediately for production deployment
   const server = await registerRoutes(app);
 
   // Add explicit 404 JSON fallback for unknown API paths
@@ -268,11 +251,42 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
+  
+  // START SERVER IMMEDIATELY - don't wait for database
   server.listen({
     port,
     host: "0.0.0.0",
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
+  });
+
+  // Initialize database in background (non-blocking with timeout)
+  Promise.race([
+    (async () => {
+      try {
+        await ensureDatabaseSchema();
+        log("Проверка схемы базы данных выполнена");
+      } catch (error) {
+        log(`Не удалось подготовить схему базы данных: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      // Reset any stuck crawling sites on server startup
+      try {
+        const sites = await storage.getAllSites();
+        const stuckSites = sites.filter(site => site.status === 'crawling');
+        for (const site of stuckSites) {
+          await storage.updateSite(site.id, { status: 'idle' });
+          log(`Reset stuck crawling status for site: ${site.url ?? 'без URL'}`);
+        }
+      } catch (error) {
+        log(`Warning: Failed to reset stuck crawling sites: ${error}`);
+      }
+    })(),
+    new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Database initialization timeout')), 30000)
+    )
+  ]).catch(error => {
+    log(`Database initialization warning: ${error instanceof Error ? error.message : String(error)}`);
   });
 })();

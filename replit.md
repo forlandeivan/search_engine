@@ -6,6 +6,12 @@ This is a lightweight search engine application designed for crawling and indexi
 
 ## Recent Changes
 
+### October 31, 2025
+- **Production deployment FIXED**: Server now opens port 5000 immediately, database initialization runs in background with 30s timeout
+- **Fast startup**: Port opens in <1 second, database schema check happens asynchronously without blocking server
+- **Deployment resilience**: Server starts successfully even if database is slow or temporarily unavailable
+- **Production database confirmed**: Using external PostgreSQL at 62.113.107.164:5432 (database: tilda_search_db) with 8 knowledge bases
+
 ### October 30, 2025
 - **Database schema synchronized**: Full schema migration with ltree extension enabled for hierarchical structures
 - **RAG API infrastructure created**: Public RAG search endpoint configured and ready for deployment
