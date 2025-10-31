@@ -38,7 +38,8 @@ import type {
   RagChunk,
   RagResponsePayload,
   SuggestResponsePayload,
-  SuggestResponseSection,
+  SuggestResponseGroup,
+  SuggestResponseItem,
 } from "@/types/search";
 import { useSuggestSearch } from "@/hooks/useSuggestSearch";
 
@@ -226,6 +227,15 @@ export default function SearchPlaygroundPage() {
     limit: settings.suggestLimit,
   });
   const isSuggestLoading = suggestStatus === "loading";
+
+  const suggestGroups = useMemo(() => suggestResponse?.groups ?? [], [suggestResponse]);
+  const flattenedSuggestItems = useMemo(
+    () =>
+      suggestGroups.flatMap((group) =>
+        group.items.map((item) => ({ group, item })),
+      ),
+    [suggestGroups],
+  );
 
   const knowledgeBasesQuery = useQuery<KnowledgeBaseSummary[]>({
     queryKey: ["/api/knowledge/bases"],
@@ -575,15 +585,15 @@ export default function SearchPlaygroundPage() {
   };
 
   const handleOpenSuggestResult = (
-    section: SuggestResponseSection,
+    item: SuggestResponseItem,
     options?: { newTab?: boolean },
   ) => {
-    if (!section.url || typeof window === "undefined") {
+    if (!item.url || typeof window === "undefined") {
       return;
     }
 
     try {
-      const targetUrl = new URL(section.url, window.location.origin);
+      const targetUrl = new URL(item.url, window.location.origin);
       if (options?.newTab) {
         window.open(targetUrl.toString(), "_blank", "noopener,noreferrer");
       } else {
@@ -845,23 +855,48 @@ export default function SearchPlaygroundPage() {
     };
   }, [ragResponse?.answer]);
 
-  const renderSection = (section: SuggestResponseSection, index: number) => {
-    const scoreValue = Number.isFinite(section.score) ? section.score : 0;
+  const renderSuggestItem = (
+    entry: { group: SuggestResponseGroup; item: SuggestResponseItem },
+    index: number,
+  ) => {
+    const { group, item } = entry;
+    const scoreValue = Number.isFinite(item.score ?? NaN) ? item.score ?? 0 : null;
+    const breadcrumbs = (item.breadcrumbs ?? []).filter(Boolean);
+    const metaChips = [
+      item.version ? (item.version.startsWith("v") ? item.version : `v${item.version}`) : null,
+      item.language ? item.language.toUpperCase() : null,
+      item.type ?? null,
+    ].filter(Boolean) as string[];
 
     return (
-      <div key={`${section.chunk_id}-${index}`} className="rounded border px-3 py-2">
+      <div key={`${item.id}-${index}`} className="rounded border px-3 py-2">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>#{index + 1}</span>
-          <span className="font-mono">{scoreValue.toFixed(3)}</span>
+          <span className="line-clamp-1" title={group.title}>
+            {group.title || "Без группы"}
+          </span>
+          {scoreValue !== null && <span className="font-mono">{scoreValue.toFixed(3)}</span>}
         </div>
         <div className="mt-1 text-sm font-semibold text-foreground">
-          {section.section_title || section.doc_title || "Без заголовка"}
+          {item.heading_text || item.title || "Без заголовка"}
         </div>
-        <div className="text-xs text-muted-foreground">{section.doc_title}</div>
-        <p className="mt-2 text-sm leading-snug text-foreground">{section.snippet}</p>
-        {section.source && (
-          <div className="mt-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-            {section.source === "content" ? "BM25" : "Заголовок"}
+        {breadcrumbs.length > 0 && (
+          <div className="text-xs text-muted-foreground">
+            {breadcrumbs.join(" › ")}
+          </div>
+        )}
+        {item.snippet_html && (
+          <p
+            className="mt-2 text-sm leading-snug text-foreground"
+            dangerouslySetInnerHTML={{ __html: item.snippet_html }}
+          />
+        )}
+        {metaChips.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+            {metaChips.map((chip, chipIndex) => (
+              <Badge key={`${item.id}-meta-${chipIndex}`} variant="outline">
+                {chip}
+              </Badge>
+            ))}
           </div>
         )}
       </div>
@@ -1299,20 +1334,20 @@ export default function SearchPlaygroundPage() {
             </div>
 
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Подсказки ({suggestResponse?.sections.length ?? 0})</span>
-              {suggestResponse?.timings?.total_ms !== undefined && (
-                <span>Ответ за {formatMs(suggestResponse.timings.total_ms)}</span>
+              <span>Подсказки ({flattenedSuggestItems.length})</span>
+              {suggestResponse?.meta?.timing_ms !== undefined && (
+                <span>Ответ за {formatMs(suggestResponse.meta.timing_ms)}</span>
               )}
             </div>
             {isSuggestLoading && <div className="rounded border px-3 py-6 text-center text-sm">Ищем подсказки…</div>}
             {suggestError && <div className="rounded border border-destructive px-3 py-2 text-sm text-destructive">{suggestError}</div>}
-            {!isSuggestLoading && !suggestError && suggestResponse?.sections.length === 0 && query.trim() && (
+            {!isSuggestLoading && !suggestError && flattenedSuggestItems.length === 0 && query.trim() && (
               <div className="rounded border px-3 py-6 text-center text-sm text-muted-foreground">
                 Подсказок не найдено.
               </div>
             )}
             <div className="grid gap-2">
-              {suggestResponse?.sections.map(renderSection)}
+              {flattenedSuggestItems.map(renderSuggestItem)}
             </div>
 
             {settings.rag.includeDebug && suggestResponse && (

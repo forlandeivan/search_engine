@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { BookOpen, FileText, Layers, Link as LinkIcon, Search, Sparkles, Tag } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { SuggestResponsePayload, SuggestResponseSection } from "@/types/search";
+import type { SuggestResponseItem, SuggestResponsePayload } from "@/types/search";
 
 const GROUP_ITEM_LIMIT = 5;
 const ASK_AI_MIN_QUERY_LENGTH = 2;
@@ -20,7 +27,7 @@ interface SearchQuickSwitcherProps {
   error: string | null;
   onQueryChange: (value: string) => void;
   onAskAi: (query: string) => Promise<void> | void;
-  onResultOpen?: (section: SuggestResponseSection, options?: { newTab?: boolean }) => void;
+  onResultOpen?: (section: SuggestResponseItem, options?: { newTab?: boolean }) => void;
   onClose?: () => void;
   onPrefetch?: (query: string) => void;
   closeOnAsk?: boolean;
@@ -29,9 +36,8 @@ interface SearchQuickSwitcherProps {
 
 interface ResultGroup {
   id: string;
-  label: string;
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-  items: SuggestResponseSection[];
+  title: string;
+  items: SuggestResponseItem[];
   hasMore: boolean;
 }
 
@@ -39,27 +45,6 @@ type VirtualRow =
   | { type: "group"; groupIndex: number }
   | { type: "item"; groupIndex: number; itemIndex: number }
   | { type: "more"; groupIndex: number };
-
-const SOURCE_ICON_MAP: Record<string, ResultGroup["icon"]> = {
-  documentation: BookOpen,
-  docs: BookOpen,
-  content: FileText,
-  article: FileText,
-  release: Layers,
-  news: Layers,
-};
-
-const SOURCE_LABEL_MAP: Record<string, string> = {
-  documentation: "Документация",
-  docs: "Документация",
-  content: "Материалы",
-  article: "Статьи",
-  release: "Релиз-ноты",
-  news: "Новости",
-};
-
-const DEFAULT_GROUP_ICON = FileText;
-const DEFAULT_GROUP_LABEL = "Документы";
 
 const STATUS_BAR_SHORTCUTS = [
   { label: "Навигация", value: "↑/↓" },
@@ -75,89 +60,15 @@ function normalizeString(value: string | null | undefined) {
   return value?.trim() ?? "";
 }
 
-function getGroupKey(section: SuggestResponseSection) {
-  const source = normalizeString(section.source).toLowerCase();
-  if (source) {
-    return source;
-  }
-
-  const version = normalizeString(section.version);
-  if (version) {
-    return `version:${version}`;
-  }
-
-  const docTitle = normalizeString(section.doc_title);
-  if (docTitle) {
-    return `doc:${docTitle}`;
-  }
-
-  return "other";
-}
-
-function getGroupLabel(section: SuggestResponseSection, key: string) {
-  if (key.startsWith("version:")) {
-    return `Версия ${key.slice("version:".length)}`;
-  }
-
-  if (key.startsWith("doc:")) {
-    return normalizeString(section.doc_title) || DEFAULT_GROUP_LABEL;
-  }
-
-  const source = normalizeString(section.source).toLowerCase();
-  if (source) {
-    return SOURCE_LABEL_MAP[source] ?? source.charAt(0).toUpperCase() + source.slice(1);
-  }
-
-  return DEFAULT_GROUP_LABEL;
-}
-
-function getGroupIcon(section: SuggestResponseSection, key: string) {
-  if (key.startsWith("version:")) {
-    return Layers;
-  }
-
-  if (key.startsWith("doc:")) {
-    return BookOpen;
-  }
-
-  const source = normalizeString(section.source).toLowerCase();
-  if (source && SOURCE_ICON_MAP[source]) {
-    return SOURCE_ICON_MAP[source];
-  }
-
-  return DEFAULT_GROUP_ICON;
-}
-
 function buildGroups(payload: SuggestResponsePayload | null): ResultGroup[] {
-  if (!payload || payload.sections.length === 0) {
+  if (!payload || !Array.isArray(payload.groups) || payload.groups.length === 0) {
     return [];
   }
 
-  const groupsMap = new Map<string, ResultGroup>();
-
-  payload.sections.forEach((section) => {
-    const key = getGroupKey(section);
-    const existing = groupsMap.get(key);
-    if (!existing) {
-      const label = getGroupLabel(section, key);
-      const icon = getGroupIcon(section, key);
-      groupsMap.set(key, {
-        id: key,
-        label,
-        icon,
-        items: [section],
-        hasMore: false,
-      });
-      return;
-    }
-
-    existing.items.push(section);
-  });
-
-  const groups = Array.from(groupsMap.values());
-  return groups.map((group) => ({
-    ...group,
-    hasMore: group.items.length > GROUP_ITEM_LIMIT,
+  return payload.groups.map((group) => ({
+    id: group.id,
+    title: normalizeString(group.title) || group.id,
+    hasMore: Boolean(group.hasMore && group.items.length > GROUP_ITEM_LIMIT),
     items: group.items.slice(0, GROUP_ITEM_LIMIT),
   }));
 }
@@ -167,6 +78,31 @@ function tokenize(query: string) {
     .split(/\s+/)
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+function truncateMiddle(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  if (maxLength <= 1) {
+    return "…";
+  }
+
+  const half = Math.floor((maxLength - 1) / 2);
+  const start = value.slice(0, half);
+  const end = value.slice(value.length - (maxLength - half - 1));
+  return `${start}…${end}`;
+}
+
+function truncateEnd(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  if (maxLength <= 1) {
+    return "…";
+  }
+  return `${value.slice(0, maxLength - 1)}…`;
 }
 
 function highlightText(text: string, tokens: string[]) {
@@ -207,6 +143,129 @@ function highlightText(text: string, tokens: string[]) {
   }
 
   return parts;
+}
+
+function getDisplayTitle(item: SuggestResponseItem) {
+  const heading = normalizeString(item.heading_text);
+  if (heading) {
+    return heading;
+  }
+
+  const title = normalizeString(item.title);
+  if (title) {
+    return title;
+  }
+
+  const path = normalizeString(item.path);
+  if (path) {
+    return humanizeSlug(path.split("/").pop() ?? path);
+  }
+
+  const url = normalizeString(item.url);
+  if (url) {
+    try {
+      const base = typeof window !== "undefined" ? window.location.origin : "http://localhost";
+      const parsed = new URL(url, base);
+      const segment = parsed.pathname.split("/").filter(Boolean).pop();
+      if (segment) {
+        return humanizeSlug(segment);
+      }
+      return parsed.hostname;
+    } catch {
+      const segment = url.split("/").filter(Boolean).pop();
+      if (segment) {
+        return humanizeSlug(segment);
+      }
+    }
+  }
+
+  return "";
+}
+
+function humanizeSlug(value: string) {
+  return value
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildBreadcrumbs(item: SuggestResponseItem) {
+  const breadcrumbs = (item.breadcrumbs ?? []).map(normalizeString).filter(Boolean);
+  if (breadcrumbs.length > 0) {
+    return breadcrumbs.join(" › ");
+  }
+
+  const path = normalizeString(item.path);
+  if (path) {
+    return path;
+  }
+
+  const url = normalizeString(item.url);
+  if (url) {
+    try {
+      const base = typeof window !== "undefined" ? window.location.origin : "http://localhost";
+      const parsed = new URL(url, base);
+      return parsed.pathname.replace(/^\/+/, "");
+    } catch {
+      return url.replace(/^https?:\/\//i, "");
+    }
+  }
+
+  return "";
+}
+
+function buildMetaChips(item: SuggestResponseItem) {
+  const meta: { key: string; label: string }[] = [];
+
+  const version = normalizeString(item.version);
+  if (version) {
+    meta.push({ key: "version", label: version.startsWith("v") ? version : `v${version}` });
+  }
+
+  const language = normalizeString(item.language);
+  if (language) {
+    meta.push({ key: "language", label: language.toUpperCase() });
+  }
+
+  const type = normalizeString(item.type);
+  if (type) {
+    meta.push({ key: "type", label: type });
+  }
+
+  if (meta.length === 0) {
+    return null;
+  }
+
+  const primary = meta.slice(0, 2);
+  const overflow = meta.slice(2);
+
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      {primary.map((chip) => (
+        <Badge key={chip.key} variant="outline" className="max-w-[72px] truncate text-[10px]">
+          {chip.label}
+        </Badge>
+      ))}
+      {overflow.length > 0 && (
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="outline" className="text-[10px]">
+                +{overflow.length}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent className="text-xs">
+              <div className="flex flex-col gap-1">
+                {overflow.map((chip) => (
+                  <span key={chip.key}>{chip.label}</span>
+                ))}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+    </div>
+  );
 }
 
 function buildVirtualRows(groups: ResultGroup[]): VirtualRow[] {
@@ -254,6 +313,8 @@ export function SearchQuickSwitcher({
   const groups = useMemo(() => buildGroups(suggest), [suggest]);
   const tokens = useMemo(() => tokenize(localQuery), [localQuery]);
   const rows = useMemo(() => buildVirtualRows(groups), [groups]);
+  const trimmedQuery = localQuery.trim();
+  const canShowAskAiChip = trimmedQuery.length >= ASK_AI_MIN_QUERY_LENGTH;
 
   useEffect(() => {
     setLocalQuery(query);
@@ -322,6 +383,7 @@ export function SearchQuickSwitcher({
   const activeOptionId = groups[activeGroupIndex]?.items[activeItemIndex]
     ? getOptionId(activeGroupIndex, activeItemIndex)
     : undefined;
+  const virtualItems = virtualizer.getVirtualItems();
 
   const handleOpenChange = (value: boolean) => {
     setOpen(value);
@@ -385,7 +447,7 @@ export function SearchQuickSwitcher({
     }
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
       setOpen(false);
@@ -453,7 +515,7 @@ export function SearchQuickSwitcher({
     }
   };
 
-  const handleListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
       moveSelection(1);
@@ -498,18 +560,21 @@ export function SearchQuickSwitcher({
   const renderRow = (row: VirtualRow) => {
     if (row.type === "group") {
       const group = groups[row.groupIndex];
-      const Icon = group.icon;
       return (
-        <div className="flex items-center gap-2 px-2 py-2 text-xs font-semibold text-muted-foreground" role="group">
-          <Icon className="h-3.5 w-3.5" />
-          <span>{group.label}</span>
+        <div
+          className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+          role="group"
+        >
+          <span className="block truncate" title={group.title}>
+            {truncateEnd(group.title, 56)}
+          </span>
         </div>
       );
     }
 
     if (row.type === "more") {
       return (
-        <div className="px-4 py-3 text-xs text-muted-foreground">
+        <div className="px-3 py-3 text-xs text-muted-foreground">
           Показать ещё в этой группе
         </div>
       );
@@ -518,18 +583,17 @@ export function SearchQuickSwitcher({
     const group = groups[row.groupIndex];
     const item = group.items[row.itemIndex];
     const isActive = row.groupIndex === activeGroupIndex && row.itemIndex === activeItemIndex;
-    const icon = group.icon;
-    const Icon = icon;
-    const breadcrumbs = item.breadcrumbs?.filter(Boolean) ?? [];
-    let host: string | null = null;
-    if (item.url) {
-      try {
-        const base = typeof window !== "undefined" ? window.location.origin : "http://localhost";
-        host = new URL(item.url, base).hostname;
-      } catch {
-        host = null;
-      }
-    }
+
+    const breadcrumbs = buildBreadcrumbs(item);
+    const displayTitle = getDisplayTitle(item);
+    const truncatedTitle = truncateMiddle(displayTitle, 80);
+    const highlightedTitle = highlightText(truncatedTitle, tokens);
+    const breadcrumbText = truncateEnd(breadcrumbs, 96);
+    const highlightedBreadcrumbs = highlightText(breadcrumbText, tokens);
+    const metaChips = buildMetaChips(item);
+
+    const hasSnippet = Boolean(item.snippet_html?.trim());
+    const hasBreadcrumbs = Boolean(breadcrumbs);
 
     return (
       <div
@@ -550,42 +614,31 @@ export function SearchQuickSwitcher({
           onResultOpen(item);
           setOpen(false);
         }}
-      >
-        <div className="flex items-center gap-2">
-          <Icon className="h-4 w-4 flex-shrink-0" />
-          <div className="flex flex-1 flex-col">
-            <span className="font-semibold leading-tight">
-              {highlightText(normalizeString(item.section_title) || normalizeString(item.doc_title), tokens)}
-            </span>
-            {breadcrumbs.length > 0 && (
-              <span className="text-xs text-muted-foreground">
-                {breadcrumbs.join(" / ")}
-              </span>
-            )}
-          </div>
-          <span className="text-xs text-muted-foreground">↵</span>
-        </div>
-        <div className="pl-6 text-xs leading-snug text-muted-foreground">
-          {highlightText(normalizeString(item.snippet), tokens)}
-        </div>
-        <div className="flex flex-wrap items-center gap-2 pl-6 text-[11px] text-muted-foreground">
-          {item.version && <Badge variant="outline">v{item.version}</Badge>}
-          {item.language && (
-            <Badge variant="outline" className="uppercase">
-              {item.language}
-            </Badge>
-          )}
-          <span className="inline-flex items-center gap-1">
-            <Tag className="h-3 w-3" />
-            {item.score.toFixed(3)}
+        >
+        <div className="flex items-start justify-between gap-2">
+          <span className="line-clamp-1 font-semibold leading-tight" title={displayTitle}>
+            {highlightedTitle}
           </span>
-          {host && (
-            <span className="inline-flex items-center gap-1">
-              <LinkIcon className="h-3 w-3" />
-              {host}
-            </span>
-          )}
+          <span className="mt-0.5 text-[11px] text-muted-foreground">↵</span>
         </div>
+        {(hasBreadcrumbs || metaChips) && (
+          <div className="flex items-start gap-2 text-[13px] leading-tight text-muted-foreground">
+            {hasBreadcrumbs ? (
+              <span className="line-clamp-1 flex-1" title={breadcrumbs}>
+                {highlightedBreadcrumbs}
+              </span>
+            ) : (
+              <span className="flex-1" />
+            )}
+            {metaChips}
+          </div>
+        )}
+        {hasSnippet && (
+          <div
+            className="line-clamp-2 text-xs leading-snug text-muted-foreground"
+            dangerouslySetInnerHTML={{ __html: item.snippet_html }}
+          />
+        )}
       </div>
     );
   };
@@ -655,21 +708,25 @@ export function SearchQuickSwitcher({
               )}
             </div>
 
-            <button
-              type="button"
-              className={cn(
-                "flex items-center gap-2 border-b px-4 py-2 text-sm",
-                isAskAiEnabled && localQuery.trim().length >= ASK_AI_MIN_QUERY_LENGTH
-                  ? "cursor-pointer text-primary hover:bg-muted"
-                  : "cursor-not-allowed text-muted-foreground",
-              )}
-              onClick={() => void handleAskAi()}
-              disabled={!isAskAiEnabled || localQuery.trim().length < ASK_AI_MIN_QUERY_LENGTH}
-            >
-              <Sparkles className="h-4 w-4" />
-              <span className="flex-1 truncate">Ask AI: {localQuery.trim() || "Введите запрос"}</span>
-              <kbd className="rounded border px-2 py-1 text-xs">⌘↵</kbd>
-            </button>
+            {canShowAskAiChip && (
+              <div className="border-b px-4 py-2">
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    isAskAiEnabled
+                      ? "border-primary/40 text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                      : "cursor-not-allowed border-muted text-muted-foreground",
+                  )}
+                  onClick={() => void handleAskAi()}
+                  disabled={!isAskAiEnabled || !canShowAskAiChip}
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span className="max-w-[200px] truncate">Ask AI: {trimmedQuery}</span>
+                  <kbd className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">⌘↵</kbd>
+                </button>
+              </div>
+            )}
 
             <div className="flex flex-1 flex-col">
               <div

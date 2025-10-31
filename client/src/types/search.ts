@@ -1,24 +1,37 @@
-export interface SuggestResponseSection {
-  chunk_id: string;
-  doc_id: string;
-  doc_title: string;
-  section_title: string | null;
-  snippet: string;
-  score: number;
-  source?: string;
-  breadcrumbs?: string[];
+export interface SuggestResponseItem {
+  id: string;
+  url: string;
+  title: string;
+  heading_text?: string | null;
+  breadcrumbs: string[];
+  snippet_html: string;
   version?: string | null;
   language?: string | null;
-  url?: string | null;
+  type?: string | null;
+  path?: string | null;
+  icon?: string | null;
+  score?: number | null;
+  docId?: string | null;
+  chunkId?: string | null;
+  anchor?: string | null;
+}
+
+export interface SuggestResponseGroup {
+  id: string;
+  title: string;
+  items: SuggestResponseItem[];
+  hasMore?: boolean;
+}
+
+export interface SuggestResponseMeta {
+  timing_ms?: number;
+  total_found?: number;
 }
 
 export interface SuggestResponsePayload {
   query: string;
-  kb_id: string;
-  normalized_query: string;
-  ask_ai: { label: string; query: string };
-  sections: SuggestResponseSection[];
-  timings?: { total_ms?: number };
+  groups: SuggestResponseGroup[];
+  meta?: SuggestResponseMeta;
 }
 
 export interface RagChunk {
