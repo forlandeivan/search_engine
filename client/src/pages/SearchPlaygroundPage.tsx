@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Settings, Search as SearchIcon, RefreshCcw, HelpCircle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+import SearchQuickSwitcher from "@/components/search/SearchQuickSwitcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,54 +34,13 @@ import {
 } from "@/components/ui/tooltip";
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 import type { PublicEmbeddingProvider, PublicLlmProvider, LlmModelOption } from "@shared/schema";
-
-interface SuggestResponseSection {
-  chunk_id: string;
-  doc_id: string;
-  doc_title: string;
-  section_title: string | null;
-  snippet: string;
-  score: number;
-  source?: string;
-}
-
-interface SuggestResponsePayload {
-  query: string;
-  kb_id: string;
-  normalized_query: string;
-  ask_ai: { label: string; query: string };
-  sections: SuggestResponseSection[];
-  timings?: { total_ms?: number };
-}
-
-interface RagChunk {
-  chunk_id: string;
-  doc_id: string;
-  doc_title: string;
-  section_title: string | null;
-  snippet: string;
-  text?: string;
-  score: number;
-  scores?: { bm25?: number; vector?: number };
-}
-
-interface RagResponsePayload {
-  query: string;
-  kb_id: string;
-  normalized_query: string;
-  answer: string;
-  citations: RagChunk[];
-  chunks?: RagChunk[];
-  usage?: { embeddingTokens?: number | null; llmTokens?: number | null };
-  timings?: {
-    total_ms?: number;
-    retrieval_ms?: number;
-    bm25_ms?: number;
-    vector_ms?: number;
-    llm_ms?: number;
-  };
-  debug?: { vectorSearch?: Array<Record<string, unknown>> | null };
-}
+import type {
+  RagChunk,
+  RagResponsePayload,
+  SuggestResponsePayload,
+  SuggestResponseSection,
+} from "@/types/search";
+import { useSuggestSearch } from "@/hooks/useSuggestSearch";
 
 interface RagRequestPayload {
   q: string;
@@ -246,16 +206,26 @@ export default function SearchPlaygroundPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"search" | "rag">("search");
   const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [suggestResponse, setSuggestResponse] = useState<SuggestResponsePayload | null>(null);
   const [ragResponse, setRagResponse] = useState<RagResponsePayload | null>(null);
-  const [suggestError, setSuggestError] = useState<string | null>(null);
   const [ragError, setRagError] = useState<string | null>(null);
-  const [isSuggestLoading, setIsSuggestLoading] = useState(false);
   const [isRagLoading, setIsRagLoading] = useState(false);
   const [streamedAnswer, setStreamedAnswer] = useState("");
   const ragRequestCounter = useRef(0);
   const [ragRequest, setRagRequest] = useState<RagRequestState | null>(null);
+
+  const {
+    status: suggestStatus,
+    data: suggestData,
+    error: suggestError,
+    search: runSuggest,
+    prefetch: prefetchSuggest,
+    reset: resetSuggest,
+  } = useSuggestSearch({
+    knowledgeBaseId: settings.knowledgeBaseId,
+    limit: settings.suggestLimit,
+  });
+  const isSuggestLoading = suggestStatus === "loading";
 
   const knowledgeBasesQuery = useQuery<KnowledgeBaseSummary[]>({
     queryKey: ["/api/knowledge/bases"],
@@ -374,20 +344,12 @@ export default function SearchPlaygroundPage() {
 
   useEffect(() => {
     if (!query.trim()) {
-      setDebouncedQuery("");
       setRagRequest(null);
       setRagResponse(null);
       setRagError(null);
       setIsRagLoading(false);
       setStreamedAnswer("");
-      return;
     }
-
-    const timeout = setTimeout(() => {
-      setDebouncedQuery(query.trim());
-    }, 250);
-
-    return () => clearTimeout(timeout);
   }, [query]);
 
   const knowledgeBaseName = useMemo(() => {
@@ -461,62 +423,25 @@ export default function SearchPlaygroundPage() {
   );
 
   useEffect(() => {
-    if (!debouncedQuery || !settings.knowledgeBaseId) {
+    const trimmed = query.trim();
+    if (!settings.knowledgeBaseId || !trimmed) {
       setSuggestResponse(null);
-      setSuggestError(null);
-      setIsSuggestLoading(false);
+      resetSuggest();
       return;
     }
 
-    let cancelled = false;
+    runSuggest(trimmed);
+  }, [query, resetSuggest, runSuggest, settings.knowledgeBaseId]);
 
-    const runSuggest = async () => {
-      setIsSuggestLoading(true);
-      setSuggestError(null);
+  useEffect(() => {
+    if (suggestStatus === "success" && suggestData) {
+      setSuggestResponse(suggestData);
+    }
 
-      try {
-        const suggestParams = new URLSearchParams({
-          q: debouncedQuery,
-          kb_id: settings.knowledgeBaseId,
-          limit: String(settings.suggestLimit),
-        });
-
-        const suggestResponseRaw = await fetch(`/public/search/suggest?${suggestParams.toString()}`);
-        if (!suggestResponseRaw.ok) {
-          const fallbackMessage =
-            suggestResponseRaw.status === 404
-              ? "База знаний не найдена или недоступна."
-              : "Не удалось получить подсказки.";
-          const errorMessage = (await extractErrorMessage(suggestResponseRaw)) ?? fallbackMessage;
-          throw new Error(`${errorMessage} (код ${suggestResponseRaw.status})`);
-        }
-        const suggestJson = (await suggestResponseRaw.json()) as SuggestResponsePayload;
-
-        if (!cancelled) {
-          setSuggestResponse(suggestJson);
-        }
-      } catch (error) {
-        console.error("Search playground suggest error", error);
-        if (!cancelled) {
-          const message =
-            error instanceof Error && error.message
-              ? error.message
-              : "Не удалось получить подсказки.";
-          setSuggestError(message);
-          setSuggestResponse(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsSuggestLoading(false);
-        }
-      }
-    };
-
-    void runSuggest();
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedQuery, settings.knowledgeBaseId, settings.suggestLimit]);
+    if (suggestStatus === "idle" || suggestStatus === "error" || !suggestData) {
+      setSuggestResponse(suggestStatus === "success" ? suggestData : null);
+    }
+  }, [suggestData, suggestStatus]);
 
   useEffect(() => {
     if (!ragRequest) {
@@ -585,19 +510,18 @@ export default function SearchPlaygroundPage() {
 
   const resetResults = () => {
     setQuery("");
-    setDebouncedQuery("");
     setSuggestResponse(null);
     setRagResponse(null);
-    setSuggestError(null);
     setRagError(null);
-    setIsSuggestLoading(false);
     setIsRagLoading(false);
     setStreamedAnswer("");
     setRagRequest(null);
+    resetSuggest();
   };
 
-  const handleAskAi = () => {
-    const trimmedQuery = query.trim();
+  const handleAskAi = async (overrideQuery?: string) => {
+    const trimmedQuery = (overrideQuery ?? query).trim();
+    setQuery(trimmedQuery);
 
     if (!trimmedQuery) {
       setRagError("Введите вопрос, чтобы Ask AI подготовил ответ.");
@@ -648,6 +572,26 @@ export default function SearchPlaygroundPage() {
 
     ragRequestCounter.current += 1;
     setRagRequest({ id: ragRequestCounter.current, payload });
+  };
+
+  const handleOpenSuggestResult = (
+    section: SuggestResponseSection,
+    options?: { newTab?: boolean },
+  ) => {
+    if (!section.url || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const targetUrl = new URL(section.url, window.location.origin);
+      if (options?.newTab) {
+        window.open(targetUrl.toString(), "_blank", "noopener,noreferrer");
+      } else {
+        window.open(targetUrl.toString(), "_self");
+      }
+    } catch (error) {
+      console.error("Не удалось открыть результат поиска", error);
+    }
   };
 
   const handleSettingsChange = <K extends keyof PlaygroundSettings>(key: K, value: PlaygroundSettings[K]) => {
@@ -962,6 +906,28 @@ export default function SearchPlaygroundPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <SearchQuickSwitcher
+            query={query}
+            isAskAiEnabled={settings.rag.askAiEnabled && !ragConfigurationError}
+            suggest={suggestResponse}
+            status={settings.knowledgeBaseId ? suggestStatus : "idle"}
+            error={suggestError}
+            onQueryChange={setQuery}
+            onAskAi={handleAskAi}
+            onResultOpen={handleOpenSuggestResult}
+            onPrefetch={(value) => {
+              if (settings.knowledgeBaseId) {
+                prefetchSuggest(value);
+              }
+            }}
+            disabledReason={
+              !settings.knowledgeBaseId
+                ? "Выберите базу знаний"
+                : !settings.rag.askAiEnabled
+                ? "Ask AI отключён в настройках"
+                : ragConfigurationError ?? null
+            }
+          />
           <Button
             variant="outline"
             size="sm"
@@ -1327,27 +1293,6 @@ export default function SearchPlaygroundPage() {
       <main className="flex-1 overflow-auto px-4 py-4">
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Введите вопрос"
-                className="flex-1"
-              />
-              <Button
-                variant="secondary"
-                onClick={() => setDebouncedQuery(query.trim())}
-                disabled={!query.trim() || isSuggestLoading || isRagLoading}
-              >
-                Найти
-              </Button>
-              <Button
-                onClick={handleAskAi}
-                disabled={!query.trim() || isRagLoading}
-              >
-                Спросить AI
-              </Button>
-            </div>
             <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
               Все запросы уходят в публичные эндпоинты `/public/search/suggest` и `/public/rag/answer` с текущими
               настройками. Так можно воспроизвести интеграцию клиента 1:1.
@@ -1361,7 +1306,7 @@ export default function SearchPlaygroundPage() {
             </div>
             {isSuggestLoading && <div className="rounded border px-3 py-6 text-center text-sm">Ищем подсказки…</div>}
             {suggestError && <div className="rounded border border-destructive px-3 py-2 text-sm text-destructive">{suggestError}</div>}
-            {!isSuggestLoading && !suggestError && suggestResponse?.sections.length === 0 && debouncedQuery && (
+            {!isSuggestLoading && !suggestError && suggestResponse?.sections.length === 0 && query.trim() && (
               <div className="rounded border px-3 py-6 text-center text-sm text-muted-foreground">
                 Подсказок не найдено.
               </div>
