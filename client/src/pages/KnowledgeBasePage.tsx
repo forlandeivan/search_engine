@@ -83,6 +83,7 @@ import type {
   KnowledgeBaseChildNode,
   DeleteKnowledgeNodeResponse,
   CreateKnowledgeDocumentResponse,
+  DeleteKnowledgeBaseResponse,
   KnowledgeBaseDocumentDetail,
   KnowledgeDocumentChunkSet,
   KnowledgeDocumentVectorizationJobStatus,
@@ -428,6 +429,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     id: string;
     title: string;
   } | null>(null);
+  const [baseDeleteTarget, setBaseDeleteTarget] = useState<KnowledgeBaseSummary | null>(null);
+  const [baseDeleteConfirmation, setBaseDeleteConfirmation] = useState<string>("");
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
   const [isCreateDocumentDialogOpen, setIsCreateDocumentDialogOpen] = useState(false);
   const [documentDialogParentId, setDocumentDialogParentId] = useState<string | null>(null);
@@ -867,6 +870,44 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     },
     onSettled: () => {
       setMovingNodeId(null);
+    },
+  });
+
+  const deleteBaseMutation = useMutation<
+    DeleteKnowledgeBaseResponse,
+    Error,
+    { baseId: string; confirmation: string }
+  >({
+    mutationFn: async ({ baseId, confirmation }) => {
+      const res = await apiRequest("DELETE", `/api/knowledge/bases/${baseId}`, {
+        confirmation,
+      });
+      return (await res.json()) as DeleteKnowledgeBaseResponse;
+    },
+    onSuccess: (_, variables) => {
+      toast({
+        title: "База знаний удалена",
+        description: "База и связанные документы удалены без возможности восстановления.",
+      });
+      setBaseDeleteTarget(null);
+      setBaseDeleteConfirmation("");
+      queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+      queryClient.removeQueries({
+        predicate: (query) => {
+          const [key, baseId] = query.queryKey as [unknown, unknown?, ...unknown[]];
+          return key === "knowledge-node" && baseId === variables.baseId;
+        },
+      });
+      if (knowledgeBaseId === variables.baseId) {
+        setLocation("/knowledge");
+      }
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось удалить базу знаний",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -1662,13 +1703,40 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           <CardTitle>{detail.name}</CardTitle>
           <CardDescription>Последнее обновление: {formatDateTime(detail.updatedAt)}</CardDescription>
         </div>
-        <Button
-          type="button"
-          onClick={() => handleOpenCreateDocument(null, detail.name)}
-          className="w-full sm:w-auto"
-        >
-          <Plus className="mr-2 h-4 w-4" /> Новый документ
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+          <Button
+            type="button"
+            onClick={() => handleOpenCreateDocument(null, detail.name)}
+            className="w-full sm:w-auto"
+          >
+            <Plus className="mr-2 h-4 w-4" /> Новый документ
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="Действия с базой знаний">
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onSelect={(event) => {
+                  event.preventDefault();
+                  setBaseDeleteTarget({
+                    id: detail.id,
+                    name: detail.name,
+                    description: detail.description,
+                    updatedAt: detail.updatedAt,
+                    rootNodes: detail.rootNodes,
+                  });
+                  setBaseDeleteConfirmation("");
+                }}
+              >
+                <Trash2 className="mr-2 h-4 w-4" /> Удалить базу знаний
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">{detail.description}</p>
@@ -2083,6 +2151,66 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AlertDialog
+        open={Boolean(baseDeleteTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBaseDeleteTarget(null);
+            setBaseDeleteConfirmation("");
+            deleteBaseMutation.reset();
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить базу знаний?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие удалит базу «{baseDeleteTarget?.name}» и все её документы без возможности восстановления.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-md border bg-muted/40 p-3 text-sm">
+              <p className="font-medium">{baseDeleteTarget?.name}</p>
+              <p className="text-muted-foreground">
+                Для подтверждения введите точное название базы знаний.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="knowledge-base-delete-confirmation">Название базы знаний</Label>
+              <Input
+                id="knowledge-base-delete-confirmation"
+                value={baseDeleteConfirmation}
+                onChange={(event) => setBaseDeleteConfirmation(event.target.value)}
+                placeholder="Введите название базы"
+                autoComplete="off"
+                autoFocus
+              />
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                if (!baseDeleteTarget) {
+                  return;
+                }
+                void deleteBaseMutation.mutate({
+                  baseId: baseDeleteTarget.id,
+                  confirmation: baseDeleteConfirmation.trim(),
+                });
+              }}
+              disabled={
+                deleteBaseMutation.isPending ||
+                !baseDeleteTarget ||
+                baseDeleteConfirmation.trim() !== baseDeleteTarget.name
+              }
+            >
+              {deleteBaseMutation.isPending ? "Удаляем..." : "Удалить"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog
         open={isDeleteDialogOpen}
         onOpenChange={(open) => {
