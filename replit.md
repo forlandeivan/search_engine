@@ -7,6 +7,10 @@ This is a lightweight search engine application designed for crawling and indexi
 ## Recent Changes
 
 ### October 31, 2025  
+- **Database management separation**: Created separate configs and scripts for dev (Neon) and production (External PostgreSQL) databases
+- **Migration scripts with safety**: Added `db-push-dev.sh` and `db-push-prod.sh` with credential masking and error handling
+- **Production safety**: Production migration script requires explicit confirmation before running
+- **Clean codebase**: Removed debug logging from routes and knowledge-base modules
 - **Production deployment FIXED**: Server now opens port 5000 immediately, database initialization runs in background with 30s timeout
 - **Fast startup**: Port opens in <1 second, database schema check happens asynchronously without blocking server  
 - **Deployment resilience**: Server starts successfully even if database is slow or temporarily unavailable
