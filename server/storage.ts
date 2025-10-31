@@ -809,6 +809,66 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       )
     `);
 
+    await db.execute(sql`
+      ALTER TABLE "knowledge_bases"
+      ADD COLUMN IF NOT EXISTS "workspace_id" varchar
+    `);
+
+    await db.execute(sql`
+      UPDATE "knowledge_bases"
+      SET "workspace_id" = NULLIF("workspace_id", '')
+      WHERE "workspace_id" IS NOT NULL AND btrim("workspace_id") = ''
+    `);
+
+    await db.execute(sql`
+      UPDATE "knowledge_bases" AS kb
+      SET "workspace_id" = inferred.workspace_id
+      FROM (
+        SELECT kn."base_id" AS base_id, MAX(kn."workspace_id") AS workspace_id
+        FROM "knowledge_nodes" AS kn
+        WHERE kn."workspace_id" IS NOT NULL AND btrim(kn."workspace_id") <> ''
+        GROUP BY kn."base_id"
+      ) AS inferred
+      WHERE kb."id" = inferred.base_id
+        AND (kb."workspace_id" IS NULL OR btrim(kb."workspace_id") = '')
+    `);
+
+    await db.execute(sql`
+      UPDATE "knowledge_bases" AS kb
+      SET "workspace_id" = inferred.workspace_id
+      FROM (
+        SELECT kd."base_id" AS base_id, MAX(kd."workspace_id") AS workspace_id
+        FROM "knowledge_documents" AS kd
+        WHERE kd."workspace_id" IS NOT NULL AND btrim(kd."workspace_id") <> ''
+        GROUP BY kd."base_id"
+      ) AS inferred
+      WHERE kb."id" = inferred.base_id
+        AND (kb."workspace_id" IS NULL OR btrim(kb."workspace_id") = '')
+    `);
+
+    await db.execute(sql`
+      WITH fallback AS (
+        SELECT "id"
+        FROM "workspaces"
+        ORDER BY "created_at"
+        LIMIT 1
+      )
+      UPDATE "knowledge_bases" AS kb
+      SET "workspace_id" = fallback."id"
+      FROM fallback
+      WHERE (kb."workspace_id" IS NULL OR btrim(kb."workspace_id") = '')
+        AND fallback."id" IS NOT NULL
+    `);
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "knowledge_bases"
+        ALTER COLUMN "workspace_id" SET NOT NULL
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42704", "23502"]);
+    }
+
     await ensureConstraint(
       "knowledge_bases",
       "knowledge_bases_workspace_id_fkey",
