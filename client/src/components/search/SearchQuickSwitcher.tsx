@@ -2,26 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import {
-  BookOpen,
-  FileText,
-  Layers,
-  Link as LinkIcon,
-  LoaderCircle,
-  Search,
-  Sparkles,
-  Tag,
-} from "lucide-react";
+import { LoaderCircle, Search, Sparkles } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type {
   SuggestResponseItem,
@@ -141,7 +125,7 @@ function mapSectionToItem(section: SuggestResponseSection, index: number): Sugge
 
   const baseId = chunkId || `${docId || "doc"}-${index + 1}`;
   const displayDocTitle = docTitle || sectionTitle || `Документ ${index + 1}`;
-  const computedBreadcrumbs = breadcrumbs.length > 0 ? breadcrumbs : docTitle ? [docTitle] : [];
+  const computedBreadcrumbs = breadcrumbs.length > 0 ? breadcrumbs : [];
   const typeLabel = (() => {
     const source = normalizeString(section.source);
     if (!source) {
@@ -151,7 +135,7 @@ function mapSectionToItem(section: SuggestResponseSection, index: number): Sugge
       return "Структура";
     }
     if (source === "content") {
-      return "Контент";
+      return null;
     }
     return source;
   })();
@@ -352,85 +336,6 @@ function humanizeSlug(value: string) {
     .trim();
 }
 
-function buildBreadcrumbs(item: SuggestResponseItem) {
-  const breadcrumbs = (item.breadcrumbs ?? []).map(normalizeString).filter(Boolean);
-  if (breadcrumbs.length > 0) {
-    return breadcrumbs.join(" › ");
-  }
-
-  const path = normalizeString(item.path);
-  if (path) {
-    return path;
-  }
-
-  const url = normalizeString(item.url);
-  if (url) {
-    try {
-      const base = typeof window !== "undefined" ? window.location.origin : "http://localhost";
-      const parsed = new URL(url, base);
-      return parsed.pathname.replace(/^\/+/, "");
-    } catch {
-      return url.replace(/^https?:\/\//i, "");
-    }
-  }
-
-  return "";
-}
-
-function buildMetaChips(item: SuggestResponseItem) {
-  const meta: { key: string; label: string }[] = [];
-
-  const version = normalizeString(item.version);
-  if (version) {
-    meta.push({ key: "version", label: version.startsWith("v") ? version : `v${version}` });
-  }
-
-  const language = normalizeString(item.language);
-  if (language) {
-    meta.push({ key: "language", label: language.toUpperCase() });
-  }
-
-  const type = normalizeString(item.type);
-  if (type) {
-    meta.push({ key: "type", label: type });
-  }
-
-  if (meta.length === 0) {
-    return null;
-  }
-
-  const primary = meta.slice(0, 2);
-  const overflow = meta.slice(2);
-
-  return (
-    <div className="flex shrink-0 items-center gap-1">
-      {primary.map((chip) => (
-        <Badge key={chip.key} variant="outline" className="max-w-[72px] truncate text-[10px]">
-          {chip.label}
-        </Badge>
-      ))}
-      {overflow.length > 0 && (
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Badge variant="outline" className="text-[10px]">
-                +{overflow.length}
-              </Badge>
-            </TooltipTrigger>
-            <TooltipContent className="text-xs">
-              <div className="flex flex-col gap-1">
-                {overflow.map((chip) => (
-                  <span key={chip.key}>{chip.label}</span>
-                ))}
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      )}
-    </div>
-  );
-}
-
 function getPlainSnippet(item: SuggestResponseItem) {
   const snippetHtml = normalizeString(item.snippet_html);
   if (!snippetHtml) {
@@ -441,7 +346,7 @@ function getPlainSnippet(item: SuggestResponseItem) {
     const container = window.document.createElement("div");
     container.innerHTML = snippetHtml;
     const text = container.textContent || container.innerText || "";
-    return text.replace(/\s+/g, " ").trim();
+    return text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   }
 
   return snippetHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -550,7 +455,6 @@ export function SearchQuickSwitcher({
 
     const frame = window.requestAnimationFrame(() => {
       inputRef.current?.focus();
-      inputRef.current?.select();
     });
 
     return () => window.cancelAnimationFrame(frame);
@@ -909,16 +813,12 @@ export function SearchQuickSwitcher({
     const item = group.items[row.itemIndex];
     const isActive = rowIndex === activeRowIndex;
 
-    const breadcrumbs = buildBreadcrumbs(item);
     const displayTitle = getDisplayTitle(item);
     const truncatedTitle = truncateMiddle(displayTitle, 80);
     const highlightedTitle = highlightText(truncatedTitle, tokens);
-    const breadcrumbText = truncateEnd(breadcrumbs, 96);
-    const highlightedBreadcrumbs = highlightText(breadcrumbText, tokens);
     const snippetText = getPlainSnippet(item);
     const truncatedSnippet = truncateEnd(snippetText, 140);
     const highlightedSnippet = highlightText(truncatedSnippet, tokens);
-    const metaChips = buildMetaChips(item);
 
     return (
       <div
@@ -950,16 +850,6 @@ export function SearchQuickSwitcher({
             {highlightedSnippet}
           </div>
         )}
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          {breadcrumbs ? (
-            <span className="truncate" title={breadcrumbs}>
-              {highlightedBreadcrumbs}
-            </span>
-          ) : (
-            <span className="truncate text-transparent">.</span>
-          )}
-          {metaChips}
-        </div>
       </div>
     );
   };
@@ -1069,10 +959,20 @@ export function SearchQuickSwitcher({
                     </div>
                   )}
 
-                  {(status === "loading" || status === "idle") && groups.length === 0 && (
+                  {status === "loading" && groups.length === 0 && (
                     <div className="flex min-h-[160px] flex-col items-center justify-center gap-3 rounded-md border border-dashed px-4 text-sm text-muted-foreground">
                       <LoaderCircle className="h-5 w-5 animate-spin text-primary" />
                       <span>Ищем подсказки…</span>
+                    </div>
+                  )}
+
+                  {status === "idle" && groups.length === 0 && !normalizedQuery && (
+                    <div className="flex min-h-[160px] flex-col items-center justify-center gap-3 rounded-md border border-dashed px-4 text-center text-sm text-muted-foreground">
+                      <Search className="h-6 w-6 text-muted-foreground" />
+                      <div>
+                        <p className="font-medium text-foreground">Начните поиск.</p>
+                        <p>Введите запрос, чтобы увидеть подсказки.</p>
+                      </div>
                     </div>
                   )}
 
