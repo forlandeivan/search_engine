@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Settings, Search as SearchIcon, RefreshCcw, HelpCircle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
-import SearchQuickSwitcher from "@/components/search/SearchQuickSwitcher";
+import SearchQuickSwitcher, {
+  buildSuggestGroups,
+  type SuggestResultGroup,
+} from "@/components/search/SearchQuickSwitcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,7 +41,6 @@ import type {
   RagChunk,
   RagResponsePayload,
   SuggestResponsePayload,
-  SuggestResponseGroup,
   SuggestResponseItem,
 } from "@/types/search";
 import { useSuggestSearch } from "@/hooks/useSuggestSearch";
@@ -228,7 +230,10 @@ export default function SearchPlaygroundPage() {
   });
   const isSuggestLoading = suggestStatus === "loading";
 
-  const suggestGroups = useMemo(() => suggestResponse?.groups ?? [], [suggestResponse]);
+  const suggestGroups = useMemo<SuggestResultGroup[]>(
+    () => buildSuggestGroups(suggestResponse),
+    [suggestResponse],
+  );
   const flattenedSuggestItems = useMemo(
     () =>
       suggestGroups.flatMap((group) =>
@@ -856,7 +861,7 @@ export default function SearchPlaygroundPage() {
   }, [ragResponse?.answer]);
 
   const renderSuggestItem = (
-    entry: { group: SuggestResponseGroup; item: SuggestResponseItem },
+    entry: { group: SuggestResultGroup; item: SuggestResponseItem },
     index: number,
   ) => {
     const { group, item } = entry;
@@ -869,7 +874,7 @@ export default function SearchPlaygroundPage() {
     ].filter(Boolean) as string[];
 
     return (
-      <div key={`${item.id}-${index}`} className="rounded border px-3 py-2">
+      <div key={`${item.id ?? item.chunkId ?? index}-${index}`} className="rounded border px-3 py-2">
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span className="line-clamp-1" title={group.title}>
             {group.title || "Без группы"}
