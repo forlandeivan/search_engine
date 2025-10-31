@@ -36,7 +36,7 @@ import {
   type AuthProviderType,
 } from "@shared/schema";
 import { db } from "./db";
-import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { randomBytes } from "crypto";
 
 let globalUserAuthSchemaReady = false;
@@ -564,6 +564,7 @@ export interface IStorage {
   ensurePersonalWorkspace(user: User): Promise<Workspace>;
   listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
   getOrCreateUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
+  getWorkspaceKnowledgeBaseCounts(workspaceIds: readonly string[]): Promise<Map<string, number>>;
   addWorkspaceMember(
     workspaceId: string,
     userId: string,
@@ -3638,6 +3639,26 @@ export class DatabaseStorage implements IStorage {
       return existing[0].workspace;
     }
 
+    const ownedWorkspaces = await this.db
+      .select()
+      .from(workspaces)
+      .where(eq(workspaces.ownerId, user.id))
+      .orderBy(asc(workspaces.createdAt));
+
+    if (ownedWorkspaces.length > 0) {
+      for (const workspace of ownedWorkspaces) {
+        await this.db
+          .insert(workspaceMembers)
+          .values({ workspaceId: workspace.id, userId: user.id, role: "owner" })
+          .onConflictDoUpdate({
+            target: [workspaceMembers.workspaceId, workspaceMembers.userId],
+            set: { role: "owner", updatedAt: sql`CURRENT_TIMESTAMP` },
+          });
+      }
+
+      return ownedWorkspaces[0];
+    }
+
     const workspaceName = generatePersonalWorkspaceName(user);
     const [workspace] = await this.db
       .insert(workspaces)
@@ -3691,6 +3712,33 @@ export class DatabaseStorage implements IStorage {
     memberships = await this.listUserWorkspaces(userId);
 
     return memberships;
+  }
+
+  async getWorkspaceKnowledgeBaseCounts(workspaceIds: readonly string[]): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+
+    if (!workspaceIds || workspaceIds.length === 0) {
+      return result;
+    }
+
+    await ensureKnowledgeBaseTables();
+
+    const workspaceList = [...workspaceIds];
+
+    const rows = await this.db
+      .select({
+        workspaceId: knowledgeBases.workspaceId,
+        count: sql<number>`COUNT(${knowledgeBases.id})`,
+      })
+      .from(knowledgeBases)
+      .where(inArray(knowledgeBases.workspaceId, workspaceList))
+      .groupBy(knowledgeBases.workspaceId);
+
+    for (const row of rows) {
+      result.set(row.workspaceId, Number(row.count ?? 0));
+    }
+
+    return result;
   }
 
   async addWorkspaceMember(
