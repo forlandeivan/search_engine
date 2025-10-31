@@ -59,9 +59,10 @@ function tryConnectCustomPostgres(): void {
 
     const customPool = new PgPool({
       connectionString: databaseUrl,
-      connectionTimeoutMillis: 5_000,
-      idleTimeoutMillis: 10_000,
-      max: 10,
+      connectionTimeoutMillis: 30_000,
+      idleTimeoutMillis: 60_000,
+      max: 20,
+      allowExitOnIdle: true,
     });
 
     pool = customPool;
