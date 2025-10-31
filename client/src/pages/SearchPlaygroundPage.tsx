@@ -162,11 +162,11 @@ const DEFAULT_SETTINGS: PlaygroundSettings = {
   knowledgeBaseId: "",
   suggestLimit: 3,
   rag: {
-    topK: 4,
+    topK: 5,
     bm25Weight: 0.5,
     vectorWeight: 0.5,
     bm25Limit: 4,
-    vectorLimit: 4,
+    vectorLimit: 5,
     embeddingProviderId: "",
     collection: "",
     llmProviderId: "",
@@ -279,8 +279,13 @@ export default function SearchPlaygroundPage() {
 
     const models = [...(selectedLlmProvider.availableModels ?? [])];
     const defaultModel = selectedLlmProvider.model?.trim();
+    const providerName = selectedLlmProvider.name?.trim();
+    const isDefaultModelProviderName =
+      !!defaultModel &&
+      !!providerName &&
+      defaultModel.localeCompare(providerName, undefined, { sensitivity: "accent" }) === 0;
 
-    if (defaultModel && !models.some((model) => model.value === defaultModel)) {
+    if (defaultModel && !isDefaultModelProviderName && !models.some((model) => model.value === defaultModel)) {
       models.unshift({ label: `${defaultModel} (по умолчанию)`, value: defaultModel });
     }
 
@@ -577,13 +582,44 @@ export default function SearchPlaygroundPage() {
     key: K,
     value: PlaygroundSettings["rag"][K],
   ) => {
-    setSettings((prev) => ({
-      ...prev,
-      rag: {
-        ...prev.rag,
-        [key]: value,
-      },
-    }));
+    setSettings((prev) => {
+      if (key === "topK" && typeof value === "number") {
+        const nextTopK = value;
+        const shouldSyncVectorLimit = prev.rag.vectorLimit === prev.rag.topK;
+
+        return {
+          ...prev,
+          rag: {
+            ...prev.rag,
+            topK: nextTopK,
+            vectorLimit: shouldSyncVectorLimit ? nextTopK : prev.rag.vectorLimit,
+          },
+        };
+      }
+
+      if (key === "vectorLimit" && typeof value === "number") {
+        const nextVectorLimit = value;
+        const shouldSyncTopK = prev.rag.vectorLimit === prev.rag.topK;
+        const syncedTopK = Math.max(1, Math.min(10, nextVectorLimit));
+
+        return {
+          ...prev,
+          rag: {
+            ...prev.rag,
+            vectorLimit: nextVectorLimit,
+            topK: shouldSyncTopK ? syncedTopK : prev.rag.topK,
+          },
+        };
+      }
+
+      return {
+        ...prev,
+        rag: {
+          ...prev.rag,
+          [key]: value,
+        },
+      };
+    });
   };
 
   const handleLlmProviderChange = (providerId: string) => {
@@ -749,7 +785,7 @@ export default function SearchPlaygroundPage() {
                 Настройки
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[72rem]">
               <DialogHeader>
                 <DialogTitle>Настройки песочницы</DialogTitle>
                 <DialogDescription>
@@ -825,7 +861,10 @@ export default function SearchPlaygroundPage() {
                           max={10}
                           value={settings.rag.topK}
                           onChange={(event) =>
-                            handleRagSettingsChange("topK", Math.max(1, Number(event.target.value) || 1))
+                            handleRagSettingsChange(
+                              "topK",
+                              Math.max(1, Math.min(10, Number(event.target.value) || 1)),
+                            )
                           }
                         />
                       </div>
@@ -852,7 +891,7 @@ export default function SearchPlaygroundPage() {
                         <SettingLabelWithTooltip
                           htmlFor="playground-vector-weight"
                           label="Вес векторов"
-                          description="Доля семантического поиска Qdrant в итоговом ранжировании. Пример: 0.3 добавляет семантические совпадения при наличии коллекции."
+                          description="Баланс между семантическим (векторным) и классическим поиском: 0 — учитываем только BM25, 1 — полагаемся только на вектора. Меняйте вместе с весом BM25, чтобы подобрать нужный микс."
                         />
                         <Input
                           id="playground-vector-weight"
@@ -888,7 +927,7 @@ export default function SearchPlaygroundPage() {
                         <SettingLabelWithTooltip
                           htmlFor="playground-vector-limit"
                           label="Чанков векторов"
-                          description="Сколько ближайших векторных совпадений запрашивать из Qdrant. Пример: 8 — первые восемь семантических совпадений."
+                          description="Сколько ближайших векторных совпадений запрашивать из Qdrant. Значение по умолчанию совпадает с Top-K и синхронизируется с ним, пока вы вручную не зададите другое число."
                         />
                         <Input
                           id="playground-vector-limit"
@@ -897,7 +936,10 @@ export default function SearchPlaygroundPage() {
                           max={20}
                           value={settings.rag.vectorLimit}
                           onChange={(event) =>
-                            handleRagSettingsChange("vectorLimit", Math.max(1, Number(event.target.value) || 1))
+                            handleRagSettingsChange(
+                              "vectorLimit",
+                              Math.max(1, Math.min(20, Number(event.target.value) || 1)),
+                            )
                           }
                         />
                       </div>
