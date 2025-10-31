@@ -2,7 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import { BookOpen, FileText, Layers, Link as LinkIcon, Search, Sparkles, Tag } from "lucide-react";
+import {
+  BookOpen,
+  FileText,
+  Layers,
+  Link as LinkIcon,
+  LoaderCircle,
+  Search,
+  Sparkles,
+  Tag,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +32,7 @@ import type {
 const GROUP_ITEM_LIMIT = 5;
 const ASK_AI_MIN_QUERY_LENGTH = 2;
 const SEARCH_DEBOUNCE_MS = 150;
+const ASK_AI_OPTION_ID = "search-option-ask";
 
 interface SearchQuickSwitcherProps {
   query: string;
@@ -47,6 +57,7 @@ export interface SuggestResultGroup {
 }
 
 type VirtualRow =
+  | { type: "ask" }
   | { type: "group"; groupIndex: number }
   | { type: "item"; groupIndex: number; itemIndex: number }
   | { type: "more"; groupIndex: number };
@@ -420,6 +431,22 @@ function buildMetaChips(item: SuggestResponseItem) {
   );
 }
 
+function getPlainSnippet(item: SuggestResponseItem) {
+  const snippetHtml = normalizeString(item.snippet_html);
+  if (!snippetHtml) {
+    return "";
+  }
+
+  if (typeof window !== "undefined") {
+    const container = window.document.createElement("div");
+    container.innerHTML = snippetHtml;
+    const text = container.textContent || container.innerText || "";
+    return text.replace(/\s+/g, " ").trim();
+  }
+
+  return snippetHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function buildVirtualRows(groups: SuggestResultGroup[]): VirtualRow[] {
   const rows: VirtualRow[] = [];
 
@@ -440,6 +467,25 @@ function getOptionId(groupIndex: number, itemIndex: number) {
   return `search-option-${groupIndex}-${itemIndex}`;
 }
 
+function isInteractiveRow(row: VirtualRow | undefined):
+  | ({ type: "ask" }
+      | { type: "item"; groupIndex: number; itemIndex: number })
+  | false {
+  if (!row) {
+    return false;
+  }
+
+  if (row.type === "ask") {
+    return row;
+  }
+
+  if (row.type === "item") {
+    return row;
+  }
+
+  return false;
+}
+
 export function SearchQuickSwitcher({
   query,
   suggest,
@@ -456,17 +502,24 @@ export function SearchQuickSwitcher({
 }: SearchQuickSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
-  const [activeGroupIndex, setActiveGroupIndex] = useState(0);
-  const [activeItemIndex, setActiveItemIndex] = useState(0);
+  const [activeRowIndex, setActiveRowIndex] = useState(-1);
   const [localQuery, setLocalQuery] = useState(query);
   const scrollParentRef = useRef<HTMLDivElement | null>(null);
   const [lastInputTime, setLastInputTime] = useState<number>(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const groups = useMemo(() => buildSuggestGroups(suggest), [suggest]);
   const tokens = useMemo(() => tokenize(localQuery), [localQuery]);
-  const rows = useMemo(() => buildVirtualRows(groups), [groups]);
-  const trimmedQuery = localQuery.trim();
-  const canShowAskAiChip = trimmedQuery.length >= ASK_AI_MIN_QUERY_LENGTH;
+  const normalizedQuery = localQuery.trim();
+  const canSubmitAskAi = normalizedQuery.length >= ASK_AI_MIN_QUERY_LENGTH;
+  const shouldRenderAskAiRow = normalizedQuery.length > 0;
+  const rows = useMemo(() => {
+    const baseRows = buildVirtualRows(groups);
+    if (!shouldRenderAskAiRow) {
+      return baseRows;
+    }
+    return ([{ type: "ask" }] as VirtualRow[]).concat(baseRows);
+  }, [groups, shouldRenderAskAiRow]);
 
   useEffect(() => {
     setLocalQuery(query);
@@ -486,15 +539,58 @@ export function SearchQuickSwitcher({
 
   useEffect(() => {
     if (!open) {
-      setActiveGroupIndex(0);
-      setActiveItemIndex(0);
       setLocalQuery(query);
       setIsComposing(false);
+      setActiveRowIndex(-1);
       if (onClose) {
         onClose();
       }
+      return;
     }
+
+    const frame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [open, onClose, query]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const firstInteractiveIndex = rows.findIndex((row) => Boolean(isInteractiveRow(row)));
+    if (firstInteractiveIndex === -1) {
+      setActiveRowIndex(-1);
+      return;
+    }
+
+    const lastInteractiveIndex = (() => {
+      for (let index = rows.length - 1; index >= 0; index -= 1) {
+        if (isInteractiveRow(rows[index])) {
+          return index;
+        }
+      }
+      return firstInteractiveIndex;
+    })();
+
+    if (activeRowIndex === -1) {
+      setActiveRowIndex(firstInteractiveIndex);
+      return;
+    }
+
+    if (activeRowIndex > lastInteractiveIndex) {
+      setActiveRowIndex(lastInteractiveIndex);
+      return;
+    }
+
+    const currentRow = rows[activeRowIndex];
+    if (!isInteractiveRow(currentRow)) {
+      setActiveRowIndex(firstInteractiveIndex);
+    }
+  }, [rows, open, activeRowIndex]);
 
   useEffect(() => {
     if (!open) {
@@ -520,21 +616,34 @@ export function SearchQuickSwitcher({
     count: rows.length,
     estimateSize: (index: number) => {
       const row = rows[index];
+      if (row.type === "ask") {
+        return 56;
+      }
       if (row.type === "group") {
-        return 32;
+        return 36;
       }
       if (row.type === "more") {
         return 40;
       }
-      return 72;
+      return 68;
     },
     getScrollElement: () => scrollParentRef.current,
     overscan: 4,
   });
 
-  const activeOptionId = groups[activeGroupIndex]?.items[activeItemIndex]
-    ? getOptionId(activeGroupIndex, activeItemIndex)
-    : undefined;
+  const activeRow = activeRowIndex >= 0 ? rows[activeRowIndex] : undefined;
+  const activeOptionId = (() => {
+    if (!activeRow) {
+      return undefined;
+    }
+    if (activeRow.type === "ask") {
+      return ASK_AI_OPTION_ID;
+    }
+    if (activeRow.type === "item") {
+      return getOptionId(activeRow.groupIndex, activeRow.itemIndex);
+    }
+    return undefined;
+  })();
   const virtualItems = virtualizer.getVirtualItems();
 
   const handleOpenChange = (value: boolean) => {
@@ -542,40 +651,42 @@ export function SearchQuickSwitcher({
   };
 
   const handleAskAi = async () => {
-    if (!isAskAiEnabled || localQuery.trim().length < ASK_AI_MIN_QUERY_LENGTH) {
+    if (!isAskAiEnabled || !canSubmitAskAi) {
       return;
     }
 
-    await onAskAi(localQuery.trim());
+    await onAskAi(normalizedQuery);
     if (closeOnAsk) {
       setOpen(false);
     }
   };
 
-  const moveSelection = (direction: 1 | -1) => {
-    if (groups.length === 0) {
+  const scrollToRow = (index: number, align: "auto" | "start" | "center" | "end" = "auto") => {
+    if (index < 0) {
       return;
     }
 
-    let groupIndex = activeGroupIndex;
-    let itemIndex = activeItemIndex + direction;
+    virtualizer.scrollToIndex(index, { align });
+  };
 
-    while (groupIndex >= 0 && groupIndex < groups.length) {
-      const group = groups[groupIndex];
-      if (itemIndex >= 0 && itemIndex < group.items.length) {
-        setActiveGroupIndex(groupIndex);
-        setActiveItemIndex(itemIndex);
-        const targetIndex = rows.findIndex(
-          (row) => row.type === "item" && row.groupIndex === groupIndex && row.itemIndex === itemIndex,
-        );
-        if (targetIndex >= 0) {
-          virtualizer.scrollToIndex(targetIndex, { align: "auto" });
-        }
+  const moveSelection = (direction: 1 | -1) => {
+    if (rows.length === 0) {
+      return;
+    }
+
+    let startIndex = activeRowIndex;
+    if (startIndex === -1) {
+      startIndex = direction === 1 ? -1 : rows.length;
+    }
+
+    let nextIndex = startIndex + direction;
+    while (nextIndex >= 0 && nextIndex < rows.length) {
+      if (isInteractiveRow(rows[nextIndex])) {
+        setActiveRowIndex(nextIndex);
+        scrollToRow(nextIndex);
         return;
       }
-
-      groupIndex += direction;
-      itemIndex = direction === 1 ? 0 : Math.max(0, (groups[groupIndex]?.items.length ?? 1) - 1);
+      nextIndex += direction;
     }
   };
 
@@ -584,18 +695,30 @@ export function SearchQuickSwitcher({
       return;
     }
 
-    let nextGroup = activeGroupIndex + direction;
-    if (nextGroup < 0) {
-      nextGroup = groups.length - 1;
-    } else if (nextGroup >= groups.length) {
-      nextGroup = 0;
-    }
+    const currentInteractive = isInteractiveRow(activeRow);
+    let currentGroupIndex =
+      currentInteractive && currentInteractive.type === "item"
+        ? currentInteractive.groupIndex
+        : direction === 1
+          ? -1
+          : groups.length;
 
-    setActiveGroupIndex(nextGroup);
-    setActiveItemIndex(0);
-    const targetIndex = rows.findIndex((row) => row.type === "group" && row.groupIndex === nextGroup);
-    if (targetIndex >= 0) {
-      virtualizer.scrollToIndex(targetIndex, { align: "start" });
+    for (let attempt = 0; attempt < groups.length; attempt += 1) {
+      currentGroupIndex += direction;
+      if (currentGroupIndex < 0) {
+        currentGroupIndex = groups.length - 1;
+      } else if (currentGroupIndex >= groups.length) {
+        currentGroupIndex = 0;
+      }
+
+      const targetIndex = rows.findIndex(
+        (row) => row.type === "item" && row.groupIndex === currentGroupIndex,
+      );
+      if (targetIndex !== -1) {
+        setActiveRowIndex(targetIndex);
+        scrollToRow(targetIndex, "start");
+        return;
+      }
     }
   };
 
@@ -632,20 +755,23 @@ export function SearchQuickSwitcher({
 
     if (event.key === "Home") {
       event.preventDefault();
-      setActiveGroupIndex(0);
-      setActiveItemIndex(0);
-      virtualizer.scrollToIndex(0, { align: "start" });
+      const firstInteractiveIndex = rows.findIndex((row) => Boolean(isInteractiveRow(row)));
+      if (firstInteractiveIndex !== -1) {
+        setActiveRowIndex(firstInteractiveIndex);
+        scrollToRow(firstInteractiveIndex, "start");
+      }
       return;
     }
 
     if (event.key === "End") {
       event.preventDefault();
-      const lastGroupIndex = groups.length - 1;
-      const lastItemIndex = Math.max(0, groups[lastGroupIndex]?.items.length - 1);
-      setActiveGroupIndex(lastGroupIndex);
-      setActiveItemIndex(lastItemIndex);
-      const lastRowIndex = rows.length - 1;
-      virtualizer.scrollToIndex(lastRowIndex, { align: "end" });
+      for (let index = rows.length - 1; index >= 0; index -= 1) {
+        if (isInteractiveRow(rows[index])) {
+          setActiveRowIndex(index);
+          scrollToRow(index, "end");
+          break;
+        }
+      }
       return;
     }
 
@@ -694,11 +820,18 @@ export function SearchQuickSwitcher({
 
     if (event.key === "Enter") {
       event.preventDefault();
-      const group = groups[activeGroupIndex];
-      const item = group?.items[activeItemIndex];
-      if (item) {
-        onResultOpen(item, { newTab: event.shiftKey });
-        setOpen(false);
+      if (activeRow?.type === "ask") {
+        void handleAskAi();
+        return;
+      }
+
+      if (activeRow?.type === "item") {
+        const group = groups[activeRow.groupIndex];
+        const item = group?.items[activeRow.itemIndex];
+        if (item) {
+          onResultOpen(item, { newTab: event.shiftKey });
+          setOpen(false);
+        }
       }
       return;
     }
@@ -709,13 +842,53 @@ export function SearchQuickSwitcher({
     }
   };
 
-  const renderRow = (row: VirtualRow) => {
+  const renderRow = (row: VirtualRow, rowIndex: number) => {
+    if (row.type === "ask") {
+      const isActive = rowIndex === activeRowIndex;
+      const isDisabled = !isAskAiEnabled || !canSubmitAskAi;
+      return (
+        <div
+          id={ASK_AI_OPTION_ID}
+          role="option"
+          aria-selected={isActive}
+          aria-disabled={isDisabled}
+          tabIndex={-1}
+          className={cn(
+            "flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+            isActive ? "bg-accent text-accent-foreground" : "hover:bg-muted",
+            isDisabled ? "cursor-not-allowed opacity-70 hover:bg-transparent" : "",
+          )}
+          onMouseEnter={() => setActiveRowIndex(rowIndex)}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (!isDisabled) {
+              void handleAskAi();
+            }
+          }}
+        >
+          <Sparkles className="h-4 w-4 text-primary" />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate font-semibold" title={normalizedQuery}>
+              Ask AI: {normalizedQuery}
+            </span>
+            <span className="truncate text-[12px] text-muted-foreground">
+              Мгновенный ответ по базе знаний
+            </span>
+          </div>
+          <kbd className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">⌘↵</kbd>
+        </div>
+      );
+    }
+
     if (row.type === "group") {
       const group = groups[row.groupIndex];
       return (
         <div
-          className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
-          role="group"
+          className={cn(
+            "border-t border-border/60 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground",
+            rowIndex === 0 ? "border-t-transparent" : undefined,
+          )}
+          role="presentation"
         >
           <span className="block truncate" title={group.title}>
             {truncateEnd(group.title, 56)}
@@ -734,7 +907,7 @@ export function SearchQuickSwitcher({
 
     const group = groups[row.groupIndex];
     const item = group.items[row.itemIndex];
-    const isActive = row.groupIndex === activeGroupIndex && row.itemIndex === activeItemIndex;
+    const isActive = rowIndex === activeRowIndex;
 
     const breadcrumbs = buildBreadcrumbs(item);
     const displayTitle = getDisplayTitle(item);
@@ -742,10 +915,10 @@ export function SearchQuickSwitcher({
     const highlightedTitle = highlightText(truncatedTitle, tokens);
     const breadcrumbText = truncateEnd(breadcrumbs, 96);
     const highlightedBreadcrumbs = highlightText(breadcrumbText, tokens);
+    const snippetText = getPlainSnippet(item);
+    const truncatedSnippet = truncateEnd(snippetText, 140);
+    const highlightedSnippet = highlightText(truncatedSnippet, tokens);
     const metaChips = buildMetaChips(item);
-
-    const hasSnippet = Boolean(item.snippet_html?.trim());
-    const hasBreadcrumbs = Boolean(breadcrumbs);
 
     return (
       <div
@@ -755,42 +928,38 @@ export function SearchQuickSwitcher({
         tabIndex={-1}
         className={cn(
           "flex cursor-pointer flex-col gap-1 rounded-md px-3 py-2 text-sm transition-colors",
-          isActive ? "bg-accent text-accent-foreground" : "hover:bg-muted",
+          isActive
+            ? "bg-accent text-accent-foreground"
+            : "hover:bg-muted",
         )}
-        onMouseEnter={() => {
-          setActiveGroupIndex(row.groupIndex);
-          setActiveItemIndex(row.itemIndex);
-        }}
+        onMouseEnter={() => setActiveRowIndex(rowIndex)}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => {
           onResultOpen(item);
           setOpen(false);
         }}
-        >
-        <div className="flex items-start justify-between gap-2">
-          <span className="line-clamp-1 font-semibold leading-tight" title={displayTitle}>
+      >
+        <div className="flex items-center gap-2">
+          <span className="truncate font-semibold" title={displayTitle}>
             {highlightedTitle}
           </span>
-          <span className="mt-0.5 text-[11px] text-muted-foreground">↵</span>
+          <span className="shrink-0 text-[11px] text-muted-foreground">↵</span>
         </div>
-        {(hasBreadcrumbs || metaChips) && (
-          <div className="flex items-start gap-2 text-[13px] leading-tight text-muted-foreground">
-            {hasBreadcrumbs ? (
-              <span className="line-clamp-1 flex-1" title={breadcrumbs}>
-                {highlightedBreadcrumbs}
-              </span>
-            ) : (
-              <span className="flex-1" />
-            )}
-            {metaChips}
+        {snippetText && (
+          <div className="truncate text-xs text-muted-foreground" title={snippetText}>
+            {highlightedSnippet}
           </div>
         )}
-        {hasSnippet && (
-          <div
-            className="line-clamp-2 text-xs leading-snug text-muted-foreground"
-            dangerouslySetInnerHTML={{ __html: item.snippet_html }}
-          />
-        )}
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          {breadcrumbs ? (
+            <span className="truncate" title={breadcrumbs}>
+              {highlightedBreadcrumbs}
+            </span>
+          ) : (
+            <span className="truncate text-transparent">.</span>
+          )}
+          {metaChips}
+        </div>
       </div>
     );
   };
@@ -809,7 +978,7 @@ export function SearchQuickSwitcher({
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent
-          className="flex w-full max-w-3xl flex-col gap-0 overflow-hidden rounded-xl border p-0"
+          className="top-0 flex h-screen w-[min(720px,100vw)] max-h-screen max-w-[720px] translate-y-0 flex-col overflow-hidden rounded-none border border-border/60 bg-background p-0 sm:left-1/2 sm:translate-x-[-50%]"
           aria-label="Поиск по документации"
         >
           <div
@@ -817,13 +986,13 @@ export function SearchQuickSwitcher({
             aria-haspopup="listbox"
             aria-expanded={open}
             aria-owns="search-quick-switcher-list"
-            className="flex flex-col"
+            className="flex h-full flex-col"
           >
             <div className="flex items-center gap-2 border-b bg-card px-4 py-3">
               <Search className="h-4 w-4 text-muted-foreground" />
               <input
+                ref={inputRef}
                 value={localQuery}
-                autoFocus
                 placeholder="Поиск…"
                 onChange={(event) => {
                   setLastInputTime(performance.now());
@@ -859,77 +1028,29 @@ export function SearchQuickSwitcher({
                 </Button>
               )}
             </div>
-
-            {canShowAskAiChip && (
-              <div className="border-b px-4 py-2">
-                <button
-                  type="button"
-                  className={cn(
-                    "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                    isAskAiEnabled
-                      ? "border-primary/40 text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
-                      : "cursor-not-allowed border-muted text-muted-foreground",
-                  )}
-                  onClick={() => void handleAskAi()}
-                  disabled={!isAskAiEnabled || !canShowAskAiChip}
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  <span className="max-w-[200px] truncate">Ask AI: {trimmedQuery}</span>
-                  <kbd className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">⌘↵</kbd>
-                </button>
-              </div>
-            )}
-
-            <div className="flex flex-1 flex-col">
+            <div className="flex flex-1 flex-col overflow-hidden">
               <div
                 ref={scrollParentRef}
-                className="max-h-[420px] flex-1 overflow-y-auto"
+                className="flex-1 overflow-y-auto px-3 py-3"
               >
                 <div
                   id="search-quick-switcher-list"
                   role="listbox"
                   aria-label="Результаты поиска"
                   aria-live="polite"
+                  aria-busy={status === "loading"}
                   tabIndex={-1}
                   onKeyDown={handleListKeyDown}
-                  className="flex flex-col gap-1 px-2 py-2"
+                  className="flex flex-col gap-2"
                 >
-                  {status === "loading" && (
-                    <div className="flex flex-col gap-2">
-                      {Array.from({ length: 8 }).map((_, index) => (
-                        <div key={index} className="animate-pulse rounded-md border border-dashed px-3 py-4">
-                          <div className="h-3 w-32 rounded bg-muted" />
-                          <div className="mt-2 h-3 w-full rounded bg-muted" />
-                        </div>
-                      ))}
+                  {status === "loading" && groups.length > 0 && (
+                    <div className="flex items-center gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                      <LoaderCircle className="h-4 w-4 animate-spin text-primary" />
+                      <span>Ищем подсказки…</span>
                     </div>
                   )}
 
-                  {status === "error" && error && (
-                    <div className="flex flex-col items-center gap-2 rounded-md border border-destructive/60 bg-destructive/10 px-4 py-6 text-sm text-destructive">
-                      <span>Ошибка: {error}</span>
-                      <Button variant="outline" size="sm" onClick={() => onQueryChange(localQuery)}>
-                        Повторить
-                      </Button>
-                    </div>
-                  )}
-
-                  {status !== "loading" && !error && groups.length === 0 && localQuery.trim() && (
-                    <div className="flex flex-col items-center gap-3 rounded-md border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-                      <Search className="h-6 w-6 text-muted-foreground" />
-                      <div>
-                        <p className="font-medium text-foreground">Ничего не найдено.</p>
-                        <p>Попробуйте другие ключевые слова или сузьте запрос.</p>
-                      </div>
-                      {isAskAiEnabled && (
-                        <Button onClick={() => void handleAskAi()} disabled={localQuery.trim().length < ASK_AI_MIN_QUERY_LENGTH}>
-                          Спросить AI
-                        </Button>
-                      )}
-                    </div>
-                  )}
-
-                  {groups.length > 0 && (
+                  {rows.length > 0 && (
                     <div className="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
                       {virtualizer.getVirtualItems().map((virtualRow: VirtualItem) => (
                         <div
@@ -942,9 +1063,35 @@ export function SearchQuickSwitcher({
                             height: `${virtualRow.size}px`,
                           }}
                         >
-                          {renderRow(rows[virtualRow.index])}
+                          {renderRow(rows[virtualRow.index], virtualRow.index)}
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {(status === "loading" || status === "idle") && groups.length === 0 && (
+                    <div className="flex min-h-[160px] flex-col items-center justify-center gap-3 rounded-md border border-dashed px-4 text-sm text-muted-foreground">
+                      <LoaderCircle className="h-5 w-5 animate-spin text-primary" />
+                      <span>Ищем подсказки…</span>
+                    </div>
+                  )}
+
+                  {status === "error" && error && (
+                    <div className="flex flex-col items-center gap-2 rounded-md border border-destructive/60 bg-destructive/10 px-4 py-6 text-sm text-destructive">
+                      <span>Ошибка: {error}</span>
+                      <Button variant="outline" size="sm" onClick={() => onQueryChange(localQuery)}>
+                        Повторить
+                      </Button>
+                    </div>
+                  )}
+
+                  {status !== "loading" && !error && groups.length === 0 && normalizedQuery && (
+                    <div className="flex min-h-[160px] flex-col items-center justify-center gap-3 rounded-md border border-dashed px-4 text-center text-sm text-muted-foreground">
+                      <Search className="h-6 w-6 text-muted-foreground" />
+                      <div>
+                        <p className="font-medium text-foreground">Ничего не найдено.</p>
+                        <p>Попробуйте изменить формулировку запроса.</p>
+                      </div>
                     </div>
                   )}
                 </div>
