@@ -7,6 +7,8 @@ import {
   type UpdateKnowledgeNodeParentRequest,
   type DeleteKnowledgeNodeResponse,
   type CreateKnowledgeBasePayload,
+  type DeleteKnowledgeBasePayload,
+  type DeleteKnowledgeBaseResponse,
   type CreateKnowledgeFolderPayload,
   type CreateKnowledgeDocumentPayload,
   type CreateKnowledgeFolderResponse,
@@ -458,6 +460,42 @@ export async function createKnowledgeBase(
 
     throw error;
   }
+}
+
+export async function deleteKnowledgeBase(
+  workspaceId: string,
+  baseId: string,
+  payload: DeleteKnowledgeBasePayload,
+): Promise<DeleteKnowledgeBaseResponse> {
+  await ensureKnowledgeBaseTables();
+
+  const confirmation = payload.confirmation?.trim();
+  if (!confirmation) {
+    throw new KnowledgeBaseError(
+      "Введите название базы знаний для подтверждения удаления",
+      400,
+    );
+  }
+
+  const base = await fetchBase(baseId, workspaceId);
+  if (!base) {
+    throw new KnowledgeBaseError("База знаний не найдена", 404);
+  }
+
+  if (confirmation !== base.name) {
+    throw new KnowledgeBaseError(
+      "Название не совпадает с удаляемой базой знаний",
+      400,
+    );
+  }
+
+  await db.transaction(async (tx: typeof db) => {
+    await tx
+      .delete(knowledgeBases)
+      .where(and(eq(knowledgeBases.id, baseId), eq(knowledgeBases.workspaceId, workspaceId)));
+  });
+
+  return { deletedId: baseId } satisfies DeleteKnowledgeBaseResponse;
 }
 
 export async function listKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSummary[]> {

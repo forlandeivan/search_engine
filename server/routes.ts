@@ -23,6 +23,7 @@ import {
   updateKnowledgeNodeParent,
   KnowledgeBaseError,
   createKnowledgeBase,
+  deleteKnowledgeBase,
   createKnowledgeFolder,
   createKnowledgeDocument,
   updateKnowledgeDocument,
@@ -7126,6 +7127,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .optional(),
   });
 
+  const deleteKnowledgeBaseSchema = z.object({
+    confirmation: z
+      .string()
+      .trim()
+      .min(1, "Введите название базы знаний для подтверждения удаления"),
+  });
+
   const createKnowledgeFolderSchema = z.object({
     title: z
       .string()
@@ -7172,6 +7180,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id: workspaceId } = getRequestWorkspace(req);
       const summary = await createKnowledgeBase(workspaceId, payload);
       return res.status(201).json(summary);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issue = error.issues.at(0);
+        const message = issue?.message ?? "Некорректные данные";
+        return res.status(400).json({ error: message });
+      }
+
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.delete("/api/knowledge/bases/:baseId", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+
+    try {
+      const payload = deleteKnowledgeBaseSchema.parse(req.body ?? {});
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const result = await deleteKnowledgeBase(workspaceId, baseId, payload);
+      return res.json(result);
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issue = error.issues.at(0);

@@ -104,6 +104,14 @@ export type CreateKnowledgeBasePayload = {
 
 export type CreateKnowledgeBaseResponse = KnowledgeBaseSummary;
 
+export type DeleteKnowledgeBasePayload = {
+  confirmation: string;
+};
+
+export type DeleteKnowledgeBaseResponse = {
+  deletedId: string;
+};
+
 export type CreateKnowledgeFolderPayload = {
   title: string;
   parentId?: string | null;
