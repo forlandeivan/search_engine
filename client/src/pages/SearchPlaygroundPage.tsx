@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Settings, Search as SearchIcon, RefreshCcw, HelpCircle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
@@ -71,6 +71,19 @@ interface RagRequestPayload {
 interface RagRequestState {
   id: number;
   payload: RagRequestPayload;
+  startedAt: number;
+}
+
+type AskAiLogKind = "info" | "request" | "response" | "error";
+
+interface AskAiLogEntry {
+  id: string;
+  requestId: number;
+  timestamp: number;
+  kind: AskAiLogKind;
+  title: string;
+  description?: string;
+  data?: unknown;
 }
 
 interface VectorCollectionSummary {
@@ -117,6 +130,40 @@ const stringifyJson = (value: unknown) => {
   } catch {
     return String(value);
   }
+};
+
+const formatLogTime = (value: number) => {
+  try {
+    return new Date(value).toLocaleTimeString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+};
+
+const formatDuration = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  return `${Math.max(0, Math.round(value))} мс`;
+};
+
+const ASK_AI_LOG_KIND_LABEL: Record<AskAiLogKind, string> = {
+  info: "инфо",
+  request: "запрос",
+  response: "ответ",
+  error: "ошибка",
+};
+
+const ASK_AI_LOG_KIND_STYLES: Record<AskAiLogKind, string> = {
+  info: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+  request: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  response: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  error: "bg-destructive/15 text-destructive",
 };
 
 const extractErrorMessage = async (response: Response): Promise<string | null> => {
@@ -216,6 +263,19 @@ export default function SearchPlaygroundPage() {
   const [streamedAnswer, setStreamedAnswer] = useState("");
   const ragRequestCounter = useRef(0);
   const [ragRequest, setRagRequest] = useState<RagRequestState | null>(null);
+  const [askAiLogEntries, setAskAiLogEntries] = useState<AskAiLogEntry[]>([]);
+  const askAiLogContainerRef = useRef<HTMLDivElement | null>(null);
+  const askAiLogCounterRef = useRef(0);
+
+  const appendAskAiLog = useCallback((entry: Omit<AskAiLogEntry, "id">) => {
+    askAiLogCounterRef.current += 1;
+    const id = `${Date.now()}-${askAiLogCounterRef.current}`;
+    setAskAiLogEntries((prev) => [...prev, { ...entry, id }]);
+  }, []);
+
+  const clearAskAiLog = useCallback(() => {
+    setAskAiLogEntries([]);
+  }, []);
 
   const {
     status: suggestStatus,
@@ -325,6 +385,15 @@ export default function SearchPlaygroundPage() {
       setSettingsTab("search");
     }
   }, [isSettingsOpen]);
+
+  useEffect(() => {
+    const container = askAiLogContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    container.scrollTop = container.scrollHeight;
+  }, [askAiLogEntries]);
 
   useEffect(() => {
     if (!settings.rag.embeddingProviderId && activeEmbeddingProviders.length > 0) {
@@ -470,6 +539,18 @@ export default function SearchPlaygroundPage() {
       setRagError(null);
       setStreamedAnswer("");
 
+      appendAskAiLog({
+        requestId: ragRequest.id,
+        timestamp: Date.now(),
+        kind: "request",
+        title: "POST /public/rag/answer",
+        description: "Отправляем запрос к сервису RAG.",
+        data: {
+          endpoint: "/public/rag/answer",
+          payload: ragRequest.payload,
+        },
+      });
+
       try {
         const ragResponseRaw = await fetch("/public/rag/answer", {
           method: "POST",
@@ -489,6 +570,38 @@ export default function SearchPlaygroundPage() {
         const ragJson = (await ragResponseRaw.json()) as RagResponsePayload;
         if (!cancelled) {
           setRagResponse(ragJson);
+
+          const finishedAt = Date.now();
+          const responseSummary: Record<string, unknown> = {};
+
+          if (ragJson.timings) {
+            responseSummary.timings = ragJson.timings;
+          }
+
+          if (ragJson.usage) {
+            responseSummary.usage = ragJson.usage;
+          }
+
+          if (ragJson.citations?.length) {
+            responseSummary.citations = ragJson.citations.map((chunk) => ({
+              chunk_id: chunk.chunk_id,
+              doc_title: chunk.doc_title,
+              scores: chunk.scores,
+            }));
+          }
+
+          if (ragJson.debug?.vectorSearch) {
+            responseSummary.vectorSearch = ragJson.debug.vectorSearch;
+          }
+
+          appendAskAiLog({
+            requestId: ragRequest.id,
+            timestamp: finishedAt,
+            kind: "response",
+            title: `Ответ ${ragResponseRaw.status}`,
+            description: `Запрос выполнен за ${formatDuration(finishedAt - ragRequest.startedAt)}.`,
+            data: Object.keys(responseSummary).length > 0 ? responseSummary : undefined,
+          });
         }
       } catch (error) {
         console.error("Search playground RAG error", error);
@@ -500,6 +613,14 @@ export default function SearchPlaygroundPage() {
           setRagError(message);
           setRagResponse(null);
           setStreamedAnswer("");
+
+          appendAskAiLog({
+            requestId: ragRequest.id,
+            timestamp: Date.now(),
+            kind: "error",
+            title: "Ошибка запроса к Ask AI",
+            description: message,
+          });
         }
       } finally {
         if (!cancelled) {
@@ -513,7 +634,7 @@ export default function SearchPlaygroundPage() {
     return () => {
       cancelled = true;
     };
-  }, [ragRequest]);
+  }, [appendAskAiLog, ragRequest]);
 
   useEffect(() => {
     setRagRequest(null);
@@ -585,8 +706,29 @@ export default function SearchPlaygroundPage() {
       },
     };
 
-    ragRequestCounter.current += 1;
-    setRagRequest({ id: ragRequestCounter.current, payload });
+    const nextRequestId = ragRequestCounter.current + 1;
+    const startedAt = Date.now();
+
+    appendAskAiLog({
+      requestId: nextRequestId,
+      timestamp: startedAt,
+      kind: "info",
+      title: "Запрос к Ask AI подготовлен",
+      description: `Вопрос: «${trimmedQuery}». База знаний: ${payload.kb_id}.`,
+      data: {
+        hybrid: payload.hybrid,
+        llm: {
+          provider: payload.llm.provider,
+          model: payload.llm.model,
+          temperature: payload.llm.temperature,
+          max_tokens: payload.llm.max_tokens,
+          response_format: payload.llm.response_format,
+        },
+      },
+    });
+
+    ragRequestCounter.current = nextRequestId;
+    setRagRequest({ id: nextRequestId, payload, startedAt });
   };
 
   const handleOpenSuggestResult = (
@@ -929,6 +1071,35 @@ export default function SearchPlaygroundPage() {
           {chunk.section_title || chunk.doc_title || "Без заголовка"}
         </div>
         <p className="mt-2 text-sm leading-snug text-foreground">{chunk.snippet}</p>
+      </div>
+    );
+  };
+
+  const renderAskAiLogEntry = (entry: AskAiLogEntry) => {
+    const dataJson = entry.data !== undefined ? stringifyJson(entry.data) : null;
+
+    return (
+      <div key={entry.id} className="rounded border border-border/60 bg-background p-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${ASK_AI_LOG_KIND_STYLES[entry.kind]}`}
+            >
+              {ASK_AI_LOG_KIND_LABEL[entry.kind]}
+            </span>
+            <span className="font-mono text-[11px] text-muted-foreground">#{entry.requestId}</span>
+            <span className="text-xs font-semibold text-foreground">{entry.title}</span>
+          </div>
+          <span className="text-[11px] text-muted-foreground">{formatLogTime(entry.timestamp)}</span>
+        </div>
+        {entry.description && (
+          <div className="mt-1 text-xs leading-relaxed text-foreground">{entry.description}</div>
+        )}
+        {dataJson && (
+          <pre className="mt-2 max-h-36 overflow-auto rounded bg-muted/60 p-2 text-[11px] leading-relaxed text-foreground">
+            {dataJson}
+          </pre>
+        )}
       </div>
     );
   };
@@ -1412,6 +1583,31 @@ export default function SearchPlaygroundPage() {
                 )}
               </>
             )}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Журнал Ask AI</span>
+                <Button
+                  variant="ghost"
+                  className="h-6 px-2 text-[11px]"
+                  onClick={clearAskAiLog}
+                  disabled={askAiLogEntries.length === 0}
+                >
+                  Очистить
+                </Button>
+              </div>
+              <div
+                ref={askAiLogContainerRef}
+                className="max-h-64 overflow-auto rounded border bg-muted/40 p-2 text-xs text-foreground"
+              >
+                {askAiLogEntries.length === 0 ? (
+                  <div className="text-muted-foreground">
+                    Журнал пуст. Отправьте запрос, чтобы увидеть шаги.
+                  </div>
+                ) : (
+                  <div className="space-y-2">{askAiLogEntries.map(renderAskAiLogEntry)}</div>
+                )}
+              </div>
+            </div>
           </section>
         </div>
       </main>
