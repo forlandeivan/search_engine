@@ -122,6 +122,7 @@ type PlaygroundSettings = {
   knowledgeBaseId: string;
   suggestLimit: number;
   rag: {
+    askAiEnabled: boolean;
     topK: number;
     bm25Weight: number;
     vectorWeight: number;
@@ -185,11 +186,13 @@ const extractErrorMessage = async (response: Response): Promise<string | null> =
 };
 
 const EMPTY_SELECT_VALUE = "__empty__";
+const PLAYGROUND_SETTINGS_STORAGE_KEY = "search-playground-settings";
 
 const DEFAULT_SETTINGS: PlaygroundSettings = {
   knowledgeBaseId: "",
   suggestLimit: 3,
   rag: {
+    askAiEnabled: true,
     topK: 5,
     bm25Weight: 0.5,
     vectorWeight: 0.5,
@@ -239,6 +242,7 @@ function SettingLabelWithTooltip({ htmlFor, label, description }: SettingLabelPr
 
 export default function SearchPlaygroundPage() {
   const [settings, setSettings] = useState<PlaygroundSettings>(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"search" | "rag">("search");
   const [query, setQuery] = useState("");
@@ -406,6 +410,10 @@ export default function SearchPlaygroundPage() {
   ]);
 
   const ragConfigurationError = useMemo(() => {
+    if (!settings.rag.askAiEnabled) {
+      return null;
+    }
+
     if (!settings.rag.llmProviderId) {
       return "Выберите провайдера LLM, чтобы Ask AI сформировал ответ.";
     }
@@ -420,6 +428,7 @@ export default function SearchPlaygroundPage() {
 
     return null;
   }, [
+    settings.rag.askAiEnabled,
     settings.rag.bm25Weight,
     settings.rag.llmProviderId,
     settings.rag.vectorWeight,
@@ -432,6 +441,7 @@ export default function SearchPlaygroundPage() {
         knowledgeBaseId: settings.knowledgeBaseId,
         suggestLimit: settings.suggestLimit,
         rag: {
+          askAiEnabled: settings.rag.askAiEnabled,
           topK: settings.rag.topK,
           bm25Weight: settings.rag.bm25Weight,
           vectorWeight: settings.rag.vectorWeight,
@@ -503,7 +513,6 @@ export default function SearchPlaygroundPage() {
     };
 
     void runSuggest();
-
     return () => {
       cancelled = true;
     };
@@ -691,6 +700,121 @@ export default function SearchPlaygroundPage() {
       };
     });
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || settingsLoaded) {
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(PLAYGROUND_SETTINGS_STORAGE_KEY);
+      if (!raw) {
+        setSettingsLoaded(true);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as Partial<PlaygroundSettings> | null;
+
+      setSettings((prev) => {
+        if (!parsed || typeof parsed !== "object") {
+          return prev;
+        }
+
+        const next: PlaygroundSettings = {
+          ...prev,
+          knowledgeBaseId:
+            typeof parsed.knowledgeBaseId === "string" ? parsed.knowledgeBaseId : prev.knowledgeBaseId,
+          suggestLimit:
+            typeof parsed.suggestLimit === "number" && Number.isFinite(parsed.suggestLimit)
+              ? Math.max(1, Math.min(20, Math.round(parsed.suggestLimit)))
+              : prev.suggestLimit,
+          rag: {
+            ...prev.rag,
+            ...(parsed.rag && typeof parsed.rag === "object"
+              ? {
+                  askAiEnabled:
+                    typeof parsed.rag.askAiEnabled === "boolean"
+                      ? parsed.rag.askAiEnabled
+                      : prev.rag.askAiEnabled,
+                  topK:
+                    typeof parsed.rag.topK === "number" && Number.isFinite(parsed.rag.topK)
+                      ? Math.max(1, Math.min(10, Math.round(parsed.rag.topK)))
+                      : prev.rag.topK,
+                  bm25Weight:
+                    typeof parsed.rag.bm25Weight === "number" && Number.isFinite(parsed.rag.bm25Weight)
+                      ? Math.min(1, Math.max(0, parsed.rag.bm25Weight))
+                      : prev.rag.bm25Weight,
+                  vectorWeight:
+                    typeof parsed.rag.vectorWeight === "number" && Number.isFinite(parsed.rag.vectorWeight)
+                      ? Math.min(1, Math.max(0, parsed.rag.vectorWeight))
+                      : prev.rag.vectorWeight,
+                  bm25Limit:
+                    typeof parsed.rag.bm25Limit === "number" && Number.isFinite(parsed.rag.bm25Limit)
+                      ? Math.max(1, Math.min(20, Math.round(parsed.rag.bm25Limit)))
+                      : prev.rag.bm25Limit,
+                  vectorLimit:
+                    typeof parsed.rag.vectorLimit === "number" && Number.isFinite(parsed.rag.vectorLimit)
+                      ? Math.max(1, Math.min(20, Math.round(parsed.rag.vectorLimit)))
+                      : prev.rag.vectorLimit,
+                  embeddingProviderId:
+                    typeof parsed.rag.embeddingProviderId === "string"
+                      ? parsed.rag.embeddingProviderId
+                      : prev.rag.embeddingProviderId,
+                  collection:
+                    typeof parsed.rag.collection === "string" ? parsed.rag.collection : prev.rag.collection,
+                  llmProviderId:
+                    typeof parsed.rag.llmProviderId === "string"
+                      ? parsed.rag.llmProviderId
+                      : prev.rag.llmProviderId,
+                  llmModel:
+                    typeof parsed.rag.llmModel === "string" ? parsed.rag.llmModel : prev.rag.llmModel,
+                  temperature:
+                    typeof parsed.rag.temperature === "number" && Number.isFinite(parsed.rag.temperature)
+                      ? Math.max(0, Math.min(2, parsed.rag.temperature))
+                      : prev.rag.temperature,
+                  maxTokens:
+                    typeof parsed.rag.maxTokens === "number" && Number.isFinite(parsed.rag.maxTokens)
+                      ? Math.max(128, Math.round(parsed.rag.maxTokens))
+                      : prev.rag.maxTokens,
+                  systemPrompt:
+                    typeof parsed.rag.systemPrompt === "string"
+                      ? parsed.rag.systemPrompt
+                      : prev.rag.systemPrompt,
+                  responseFormat:
+                    parsed.rag.responseFormat === "text" ||
+                    parsed.rag.responseFormat === "markdown" ||
+                    parsed.rag.responseFormat === "html"
+                      ? parsed.rag.responseFormat
+                      : prev.rag.responseFormat,
+                  includeDebug:
+                    typeof parsed.rag.includeDebug === "boolean"
+                      ? parsed.rag.includeDebug
+                      : prev.rag.includeDebug,
+                }
+              : {}),
+          },
+        };
+
+        return next;
+      });
+    } catch (error) {
+      console.error("Не удалось загрузить настройки песочницы поиска", error);
+    } finally {
+      setSettingsLoaded(true);
+    }
+  }, [settingsLoaded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !settingsLoaded) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(PLAYGROUND_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    } catch (error) {
+      console.error("Не удалось сохранить настройки песочницы поиска", error);
+    }
+  }, [settings, settingsLoaded]);
 
   const handleLlmProviderChange = (providerId: string) => {
     const provider = activeLlmProviders.find((item) => item.id === providerId);
@@ -1062,6 +1186,18 @@ export default function SearchPlaygroundPage() {
                             ))}
                           </SelectContent>
                         </Select>
+                      </div>
+                      <div className="flex items-center justify-between rounded border px-3 py-2 sm:col-span-2">
+                        <SettingLabelWithTooltip
+                          htmlFor="playground-ask-ai"
+                          label="Ask AI"
+                          description="Отключите, чтобы не обращаться к LLM и использовать только поиск по чанкам."
+                        />
+                        <Switch
+                          id="playground-ask-ai"
+                          checked={settings.rag.askAiEnabled}
+                          onCheckedChange={(checked) => handleRagSettingsChange("askAiEnabled", checked)}
+                        />
                       </div>
                       <div className="flex flex-col gap-2">
                         <SettingLabelWithTooltip
