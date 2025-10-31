@@ -155,6 +155,13 @@
       "when": 1758104606559,
       "tag": "0024_knowledge_document_chunks",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1758104607559,
+      "tag": "0027_kb_crawl_support",
+      "breakpoints": true
     }
   ]
 }
