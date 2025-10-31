@@ -65,6 +65,57 @@ Preferred communication style: Simple, everyday language.
   - Search index table for optimized text search performance
   - Relational design with foreign key constraints and cascading deletes
 
+### Database Management
+
+**Two Separate Databases:**
+
+The application uses two separate PostgreSQL databases with distinct purposes:
+
+1. **Development Database (Neon)**
+   - Purpose: Local development and testing
+   - Connection: `DATABASE_URL` environment variable
+   - Location: Neon serverless PostgreSQL
+   - Config: `drizzle.config.ts`
+   - Safe for experimentation
+
+2. **Production Database (External PostgreSQL)**
+   - Purpose: Live application data at aiknowledge.ru
+   - Connection: `PG_HOST`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE` environment variables
+   - Location: 62.113.107.164:5432 (database: tilda_search_db)
+   - Config: `drizzle.production.config.ts`
+   - **⚠️ CRITICAL: Contains real user data - handle with care**
+
+**Schema Migration Commands:**
+
+To update database schemas, use these commands:
+
+```bash
+# Development database (Neon) - safe to experiment
+./db-push-dev.sh
+# OR
+npx drizzle-kit push
+
+# Production database - requires confirmation
+./db-push-prod.sh
+# OR
+npx drizzle-kit push --config=drizzle.production.config.ts
+```
+
+**Important Rules:**
+
+- ✅ Always test schema changes in development first
+- ✅ Production script (`db-push-prod.sh`) requires confirmation before executing
+- ⚠️ `npm run db:push` defaults to **development** database
+- ⚠️ Never run production migrations without backup
+- ⚠️ Never manually write SQL migrations - use `drizzle-kit push --force` if standard push fails
+
+**Common Issues:**
+
+If you see "column does not exist" errors in production but not in development:
+1. Schema was updated in development but not production
+2. Run `./db-push-prod.sh` to sync production with latest schema
+3. Verify migration succeeded by checking production logs
+
 ### Authentication and Authorization
 - **Current State**: No authentication system implemented
 - **Session Management**: Express session infrastructure prepared with connect-pg-simple

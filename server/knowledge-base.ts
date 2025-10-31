@@ -578,72 +578,52 @@ export async function deleteKnowledgeBase(
 }
 
 export async function listKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSummary[]> {
-  console.log('[listKnowledgeBases] START, workspaceId:', workspaceId);
-  
-  try {
-    let bases = await fetchWorkspaceBases(workspaceId);
-    console.log('[listKnowledgeBases] Fetched bases count:', bases.length);
+  let bases = await fetchWorkspaceBases(workspaceId);
 
-    if (bases.length === 0) {
-      console.log('[listKnowledgeBases] No bases found, creating default');
-      await createDefaultBase(workspaceId);
-      bases = await fetchWorkspaceBases(workspaceId);
-      console.log('[listKnowledgeBases] After creating default, bases count:', bases.length);
-    }
-
-    if (bases.length === 0) {
-      console.log('[listKnowledgeBases] Still no bases, returning empty array');
-      return [];
-    }
-
-    const baseIds = bases.map((base) => base.id);
-    console.log('[listKnowledgeBases] Base IDs:', baseIds);
-    
-    console.log('[listKnowledgeBases] Fetching nodes for bases...');
-    const nodes = baseIds.length
-      ? await db
-          .select()
-          .from(knowledgeNodes)
-          .where(inArray(knowledgeNodes.baseId, baseIds))
-          .orderBy(
-            asc(knowledgeNodes.baseId),
-            asc(knowledgeNodes.parentId),
-            asc(knowledgeNodes.position),
-            asc(knowledgeNodes.createdAt),
-          )
-      : [];
-    console.log('[listKnowledgeBases] Fetched nodes count:', nodes.length);
-
-    const nodesByBase = new Map<string, KnowledgeNodeRow[]>();
-    for (const node of nodes) {
-      const collection = nodesByBase.get(node.baseId);
-      if (collection) {
-        collection.push(node);
-      } else {
-        nodesByBase.set(node.baseId, [node]);
-      }
-    }
-    console.log('[listKnowledgeBases] Grouped nodes by base');
-
-    console.log('[listKnowledgeBases] Building response structure...');
-    const result = bases.map((base) => {
-      const baseNodes = nodesByBase.get(base.id) ?? [];
-
-      return {
-        id: base.id,
-        name: base.name,
-        description: base.description,
-        updatedAt: toIsoDate(base.updatedAt),
-        rootNodes: buildStructure(baseNodes),
-      } satisfies KnowledgeBaseSummary;
-    });
-    
-    console.log('[listKnowledgeBases] SUCCESS, returning', result.length, 'bases');
-    return result;
-  } catch (error) {
-    console.error('[listKnowledgeBases] ERROR:', error);
-    throw error;
+  if (bases.length === 0) {
+    await createDefaultBase(workspaceId);
+    bases = await fetchWorkspaceBases(workspaceId);
   }
+
+  if (bases.length === 0) {
+    return [];
+  }
+
+  const baseIds = bases.map((base) => base.id);
+  const nodes = baseIds.length
+    ? await db
+        .select()
+        .from(knowledgeNodes)
+        .where(inArray(knowledgeNodes.baseId, baseIds))
+        .orderBy(
+          asc(knowledgeNodes.baseId),
+          asc(knowledgeNodes.parentId),
+          asc(knowledgeNodes.position),
+          asc(knowledgeNodes.createdAt),
+        )
+    : [];
+
+  const nodesByBase = new Map<string, KnowledgeNodeRow[]>();
+  for (const node of nodes) {
+    const collection = nodesByBase.get(node.baseId);
+    if (collection) {
+      collection.push(node);
+    } else {
+      nodesByBase.set(node.baseId, [node]);
+    }
+  }
+
+  return bases.map((base) => {
+    const baseNodes = nodesByBase.get(base.id) ?? [];
+
+    return {
+      id: base.id,
+      name: base.name,
+      description: base.description,
+      updatedAt: toIsoDate(base.updatedAt),
+      rootNodes: buildStructure(baseNodes),
+    } satisfies KnowledgeBaseSummary;
+  });
 }
 
 export async function getKnowledgeNodeDetail(

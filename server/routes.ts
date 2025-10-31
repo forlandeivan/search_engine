@@ -7378,19 +7378,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/knowledge/bases", requireAuth, async (req, res) => {
-    console.log('[ROUTE /api/knowledge/bases] START');
-    console.log('[ROUTE /api/knowledge/bases] User:', req.user?.id);
-    console.log('[ROUTE /api/knowledge/bases] Session:', req.session?.passport?.user);
-    
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
-      console.log('[ROUTE /api/knowledge/bases] WorkspaceId:', workspaceId);
-      
       const bases = await listKnowledgeBases(workspaceId);
-      console.log('[ROUTE /api/knowledge/bases] SUCCESS, returning', bases.length, 'bases');
       return res.json(bases);
     } catch (error) {
-      console.error('[ROUTE /api/knowledge/bases] ERROR:', error);
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
