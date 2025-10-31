@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Settings, Search as SearchIcon, RefreshCcw, HelpCircle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
@@ -80,6 +80,34 @@ interface RagResponsePayload {
     llm_ms?: number;
   };
   debug?: { vectorSearch?: Array<Record<string, unknown>> | null };
+}
+
+interface RagRequestPayload {
+  q: string;
+  kb_id: string;
+  top_k: number;
+  hybrid: {
+    bm25: { weight: number; limit: number };
+    vector: {
+      weight: number;
+      limit: number;
+      collection?: string;
+      embedding_provider_id?: string;
+    };
+  };
+  llm: {
+    provider: string;
+    model?: string;
+    temperature: number;
+    max_tokens: number;
+    system_prompt?: string;
+    response_format: PlaygroundSettings["rag"]["responseFormat"];
+  };
+}
+
+interface RagRequestState {
+  id: number;
+  payload: RagRequestPayload;
 }
 
 interface VectorCollectionSummary {
@@ -226,6 +254,8 @@ export default function SearchPlaygroundPage() {
   const [isSuggestLoading, setIsSuggestLoading] = useState(false);
   const [isRagLoading, setIsRagLoading] = useState(false);
   const [streamedAnswer, setStreamedAnswer] = useState("");
+  const ragRequestCounter = useRef(0);
+  const [ragRequest, setRagRequest] = useState<RagRequestState | null>(null);
 
   const knowledgeBasesQuery = useQuery<KnowledgeBaseSummary[]>({
     queryKey: ["/api/knowledge/bases"],
@@ -345,6 +375,11 @@ export default function SearchPlaygroundPage() {
   useEffect(() => {
     if (!query.trim()) {
       setDebouncedQuery("");
+      setRagRequest(null);
+      setRagResponse(null);
+      setRagError(null);
+      setIsRagLoading(false);
+      setStreamedAnswer("");
       return;
     }
 
@@ -428,12 +463,8 @@ export default function SearchPlaygroundPage() {
   useEffect(() => {
     if (!debouncedQuery || !settings.knowledgeBaseId) {
       setSuggestResponse(null);
-      setRagResponse(null);
       setSuggestError(null);
-      setRagError(null);
       setIsSuggestLoading(false);
-      setIsRagLoading(false);
-      setStreamedAnswer("");
       return;
     }
 
@@ -482,26 +513,17 @@ export default function SearchPlaygroundPage() {
     };
 
     void runSuggest();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery, settings.knowledgeBaseId, settings.suggestLimit]);
 
-    if (!settings.rag.askAiEnabled) {
-      setRagResponse(null);
-      setIsRagLoading(false);
-      setRagError(null);
-      setStreamedAnswer("");
-      return () => {
-        cancelled = true;
-      };
+  useEffect(() => {
+    if (!ragRequest) {
+      return;
     }
 
-    if (ragConfigurationError) {
-      setRagResponse(null);
-      setIsRagLoading(false);
-      setRagError(ragConfigurationError);
-      setStreamedAnswer("");
-      return () => {
-        cancelled = true;
-      };
-    }
+    let cancelled = false;
 
     const runRag = async () => {
       setIsRagLoading(true);
@@ -509,36 +531,10 @@ export default function SearchPlaygroundPage() {
       setStreamedAnswer("");
 
       try {
-        const payload: Record<string, unknown> = {
-          q: debouncedQuery,
-          kb_id: settings.knowledgeBaseId,
-          top_k: settings.rag.topK,
-          hybrid: {
-            bm25: {
-              weight: settings.rag.bm25Weight,
-              limit: settings.rag.bm25Limit,
-            },
-            vector: {
-              weight: settings.rag.vectorWeight,
-              limit: settings.rag.vectorLimit,
-              collection: settings.rag.collection || undefined,
-              embedding_provider_id: settings.rag.embeddingProviderId || undefined,
-            },
-          },
-          llm: {
-            provider: settings.rag.llmProviderId,
-            model: settings.rag.llmModel || undefined,
-            temperature: settings.rag.temperature,
-            max_tokens: settings.rag.maxTokens,
-            system_prompt: settings.rag.systemPrompt || undefined,
-            response_format: settings.rag.responseFormat,
-          },
-        };
-
         const ragResponseRaw = await fetch("/public/rag/answer", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(ragRequest.payload),
         });
 
         if (!ragResponseRaw.ok) {
@@ -577,13 +573,15 @@ export default function SearchPlaygroundPage() {
     return () => {
       cancelled = true;
     };
-  }, [
-    debouncedQuery,
-    ragConfigurationError,
-    searchKey,
-    settings.knowledgeBaseId,
-    settings.rag.askAiEnabled,
-  ]);
+  }, [ragRequest]);
+
+  useEffect(() => {
+    setRagRequest(null);
+    setRagResponse(null);
+    setRagError(null);
+    setIsRagLoading(false);
+    setStreamedAnswer("");
+  }, [searchKey]);
 
   const resetResults = () => {
     setQuery("");
@@ -595,6 +593,61 @@ export default function SearchPlaygroundPage() {
     setIsSuggestLoading(false);
     setIsRagLoading(false);
     setStreamedAnswer("");
+    setRagRequest(null);
+  };
+
+  const handleAskAi = () => {
+    const trimmedQuery = query.trim();
+
+    if (!trimmedQuery) {
+      setRagError("Введите вопрос, чтобы Ask AI подготовил ответ.");
+      setRagResponse(null);
+      setStreamedAnswer("");
+      return;
+    }
+
+    if (!settings.knowledgeBaseId) {
+      setRagError("Выберите базу знаний перед запросом к Ask AI.");
+      setRagResponse(null);
+      setStreamedAnswer("");
+      return;
+    }
+
+    if (ragConfigurationError) {
+      setRagError(ragConfigurationError);
+      setRagResponse(null);
+      setStreamedAnswer("");
+      return;
+    }
+
+    const payload: RagRequestPayload = {
+      q: trimmedQuery,
+      kb_id: settings.knowledgeBaseId,
+      top_k: settings.rag.topK,
+      hybrid: {
+        bm25: {
+          weight: settings.rag.bm25Weight,
+          limit: settings.rag.bm25Limit,
+        },
+        vector: {
+          weight: settings.rag.vectorWeight,
+          limit: settings.rag.vectorLimit,
+          collection: settings.rag.collection || undefined,
+          embedding_provider_id: settings.rag.embeddingProviderId || undefined,
+        },
+      },
+      llm: {
+        provider: settings.rag.llmProviderId,
+        model: settings.rag.llmModel || undefined,
+        temperature: settings.rag.temperature,
+        max_tokens: settings.rag.maxTokens,
+        system_prompt: settings.rag.systemPrompt || undefined,
+        response_format: settings.rag.responseFormat,
+      },
+    };
+
+    ragRequestCounter.current += 1;
+    setRagRequest({ id: ragRequestCounter.current, payload });
   };
 
   const handleSettingsChange = <K extends keyof PlaygroundSettings>(key: K, value: PlaygroundSettings[K]) => {
@@ -1288,6 +1341,12 @@ export default function SearchPlaygroundPage() {
               >
                 Найти
               </Button>
+              <Button
+                onClick={handleAskAi}
+                disabled={!query.trim() || isRagLoading}
+              >
+                Спросить AI
+              </Button>
             </div>
             <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
               Все запросы уходят в публичные эндпоинты `/public/search/suggest` и `/public/rag/answer` с текущими
@@ -1332,18 +1391,14 @@ export default function SearchPlaygroundPage() {
                 </div>
               )}
             </div>
-            {!settings.rag.askAiEnabled && (
-              <div className="rounded border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-                Ask AI отключён в настройках. Включите его, чтобы получить ответ от LLM.
+            {isRagLoading && <div className="rounded border px-3 py-6 text-center text-sm">Готовим ответ…</div>}
+            {ragError && <div className="rounded border border-destructive px-3 py-2 text-sm text-destructive">{ragError}</div>}
+            {!isRagLoading && !ragError && !ragResponse && (
+              <div className="rounded border px-3 py-6 text-center text-sm text-muted-foreground">
+                Отправьте запрос через кнопку «Спросить AI», чтобы увидеть ответ.
               </div>
             )}
-            {settings.rag.askAiEnabled && isRagLoading && (
-              <div className="rounded border px-3 py-6 text-center text-sm">Готовим ответ…</div>
-            )}
-            {settings.rag.askAiEnabled && ragError && (
-              <div className="rounded border border-destructive px-3 py-2 text-sm text-destructive">{ragError}</div>
-            )}
-            {settings.rag.askAiEnabled && !isRagLoading && !ragError && ragResponse && (
+            {!isRagLoading && !ragError && ragResponse && (
               <>
                 <div className="rounded border px-3 py-3 text-sm leading-relaxed text-foreground">
                   {streamedAnswer || ragResponse.answer || "Ответ отсутствует."}
