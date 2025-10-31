@@ -14,7 +14,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { SuggestResponseItem, SuggestResponsePayload } from "@/types/search";
+import type {
+  SuggestResponseItem,
+  SuggestResponsePayload,
+  SuggestResponseSection,
+} from "@/types/search";
 
 const GROUP_ITEM_LIMIT = 5;
 const ASK_AI_MIN_QUERY_LENGTH = 2;
@@ -35,7 +39,7 @@ interface SearchQuickSwitcherProps {
   disabledReason?: string | null;
 }
 
-interface ResultGroup {
+export interface SuggestResultGroup {
   id: string;
   title: string;
   items: SuggestResponseItem[];
@@ -57,21 +61,168 @@ const STATUS_BAR_SHORTCUTS = [
 
 const noop = () => {};
 
-function normalizeString(value: string | null | undefined) {
-  return value?.trim() ?? "";
+function normalizeString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
-function buildGroups(payload: SuggestResponsePayload | null): ResultGroup[] {
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function resolveNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function sanitizeSuggestItem(item: SuggestResponseItem, fallbackId: string): SuggestResponseItem {
+  const trimmedUrl = normalizeString(item.url);
+  const trimmedTitle = normalizeString(item.title);
+
+  return {
+    ...item,
+    id: item.id || fallbackId,
+    url: trimmedUrl || (typeof item.url === "string" ? item.url : undefined),
+    title: trimmedTitle || item.title || fallbackId,
+    breadcrumbs: Array.isArray(item.breadcrumbs) ? item.breadcrumbs : [],
+    snippet_html: typeof item.snippet_html === "string" ? item.snippet_html : "",
+  };
+}
+
+function resolveSnippetHtml(section: SuggestResponseSection): string {
+  const directHtml = normalizeString(section.snippet_html);
+  if (directHtml) {
+    return directHtml;
+  }
+
+  const snippet = normalizeString(section.snippet) || normalizeString(section.text);
+  if (!snippet) {
+    return "";
+  }
+
+  return escapeHtml(snippet);
+}
+
+function mapSectionToItem(section: SuggestResponseSection, index: number): SuggestResponseItem | null {
+  const chunkId = normalizeString(section.chunk_id);
+  const docId = normalizeString(section.doc_id);
+  const docTitle = normalizeString(section.doc_title);
+  const sectionTitle = normalizeString(section.section_title);
+  const url = normalizeString(section.url);
+  const breadcrumbs = Array.isArray(section.breadcrumbs)
+    ? section.breadcrumbs.map(normalizeString).filter(Boolean)
+    : [];
+  const score = resolveNumber(section.score);
+
+  const baseId = chunkId || `${docId || "doc"}-${index + 1}`;
+  const displayDocTitle = docTitle || sectionTitle || `Документ ${index + 1}`;
+  const computedBreadcrumbs = breadcrumbs.length > 0 ? breadcrumbs : docTitle ? [docTitle] : [];
+  const typeLabel = (() => {
+    const source = normalizeString(section.source);
+    if (!source) {
+      return null;
+    }
+    if (source === "sections") {
+      return "Структура";
+    }
+    if (source === "content") {
+      return "Контент";
+    }
+    return source;
+  })();
+
+  return {
+    id: baseId,
+    url: url || undefined,
+    title: displayDocTitle,
+    heading_text: sectionTitle || null,
+    breadcrumbs: computedBreadcrumbs,
+    snippet_html: resolveSnippetHtml(section),
+    type: typeLabel ?? undefined,
+    score,
+    docId: docId || null,
+    chunkId: chunkId || null,
+    anchor: null,
+  } satisfies SuggestResponseItem;
+}
+
+function buildLegacyGroups(payload: SuggestResponsePayload | null): SuggestResultGroup[] {
   if (!payload || !Array.isArray(payload.groups) || payload.groups.length === 0) {
     return [];
   }
 
-  return payload.groups.map((group) => ({
-    id: group.id,
+  return payload.groups.map((group, index) => ({
+    id: normalizeString(group.id) || `group-${index + 1}`,
     title: normalizeString(group.title) || group.id,
     hasMore: Boolean(group.hasMore && group.items.length > GROUP_ITEM_LIMIT),
-    items: group.items.slice(0, GROUP_ITEM_LIMIT),
+    items: group.items.slice(0, GROUP_ITEM_LIMIT).map((item, itemIndex) =>
+      sanitizeSuggestItem(item, `${group.id}-${itemIndex}`),
+    ),
   }));
+}
+
+function buildSectionGroups(payload: SuggestResponsePayload | null): SuggestResultGroup[] {
+  const sections = payload?.sections;
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return [];
+  }
+
+  const groups: Array<{ id: string; title: string; items: SuggestResponseItem[] }> = [];
+  const groupIndexByKey = new Map<string, number>();
+
+  sections.forEach((section, index) => {
+    const item = mapSectionToItem(section, index);
+    if (!item) {
+      return;
+    }
+
+    const docId = normalizeString(section.doc_id);
+    const docTitle = normalizeString(section.doc_title) || item.title || `Документ ${index + 1}`;
+    const groupKey = docId || docTitle || `section-${index + 1}`;
+    const existingIndex = groupIndexByKey.get(groupKey);
+
+    if (existingIndex === undefined) {
+      const groupId = docId || `knowledge-doc-${groups.length + 1}`;
+      groups.push({
+        id: groupId,
+        title: docTitle || "Фрагменты базы знаний",
+        items: [item],
+      });
+      groupIndexByKey.set(groupKey, groups.length - 1);
+    } else {
+      groups[existingIndex].items.push(item);
+    }
+  });
+
+  return groups.map((group, index) => ({
+    id: group.id || `knowledge-doc-${index + 1}`,
+    title: group.title || "Фрагменты базы знаний",
+    items: group.items.slice(0, GROUP_ITEM_LIMIT),
+    hasMore: group.items.length > GROUP_ITEM_LIMIT,
+  }));
+}
+
+export function buildSuggestGroups(payload: SuggestResponsePayload | null): SuggestResultGroup[] {
+  const legacyGroups = buildLegacyGroups(payload);
+  if (legacyGroups.length > 0) {
+    return legacyGroups;
+  }
+
+  return buildSectionGroups(payload);
 }
 
 function tokenize(query: string) {
@@ -269,14 +420,14 @@ function buildMetaChips(item: SuggestResponseItem) {
   );
 }
 
-function buildVirtualRows(groups: ResultGroup[]): VirtualRow[] {
+function buildVirtualRows(groups: SuggestResultGroup[]): VirtualRow[] {
   const rows: VirtualRow[] = [];
 
   groups.forEach((group, groupIndex) => {
     rows.push({ type: "group", groupIndex });
-    group.items.forEach((_, itemIndex) => {
+    for (let itemIndex = 0; itemIndex < group.items.length; itemIndex += 1) {
       rows.push({ type: "item", groupIndex, itemIndex });
-    });
+    }
     if (group.hasMore) {
       rows.push({ type: "more", groupIndex });
     }
@@ -311,7 +462,7 @@ export function SearchQuickSwitcher({
   const scrollParentRef = useRef<HTMLDivElement | null>(null);
   const [lastInputTime, setLastInputTime] = useState<number>(0);
 
-  const groups = useMemo(() => buildGroups(suggest), [suggest]);
+  const groups = useMemo(() => buildSuggestGroups(suggest), [suggest]);
   const tokens = useMemo(() => tokenize(localQuery), [localQuery]);
   const rows = useMemo(() => buildVirtualRows(groups), [groups]);
   const trimmedQuery = localQuery.trim();
