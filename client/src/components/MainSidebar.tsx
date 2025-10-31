@@ -277,9 +277,16 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
           </div>
         ) : (
           <div className="flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-lg font-semibold">AI KMS</h2>
-              <p className="text-sm text-muted-foreground">Рабочее пространство</p>
+            <div className="flex items-center gap-3">
+              <img
+                src="/branding/logo.svg"
+                alt="Логотип AI KMS"
+                className="h-9 w-9"
+              />
+              <div>
+                <h2 className="text-lg font-semibold">AI KMS</h2>
+                <p className="text-sm text-muted-foreground">Рабочее пространство</p>
+              </div>
             </div>
             <Button
               variant="ghost"
