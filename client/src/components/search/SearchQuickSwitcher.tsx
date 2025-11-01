@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { ArrowLeft, CircleStop, LoaderCircle, Search, Sparkles } from "lucide-react";
@@ -44,6 +44,7 @@ interface SearchQuickSwitcherProps {
   onPrefetch?: (query: string) => void;
   closeOnAsk?: boolean;
   disabledReason?: string | null;
+  renderTrigger?: (options: { open: () => void; isOpen: boolean }) => ReactNode;
 }
 
 export interface SuggestResultGroup {
@@ -419,6 +420,7 @@ export function SearchQuickSwitcher({
   isAskAiEnabled,
   closeOnAsk = true,
   disabledReason,
+  renderTrigger,
 }: SearchQuickSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"search" | "ask">("search");
@@ -900,17 +902,26 @@ export function SearchQuickSwitcher({
     );
   };
 
+  const triggerNode = renderTrigger
+    ? renderTrigger({
+        open: () => setOpen(true),
+        isOpen: open,
+      })
+    : (
+        <Button
+          variant="outline"
+          className="h-9 gap-2 px-3 text-sm"
+          onClick={() => setOpen(true)}
+          aria-haspopup="dialog"
+        >
+          <Search className="h-4 w-4" />
+          <span>Поиск (⌘K)</span>
+        </Button>
+      );
+
   return (
     <>
-      <Button
-        variant="outline"
-        className="h-9 gap-2 px-3 text-sm"
-        onClick={() => setOpen(true)}
-        aria-haspopup="dialog"
-      >
-        <Search className="h-4 w-4" />
-        <span>Поиск (⌘K)</span>
-      </Button>
+      {triggerNode}
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent

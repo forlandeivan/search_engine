@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Settings, Search as SearchIcon, RefreshCcw, HelpCircle } from "lucide-react";
+import { Settings, Search as SearchIcon, RefreshCcw, HelpCircle, History } from "lucide-react";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
-import SearchQuickSwitcher, {
-  buildSuggestGroups,
-  type SuggestResultGroup,
-} from "@/components/search/SearchQuickSwitcher";
+import SearchQuickSwitcher from "@/components/search/SearchQuickSwitcher";
 import DOMPurify from "dompurify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -575,7 +572,7 @@ export default function SearchPlaygroundPage() {
     setAskAiLogEntries([]);
   }, []);
 
-  const { 
+  const {
     status: suggestStatus,
     data: suggestData,
     error: suggestError,
@@ -587,18 +584,6 @@ export default function SearchPlaygroundPage() {
     limit: settings.suggestLimit,
   });
   const isSuggestLoading = suggestStatus === "loading";
-
-  const suggestGroups = useMemo<SuggestResultGroup[]>(
-    () => buildSuggestGroups(suggestResponse),
-    [suggestResponse],
-  );
-  const flattenedSuggestItems = useMemo(
-    () =>
-      suggestGroups.flatMap((group) =>
-        group.items.map((item) => ({ group, item })),
-      ),
-    [suggestGroups],
-  );
 
   const sessionQuery = useQuery<SessionResponse | null>({
     queryKey: ["/api/auth/session"],
@@ -1967,54 +1952,6 @@ export default function SearchPlaygroundPage() {
     };
   }, [ragResponse?.answer]);
 
-  const renderSuggestItem = (
-    entry: { group: SuggestResultGroup; item: SuggestResponseItem },
-    index: number,
-  ) => {
-    const { group, item } = entry;
-    const scoreValue = Number.isFinite(item.score ?? NaN) ? item.score ?? 0 : null;
-    const breadcrumbs = (item.breadcrumbs ?? []).filter(Boolean);
-    const metaChips = [
-      item.version ? (item.version.startsWith("v") ? item.version : `v${item.version}`) : null,
-      item.language ? item.language.toUpperCase() : null,
-      item.type ?? null,
-    ].filter(Boolean) as string[];
-
-    return (
-      <div key={`${item.id ?? item.chunkId ?? index}-${index}`} className="rounded border px-3 py-2">
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span className="line-clamp-1" title={group.title}>
-            {group.title || "Без группы"}
-          </span>
-          {scoreValue !== null && <span className="font-mono">{scoreValue.toFixed(3)}</span>}
-        </div>
-        <div className="mt-1 text-sm font-semibold text-foreground">
-          {item.heading_text || item.title || "Без заголовка"}
-        </div>
-        {breadcrumbs.length > 0 && (
-          <div className="text-xs text-muted-foreground">
-            {breadcrumbs.join(" › ")}
-          </div>
-        )}
-        {item.snippet_html && (
-          <p
-            className="mt-2 text-sm leading-snug text-foreground"
-            dangerouslySetInnerHTML={{ __html: item.snippet_html }}
-          />
-        )}
-        {metaChips.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-            {metaChips.map((chip, chipIndex) => (
-              <Badge key={`${item.id}-meta-${chipIndex}`} variant="outline">
-                {chip}
-              </Badge>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const renderRagChunk = (chunk: RagChunk, index: number) => {
     const bm25Score = Number.isFinite(chunk.scores?.bm25 ?? NaN) ? chunk.scores?.bm25 : undefined;
     const vectorScore = Number.isFinite(chunk.scores?.vector ?? NaN) ? chunk.scores?.vector : undefined;
@@ -2101,606 +2038,588 @@ export default function SearchPlaygroundPage() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <header className="flex items-center justify-between border-b px-4 py-2">
-        <div className="flex items-center gap-2">
-          <SearchIcon className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-semibold text-foreground">Глобальный поиск · Песочница</span>
-          {knowledgeBaseName && (
-            <Badge variant="secondary" className="text-xs">
-              {knowledgeBaseName}
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <SearchQuickSwitcher
-            query={query}
-            isAskAiEnabled={settings.rag.askAiEnabled && !ragConfigurationError}
-            suggest={suggestResponse}
-            status={settings.knowledgeBaseId ? suggestStatus : "idle"}
-            error={suggestError}
-            onQueryChange={setQuery}
-            onAskAi={handleAskAi}
-            askState={askTabState}
-            onAskAiStop={handleAskAiStop}
-            onResultOpen={handleOpenSuggestResult}
-            onPrefetch={(value) => {
-              if (settings.knowledgeBaseId) {
-                prefetchSuggest(value);
+      <header className="border-b px-4 py-3">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <SearchIcon className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-semibold text-foreground">Глобальный поиск · Песочница</span>
+            {knowledgeBaseName && (
+              <Badge variant="secondary" className="text-xs">
+                {knowledgeBaseName}
+              </Badge>
+            )}
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <SearchQuickSwitcher
+              query={query}
+              isAskAiEnabled={settings.rag.askAiEnabled && !ragConfigurationError}
+              suggest={suggestResponse}
+              status={settings.knowledgeBaseId ? suggestStatus : "idle"}
+              error={suggestError}
+              onQueryChange={setQuery}
+              onAskAi={handleAskAi}
+              askState={askTabState}
+              onAskAiStop={handleAskAiStop}
+              onResultOpen={handleOpenSuggestResult}
+              onPrefetch={(value) => {
+                if (settings.knowledgeBaseId) {
+                  prefetchSuggest(value);
+                }
+              }}
+              closeOnAsk={false}
+              disabledReason={
+                !settings.knowledgeBaseId
+                  ? "Выберите базу знаний"
+                  : !settings.rag.askAiEnabled
+                  ? "Ask AI отключён в настройках"
+                  : ragConfigurationError ?? null
               }
-            }}
-            closeOnAsk={false}
-            disabledReason={
-              !settings.knowledgeBaseId
-                ? "Выберите базу знаний"
-                : !settings.rag.askAiEnabled
-                ? "Ask AI отключён в настройках"
-                : ragConfigurationError ?? null
-            }
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={resetResults}
-            disabled={isSuggestLoading || isRagLoading}
-          >
-            <RefreshCcw className="h-3.5 w-3.5" />
-            Сбросить
-          </Button>
-          <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-2">
-                <Settings className="h-3.5 w-3.5" />
-                Настройки
+              renderTrigger={({ open }) => (
+                <div className="relative flex w-full flex-1 items-center">
+                  <SearchIcon className="pointer-events-none absolute left-3 h-5 w-5 text-muted-foreground" />
+                  <Input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onFocus={(event) => {
+                      open();
+                      const value = event.currentTarget.value.trim();
+                      if (value && settings.knowledgeBaseId) {
+                        prefetchSuggest(value);
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        open();
+                      }
+                    }}
+                    placeholder="Введите запрос по базе знаний…"
+                    className="h-11 w-full rounded-md border border-input bg-background pl-11 pr-4 text-base shadow-sm transition-shadow focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                </div>
+              )}
+            />
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-11 gap-2 px-3 text-sm"
+                onClick={resetResults}
+                disabled={isSuggestLoading || isRagLoading}
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Сбросить
               </Button>
-            </DialogTrigger>
-            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[72rem]">
-              <DialogHeader>
-                <DialogTitle>Настройки песочницы</DialogTitle>
-                <DialogDescription>
-                  Настройте базу знаний, параметры поиска и генерации ответа. Все параметры применяются сразу после
-                  сохранения.
-                </DialogDescription>
-              </DialogHeader>
-              <TooltipProvider delayDuration={150}>
-                <Tabs value={settingsTab} onValueChange={(value) => setSettingsTab(value as "search" | "rag")} className="mt-4">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="search">Поиск по БЗ</TabsTrigger>
-                    <TabsTrigger value="rag">RAG</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="search" className="mt-4 space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-kb"
-                          label="База знаний"
-                          description="Выберите базу знаний, из которой будут подбираться документы для подсказок и RAG. Пример: «Onboarding сотрудников» или «FAQ по продукту»."
-                        />
-                        <Select
-                          value={settings.knowledgeBaseId}
-                          onValueChange={(value) => handleSettingsChange("knowledgeBaseId", value)}
-                        >
-                          <SelectTrigger id="playground-kb">
-                            <SelectValue placeholder="Выберите базу" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {knowledgeBases.map((base) => (
-                              <SelectItem key={base.id} value={base.id}>
-                                {base.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex flex-col gap-2 sm:col-span-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-site"
-                          label="Сайт (API-ключ)"
-                          description="Сайт определяет публичный API-ключ и коллекцию, к которым обращается Ask AI. Выберите проект с нужным API-ключом."
-                        />
-                        <Select
-                          value={settings.siteId}
-                          onValueChange={(value) => handleSettingsChange("siteId", value)}
-                          disabled={sites.length === 0}
-                        >
-                          <SelectTrigger id="playground-site">
-                            <SelectValue placeholder={sites.length === 0 ? "Сайты не найдены" : "Выберите сайт"} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {sites.map((site) => (
-                              <SelectItem key={site.id} value={site.id}>
-                                {site.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-limit"
-                          label="Количество подсказок"
-                          description="Сколько чанков выводить в блоке подсказок поверх результатов. Пример: 5 покажет пять самых релевантных отрывков."
-                        />
-                        <Input
-                          id="playground-limit"
-                          type="number"
-                          min={1}
-                          max={10}
-                          value={settings.suggestLimit}
-                          onChange={(event) =>
-                            handleSettingsChange("suggestLimit", Math.max(1, Number(event.target.value) || 1))
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
-                      Все запросы уходят в публичные эндпоинты `/public/search/suggest` и `/api/public/collections/search/rag`
-                      с текущими настройками. Так можно воспроизвести интеграцию клиента 1:1.
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="rag" className="mt-4 space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-topk"
-                          label="Top-K"
-                          description="Сколько чанков попадёт в итоговый запрос к LLM. Пример: 4 сохранит четыре наиболее полезных отрывка."
-                        />
-                        <Input
-                          id="playground-topk"
-                          type="number"
-                          min={1}
-                          max={10}
-                          value={settings.rag.topK}
-                          onChange={(event) =>
-                            handleRagSettingsChange(
-                              "topK",
-                              Math.max(1, Math.min(10, Number(event.target.value) || 1)),
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-bm25-weight"
-                          label="Вес BM25"
-                          description="Доля классического полнотекстового поиска в гибридном ранжировании. Пример: 0.7 делает акцент на точном совпадении текста."
-                        />
-                        <Input
-                          id="playground-bm25-weight"
-                          type="number"
-                          step="0.05"
-                          min={0}
-                          max={1}
-                          value={settings.rag.bm25Weight}
-                          onChange={(event) => {
-                            const value = Math.min(1, Math.max(0, Number(event.target.value)) || 0);
-                            handleRagSettingsChange("bm25Weight", value);
-                          }}
-                        />
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-vector-weight"
-                          label="Вес векторов"
-                          description="Баланс между семантическим (векторным) и классическим поиском: 0 — учитываем только BM25, 1 — полагаемся только на вектора. Меняйте вместе с весом BM25, чтобы подобрать нужный микс."
-                        />
-                        <Input
-                          id="playground-vector-weight"
-                          type="number"
-                          step="0.05"
-                          min={0}
-                          max={1}
-                          value={settings.rag.vectorWeight}
-                          onChange={(event) => {
-                            const value = Math.min(1, Math.max(0, Number(event.target.value)) || 0);
-                            handleRagSettingsChange("vectorWeight", value);
-                          }}
-                        />
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-bm25-limit"
-                          label="Чанков BM25"
-                          description="Сколько результатов BM25 брать перед смешиванием с векторами. Пример: 6 — шесть лучших текстовых совпадений."
-                        />
-                        <Input
-                          id="playground-bm25-limit"
-                          type="number"
-                          min={1}
-                          max={20}
-                          value={settings.rag.bm25Limit}
-                          onChange={(event) =>
-                            handleRagSettingsChange("bm25Limit", Math.max(1, Number(event.target.value) || 1))
-                          }
-                        />
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-vector-limit"
-                          label="Чанков векторов"
-                          description="Сколько ближайших векторных совпадений запрашивать из Qdrant. Значение по умолчанию совпадает с Top-K и синхронизируется с ним, пока вы вручную не зададите другое число."
-                        />
-                        <Input
-                          id="playground-vector-limit"
-                          type="number"
-                          min={1}
-                          max={20}
-                          value={settings.rag.vectorLimit}
-                          onChange={(event) =>
-                            handleRagSettingsChange(
-                              "vectorLimit",
-                              Math.max(1, Math.min(20, Number(event.target.value) || 1)),
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-embedding-provider"
-                          label="Сервис эмбеддингов"
-                          description="Сервис, который строит вектор запроса перед обращением к Qdrant. Пример: «GigaChat Embeddings»."
-                        />
-                        <Select
-                          value={settings.rag.embeddingProviderId}
-                          onValueChange={(value) => handleRagSettingsChange("embeddingProviderId", value)}
-                        >
-                          <SelectTrigger id="playground-embedding-provider">
-                            <SelectValue placeholder="Выберите сервис" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {activeEmbeddingProviders.map((provider) => (
-                              <SelectItem key={provider.id} value={provider.id}>
-                                {provider.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-collection"
-                          label="Коллекция Qdrant"
-                          description="Коллекция с векторным индексом текущего пространства. Пример: `workspace-support`. Пустое значение отключит векторный слой."
-                        />
-                        <Select
-                          value={settings.rag.collection || EMPTY_SELECT_VALUE}
-                          onValueChange={(value) =>
-                            handleRagSettingsChange(
-                              "collection",
-                              value === EMPTY_SELECT_VALUE ? "" : value,
-                            )
-                          }
-                        >
-                          <SelectTrigger id="playground-collection">
-                            <SelectValue placeholder="Без коллекции" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value={EMPTY_SELECT_VALUE}>Без коллекции (только BM25)</SelectItem>
-                            {vectorCollections.map((collection) => (
-                              <SelectItem key={collection.name} value={collection.name}>
-                                {collection.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex items-center justify-between rounded border px-3 py-2 sm:col-span-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-ask-ai"
-                          label="Ask AI"
-                          description="Отключите, чтобы не обращаться к LLM и использовать только поиск по чанкам."
-                        />
-                        <Switch
-                          id="playground-ask-ai"
-                          checked={settings.rag.askAiEnabled}
-                          onCheckedChange={(checked) => handleRagSettingsChange("askAiEnabled", checked)}
-                        />
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-llm-provider"
-                          label="Провайдер LLM"
-                          description="Сервис генерации ответа. Пример: «GigaChat» или «OpenAI»."
-                        />
-                        <Select value={settings.rag.llmProviderId} onValueChange={handleLlmProviderChange}>
-                          <SelectTrigger id="playground-llm-provider">
-                            <SelectValue placeholder="Выберите провайдера" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {activeLlmProviders.map((provider) => (
-                              <SelectItem key={provider.id} value={provider.id}>
-                                {provider.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-llm-model"
-                          label="Модель"
-                          description="Конкретная модель выбранного провайдера. Пример: `gigachat-pro` для развёрнутых ответов."
-                        />
-                        <Select
-                          value={settings.rag.llmModel || EMPTY_SELECT_VALUE}
-                          onValueChange={(value) =>
-                            handleRagSettingsChange(
-                              "llmModel",
-                              value === EMPTY_SELECT_VALUE ? "" : value,
-                            )
-                          }
-                          disabled={availableLlmModels.length === 0}
-                        >
-                          <SelectTrigger id="playground-llm-model">
-                            <SelectValue placeholder="Выберите модель" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableLlmModels.length === 0 ? (
-                              <SelectItem value={EMPTY_SELECT_VALUE}>Модель по умолчанию</SelectItem>
-                            ) : (
-                              availableLlmModels.map((model) => (
-                                <SelectItem key={model.value} value={model.value}>
-                                  {model.label}
-                                </SelectItem>
-                              ))
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-response-format"
-                          label="Формат ответа"
-                          description="Выберите представление ответа: Markdown для структурированного текста, HTML для встраивания или обычный текст без форматирования."
-                        />
-                        <Select
-                          value={settings.rag.responseFormat}
-                          onValueChange={(value) =>
-                            handleRagSettingsChange(
-                              "responseFormat",
-                              value as PlaygroundSettings["rag"]["responseFormat"],
-                            )
-                          }
-                        >
-                          <SelectTrigger id="playground-response-format">
-                            <SelectValue placeholder="Выберите формат" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="markdown">Markdown</SelectItem>
-                            <SelectItem value="html">HTML</SelectItem>
-                            <SelectItem value="text">Без форматирования</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-temperature"
-                          label="Temperature"
-                          description="Степень креативности модели: 0 — строго, 1 — более свободно. Пример: 0.2 для лаконичных ответов."
-                        />
-                        <Input
-                          id="playground-temperature"
-                          type="number"
-                          min={0}
-                          max={2}
-                          step={0.1}
-                          value={settings.rag.temperature}
-                          onChange={(event) =>
-                            handleRagSettingsChange("temperature", Math.max(0, Number(event.target.value) || 0))
-                          }
-                        />
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-max-tokens"
-                          label="Максимум токенов"
-                          description="Ограничение на длину ответа в токенах. Пример: 1024 — примерно до 750 слов."
-                        />
-                        <Input
-                          id="playground-max-tokens"
-                          type="number"
-                          min={128}
-                          max={4096}
-                          value={settings.rag.maxTokens}
-                          onChange={(event) =>
-                            handleRagSettingsChange("maxTokens", Math.max(128, Number(event.target.value) || 128))
-                          }
-                        />
-                      </div>
-                      <div className="flex flex-col gap-2 sm:col-span-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-system-prompt"
-                          label="Системный промпт"
-                          description="Дополнительные инструкции для модели. Пример: «Отвечай как сотрудник службы поддержки, отвечай кратко»."
-                        />
-                        <Textarea
-                          id="playground-system-prompt"
-                          rows={4}
-                          value={settings.rag.systemPrompt}
-                          onChange={(event) => handleRagSettingsChange("systemPrompt", event.target.value)}
-                          placeholder="Опционально: задайте контекст ассистенту"
-                        />
-                      </div>
-                      <div className="flex items-center justify-between rounded border px-3 py-2 sm:col-span-2">
-                        <SettingLabelWithTooltip
-                          htmlFor="playground-include-debug"
-                          label="Сырые данные в ответе"
-                          description="Показывает технические детали: чанки, usage и сырой JSON. Пример: включите при настройке интеграции, отключите для демонстраций."
-                        />
-                        <Switch
-                          id="playground-include-debug"
-                          checked={settings.rag.includeDebug}
-                          onCheckedChange={(checked) => handleRagSettingsChange("includeDebug", checked)}
-                        />
-                      </div>
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </TooltipProvider>
-              <DialogFooter className="sm:justify-start">
-                <Button type="button" onClick={() => setIsSettingsOpen(false)}>
-                  Закрыть
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-11 gap-2 px-3 text-sm"
+                onClick={() => setIsAskAiLogOpen(true)}
+              >
+                <History className="h-4 w-4" />
+                Журнал
+                {askAiLogEntries.length > 0 && (
+                  <Badge variant="secondary" className="ml-1 h-5 rounded-full px-2 text-[11px] leading-none">
+                    {askAiLogEntries.length}
+                  </Badge>
+                )}
+              </Button>
+              <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-11 gap-2 px-3 text-sm">
+                    <Settings className="h-4 w-4" />
+                    Настройки
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[72rem]">
+                  <DialogHeader>
+                    <DialogTitle>Настройки песочницы</DialogTitle>
+                    <DialogDescription>
+                      Настройте базу знаний, параметры поиска и генерации ответа. Все параметры применяются сразу после
+                      сохранения.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <TooltipProvider delayDuration={150}>
+                    <Tabs value={settingsTab} onValueChange={(value) => setSettingsTab(value as "search" | "rag")} className="mt-4">
+                      <TabsList className="grid w-full grid-cols-2">
+                        <TabsTrigger value="search">Поиск по БЗ</TabsTrigger>
+                        <TabsTrigger value="rag">RAG</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="search" className="mt-4 space-y-4">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-kb"
+                              label="База знаний"
+                              description="Выберите базу знаний, из которой будут подбираться документы для подсказок и RAG. Пример: «Onboarding сотрудников» или «FAQ по продукту»."
+                            />
+                            <Select
+                              value={settings.knowledgeBaseId}
+                              onValueChange={(value) => handleSettingsChange("knowledgeBaseId", value)}
+                            >
+                              <SelectTrigger id="playground-kb">
+                                <SelectValue placeholder="Выберите базу" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {knowledgeBases.map((base) => (
+                                  <SelectItem key={base.id} value={base.id}>
+                                    {base.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-col gap-2 sm:col-span-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-site"
+                              label="Сайт (API-ключ)"
+                              description="Сайт определяет публичный API-ключ и коллекцию, к которым обращается Ask AI. Выберите проект с нужным API-ключом."
+                            />
+                            <Select
+                              value={settings.siteId}
+                              onValueChange={(value) => handleSettingsChange("siteId", value)}
+                              disabled={sites.length === 0}
+                            >
+                              <SelectTrigger id="playground-site">
+                                <SelectValue placeholder={sites.length === 0 ? "Сайты не найдены" : "Выберите сайт"} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {sites.map((site) => (
+                                  <SelectItem key={site.id} value={site.id}>
+                                    {site.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-limit"
+                              label="Количество подсказок"
+                              description="Сколько чанков выводить в блоке подсказок поверх результатов. Пример: 5 покажет пять самых релевантных отрывков."
+                            />
+                            <Input
+                              id="playground-limit"
+                              type="number"
+                              min={1}
+                              max={10}
+                              value={settings.suggestLimit}
+                              onChange={(event) =>
+                                handleSettingsChange("suggestLimit", Math.max(1, Number(event.target.value) || 1))
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
+                          Все запросы уходят в публичные эндпоинты `/public/search/suggest` и `/api/public/collections/search/rag` с текущими настройками. Так можно воспроизвести интеграцию клиента 1:1.
+                        </div>
+                      </TabsContent>
+                      <TabsContent value="rag" className="mt-4 space-y-4">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-topk"
+                              label="Top-K"
+                              description="Сколько чанков попадёт в итоговый запрос к LLM. Пример: 4 сохранит четыре наиболее полезных отрывка."
+                            />
+                            <Input
+                              id="playground-topk"
+                              type="number"
+                              min={1}
+                              max={10}
+                              value={settings.rag.topK}
+                              onChange={(event) =>
+                                handleRagSettingsChange(
+                                  "topK",
+                                  Math.max(1, Math.min(10, Number(event.target.value) || 1)),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-bm25-weight"
+                              label="Вес BM25"
+                              description="Вес текстового поиска. Пример: 0.3 усилит влияние BM25 на итоговый скор."
+                            />
+                            <Input
+                              id="playground-bm25-weight"
+                              type="number"
+                              min={0}
+                              max={1}
+                              step={0.05}
+                              value={settings.rag.bm25Weight}
+                              onChange={(event) =>
+                                handleRagSettingsChange(
+                                  "bm25Weight",
+                                  Math.max(0, Math.min(1, Number(event.target.value) || 0)),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-vector-weight"
+                              label="Вес вектора"
+                              description="Вес векторного поиска. Пример: 0.7 усилит влияние векторного сходства."
+                            />
+                            <Input
+                              id="playground-vector-weight"
+                              type="number"
+                              min={0}
+                              max={1}
+                              step={0.05}
+                              value={settings.rag.vectorWeight}
+                              onChange={(event) =>
+                                handleRagSettingsChange(
+                                  "vectorWeight",
+                                  Math.max(0, Math.min(1, Number(event.target.value) || 0)),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-bm25-limit"
+                              label="Лимит BM25"
+                              description="Сколько документов берём из текстового поиска. Пример: 8 добавит больше релевантных по BM25 чанков."
+                            />
+                            <Input
+                              id="playground-bm25-limit"
+                              type="number"
+                              min={1}
+                              max={20}
+                              value={settings.rag.bm25Limit}
+                              onChange={(event) =>
+                                handleRagSettingsChange(
+                                  "bm25Limit",
+                                  Math.max(1, Math.min(20, Number(event.target.value) || 1)),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-vector-limit"
+                              label="Лимит вектора"
+                              description="Сколько документов берём из векторного поиска. Пример: 8 добавит больше чанков по векторному сходству."
+                            />
+                            <Input
+                              id="playground-vector-limit"
+                              type="number"
+                              min={1}
+                              max={20}
+                              value={settings.rag.vectorLimit}
+                              onChange={(event) =>
+                                handleRagSettingsChange(
+                                  "vectorLimit",
+                                  Math.max(1, Math.min(20, Number(event.target.value) || 1)),
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-embedding-provider"
+                              label="Провайдер эмбеддингов"
+                              description="Выберите сервис, который генерирует вектора."
+                            />
+                            <Select
+                              value={settings.rag.embeddingProviderId}
+                              onValueChange={(value) => handleRagSettingsChange("embeddingProviderId", value)}
+                              disabled={activeEmbeddingProviders.length === 0}
+                            >
+                              <SelectTrigger id="playground-embedding-provider">
+                                <SelectValue placeholder={activeEmbeddingProviders.length === 0 ? "Нет активных провайдеров" : "Выберите провайдера"} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {activeEmbeddingProviders.map((provider) => (
+                                  <SelectItem key={provider.id} value={provider.id}>
+                                    {provider.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-collection"
+                              label="Коллекция"
+                              description="Коллекция в Qdrant, из которой забираем контекст."
+                            />
+                            <Select
+                              value={settings.rag.collection}
+                              onValueChange={(value) => handleRagSettingsChange("collection", value)}
+                              disabled={vectorCollectionsQuery.data?.collections.length === 0}
+                            >
+                              <SelectTrigger id="playground-collection">
+                                <SelectValue placeholder="Выберите коллекцию" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {vectorCollectionsQuery.data?.collections.map((collection) => (
+                                  <SelectItem key={collection} value={collection}>
+                                    {collection}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-llm-provider"
+                              label="LLM провайдер"
+                              description="Поставщик модели для генерации ответа."
+                            />
+                            <Select
+                              value={settings.rag.llmProviderId}
+                              onValueChange={(value) => handleRagSettingsChange("llmProviderId", value)}
+                              disabled={activeLlmProviders.length === 0}
+                            >
+                              <SelectTrigger id="playground-llm-provider">
+                                <SelectValue placeholder={activeLlmProviders.length === 0 ? "Нет активных провайдеров" : "Выберите провайдера"} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {activeLlmProviders.map((provider) => (
+                                  <SelectItem key={provider.id} value={provider.id}>
+                                    {provider.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-llm-model"
+                              label="Модель"
+                              description="Конкретная модель выбранного провайдера."
+                            />
+                            <Select
+                              value={settings.rag.llmModel ?? EMPTY_SELECT_VALUE}
+                              onValueChange={(value) =>
+                                handleRagSettingsChange(
+                                  "llmModel",
+                                  value === EMPTY_SELECT_VALUE ? null : value,
+                                )
+                              }
+                            >
+                              <SelectTrigger id="playground-llm-model">
+                                <SelectValue placeholder="Выберите модель" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {availableLlmModels.length === 0 ? (
+                                  <SelectItem value={EMPTY_SELECT_VALUE}>Модель по умолчанию</SelectItem>
+                                ) : (
+                                  availableLlmModels.map((model) => (
+                                    <SelectItem key={model.value} value={model.value}>
+                                      {model.label}
+                                    </SelectItem>
+                                  ))
+                                )}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-response-format"
+                              label="Формат ответа"
+                              description="Выберите представление ответа: Markdown для структурированного текста, HTML для встраивания или обычный текст без форматирования."
+                            />
+                            <Select
+                              value={settings.rag.responseFormat}
+                              onValueChange={(value) =>
+                                handleRagSettingsChange(
+                                  "responseFormat",
+                                  value as PlaygroundSettings["rag"]["responseFormat"],
+                                )
+                              }
+                            >
+                              <SelectTrigger id="playground-response-format">
+                                <SelectValue placeholder="Выберите формат" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="markdown">Markdown</SelectItem>
+                                <SelectItem value="html">HTML</SelectItem>
+                                <SelectItem value="text">Без форматирования</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-temperature"
+                              label="Temperature"
+                              description="Степень креативности модели: 0 — строго, 1 — более свободно. Пример: 0.2 для лаконичных ответов."
+                            />
+                            <Input
+                              id="playground-temperature"
+                              type="number"
+                              min={0}
+                              max={2}
+                              step={0.1}
+                              value={settings.rag.temperature}
+                              onChange={(event) =>
+                                handleRagSettingsChange("temperature", Math.max(0, Number(event.target.value) || 0))
+                              }
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-max-tokens"
+                              label="Максимум токенов"
+                              description="Ограничение на длину ответа в токенах. Пример: 1024 — примерно до 750 слов."
+                            />
+                            <Input
+                              id="playground-max-tokens"
+                              type="number"
+                              min={128}
+                              max={4096}
+                              value={settings.rag.maxTokens}
+                              onChange={(event) =>
+                                handleRagSettingsChange("maxTokens", Math.max(128, Number(event.target.value) || 128))
+                              }
+                            />
+                          </div>
+                          <div className="flex flex-col gap-2 sm:col-span-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-system-prompt"
+                              label="Системный промпт"
+                              description="Дополнительные инструкции для модели. Пример: «Отвечай как сотрудник службы поддержки, отвечай кратко»."
+                            />
+                            <Textarea
+                              id="playground-system-prompt"
+                              rows={4}
+                              value={settings.rag.systemPrompt}
+                              onChange={(event) => handleRagSettingsChange("systemPrompt", event.target.value)}
+                              placeholder="Опционально: задайте контекст ассистенту"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between rounded border px-3 py-2 sm:col-span-2">
+                            <SettingLabelWithTooltip
+                              htmlFor="playground-include-debug"
+                              label="Сырые данные в ответе"
+                              description="Показывает технические детали: чанки, usage и сырой JSON. Пример: включите при настройке интеграции, отключите для демонстраций."
+                            />
+                            <Switch
+                              id="playground-include-debug"
+                              checked={settings.rag.includeDebug}
+                              onCheckedChange={(checked) => handleRagSettingsChange("includeDebug", checked)}
+                            />
+                          </div>
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+                  </TooltipProvider>
+                  <DialogFooter className="sm:justify-start">
+                    <Button type="button" onClick={() => setIsSettingsOpen(false)}>
+                      Закрыть
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+          </div>
         </div>
       </header>
-      <main className="flex-1 overflow-auto px-4 py-4">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <section className="flex flex-col gap-3">
-            <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
-              Все запросы уходят в публичные эндпоинты `/public/search/suggest` и `/api/public/collections/search/rag` с
-              текущими настройками. Так можно воспроизвести интеграцию клиента 1:1.
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Подсказки ({flattenedSuggestItems.length})</span>
-              {suggestResponse?.meta?.timing_ms !== undefined && (
-                <span>Ответ за {formatMs(suggestResponse.meta.timing_ms)}</span>
-              )}
-            </div>
-            {isSuggestLoading && <div className="rounded border px-3 py-6 text-center text-sm">Ищем подсказки…</div>}
-            {suggestError && <div className="rounded border border-destructive px-3 py-2 text-sm text-destructive">{suggestError}</div>}
-            {!isSuggestLoading && !suggestError && flattenedSuggestItems.length === 0 && query.trim() && (
-              <div className="rounded border px-3 py-6 text-center text-sm text-muted-foreground">
-                Подсказок не найдено.
+      <main className="flex-1 overflow-auto px-4 py-6">
+        <section className="mx-auto flex w-full max-w-6xl flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-foreground">Ask AI</span>
+            {ragResponse?.timings && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Badge variant="outline">Σ {formatMs(ragResponse.timings.total_ms)}</Badge>
+                <Badge variant="outline">Retrieval {formatMs(ragResponse.timings.retrieval_ms)}</Badge>
+                <Badge variant="outline">LLM {formatMs(ragResponse.timings.llm_ms)}</Badge>
               </div>
             )}
-            <div className="grid gap-2">
-              {flattenedSuggestItems.map(renderSuggestItem)}
+          </div>
+          {isRagLoading && <div className="rounded border px-3 py-6 text-center text-sm">Готовим ответ…</div>}
+          {ragError && <div className="rounded border border-destructive px-3 py-2 text-sm text-destructive">{ragError}</div>}
+          {!isRagLoading && !ragError && !ragResponse && (
+            <div className="rounded border px-3 py-6 text-center text-sm text-muted-foreground">
+              Отправьте запрос через кнопку «Спросить AI», чтобы увидеть ответ.
             </div>
-
-            {settings.rag.includeDebug && suggestResponse && (
-              <div className="mt-2 space-y-2">
-                <div className="text-xs font-semibold text-foreground">Сырый ответ</div>
-                <pre className="max-h-64 overflow-auto rounded border bg-muted/60 p-2 text-xs text-foreground">
-                  {stringifyJson(suggestResponse)}
-                </pre>
+          )}
+          {!isRagLoading && !ragError && ragResponse && (
+            <>
+              <div className="rounded border px-3 py-3 text-sm leading-relaxed text-foreground">
+                {ragAnswerHtml ? (
+                  <div
+                    className="prose prose-sm max-w-none text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
+                    dangerouslySetInnerHTML={{ __html: ragAnswerHtml }}
+                  />
+                ) : (
+                  <span className="text-muted-foreground">Ответ отсутствует.</span>
+                )}
               </div>
-            )}
-          </section>
-
-          <section className="flex flex-col gap-3">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Ask AI</span>
-              {ragResponse?.timings && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">Σ {formatMs(ragResponse.timings.total_ms)}</Badge>
-                  <Badge variant="outline">Retrieval {formatMs(ragResponse.timings.retrieval_ms)}</Badge>
-                  <Badge variant="outline">LLM {formatMs(ragResponse.timings.llm_ms)}</Badge>
+              {settings.rag.includeDebug && ragResponse.chunks && ragResponse.chunks.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-foreground">Чанки в контексте</div>
+                  <div className="grid gap-2">
+                    {ragResponse.chunks.map(renderRagChunk)}
+                  </div>
                 </div>
               )}
-            </div>
-            {isRagLoading && <div className="rounded border px-3 py-6 text-center text-sm">Готовим ответ…</div>}
-            {ragError && <div className="rounded border border-destructive px-3 py-2 text-sm text-destructive">{ragError}</div>}
-            {!isRagLoading && !ragError && !ragResponse && (
-              <div className="rounded border px-3 py-6 text-center text-sm text-muted-foreground">
-                Отправьте запрос через кнопку «Спросить AI», чтобы увидеть ответ.
-              </div>
-            )}
-            {!isRagLoading && !ragError && ragResponse && (
-              <>
-                <div className="rounded border px-3 py-3 text-sm leading-relaxed text-foreground">
-                  {ragAnswerHtml ? (
-                    <div
-                      className="prose prose-sm max-w-none text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
-                      dangerouslySetInnerHTML={{ __html: ragAnswerHtml }}
-                    />
-                  ) : (
-                    <span className="text-muted-foreground">Ответ отсутствует.</span>
-                  )}
+              {settings.rag.includeDebug && (
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-foreground">Сырой ответ</div>
+                  <pre className="max-h-64 overflow-auto rounded border bg-muted/60 p-2 text-xs text-foreground">
+                    {stringifyJson(ragResponse)}
+                  </pre>
                 </div>
-                {settings.rag.includeDebug && ragResponse.chunks && ragResponse.chunks.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold text-foreground">Чанки в контексте</div>
-                    <div className="grid gap-2">
-                      {ragResponse.chunks.map(renderRagChunk)}
-                    </div>
-                  </div>
-                )}
-                {settings.rag.includeDebug && (
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold text-foreground">Сырой ответ</div>
-                    <pre className="max-h-64 overflow-auto rounded border bg-muted/60 p-2 text-xs text-foreground">
-                      {stringifyJson(ragResponse)}
-                    </pre>
-                  </div>
-                )}
-              </>
-            )}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>Журнал Ask AI</span>
-                <div className="flex items-center gap-2">
-                  {askAiLogEntries.length > 0 && (
-                    <Badge variant="outline" className="text-[11px]">
-                      {askAiLogEntries.length}
-                    </Badge>
-                  )}
-                  <Dialog open={isAskAiLogOpen} onOpenChange={setIsAskAiLogOpen}>
-                    <DialogTrigger asChild>
-                      <Button variant="outline" size="sm" className="h-7 px-3 text-[11px]">
-                        Открыть
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="flex h-[90vh] w-[95vw] max-w-[95vw] flex-col gap-4 p-6 sm:w-[90vw] sm:max-w-[90vw]">
-                      <DialogHeader className="space-y-1">
-                        <DialogTitle>Журнал Ask AI</DialogTitle>
-                        <DialogDescription>
-                          Пошаговые события запросов к публичным эндпоинтам. Используйте журнал для диагностики интеграции.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="flex flex-1 flex-col gap-3 overflow-hidden">
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>
-                            Всего записей: {askAiLogEntries.length}
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-3 text-[11px]"
-                            onClick={clearAskAiLog}
-                            disabled={askAiLogEntries.length === 0}
-                          >
-                            Очистить
-                          </Button>
-                        </div>
-                        <div
-                          ref={askAiLogContainerRef}
-                          className="flex-1 overflow-auto rounded border bg-muted/40 p-3 text-xs text-foreground"
-                        >
-                          {askAiLogEntries.length === 0 ? (
-                            <div className="text-muted-foreground">
-                              Журнал пуст. Отправьте запрос, чтобы увидеть шаги.
-                            </div>
-                          ) : (
-                            <div className="space-y-2">{askAiLogEntries.map(renderAskAiLogEntry)}</div>
-                          )}
-                        </div>
-                      </div>
-                      <DialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-between">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={clearAskAiLog}
-                          disabled={askAiLogEntries.length === 0}
-                        >
-                          Очистить журнал
-                        </Button>
-                        <Button size="sm" onClick={() => setIsAskAiLogOpen(false)}>
-                          Закрыть
-                        </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
+              )}
+            </>
+          )}
+        </section>
       </main>
+      <Dialog open={isAskAiLogOpen} onOpenChange={setIsAskAiLogOpen}>
+        <DialogContent className="flex h-[90vh] w-[95vw] max-w-[95vw] flex-col gap-4 p-6 sm:w-[90vw] sm:max-w-[90vw]">
+          <DialogHeader className="space-y-1">
+            <DialogTitle>Журнал Ask AI</DialogTitle>
+            <DialogDescription>
+              Пошаговые события запросов к публичным эндпоинтам. Используйте журнал для диагностики интеграции.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-1 flex-col gap-3 overflow-hidden">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                Всего записей: {askAiLogEntries.length}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-3 text-[11px]"
+                onClick={clearAskAiLog}
+                disabled={askAiLogEntries.length === 0}
+              >
+                Очистить
+              </Button>
+            </div>
+            <div
+              ref={askAiLogContainerRef}
+              className="flex-1 overflow-auto rounded border bg-muted/40 p-3 text-xs text-foreground"
+            >
+              {askAiLogEntries.length === 0 ? (
+                <div className="text-muted-foreground">
+                  Журнал пуст. Отправьте запрос, чтобы увидеть шаги.
+                </div>
+              ) : (
+                <div className="space-y-2">{askAiLogEntries.map(renderAskAiLogEntry)}</div>
+              )}
+            </div>
+          </div>
+          <DialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={clearAskAiLog}
+              disabled={askAiLogEntries.length === 0}
+            >
+              Очистить журнал
+            </Button>
+            <Button size="sm" onClick={() => setIsAskAiLogOpen(false)}>
+              Закрыть
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
