@@ -76,13 +76,23 @@ export interface RagChunk {
   scores?: { bm25?: number; vector?: number };
 }
 
+export interface RagContextEntry {
+  id?: string | number | null;
+  score?: number | null;
+  payload?: Record<string, unknown> | null;
+  shard_key?: string | null;
+  order_value?: number | null;
+}
+
 export interface RagResponsePayload {
-  query: string;
-  kb_id: string;
-  normalized_query: string;
   answer: string;
+  format?: "text" | "markdown" | "html";
+  query?: string;
+  kb_id?: string;
+  normalized_query?: string;
   citations: RagChunk[];
   chunks?: RagChunk[];
+  context?: RagContextEntry[];
   usage?: { embeddingTokens?: number | null; llmTokens?: number | null };
   timings?: {
     total_ms?: number;
@@ -91,5 +101,10 @@ export interface RagResponsePayload {
     vector_ms?: number;
     llm_ms?: number;
   };
+  provider?: { id?: string; name?: string; model?: string; modelLabel?: string | null };
+  embeddingProvider?: { id?: string; name?: string };
+  collection?: string;
+  queryVector?: number[];
+  vectorLength?: number | null;
   debug?: { vectorSearch?: Array<Record<string, unknown>> | null };
 }
