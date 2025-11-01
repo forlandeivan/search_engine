@@ -3,20 +3,20 @@ import app, { initApp } from '../app';
 
 export default async function handler(req: any, res: any) {
   try {
-    // Инициализация приложения (БД и т.п.), если есть
-    if (typeof initApp === 'function') {
+    // Срежем префикс /api, Vercel вызывает функции как /api/...
+    const originalUrl = typeof req.url === 'string' ? req.url : '';
+    const strippedUrl = originalUrl.replace(/^\/api(\/|$)/, '/');
+    if (strippedUrl !== originalUrl) req.url = strippedUrl;
+
+    // Health — без initApp(), чтобы не требовать БД/секреты
+    const isHealth = strippedUrl === '/health' || strippedUrl.startsWith('/health?');
+
+    if (!isHealth && typeof initApp === 'function') {
       await initApp();
     }
 
-    // Vercel отдаёт урлы как /api/..., а у нас роуты без /api
-    if (typeof req.url === 'string') {
-      req.url = req.url.replace(/^\/api(\/|$)/, '/');
-    }
-
-    // --- АДАПТЕР ДЛЯ FASTIFY ---
-    // Fastify имеет .server.emit('request', req, res)
+    // --- Адаптер для Fastify ---
     if (app && app.server && typeof app.server.emit === 'function') {
-      // На всякий случай дождёмся готовности роутов
       if (typeof app.ready === 'function') {
         await app.ready();
       }
@@ -24,7 +24,7 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    // --- ФОЛБЭК НА EXPRESS (если вдруг app — это express) ---
+    // --- Fallback на Express ---
     // @ts-ignore
     return app(req, res);
   } catch (e) {
