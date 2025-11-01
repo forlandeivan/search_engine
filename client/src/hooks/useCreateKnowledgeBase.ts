@@ -57,7 +57,6 @@ export function useCreateKnowledgeBase() {
       let structure: ArchiveImportResult["structure"] | undefined;
       let documents: ArchiveImportResult["documents"] | undefined;
       let tasks: KnowledgeBaseTaskSummary | undefined;
-      let crawlJob: KnowledgeBaseCrawlJobStatus | undefined;
       if (mode === "archive") {
         if (!archiveFile) {
           throw new Error("Выберите архив документов для импорта");
@@ -146,7 +145,10 @@ export function useCreateKnowledgeBase() {
           updatedAt: summary.updatedAt,
         };
 
-        crawlJob = created.job;
+        const crawlJob = created.job;
+        if (crawlJob) {
+          base = { ...base, crawlJob };
+        }
       } else {
         const response = await apiRequest("POST", "/api/knowledge/bases", {
           id: base.id,
@@ -173,10 +175,6 @@ export function useCreateKnowledgeBase() {
       };
 
       writeKnowledgeBaseStorage(updatedState);
-
-      if (crawlJob) {
-        return { ...base, crawlJob } as KnowledgeBase;
-      }
 
       return base;
     },
