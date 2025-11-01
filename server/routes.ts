@@ -1278,6 +1278,7 @@ type GigachatStreamOptions = {
   responseFormat?: RagResponseFormat;
   includeContextInResponse: boolean;
   includeQueryVectorInResponse: boolean;
+  collectionName: string;
 };
 
 type RagResponseFormat = "text" | "markdown" | "html";
@@ -1374,6 +1375,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     responseFormat,
     includeContextInResponse,
     includeQueryVectorInResponse,
+    collectionName,
   } = options;
 
   const streamHeaders = new Headers();
@@ -1426,6 +1428,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     limit,
     contextLimit,
     format: responseFormat ?? "text",
+    collection: collectionName,
   };
 
   if (includeContextInResponse) {
@@ -1437,7 +1440,20 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     metadataPayload.vectorLength = embeddingResult.vector.length;
   }
 
-  sendSseEvent(res, "metadata", metadataPayload);
+  sendSseEvent(res, "status", { stage: "thinking", message: "Думаю…" });
+  sendSseEvent(res, "status", { stage: "retrieving", message: "Ищу источники…" });
+
+  const streamedContextEntries = sanitizedResults.map((entry) => ({
+    id: entry.id ?? null,
+    score: typeof entry.score === "number" ? entry.score : null,
+    payload: entry.payload ?? null,
+    shard_key: entry.shard_key ?? null,
+    order_value: entry.order_value ?? null,
+  }));
+
+  streamedContextEntries.slice(0, contextLimit).forEach((contextEntry, index) => {
+    sendSseEvent(res, "source", { index: index + 1, context: contextEntry });
+  });
 
   let completionResponse: FetchResponse;
 
@@ -1495,6 +1511,8 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     return;
   }
 
+  sendSseEvent(res, "status", { stage: "answering", message: "Формулирую ответ…" });
+
   const decoder = new TextDecoder();
   let buffer = "";
   let aggregatedAnswer = "";
@@ -1536,12 +1554,19 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
         }
 
         if (dataPayload === "[DONE]") {
-          sendSseEvent(res, "complete", {
+          sendSseEvent(res, "status", { stage: "done", message: "Готово" });
+          sendSseEvent(res, "done", {
             answer: aggregatedAnswer,
             usage: {
               embeddingTokens: embeddingResult.usageTokens ?? null,
               llmTokens: llmUsageTokens,
             },
+            sourcesCount: streamedContextEntries.slice(0, contextLimit).length,
+            metadata: metadataPayload,
+            provider: metadataPayload.provider ?? null,
+            embeddingProvider: metadataPayload.embeddingProvider ?? null,
+            collection: collectionName,
+            format: responseFormat ?? "text",
           });
           res.end();
           return;
@@ -1557,7 +1582,8 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
         const delta = extractTextDeltaFromChunk(parsed);
         if (delta) {
           aggregatedAnswer += delta;
-          sendSseEvent(res, eventName === "message" ? "token" : eventName, { delta });
+          const normalizedEventName = eventName === "message" ? "delta" : eventName;
+          sendSseEvent(res, normalizedEventName === "delta" ? "delta" : normalizedEventName, { text: delta });
         }
 
         const maybeUsage = extractUsageTokensFromChunk(parsed);
@@ -1579,12 +1605,19 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     return;
   }
 
-  sendSseEvent(res, "complete", {
+  sendSseEvent(res, "status", { stage: "done", message: "Готово" });
+  sendSseEvent(res, "done", {
     answer: aggregatedAnswer,
     usage: {
       embeddingTokens: embeddingResult.usageTokens ?? null,
       llmTokens: llmUsageTokens,
     },
+    sourcesCount: streamedContextEntries.slice(0, contextLimit).length,
+    metadata: metadataPayload,
+    provider: metadataPayload.provider ?? null,
+    embeddingProvider: metadataPayload.embeddingProvider ?? null,
+    collection: collectionName,
+    format: responseFormat ?? "text",
   });
   res.end();
 }
@@ -3526,11 +3559,106 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? { ...(req.body as Record<string, unknown>) }
           : {};
 
+      const parseBooleanParam = (value: unknown): boolean | undefined => {
+        if (typeof value === "boolean") {
+          return value;
+        }
+
+        if (typeof value === "string") {
+          const normalized = value.trim().toLowerCase();
+          if (normalized === "true" || normalized === "1") {
+            return true;
+          }
+          if (normalized === "false" || normalized === "0") {
+            return false;
+          }
+        }
+
+        return undefined;
+      };
+
+      const parseIntegerParam = (value: unknown): number | undefined => {
+        if (typeof value === "number" && Number.isInteger(value)) {
+          return value;
+        }
+
+        if (typeof value === "string") {
+          const parsed = Number.parseInt(value, 10);
+          if (Number.isFinite(parsed)) {
+            return parsed;
+          }
+        }
+
+        return undefined;
+      };
+
       delete payloadSource.apiKey;
       delete payloadSource.publicId;
       delete payloadSource.sitePublicId;
       delete payloadSource.workspaceId;
       delete payloadSource.workspace_id;
+
+      if (!("query" in payloadSource)) {
+        if (typeof req.query.q === "string" && req.query.q.trim()) {
+          payloadSource.query = req.query.q.trim();
+        } else if (typeof req.query.query === "string" && req.query.query.trim()) {
+          payloadSource.query = req.query.query.trim();
+        }
+      }
+
+      if (!("embeddingProviderId" in payloadSource) && typeof req.query.embeddingProviderId === "string") {
+        payloadSource.embeddingProviderId = req.query.embeddingProviderId;
+      }
+
+      if (!("llmProviderId" in payloadSource) && typeof req.query.llmProviderId === "string") {
+        payloadSource.llmProviderId = req.query.llmProviderId;
+      }
+
+      if (!("llmModel" in payloadSource) && typeof req.query.llmModel === "string") {
+        payloadSource.llmModel = req.query.llmModel;
+      }
+
+      if (!("limit" in payloadSource)) {
+        const parsedLimit = parseIntegerParam(req.query.limit);
+        if (parsedLimit !== undefined) {
+          payloadSource.limit = parsedLimit;
+        }
+      }
+
+      if (!("contextLimit" in payloadSource)) {
+        const parsedContextLimit = parseIntegerParam(req.query.contextLimit);
+        if (parsedContextLimit !== undefined) {
+          payloadSource.contextLimit = parsedContextLimit;
+        }
+      }
+
+      if (!("includeContext" in payloadSource)) {
+        const parsedIncludeContext = parseBooleanParam(req.query.includeContext);
+        if (parsedIncludeContext !== undefined) {
+          payloadSource.includeContext = parsedIncludeContext;
+        }
+      }
+
+      if (!("includeQueryVector" in payloadSource)) {
+        const parsedIncludeQueryVector = parseBooleanParam(req.query.includeQueryVector);
+        if (parsedIncludeQueryVector !== undefined) {
+          payloadSource.includeQueryVector = parsedIncludeQueryVector;
+        }
+      }
+
+      if (!("withPayload" in payloadSource)) {
+        const parsedWithPayload = parseBooleanParam(req.query.withPayload);
+        if (parsedWithPayload !== undefined) {
+          payloadSource.withPayload = parsedWithPayload;
+        }
+      }
+
+      if (!("withVector" in payloadSource)) {
+        const parsedWithVector = parseBooleanParam(req.query.withVector);
+        if (parsedWithVector !== undefined) {
+          payloadSource.withVector = parsedWithVector;
+        }
+      }
 
       if (!("collection" in payloadSource) && typeof req.query.collection === "string") {
         const candidate = req.query.collection.trim();
@@ -3724,6 +3852,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           responseFormat,
           includeContextInResponse,
           includeQueryVectorInResponse,
+          collectionName: typeof req.params.name === "string" ? req.params.name : "",
         });
         return;
       }
@@ -6051,6 +6180,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           responseFormat,
           includeContextInResponse,
           includeQueryVectorInResponse,
+          collectionName: typeof req.params.name === "string" ? req.params.name : "",
         });
         return;
       }
