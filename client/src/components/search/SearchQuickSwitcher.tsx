@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import { LoaderCircle, Search, Sparkles } from "lucide-react";
+import { ArrowLeft, CircleStop, LoaderCircle, Search, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type {
+  RagChunk,
   SuggestResponseItem,
   SuggestResponsePayload,
   SuggestResponseSection,
@@ -26,6 +27,18 @@ interface SearchQuickSwitcherProps {
   error: string | null;
   onQueryChange: (value: string) => void;
   onAskAi: (query: string) => Promise<void> | void;
+  askState?: {
+    isActive: boolean;
+    question: string;
+    answer: string;
+    statusMessage: string | null;
+    showIndicator: boolean;
+    error: string | null;
+    sources: RagChunk[];
+    isStreaming: boolean;
+    isDone: boolean;
+  };
+  onAskAiStop?: () => void;
   onResultOpen?: (section: SuggestResponseItem, options?: { newTab?: boolean }) => void;
   onClose?: () => void;
   onPrefetch?: (query: string) => void;
@@ -398,6 +411,8 @@ export function SearchQuickSwitcher({
   error,
   onQueryChange,
   onAskAi,
+  askState,
+  onAskAiStop,
   onResultOpen = noop,
   onClose,
   onPrefetch,
@@ -406,12 +421,14 @@ export function SearchQuickSwitcher({
   disabledReason,
 }: SearchQuickSwitcherProps) {
   const [open, setOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"search" | "ask">("search");
   const [isComposing, setIsComposing] = useState(false);
   const [activeRowIndex, setActiveRowIndex] = useState(-1);
   const [localQuery, setLocalQuery] = useState(query);
   const scrollParentRef = useRef<HTMLDivElement | null>(null);
   const [lastInputTime, setLastInputTime] = useState<number>(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const scrollPositionRef = useRef(0);
 
   const groups = useMemo(() => buildSuggestGroups(suggest), [suggest]);
   const tokens = useMemo(() => tokenize(localQuery), [localQuery]);
@@ -552,6 +569,13 @@ export function SearchQuickSwitcher({
 
   const handleOpenChange = (value: boolean) => {
     setOpen(value);
+    if (!value) {
+      setActiveTab("search");
+      setActiveRowIndex(-1);
+      if (scrollParentRef.current) {
+        scrollParentRef.current.scrollTop = 0;
+      }
+    }
   };
 
   const handleAskAi = async () => {
@@ -559,10 +583,28 @@ export function SearchQuickSwitcher({
       return;
     }
 
-    await onAskAi(normalizedQuery);
-    if (closeOnAsk) {
-      setOpen(false);
+    if (scrollParentRef.current) {
+      scrollPositionRef.current = scrollParentRef.current.scrollTop;
     }
+    setActiveTab("ask");
+
+    try {
+      await onAskAi(normalizedQuery);
+      if (closeOnAsk) {
+        setOpen(false);
+      }
+    } catch (error) {
+      console.error("Не удалось выполнить запрос Ask AI", error);
+    }
+  };
+
+  const handleBackToSearch = () => {
+    setActiveTab("search");
+    requestAnimationFrame(() => {
+      if (scrollParentRef.current) {
+        scrollParentRef.current.scrollTop = scrollPositionRef.current;
+      }
+    });
   };
 
   const scrollToRow = (index: number, align: "auto" | "start" | "center" | "end" = "auto") => {
@@ -878,50 +920,74 @@ export function SearchQuickSwitcher({
             aria-owns="search-quick-switcher-list"
             className="flex h-full flex-col"
           >
-            <div className="flex items-center gap-2 border-b bg-card px-4 py-3">
-              <Search className="h-4 w-4 text-muted-foreground" />
-              <input
-                ref={inputRef}
-                value={localQuery}
-                placeholder="Поиск…"
-                onChange={(event) => {
-                  setLastInputTime(performance.now());
-                  setLocalQuery(event.target.value);
-                }}
-                onCompositionStart={() => setIsComposing(true)}
-                onCompositionEnd={(event) => {
-                  setIsComposing(false);
-                  setLocalQuery(event.currentTarget.value);
-                }}
-                onFocus={() => {
-                  if (onPrefetch) {
-                    onPrefetch(localQuery);
-                  }
-                }}
-                onKeyDown={handleKeyDown}
-                className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-                aria-autocomplete="list"
-                aria-controls="search-quick-switcher-list"
-                aria-activedescendant={activeOptionId}
-              />
-              {localQuery && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => {
-                    setLocalQuery("");
-                    onQueryChange("");
+            {activeTab === "search" ? (
+              <div className="flex items-center gap-2 border-b bg-card px-4 py-3">
+                <Search className="h-4 w-4 text-muted-foreground" />
+                <input
+                  ref={inputRef}
+                  value={localQuery}
+                  placeholder="Поиск…"
+                  onChange={(event) => {
+                    setLastInputTime(performance.now());
+                    setLocalQuery(event.target.value);
                   }}
+                  onCompositionStart={() => setIsComposing(true)}
+                  onCompositionEnd={(event) => {
+                    setIsComposing(false);
+                    setLocalQuery(event.currentTarget.value);
+                  }}
+                  onFocus={() => {
+                    if (onPrefetch) {
+                      onPrefetch(localQuery);
+                    }
+                  }}
+                  onKeyDown={handleKeyDown}
+                  className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                  aria-autocomplete="list"
+                  aria-controls="search-quick-switcher-list"
+                  aria-activedescendant={activeOptionId}
+                />
+                {localQuery && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => {
+                      setLocalQuery("");
+                      onQueryChange("");
+                    }}
+                  >
+                    Очистить
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between border-b bg-card px-4 py-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                  onClick={handleBackToSearch}
                 >
-                  Очистить
-                </Button>
-              )}
-            </div>
-            <div className="flex flex-1 flex-col overflow-hidden">
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>Ask another question…</span>
+                </button>
+                {askState?.isStreaming && onAskAiStop && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-2 px-3 text-xs"
+                    onClick={() => onAskAiStop()}
+                  >
+                    <CircleStop className="h-4 w-4" />
+                    Stop
+                  </Button>
+                )}
+              </div>
+            )}
+            <div className="relative flex flex-1 flex-col overflow-hidden">
               <div
                 ref={scrollParentRef}
-                className="flex-1 overflow-y-auto px-3 py-3"
+                className={cn("flex-1 overflow-y-auto px-3 py-3", activeTab === "ask" && "hidden")}
               >
                 <div
                   id="search-quick-switcher-list"
@@ -997,6 +1063,88 @@ export function SearchQuickSwitcher({
                 </div>
               </div>
 
+              <div
+                className={cn(
+                  "absolute left-0 right-0 top-0 bottom-12 flex flex-col gap-4 overflow-y-auto px-4 py-4",
+                  activeTab === "search" && "pointer-events-none opacity-0",
+                )}
+                aria-live="polite"
+              >
+                <div className="space-y-3">
+                  <div className="rounded border px-3 py-2 text-sm">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Вопрос</div>
+                    <div className="mt-1 text-sm font-semibold text-foreground">
+                      {askState?.question || normalizedQuery || "—"}
+                    </div>
+                  </div>
+                  {askState?.showIndicator && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+                      <LoaderCircle className="h-4 w-4 animate-spin text-primary" />
+                      <span>{askState.statusMessage ?? "Готовим ответ…"}</span>
+                    </div>
+                  )}
+                  {askState?.error && (
+                    <div
+                      role="alert"
+                      className="rounded border border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                    >
+                      {askState.error}
+                    </div>
+                  )}
+                  <div
+                    className="rounded border px-3 py-3 text-sm leading-relaxed text-foreground"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {askState?.answer ? (
+                      <div className="whitespace-pre-wrap">{askState.answer}</div>
+                    ) : askState?.isStreaming ? (
+                      <span className="text-muted-foreground">Готовим ответ…</span>
+                    ) : (
+                      <span className="text-muted-foreground">
+                        Введите вопрос, чтобы Ask AI подготовил ответ.
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-foreground">
+                      Источники{askState?.sources.length ? ` · ${askState.sources.length}` : ""}
+                    </div>
+                    {askState?.sources.length ? (
+                      <div className="space-y-2">
+                        {askState.sources.map((chunk, index) => (
+                          <div key={`${chunk.chunk_id}-${index}`} className="rounded border px-3 py-2">
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>#{index + 1}</span>
+                              {chunk.scores && (
+                                <span className="font-mono">
+                                  {chunk.scores.vector !== undefined
+                                    ? `Vector ${chunk.scores.vector.toFixed(3)}`
+                                    : chunk.scores.bm25 !== undefined
+                                      ? `BM25 ${chunk.scores.bm25.toFixed(3)}`
+                                      : null}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 text-sm font-semibold text-foreground">
+                              {chunk.section_title || chunk.doc_title || "Без заголовка"}
+                            </div>
+                            {chunk.snippet && (
+                              <p className="mt-2 text-sm text-foreground">{chunk.snippet}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded border border-dashed px-3 py-3 text-sm text-muted-foreground">
+                        {askState?.isStreaming
+                          ? "Собираем источники…"
+                          : "Источники появятся, когда Ask AI завершит поиск."}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
               <div className="flex items-center justify-between border-t bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
                 <div className="flex flex-wrap items-center gap-3">
                   {STATUS_BAR_SHORTCUTS.map((shortcut) => (

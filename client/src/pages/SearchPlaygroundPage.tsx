@@ -111,6 +111,10 @@ interface RagRequestState {
   workspaceId: string;
 }
 
+type RagStreamAbortHandle = {
+  abort: () => void;
+};
+
 const buildChunkFromContext = (entry: PublicRagContextEntry, index: number): RagChunk => {
   const payload = isRecord(entry.payload) ? entry.payload : {};
   const chunkPayload = isRecord((payload as Record<string, unknown>).chunk)
@@ -364,6 +368,8 @@ const extractErrorMessage = async (response: Response): Promise<string | null> =
 const EMPTY_SELECT_VALUE = "__empty__";
 const PLAYGROUND_SETTINGS_STORAGE_KEY = "search-playground-settings";
 
+const RAG_STATUS_MESSAGES = ["Думаю…", "Ищу источники…", "Формулирую ответ…"] as const;
+
 const DEFAULT_SETTINGS: PlaygroundSettings = {
   knowledgeBaseId: "",
   siteId: "",
@@ -430,6 +436,30 @@ export default function SearchPlaygroundPage() {
   const [streamedAnswer, setStreamedAnswer] = useState("");
   const ragRequestCounter = useRef(0);
   const [ragRequest, setRagRequest] = useState<RagRequestState | null>(null);
+  const [ragStreamingState, setRagStreamingState] = useState<{
+    requestId: number | null;
+    question: string;
+    answer: string;
+    stage: "idle" | "connecting" | "retrieving" | "answering" | "done" | "error";
+    statusMessage: string | null;
+    statusIndex: number;
+    showIndicator: boolean;
+    error: string | null;
+  }>({
+    requestId: null,
+    question: "",
+    answer: "",
+    stage: "idle",
+    statusMessage: null,
+    statusIndex: 0,
+    showIndicator: false,
+    error: null,
+  });
+  const [ragStreamingContext, setRagStreamingContext] = useState<PublicRagContextEntry[]>([]);
+  const [ragStreamingChunks, setRagStreamingChunks] = useState<RagChunk[]>([]);
+  const ragStreamAbortControllerRef = useRef<RagStreamAbortHandle | null>(null);
+  const ragStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const ragStreamingContextRef = useRef<PublicRagContextEntry[]>([]);
   const [askAiLogEntries, setAskAiLogEntries] = useState<AskAiLogEntry[]>([]);
   const [isAskAiLogOpen, setIsAskAiLogOpen] = useState(false);
   const askAiLogContainerRef = useRef<HTMLDivElement | null>(null);
@@ -731,159 +761,62 @@ export default function SearchPlaygroundPage() {
   }, [suggestData, suggestStatus]);
 
   useEffect(() => {
-    if (!ragRequest) {
+    if (!ragStreamingState.showIndicator) {
+      if (ragStatusTimerRef.current) {
+        clearInterval(ragStatusTimerRef.current);
+        ragStatusTimerRef.current = null;
+      }
       return;
     }
 
-    let cancelled = false;
+    if (ragStatusTimerRef.current) {
+      clearInterval(ragStatusTimerRef.current);
+    }
 
-    const runRag = async () => {
-      setIsRagLoading(true);
-      setRagError(null);
-      setStreamedAnswer("");
+    ragStatusTimerRef.current = setInterval(() => {
+      setRagStreamingState((prev) => {
+        if (!prev.showIndicator) {
+          return prev;
+        }
 
-      appendAskAiLog({
-        requestId: ragRequest.id,
-        timestamp: Date.now(),
-        kind: "request",
-        title: "POST /api/public/collections/search/rag",
-        description: `Отправляем запрос к сервису RAG (коллекция ${ragRequest.payload.collection}).`,
-        data: {
-          endpoint: "/api/public/collections/search/rag",
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": maskApiKey(ragRequest.apiKey),
-          },
-          payload: ragRequest.payload,
-        },
+        const nextIndex = (prev.statusIndex + 1) % RAG_STATUS_MESSAGES.length;
+        return {
+          ...prev,
+          statusIndex: nextIndex,
+          statusMessage: RAG_STATUS_MESSAGES[nextIndex],
+        };
       });
-
-      try {
-        const ragResponseRaw = await fetch("/api/public/collections/search/rag", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": ragRequest.apiKey,
-          },
-          body: JSON.stringify(ragRequest.payload),
-        });
-
-        if (!ragResponseRaw.ok) {
-          const fallbackMessage =
-            ragResponseRaw.status === 503
-              ? "Сервис RAG временно недоступен. Попробуйте позже."
-              : "Не удалось получить ответ от LLM.";
-          const errorMessage = (await extractErrorMessage(ragResponseRaw)) ?? fallbackMessage;
-          throw new Error(`${errorMessage} (код ${ragResponseRaw.status})`);
-        }
-
-        const ragJson = (await ragResponseRaw.json()) as PublicRagResponse;
-        if (!cancelled) {
-          const normalized = normalizePublicRagResponse(ragJson, { query: ragRequest.query });
-          setRagResponse(normalized);
-
-          const finishedAt = Date.now();
-          const responseSummary: Record<string, unknown> = {};
-
-          responseSummary.status = ragResponseRaw.status;
-
-          if (normalized.format) {
-            responseSummary.format = normalized.format;
-          }
-
-          if (normalized.usage) {
-            responseSummary.usage = normalized.usage;
-          }
-
-          if (normalized.provider) {
-            responseSummary.provider = normalized.provider;
-          }
-
-          if (normalized.embeddingProvider) {
-            responseSummary.embeddingProvider = normalized.embeddingProvider;
-          }
-
-          if (normalized.collection) {
-            responseSummary.collection = normalized.collection;
-          }
-
-          const citations = normalized.citations ?? [];
-          if (citations.length > 0) {
-            responseSummary.citations = citations.map((chunk) => ({
-              chunk_id: chunk.chunk_id,
-              doc_title: chunk.doc_title,
-              scores: chunk.scores,
-            }));
-          }
-
-          if (normalized.context) {
-            responseSummary.contextLength = normalized.context.length;
-          }
-
-          if (typeof normalized.vectorLength === "number") {
-            responseSummary.vectorLength = normalized.vectorLength;
-          }
-
-          if (normalized.debug?.vectorSearch) {
-            responseSummary.vectorSearch = normalized.debug.vectorSearch;
-          }
-
-          if (normalized.queryVector) {
-            responseSummary.queryVectorPreview = normalized.queryVector.slice(0, 6);
-          }
-
-          appendAskAiLog({
-            requestId: ragRequest.id,
-            timestamp: finishedAt,
-            kind: "response",
-            title: `Ответ ${ragResponseRaw.status}`,
-            description: `Ответ для сайта ${ragRequest.siteName} получен за ${formatDuration(finishedAt - ragRequest.startedAt)}.`,
-            data: Object.keys(responseSummary).length > 0 ? responseSummary : undefined,
-          });
-        }
-      } catch (error) {
-        console.error("Search playground RAG error", error);
-        if (!cancelled) {
-          const message =
-            error instanceof Error && error.message
-              ? error.message
-              : "Не удалось получить ответ от LLM.";
-          setRagError(message);
-          setRagResponse(null);
-          setStreamedAnswer("");
-
-          appendAskAiLog({
-            requestId: ragRequest.id,
-            timestamp: Date.now(),
-            kind: "error",
-            title: "Ошибка запроса к Ask AI",
-            description: message,
-            data: {
-              endpoint: "/api/public/collections/search/rag",
-              status: error instanceof Error ? error.message : undefined,
-            },
-          });
-        }
-      } finally {
-        if (!cancelled) {
-          setIsRagLoading(false);
-        }
-      }
-    };
-
-    void runRag();
+    }, 2200);
 
     return () => {
-      cancelled = true;
+      if (ragStatusTimerRef.current) {
+        clearInterval(ragStatusTimerRef.current);
+        ragStatusTimerRef.current = null;
+      }
     };
-  }, [appendAskAiLog, ragRequest]);
+  }, [ragStreamingState.showIndicator]);
 
   useEffect(() => {
+    ragStreamAbortControllerRef.current?.abort();
+    ragStreamAbortControllerRef.current = null;
     setRagRequest(null);
     setRagResponse(null);
     setRagError(null);
     setIsRagLoading(false);
     setStreamedAnswer("");
+    setRagStreamingState({
+      requestId: null,
+      question: "",
+      answer: "",
+      stage: "idle",
+      statusMessage: null,
+      statusIndex: 0,
+      showIndicator: false,
+      error: null,
+    });
+    setRagStreamingContext([]);
+    ragStreamingContextRef.current = [];
+    setRagStreamingChunks([]);
   }, [searchKey]);
 
   const resetResults = () => {
@@ -897,49 +830,567 @@ export default function SearchPlaygroundPage() {
     resetSuggest();
   };
 
+  const handleAskAiStop = useCallback(() => {
+    ragStreamAbortControllerRef.current?.abort();
+    ragStreamAbortControllerRef.current = null;
+    setIsRagLoading(false);
+    setRagStreamingState((prev) => ({
+      ...prev,
+      stage: "error",
+      showIndicator: false,
+      statusMessage: null,
+      error: "Ответ остановлен пользователем.",
+    }));
+    setRagError("Ответ остановлен пользователем.");
+  }, []);
+
+  const runRagStream = useCallback(
+    async (request: RagRequestState) => {
+      ragStreamAbortControllerRef.current?.abort();
+      ragStreamAbortControllerRef.current = null;
+
+      const initializeStreamState = () => {
+        setIsRagLoading(true);
+        setRagError(null);
+        setStreamedAnswer("");
+        setRagResponse(null);
+        setRagStreamingContext([]);
+        ragStreamingContextRef.current = [];
+        setRagStreamingChunks([]);
+        setRagStreamingState({
+          requestId: request.id,
+          question: request.query,
+          answer: "",
+          stage: "connecting",
+          statusMessage: RAG_STATUS_MESSAGES[0],
+          statusIndex: 0,
+          showIndicator: true,
+          error: null,
+        });
+      };
+
+      const canUseEventSource = typeof window !== "undefined" && typeof window.EventSource === "function";
+
+      initializeStreamState();
+
+      appendAskAiLog({
+        requestId: request.id,
+        timestamp: Date.now(),
+        kind: "request",
+        title: `${canUseEventSource ? "GET (SSE)" : "POST"} /api/public/collections/search/rag`,
+        description: `Отправляем запрос к сервису RAG (коллекция ${request.payload.collection}).`,
+        data: {
+          endpoint: "/api/public/collections/search/rag",
+          transport: canUseEventSource ? "eventsource" : "fetch",
+          headers: canUseEventSource
+            ? undefined
+            : {
+                Accept: "text/event-stream",
+                "Content-Type": "application/json",
+                "X-API-Key": maskApiKey(request.apiKey),
+              },
+          payload: request.payload,
+        },
+      });
+
+      const handleFinalizeError = (message: string, status?: number) => {
+        setRagError(message);
+        setRagStreamingState((prev) => ({
+          ...prev,
+          stage: "error",
+          showIndicator: false,
+          statusMessage: null,
+          error: message,
+        }));
+        const errorData: Record<string, unknown> = {
+          endpoint: "/api/public/collections/search/rag",
+        };
+        if (status !== undefined) {
+          errorData.status = status;
+        }
+        appendAskAiLog({
+          requestId: request.id,
+          timestamp: Date.now(),
+          kind: "error",
+          title: "Ошибка запроса к Ask AI",
+          description: message,
+          data: errorData,
+        });
+        ragStreamAbortControllerRef.current = null;
+        setIsRagLoading(false);
+      };
+
+      const handleEvent = (eventName: string, data: string, meta: { status: number }) => {
+        if (!data) {
+          return;
+        }
+
+        if (eventName === "status") {
+          try {
+            const payload = JSON.parse(data) as { stage?: string; message?: string };
+            setRagStreamingState((prev) => {
+              const stage =
+                payload.stage === "retrieving"
+                  ? "retrieving"
+                  : payload.stage === "answering"
+                    ? "answering"
+                    : payload.stage === "done"
+                      ? "done"
+                      : payload.stage === "error"
+                        ? "error"
+                        : "connecting";
+
+              return {
+                ...prev,
+                stage,
+                statusMessage: typeof payload.message === "string" ? payload.message : prev.statusMessage,
+                statusIndex: prev.statusIndex,
+                showIndicator: stage === "done" || stage === "error" ? false : prev.showIndicator || stage !== "answering",
+              };
+            });
+          } catch {
+            // ignore invalid status payload
+          }
+          return;
+        }
+
+        if (eventName === "delta") {
+          try {
+            const payload = JSON.parse(data) as { text?: string };
+            const delta = typeof payload.text === "string" ? payload.text : "";
+            if (!delta) {
+              return;
+            }
+
+            setRagStreamingState((prev) => ({
+              ...prev,
+              stage: "answering",
+              showIndicator: false,
+              statusMessage: null,
+              answer: prev.answer + delta,
+            }));
+            setStreamedAnswer((prev) => prev + delta);
+          } catch {
+            // ignore invalid delta payload
+          }
+          return;
+        }
+
+        if (eventName === "source") {
+          try {
+            const payload = JSON.parse(data) as {
+              context?: PublicRagContextEntry | null;
+              index?: number;
+            };
+            if (!payload.context) {
+              return;
+            }
+
+            setRagStreamingContext((prev) => {
+              const contextEntry = payload.context as PublicRagContextEntry;
+              const next = [...prev, contextEntry];
+              ragStreamingContextRef.current = next;
+              const currentIndex = next.length - 1;
+              setRagStreamingChunks((prevChunks) => [
+                ...prevChunks,
+                buildChunkFromContext(contextEntry, currentIndex),
+              ]);
+              return next;
+            });
+          } catch {
+            // ignore invalid source payload
+          }
+          return;
+        }
+
+        if (eventName === "error") {
+          try {
+            const payload = JSON.parse(data) as { message?: string };
+            const message = payload.message || "Не удалось получить ответ от LLM.";
+            throw new Error(message);
+          } catch (error) {
+            if (error instanceof Error) {
+              throw error;
+            }
+            throw new Error("Не удалось получить ответ от LLM.");
+          }
+        }
+
+        if (eventName === "done") {
+          try {
+            const payload = JSON.parse(data) as {
+              answer?: string;
+              usage?: PublicRagResponse["usage"];
+              provider?: PublicRagResponse["provider"];
+              embeddingProvider?: PublicRagResponse["embeddingProvider"];
+              collection?: string | null;
+              format?: string | null;
+            };
+            const answer = typeof payload.answer === "string" ? payload.answer : "";
+            const contextEntries = ragStreamingContextRef.current;
+            const responsePayload: PublicRagResponse = {
+              answer,
+              usage: payload.usage ?? null,
+              provider: payload.provider ?? null,
+              embeddingProvider: payload.embeddingProvider ?? null,
+              collection: payload.collection ?? null,
+              format: payload.format ?? null,
+              context: contextEntries,
+              queryVector: null,
+              vectorLength: null,
+            };
+            const normalized = normalizePublicRagResponse(responsePayload, { query: request.query });
+
+            setRagResponse(normalized);
+            setStreamedAnswer(answer);
+            setRagStreamingState((prev) => ({
+              ...prev,
+              stage: "done",
+              showIndicator: false,
+              statusMessage: null,
+              answer,
+            }));
+
+            const finishedAt = Date.now();
+            const responseSummary: Record<string, unknown> = { status: meta.status };
+            if (normalized.format) {
+              responseSummary.format = normalized.format;
+            }
+            if (normalized.usage) {
+              responseSummary.usage = normalized.usage;
+            }
+            if (normalized.provider) {
+              responseSummary.provider = normalized.provider;
+            }
+            if (normalized.embeddingProvider) {
+              responseSummary.embeddingProvider = normalized.embeddingProvider;
+            }
+            if (normalized.collection) {
+              responseSummary.collection = normalized.collection;
+            }
+            if (normalized.citations?.length) {
+              responseSummary.citations = normalized.citations.map((chunk) => ({
+                chunk_id: chunk.chunk_id,
+                doc_title: chunk.doc_title,
+                scores: chunk.scores,
+              }));
+            }
+            if (normalized.context) {
+              responseSummary.contextLength = normalized.context.length;
+            }
+            if (typeof normalized.vectorLength === "number") {
+              responseSummary.vectorLength = normalized.vectorLength;
+            }
+            if (normalized.debug?.vectorSearch) {
+              responseSummary.vectorSearch = normalized.debug.vectorSearch;
+            }
+
+            appendAskAiLog({
+              requestId: request.id,
+              timestamp: finishedAt,
+              kind: "response",
+              title: `Ответ ${meta.status}`,
+              description: `Ответ для сайта ${request.siteName} получен за ${formatDuration(finishedAt - request.startedAt)}.`,
+              data: Object.keys(responseSummary).length > 0 ? responseSummary : undefined,
+            });
+            ragStreamAbortControllerRef.current = null;
+            setIsRagLoading(false);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Не удалось обработать ответ LLM.";
+            setRagError(message);
+            setRagStreamingState((prev) => ({
+              ...prev,
+              stage: "error",
+              showIndicator: false,
+              statusMessage: null,
+              error: message,
+            }));
+          }
+        }
+      };
+
+      const buildSseUrl = () => {
+        const params = new URLSearchParams();
+        params.set("apiKey", request.apiKey);
+        params.set("workspace_id", request.workspaceId);
+        if (request.sitePublicId) {
+          params.set("sitePublicId", request.sitePublicId);
+        }
+        for (const [key, value] of Object.entries(request.payload)) {
+          if (value === undefined || value === null) {
+            continue;
+          }
+          if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+            params.set(key, String(value));
+          } else {
+            params.set(key, JSON.stringify(value));
+          }
+        }
+        return `/api/public/collections/search/rag?${params.toString()}`;
+      };
+
+      if (canUseEventSource) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const eventSource = new EventSource(buildSseUrl());
+            let settled = false;
+            const safeResolve = () => {
+              if (!settled) {
+                settled = true;
+                resolve();
+              }
+            };
+            const safeReject = (error: Error) => {
+              if (!settled) {
+                settled = true;
+                reject(error);
+              }
+            };
+            const close = () => {
+              eventSource.close();
+            };
+
+            const handleMessage = (eventName: string, eventData: string) => {
+              if (!eventData) {
+                return;
+              }
+              try {
+                handleEvent(eventName, eventData, { status: 200 });
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "Не удалось получить ответ от LLM.";
+                handleFinalizeError(message, 200);
+                close();
+                safeResolve();
+              }
+            };
+
+            eventSource.addEventListener("status", (event) =>
+              handleMessage("status", (event as MessageEvent<string>).data ?? ""),
+            );
+            eventSource.addEventListener("delta", (event) =>
+              handleMessage("delta", (event as MessageEvent<string>).data ?? ""),
+            );
+            eventSource.addEventListener("source", (event) =>
+              handleMessage("source", (event as MessageEvent<string>).data ?? ""),
+            );
+            eventSource.addEventListener("done", (event) => {
+              handleMessage("done", (event as MessageEvent<string>).data ?? "");
+              close();
+              safeResolve();
+            });
+            eventSource.addEventListener("error", (event) => {
+              const maybeData = (event as MessageEvent<string>).data;
+              if (typeof maybeData === "string" && maybeData.trim()) {
+                handleMessage("error", maybeData);
+                close();
+                safeResolve();
+                return;
+              }
+              close();
+              safeReject(new Error("SSE connection unavailable"));
+            });
+
+            ragStreamAbortControllerRef.current = {
+              abort: () => {
+                close();
+                safeResolve();
+              },
+            };
+          });
+          return;
+        } catch (error) {
+          console.warn("EventSource недоступен, переключаемся на fetch()", error);
+          ragStreamAbortControllerRef.current = null;
+          initializeStreamState();
+        }
+      }
+
+      const abortController = new AbortController();
+      ragStreamAbortControllerRef.current = {
+        abort: () => abortController.abort(),
+      };
+
+      try {
+        const response = await fetch("/api/public/collections/search/rag", {
+          method: "POST",
+          headers: {
+            Accept: "text/event-stream",
+            "Content-Type": "application/json",
+            "X-API-Key": request.apiKey,
+          },
+          body: JSON.stringify(request.payload),
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          const fallbackMessage =
+            response.status === 503
+              ? "Сервис RAG временно недоступен. Попробуйте позже."
+              : "Не удалось получить ответ от LLM.";
+          const errorMessage = (await extractErrorMessage(response)) ?? fallbackMessage;
+          throw new Error(`${errorMessage} (код ${response.status})`);
+        }
+
+        const contentType = response.headers.get("Content-Type") ?? response.headers.get("content-type");
+        const isSse = typeof contentType === "string" && contentType.includes("text/event-stream");
+
+        if (isSse && response.body) {
+          const decoder = new TextDecoder();
+          const reader = response.body.getReader();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+
+            let boundaryIndex = buffer.indexOf("\n\n");
+            while (boundaryIndex >= 0) {
+              const rawEvent = buffer.slice(0, boundaryIndex).replace(/\r/g, "");
+              buffer = buffer.slice(boundaryIndex + 2);
+              boundaryIndex = buffer.indexOf("\n\n");
+
+              if (!rawEvent.trim()) {
+                continue;
+              }
+
+              const lines = rawEvent.split("\n");
+              let eventName = "message";
+              const dataLines: string[] = [];
+
+              for (const line of lines) {
+                if (line.startsWith("event:")) {
+                  eventName = line.slice(6).trim();
+                } else if (line.startsWith("data:")) {
+                  dataLines.push(line.slice(5).trim());
+                }
+              }
+
+              const eventData = dataLines.join("\n");
+              if (!eventData) {
+                continue;
+              }
+
+              try {
+                handleEvent(eventName, eventData, { status: response.status });
+              } catch (error) {
+                const message = error instanceof Error ? error.message : "Не удалось получить ответ от LLM.";
+                handleFinalizeError(message, response.status);
+                reader.cancel().catch(() => {});
+                return;
+              }
+            }
+          }
+
+          setIsRagLoading(false);
+          ragStreamAbortControllerRef.current = null;
+          return;
+        }
+
+        const text = await response.text();
+        let json: unknown = null;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          json = null;
+        }
+        if (!json || typeof json !== "object") {
+          throw new Error("Не удалось прочитать ответ сервера.");
+        }
+        const payload = json as PublicRagResponse;
+        const normalized = normalizePublicRagResponse(payload, { query: request.query });
+        setRagResponse(normalized);
+        setStreamedAnswer(normalized.answer ?? "");
+        const contextEntries = Array.isArray(payload.context) ? payload.context : [];
+        setRagStreamingContext(contextEntries);
+        ragStreamingContextRef.current = contextEntries;
+        setRagStreamingChunks(
+          contextEntries.map((entry, index) =>
+            buildChunkFromContext(entry, index),
+          ),
+        );
+        setRagStreamingState({
+          requestId: request.id,
+          question: request.query,
+          answer: normalized.answer ?? "",
+          stage: "done",
+          statusMessage: null,
+          statusIndex: 0,
+          showIndicator: false,
+          error: null,
+        });
+        ragStreamAbortControllerRef.current = null;
+        setIsRagLoading(false);
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          return;
+        }
+
+        console.error("Search playground RAG error", error);
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : "Не удалось получить ответ от LLM.";
+        setRagResponse(null);
+        setStreamedAnswer("");
+        handleFinalizeError(message);
+      } finally {
+        if (!abortController.signal.aborted) {
+          setIsRagLoading(false);
+        }
+      }
+    },
+    [appendAskAiLog],
+  );
+
   const handleAskAi = async (overrideQuery?: string) => {
     const trimmedQuery = (overrideQuery ?? query).trim();
     setQuery(trimmedQuery);
 
-    if (!trimmedQuery) {
-      setRagError("Введите вопрос, чтобы Ask AI подготовил ответ.");
+    const registerValidationError = (message: string) => {
+      setRagError(message);
       setRagResponse(null);
       setStreamedAnswer("");
+      setRagStreamingState((prev) => ({
+        ...prev,
+        question: trimmedQuery || prev.question,
+        stage: "error",
+        statusMessage: null,
+        showIndicator: false,
+        error: message,
+      }));
+    };
+
+    if (!trimmedQuery) {
+      registerValidationError("Введите вопрос, чтобы Ask AI подготовил ответ.");
       return;
     }
 
     if (!settings.knowledgeBaseId) {
-      setRagError("Выберите базу знаний перед запросом к Ask AI.");
-      setRagResponse(null);
-      setStreamedAnswer("");
+      registerValidationError("Выберите базу знаний перед запросом к Ask AI.");
       return;
     }
 
     if (!selectedSite) {
-      setRagError("Выберите сайт с публичным API-ключом перед запросом к Ask AI.");
-      setRagResponse(null);
-      setStreamedAnswer("");
+      registerValidationError("Выберите сайт с публичным API-ключом перед запросом к Ask AI.");
       return;
     }
 
     if (!siteApiKey) {
-      setRagError("Для выбранного сайта отсутствует публичный API-ключ.");
-      setRagResponse(null);
-      setStreamedAnswer("");
+      registerValidationError("Для выбранного сайта отсутствует публичный API-ключ.");
       return;
     }
 
     if (!workspaceId) {
-      setRagError("Не удалось определить рабочее пространство. Обновите страницу и попробуйте снова.");
-      setRagResponse(null);
-      setStreamedAnswer("");
+      registerValidationError("Не удалось определить рабочее пространство. Обновите страницу и попробуйте снова.");
       return;
     }
 
     if (ragConfigurationError) {
-      setRagError(ragConfigurationError);
-      setRagResponse(null);
-      setStreamedAnswer("");
+      registerValidationError(ragConfigurationError);
       return;
     }
 
@@ -990,7 +1441,7 @@ export default function SearchPlaygroundPage() {
     });
 
     ragRequestCounter.current = nextRequestId;
-    setRagRequest({
+    const nextRequest: RagRequestState = {
       id: nextRequestId,
       payload,
       startedAt,
@@ -999,7 +1450,9 @@ export default function SearchPlaygroundPage() {
       siteName: selectedSite.name,
       sitePublicId: selectedSite.publicId ?? undefined,
       workspaceId,
-    });
+    };
+    setRagRequest(nextRequest);
+    void runRagStream(nextRequest);
   };
 
   const handleOpenSuggestResult = (
@@ -1376,6 +1829,24 @@ export default function SearchPlaygroundPage() {
     );
   };
 
+  const askTabState = useMemo(
+    () => ({
+      isActive: ragStreamingState.stage !== "idle" || ragStreamingState.question.length > 0,
+      question: ragStreamingState.question,
+      answer: streamedAnswer,
+      statusMessage: ragStreamingState.statusMessage,
+      showIndicator: ragStreamingState.showIndicator,
+      error: ragStreamingState.error ?? ragError,
+      sources: ragStreamingChunks,
+      isStreaming:
+        ragStreamingState.stage === "connecting" ||
+        ragStreamingState.stage === "retrieving" ||
+        ragStreamingState.stage === "answering",
+      isDone: ragStreamingState.stage === "done",
+    }),
+    [ragError, ragStreamingChunks, ragStreamingState, streamedAnswer],
+  );
+
   return (
     <div className="flex h-full flex-col bg-background">
       <header className="flex items-center justify-between border-b px-4 py-2">
@@ -1397,12 +1868,15 @@ export default function SearchPlaygroundPage() {
             error={suggestError}
             onQueryChange={setQuery}
             onAskAi={handleAskAi}
+            askState={askTabState}
+            onAskAiStop={handleAskAiStop}
             onResultOpen={handleOpenSuggestResult}
             onPrefetch={(value) => {
               if (settings.knowledgeBaseId) {
                 prefetchSuggest(value);
               }
             }}
+            closeOnAsk={false}
             disabledReason={
               !settings.knowledgeBaseId
                 ? "Выберите базу знаний"
@@ -1719,6 +2193,31 @@ export default function SearchPlaygroundPage() {
                                 </SelectItem>
                               ))
                             )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <SettingLabelWithTooltip
+                          htmlFor="playground-response-format"
+                          label="Формат ответа"
+                          description="Выберите представление ответа: Markdown для структурированного текста, HTML для встраивания или обычный текст без форматирования."
+                        />
+                        <Select
+                          value={settings.rag.responseFormat}
+                          onValueChange={(value) =>
+                            handleRagSettingsChange(
+                              "responseFormat",
+                              value as PlaygroundSettings["rag"]["responseFormat"],
+                            )
+                          }
+                        >
+                          <SelectTrigger id="playground-response-format">
+                            <SelectValue placeholder="Выберите формат" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="markdown">Markdown</SelectItem>
+                            <SelectItem value="html">HTML</SelectItem>
+                            <SelectItem value="text">Без форматирования</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
