@@ -23,6 +23,12 @@ const MIN_DELAY_MS = 500;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const TERMINAL_JOB_STATUSES: Array<KnowledgeBaseCrawlJobStatus["status"]> = [
+  "failed",
+  "canceled",
+  "done",
+];
+
 type CrawlQueueItem = {
   url: string;
   depth: number;
@@ -457,6 +463,22 @@ export function startKnowledgeBaseCrawl(
   });
 
   return { ...state.status };
+}
+
+export function retryKnowledgeBaseCrawl(
+  jobId: string,
+  workspaceId: string,
+): KnowledgeBaseCrawlJobStatus | null {
+  const state = jobs.get(jobId);
+  if (!state || state.workspaceId !== workspaceId) {
+    return null;
+  }
+
+  if (!TERMINAL_JOB_STATUSES.includes(state.status.status)) {
+    throw new Error("Задача краулинга ещё выполняется и не может быть перезапущена");
+  }
+
+  return startKnowledgeBaseCrawl(state.workspaceId, state.baseId, state.config);
 }
 
 export function getKnowledgeBaseCrawlJob(jobId: string): KnowledgeBaseCrawlJobStatus | null {

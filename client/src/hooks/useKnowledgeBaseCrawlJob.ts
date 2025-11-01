@@ -21,9 +21,11 @@ type UseKnowledgeBaseCrawlJobResult = {
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   cancel: () => Promise<void>;
+  retry: () => Promise<void>;
   isPausing: boolean;
   isResuming: boolean;
   isCanceling: boolean;
+  isRetrying: boolean;
   connectionError: string | null;
   actionError: string | null;
 };
@@ -64,6 +66,7 @@ export function useKnowledgeBaseCrawlJob({
   const [isPausing, setIsPausing] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [isCanceling, setIsCanceling] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   const previousJobRef = useRef<KnowledgeBaseCrawlJobStatus | null>(initialJob ?? null);
   const fetchedJobIdsRef = useRef<Set<string>>(
@@ -318,7 +321,7 @@ export function useKnowledgeBaseCrawlJob({
 
   const executeJobCommand = useCallback(
     async (
-      action: "pause" | "resume" | "cancel",
+      action: "pause" | "resume" | "cancel" | "retry",
       setPending: (value: boolean) => void,
     ) => {
       if (!job) {
@@ -360,6 +363,10 @@ export function useKnowledgeBaseCrawlJob({
     await executeJobCommand("cancel", setIsCanceling);
   }, [executeJobCommand]);
 
+  const retry = useCallback(async () => {
+    await executeJobCommand("retry", setIsRetrying);
+  }, [executeJobCommand]);
+
   return useMemo(
     () => ({
       job,
@@ -367,9 +374,11 @@ export function useKnowledgeBaseCrawlJob({
       pause,
       resume,
       cancel,
+      retry,
       isPausing,
       isResuming,
       isCanceling,
+      isRetrying,
       connectionError,
       actionError,
     }),
@@ -379,9 +388,11 @@ export function useKnowledgeBaseCrawlJob({
       pause,
       resume,
       cancel,
+      retry,
       isPausing,
       isResuming,
       isCanceling,
+      isRetrying,
       connectionError,
       actionError,
     ],

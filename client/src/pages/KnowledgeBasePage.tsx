@@ -547,9 +547,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     pause: pauseCrawl,
     resume: resumeCrawl,
     cancel: cancelCrawl,
+    retry: retryCrawl,
     isPausing: isCrawlPausing,
     isResuming: isCrawlResuming,
     isCanceling: isCrawlCanceling,
+    isRetrying: isCrawlRetrying,
     connectionError: crawlConnectionError,
     actionError: crawlActionError,
   } = useKnowledgeBaseCrawlJob({
@@ -1897,9 +1899,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             onPause={pauseCrawl}
             onResume={resumeCrawl}
             onCancel={cancelCrawl}
+            onRetry={retryCrawl}
             isPausing={isCrawlPausing}
             isResuming={isCrawlResuming}
             isCanceling={isCrawlCanceling}
+            isRetrying={isCrawlRetrying}
             connectionError={crawlConnectionError}
             actionError={crawlActionError}
           />

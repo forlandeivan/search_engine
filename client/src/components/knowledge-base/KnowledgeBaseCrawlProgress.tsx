@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, Clock3, PauseCircle, PlayCircle, StopCircle } from "lucide-react";
+import { AlertTriangle, Clock3, PauseCircle, PlayCircle, RefreshCw, StopCircle } from "lucide-react";
 import type { CrawlActivityEvent } from "@/hooks/useKnowledgeBaseCrawlJob";
 
 const STATUS_LABELS: Record<KnowledgeBaseCrawlJobStatus["status"], string> = {
@@ -68,9 +68,11 @@ type KnowledgeBaseCrawlProgressProps = {
   onPause?: () => void | Promise<void>;
   onResume?: () => void | Promise<void>;
   onCancel?: () => void | Promise<void>;
+  onRetry?: () => void | Promise<void>;
   isPausing?: boolean;
   isResuming?: boolean;
   isCanceling?: boolean;
+  isRetrying?: boolean;
   connectionError?: string | null;
   actionError?: string | null;
 };
@@ -81,9 +83,11 @@ export function KnowledgeBaseCrawlProgress({
   onPause,
   onResume,
   onCancel,
+  onRetry,
   isPausing = false,
   isResuming = false,
   isCanceling = false,
+  isRetrying = false,
   connectionError,
   actionError,
 }: KnowledgeBaseCrawlProgressProps) {
@@ -91,6 +95,7 @@ export function KnowledgeBaseCrawlProgress({
   const showPause = job.status === "running";
   const showResume = job.status === "paused";
   const showCancel = !isTerminal;
+  const showRetry = job.status === "failed";
 
   return (
     <Card className="border border-primary/30 bg-primary/5">
@@ -161,6 +166,19 @@ export function KnowledgeBaseCrawlProgress({
                 }}
               >
                 <StopCircle className="mr-2 h-4 w-4" /> Отменить
+              </Button>
+            )}
+            {showRetry && onRetry && (
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                disabled={isRetrying}
+                onClick={() => {
+                  void onRetry?.();
+                }}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" /> Повторить
               </Button>
             )}
           </div>
