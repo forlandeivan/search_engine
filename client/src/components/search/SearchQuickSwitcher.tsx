@@ -63,7 +63,7 @@ const STATUS_BAR_SHORTCUTS = [
   { label: "Навигация", value: "↑/↓" },
   { label: "Группы", value: "Tab" },
   { label: "Новая вкладка", value: "⇧↵" },
-  { label: "Ask AI", value: "⌘↵" },
+  { label: "Ask AI", value: "↵" },
   { label: "Закрыть", value: "Esc" },
 ];
 
@@ -675,15 +675,25 @@ export function SearchQuickSwitcher({
       return;
     }
 
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      void handleAskAi();
-      return;
-    }
-
     if (event.key === "Tab") {
       event.preventDefault();
       moveGroup(event.shiftKey ? -1 : 1);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (activeRow?.type === "item") {
+        const group = groups[activeRow.groupIndex];
+        const item = group?.items[activeRow.itemIndex];
+        if (item) {
+          onResultOpen(item, { newTab: event.shiftKey });
+          setOpen(false);
+          return;
+        }
+      }
+
+      void handleAskAi();
       return;
     }
 
@@ -758,12 +768,6 @@ export function SearchQuickSwitcher({
       return;
     }
 
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      void handleAskAi();
-      return;
-    }
-
     if (event.key === "Enter") {
       event.preventDefault();
       if (activeRow?.type === "ask") {
@@ -821,7 +825,7 @@ export function SearchQuickSwitcher({
               Мгновенный ответ по базе знаний
             </span>
           </div>
-          <kbd className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">⌘↵</kbd>
+          <kbd className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">↵</kbd>
         </div>
       );
     }

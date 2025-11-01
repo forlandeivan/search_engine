@@ -83,6 +83,29 @@ const ASK_AI_ALLOWED_TAGS = [
 
 const ASK_AI_ALLOWED_ATTR = ["href", "title", "target", "rel"];
 
+type AskAiHtmlToken = { type: "tag" | "text"; value: string };
+
+const tokenizeAskAiHtml = (html: string): AskAiHtmlToken[] => {
+  if (!html) {
+    return [];
+  }
+
+  const tokens: AskAiHtmlToken[] = [];
+  const regex = /(<[^>]+>|[^<]+)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(html)) !== null) {
+    const value = match[0];
+    if (!value) {
+      continue;
+    }
+
+    tokens.push({ type: value.startsWith("<") ? "tag" : "text", value });
+  }
+
+  return tokens;
+};
+
 const sanitizeAskAiHtml = (html: string): string => {
   if (!html) {
     return "";
@@ -494,6 +517,7 @@ export default function SearchPlaygroundPage() {
   const [isRagLoading, setIsRagLoading] = useState(false);
   const [, setStreamedAnswer] = useState("");
   const [streamedAnswerHtml, setStreamedAnswerHtml] = useState("");
+  const [displayedAnswerHtml, setDisplayedAnswerHtml] = useState("");
   const ragRequestCounter = useRef(0);
   const [ragRequest, setRagRequest] = useState<RagRequestState | null>(null);
   const [ragStreamingState, setRagStreamingState] = useState<{
@@ -521,6 +545,21 @@ export default function SearchPlaygroundPage() {
   const ragCurrentRequestIdRef = useRef<number | null>(null);
   const ragStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
   const ragStreamingContextRef = useRef<PublicRagContextEntry[]>([]);
+  const askAiTypingStateRef = useRef<{
+    tokens: AskAiHtmlToken[];
+    tokenIndex: number;
+    charIndex: number;
+    completedHtml: string;
+    partialHtml: string;
+    timer: ReturnType<typeof setTimeout> | null;
+  }>({
+    tokens: [],
+    tokenIndex: 0,
+    charIndex: 0,
+    completedHtml: "",
+    partialHtml: "",
+    timer: null,
+  });
   const [askAiLogEntries, setAskAiLogEntries] = useState<AskAiLogEntry[]>([]);
   const [isAskAiLogOpen, setIsAskAiLogOpen] = useState(false);
   const askAiLogContainerRef = useRef<HTMLDivElement | null>(null);
@@ -865,6 +904,8 @@ export default function SearchPlaygroundPage() {
     setRagError(null);
     setIsRagLoading(false);
     setStreamedAnswer("");
+    setStreamedAnswerHtml("");
+    setDisplayedAnswerHtml("");
     setRagStreamingState({
       requestId: null,
       question: "",
@@ -888,6 +929,7 @@ export default function SearchPlaygroundPage() {
     setIsRagLoading(false);
     setStreamedAnswer("");
     setStreamedAnswerHtml("");
+    setDisplayedAnswerHtml("");
     setRagRequest(null);
     ragCurrentRequestIdRef.current = null;
     resetSuggest();
@@ -918,6 +960,7 @@ export default function SearchPlaygroundPage() {
         setRagError(null);
         setStreamedAnswer("");
         setStreamedAnswerHtml("");
+        setDisplayedAnswerHtml("");
         setRagResponse(null);
         setRagStreamingContext([]);
         ragStreamingContextRef.current = [];
@@ -970,6 +1013,7 @@ export default function SearchPlaygroundPage() {
         }));
         setStreamedAnswer("");
         setStreamedAnswerHtml("");
+        setDisplayedAnswerHtml("");
         const errorData: Record<string, unknown> = {
           endpoint: "/api/public/collections/search/rag",
         };
@@ -1431,6 +1475,116 @@ export default function SearchPlaygroundPage() {
     },
     [appendAskAiLog],
   );
+
+  const clearAskAiTypingTimer = useCallback(() => {
+    const state = askAiTypingStateRef.current;
+    if (state.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+  }, []);
+
+  const runAskAiTypingTick = useCallback(() => {
+    const state = askAiTypingStateRef.current;
+
+    if (!state.tokens.length || state.tokenIndex >= state.tokens.length) {
+      state.timer = null;
+      setDisplayedAnswerHtml(state.completedHtml + state.partialHtml);
+      return;
+    }
+
+    const token = state.tokens[state.tokenIndex];
+
+    if (token.type === "tag") {
+      state.completedHtml += token.value;
+      state.tokenIndex += 1;
+      state.charIndex = 0;
+      state.partialHtml = "";
+      setDisplayedAnswerHtml(state.completedHtml);
+      state.timer = setTimeout(runAskAiTypingTick, 0);
+      return;
+    }
+
+    const step = Math.max(1, Math.ceil(token.value.length / 28));
+    state.charIndex = Math.min(token.value.length, state.charIndex + step);
+    state.partialHtml = token.value.slice(0, state.charIndex);
+    const nextHtml = state.completedHtml + state.partialHtml;
+    setDisplayedAnswerHtml(nextHtml);
+
+    if (state.charIndex >= token.value.length) {
+      state.completedHtml = nextHtml;
+      state.tokenIndex += 1;
+      state.charIndex = 0;
+      state.partialHtml = "";
+    }
+
+    state.timer = setTimeout(runAskAiTypingTick, 20);
+  }, []);
+
+  useEffect(() => {
+    const state = askAiTypingStateRef.current;
+    clearAskAiTypingTimer();
+
+    if (!streamedAnswerHtml) {
+      state.tokens = [];
+      state.tokenIndex = 0;
+      state.charIndex = 0;
+      state.completedHtml = "";
+      state.partialHtml = "";
+      setDisplayedAnswerHtml("");
+      return;
+    }
+
+    state.tokens = tokenizeAskAiHtml(streamedAnswerHtml);
+
+    const currentHtml = state.completedHtml + state.partialHtml;
+
+    if (!currentHtml || !streamedAnswerHtml.startsWith(currentHtml)) {
+      state.tokenIndex = 0;
+      state.charIndex = 0;
+      state.completedHtml = "";
+      state.partialHtml = "";
+      setDisplayedAnswerHtml("");
+    } else {
+      let matchedLength = 0;
+      let completedHtml = "";
+      let tokenIndex = 0;
+      let partialHtml = "";
+      let partialChars = 0;
+
+      while (tokenIndex < state.tokens.length && matchedLength < currentHtml.length) {
+        const token = state.tokens[tokenIndex];
+        const tokenLength = token.value.length;
+
+        if (matchedLength + tokenLength <= currentHtml.length) {
+          completedHtml += token.value;
+          matchedLength += tokenLength;
+          tokenIndex += 1;
+          continue;
+        }
+
+        if (token.type === "text") {
+          partialChars = currentHtml.length - matchedLength;
+          partialHtml = token.value.slice(0, partialChars);
+        }
+
+        matchedLength = currentHtml.length;
+        break;
+      }
+
+      state.completedHtml = completedHtml;
+      state.tokenIndex = tokenIndex;
+      state.charIndex = partialChars;
+      state.partialHtml = partialHtml;
+      setDisplayedAnswerHtml(currentHtml);
+    }
+
+    state.timer = setTimeout(runAskAiTypingTick, 16);
+
+    return () => {
+      clearAskAiTypingTimer();
+    };
+  }, [clearAskAiTypingTimer, runAskAiTypingTick, streamedAnswerHtml]);
 
   const handleAskAi = async (overrideQuery?: string) => {
     const trimmedQuery = (overrideQuery ?? query).trim();
@@ -1919,7 +2073,7 @@ export default function SearchPlaygroundPage() {
     () => ({
       isActive: ragStreamingState.stage !== "idle" || ragStreamingState.question.length > 0,
       question: ragStreamingState.question,
-      answerHtml: streamedAnswerHtml,
+      answerHtml: displayedAnswerHtml,
       statusMessage: ragStreamingState.statusMessage,
       showIndicator: ragStreamingState.showIndicator,
       error: ragStreamingState.error ?? ragError,
@@ -1930,12 +2084,12 @@ export default function SearchPlaygroundPage() {
         ragStreamingState.stage === "answering",
       isDone: ragStreamingState.stage === "done",
     }),
-    [ragError, ragStreamingChunks, ragStreamingState, streamedAnswerHtml],
+    [displayedAnswerHtml, ragError, ragStreamingChunks, ragStreamingState],
   );
 
   const ragAnswerHtml = useMemo(() => {
-    if (streamedAnswerHtml) {
-      return streamedAnswerHtml;
+    if (displayedAnswerHtml) {
+      return displayedAnswerHtml;
     }
 
     if (ragResponse?.answer) {
@@ -1943,7 +2097,7 @@ export default function SearchPlaygroundPage() {
     }
 
     return "";
-  }, [ragResponse?.answer, streamedAnswerHtml]);
+  }, [displayedAnswerHtml, ragResponse?.answer]);
 
   return (
     <div className="flex h-full flex-col bg-background">
