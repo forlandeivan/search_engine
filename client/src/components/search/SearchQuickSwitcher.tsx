@@ -30,7 +30,7 @@ interface SearchQuickSwitcherProps {
   askState?: {
     isActive: boolean;
     question: string;
-    answer: string;
+    answerHtml: string;
     statusMessage: string | null;
     showIndicator: boolean;
     error: string | null;
@@ -969,7 +969,7 @@ export function SearchQuickSwitcher({
                   onClick={handleBackToSearch}
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  <span>Ask another question…</span>
+                  <span>Задать другой вопрос…</span>
                 </button>
                 {askState?.isStreaming && onAskAiStop && (
                   <Button
@@ -984,10 +984,13 @@ export function SearchQuickSwitcher({
                 )}
               </div>
             )}
-            <div className="relative flex flex-1 flex-col overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div
                 ref={scrollParentRef}
-                className={cn("flex-1 overflow-y-auto px-3 py-3", activeTab === "ask" && "hidden")}
+                className={cn(
+                  "flex-1 overflow-y-auto px-3 py-3",
+                  activeTab === "ask" && "hidden",
+                )}
               >
                 <div
                   id="search-quick-switcher-list"
@@ -1065,8 +1068,8 @@ export function SearchQuickSwitcher({
 
               <div
                 className={cn(
-                  "absolute left-0 right-0 top-0 bottom-12 flex flex-col gap-4 overflow-y-auto px-4 py-4",
-                  activeTab === "search" && "pointer-events-none opacity-0",
+                  "flex-1 overflow-y-auto px-4 py-4",
+                  activeTab === "search" && "hidden",
                 )}
                 aria-live="polite"
               >
@@ -1096,8 +1099,11 @@ export function SearchQuickSwitcher({
                     role="status"
                     aria-live="polite"
                   >
-                    {askState?.answer ? (
-                      <div className="whitespace-pre-wrap">{askState.answer}</div>
+                    {askState?.answerHtml ? (
+                      <div
+                        className="prose prose-sm max-w-none text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
+                        dangerouslySetInnerHTML={{ __html: askState.answerHtml }}
+                      />
                     ) : askState?.isStreaming ? (
                       <span className="text-muted-foreground">Готовим ответ…</span>
                     ) : (
@@ -1106,46 +1112,11 @@ export function SearchQuickSwitcher({
                       </span>
                     )}
                   </div>
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold text-foreground">
-                      Источники{askState?.sources.length ? ` · ${askState.sources.length}` : ""}
-                    </div>
-                    {askState?.sources.length ? (
-                      <div className="space-y-2">
-                        {askState.sources.map((chunk, index) => (
-                          <div key={`${chunk.chunk_id}-${index}`} className="rounded border px-3 py-2">
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
-                              <span>#{index + 1}</span>
-                              {chunk.scores && (
-                                <span className="font-mono">
-                                  {chunk.scores.vector !== undefined
-                                    ? `Vector ${chunk.scores.vector.toFixed(3)}`
-                                    : chunk.scores.bm25 !== undefined
-                                      ? `BM25 ${chunk.scores.bm25.toFixed(3)}`
-                                      : null}
-                                </span>
-                              )}
-                            </div>
-                            <div className="mt-1 text-sm font-semibold text-foreground">
-                              {chunk.section_title || chunk.doc_title || "Без заголовка"}
-                            </div>
-                            {chunk.snippet && (
-                              <p className="mt-2 text-sm text-foreground">{chunk.snippet}</p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                        {askState?.isStreaming
-                          ? "Собираем источники…"
-                          : "Источники появятся, когда Ask AI завершит поиск."}
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
-              <div className="flex items-center justify-between border-t bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+            </div>
+            <div className="shrink-0 border-t bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-3">
                   {STATUS_BAR_SHORTCUTS.map((shortcut) => (
                     <span key={shortcut.label} className="inline-flex items-center gap-1">

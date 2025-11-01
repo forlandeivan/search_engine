@@ -6,6 +6,7 @@ import SearchQuickSwitcher, {
   buildSuggestGroups,
   type SuggestResultGroup,
 } from "@/components/search/SearchQuickSwitcher";
+import DOMPurify from "dompurify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -61,6 +62,64 @@ const maskApiKey = (value: string) => {
   }
 
   return `${trimmed.slice(0, 4)}***${trimmed.slice(-4)}`;
+};
+
+const ASK_AI_ALLOWED_TAGS = [
+  "p",
+  "br",
+  "strong",
+  "em",
+  "a",
+  "ul",
+  "ol",
+  "li",
+  "code",
+  "pre",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+];
+
+const ASK_AI_ALLOWED_ATTR = ["href", "title", "target", "rel"];
+
+const sanitizeAskAiHtml = (html: string): string => {
+  if (!html) {
+    return "";
+  }
+
+  if (typeof window === "undefined") {
+    return html;
+  }
+
+  const sanitized = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ASK_AI_ALLOWED_TAGS,
+    ALLOWED_ATTR: ASK_AI_ALLOWED_ATTR,
+    KEEP_CONTENT: true,
+    RETURN_TRUSTED_TYPE: false,
+  });
+
+  if (!sanitized) {
+    return "";
+  }
+
+  if (typeof window.DOMParser === "undefined") {
+    return sanitized;
+  }
+
+  try {
+    const parser = new DOMParser();
+    const documentWrapper = parser.parseFromString(`<div>${sanitized}</div>`, "text/html");
+
+    documentWrapper.querySelectorAll("a").forEach((anchor) => {
+      anchor.setAttribute("target", "_blank");
+      anchor.setAttribute("rel", "noopener noreferrer");
+    });
+
+    return documentWrapper.body.innerHTML;
+  } catch {
+    return sanitized;
+  }
 };
 
 interface PublicRagContextEntry {
@@ -433,7 +492,8 @@ export default function SearchPlaygroundPage() {
   const [ragResponse, setRagResponse] = useState<RagResponsePayload | null>(null);
   const [ragError, setRagError] = useState<string | null>(null);
   const [isRagLoading, setIsRagLoading] = useState(false);
-  const [streamedAnswer, setStreamedAnswer] = useState("");
+  const [, setStreamedAnswer] = useState("");
+  const [streamedAnswerHtml, setStreamedAnswerHtml] = useState("");
   const ragRequestCounter = useRef(0);
   const [ragRequest, setRagRequest] = useState<RagRequestState | null>(null);
   const [ragStreamingState, setRagStreamingState] = useState<{
@@ -458,6 +518,7 @@ export default function SearchPlaygroundPage() {
   const [ragStreamingContext, setRagStreamingContext] = useState<PublicRagContextEntry[]>([]);
   const [ragStreamingChunks, setRagStreamingChunks] = useState<RagChunk[]>([]);
   const ragStreamAbortControllerRef = useRef<RagStreamAbortHandle | null>(null);
+  const ragCurrentRequestIdRef = useRef<number | null>(null);
   const ragStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
   const ragStreamingContextRef = useRef<PublicRagContextEntry[]>([]);
   const [askAiLogEntries, setAskAiLogEntries] = useState<AskAiLogEntry[]>([]);
@@ -826,13 +887,16 @@ export default function SearchPlaygroundPage() {
     setRagError(null);
     setIsRagLoading(false);
     setStreamedAnswer("");
+    setStreamedAnswerHtml("");
     setRagRequest(null);
+    ragCurrentRequestIdRef.current = null;
     resetSuggest();
   };
 
   const handleAskAiStop = useCallback(() => {
     ragStreamAbortControllerRef.current?.abort();
     ragStreamAbortControllerRef.current = null;
+    ragCurrentRequestIdRef.current = null;
     setIsRagLoading(false);
     setRagStreamingState((prev) => ({
       ...prev,
@@ -853,6 +917,7 @@ export default function SearchPlaygroundPage() {
         setIsRagLoading(true);
         setRagError(null);
         setStreamedAnswer("");
+        setStreamedAnswerHtml("");
         setRagResponse(null);
         setRagStreamingContext([]);
         ragStreamingContextRef.current = [];
@@ -871,6 +936,7 @@ export default function SearchPlaygroundPage() {
 
       const canUseEventSource = typeof window !== "undefined" && typeof window.EventSource === "function";
 
+      ragCurrentRequestIdRef.current = request.id;
       initializeStreamState();
 
       appendAskAiLog({
@@ -902,6 +968,8 @@ export default function SearchPlaygroundPage() {
           statusMessage: null,
           error: message,
         }));
+        setStreamedAnswer("");
+        setStreamedAnswerHtml("");
         const errorData: Record<string, unknown> = {
           endpoint: "/api/public/collections/search/rag",
         };
@@ -918,10 +986,15 @@ export default function SearchPlaygroundPage() {
         });
         ragStreamAbortControllerRef.current = null;
         setIsRagLoading(false);
+        ragCurrentRequestIdRef.current = null;
       };
 
       const handleEvent = (eventName: string, data: string, meta: { status: number }) => {
         if (!data) {
+          return;
+        }
+
+        if (ragCurrentRequestIdRef.current !== request.id) {
           return;
         }
 
@@ -969,7 +1042,9 @@ export default function SearchPlaygroundPage() {
               statusMessage: null,
               answer: prev.answer + delta,
             }));
+            const sanitizedDelta = sanitizeAskAiHtml(delta);
             setStreamedAnswer((prev) => prev + delta);
+            setStreamedAnswerHtml((prev) => prev + sanitizedDelta);
           } catch {
             // ignore invalid delta payload
           }
@@ -1043,6 +1118,7 @@ export default function SearchPlaygroundPage() {
 
             setRagResponse(normalized);
             setStreamedAnswer(answer);
+            setStreamedAnswerHtml(sanitizeAskAiHtml(answer));
             setRagStreamingState((prev) => ({
               ...prev,
               stage: "done",
@@ -1050,6 +1126,8 @@ export default function SearchPlaygroundPage() {
               statusMessage: null,
               answer,
             }));
+
+            ragCurrentRequestIdRef.current = null;
 
             const finishedAt = Date.now();
             const responseSummary: Record<string, unknown> = { status: meta.status };
@@ -1222,6 +1300,10 @@ export default function SearchPlaygroundPage() {
           signal: abortController.signal,
         });
 
+        if (ragCurrentRequestIdRef.current !== request.id) {
+          return;
+        }
+
         if (!response.ok) {
           const fallbackMessage =
             response.status === 503
@@ -1287,6 +1369,7 @@ export default function SearchPlaygroundPage() {
 
           setIsRagLoading(false);
           ragStreamAbortControllerRef.current = null;
+          ragCurrentRequestIdRef.current = null;
           return;
         }
 
@@ -1303,7 +1386,9 @@ export default function SearchPlaygroundPage() {
         const payload = json as PublicRagResponse;
         const normalized = normalizePublicRagResponse(payload, { query: request.query });
         setRagResponse(normalized);
-        setStreamedAnswer(normalized.answer ?? "");
+        const finalAnswer = normalized.answer ?? "";
+        setStreamedAnswer(finalAnswer);
+        setStreamedAnswerHtml(sanitizeAskAiHtml(finalAnswer));
         const contextEntries = Array.isArray(payload.context) ? payload.context : [];
         setRagStreamingContext(contextEntries);
         ragStreamingContextRef.current = contextEntries;
@@ -1315,7 +1400,7 @@ export default function SearchPlaygroundPage() {
         setRagStreamingState({
           requestId: request.id,
           question: request.query,
-          answer: normalized.answer ?? "",
+          answer: finalAnswer,
           stage: "done",
           statusMessage: null,
           statusIndex: 0,
@@ -1324,6 +1409,7 @@ export default function SearchPlaygroundPage() {
         });
         ragStreamAbortControllerRef.current = null;
         setIsRagLoading(false);
+        ragCurrentRequestIdRef.current = null;
       } catch (error) {
         if (abortController.signal.aborted) {
           return;
@@ -1833,7 +1919,7 @@ export default function SearchPlaygroundPage() {
     () => ({
       isActive: ragStreamingState.stage !== "idle" || ragStreamingState.question.length > 0,
       question: ragStreamingState.question,
-      answer: streamedAnswer,
+      answerHtml: streamedAnswerHtml,
       statusMessage: ragStreamingState.statusMessage,
       showIndicator: ragStreamingState.showIndicator,
       error: ragStreamingState.error ?? ragError,
@@ -1844,8 +1930,20 @@ export default function SearchPlaygroundPage() {
         ragStreamingState.stage === "answering",
       isDone: ragStreamingState.stage === "done",
     }),
-    [ragError, ragStreamingChunks, ragStreamingState, streamedAnswer],
+    [ragError, ragStreamingChunks, ragStreamingState, streamedAnswerHtml],
   );
+
+  const ragAnswerHtml = useMemo(() => {
+    if (streamedAnswerHtml) {
+      return streamedAnswerHtml;
+    }
+
+    if (ragResponse?.answer) {
+      return sanitizeAskAiHtml(ragResponse.answer);
+    }
+
+    return "";
+  }, [ragResponse?.answer, streamedAnswerHtml]);
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -2351,13 +2449,14 @@ export default function SearchPlaygroundPage() {
             {!isRagLoading && !ragError && ragResponse && (
               <>
                 <div className="rounded border px-3 py-3 text-sm leading-relaxed text-foreground">
-                  {streamedAnswer || ragResponse.answer || "Ответ отсутствует."}
-                </div>
-                <div className="space-y-2">
-                  <div className="text-xs font-semibold text-foreground">Цитаты</div>
-                  <div className="grid gap-2">
-                    {ragResponse.citations.map(renderRagChunk)}
-                  </div>
+                  {ragAnswerHtml ? (
+                    <div
+                      className="prose prose-sm max-w-none text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
+                      dangerouslySetInnerHTML={{ __html: ragAnswerHtml }}
+                    />
+                  ) : (
+                    <span className="text-muted-foreground">Ответ отсутствует.</span>
+                  )}
                 </div>
                 {settings.rag.includeDebug && ragResponse.chunks && ragResponse.chunks.length > 0 && (
                   <div className="space-y-2">
