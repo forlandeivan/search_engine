@@ -180,22 +180,6 @@ export function useCreateKnowledgeBase() {
       };
 
       writeKnowledgeBaseStorage(updatedState);
-
-      if (remoteSummary) {
-        const summary = remoteSummary;
-
-        queryClient.setQueryData<KnowledgeBaseSummary[]>(["knowledge-bases"], (current) => {
-          const existing = Array.isArray(current) ? current : [];
-          const filtered = existing.filter((item) => item.id !== summary.id);
-          const normalizedSummary: KnowledgeBaseSummary = {
-            ...summary,
-            rootNodes: summary.rootNodes ?? [],
-          };
-
-          return [normalizedSummary, ...filtered];
-        });
-      }
-
       return base;
     },
     onSuccess: async (createdBase) => {
