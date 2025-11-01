@@ -105,7 +105,7 @@ export async function initApp(): Promise<void> {
     // Роуты
     const server = await registerRoutes(app);
 
-    // Health
+    // Health 
     app.get("/health", (_req, res) => res.json({ ok: true, env: process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown" }));
 
     // 404 для неизвестных API
