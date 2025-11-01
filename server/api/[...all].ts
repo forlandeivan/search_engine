@@ -6,6 +6,6 @@ export default async function handler(req: any, res: any) {
     await initApp();
   }
   // делегируем в Express
-  // @ts-ignore совместимо по используемым полям
+  // @ts-ignore совместимо по используемым полям123
   return app(req, res);
 }
