@@ -2024,18 +2024,6 @@ export default function SearchPlaygroundPage() {
     [displayedAnswerHtml, ragError, ragStreamingChunks, ragStreamingState],
   );
 
-  const ragAnswerHtml = useMemo(() => {
-    if (displayedAnswerHtml) {
-      return displayedAnswerHtml;
-    }
-
-    if (ragResponse?.answer) {
-      return sanitizeAskAiHtml(ragResponse.answer);
-    }
-
-    return "";
-  }, [displayedAnswerHtml, ragResponse?.answer]);
-
   return (
     <div className="flex h-full flex-col bg-background">
       <header className="border-b px-4 py-3">
@@ -2539,15 +2527,8 @@ export default function SearchPlaygroundPage() {
           )}
           {!isRagLoading && !ragError && ragResponse && (
             <>
-              <div className="rounded border px-3 py-3 text-sm leading-relaxed text-foreground">
-                {ragAnswerHtml ? (
-                  <div
-                    className="prose prose-sm max-w-none text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
-                    dangerouslySetInnerHTML={{ __html: ragAnswerHtml }}
-                  />
-                ) : (
-                  <span className="text-muted-foreground">Ответ отсутствует.</span>
-                )}
+              <div className="rounded border px-3 py-2 text-sm text-muted-foreground">
+                Ответ отображается во вкладке Ask AI.
               </div>
               {settings.rag.includeDebug && ragResponse.chunks && ragResponse.chunks.length > 0 && (
                 <div className="space-y-2">
