@@ -1501,6 +1501,24 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunks_document_idx ON knowledge_document_chunks("document_id", "chunk_index")`,
     );
 
+    await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
+
+    await db.execute(
+      sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "content_hash" text`,
+    );
+
+    await db.execute(
+      sql`
+        UPDATE "knowledge_document_chunks"
+        SET "content_hash" = encode(digest(COALESCE("text", ''), 'sha256'), 'hex')
+        WHERE "content_hash" IS NULL
+      `,
+    );
+
+    await db.execute(
+      sql`ALTER TABLE "knowledge_document_chunks" ALTER COLUMN "content_hash" SET NOT NULL`,
+    );
+
     await db.execute(
       sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "vector_record_id" text`,
     );
