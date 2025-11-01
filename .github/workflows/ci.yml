@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]          # автодеплой в Preview при пуше в dev
+  push:
+    tags: ['v*.*.*']         # прод-выкаты по тегам вида v1.2.3
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # ↓ добавь свой стек: установка зависимостей, линт, тесты, сборка
+      - run: echo "install / lint / test / build"
+
+  deploy-preview:
+    needs: test-build
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: Preview        # важно: имя окружения = Preview
+    steps:
+      - run: echo "deploy to Preview (Replit-Dev)"
+
+  deploy-production:
+    needs: test-build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: Production     # потребует ручного approve перед секретами
+    steps:
+      - run: echo "deploy to Production (Replit-Prod)"
