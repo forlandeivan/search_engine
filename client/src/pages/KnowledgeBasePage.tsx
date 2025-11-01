@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -70,12 +70,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { escapeHtml, getSanitizedContent } from "@/lib/document-import";
 import {
+  KNOWLEDGE_BASE_EVENT,
+  readKnowledgeBaseStorage,
   syncKnowledgeBaseStorageFromSummaries,
   type KnowledgeBase as LocalKnowledgeBase,
   type KnowledgeBaseSourceType,
 } from "@/lib/knowledge-base";
+import { KnowledgeBaseCrawlProgress } from "@/components/knowledge-base/KnowledgeBaseCrawlProgress";
+import { useKnowledgeBaseCrawlJob } from "@/hooks/useKnowledgeBaseCrawlJob";
 import type {
   KnowledgeBaseSummary,
   KnowledgeBaseTreeNode,
@@ -87,6 +92,7 @@ import type {
   KnowledgeBaseDocumentDetail,
   KnowledgeDocumentChunkSet,
   KnowledgeDocumentVectorizationJobStatus,
+  KnowledgeBaseCrawlJobStatus,
 } from "@shared/knowledge-base";
 import type { PublicEmbeddingProvider } from "@shared/schema";
 import {
@@ -448,6 +454,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     useState<DocumentVectorizationProgressState | null>(null);
   const [shouldPollVectorizationJob, setShouldPollVectorizationJob] = useState(false);
   const [chunkDialogSignal, setChunkDialogSignal] = useState(0);
+  const [localKnowledgeBases, setLocalKnowledgeBases] = useState<LocalKnowledgeBase[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+
+    return readKnowledgeBaseStorage().knowledgeBases;
+  });
   const handleDocumentTabChange = (value: string) => {
     if (value === "content" || value === "chunks") {
       setDocumentActiveTab(value);
@@ -490,10 +503,33 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return;
     }
 
-    syncKnowledgeBaseStorageFromSummaries(basesQuery.data);
+    const updated = syncKnowledgeBaseStorageFromSummaries(basesQuery.data);
+    setLocalKnowledgeBases(updated.knowledgeBases);
   }, [basesQuery.data]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const sync = () => {
+      setLocalKnowledgeBases(readKnowledgeBaseStorage().knowledgeBases);
+    };
+
+    window.addEventListener(KNOWLEDGE_BASE_EVENT, sync);
+    window.addEventListener("storage", sync);
+
+    return () => {
+      window.removeEventListener(KNOWLEDGE_BASE_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
+
   const bases = basesQuery.data ?? [];
+  const localSelectedBase = useMemo(
+    () => localKnowledgeBases.find((base) => base.id === knowledgeBaseId) ?? null,
+    [localKnowledgeBases, knowledgeBaseId],
+  );
   const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
     queryKey: ["/api/embedding/services"],
   });
@@ -505,6 +541,61 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => bases.find((base) => base.id === knowledgeBaseId) ?? null,
     [bases, knowledgeBaseId],
   );
+  const {
+    job: crawlJob,
+    events: crawlEvents,
+    pause: pauseCrawl,
+    resume: resumeCrawl,
+    cancel: cancelCrawl,
+    isPausing: isCrawlPausing,
+    isResuming: isCrawlResuming,
+    isCanceling: isCrawlCanceling,
+    connectionError: crawlConnectionError,
+    actionError: crawlActionError,
+  } = useKnowledgeBaseCrawlJob({
+    baseId: localSelectedBase?.id,
+    initialJob: localSelectedBase?.crawlJob ?? null,
+  });
+  const crawlJobPreviousRef = useRef<KnowledgeBaseCrawlJobStatus | null>(null);
+
+  useEffect(() => {
+    if (!crawlJob || selectedBase?.id !== crawlJob.baseId) {
+      crawlJobPreviousRef.current = null;
+      return;
+    }
+
+    const previous = crawlJobPreviousRef.current;
+    const isSameJob = previous?.jobId === crawlJob.jobId;
+    if (!previous || !isSameJob || previous.status !== crawlJob.status) {
+      if (crawlJob.status === "done") {
+        toast({
+          title: "Краулинг завершён",
+          description: `Добавлено ${crawlJob.saved.toLocaleString("ru-RU")} документов`,
+          action: (
+            <ToastAction
+              altText="Открыть библиотеку"
+              onClick={() => setLocation(`/knowledge/${crawlJob.baseId}`)}
+            >
+              Открыть библиотеку
+            </ToastAction>
+          ),
+        });
+      } else if (crawlJob.status === "failed") {
+        toast({
+          variant: "destructive",
+          title: "Краулинг завершился с ошибкой",
+          description: crawlJob.lastError ?? "Попробуйте изменить настройки и перезапустить краулинг.",
+        });
+      } else if (crawlJob.status === "canceled") {
+        toast({
+          title: "Краулинг остановлен",
+          description: "Задача была отменена.",
+        });
+      }
+    }
+
+    crawlJobPreviousRef.current = crawlJob;
+  }, [crawlJob, selectedBase?.id, setLocation, toast]);
 
   useEffect(() => {
     setExpandedNodeIds(new Set());
@@ -1786,15 +1877,36 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return null;
     }
 
+    let detailContent: ReactNode = null;
     if (detail.type === "folder") {
-      return renderFolderSettings(detail);
+      detailContent = renderFolderSettings(detail);
+    } else if (detail.type === "document") {
+      detailContent = renderDocument(detail);
+    } else {
+      detailContent = renderOverview(detail);
     }
 
-    if (detail.type === "document") {
-      return renderDocument(detail);
-    }
+    const showCrawlProgress = crawlJob && selectedBase?.id === crawlJob.baseId;
 
-    return renderOverview(detail);
+    return (
+      <div className="space-y-6">
+        {showCrawlProgress && (
+          <KnowledgeBaseCrawlProgress
+            job={crawlJob}
+            events={crawlEvents}
+            onPause={pauseCrawl}
+            onResume={resumeCrawl}
+            onCancel={cancelCrawl}
+            isPausing={isCrawlPausing}
+            isResuming={isCrawlResuming}
+            isCanceling={isCrawlCanceling}
+            connectionError={crawlConnectionError}
+            actionError={crawlActionError}
+          />
+        )}
+        {detailContent}
+      </div>
+    );
   };
 
   const normalizedHierarchySelectedParentId =

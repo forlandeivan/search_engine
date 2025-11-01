@@ -6,6 +6,7 @@ import type {
   KnowledgeDocumentChunkItem,
   KnowledgeDocumentChunkSet,
   KnowledgeBaseCrawlJobStatus,
+  KnowledgeBaseCrawlJobPhase,
 } from "@shared/knowledge-base";
 
 export type TreeNode = {
@@ -141,6 +142,14 @@ const parseDateIso = (value: unknown): string => {
   return new Date().toISOString();
 };
 
+const parseOptionalDateIso = (value: unknown): string | null => {
+  if (typeof value === "string" && !Number.isNaN(Date.parse(value))) {
+    return value;
+  }
+
+  return null;
+};
+
 const parseStringArray = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) {
     return undefined;
@@ -159,6 +168,110 @@ const ensureMetadata = (value: unknown): Record<string, unknown> => {
   }
 
   return {};
+};
+
+const CRAWL_JOB_PHASE_VALUES = [
+  "created",
+  "crawling",
+  "extracting",
+  "chunking",
+  "embedding",
+  "indexing",
+  "paused",
+  "canceled",
+  "done",
+  "failed",
+] as const;
+
+const CRAWL_JOB_STATUS_VALUES = ["running", "paused", "canceled", "failed", "done"] as const;
+
+const isCrawlJobPhase = (value: unknown): value is KnowledgeBaseCrawlJobPhase =>
+  typeof value === "string" &&
+  (CRAWL_JOB_PHASE_VALUES as ReadonlyArray<string>).includes(value.trim().toLowerCase());
+
+const isCrawlJobStatus = (
+  value: unknown,
+): value is KnowledgeBaseCrawlJobStatus["status"] =>
+  typeof value === "string" &&
+  (CRAWL_JOB_STATUS_VALUES as ReadonlyArray<string>).includes(value.trim().toLowerCase());
+
+const parseJobCount = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+
+const parseJobOptionalNumber = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? Number(value) : null;
+
+const parseJobOptionalString = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const parseCrawlPhase = (value: unknown): KnowledgeBaseCrawlJobPhase => {
+  if (isCrawlJobPhase(value)) {
+    return value.trim().toLowerCase() as KnowledgeBaseCrawlJobPhase;
+  }
+
+  return "created";
+};
+
+const parseCrawlStatus = (value: unknown): KnowledgeBaseCrawlJobStatus["status"] => {
+  if (isCrawlJobStatus(value)) {
+    return value.trim().toLowerCase() as KnowledgeBaseCrawlJobStatus["status"];
+  }
+
+  return "running";
+};
+
+const normalizeCrawlJob = (raw: unknown): KnowledgeBaseCrawlJobStatus | null => {
+  if (!isRecord(raw)) {
+    return null;
+  }
+
+  const jobId = typeof raw.jobId === "string" ? raw.jobId : null;
+  const baseId = typeof raw.baseId === "string" ? raw.baseId : null;
+  const workspaceId = typeof raw.workspaceId === "string" ? raw.workspaceId : null;
+
+  if (!jobId || !baseId || !workspaceId) {
+    return null;
+  }
+
+  const startedAt = parseOptionalDateIso(raw.startedAt);
+  const updatedAt = parseOptionalDateIso(raw.updatedAt) ?? startedAt ?? new Date().toISOString();
+
+  const percentValue = parseJobOptionalNumber(raw.percent ?? raw.percentComplete ?? raw.percent_complete);
+
+  return {
+    jobId,
+    baseId,
+    workspaceId,
+    phase: parseCrawlPhase(raw.phase),
+    percent: Math.min(100, Math.max(0, percentValue ?? 0)),
+    discovered: parseJobCount(raw.discovered),
+    queued: parseJobCount(raw.queued),
+    fetched: parseJobCount(raw.fetched),
+    extracted: parseJobCount(raw.extracted),
+    saved: parseJobCount(raw.saved),
+    failed: parseJobCount(raw.failed),
+    etaSec:
+      parseJobOptionalNumber(raw.etaSec ?? raw.eta_sec ?? raw.eta) ??
+      parseJobOptionalNumber(raw.etaSeconds ?? raw.eta_seconds),
+    lastUrl: parseJobOptionalString(raw.lastUrl ?? raw.last_url),
+    lastError: parseJobOptionalString(raw.lastError ?? raw.last_error),
+    startedAt: startedAt ?? new Date().toISOString(),
+    updatedAt,
+    finishedAt: parseOptionalDateIso(raw.finishedAt ?? raw.finished_at),
+    pagesTotal: parseJobOptionalNumber(raw.pagesTotal ?? raw.pages_total),
+    pagesNew: parseJobOptionalNumber(raw.pagesNew ?? raw.pages_new),
+    pagesUpdated: parseJobOptionalNumber(raw.pagesUpdated ?? raw.pages_updated),
+    pagesSkipped: parseJobOptionalNumber(raw.pagesSkipped ?? raw.pages_skipped),
+    errorsCount: parseJobOptionalNumber(raw.errorsCount ?? raw.errors_count),
+    durationSec: parseJobOptionalNumber(raw.durationSec ?? raw.duration_sec),
+    status: parseCrawlStatus(raw.status),
+  } satisfies KnowledgeBaseCrawlJobStatus;
 };
 
 const countTokens = (text: string): number => {
@@ -588,6 +701,7 @@ const normalizeKnowledgeBase = (raw: unknown): KnowledgeBase => {
       lastOpenedAt: null,
       tasks: { ...DEFAULT_TASKS },
       importSummary: undefined,
+      crawlJob: undefined,
     };
   }
 
@@ -608,6 +722,8 @@ const normalizeKnowledgeBase = (raw: unknown): KnowledgeBase => {
 
   const sourceType: KnowledgeBaseSourceType = isSourceType(raw.sourceType) ? raw.sourceType : "unknown";
 
+  const crawlJob = normalizeCrawlJob(raw.crawlJob);
+
   return {
     id: baseId,
     name: typeof raw.name === "string" ? raw.name : "Без названия",
@@ -621,6 +737,7 @@ const normalizeKnowledgeBase = (raw: unknown): KnowledgeBase => {
     ingestion: normalizeIngestion(raw.ingestion),
     tasks: normalizeTasks(raw.tasks),
     importSummary: normalizeImportSummary(raw.importSummary),
+    crawlJob: crawlJob ?? undefined,
   };
 };
 
@@ -746,6 +863,7 @@ const mergeKnowledgeBaseSummary = (
   ingestion: previous?.ingestion,
   tasks: previous?.tasks ? { ...previous.tasks } : { ...DEFAULT_TASKS },
   importSummary: previous?.importSummary,
+  crawlJob: previous?.crawlJob ? { ...previous.crawlJob } : undefined,
 });
 
 export const syncKnowledgeBaseStorageFromSummaries = (
@@ -778,6 +896,61 @@ export const syncKnowledgeBaseStorageFromSummaries = (
 
   writeKnowledgeBaseStorage(updatedState);
   return updatedState;
+};
+
+export const updateKnowledgeBaseCrawlJob = (
+  baseId: string,
+  job: KnowledgeBaseCrawlJobStatus | null,
+) => {
+  const currentState = readKnowledgeBaseStorage();
+  let changed = false;
+
+  const knowledgeBases = currentState.knowledgeBases.map((base) => {
+    if (base.id !== baseId) {
+      return base;
+    }
+
+    if (job) {
+      const previous = base.crawlJob;
+      const isSame =
+        previous !== undefined &&
+        previous.jobId === job.jobId &&
+        previous.updatedAt === job.updatedAt &&
+        previous.status === job.status &&
+        previous.percent === job.percent &&
+        previous.saved === job.saved &&
+        previous.failed === job.failed &&
+        previous.fetched === job.fetched &&
+        previous.discovered === job.discovered &&
+        previous.queued === job.queued;
+
+      if (isSame) {
+        return base;
+      }
+
+      changed = true;
+      return { ...base, crawlJob: { ...job } };
+    }
+
+    if (base.crawlJob !== undefined) {
+      changed = true;
+      return { ...base, crawlJob: undefined };
+    }
+
+    return base;
+  });
+
+  if (!changed) {
+    return currentState;
+  }
+
+  const nextState: KnowledgeBaseStorage = {
+    ...currentState,
+    knowledgeBases,
+  };
+
+  writeKnowledgeBaseStorage(nextState);
+  return nextState;
 };
 
 export const createKnowledgeBaseEntry = ({

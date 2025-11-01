@@ -2346,8 +2346,8 @@ export default function SearchPlaygroundPage() {
                               </SelectTrigger>
                               <SelectContent>
                                 {vectorCollectionsQuery.data?.collections.map((collection) => (
-                                  <SelectItem key={collection} value={collection}>
-                                    {collection}
+                                  <SelectItem key={collection.name} value={collection.name}>
+                                    {collection.name}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -2383,11 +2383,15 @@ export default function SearchPlaygroundPage() {
                               description="Конкретная модель выбранного провайдера."
                             />
                             <Select
-                              value={settings.rag.llmModel ?? EMPTY_SELECT_VALUE}
+                              value={
+                                settings.rag.llmModel && settings.rag.llmModel.length > 0
+                                  ? settings.rag.llmModel
+                                  : EMPTY_SELECT_VALUE
+                              }
                               onValueChange={(value) =>
                                 handleRagSettingsChange(
                                   "llmModel",
-                                  value === EMPTY_SELECT_VALUE ? null : value,
+                                  value === EMPTY_SELECT_VALUE ? "" : value,
                                 )
                               }
                             >
