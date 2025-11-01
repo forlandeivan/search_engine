@@ -1,8 +1,11 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
-import app, { initApp } from "../app";
+// server/api/[...all].ts
+import app, { initApp } from '../app';
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  await initApp();
-  // @ts-ignore  // express совместим по сигнатуре
+export default async function handler(req: any, res: any) {
+  if (typeof initApp === 'function') {
+    await initApp();
+  }
+  // делегируем в Express
+  // @ts-ignore совместимо по используемым полям
   return app(req, res);
 }
