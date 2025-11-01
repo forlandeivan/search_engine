@@ -1146,8 +1146,10 @@ export default function SearchPlaygroundPage() {
             const normalized = normalizePublicRagResponse(responsePayload, { query: request.query });
 
             setRagResponse(normalized);
-            setStreamedAnswer(answer);
-            setStreamedAnswerHtml(sanitizeAskAiHtml(answer));
+            setStreamedAnswer((prev) => (prev ? prev : answer));
+            setStreamedAnswerHtml((prev) =>
+              prev && prev.length > 0 ? prev : sanitizeAskAiHtml(answer),
+            );
             setRagStreamingState((prev) => ({
               ...prev,
               stage: "done",
