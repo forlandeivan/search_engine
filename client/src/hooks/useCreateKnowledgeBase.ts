@@ -14,6 +14,7 @@ import { apiRequest } from "@/lib/queryClient";
 import type {
   CreateKnowledgeBaseResponse,
   KnowledgeBaseCrawlJobStatus,
+  KnowledgeBaseSummary,
 } from "@shared/knowledge-base";
 
 export type CreateKnowledgeBaseInput = {
@@ -106,6 +107,8 @@ export function useCreateKnowledgeBase() {
         base = { ...base, tasks };
       }
 
+      let remoteSummary: CreateKnowledgeBaseResponse | null = null;
+
       if (mode === "crawler" && crawlerConfig) {
         const payload: Record<string, unknown> = {
           name: base.name,
@@ -136,6 +139,7 @@ export function useCreateKnowledgeBase() {
         };
 
         const summary = created.knowledge_base;
+        remoteSummary = summary;
         base = {
           ...base,
           id: summary.id,
@@ -157,6 +161,7 @@ export function useCreateKnowledgeBase() {
         });
 
         const created = (await response.json()) as CreateKnowledgeBaseResponse;
+        remoteSummary = created;
         base = {
           ...base,
           id: created.id,
@@ -175,7 +180,6 @@ export function useCreateKnowledgeBase() {
       };
 
       writeKnowledgeBaseStorage(updatedState);
-
       return base;
     },
     onSuccess: async (createdBase) => {
