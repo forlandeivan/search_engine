@@ -1558,42 +1558,20 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunks_document_idx ON knowledge_document_chunks("document_id", "chunk_index")`,
     );
 
-    await ensurePgcryptoExtensionAvailable();
+
+    await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
 
     await db.execute(
       sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "content_hash" text`,
     );
 
-    let digestAvailable = await hasDigestFunction();
-
-    if (digestAvailable) {
-      try {
-        await db.execute(
-          sql`
-            UPDATE "knowledge_document_chunks"
-            SET "content_hash" = encode(digest(COALESCE("text", ''), 'sha256'), 'hex')
-            WHERE "content_hash" IS NULL
-          `,
-        );
-      } catch (error) {
-        const code = isPgError(error) ? error.code : null;
-        if (code && ["42883", "0A000"].includes(code)) {
-          digestAvailable = false;
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    if (!digestAvailable) {
-      if (!loggedContentHashFallbackWarning) {
-        console.warn(
-          "[storage] Функция digest недоступна. Вычисляем content_hash на уровне приложения",
-        );
-        loggedContentHashFallbackWarning = true;
-      }
-      await backfillChunkContentHashesInApp();
-    }
+    await db.execute(
+      sql`
+        UPDATE "knowledge_document_chunks"
+        SET "content_hash" = encode(digest(COALESCE("text", ''), 'sha256'), 'hex')
+        WHERE "content_hash" IS NULL
+      `,
+    );
 
     await db.execute(
       sql`ALTER TABLE "knowledge_document_chunks" ALTER COLUMN "content_hash" SET NOT NULL`,
