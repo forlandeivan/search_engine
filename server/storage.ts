@@ -37,7 +37,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { randomBytes } from "crypto";
+import { randomBytes, createHash } from "crypto";
 
 let globalUserAuthSchemaReady = false;
 
@@ -222,6 +222,7 @@ let loggedUuidFallbackWarning = false;
 const randomHexExpressionCache = new Map<number, SQL>();
 const ensuringRandomHexExpression = new Map<number, Promise<SQL>>();
 let loggedRandomHexFallbackWarning = false;
+let loggedContentHashFallbackWarning = false;
 
 async function ensureConstraint(
   tableName: string,
@@ -258,6 +259,62 @@ async function ensurePgcryptoExtensionAvailable(): Promise<void> {
     await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
   } catch (error) {
     swallowPgError(error, ["42710", "42501"]);
+  }
+}
+
+async function hasDigestFunction(): Promise<boolean> {
+  const result = await db.execute(sql`
+    SELECT COUNT(*)::int AS "functionCount"
+    FROM pg_proc
+    WHERE proname = 'digest'
+  `);
+  const count = Number(result.rows[0]?.functionCount ?? 0);
+  return Number.isFinite(count) && count > 0;
+}
+
+async function backfillChunkContentHashesInApp(): Promise<void> {
+  const batchSize = 100;
+
+  while (true) {
+    const result = await db.execute(sql`
+      SELECT "id", COALESCE("text", '') AS "text"
+      FROM "knowledge_document_chunks"
+      WHERE "content_hash" IS NULL
+      LIMIT ${batchSize}
+    `);
+
+    const rows = (result.rows ?? []) as Array<Record<string, unknown>>;
+    if (rows.length === 0) {
+      break;
+    }
+
+    const updates = rows
+      .map((row: Record<string, unknown>) => {
+        const id = getRowString(row, "id");
+        if (!id) {
+          return null;
+        }
+        const text = getRowString(row, "text");
+        const hash = createHash("sha256").update(text, "utf8").digest("hex");
+        return { id, hash };
+      })
+      .filter((entry): entry is { id: string; hash: string } => Boolean(entry));
+
+    if (updates.length === 0) {
+      break;
+    }
+
+    const values = sql.join(
+      updates.map(({ id, hash }: { id: string; hash: string }) => sql`(${id}, ${hash})`),
+      sql`, `,
+    );
+
+    await db.execute(sql`
+      UPDATE "knowledge_document_chunks" AS chunks
+      SET "content_hash" = data.hash
+      FROM (VALUES ${values}) AS data(id, hash)
+      WHERE chunks."id" = data.id
+    `);
   }
 }
 
@@ -1499,6 +1556,47 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
 
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunks_document_idx ON knowledge_document_chunks("document_id", "chunk_index")`,
+    );
+
+    await ensurePgcryptoExtensionAvailable();
+
+    await db.execute(
+      sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "content_hash" text`,
+    );
+
+    let digestAvailable = await hasDigestFunction();
+
+    if (digestAvailable) {
+      try {
+        await db.execute(
+          sql`
+            UPDATE "knowledge_document_chunks"
+            SET "content_hash" = encode(digest(COALESCE("text", ''), 'sha256'), 'hex')
+            WHERE "content_hash" IS NULL
+          `,
+        );
+      } catch (error) {
+        const code = isPgError(error) ? error.code : null;
+        if (code && ["42883", "0A000"].includes(code)) {
+          digestAvailable = false;
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (!digestAvailable) {
+      if (!loggedContentHashFallbackWarning) {
+        console.warn(
+          "[storage] Функция digest недоступна. Вычисляем content_hash на уровне приложения",
+        );
+        loggedContentHashFallbackWarning = true;
+      }
+      await backfillChunkContentHashesInApp();
+    }
+
+    await db.execute(
+      sql`ALTER TABLE "knowledge_document_chunks" ALTER COLUMN "content_hash" SET NOT NULL`,
     );
 
     await db.execute(

@@ -19,6 +19,7 @@ import {
   pauseKnowledgeBaseCrawl,
   resumeKnowledgeBaseCrawl,
   cancelKnowledgeBaseCrawl,
+  retryKnowledgeBaseCrawl,
 } from "./kb-crawler";
 import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
@@ -7555,6 +7556,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     return res.json({ job });
+  });
+
+  app.post("/api/jobs/:jobId/retry", requireAuth, (req, res) => {
+    const { jobId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+
+    try {
+      const job = retryKnowledgeBaseCrawl(jobId, workspaceId);
+      if (!job) {
+        return res.status(404).json({ error: "Задача не найдена" });
+      }
+
+      return res.status(201).json({ job });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось перезапустить краулинг";
+      return res.status(409).json({ error: message });
+    }
   });
 
   app.get("/api/jobs/:jobId/sse", requireAuth, (req, res) => {

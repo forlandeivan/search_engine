@@ -14,6 +14,7 @@ import { apiRequest } from "@/lib/queryClient";
 import type {
   CreateKnowledgeBaseResponse,
   KnowledgeBaseCrawlJobStatus,
+  KnowledgeBaseSummary,
 } from "@shared/knowledge-base";
 
 export type CreateKnowledgeBaseInput = {
@@ -57,7 +58,6 @@ export function useCreateKnowledgeBase() {
       let structure: ArchiveImportResult["structure"] | undefined;
       let documents: ArchiveImportResult["documents"] | undefined;
       let tasks: KnowledgeBaseTaskSummary | undefined;
-      let crawlJob: KnowledgeBaseCrawlJobStatus | undefined;
       if (mode === "archive") {
         if (!archiveFile) {
           throw new Error("Выберите архив документов для импорта");
@@ -107,6 +107,8 @@ export function useCreateKnowledgeBase() {
         base = { ...base, tasks };
       }
 
+      let remoteSummary: CreateKnowledgeBaseResponse | null = null;
+
       if (mode === "crawler" && crawlerConfig) {
         const payload: Record<string, unknown> = {
           name: base.name,
@@ -137,6 +139,7 @@ export function useCreateKnowledgeBase() {
         };
 
         const summary = created.knowledge_base;
+        remoteSummary = summary;
         base = {
           ...base,
           id: summary.id,
@@ -146,7 +149,10 @@ export function useCreateKnowledgeBase() {
           updatedAt: summary.updatedAt,
         };
 
-        crawlJob = created.job;
+        const crawlJob = created.job;
+        if (crawlJob) {
+          base = { ...base, crawlJob };
+        }
       } else {
         const response = await apiRequest("POST", "/api/knowledge/bases", {
           id: base.id,
@@ -155,6 +161,7 @@ export function useCreateKnowledgeBase() {
         });
 
         const created = (await response.json()) as CreateKnowledgeBaseResponse;
+        remoteSummary = created;
         base = {
           ...base,
           id: created.id,
@@ -174,8 +181,19 @@ export function useCreateKnowledgeBase() {
 
       writeKnowledgeBaseStorage(updatedState);
 
-      if (crawlJob) {
-        return { ...base, crawlJob } as KnowledgeBase;
+      if (remoteSummary) {
+        const summary = remoteSummary;
+
+        queryClient.setQueryData<KnowledgeBaseSummary[]>(["knowledge-bases"], (current) => {
+          const existing = Array.isArray(current) ? current : [];
+          const filtered = existing.filter((item) => item.id !== summary.id);
+          const normalizedSummary: KnowledgeBaseSummary = {
+            ...summary,
+            rootNodes: summary.rootNodes ?? [],
+          };
+
+          return [normalizedSummary, ...filtered];
+        });
       }
 
       return base;
