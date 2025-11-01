@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Settings, Search as SearchIcon, RefreshCcw, HelpCircle } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import SearchQuickSwitcher, {
   buildSuggestGroups,
   type SuggestResultGroup,
@@ -36,7 +36,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
-import type { PublicEmbeddingProvider, PublicLlmProvider, LlmModelOption } from "@shared/schema";
+import type { PublicEmbeddingProvider, PublicLlmProvider, LlmModelOption, Site } from "@shared/schema";
 import type {
   RagChunk,
   RagResponsePayload,
@@ -44,35 +44,200 @@ import type {
   SuggestResponseItem,
 } from "@/types/search";
 import { useSuggestSearch } from "@/hooks/useSuggestSearch";
+import type { SessionResponse } from "@/types/session";
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+};
+
+const maskApiKey = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.length <= 6) {
+    return `${trimmed.slice(0, 2)}***${trimmed.slice(-2)}`;
+  }
+
+  return `${trimmed.slice(0, 4)}***${trimmed.slice(-4)}`;
+};
+
+interface PublicRagContextEntry {
+  id?: string | number | null;
+  score?: number | null;
+  payload?: unknown;
+  shard_key?: string | null;
+  order_value?: number | null;
+}
+
+interface PublicRagResponse {
+  answer?: string | null;
+  format?: string | null;
+  usage?: { embeddingTokens?: number | null; llmTokens?: number | null } | null;
+  provider?: { id?: string; name?: string; model?: string; modelLabel?: string | null } | null;
+  embeddingProvider?: { id?: string; name?: string } | null;
+  collection?: string | null;
+  context?: PublicRagContextEntry[] | null;
+  queryVector?: number[] | null;
+  vectorLength?: number | null;
+}
 
 interface RagRequestPayload {
-  q: string;
-  kb_id: string;
-  top_k: number;
-  hybrid: {
-    bm25: { weight: number; limit: number };
-    vector: {
-      weight: number;
-      limit: number;
-      collection?: string;
-      embedding_provider_id?: string;
-    };
-  };
-  llm: {
-    provider: string;
-    model?: string;
-    temperature: number;
-    max_tokens: number;
-    system_prompt?: string;
-    response_format: PlaygroundSettings["rag"]["responseFormat"];
-  };
+  query: string;
+  workspace_id: string;
+  collection: string;
+  embeddingProviderId: string;
+  llmProviderId: string;
+  llmModel?: string;
+  limit: number;
+  contextLimit?: number;
+  responseFormat?: PlaygroundSettings["rag"]["responseFormat"];
+  includeContext?: boolean;
+  includeQueryVector?: boolean;
+  withPayload?: boolean;
+  withVector?: boolean;
+  sitePublicId?: string;
 }
 
 interface RagRequestState {
   id: number;
   payload: RagRequestPayload;
   startedAt: number;
+  apiKey: string;
+  query: string;
+  siteName: string;
+  sitePublicId?: string;
+  workspaceId: string;
 }
+
+const buildChunkFromContext = (entry: PublicRagContextEntry, index: number): RagChunk => {
+  const payload = isRecord(entry.payload) ? entry.payload : {};
+  const chunkPayload = isRecord((payload as Record<string, unknown>).chunk)
+    ? ((payload as { chunk: Record<string, unknown> }).chunk ?? {})
+    : {};
+  const documentPayload = isRecord((payload as Record<string, unknown>).document)
+    ? ((payload as { document: Record<string, unknown> }).document ?? {})
+    : {};
+  const scorePayload = isRecord((payload as Record<string, unknown>).scores)
+    ? ((payload as { scores: Record<string, unknown> }).scores ?? {})
+    : {};
+
+  const chunkIdCandidate = chunkPayload.id;
+  const entryId = entry.id;
+  const chunkId =
+    typeof chunkIdCandidate === "string" && chunkIdCandidate.trim().length > 0
+      ? chunkIdCandidate.trim()
+      : typeof entryId === "string" && entryId.trim().length > 0
+        ? entryId.trim()
+        : `context-${index + 1}`;
+
+  const docIdCandidate = documentPayload.id;
+  const docId = typeof docIdCandidate === "string" ? docIdCandidate : "";
+  const docTitleCandidate = documentPayload.title;
+  const docTitle =
+    typeof docTitleCandidate === "string" && docTitleCandidate.trim().length > 0
+      ? docTitleCandidate.trim()
+      : "Документ";
+
+  const sectionTitleCandidate = chunkPayload.sectionTitle ?? chunkPayload.section_title;
+  const sectionTitle =
+    typeof sectionTitleCandidate === "string" && sectionTitleCandidate.trim().length > 0
+      ? sectionTitleCandidate.trim()
+      : null;
+
+  const chunkTextCandidate = chunkPayload.text;
+  const chunkText = typeof chunkTextCandidate === "string" ? chunkTextCandidate : undefined;
+  const snippetCandidate = chunkPayload.snippet ?? chunkPayload.excerpt ?? chunkTextCandidate;
+  const snippet =
+    typeof snippetCandidate === "string" && snippetCandidate.trim().length > 0
+      ? snippetCandidate
+      : chunkText ?? "";
+
+  const bm25ScoreCandidate = scorePayload.bm25;
+  const vectorScoreCandidate = scorePayload.vector;
+
+  const entryScore = typeof entry.score === "number" ? entry.score : null;
+  const vectorScore =
+    typeof entryScore === "number"
+      ? entryScore
+      : typeof vectorScoreCandidate === "number"
+        ? vectorScoreCandidate
+        : null;
+
+  return {
+    chunk_id: chunkId,
+    doc_id: docId,
+    doc_title: docTitle,
+    section_title: sectionTitle,
+    snippet,
+    text: chunkText,
+    score: typeof vectorScore === "number" ? vectorScore : 0,
+    scores: {
+      bm25: typeof bm25ScoreCandidate === "number" ? bm25ScoreCandidate : undefined,
+      vector: typeof vectorScore === "number" ? vectorScore : undefined,
+    },
+  };
+};
+
+const normalizePublicRagResponse = (
+  response: PublicRagResponse,
+  params: { query: string },
+): RagResponsePayload => {
+  const contextEntries = Array.isArray(response.context) ? response.context : [];
+  const citations = contextEntries.map((entry, index) => buildChunkFromContext(entry, index));
+
+  const vectorSearchDetails = contextEntries.map((entry) => {
+    return {
+      id: entry.id ?? null,
+      score: typeof entry.score === "number" ? entry.score : null,
+      payload: isRecord(entry.payload) ? entry.payload : entry.payload ?? null,
+    } satisfies Record<string, unknown>;
+  });
+
+  const normalizedAnswer =
+    typeof response.answer === "string" && response.answer.trim().length > 0
+      ? response.answer
+      : "";
+
+  const formatCandidate = typeof response.format === "string" ? response.format.trim() : "";
+  const normalizedFormat =
+    formatCandidate === "markdown"
+      ? "markdown"
+      : formatCandidate === "md"
+        ? "markdown"
+        : formatCandidate === "html"
+          ? "html"
+          : formatCandidate === "text"
+            ? "text"
+            : undefined;
+
+  return {
+    answer: normalizedAnswer,
+    format: normalizedFormat,
+    query: params.query,
+    normalized_query: params.query,
+    citations,
+    chunks: citations,
+    context: contextEntries.map((entry) => ({
+      id: entry.id ?? null,
+      score: typeof entry.score === "number" ? entry.score : null,
+      payload: isRecord(entry.payload) ? entry.payload : null,
+      shard_key: typeof entry.shard_key === "string" ? entry.shard_key : null,
+      order_value: typeof entry.order_value === "number" ? entry.order_value : null,
+    })),
+    usage: response.usage ?? undefined,
+    provider: response.provider ?? undefined,
+    embeddingProvider: response.embeddingProvider ?? undefined,
+    collection: typeof response.collection === "string" ? response.collection : undefined,
+    queryVector: Array.isArray(response.queryVector) ? response.queryVector : undefined,
+    vectorLength:
+      typeof response.vectorLength === "number" ? response.vectorLength : undefined,
+    debug: {
+      vectorSearch: vectorSearchDetails,
+    },
+  };
+};
 
 type AskAiLogKind = "info" | "request" | "response" | "error";
 
@@ -96,6 +261,7 @@ interface VectorCollectionsResponse {
 
 type PlaygroundSettings = {
   knowledgeBaseId: string;
+  siteId: string;
   suggestLimit: number;
   rag: {
     askAiEnabled: boolean;
@@ -200,6 +366,7 @@ const PLAYGROUND_SETTINGS_STORAGE_KEY = "search-playground-settings";
 
 const DEFAULT_SETTINGS: PlaygroundSettings = {
   knowledgeBaseId: "",
+  siteId: "",
   suggestLimit: 3,
   rag: {
     askAiEnabled: true,
@@ -264,6 +431,7 @@ export default function SearchPlaygroundPage() {
   const ragRequestCounter = useRef(0);
   const [ragRequest, setRagRequest] = useState<RagRequestState | null>(null);
   const [askAiLogEntries, setAskAiLogEntries] = useState<AskAiLogEntry[]>([]);
+  const [isAskAiLogOpen, setIsAskAiLogOpen] = useState(false);
   const askAiLogContainerRef = useRef<HTMLDivElement | null>(null);
   const askAiLogCounterRef = useRef(0);
 
@@ -277,7 +445,7 @@ export default function SearchPlaygroundPage() {
     setAskAiLogEntries([]);
   }, []);
 
-  const {
+  const { 
     status: suggestStatus,
     data: suggestData,
     error: suggestError,
@@ -302,11 +470,24 @@ export default function SearchPlaygroundPage() {
     [suggestGroups],
   );
 
+  const sessionQuery = useQuery<SessionResponse | null>({
+    queryKey: ["/api/auth/session"],
+    queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
+  });
+
   const knowledgeBasesQuery = useQuery<KnowledgeBaseSummary[]>({
     queryKey: ["/api/knowledge/bases"],
     queryFn: async () => {
       const response = await apiRequest("GET", "/api/knowledge/bases");
       return (await response.json()) as KnowledgeBaseSummary[];
+    },
+  });
+
+  const sitesQuery = useQuery<Site[]>({
+    queryKey: ["/api/sites"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/sites");
+      return (await response.json()) as Site[];
     },
   });
 
@@ -334,7 +515,13 @@ export default function SearchPlaygroundPage() {
     },
   });
 
+  const workspaceId = sessionQuery.data?.workspace.active.id ?? "";
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
+  const sites = sitesQuery.data ?? [];
+  const selectedSite = useMemo(() => {
+    return sites.find((site) => site.id === settings.siteId) ?? null;
+  }, [sites, settings.siteId]);
+  const siteApiKey = selectedSite?.publicApiKey?.trim() ?? "";
   const activeEmbeddingProviders = useMemo(() => {
     const providers = embeddingProvidersQuery.data?.providers ?? [];
     return providers.filter((provider) => provider.isActive);
@@ -379,6 +566,15 @@ export default function SearchPlaygroundPage() {
       }));
     }
   }, [knowledgeBases, settings.knowledgeBaseId]);
+
+  useEffect(() => {
+    if (!settings.siteId && sites.length > 0) {
+      setSettings((prev) => ({
+        ...prev,
+        siteId: sites[0]?.id ?? "",
+      }));
+    }
+  }, [settings.siteId, sites]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -441,50 +637,57 @@ export default function SearchPlaygroundPage() {
   }, [knowledgeBases, settings.knowledgeBaseId]);
 
   const vectorLayerReady = useMemo(() => {
-    if (settings.rag.vectorWeight <= 0) {
-      return false;
-    }
-
     const providerId = settings.rag.embeddingProviderId?.trim() ?? "";
     const collection = settings.rag.collection?.trim() ?? "";
 
     return Boolean(providerId && collection);
-  }, [
-    settings.rag.collection,
-    settings.rag.embeddingProviderId,
-    settings.rag.vectorWeight,
-  ]);
+  }, [settings.rag.collection, settings.rag.embeddingProviderId]);
 
   const ragConfigurationError = useMemo(() => {
     if (!settings.rag.askAiEnabled) {
       return null;
     }
 
+    if (!workspaceId) {
+      return "Не удалось определить рабочее пространство. Обновите страницу.";
+    }
+
+    if (!selectedSite) {
+      return "Выберите сайт с публичным API-ключом.";
+    }
+
+    if (!siteApiKey) {
+      return "У выбранного сайта отсутствует публичный API-ключ.";
+    }
+
+    if (!settings.rag.embeddingProviderId) {
+      return "Выберите сервис эмбеддингов, чтобы Ask AI сформировал ответ.";
+    }
+
+    if (!vectorLayerReady) {
+      return "Укажите коллекцию Qdrant и сервис эмбеддингов.";
+    }
+
     if (!settings.rag.llmProviderId) {
       return "Выберите провайдера LLM, чтобы Ask AI сформировал ответ.";
-    }
-
-    if (settings.rag.bm25Weight <= 0 && settings.rag.vectorWeight <= 0) {
-      return "Включите хотя бы один слой поиска (BM25 или векторный).";
-    }
-
-    if (settings.rag.vectorWeight > 0 && !vectorLayerReady) {
-      return "Заполните коллекцию Qdrant и сервис эмбеддингов или уменьшите вес векторного поиска.";
     }
 
     return null;
   }, [
     settings.rag.askAiEnabled,
-    settings.rag.bm25Weight,
+    settings.rag.embeddingProviderId,
     settings.rag.llmProviderId,
-    settings.rag.vectorWeight,
+    selectedSite,
+    siteApiKey,
     vectorLayerReady,
+    workspaceId,
   ]);
 
   const searchKey = useMemo(
     () =>
       JSON.stringify({
         knowledgeBaseId: settings.knowledgeBaseId,
+        siteId: settings.siteId,
         suggestLimit: settings.suggestLimit,
         rag: {
           askAiEnabled: settings.rag.askAiEnabled,
@@ -543,18 +746,25 @@ export default function SearchPlaygroundPage() {
         requestId: ragRequest.id,
         timestamp: Date.now(),
         kind: "request",
-        title: "POST /public/rag/answer",
-        description: "Отправляем запрос к сервису RAG.",
+        title: "POST /api/public/collections/search/rag",
+        description: `Отправляем запрос к сервису RAG (коллекция ${ragRequest.payload.collection}).`,
         data: {
-          endpoint: "/public/rag/answer",
+          endpoint: "/api/public/collections/search/rag",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": maskApiKey(ragRequest.apiKey),
+          },
           payload: ragRequest.payload,
         },
       });
 
       try {
-        const ragResponseRaw = await fetch("/public/rag/answer", {
+        const ragResponseRaw = await fetch("/api/public/collections/search/rag", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": ragRequest.apiKey,
+          },
           body: JSON.stringify(ragRequest.payload),
         });
 
@@ -567,31 +777,59 @@ export default function SearchPlaygroundPage() {
           throw new Error(`${errorMessage} (код ${ragResponseRaw.status})`);
         }
 
-        const ragJson = (await ragResponseRaw.json()) as RagResponsePayload;
+        const ragJson = (await ragResponseRaw.json()) as PublicRagResponse;
         if (!cancelled) {
-          setRagResponse(ragJson);
+          const normalized = normalizePublicRagResponse(ragJson, { query: ragRequest.query });
+          setRagResponse(normalized);
 
           const finishedAt = Date.now();
           const responseSummary: Record<string, unknown> = {};
 
-          if (ragJson.timings) {
-            responseSummary.timings = ragJson.timings;
+          responseSummary.status = ragResponseRaw.status;
+
+          if (normalized.format) {
+            responseSummary.format = normalized.format;
           }
 
-          if (ragJson.usage) {
-            responseSummary.usage = ragJson.usage;
+          if (normalized.usage) {
+            responseSummary.usage = normalized.usage;
           }
 
-          if (ragJson.citations?.length) {
-            responseSummary.citations = ragJson.citations.map((chunk) => ({
+          if (normalized.provider) {
+            responseSummary.provider = normalized.provider;
+          }
+
+          if (normalized.embeddingProvider) {
+            responseSummary.embeddingProvider = normalized.embeddingProvider;
+          }
+
+          if (normalized.collection) {
+            responseSummary.collection = normalized.collection;
+          }
+
+          const citations = normalized.citations ?? [];
+          if (citations.length > 0) {
+            responseSummary.citations = citations.map((chunk) => ({
               chunk_id: chunk.chunk_id,
               doc_title: chunk.doc_title,
               scores: chunk.scores,
             }));
           }
 
-          if (ragJson.debug?.vectorSearch) {
-            responseSummary.vectorSearch = ragJson.debug.vectorSearch;
+          if (normalized.context) {
+            responseSummary.contextLength = normalized.context.length;
+          }
+
+          if (typeof normalized.vectorLength === "number") {
+            responseSummary.vectorLength = normalized.vectorLength;
+          }
+
+          if (normalized.debug?.vectorSearch) {
+            responseSummary.vectorSearch = normalized.debug.vectorSearch;
+          }
+
+          if (normalized.queryVector) {
+            responseSummary.queryVectorPreview = normalized.queryVector.slice(0, 6);
           }
 
           appendAskAiLog({
@@ -599,7 +837,7 @@ export default function SearchPlaygroundPage() {
             timestamp: finishedAt,
             kind: "response",
             title: `Ответ ${ragResponseRaw.status}`,
-            description: `Запрос выполнен за ${formatDuration(finishedAt - ragRequest.startedAt)}.`,
+            description: `Ответ для сайта ${ragRequest.siteName} получен за ${formatDuration(finishedAt - ragRequest.startedAt)}.`,
             data: Object.keys(responseSummary).length > 0 ? responseSummary : undefined,
           });
         }
@@ -620,6 +858,10 @@ export default function SearchPlaygroundPage() {
             kind: "error",
             title: "Ошибка запроса к Ask AI",
             description: message,
+            data: {
+              endpoint: "/api/public/collections/search/rag",
+              status: error instanceof Error ? error.message : undefined,
+            },
           });
         }
       } finally {
@@ -673,6 +915,27 @@ export default function SearchPlaygroundPage() {
       return;
     }
 
+    if (!selectedSite) {
+      setRagError("Выберите сайт с публичным API-ключом перед запросом к Ask AI.");
+      setRagResponse(null);
+      setStreamedAnswer("");
+      return;
+    }
+
+    if (!siteApiKey) {
+      setRagError("Для выбранного сайта отсутствует публичный API-ключ.");
+      setRagResponse(null);
+      setStreamedAnswer("");
+      return;
+    }
+
+    if (!workspaceId) {
+      setRagError("Не удалось определить рабочее пространство. Обновите страницу и попробуйте снова.");
+      setRagResponse(null);
+      setStreamedAnswer("");
+      return;
+    }
+
     if (ragConfigurationError) {
       setRagError(ragConfigurationError);
       setRagResponse(null);
@@ -680,30 +943,22 @@ export default function SearchPlaygroundPage() {
       return;
     }
 
+    const normalizedCollection = settings.rag.collection.trim();
     const payload: RagRequestPayload = {
-      q: trimmedQuery,
-      kb_id: settings.knowledgeBaseId,
-      top_k: settings.rag.topK,
-      hybrid: {
-        bm25: {
-          weight: settings.rag.bm25Weight,
-          limit: settings.rag.bm25Limit,
-        },
-        vector: {
-          weight: settings.rag.vectorWeight,
-          limit: settings.rag.vectorLimit,
-          collection: settings.rag.collection || undefined,
-          embedding_provider_id: settings.rag.embeddingProviderId || undefined,
-        },
-      },
-      llm: {
-        provider: settings.rag.llmProviderId,
-        model: settings.rag.llmModel || undefined,
-        temperature: settings.rag.temperature,
-        max_tokens: settings.rag.maxTokens,
-        system_prompt: settings.rag.systemPrompt || undefined,
-        response_format: settings.rag.responseFormat,
-      },
+      query: trimmedQuery,
+      workspace_id: workspaceId,
+      collection: normalizedCollection,
+      embeddingProviderId: settings.rag.embeddingProviderId,
+      llmProviderId: settings.rag.llmProviderId,
+      llmModel: settings.rag.llmModel || undefined,
+      limit: Math.max(settings.rag.vectorLimit, settings.rag.topK),
+      contextLimit: settings.rag.topK,
+      responseFormat: settings.rag.responseFormat,
+      includeContext: true,
+      includeQueryVector: settings.rag.includeDebug,
+      withPayload: true,
+      withVector: true,
+      sitePublicId: selectedSite.publicId || undefined,
     };
 
     const nextRequestId = ragRequestCounter.current + 1;
@@ -714,21 +969,37 @@ export default function SearchPlaygroundPage() {
       timestamp: startedAt,
       kind: "info",
       title: "Запрос к Ask AI подготовлен",
-      description: `Вопрос: «${trimmedQuery}». База знаний: ${payload.kb_id}.`,
+      description: `Вопрос: «${trimmedQuery}». Сайт: ${selectedSite.name}. Коллекция: ${payload.collection}.`,
       data: {
-        hybrid: payload.hybrid,
-        llm: {
-          provider: payload.llm.provider,
-          model: payload.llm.model,
-          temperature: payload.llm.temperature,
-          max_tokens: payload.llm.max_tokens,
-          response_format: payload.llm.response_format,
+        workspaceId,
+        site: {
+          id: selectedSite.id,
+          name: selectedSite.name,
+          publicId: selectedSite.publicId,
+        },
+        request: {
+          collection: payload.collection,
+          embeddingProviderId: payload.embeddingProviderId,
+          llmProviderId: payload.llmProviderId,
+          llmModel: payload.llmModel,
+          limit: payload.limit,
+          contextLimit: payload.contextLimit,
+          responseFormat: payload.responseFormat,
         },
       },
     });
 
     ragRequestCounter.current = nextRequestId;
-    setRagRequest({ id: nextRequestId, payload, startedAt });
+    setRagRequest({
+      id: nextRequestId,
+      payload,
+      startedAt,
+      apiKey: siteApiKey,
+      query: trimmedQuery,
+      siteName: selectedSite.name,
+      sitePublicId: selectedSite.publicId ?? undefined,
+      workspaceId,
+    });
   };
 
   const handleOpenSuggestResult = (
@@ -825,6 +1096,7 @@ export default function SearchPlaygroundPage() {
           ...prev,
           knowledgeBaseId:
             typeof parsed.knowledgeBaseId === "string" ? parsed.knowledgeBaseId : prev.knowledgeBaseId,
+          siteId: typeof parsed.siteId === "string" ? parsed.siteId : prev.siteId,
           suggestLimit:
             typeof parsed.suggestLimit === "number" && Number.isFinite(parsed.suggestLimit)
               ? Math.max(1, Math.min(20, Math.round(parsed.suggestLimit)))
@@ -1194,6 +1466,29 @@ export default function SearchPlaygroundPage() {
                           </SelectContent>
                         </Select>
                       </div>
+                      <div className="flex flex-col gap-2 sm:col-span-2">
+                        <SettingLabelWithTooltip
+                          htmlFor="playground-site"
+                          label="Сайт (API-ключ)"
+                          description="Сайт определяет публичный API-ключ и коллекцию, к которым обращается Ask AI. Выберите проект с нужным API-ключом."
+                        />
+                        <Select
+                          value={settings.siteId}
+                          onValueChange={(value) => handleSettingsChange("siteId", value)}
+                          disabled={sites.length === 0}
+                        >
+                          <SelectTrigger id="playground-site">
+                            <SelectValue placeholder={sites.length === 0 ? "Сайты не найдены" : "Выберите сайт"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {sites.map((site) => (
+                              <SelectItem key={site.id} value={site.id}>
+                                {site.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                       <div className="flex flex-col gap-2">
                         <SettingLabelWithTooltip
                           htmlFor="playground-limit"
@@ -1213,8 +1508,8 @@ export default function SearchPlaygroundPage() {
                       </div>
                     </div>
                     <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
-                      Все запросы уходят в публичные эндпоинты `/public/search/suggest` и `/public/rag/answer` с текущими
-                      настройками. Так можно воспроизвести интеграцию клиента 1:1.
+                      Все запросы уходят в публичные эндпоинты `/public/search/suggest` и `/api/public/collections/search/rag`
+                      с текущими настройками. Так можно воспроизвести интеграцию клиента 1:1.
                     </div>
                   </TabsContent>
                   <TabsContent value="rag" className="mt-4 space-y-4">
@@ -1505,8 +1800,8 @@ export default function SearchPlaygroundPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="flex flex-col gap-3">
             <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
-              Все запросы уходят в публичные эндпоинты `/public/search/suggest` и `/public/rag/answer` с текущими
-              настройками. Так можно воспроизвести интеграцию клиента 1:1.
+              Все запросы уходят в публичные эндпоинты `/public/search/suggest` и `/api/public/collections/search/rag` с
+              текущими настройками. Так можно воспроизвести интеграцию клиента 1:1.
             </div>
 
             <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -1586,26 +1881,69 @@ export default function SearchPlaygroundPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>Журнал Ask AI</span>
-                <Button
-                  variant="ghost"
-                  className="h-6 px-2 text-[11px]"
-                  onClick={clearAskAiLog}
-                  disabled={askAiLogEntries.length === 0}
-                >
-                  Очистить
-                </Button>
-              </div>
-              <div
-                ref={askAiLogContainerRef}
-                className="max-h-64 overflow-auto rounded border bg-muted/40 p-2 text-xs text-foreground"
-              >
-                {askAiLogEntries.length === 0 ? (
-                  <div className="text-muted-foreground">
-                    Журнал пуст. Отправьте запрос, чтобы увидеть шаги.
-                  </div>
-                ) : (
-                  <div className="space-y-2">{askAiLogEntries.map(renderAskAiLogEntry)}</div>
-                )}
+                <div className="flex items-center gap-2">
+                  {askAiLogEntries.length > 0 && (
+                    <Badge variant="outline" className="text-[11px]">
+                      {askAiLogEntries.length}
+                    </Badge>
+                  )}
+                  <Dialog open={isAskAiLogOpen} onOpenChange={setIsAskAiLogOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-7 px-3 text-[11px]">
+                        Открыть
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="flex h-[90vh] w-[95vw] max-w-[95vw] flex-col gap-4 p-6 sm:w-[90vw] sm:max-w-[90vw]">
+                      <DialogHeader className="space-y-1">
+                        <DialogTitle>Журнал Ask AI</DialogTitle>
+                        <DialogDescription>
+                          Пошаговые события запросов к публичным эндпоинтам. Используйте журнал для диагностики интеграции.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="flex flex-1 flex-col gap-3 overflow-hidden">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>
+                            Всего записей: {askAiLogEntries.length}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-3 text-[11px]"
+                            onClick={clearAskAiLog}
+                            disabled={askAiLogEntries.length === 0}
+                          >
+                            Очистить
+                          </Button>
+                        </div>
+                        <div
+                          ref={askAiLogContainerRef}
+                          className="flex-1 overflow-auto rounded border bg-muted/40 p-3 text-xs text-foreground"
+                        >
+                          {askAiLogEntries.length === 0 ? (
+                            <div className="text-muted-foreground">
+                              Журнал пуст. Отправьте запрос, чтобы увидеть шаги.
+                            </div>
+                          ) : (
+                            <div className="space-y-2">{askAiLogEntries.map(renderAskAiLogEntry)}</div>
+                          )}
+                        </div>
+                      </div>
+                      <DialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={clearAskAiLog}
+                          disabled={askAiLogEntries.length === 0}
+                        >
+                          Очистить журнал
+                        </Button>
+                        <Button size="sm" onClick={() => setIsAskAiLogOpen(false)}>
+                          Закрыть
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </div>
             </div>
           </section>
