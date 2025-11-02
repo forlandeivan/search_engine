@@ -12,7 +12,6 @@ import {
 } from "@shared/knowledge-base";
 import { db } from "./db";
 import { createKnowledgeDocument, updateKnowledgeDocument } from "./knowledge-base";
-import { createKnowledgeDocumentChunkSet } from "./knowledge-chunks";
 
 const DEFAULT_RATE_LIMIT = 1;
 const DEFAULT_MAX_DEPTH = 3;
@@ -195,19 +194,6 @@ async function upsertDocument({
       .set({ sourceConfig: { sourceUrl: url } })
       .where(eq(knowledgeNodes.id, created.id));
 
-    try {
-      await createKnowledgeDocumentChunkSet(baseId, created.id, workspaceId, {});
-    } catch (error) {
-      console.error("[KB-CRAWLER] Не удалось автоматически разбить документ на чанки:", {
-        baseId,
-        nodeId: created.id,
-        workspaceId,
-        url,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-    }
-
     return "created";
   }
 
@@ -234,19 +220,6 @@ async function upsertDocument({
       metadata,
     })
     .where(eq(knowledgeDocuments.id, existing.documentId));
-
-  try {
-    await createKnowledgeDocumentChunkSet(baseId, existing.nodeId, workspaceId, {});
-  } catch (error) {
-    console.error("[KB-CRAWLER] Не удалось обновить чанки документа:", {
-      baseId,
-      nodeId: existing.nodeId,
-      workspaceId,
-      url,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-  }
 
   return "updated";
 }
