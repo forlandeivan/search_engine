@@ -95,28 +95,69 @@ function resolveDatabaseUrl(): string | null {
   return candidates[0] ?? null;
 }
 
-function tryConnectNeon(): void {
+function isLikelyNeonConnection(databaseUrl: string): boolean {
+  try {
+    const parsed = new URL(databaseUrl);
+    const hostname = parsed.hostname.toLowerCase();
+
+    return hostname.endsWith(".neon.tech") || hostname === "neon.tech";
+  } catch {
+    return false;
+  }
+}
+
+function connectUsingPgPool(databaseUrl: string): void {
+  try {
+    const pgPool = new PgPool({
+      connectionString: databaseUrl,
+      connectionTimeoutMillis: 30_000,
+      idleTimeoutMillis: 60_000,
+      max: 20,
+      allowExitOnIdle: true,
+    });
+
+    pool = pgPool;
+    db = pgDrizzle({ client: pgPool, schema });
+
+    console.log(`[db] ✅ Using PostgreSQL connection string via node-postgres`);
+  } catch (error) {
+    const message = formatConnectionError(error);
+    console.warn(`[db] ❌ Failed to configure PostgreSQL connection via node-postgres: ${message}`);
+    lastDatabaseError = message;
+    pool = null;
+    db = null;
+  }
+}
+
+function tryConnectDatabaseUrl(): void {
   if (hasCustomPostgresConfig()) {
-    console.log(`[db] Skipping Neon connection - custom PostgreSQL config is present`);
+    console.log(`[db] Skipping DATABASE_URL connection - custom PostgreSQL config is present`);
     return;
   }
 
   const databaseUrl = resolveDatabaseUrl();
   if (!databaseUrl) {
-    console.log(`[db] No DATABASE_URL found for Neon connection`);
+    console.log(`[db] No DATABASE_URL found for connection`);
     return;
   }
 
-  try {
-    pool = new NeonPool({ connectionString: databaseUrl });
-    db = neonDrizzle({ client: pool, schema });
-    console.log(`[db] ✅ Using Neon/PostgreSQL connection string`);
-  } catch (error) {
-    const message = formatConnectionError(error);
-    console.warn(`[db] ❌ Failed to configure Neon/PostgreSQL connection: ${message}`);
-    lastDatabaseError = message;
-    pool = null;
-    db = null;
+  if (isLikelyNeonConnection(databaseUrl)) {
+    try {
+      pool = new NeonPool({ connectionString: databaseUrl });
+      db = neonDrizzle({ client: pool, schema });
+      console.log(`[db] ✅ Using Neon/PostgreSQL connection string`);
+      return;
+    } catch (error) {
+      const message = formatConnectionError(error);
+      console.warn(`[db] ❌ Failed to configure Neon/PostgreSQL connection: ${message}`);
+      lastDatabaseError = message;
+      pool = null;
+      db = null;
+    }
+  }
+
+  if (!pool || !db) {
+    connectUsingPgPool(databaseUrl);
   }
 }
 
@@ -132,7 +173,7 @@ console.log(`[db] ============================================`);
 tryConnectCustomPostgres();
 
 if (!pool || !db) {
-  tryConnectNeon();
+  tryConnectDatabaseUrl();
 }
 
 if (!pool || !db) {

@@ -1559,23 +1559,59 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
     );
 
 
-    await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
+    await ensurePgcryptoExtensionAvailable();
 
     await db.execute(
       sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "content_hash" text`,
     );
 
-    await db.execute(
-      sql`
-        UPDATE "knowledge_document_chunks"
-        SET "content_hash" = encode(digest(COALESCE("text", ''), 'sha256'), 'hex')
-        WHERE "content_hash" IS NULL
-      `,
-    );
+    let hashesUpdatedWithDigest = false;
+    if (await hasDigestFunction()) {
+      try {
+        await db.execute(
+          sql`
+            UPDATE "knowledge_document_chunks"
+            SET "content_hash" = encode(digest(COALESCE("text", ''), 'sha256'), 'hex')
+            WHERE "content_hash" IS NULL
+          `,
+        );
+        hashesUpdatedWithDigest = true;
+      } catch (error) {
+        if (!isPgError(error) || !["42883", "42501"].includes(error.code ?? "")) {
+          throw error;
+        }
+      }
+    }
 
-    await db.execute(
-      sql`ALTER TABLE "knowledge_document_chunks" ALTER COLUMN "content_hash" SET NOT NULL`,
-    );
+    if (!hashesUpdatedWithDigest) {
+      if (!loggedContentHashFallbackWarning) {
+        console.warn(
+          "pgcrypto недоступен, вычисляем content_hash в приложении",
+        );
+        loggedContentHashFallbackWarning = true;
+      }
+      await backfillChunkContentHashesInApp();
+    }
+
+    let shouldRetrySetNotNull = false;
+    try {
+      await db.execute(
+        sql`ALTER TABLE "knowledge_document_chunks" ALTER COLUMN "content_hash" SET NOT NULL`,
+      );
+    } catch (error) {
+      if (isPgError(error) && error.code === "23502") {
+        await backfillChunkContentHashesInApp();
+        shouldRetrySetNotNull = true;
+      } else {
+        swallowPgError(error, ["42704", "42703"]);
+      }
+    }
+
+    if (shouldRetrySetNotNull) {
+      await db.execute(
+        sql`ALTER TABLE "knowledge_document_chunks" ALTER COLUMN "content_hash" SET NOT NULL`,
+      );
+    }
 
     await db.execute(
       sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "vector_record_id" text`,
