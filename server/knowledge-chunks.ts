@@ -626,10 +626,15 @@ export const createKnowledgeDocumentChunkSet = async (
   workspaceId: string,
   inputConfig: ChunkingConfigInput,
 ): Promise<KnowledgeDocumentChunkSet> => {
+  console.log("[CHUNKS] Начало создания чанков для документа:", { baseId, nodeId, workspaceId });
   const context = await fetchDocumentContext(baseId, nodeId, workspaceId);
   const normalizedConfig = normalizeChunkingConfig(inputConfig);
   const { sentences, normalizedText } = extractSentences(context.content ?? "");
   const generatedChunks = generateChunks(sentences, normalizedText, normalizedConfig);
+  console.log("[CHUNKS] Сгенерировано чанков:", { 
+    count: generatedChunks.length, 
+    allHaveHashes: generatedChunks.every(c => !!c.contentHash) 
+  });
 
   if (generatedChunks.length === 0) {
     throw new KnowledgeBaseError("Не удалось разбить документ на чанки", 400);
@@ -667,8 +672,8 @@ export const createKnowledgeDocumentChunkSet = async (
     });
 
     if (generatedChunks.length > 0) {
-      await tx.insert(knowledgeDocumentChunkItems).values(
-        generatedChunks.map((chunk) => ({
+      try {
+        const chunkValues = generatedChunks.map((chunk) => ({
           id: chunk.id,
           workspaceId,
           chunkSetId,
@@ -686,8 +691,23 @@ export const createKnowledgeDocumentChunkSet = async (
           vectorRecordId: chunk.vectorRecordId ?? null,
           createdAt: now,
           updatedAt: now,
-        })),
-      );
+        }));
+        
+        await tx.insert(knowledgeDocumentChunkItems).values(chunkValues);
+      } catch (error) {
+        console.error("[CHUNKS] Ошибка при вставке чанков в БД:", {
+          baseId,
+          nodeId,
+          workspaceId,
+          documentId: context.documentId,
+          versionId: context.versionId,
+          chunkCount: generatedChunks.length,
+          firstChunkHasHash: generatedChunks.length > 0 ? !!generatedChunks[0].contentHash : false,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+        throw error;
+      }
     }
   });
 

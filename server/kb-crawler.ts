@@ -128,21 +128,33 @@ async function upsertDocument({
   const normalizedContent = content.trim();
   const hash = createHash("sha256").update(normalizedContent).digest("hex");
 
-  const [existing] = await db
-    .select({
-      documentId: knowledgeDocuments.id,
-      nodeId: knowledgeDocuments.nodeId,
-      contentHash: knowledgeDocuments.contentHash,
-    })
-    .from(knowledgeDocuments)
-    .where(
-      and(
-        eq(knowledgeDocuments.baseId, baseId),
-        eq(knowledgeDocuments.workspaceId, workspaceId),
-        eq(knowledgeDocuments.sourceUrl, url),
-      ),
-    )
-    .limit(1);
+  let existing;
+  try {
+    [existing] = await db
+      .select({
+        documentId: knowledgeDocuments.id,
+        nodeId: knowledgeDocuments.nodeId,
+        contentHash: knowledgeDocuments.contentHash,
+      })
+      .from(knowledgeDocuments)
+      .where(
+        and(
+          eq(knowledgeDocuments.baseId, baseId),
+          eq(knowledgeDocuments.workspaceId, workspaceId),
+          eq(knowledgeDocuments.sourceUrl, url),
+        ),
+      )
+      .limit(1);
+  } catch (error) {
+    console.error("[KB-CRAWLER] Ошибка при проверке существующего документа:", {
+      baseId,
+      workspaceId,
+      url,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    throw error;
+  }
 
   const now = new Date();
 
@@ -153,17 +165,30 @@ async function upsertDocument({
       sourceType: "crawl",
     });
 
-    await db
-      .update(knowledgeDocuments)
-      .set({
-        sourceUrl: url,
-        contentHash: hash,
-        language: language ?? null,
-        versionTag: versionTag ?? null,
-        crawledAt: now,
-        metadata,
-      })
-      .where(eq(knowledgeDocuments.id, created.documentId));
+    try {
+      await db
+        .update(knowledgeDocuments)
+        .set({
+          sourceUrl: url,
+          contentHash: hash,
+          language: language ?? null,
+          versionTag: versionTag ?? null,
+          crawledAt: now,
+          metadata,
+        })
+        .where(eq(knowledgeDocuments.id, created.documentId));
+    } catch (error) {
+      console.error("[KB-CRAWLER] Ошибка при обновлении нового документа:", {
+        documentId: created.documentId,
+        baseId,
+        workspaceId,
+        url,
+        hasContentHash: !!hash,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    }
 
     await db
       .update(knowledgeNodes)
@@ -173,7 +198,14 @@ async function upsertDocument({
     try {
       await createKnowledgeDocumentChunkSet(baseId, created.id, workspaceId, {});
     } catch (error) {
-      console.warn("Не удалось автоматически разбить документ на чанки", error);
+      console.error("[KB-CRAWLER] Не удалось автоматически разбить документ на чанки:", {
+        baseId,
+        nodeId: created.id,
+        workspaceId,
+        url,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     }
 
     return "created";
@@ -206,7 +238,14 @@ async function upsertDocument({
   try {
     await createKnowledgeDocumentChunkSet(baseId, existing.nodeId, workspaceId, {});
   } catch (error) {
-    console.warn("Не удалось обновить чанки документа", error);
+    console.error("[KB-CRAWLER] Не удалось обновить чанки документа:", {
+      baseId,
+      nodeId: existing.nodeId,
+      workspaceId,
+      url,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
   }
 
   return "updated";
