@@ -107,12 +107,18 @@ import {
   MoreVertical,
   PencilLine,
   Plus,
+  RefreshCw,
   SquareStack,
   Sparkles,
   Trash2,
 } from "lucide-react";
 
 const ROOT_PARENT_VALUE = "__root__";
+const TERMINAL_CRAWL_STATUSES: Array<KnowledgeBaseCrawlJobStatus["status"]> = [
+  "failed",
+  "canceled",
+  "done",
+];
 
 type KnowledgeBasePageParams = {
   knowledgeBaseId?: string;
@@ -558,6 +564,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     baseId: localSelectedBase?.id,
     initialJob: localSelectedBase?.crawlJob ?? null,
   });
+  const activeCrawlJobForSelectedBase =
+    crawlJob && selectedBase?.id === crawlJob.baseId ? crawlJob : null;
+  const isCrawlJobTerminalForSelectedBase = activeCrawlJobForSelectedBase
+    ? TERMINAL_CRAWL_STATUSES.includes(activeCrawlJobForSelectedBase.status)
+    : false;
   const crawlJobPreviousRef = useRef<KnowledgeBaseCrawlJobStatus | null>(null);
 
   useEffect(() => {
@@ -1804,6 +1815,29 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           >
             <Plus className="mr-2 h-4 w-4" /> Новый документ
           </Button>
+          {activeCrawlJobForSelectedBase && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              disabled={!isCrawlJobTerminalForSelectedBase || isCrawlRetrying}
+              onClick={() => {
+                if (!isCrawlJobTerminalForSelectedBase) {
+                  return;
+                }
+                void retryCrawl();
+              }}
+            >
+              {isCrawlRetrying ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              {activeCrawlJobForSelectedBase.status === "failed"
+                ? "Повторить краулинг"
+                : "Перезапустить краулинг"}
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" aria-label="Действия с базой знаний">
@@ -1888,13 +1922,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       detailContent = renderOverview(detail);
     }
 
-    const showCrawlProgress = crawlJob && selectedBase?.id === crawlJob.baseId;
+    const showCrawlProgress = Boolean(activeCrawlJobForSelectedBase);
 
     return (
       <div className="space-y-6">
-        {showCrawlProgress && (
+        {showCrawlProgress && activeCrawlJobForSelectedBase && (
           <KnowledgeBaseCrawlProgress
-            job={crawlJob}
+            job={activeCrawlJobForSelectedBase}
             events={crawlEvents}
             onPause={pauseCrawl}
             onResume={resumeCrawl}
