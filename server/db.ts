@@ -66,7 +66,18 @@ function tryConnectCustomPostgres(): void {
     });
 
     pool = customPool;
-    db = pgDrizzle({ client: customPool, schema });
+    db = pgDrizzle({ 
+      client: customPool, 
+      schema,
+      logger: {
+        logQuery(query: string, params: unknown[]) {
+          console.log('[SQL]', query);
+          if (params && params.length > 0) {
+            console.log('[SQL PARAMS]', params);
+          }
+        }
+      }
+    });
 
     console.log(`[db] ✅ Successfully configured custom PostgreSQL connection`);
   } catch (error) {
@@ -117,7 +128,18 @@ function connectUsingPgPool(databaseUrl: string): void {
     });
 
     pool = pgPool;
-    db = pgDrizzle({ client: pgPool, schema });
+    db = pgDrizzle({ 
+      client: pgPool, 
+      schema,
+      logger: {
+        logQuery(query: string, params: unknown[]) {
+          console.log('[SQL]', query);
+          if (params && params.length > 0) {
+            console.log('[SQL PARAMS]', params);
+          }
+        }
+      }
+    });
 
     console.log(`[db] ✅ Using PostgreSQL connection string via node-postgres`);
   } catch (error) {
@@ -144,7 +166,18 @@ function tryConnectDatabaseUrl(): void {
   if (isLikelyNeonConnection(databaseUrl)) {
     try {
       pool = new NeonPool({ connectionString: databaseUrl });
-      db = neonDrizzle({ client: pool, schema });
+      db = neonDrizzle({ 
+        client: pool, 
+        schema,
+        logger: {
+          logQuery(query: string, params: unknown[]) {
+            console.log('[SQL]', query);
+            if (params && params.length > 0) {
+              console.log('[SQL PARAMS]', params);
+            }
+          }
+        }
+      });
       console.log(`[db] ✅ Using Neon/PostgreSQL connection string`);
       return;
     } catch (error) {
