@@ -34,6 +34,7 @@ import { db } from "./db";
 import { ensureKnowledgeBaseTables, isKnowledgeBasePathLtreeEnabled } from "./storage";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
+import { load as loadHtml } from "cheerio";
 import { getLatestKnowledgeDocumentChunkSetForDocument } from "./knowledge-chunks";
 
 export class KnowledgeBaseError extends Error {
@@ -199,6 +200,21 @@ function computeContentHash(content: string): string | null {
   }
 
   return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+function extractPlainTextFromHtml(html: string): string {
+  const trimmed = html.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    const $ = loadHtml(trimmed);
+    const text = $("body").text() || $.root().text();
+    return text.replace(/\s+/g, " ").trim();
+  } catch {
+    return trimmed.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
 }
 
 function getNextPosition(nodes: KnowledgeNodeRow[], parentId: string | null): number {
@@ -674,7 +690,8 @@ export async function getKnowledgeNodeDetail(
       status: knowledgeDocuments.status,
       versionId: knowledgeDocumentVersions.id,
       versionNo: knowledgeDocumentVersions.versionNo,
-      content: knowledgeDocumentVersions.contentText,
+      contentJson: knowledgeDocumentVersions.contentJson,
+      contentText: knowledgeDocumentVersions.contentText,
       versionCreatedAt: knowledgeDocumentVersions.createdAt,
     })
     .from(knowledgeDocuments)
@@ -691,7 +708,12 @@ export async function getKnowledgeNodeDetail(
   const versionId = documentRow?.versionId ?? null;
   const versionNumber = documentRow?.versionNo ?? null;
   const versionCreatedAt = documentRow?.versionCreatedAt ?? node.updatedAt;
-  const contentText = documentRow?.content ?? "";
+  const versionContent = (documentRow?.contentJson ?? {}) as Record<string, unknown>;
+  const contentHtml =
+    typeof versionContent.html === "string" ? versionContent.html : "";
+  const contentMarkdown =
+    typeof versionContent.markdown === "string" ? versionContent.markdown : null;
+  const contentPlainText = documentRow?.contentText ?? "";
 
   const chunkSet = await getLatestKnowledgeDocumentChunkSetForDocument(documentId, workspaceId).catch((error) => {
     if (error instanceof KnowledgeBaseError && error.status === 404) {
@@ -705,7 +727,9 @@ export async function getKnowledgeNodeDetail(
     type: "document",
     id: node.id,
     title: node.title,
-    content: contentText,
+    content: contentHtml || contentPlainText,
+    contentMarkdown,
+    contentPlainText,
     updatedAt: toIsoDate(versionCreatedAt),
     breadcrumbs: buildBreadcrumbs(base, node, nodesById),
     sourceType: resolveNodeSourceType(node),
@@ -831,7 +855,16 @@ export async function createKnowledgeDocument(
     throw new KnowledgeBaseError("Укажите название документа", 400);
   }
 
-  const content = typeof payload.content === "string" ? payload.content : "";
+  const rawContent = typeof payload.content === "string" ? payload.content : "";
+  const rawMarkdown =
+    typeof payload.contentMarkdown === "string" ? payload.contentMarkdown : "";
+  const rawPlainText =
+    typeof payload.contentPlainText === "string" ? payload.contentPlainText : "";
+  const contentHtml = rawContent;
+  const contentMarkdown = rawMarkdown;
+  const contentPlainText = rawPlainText.trim()
+    ? rawPlainText.trim()
+    : extractPlainTextFromHtml(contentHtml) || rawMarkdown.trim();
   const sourceType =
     payload.sourceType && NODE_SOURCE_SET.has(payload.sourceType) ? payload.sourceType : "manual";
   const importFileName = payload.importFileName?.trim() ? payload.importFileName.trim() : null;
@@ -862,8 +895,8 @@ export async function createKnowledgeDocument(
   const pathSegment = slugToLtreeSegment(slug, segmentFallback);
   const path = buildNodePath(parentPath, pathSegment);
 
-  const wordCount = countWords(content);
-  const hash = computeContentHash(content);
+  const wordCount = countWords(contentPlainText);
+  const hash = computeContentHash(contentMarkdown || contentPlainText || contentHtml);
 
   let createdNode: KnowledgeNodeRow | null = null;
   let createdVersionTimestamp: Date | null = null;
@@ -916,8 +949,11 @@ export async function createKnowledgeDocument(
         documentId: document.id,
         workspaceId,
         versionNo: 1,
-        contentJson: { html: content },
-        contentText: content,
+        contentJson: {
+          html: contentHtml,
+          markdown: contentMarkdown || undefined,
+        },
+        contentText: contentPlainText,
         hash: hash ?? null,
         wordCount,
       })
@@ -976,7 +1012,9 @@ export async function createKnowledgeDocument(
     title: node.title,
     parentId: node.parentId ?? null,
     type: "document",
-    content,
+    content: contentHtml,
+    contentMarkdown: contentMarkdown || null,
+    contentPlainText: contentPlainText || null,
     updatedAt: toIsoDate(updatedAt),
     sourceType: resolveNodeSourceType(node),
     importFileName: node.importFileName ?? null,
@@ -1018,7 +1056,16 @@ export async function updateKnowledgeDocument(
     throw new KnowledgeBaseError("Укажите название документа", 400);
   }
 
-  const content = typeof payload.content === "string" ? payload.content : "";
+  const rawContent = typeof payload.content === "string" ? payload.content : "";
+  const rawMarkdown =
+    typeof payload.contentMarkdown === "string" ? payload.contentMarkdown : "";
+  const rawPlainText =
+    typeof payload.contentPlainText === "string" ? payload.contentPlainText : "";
+  const contentHtml = rawContent;
+  const contentMarkdown = rawMarkdown;
+  const contentPlainText = rawPlainText.trim()
+    ? rawPlainText.trim()
+    : extractPlainTextFromHtml(contentHtml) || rawMarkdown.trim();
 
   const [documentRow] = await db
     .select({
@@ -1043,8 +1090,8 @@ export async function updateKnowledgeDocument(
   const versionNumber = previousVersionNumber + 1;
   const versionId = randomUUID();
 
-  const wordCount = countWords(content);
-  const hash = computeContentHash(content);
+  const wordCount = countWords(contentPlainText);
+  const hash = computeContentHash(contentMarkdown || contentPlainText || contentHtml);
 
   let versionCreatedAt: Date = new Date();
 
@@ -1057,8 +1104,11 @@ export async function updateKnowledgeDocument(
         workspaceId,
         versionNo: versionNumber,
         authorId: authorId ?? null,
-        contentJson: { html: content },
-        contentText: content,
+        contentJson: {
+          html: contentHtml,
+          markdown: contentMarkdown || undefined,
+        },
+        contentText: contentPlainText,
         hash: hash ?? null,
         wordCount,
       })

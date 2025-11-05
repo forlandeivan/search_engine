@@ -10,6 +10,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import MarkdownRenderer from "@/components/ui/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -1589,10 +1590,15 @@ export default function PagesPage() {
                 <div className="grid gap-3">
                   {pages.map((page) => {
                     const siteConfig = sites.find(site => site.id === page.siteId);
-                    const aggregatedContent = page.content ?? "";
-                    const contentLength = aggregatedContent.length;
+                    const aggregatedMarkdown = (page.metadata?.markdown ?? "").trim() || (page.content ?? "");
+                    const aggregatedPlainText = page.metadata?.plainText ?? "";
+                    const contentLength = aggregatedPlainText
+                      ? aggregatedPlainText.length
+                      : aggregatedMarkdown.length;
                     const aggregatedWordCount = page.metadata?.wordCount ??
-                      (aggregatedContent ? aggregatedContent.trim().split(/\s+/).filter(Boolean).length : 0);
+                      (aggregatedPlainText
+                        ? aggregatedPlainText.trim().split(/\s+/).filter(Boolean).length
+                        : aggregatedMarkdown.trim().split(/\s+/).filter(Boolean).length);
                     const chunks = page.chunks ?? [];
                     const chunkCharCounts = chunks.map(chunk => chunk.metadata?.charCount ?? chunk.content.length);
                     const chunkWordCounts = chunks.map(chunk => chunk.metadata?.wordCount ??
@@ -1779,17 +1785,28 @@ export default function PagesPage() {
                                                     )}
                                                   </div>
                                                 </div>
-                                                <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
-                                                  {chunk.content}
-                                                </p>
+                                                {chunk.markdown ? (
+                                                  <MarkdownRenderer
+                                                    markdown={chunk.markdown}
+                                                    className="mt-2"
+                                                  />
+                                                ) : (
+                                                  <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                                                    {chunk.content}
+                                                  </p>
+                                                )}
                                               </div>
                                             );
                                           })}
                                         </div>
                                       )}
-                                      <pre className="text-sm bg-muted p-4 rounded-lg whitespace-pre-wrap">
-                                        {page.content}
-                                      </pre>
+                                      {aggregatedMarkdown.trim() ? (
+                                        <MarkdownRenderer markdown={aggregatedMarkdown} />
+                                      ) : aggregatedPlainText ? (
+                                        <pre className="text-sm bg-muted p-4 rounded-lg whitespace-pre-wrap">
+                                          {aggregatedPlainText}
+                                        </pre>
+                                      ) : null}
                                     </div>
                                   </div>
                                 </ScrollArea>

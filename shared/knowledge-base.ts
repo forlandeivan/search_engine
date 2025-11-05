@@ -194,6 +194,8 @@ export type CreateKnowledgeFolderPayload = {
 export type CreateKnowledgeDocumentPayload = {
   title: string;
   content?: string;
+  contentMarkdown?: string | null;
+  contentPlainText?: string | null;
   parentId?: string | null;
   sourceType?: KnowledgeNodeSourceType;
   importFileName?: string | null;
@@ -202,6 +204,8 @@ export type CreateKnowledgeDocumentPayload = {
 export type UpdateKnowledgeDocumentPayload = {
   title: string;
   content?: string;
+  contentMarkdown?: string | null;
+  contentPlainText?: string | null;
 };
 
 type KnowledgeNodeCreationBase = {
@@ -218,6 +222,8 @@ export type CreateKnowledgeFolderResponse = KnowledgeNodeCreationBase & {
 export type CreateKnowledgeDocumentResponse = KnowledgeNodeCreationBase & {
   type: "document";
   content: string;
+  contentMarkdown?: string | null;
+  contentPlainText?: string | null;
   sourceType: KnowledgeNodeSourceType;
   importFileName: string | null;
   documentId: string;
@@ -269,6 +275,8 @@ export type KnowledgeBaseDocumentDetail = {
   id: string;
   title: string;
   content: string;
+  contentMarkdown?: string | null;
+  contentPlainText?: string | null;
   updatedAt: string;
   breadcrumbs: KnowledgeBaseBreadcrumb[];
   sourceType: KnowledgeNodeSourceType;

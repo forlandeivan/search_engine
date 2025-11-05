@@ -28,11 +28,18 @@ interface CrawlResult {
   url: string;
   title?: string;
   content: string;
+  plainText?: string;
   metaDescription?: string;
   statusCode: number;
   links: string[];
   metadata: PageMetadata;
   chunks: ContentChunk[];
+  structureStats?: {
+    headingCount: number;
+    listCount: number;
+    tableCount: number;
+    codeBlockCount: number;
+  };
   rawHtml?: string;
   error?: string;
 }
@@ -446,6 +453,7 @@ export class WebCrawler {
               // Update existing page
               const existingPage = existingPages[0];
               if (existingPage.contentHash !== contentHash) {
+                const structureStats = result.structureStats;
                 await storage.updatePage(existingPage.id, {
                   title: result.title,
                   content: result.content,
@@ -460,6 +468,12 @@ export class WebCrawler {
                 this.log(siteId, 'info', 'Обновлено содержимое страницы', {
                   url: result.url,
                   statusCode: result.statusCode,
+                  stored: 'updated',
+                  markdownLength: result.content.length,
+                  headings: structureStats?.headingCount,
+                  lists: structureStats?.listCount,
+                  tables: structureStats?.tableCount,
+                  codeBlocks: structureStats?.codeBlockCount,
                 });
               } else {
                 this.log(siteId, 'debug', 'Страница не изменилась, пропускаем', {
@@ -468,6 +482,7 @@ export class WebCrawler {
               }
             } else {
               // Create new page - this handles both first crawl and re-crawl scenarios
+              const structureStats = result.structureStats;
               const newPage: InsertPage = {
                 siteId: this.currentSiteId!,
                 url: result.url,
@@ -485,6 +500,12 @@ export class WebCrawler {
               this.log(siteId, 'info', 'Проиндексирована новая страница', {
                 url: result.url,
                 statusCode: result.statusCode,
+                stored: 'created',
+                markdownLength: result.content.length,
+                headings: structureStats?.headingCount,
+                lists: structureStats?.listCount,
+                tables: structureStats?.tableCount,
+                codeBlocks: structureStats?.codeBlockCount,
               });
             }
 
@@ -617,6 +638,15 @@ export class WebCrawler {
         }
       );
 
+      this.logForCurrentSite('info', 'Структурный контент извлечен', {
+        url: resolvedUrl,
+        headings: stats.headingCount,
+        lists: stats.listCount,
+        tables: stats.tableCount,
+        codeBlocks: stats.codeBlockCount,
+        markdownLength: markdown.length,
+      });
+
       const discoveredLinks = this.extractLinksForCrawl(originalDom, resolvedUrl);
 
       this.crawledUrls.add(resolvedUrl);
@@ -624,12 +654,14 @@ export class WebCrawler {
       return {
         url: resolvedUrl,
         title,
-        content: aggregatedText,
+        content: markdown,
+        plainText: aggregatedText,
         metaDescription,
         statusCode,
         links: discoveredLinks,
         metadata: pageMetadata,
         chunks,
+        structureStats: stats,
         rawHtml: html,
       };
     } catch (error) {
@@ -665,14 +697,68 @@ export class WebCrawler {
     }
   }
 
-  private async fetchPageContent(url: string): Promise<{ html: string; statusCode: number; finalUrl: string }> {
+  public async extractStructuredContentFromHtml(
+    rawHtml: string,
+    pageUrl: string,
+    canonicalUrl?: string,
+    fallbackTitle?: string
+  ): Promise<{
+    chunks: ContentChunk[];
+    aggregatedText: string;
+    wordCount: number;
+    markdown: string;
+    title?: string;
+    outLinks: string[];
+    stats: {
+      headingCount: number;
+      listCount: number;
+      tableCount: number;
+      codeBlockCount: number;
+    };
+  }> {
+    const $ = cheerio.load(rawHtml);
+    this.cleanDocument($);
+    return await this.parseContentIntoChunks(
+      rawHtml,
+      $,
+      this.normalizeUrl(pageUrl),
+      canonicalUrl ? this.normalizeUrl(canonicalUrl) : this.normalizeUrl(pageUrl),
+      fallbackTitle ?? ''
+    );
+  }
+
+  public async fetchPageHtml(
+    url: string,
+    options: { userAgent?: string; headers?: Record<string, string> } = {}
+  ): Promise<{ html: string; statusCode: number; finalUrl: string }> {
+    return await this.fetchPageContent(url, options);
+  }
+
+  private async fetchPageContent(
+    url: string,
+    options: { userAgent?: string; headers?: Record<string, string> } = {}
+  ): Promise<{ html: string; statusCode: number; finalUrl: string }> {
     const browser = await this.getBrowser();
 
     if (browser) {
       let page: any = null;
       try {
         page = await browser.newPage();
-        await page.setUserAgent('SearchEngine-Crawler/1.0 (+https://example.com/crawler)');
+        const userAgent = options.userAgent?.trim() || 'SearchEngine-Crawler/1.0 (+https://example.com/crawler)';
+        await page.setUserAgent(userAgent);
+
+        if (options.headers && typeof page.setExtraHTTPHeaders === 'function') {
+          const headerEntries = Object.entries(options.headers).filter(([key, value]) =>
+            typeof key === 'string' && key.trim().length > 0 && typeof value === 'string'
+          );
+          if (headerEntries.length > 0) {
+            const normalizedHeaders: Record<string, string> = {};
+            for (const [key, value] of headerEntries) {
+              normalizedHeaders[key] = value;
+            }
+            await page.setExtraHTTPHeaders(normalizedHeaders);
+          }
+        }
 
         if (this.proxyCredentials && typeof page.authenticate === 'function') {
           await page.authenticate(this.proxyCredentials);
@@ -774,10 +860,26 @@ export class WebCrawler {
         });
       }
 
+      const defaultUserAgent = 'SearchEngine-Crawler/1.0 (+https://example.com/crawler)';
+      const providedHeaders = options.headers ?? {};
+      const headers: Record<string, string> = {};
+
+      for (const [key, value] of Object.entries(providedHeaders)) {
+        if (typeof key === 'string' && key.trim() && typeof value === 'string') {
+          headers[key] = value;
+        }
+      }
+
+      const hasCustomUserAgent = Object.keys(headers).some(
+        key => key.toLowerCase() === 'user-agent'
+      );
+
+      if (!hasCustomUserAgent) {
+        headers['User-Agent'] = options.userAgent?.trim() || defaultUserAgent;
+      }
+
       const fetchOptions: any = {
-        headers: {
-          'User-Agent': 'SearchEngine-Crawler/1.0 (+https://example.com/crawler)',
-        },
+        headers,
         signal: controller.signal,
       };
 

@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import { randomUUID, createHash } from "crypto";
-import fetch, { type RequestInit } from "node-fetch";
 import { load } from "cheerio";
+import { marked } from "marked";
 import { URL } from "url";
 import { and, eq } from "drizzle-orm";
 import { knowledgeDocuments, knowledgeNodes } from "@shared/schema";
@@ -12,6 +12,7 @@ import {
 } from "@shared/knowledge-base";
 import { db } from "./db";
 import { createKnowledgeDocument, updateKnowledgeDocument } from "./knowledge-base";
+import { WebCrawler } from "./crawler";
 
 const DEFAULT_RATE_LIMIT = 1;
 const DEFAULT_MAX_DEPTH = 3;
@@ -50,6 +51,16 @@ type InternalJobState = {
 };
 
 const jobs = new Map<string, InternalJobState>();
+
+const structuredCrawler = new WebCrawler();
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 function normalizeUrl(rawUrl: string): string | null {
   try {
@@ -110,7 +121,9 @@ async function upsertDocument({
   baseId,
   url,
   title,
-  content,
+  contentHtml,
+  contentMarkdown,
+  contentPlainText,
   language,
   versionTag,
   metadata,
@@ -119,13 +132,18 @@ async function upsertDocument({
   baseId: string;
   url: string;
   title: string;
-  content: string;
+  contentHtml: string;
+  contentMarkdown: string;
+  contentPlainText: string;
   language?: string | null;
   versionTag?: string | null;
   metadata: Record<string, unknown>;
 }): Promise<"created" | "updated" | "skipped"> {
-  const normalizedContent = content.trim();
-  const hash = createHash("sha256").update(normalizedContent).digest("hex");
+  const normalizedMarkdown = contentMarkdown.trim();
+  const normalizedHtml = contentHtml.trim();
+  const normalizedPlainText = contentPlainText.trim() || normalizedMarkdown || normalizedHtml;
+  const hashSource = normalizedMarkdown || normalizedHtml;
+  const hash = createHash("sha256").update(hashSource).digest("hex");
 
   let existing;
   try {
@@ -160,7 +178,9 @@ async function upsertDocument({
   if (!existing) {
     const created = await createKnowledgeDocument(baseId, workspaceId, {
       title: title || url,
-      content: normalizedContent,
+      content: normalizedHtml,
+      contentMarkdown: normalizedMarkdown,
+      contentPlainText: normalizedPlainText,
       sourceType: "crawl",
     });
 
@@ -207,7 +227,9 @@ async function upsertDocument({
 
   await updateKnowledgeDocument(baseId, existing.nodeId, workspaceId, {
     title: title || url,
-    content: normalizedContent,
+    content: normalizedHtml,
+    contentMarkdown: normalizedMarkdown,
+    contentPlainText: normalizedPlainText,
   });
 
   await db
@@ -225,49 +247,96 @@ async function upsertDocument({
 }
 
 async function fetchPage(url: string, config: KnowledgeBaseCrawlConfig): Promise<string> {
-  const headers: Record<string, string> = {};
   const userAgent = config.userAgent?.trim() || DEFAULT_USER_AGENT;
-  headers["User-Agent"] = userAgent;
+  const headers: Record<string, string> = {};
 
   if (config.auth?.headers) {
     for (const [key, value] of Object.entries(config.auth.headers)) {
-      headers[key] = value;
+      if (typeof key === "string" && key.trim().length > 0 && typeof value === "string") {
+        headers[key] = value;
+      }
     }
   }
 
-  const init: RequestInit = {
+  const { html } = await structuredCrawler.fetchPageHtml(url, {
+    userAgent,
     headers,
-    redirect: "follow",
-  };
+  });
 
-  const response = await fetch(url, init);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  const text = await response.text();
-  return text;
+  return html;
 }
 
-function extractContent(baseUrl: string, html: string, config: KnowledgeBaseCrawlConfig): {
+async function extractContent(
+  baseUrl: string,
+  html: string,
+  config: KnowledgeBaseCrawlConfig,
+): Promise<{
   title: string;
-  content: string;
+  markdown: string;
+  html: string;
+  plainText: string;
   links: string[];
-} {
+  stats: {
+    headingCount: number;
+    listCount: number;
+    tableCount: number;
+    codeBlockCount: number;
+  };
+}> {
   const $ = load(html);
   const selectorTitle = config.selectors?.title?.trim();
   const selectorContent = config.selectors?.content?.trim();
 
-  const title = selectorTitle ? $(selectorTitle).first().text().trim() : $("title").first().text().trim();
+  const fallbackTitle = selectorTitle ? $(selectorTitle).first().text().trim() : $("title").first().text().trim();
 
-  const contentRoot = selectorContent ? $(selectorContent) : $("body");
-  const content = contentRoot.text().replace(/\s+/g, " ").trim();
+  const contentRoot = selectorContent ? $(selectorContent) : null;
+  const selectionHtml = contentRoot && contentRoot.length > 0 ? contentRoot.html() ?? "" : "";
+  const extractionHtml = selectionHtml.trim() ? `<article>${selectionHtml}</article>` : html;
+
+  const structured = await structuredCrawler.extractStructuredContentFromHtml(
+    extractionHtml,
+    baseUrl,
+    baseUrl,
+    fallbackTitle,
+  );
+
+  const structuredTitle = structured.title?.trim();
+  let markdown = structured.markdown?.trim() ?? "";
+  const plainText = structured.aggregatedText ?? "";
+  if (!markdown && plainText) {
+    markdown = plainText;
+  }
+
+  let renderedHtml = "";
+  if (markdown) {
+    const parsed = marked.parse(markdown, { gfm: true });
+    renderedHtml = typeof parsed === "string" ? parsed : await parsed;
+  }
+
+  if (!renderedHtml.trim()) {
+    if (selectionHtml.trim()) {
+      renderedHtml = selectionHtml;
+    } else if (plainText.trim()) {
+      renderedHtml = `<p>${escapeHtml(plainText)}</p>`;
+    } else {
+      renderedHtml = html;
+    }
+  }
 
   const links = new Set<string>();
+  structured.outLinks?.forEach((link) => {
+    if (link) {
+      links.add(link);
+    }
+  });
+
   $("a[href]")
     .map((_, element) => $(element).attr("href"))
     .get()
     .forEach((href) => {
-      if (!href) return;
+      if (!href) {
+        return;
+      }
       try {
         const resolved = new URL(href, baseUrl).toString();
         const normalized = normalizeUrl(resolved);
@@ -279,7 +348,14 @@ function extractContent(baseUrl: string, html: string, config: KnowledgeBaseCraw
       }
     });
 
-  return { title, content, links: Array.from(links) };
+  return {
+    title: structuredTitle || fallbackTitle,
+    markdown,
+    html: renderedHtml,
+    plainText,
+    links: Array.from(links),
+    stats: structured.stats,
+  };
 }
 
 async function processJob(job: InternalJobState): Promise<void> {
@@ -351,13 +427,22 @@ async function processJob(job: InternalJobState): Promise<void> {
       const html = await fetchPage(normalizedUrl, config);
       job.status.fetched += 1;
 
-      const { title, content, links } = extractContent(normalizedUrl, html, config);
+      const {
+        title,
+        markdown,
+        html: contentHtml,
+        plainText,
+        links,
+        stats,
+      } = await extractContent(normalizedUrl, html, config);
       job.status.extracted += 1;
 
       const metadata = {
         sourceUrl: normalizedUrl,
         extractedAt: new Date().toISOString(),
         status: "fetched",
+        structureStats: stats,
+        markdownLength: markdown.length,
       };
 
       const result = await upsertDocument({
@@ -365,7 +450,9 @@ async function processJob(job: InternalJobState): Promise<void> {
         baseId: job.baseId,
         url: normalizedUrl,
         title,
-        content,
+        contentHtml,
+        contentMarkdown: markdown,
+        contentPlainText: plainText,
         language: config.language,
         versionTag: config.version,
         metadata,
