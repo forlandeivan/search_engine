@@ -8,6 +8,7 @@ import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { JSDOM } from 'jsdom';
 import GithubSlugger from 'github-slugger';
+import { spawn } from 'child_process';
 import { storage } from './storage';
 import { type InsertPage, type ContentChunk, type PageMetadata, type ChunkMedia } from '@shared/schema';
 
@@ -615,7 +616,6 @@ export class WebCrawler {
         markdown,
         title: extractedTitle,
         outLinks,
-        stats,
       } = await this.parseContentIntoChunks(html, $, resolvedUrl, canonicalUrl, fallbackTitle);
 
       const title = extractedTitle || fallbackTitle;
@@ -635,8 +635,6 @@ export class WebCrawler {
           outLinks,
           languageAttr,
           finalUrl,
-          structureStats: stats,
-          plainText: aggregatedText,
         }
       );
 
@@ -1138,6 +1136,115 @@ export class WebCrawler {
     }
   }
 
+  private async extractWithTrafilatura(
+    html: string,
+    pageUrl: string
+  ): Promise<{ html: string; title?: string } | null> {
+    const pythonScript = [
+      'import json, sys',
+      'try:',
+      '    import trafilatura',
+      'except Exception as exc:',
+      "    json.dump({'error': f'import:{exc.__class__.__name__}:{exc}'}, sys.stdout)",
+      '    sys.exit(0)',
+      'raw_html = sys.stdin.read()',
+      'try:',
+      `    html_output = trafilatura.extract(html_input=raw_html, url=${JSON.stringify(pageUrl)}, include_comments=False, include_links=True, include_images=True, favour_recall=True, output_format="html")`,
+      `    metadata = trafilatura.extract_metadata(raw_html, url=${JSON.stringify(pageUrl)})`,
+      '    title = getattr(metadata, "title", None) if metadata else None',
+      'except Exception as exc:',
+      "    json.dump({'error': f'extract:{exc.__class__.__name__}:{exc}'}, sys.stdout)",
+      '    sys.exit(0)',
+      "json.dump({'html': html_output, 'title': title}, sys.stdout)",
+    ].join('\n');
+
+    return await new Promise(resolve => {
+      let stdout = '';
+      let stderr = '';
+      const child = spawn('python3', ['-c', pythonScript], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      const timeoutId = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, 10000);
+
+      let completed = false;
+
+      const finish = (result: { html: string; title?: string } | null) => {
+        if (completed) {
+          return;
+        }
+        completed = true;
+        clearTimeout(timeoutId);
+        resolve(result);
+      };
+
+      child.stdout.on('data', data => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on('data', data => {
+        stderr += data.toString();
+      });
+
+      child.on('error', error => {
+        this.logForCurrentSite('debug', 'Не удалось запустить Trafilatura', {
+          url: pageUrl,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        finish(null);
+      });
+
+      child.on('close', () => {
+        if (stderr.trim()) {
+          this.logForCurrentSite('debug', 'Trafilatura stderr', {
+            url: pageUrl,
+            stderr: stderr.trim().slice(0, 5000),
+          });
+        }
+
+        try {
+          const parsed = stdout.trim() ? JSON.parse(stdout) : null;
+          if (!parsed || !parsed.html) {
+            if (parsed?.error) {
+              this.logForCurrentSite('debug', 'Trafilatura вернула ошибку', {
+                url: pageUrl,
+                error: parsed.error,
+              });
+            }
+            finish(null);
+            return;
+          }
+
+          const textPreview = this.normalizeText(cheerio.load(parsed.html).text());
+          if (textPreview.length < 150) {
+            finish(null);
+            return;
+          }
+
+          finish({
+            html: parsed.html as string,
+            title: typeof parsed.title === 'string' ? parsed.title : undefined,
+          });
+        } catch (error) {
+          this.logForCurrentSite('debug', 'Trafilatura вернула некорректный ответ', {
+            url: pageUrl,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          finish(null);
+        }
+      });
+
+      try {
+        child.stdin.write(html);
+      } catch {
+        // ignored
+      }
+      child.stdin.end();
+    });
+  }
+
   private prepareStructuredContent(
     html: string,
     pageUrl: string,
@@ -1149,12 +1256,6 @@ export class WebCrawler {
     wordCount: number;
     markdown: string;
     outLinks: string[];
-    stats: {
-      headingCount: number;
-      listCount: number;
-      tableCount: number;
-      codeBlockCount: number;
-    };
   } | null {
     const sanitizedHtml = typeof html === 'string' ? html.trim() : '';
     if (!sanitizedHtml) {
@@ -1168,9 +1269,6 @@ export class WebCrawler {
     if (!body) {
       return null;
     }
-
-    const nodeInterface = document.defaultView?.Node;
-    const elementNodeType = nodeInterface?.ELEMENT_NODE ?? 1;
 
     const slugger = new GithubSlugger();
     const outLinksSet = new Set<string>();
@@ -1214,13 +1312,6 @@ export class WebCrawler {
       return null;
     }
 
-    const headingCount = headingElements.length;
-    const listCount = body.querySelectorAll('ul, ol').length;
-    const tableCount = body.querySelectorAll('table').length;
-    const preCount = body.querySelectorAll('pre').length;
-    const codeCount = body.querySelectorAll('code').length;
-    const codeBlockCount = preCount + Math.max(0, codeCount - preCount);
-
     const headingStack: Array<{ level: number; title: string }> = [];
     const sections: Array<{
       id: string;
@@ -1252,7 +1343,7 @@ export class WebCrawler {
       const tempContainer = document.createElement('div');
       let sibling: Node | null = headingElement.nextSibling;
       while (sibling) {
-        if (sibling.nodeType === elementNodeType) {
+        if (sibling.nodeType === Node.ELEMENT_NODE) {
           const tagName = (sibling as Element).tagName.toLowerCase();
           if (/^h[1-6]$/.test(tagName)) {
             const siblingLevel = Number.parseInt(tagName.replace(/[^0-9]/g, ''), 10) || 6;
@@ -1370,12 +1461,6 @@ export class WebCrawler {
       wordCount: this.countWords(aggregatedText),
       markdown,
       outLinks: Array.from(outLinksSet),
-      stats: {
-        headingCount,
-        listCount,
-        tableCount,
-        codeBlockCount,
-      },
     };
   }
 
@@ -1464,12 +1549,6 @@ export class WebCrawler {
     markdown: string;
     title?: string;
     outLinks: string[];
-    stats: {
-      headingCount: number;
-      listCount: number;
-      tableCount: number;
-      codeBlockCount: number;
-    };
   }> {
     const articleFromReadability = this.extractWithReadability(rawHtml, pageUrl);
     if (articleFromReadability && articleFromReadability.html) {
@@ -1481,6 +1560,19 @@ export class WebCrawler {
       );
       if (prepared) {
         return { ...prepared, title: articleFromReadability.title ?? fallbackTitle };
+      }
+    }
+
+    const articleFromTrafilatura = await this.extractWithTrafilatura(rawHtml, pageUrl);
+    if (articleFromTrafilatura && articleFromTrafilatura.html) {
+      const prepared = this.prepareStructuredContent(
+        articleFromTrafilatura.html,
+        pageUrl,
+        canonicalUrl,
+        articleFromTrafilatura.title ?? fallbackTitle
+      );
+      if (prepared) {
+        return { ...prepared, title: articleFromTrafilatura.title ?? fallbackTitle };
       }
     }
 
@@ -1497,12 +1589,6 @@ export class WebCrawler {
       wordCount: 0,
       markdown: '',
       outLinks: [],
-      stats: {
-        headingCount: 0,
-        listCount: 0,
-        tableCount: 0,
-        codeBlockCount: 0,
-      },
     };
   }
 
@@ -1528,13 +1614,6 @@ export class WebCrawler {
       outLinks?: string[];
       languageAttr?: string;
       finalUrl?: string;
-      plainText?: string;
-      structureStats?: {
-        headingCount: number;
-        listCount: number;
-        tableCount: number;
-        codeBlockCount: number;
-      };
     } = {}
   ): PageMetadata {
     const linksDom = options.linkSourceDom ?? $;
@@ -1559,8 +1638,6 @@ export class WebCrawler {
       fetchedAt: new Date().toISOString(),
       markdown: options.markdown,
       outLinks: options.outLinks,
-      plainText: options.plainText ?? aggregatedText,
-      structureStats: options.structureStats,
       extractedAt: new Date().toISOString(),
       totalChunks: chunks.length,
       wordCount,

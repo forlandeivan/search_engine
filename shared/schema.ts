@@ -77,13 +77,6 @@ export interface PageMetadata {
   fetchedAt?: string;
   markdown?: string;
   outLinks?: string[];
-  plainText?: string;
-  structureStats?: {
-    headingCount: number;
-    listCount: number;
-    tableCount: number;
-    codeBlockCount: number;
-  };
   extractedAt: string;
   totalChunks: number;
   wordCount: number;
