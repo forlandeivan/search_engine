@@ -3,6 +3,12 @@ import fetch from 'node-fetch';
 import { URL } from 'url';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
+import { Readability } from '@mozilla/readability';
+import TurndownService from 'turndown';
+import { gfm } from 'turndown-plugin-gfm';
+import { JSDOM } from 'jsdom';
+import GithubSlugger from 'github-slugger';
+import { spawn } from 'child_process';
 import { storage } from './storage';
 import { type InsertPage, type ContentChunk, type PageMetadata, type ChunkMedia } from '@shared/schema';
 
@@ -56,6 +62,11 @@ export class WebCrawler {
   private proxyCredentials: { username: string; password: string } | null = null;
   private browserProxyConfig: { server: string; credentials: { username: string; password: string } | null } | null = null;
   private readonly defaultMaxChunkSize = 1200;
+  private readonly turndown = new TurndownService({
+    headingStyle: 'atx',
+    codeBlockStyle: 'fenced',
+    bulletListMarker: '-',
+  });
   private options: CrawlOptions = {
     maxDepth: 3,
     followExternalLinks: false,
@@ -67,6 +78,7 @@ export class WebCrawler {
 
   constructor() {
     this.logEmitter.setMaxListeners(0);
+    this.turndown.use(gfm);
   }
 
   private async loadPuppeteer(): Promise<any | null> {
@@ -571,10 +583,21 @@ export class WebCrawler {
       const $ = cheerio.load(html);
       this.cleanDocument($);
 
-      const title = this.normalizeText($('title').first().text()) || this.normalizeText($('h1').first().text());
-      const contentRoot = this.getContentRoot($);
+      const fallbackTitle =
+        this.normalizeText($('title').first().text()) || this.normalizeText($('h1').first().text());
+      const canonicalUrl = this.extractCanonicalUrl(originalDom, resolvedUrl);
+      const languageAttr = this.normalizeText(originalDom('html').attr('lang')) || undefined;
 
-      const { chunks, aggregatedText, wordCount } = this.parseContentIntoChunks($, contentRoot, resolvedUrl);
+      const {
+        chunks,
+        aggregatedText,
+        wordCount,
+        markdown,
+        title: extractedTitle,
+        outLinks,
+      } = await this.parseContentIntoChunks(html, $, resolvedUrl, canonicalUrl, fallbackTitle);
+
+      const title = extractedTitle || fallbackTitle;
 
       const metaDescription = this.extractMetaDescription($);
       const pageMetadata = this.extractPageMetadata(
@@ -583,8 +606,15 @@ export class WebCrawler {
         aggregatedText,
         chunks,
         wordCount,
-        metaDescription,
-        originalDom
+        {
+          metaDescription,
+          linkSourceDom: originalDom,
+          canonicalUrl,
+          markdown,
+          outLinks,
+          languageAttr,
+          finalUrl,
+        }
       );
 
       const discoveredLinks = this.extractLinksForCrawl(originalDom, resolvedUrl);
@@ -963,117 +993,500 @@ export class WebCrawler {
     return $('body');
   }
 
-  private parseContentIntoChunks(
-    $: CheerioRoot,
-    contentRoot: CheerioCollection,
+  private extractCanonicalUrl($: CheerioRoot, fallbackUrl: string): string {
+    const href = this.normalizeText($('link[rel="canonical"]').attr('href'));
+    if (href) {
+      const resolved = this.resolveUrl(href, fallbackUrl);
+      if (resolved) {
+        return this.normalizeUrl(resolved);
+      }
+    }
+    return this.normalizeUrl(fallbackUrl);
+  }
+
+  private extractWithReadability(
+    html: string,
     pageUrl: string
-  ): { chunks: ContentChunk[]; aggregatedText: string; wordCount: number } {
-    const headings = contentRoot.find('h2, h3, h4').toArray();
-    const chunks: ContentChunk[] = [];
-    let positionCounter = 0;
+  ): { html: string; title?: string } | null {
+    try {
+      const dom = new JSDOM(html, { url: pageUrl });
+      const reader = new Readability(dom.window.document);
+      const article = reader.parse();
+      if (!article?.content) {
+        return null;
+      }
 
-    const pushChunk = (chunk: ContentChunk) => {
-      const chunkSizeLimit = this.options.maxChunkSize ?? this.defaultMaxChunkSize;
-      const chunkCopies = this.subdivideChunksBySize(chunk, chunkSizeLimit);
-      for (const part of chunkCopies) {
-        const clonedImages = part.metadata.images.map(image => ({ ...image }));
-        const clonedLinks = [...part.metadata.links];
-        chunks.push({
-          ...part,
-          metadata: {
-            ...part.metadata,
-            images: clonedImages,
-            links: clonedLinks,
-            position: positionCounter++,
-          },
+      const textContent = this.normalizeText(article.textContent ?? '');
+      if (textContent.length < 200) {
+        return null;
+      }
+
+      return {
+        html: article.content,
+        title: article.title ?? undefined,
+      };
+    } catch (error) {
+      this.logForCurrentSite('debug', 'Readability не смог извлечь контент', {
+        url: pageUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  private async extractWithTrafilatura(
+    html: string,
+    pageUrl: string
+  ): Promise<{ html: string; title?: string } | null> {
+    const pythonScript = [
+      'import json, sys',
+      'try:',
+      '    import trafilatura',
+      'except Exception as exc:',
+      "    json.dump({'error': f'import:{exc.__class__.__name__}:{exc}'}, sys.stdout)",
+      '    sys.exit(0)',
+      'raw_html = sys.stdin.read()',
+      'try:',
+      `    html_output = trafilatura.extract(html_input=raw_html, url=${JSON.stringify(pageUrl)}, include_comments=False, include_links=True, include_images=True, favour_recall=True, output_format="html")`,
+      `    metadata = trafilatura.extract_metadata(raw_html, url=${JSON.stringify(pageUrl)})`,
+      '    title = getattr(metadata, "title", None) if metadata else None',
+      'except Exception as exc:',
+      "    json.dump({'error': f'extract:{exc.__class__.__name__}:{exc}'}, sys.stdout)",
+      '    sys.exit(0)',
+      "json.dump({'html': html_output, 'title': title}, sys.stdout)",
+    ].join('\n');
+
+    return await new Promise(resolve => {
+      let stdout = '';
+      let stderr = '';
+      const child = spawn('python3', ['-c', pythonScript], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      const timeoutId = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, 10000);
+
+      let completed = false;
+
+      const finish = (result: { html: string; title?: string } | null) => {
+        if (completed) {
+          return;
+        }
+        completed = true;
+        clearTimeout(timeoutId);
+        resolve(result);
+      };
+
+      child.stdout.on('data', data => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on('data', data => {
+        stderr += data.toString();
+      });
+
+      child.on('error', error => {
+        this.logForCurrentSite('debug', 'Не удалось запустить Trafilatura', {
+          url: pageUrl,
+          error: error instanceof Error ? error.message : String(error),
         });
-      }
-    };
+        finish(null);
+      });
 
-    if (headings.length === 0) {
-      const fullText = this.normalizeText(contentRoot.text());
-      if (fullText.length > 0) {
-        const fallbackHeading = this.normalizeText($('h1').first().text()) || 'Основной контент';
-        const html = contentRoot.html() ?? '';
-        const fallbackChunk: ContentChunk = {
-          id: 'content-section-0',
-          heading: fallbackHeading,
-          level: 2,
-          content: fullText,
-          deepLink: pageUrl,
-          metadata: {
-            images: this.collectChunkImagesFromHtml(html, pageUrl),
-            links: this.collectChunkLinksFromHtml(html, pageUrl),
-            position: 0,
-            wordCount: this.countWords(fullText),
-            charCount: fullText.length,
-            estimatedReadingTimeSec: this.calculateReadingTimeSec(this.countWords(fullText)),
-            excerpt: this.buildExcerpt(fullText),
-          },
-        };
-
-        pushChunk(fallbackChunk);
-      }
-    } else {
-      headings.forEach((element: any, index: number) => {
-        const headingElement = $(element);
-        const headingText = this.normalizeText(headingElement.text()) || `Раздел ${index + 1}`;
-        const level = parseInt(element.tagName?.replace(/[^0-9]/g, '') ?? '2', 10) || 2;
-
-        const sectionNodes: any[] = [];
-        let node = element.next;
-
-        while (node) {
-          if (node.type === 'tag') {
-            const tagName = node.name?.toLowerCase();
-            if (tagName && /^h[1-6]$/.test(tagName)) {
-              const nodeLevel = parseInt(tagName.replace(/[^0-9]/g, ''), 10) || 6;
-              if (nodeLevel <= level) {
-                break;
-              }
-            }
-          }
-          sectionNodes.push(node);
-          node = node.next;
+      child.on('close', () => {
+        if (stderr.trim()) {
+          this.logForCurrentSite('debug', 'Trafilatura stderr', {
+            url: pageUrl,
+            stderr: stderr.trim().slice(0, 5000),
+          });
         }
 
-        const sectionHtml = sectionNodes.map(nodeItem => $.html(nodeItem)).join('');
-        const sectionText = this.normalizeText(cheerio.load(sectionHtml).text());
+        try {
+          const parsed = stdout.trim() ? JSON.parse(stdout) : null;
+          if (!parsed || !parsed.html) {
+            if (parsed?.error) {
+              this.logForCurrentSite('debug', 'Trafilatura вернула ошибку', {
+                url: pageUrl,
+                error: parsed.error,
+              });
+            }
+            finish(null);
+            return;
+          }
 
-        const chunk: ContentChunk = {
-          id: headingElement.attr('id')?.trim() || `heading-${index}`,
-          heading: headingText,
-          level,
-          content: sectionText,
-          deepLink: this.buildDeepLink(pageUrl, headingElement, headingText, index),
-          metadata: {
-            images: this.collectChunkImagesFromHtml(sectionHtml, pageUrl),
-            links: this.collectChunkLinksFromHtml(sectionHtml, pageUrl),
-            position: 0,
-            wordCount: this.countWords(sectionText),
-            charCount: sectionText.length,
-            estimatedReadingTimeSec: this.calculateReadingTimeSec(this.countWords(sectionText)),
-            excerpt: this.buildExcerpt(sectionText),
-          },
-        };
+          const textPreview = this.normalizeText(cheerio.load(parsed.html).text());
+          if (textPreview.length < 150) {
+            finish(null);
+            return;
+          }
 
-        pushChunk(chunk);
+          finish({
+            html: parsed.html as string,
+            title: typeof parsed.title === 'string' ? parsed.title : undefined,
+          });
+        } catch (error) {
+          this.logForCurrentSite('debug', 'Trafilatura вернула некорректный ответ', {
+            url: pageUrl,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          finish(null);
+        }
       });
+
+      try {
+        child.stdin.write(html);
+      } catch {
+        // ignored
+      }
+      child.stdin.end();
+    });
+  }
+
+  private prepareStructuredContent(
+    html: string,
+    pageUrl: string,
+    canonicalUrl: string,
+    fallbackTitle: string
+  ): {
+    chunks: ContentChunk[];
+    aggregatedText: string;
+    wordCount: number;
+    markdown: string;
+    outLinks: string[];
+  } | null {
+    const sanitizedHtml = typeof html === 'string' ? html.trim() : '';
+    if (!sanitizedHtml) {
+      return null;
     }
 
-    const aggregatedText = this.normalizeText(
-      chunks
-        .map(chunk => `${chunk.heading}\n${chunk.content}`.trim())
-        .filter(Boolean)
-        .join('\n\n')
-    );
+    const baseUrl = canonicalUrl || pageUrl;
+    const dom = new JSDOM(`<!DOCTYPE html><html><body>${sanitizedHtml}</body></html>`, { url: baseUrl });
+    const document = dom.window.document;
+    const body = document.body;
+    if (!body) {
+      return null;
+    }
 
-    const wordCount = this.countWords(aggregatedText);
+    const slugger = new GithubSlugger();
+    const outLinksSet = new Set<string>();
+
+    body.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(anchor => {
+      const href = anchor.getAttribute('href');
+      if (!href) {
+        return;
+      }
+      const resolved = this.resolveUrl(href, baseUrl);
+      if (resolved) {
+        anchor.setAttribute('href', resolved);
+        outLinksSet.add(resolved);
+      } else {
+        anchor.removeAttribute('href');
+      }
+    });
+
+    body.querySelectorAll<HTMLImageElement>('img[src]').forEach(image => {
+      const src = image.getAttribute('src');
+      if (!src) {
+        return;
+      }
+      const resolved = this.resolveUrl(src, baseUrl);
+      if (resolved) {
+        image.setAttribute('src', resolved);
+      }
+    });
+
+    let headingElements = Array.from(body.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'));
+    if (headingElements.length === 0) {
+      const fallbackHeading = document.createElement('h1');
+      fallbackHeading.textContent = fallbackTitle || 'Основной контент';
+      const fallbackId = this.slugifyHeading(fallbackHeading.textContent ?? 'section', slugger);
+      fallbackHeading.setAttribute('id', fallbackId);
+      body.insertBefore(fallbackHeading, body.firstChild);
+      headingElements = [fallbackHeading];
+    }
+
+    if (headingElements.length === 0) {
+      return null;
+    }
+
+    const headingStack: Array<{ level: number; title: string }> = [];
+    const sections: Array<{
+      id: string;
+      heading: string;
+      level: number;
+      markdown: string;
+      content: string;
+      links: string[];
+      images: ChunkMedia[];
+      sectionPath: string[];
+      orderIndex: number;
+      sourceUrl: string;
+    }> = [];
+
+    headingElements.forEach((headingElement, index) => {
+      const level = Number.parseInt(headingElement.tagName.replace(/[^0-9]/g, ''), 10) || 2;
+      const headingText = this.normalizeText(headingElement.textContent) || `Раздел ${index + 1}`;
+
+      while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= level) {
+        headingStack.pop();
+      }
+
+      const anchorId = this.ensureAnchorId(headingElement, slugger, headingText, index);
+      headingElement.setAttribute('id', anchorId);
+
+      const sectionPath = [...headingStack.map(item => item.title), headingText];
+      headingStack.push({ level, title: headingText });
+
+      const tempContainer = document.createElement('div');
+      let sibling: Node | null = headingElement.nextSibling;
+      while (sibling) {
+        if (sibling.nodeType === Node.ELEMENT_NODE) {
+          const tagName = (sibling as Element).tagName.toLowerCase();
+          if (/^h[1-6]$/.test(tagName)) {
+            const siblingLevel = Number.parseInt(tagName.replace(/[^0-9]/g, ''), 10) || 6;
+            if (siblingLevel <= level) {
+              break;
+            }
+          }
+        }
+        tempContainer.appendChild(sibling.cloneNode(true));
+        sibling = sibling.nextSibling;
+      }
+
+      const bodyMarkdown = tempContainer.innerHTML ? this.turndown.turndown(tempContainer.innerHTML) : '';
+      const headingLine = `${'#'.repeat(Math.min(6, Math.max(1, level)))} ${headingText}`.trim();
+      const headingWithAnchor = anchorId ? `${headingLine} {#${anchorId}}` : headingLine;
+      const combinedMarkdown = [headingWithAnchor, bodyMarkdown].filter(Boolean).join('\n\n');
+
+      const plainText = this.normalizeText(`${headingText}\n${tempContainer.textContent ?? ''}`);
+      const links = this.collectLinksFromElement(tempContainer);
+      const images = this.collectImagesFromElement(tempContainer);
+      const sourceUrl = this.buildSourceUrl(pageUrl, canonicalUrl, anchorId, headingText, index);
+
+      sections.push({
+        id: anchorId,
+        heading: headingText,
+        level,
+        markdown: combinedMarkdown,
+        content: plainText,
+        links,
+        images,
+        sectionPath,
+        orderIndex: sections.length,
+        sourceUrl,
+      });
+    });
+
+    const chunkSizeLimit = this.options.maxChunkSize ?? this.defaultMaxChunkSize;
+    const finalChunks: ContentChunk[] = [];
+    let positionCounter = 0;
+
+    for (const section of sections) {
+      const baseChunk: ContentChunk = {
+        id: section.id,
+        heading: section.heading,
+        level: section.level,
+        content: section.content,
+        markdown: section.markdown,
+        deepLink: section.sourceUrl,
+        metadata: {
+          images: section.images.map(image => ({ ...image })),
+          links: [...section.links],
+          position: positionCounter,
+          wordCount: this.countWords(section.content),
+          charCount: section.content.length,
+          estimatedReadingTimeSec: this.calculateReadingTimeSec(this.countWords(section.content)),
+          excerpt: this.buildExcerpt(section.content),
+          anchorId: section.id,
+          headingLevel: section.level,
+          headingText: section.heading,
+          sectionPath: [...section.sectionPath],
+          orderIndex: section.orderIndex,
+          sourceUrl: section.sourceUrl,
+          markdown: section.markdown,
+        },
+      };
+
+      const subdivided = this.subdivideChunksBySize(baseChunk, chunkSizeLimit);
+      for (const chunk of subdivided) {
+        chunk.deepLink = section.sourceUrl;
+        chunk.metadata.position = positionCounter++;
+        chunk.metadata.anchorId = section.id;
+        chunk.metadata.headingLevel = section.level;
+        chunk.metadata.headingText = section.heading;
+        chunk.metadata.sectionPath = [...section.sectionPath];
+        chunk.metadata.orderIndex = section.orderIndex;
+        chunk.metadata.sourceUrl = section.sourceUrl;
+        chunk.metadata.markdown = section.markdown;
+        if (!chunk.markdown) {
+          chunk.markdown = section.markdown;
+        }
+        finalChunks.push(chunk);
+      }
+    }
+
+    let aggregatedText = '';
+    for (const chunk of finalChunks) {
+      const chunkText = this.normalizeText(chunk.content);
+      if (!chunkText) {
+        chunk.metadata.charRange = [aggregatedText.length, aggregatedText.length];
+        continue;
+      }
+
+      if (aggregatedText.length > 0) {
+        aggregatedText += '\n\n';
+      }
+      const start = aggregatedText.length;
+      aggregatedText += chunkText;
+      const end = aggregatedText.length;
+      chunk.metadata.charRange = [start, end];
+      chunk.metadata.wordCount = this.countWords(chunkText);
+      chunk.metadata.charCount = chunkText.length;
+      chunk.metadata.estimatedReadingTimeSec = this.calculateReadingTimeSec(chunk.metadata.wordCount);
+      chunk.metadata.excerpt = this.buildExcerpt(chunkText);
+      chunk.content = chunkText;
+    }
+
+    const markdown = sections
+      .map(section => section.markdown)
+      .filter((entry): entry is string => Boolean(entry))
+      .join('\n\n');
 
     return {
-      chunks,
+      chunks: finalChunks,
       aggregatedText,
-      wordCount,
+      wordCount: this.countWords(aggregatedText),
+      markdown,
+      outLinks: Array.from(outLinksSet),
+    };
+  }
+
+  private ensureAnchorId(
+    heading: HTMLElement,
+    slugger: GithubSlugger,
+    headingText: string,
+    index: number
+  ): string {
+    const existing = this.normalizeText(heading.getAttribute('id')) || this.normalizeText(heading.getAttribute('name'));
+    if (existing) {
+      return existing
+        .trim()
+        .replace(/[^\p{L}\p{N}\-_. ]+/gu, '')
+        .replace(/\s+/g, '-')
+        .toLowerCase();
+    }
+
+    const base = headingText || `section-${index + 1}`;
+    const slug = slugger.slug(base);
+    return slug || `section-${index + 1}`;
+  }
+
+  private slugifyHeading(text: string, slugger: GithubSlugger): string {
+    const base = text.trim() || 'section';
+    const slug = slugger.slug(base);
+    return slug || base.toLowerCase().replace(/[^a-z0-9]+/gi, '-');
+  }
+
+  private collectLinksFromElement(container: HTMLElement): string[] {
+    const links = new Set<string>();
+    container.querySelectorAll('a[href]').forEach(anchor => {
+      const href = this.normalizeText(anchor.getAttribute('href'));
+      if (href) {
+        links.add(href);
+      }
+    });
+    return Array.from(links).slice(0, 20);
+  }
+
+  private collectImagesFromElement(container: HTMLElement): ChunkMedia[] {
+    const images: ChunkMedia[] = [];
+    const seen = new Set<string>();
+    container.querySelectorAll('img[src]').forEach(image => {
+      const src = this.normalizeText(image.getAttribute('src'));
+      if (!src || seen.has(src)) {
+        return;
+      }
+      seen.add(src);
+      const alt = this.normalizeText(image.getAttribute('alt')) || undefined;
+      images.push({ src, alt });
+    });
+    return images.slice(0, 10);
+  }
+
+  private buildSourceUrl(
+    pageUrl: string,
+    canonicalUrl: string,
+    anchorId: string | null,
+    headingText: string,
+    index: number
+  ): string {
+    const base = this.normalizeUrl(canonicalUrl || pageUrl);
+    if (anchorId) {
+      return `${base}#${encodeURIComponent(anchorId)}`;
+    }
+
+    if (headingText) {
+      const fragment = headingText.split(' ').slice(0, 12).join(' ');
+      return `${base}#:~:text=${encodeURIComponent(fragment)}`;
+    }
+
+    return `${base}#section-${index + 1}`;
+  }
+
+  private async parseContentIntoChunks(
+    rawHtml: string,
+    sanitizedDom: CheerioRoot,
+    pageUrl: string,
+    canonicalUrl: string,
+    fallbackTitle: string
+  ): Promise<{
+    chunks: ContentChunk[];
+    aggregatedText: string;
+    wordCount: number;
+    markdown: string;
+    title?: string;
+    outLinks: string[];
+  }> {
+    const articleFromReadability = this.extractWithReadability(rawHtml, pageUrl);
+    if (articleFromReadability && articleFromReadability.html) {
+      const prepared = this.prepareStructuredContent(
+        articleFromReadability.html,
+        pageUrl,
+        canonicalUrl,
+        articleFromReadability.title ?? fallbackTitle
+      );
+      if (prepared) {
+        return { ...prepared, title: articleFromReadability.title ?? fallbackTitle };
+      }
+    }
+
+    const articleFromTrafilatura = await this.extractWithTrafilatura(rawHtml, pageUrl);
+    if (articleFromTrafilatura && articleFromTrafilatura.html) {
+      const prepared = this.prepareStructuredContent(
+        articleFromTrafilatura.html,
+        pageUrl,
+        canonicalUrl,
+        articleFromTrafilatura.title ?? fallbackTitle
+      );
+      if (prepared) {
+        return { ...prepared, title: articleFromTrafilatura.title ?? fallbackTitle };
+      }
+    }
+
+    const contentRoot = this.getContentRoot(sanitizedDom);
+    const fallbackHtml = contentRoot.length > 0 ? contentRoot.html() ?? '' : sanitizedDom('body').html() ?? '';
+    const preparedFallback = this.prepareStructuredContent(fallbackHtml, pageUrl, canonicalUrl, fallbackTitle);
+    if (preparedFallback) {
+      return preparedFallback;
+    }
+
+    return {
+      chunks: [],
+      aggregatedText: '',
+      wordCount: 0,
+      markdown: '',
+      outLinks: [],
     };
   }
 
@@ -1091,12 +1504,19 @@ export class WebCrawler {
     aggregatedText: string,
     chunks: ContentChunk[],
     wordCount: number,
-    metaDescription?: string,
-    linkSourceDom?: CheerioRoot
+    options: {
+      metaDescription?: string;
+      linkSourceDom?: CheerioRoot;
+      canonicalUrl?: string;
+      markdown?: string;
+      outLinks?: string[];
+      languageAttr?: string;
+      finalUrl?: string;
+    } = {}
   ): PageMetadata {
-    const linksDom = linkSourceDom ?? $;
+    const linksDom = options.linkSourceDom ?? $;
     const metadata: PageMetadata = {
-      description: metaDescription,
+      description: options.metaDescription,
       keywords: this.normalizeText($('meta[name="keywords"]').attr('content')) || undefined,
       author:
         this.normalizeText($('meta[name="author"]').attr('content')) ||
@@ -1110,6 +1530,12 @@ export class WebCrawler {
       images: this.collectPageImages($, pageUrl),
       links: this.collectPageLinks(linksDom, pageUrl),
       language: (this.normalizeText($('html').attr('lang')) || undefined)?.toLowerCase(),
+      lang: options.languageAttr?.toLowerCase(),
+      canonicalUrl: options.canonicalUrl,
+      finalUrl: options.finalUrl,
+      fetchedAt: new Date().toISOString(),
+      markdown: options.markdown,
+      outLinks: options.outLinks,
       extractedAt: new Date().toISOString(),
       totalChunks: chunks.length,
       wordCount,
@@ -1173,6 +1599,7 @@ export class WebCrawler {
             ...chunk.metadata,
             images: chunk.metadata.images.map(image => ({ ...image })),
             links: [...chunk.metadata.links],
+            sectionPath: chunk.metadata.sectionPath ? [...chunk.metadata.sectionPath] : undefined,
           },
         },
       ];
@@ -1187,6 +1614,7 @@ export class WebCrawler {
             ...chunk.metadata,
             images: chunk.metadata.images.map(image => ({ ...image })),
             links: [...chunk.metadata.links],
+            sectionPath: chunk.metadata.sectionPath ? [...chunk.metadata.sectionPath] : undefined,
           },
         },
       ];
@@ -1217,6 +1645,7 @@ export class WebCrawler {
           excerpt: this.buildExcerpt(combinedContent),
           images: chunk.metadata.images.map(image => ({ ...image })),
           links: [...chunk.metadata.links],
+          sectionPath: chunk.metadata.sectionPath ? [...chunk.metadata.sectionPath] : undefined,
         },
       };
       subdividedChunks.push(combinedChunk);
@@ -1245,53 +1674,6 @@ export class WebCrawler {
     }
 
     return parts.filter(Boolean);
-  }
-
-  private collectChunkImagesFromHtml(html: string, pageUrl: string): ChunkMedia[] {
-    const $ = cheerio.load(html);
-    const images: ChunkMedia[] = [];
-    const seen = new Set<string>();
-
-    $('img[src]').each((_, element) => {
-      const src = this.normalizeText($(element).attr('src'));
-      if (!src) {
-        return;
-      }
-
-      const resolved = this.resolveUrl(src, pageUrl);
-      if (!resolved || seen.has(resolved)) {
-        return;
-      }
-
-      seen.add(resolved);
-      const alt = this.normalizeText($(element).attr('alt')) || undefined;
-      images.push({ src: resolved, alt });
-    });
-
-    return images.slice(0, 10);
-  }
-
-  private collectChunkLinksFromHtml(html: string, pageUrl: string): string[] {
-    const $ = cheerio.load(html);
-    const links: string[] = [];
-    const seen = new Set<string>();
-
-    $('a[href]').each((_, element) => {
-      const href = this.normalizeText($(element).attr('href'));
-      if (!href) {
-        return;
-      }
-
-      const resolved = this.resolveUrl(href, pageUrl);
-      if (!resolved || seen.has(resolved) || !this.isValidUrl(resolved)) {
-        return;
-      }
-
-      seen.add(resolved);
-      links.push(resolved);
-    });
-
-    return links.slice(0, 20);
   }
 
   private collectPageImages($: CheerioRoot, pageUrl: string): string[] {
@@ -1373,26 +1755,6 @@ export class WebCrawler {
       return text;
     }
     return `${text.slice(0, maxLength).trim()}…`;
-  }
-
-  private buildDeepLink(
-    pageUrl: string,
-    headingElement: CheerioCollection,
-    headingText: string,
-    index: number
-  ): string {
-    const anchorId = this.normalizeText(headingElement.attr('id')) || this.normalizeText(headingElement.attr('name'));
-    if (anchorId) {
-      return `${pageUrl}#${encodeURIComponent(anchorId)}`;
-    }
-
-    if (headingText) {
-      const fragment = headingText.split(' ').slice(0, 12).join(' ');
-      const encoded = encodeURIComponent(fragment);
-      return `${pageUrl}#:~:text=${encoded}`;
-    }
-
-    return `${pageUrl}#section-${index}`;
   }
 
   private shouldSkipUrl(url: string, depth: number, siteId: string): boolean {
