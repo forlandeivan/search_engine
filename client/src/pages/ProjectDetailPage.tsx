@@ -28,6 +28,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import MarkdownRenderer from "@/components/ui/markdown";
 import CrawlerLogPanel from "@/components/CrawlerLogPanel";
 import VectorizeProjectDialog from "@/components/VectorizeProjectDialog";
 import VectorizationStatusCard from "@/components/VectorizationStatusCard";
@@ -314,9 +315,12 @@ export default function ProjectDetailPage() {
           return Math.max(max, charCount);
         }, 0);
       const totalChunks = chunks.length;
-      const aggregatedContent = page.content ?? "";
-      const aggregatedCharCount = aggregatedContent.length;
-      const aggregatedWordCount = page.metadata?.wordCount ?? calculateWordCount(aggregatedContent);
+      const aggregatedPlainText = page.metadata?.plainText ?? "";
+      const aggregatedMarkdown = (page.metadata?.markdown ?? "").trim() || (page.content ?? "");
+      const aggregatedCharCount = aggregatedPlainText
+        ? aggregatedPlainText.length
+        : aggregatedMarkdown.length;
+      const aggregatedWordCount = page.metadata?.wordCount ?? calculateWordCount(aggregatedPlainText || aggregatedMarkdown);
 
       addParagraph(page.title || "Без названия", 18, { bold: true, spacingAfter: 6 });
       addParagraph(page.url ?? "", 11, { spacingAfter: 10 });
@@ -590,9 +594,12 @@ export default function ProjectDetailPage() {
                   <div className="space-y-4">
                     {sortedPages.map((page) => {
                       const siteConfig = site ?? null;
-                      const aggregatedContent = page.content ?? "";
-                      const contentLength = aggregatedContent.length;
-                      const aggregatedWordCount = page.metadata?.wordCount ?? calculateWordCount(aggregatedContent);
+                      const aggregatedMarkdown = (page.metadata?.markdown ?? "").trim() || (page.content ?? "");
+                      const aggregatedPlainText = page.metadata?.plainText ?? "";
+                      const contentLength = aggregatedPlainText
+                        ? aggregatedPlainText.length
+                        : aggregatedMarkdown.length;
+                      const aggregatedWordCount = page.metadata?.wordCount ?? calculateWordCount(aggregatedPlainText || aggregatedMarkdown);
                       const chunks = Array.isArray(page.chunks) ? page.chunks : [];
                       const chunkCharCounts = chunks.map((chunk) => chunk.metadata?.charCount ?? chunk.content.length);
                       const chunkWordCounts = chunks.map((chunk) => chunk.metadata?.wordCount ?? calculateWordCount(chunk.content));
@@ -718,17 +725,28 @@ export default function ProjectDetailPage() {
                                                         )}
                                                       </div>
                                                     </div>
-                                                    <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">
-                                                      {chunk.content}
-                                                    </p>
+                                                    {chunk.markdown ? (
+                                                      <MarkdownRenderer
+                                                        markdown={chunk.markdown}
+                                                        className="mt-2"
+                                                      />
+                                                    ) : (
+                                                      <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                                                        {chunk.content}
+                                                      </p>
+                                                    )}
                                                   </div>
                                                 );
                                               })}
                                             </div>
                                           )}
-                                          <pre className="whitespace-pre-wrap rounded-lg bg-muted p-4 text-sm">
-                                            {aggregatedContent}
-                                          </pre>
+                                          {aggregatedMarkdown.trim() ? (
+                                            <MarkdownRenderer markdown={aggregatedMarkdown} />
+                                          ) : aggregatedPlainText ? (
+                                            <pre className="whitespace-pre-wrap rounded-lg bg-muted p-4 text-sm">
+                                              {aggregatedPlainText}
+                                            </pre>
+                                          ) : null}
                                         </div>
                                       </div>
                                     </ScrollArea>

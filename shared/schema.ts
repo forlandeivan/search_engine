@@ -35,21 +35,32 @@ export interface ChunkMedia {
   alt?: string;
 }
 
+export interface ChunkMetadata {
+  images: ChunkMedia[];
+  links: string[];
+  position: number;
+  wordCount: number;
+  charCount: number;
+  estimatedReadingTimeSec: number;
+  excerpt: string;
+  anchorId?: string;
+  headingLevel?: number;
+  headingText?: string;
+  sectionPath?: string[];
+  orderIndex?: number;
+  charRange?: [number, number];
+  sourceUrl?: string;
+  markdown?: string;
+}
+
 export interface ContentChunk {
   id: string;
   heading: string;
   level: number;
   content: string;
   deepLink: string;
-  metadata: {
-    images: ChunkMedia[];
-    links: string[];
-    position: number;
-    wordCount: number;
-    charCount: number;
-    estimatedReadingTimeSec: number;
-    excerpt: string;
-  };
+  markdown?: string;
+  metadata: ChunkMetadata;
 }
 
 export interface PageMetadata {
@@ -60,6 +71,19 @@ export interface PageMetadata {
   images?: string[];
   links?: string[];
   language?: string;
+  lang?: string;
+  canonicalUrl?: string;
+  finalUrl?: string;
+  fetchedAt?: string;
+  markdown?: string;
+  outLinks?: string[];
+  plainText?: string;
+  structureStats?: {
+    headingCount: number;
+    listCount: number;
+    tableCount: number;
+    codeBlockCount: number;
+  };
   extractedAt: string;
   totalChunks: number;
   wordCount: number;

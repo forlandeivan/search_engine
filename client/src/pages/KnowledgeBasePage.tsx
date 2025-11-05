@@ -24,6 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
+import MarkdownRenderer from "@/components/ui/markdown";
 import VectorizeKnowledgeDocumentDialog, {
   type KnowledgeDocumentVectorizationSelection,
 } from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
@@ -1587,6 +1588,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       detail.id === documentDetail?.id
         ? sanitizedDocumentContent
         : getSanitizedContent(detail.content ?? "");
+    const markdownContent = detail.contentMarkdown ?? null;
     const statusLabel = DOCUMENT_STATUS_LABELS[detail.status] ?? detail.status;
     const sourceLabel = DOCUMENT_SOURCE_LABELS[detail.sourceType] ?? "Документ";
     const versionLabel = detail.versionNumber ? `v${detail.versionNumber}` : null;
@@ -1775,6 +1777,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                     />
                   </div>
                 </div>
+              ) : markdownContent && markdownContent.trim().length > 0 ? (
+                <MarkdownRenderer markdown={markdownContent} />
               ) : sanitizedContent ? (
                 <div
                   className="prose prose-sm max-w-none dark:prose-invert"
