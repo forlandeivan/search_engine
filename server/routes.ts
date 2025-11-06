@@ -15,6 +15,7 @@ import { crawler, type CrawlLogEvent } from "./crawler";
 import {
   startKnowledgeBaseCrawl,
   getKnowledgeBaseCrawlJob,
+  getKnowledgeBaseCrawlJobStateForBase,
   subscribeKnowledgeBaseCrawlJob,
   pauseKnowledgeBaseCrawl,
   resumeKnowledgeBaseCrawl,
@@ -7487,6 +7488,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       return handleKnowledgeBaseRouteError(error, res);
     }
+  });
+
+  app.get("/api/kb/:baseId/crawl/active", requireAuth, (req, res) => {
+    const { baseId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+
+    const { active, latest } = getKnowledgeBaseCrawlJobStateForBase(baseId, workspaceId);
+    if (!active) {
+      const lastRun = latest ? { job: latest } : undefined;
+      return res.json(lastRun ? { running: false, lastRun } : { running: false });
+    }
+
+    const normalizeNumber = (value?: number | null): number =>
+      typeof value === "number" && Number.isFinite(value) ? value : 0;
+
+    const progress: {
+      percent: number;
+      discovered: number;
+      fetched: number;
+      saved: number;
+      errors: number;
+      queued?: number;
+      extracted?: number;
+    } = {
+      percent: normalizeNumber(active.percent),
+      discovered: normalizeNumber(active.discovered),
+      fetched: normalizeNumber(active.fetched),
+      saved: normalizeNumber(active.saved),
+      errors: normalizeNumber(active.failed),
+    };
+
+    if (typeof active.queued === "number") {
+      progress.queued = normalizeNumber(active.queued);
+    }
+
+    if (typeof active.extracted === "number") {
+      progress.extracted = normalizeNumber(active.extracted);
+    }
+
+    return res.json({
+      running: true,
+      runId: active.jobId,
+      progress,
+      job: active,
+    });
   });
 
   app.delete("/api/knowledge/bases/:baseId", requireAuth, async (req, res) => {

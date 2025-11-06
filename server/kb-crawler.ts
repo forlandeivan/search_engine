@@ -638,3 +638,47 @@ export function cancelKnowledgeBaseCrawl(jobId: string): KnowledgeBaseCrawlJobSt
   emit(state);
   return { ...state.status };
 }
+
+export function getKnowledgeBaseCrawlJobStateForBase(
+  baseId: string,
+  workspaceId: string,
+): {
+  active: KnowledgeBaseCrawlJobStatus | null;
+  latest: KnowledgeBaseCrawlJobStatus | null;
+} {
+  let active: InternalJobState | null = null;
+  let latest: InternalJobState | null = null;
+
+  for (const state of jobs.values()) {
+    if (state.baseId !== baseId || state.workspaceId !== workspaceId) {
+      continue;
+    }
+
+    if (!latest) {
+      latest = state;
+    } else {
+      const currentUpdatedAt = new Date(state.status.updatedAt).getTime();
+      const latestUpdatedAt = new Date(latest.status.updatedAt).getTime();
+      if (currentUpdatedAt > latestUpdatedAt) {
+        latest = state;
+      }
+    }
+
+    if (!TERMINAL_JOB_STATUSES.includes(state.status.status)) {
+      if (!active) {
+        active = state;
+      } else {
+        const activeUpdatedAt = new Date(active.status.updatedAt).getTime();
+        const stateUpdatedAt = new Date(state.status.updatedAt).getTime();
+        if (stateUpdatedAt > activeUpdatedAt) {
+          active = state;
+        }
+      }
+    }
+  }
+
+  return {
+    active: active ? { ...active.status } : null,
+    latest: latest ? { ...latest.status } : null,
+  };
+}
