@@ -159,6 +159,7 @@ export type KnowledgeBaseTreeNode = {
   id: string;
   title: string;
   type: KnowledgeBaseNodeType;
+  sourceType?: KnowledgeNodeSourceType;
   children?: KnowledgeBaseTreeNode[];
 };
 

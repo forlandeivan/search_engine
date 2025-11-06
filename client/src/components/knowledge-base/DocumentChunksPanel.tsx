@@ -19,13 +19,14 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, HelpCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle } from "lucide-react";
 import type {
   KnowledgeDocumentChunkPreview,
   KnowledgeDocumentChunkSet,
   KnowledgeDocumentChunkConfig,
   KnowledgeDocumentChunkItem,
 } from "@shared/knowledge-base";
+import type { KnowledgeNodeSourceType } from "@shared/schema";
 
 interface DocumentChunksPanelProps {
   baseId: string;
@@ -34,6 +35,7 @@ interface DocumentChunksPanelProps {
   chunkSet?: KnowledgeDocumentChunkSet | null;
   onChunkSetCreated: (chunkSet: KnowledgeDocumentChunkSet) => void;
   externalOpenDialogSignal?: number;
+  sourceType?: KnowledgeNodeSourceType;
 }
 
 interface ChunkConfigState {
@@ -97,10 +99,12 @@ const ChunkList = ({
   title,
   items,
   info,
+  showSourceLinks = false,
 }: {
   title: string;
   items: KnowledgeDocumentChunkItem[];
   info?: ReactNode;
+  showSourceLinks?: boolean;
 }) => {
   if (items.length === 0) {
     return <p className="text-sm text-muted-foreground">Чанков нет.</p>;
@@ -117,6 +121,9 @@ const ChunkList = ({
           const charStart = typeof chunk.charStart === "number" ? chunk.charStart : null;
           const charEnd = typeof chunk.charEnd === "number" ? chunk.charEnd : null;
           const spanLabel = charStart !== null && charEnd !== null ? `${charStart.toLocaleString("ru-RU")}–${charEnd.toLocaleString("ru-RU")}` : "—";
+          const metadata = (chunk.metadata ?? {}) as { sourceUrl?: unknown };
+          const rawSourceUrl = typeof metadata.sourceUrl === "string" ? metadata.sourceUrl.trim() : "";
+          const sourceUrl = rawSourceUrl.length > 0 ? rawSourceUrl : null;
 
           return (
             <div key={chunk.id ?? `chunk-${chunk.index}`} className="rounded-lg border bg-background p-3 shadow-sm">
@@ -132,6 +139,26 @@ const ChunkList = ({
                     <Badge variant="outline" className="font-mono text-[10px] uppercase">
                       {chunk.contentHash.slice(0, 12)}
                     </Badge>
+                  )}
+                  {showSourceLinks && sourceUrl && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            asChild
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-emerald-500 hover:bg-emerald-50 hover:text-emerald-600"
+                          >
+                            <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink aria-hidden="true" className="h-4 w-4" />
+                              <span className="sr-only">Открыть исходную секцию</span>
+                            </a>
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">Открыть исходную секцию</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   )}
                 </div>
               </div>
@@ -152,6 +179,7 @@ export function DocumentChunksPanel({
   chunkSet,
   onChunkSetCreated,
   externalOpenDialogSignal,
+  sourceType,
 }: DocumentChunksPanelProps) {
   const { toast } = useToast();
   const [configState, setConfigState] = useState<ChunkConfigState>(INITIAL_CONFIG);
@@ -161,6 +189,7 @@ export function DocumentChunksPanel({
   const [preview, setPreview] = useState<KnowledgeDocumentChunkPreview | null>(null);
   const [chunksPage, setChunksPage] = useState(1);
   const [chunksPerPage, setChunksPerPage] = useState(10);
+  const isCrawledDocument = sourceType === "crawl";
 
   useEffect(() => {
     setChunksPage(1);
@@ -387,7 +416,12 @@ export function DocumentChunksPanel({
           </div>
           <Separator className="my-3" />
           <ScrollArea className="h-80 pr-3">
-            <ChunkList title="Сохранённые чанки" items={paginatedChunks} info={chunkRangeInfo} />
+            <ChunkList
+              title="Сохранённые чанки"
+              items={paginatedChunks}
+              info={chunkRangeInfo}
+              showSourceLinks={isCrawledDocument}
+            />
           </ScrollArea>
           {chunkSet.chunks.length > 0 && (
             <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -609,7 +643,11 @@ export function DocumentChunksPanel({
                   <Badge variant="outline">Символов: {preview.totalChars.toLocaleString("ru-RU")}</Badge>
                 </div>
                 <ScrollArea className="h-60 pr-3">
-                  <ChunkList title="Предпросмотр" items={preview.items} />
+                  <ChunkList
+                    title="Предпросмотр"
+                    items={preview.items}
+                    showSourceLinks={isCrawledDocument}
+                  />
                 </ScrollArea>
               </div>
             )}

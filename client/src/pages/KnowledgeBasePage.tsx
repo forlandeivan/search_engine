@@ -104,6 +104,7 @@ import {
   FileType,
   Folder,
   GitBranch,
+  Globe2,
   Loader2,
   MoreVertical,
   PencilLine,
@@ -413,6 +414,12 @@ function TreeMenu({
                   <FileText className="h-4 w-4" />
                 )}
                 <span className="flex-1 truncate">{node.title}</span>
+                {node.type === "document" && node.sourceType === "crawl" && (
+                  <span className="flex items-center">
+                    <Globe2 aria-hidden="true" className="h-3.5 w-3.5 text-emerald-500" />
+                    <span className="sr-only">Документ создан краулингом</span>
+                  </span>
+                )}
               </Link>
             </div>
             {hasChildren && isExpanded && (
@@ -1732,7 +1739,15 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               </div>
             ) : (
               <>
-                <CardTitle>{detail.title}</CardTitle>
+                <CardTitle className="flex flex-wrap items-center gap-2">
+                  <span>{detail.title}</span>
+                  {detail.sourceType === "crawl" && (
+                    <span className="flex items-center">
+                      <Globe2 aria-hidden="true" className="h-4 w-4 text-emerald-500" />
+                      <span className="sr-only">Документ создан краулингом</span>
+                    </span>
+                  )}
+                </CardTitle>
                 <CardDescription>Обновлено {formatDateTime(detail.updatedAt)}</CardDescription>
               </>
             )}
@@ -1876,6 +1891,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 chunkSet={detail.chunkSet}
                 onChunkSetCreated={handleChunkSetCreated}
                 externalOpenDialogSignal={chunkDialogSignal}
+                sourceType={detail.sourceType}
               />
             </TabsContent>
           </Tabs>
