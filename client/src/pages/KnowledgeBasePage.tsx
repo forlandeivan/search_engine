@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -80,8 +80,7 @@ import {
   type KnowledgeBase as LocalKnowledgeBase,
   type KnowledgeBaseSourceType,
 } from "@/lib/knowledge-base";
-import { KnowledgeBaseCrawlProgress } from "@/components/knowledge-base/KnowledgeBaseCrawlProgress";
-import { useKnowledgeBaseCrawlJob } from "@/hooks/useKnowledgeBaseCrawlJob";
+import { CrawlInlineProgress, type CrawlInlineState } from "@/components/knowledge-base/CrawlInlineProgress";
 import type {
   KnowledgeBaseSummary,
   KnowledgeBaseTreeNode,
@@ -461,7 +460,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     useState<DocumentVectorizationProgressState | null>(null);
   const [shouldPollVectorizationJob, setShouldPollVectorizationJob] = useState(false);
   const [chunkDialogSignal, setChunkDialogSignal] = useState(0);
-  const [localKnowledgeBases, setLocalKnowledgeBases] = useState<LocalKnowledgeBase[]>(() => {
+  const [, setLocalKnowledgeBases] = useState<LocalKnowledgeBase[]>(() => {
     if (typeof window === "undefined") {
       return [];
     }
@@ -533,10 +532,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   }, []);
 
   const bases = basesQuery.data ?? [];
-  const localSelectedBase = useMemo(
-    () => localKnowledgeBases.find((base) => base.id === knowledgeBaseId) ?? null,
-    [localKnowledgeBases, knowledgeBaseId],
-  );
   const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
     queryKey: ["/api/embedding/services"],
   });
@@ -548,59 +543,50 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => bases.find((base) => base.id === knowledgeBaseId) ?? null,
     [bases, knowledgeBaseId],
   );
-  const {
-    job: crawlJob,
-    events: crawlEvents,
-    pause: pauseCrawl,
-    resume: resumeCrawl,
-    cancel: cancelCrawl,
-    retry: retryCrawl,
-    isPausing: isCrawlPausing,
-    isResuming: isCrawlResuming,
-    isCanceling: isCrawlCanceling,
-    isRetrying: isCrawlRetrying,
-    connectionError: crawlConnectionError,
-    actionError: crawlActionError,
-  } = useKnowledgeBaseCrawlJob({
-    baseId: localSelectedBase?.id,
-    initialJob: localSelectedBase?.crawlJob ?? null,
-  });
-  const activeCrawlJobForSelectedBase =
-    crawlJob && selectedBase?.id === crawlJob.baseId ? crawlJob : null;
-  const isCrawlJobTerminalForSelectedBase = activeCrawlJobForSelectedBase
-    ? TERMINAL_CRAWL_STATUSES.includes(activeCrawlJobForSelectedBase.status)
-    : false;
+  const [latestCrawlJob, setLatestCrawlJob] = useState<KnowledgeBaseCrawlJobStatus | null>(null);
   const crawlJobPreviousRef = useRef<KnowledgeBaseCrawlJobStatus | null>(null);
+  const handleCrawlStateChange = useCallback((state: CrawlInlineState) => {
+    if (state.running && state.job) {
+      setLatestCrawlJob(state.job);
+      return;
+    }
+
+    if (!state.running) {
+      setLatestCrawlJob(state.lastRun ?? null);
+    }
+  }, []);
+  const [isRetryingCrawl, setIsRetryingCrawl] = useState(false);
 
   useEffect(() => {
-    if (!crawlJob || selectedBase?.id !== crawlJob.baseId) {
-      crawlJobPreviousRef.current = null;
+    const job = latestCrawlJob;
+    if (!job || selectedBase?.id !== job.baseId) {
+      crawlJobPreviousRef.current = job ?? null;
       return;
     }
 
     const previous = crawlJobPreviousRef.current;
-    const isSameJob = previous?.jobId === crawlJob.jobId;
-    if (!previous || !isSameJob || previous.status !== crawlJob.status) {
-      if (crawlJob.status === "done") {
+    const isSameJob = previous?.jobId === job.jobId;
+    if (!previous || !isSameJob || previous.status !== job.status) {
+      if (job.status === "done") {
         toast({
           title: "Краулинг завершён",
-          description: `Добавлено ${crawlJob.saved.toLocaleString("ru-RU")} документов`,
+          description: `Добавлено ${job.saved.toLocaleString("ru-RU")} документов`,
           action: (
             <ToastAction
               altText="Открыть библиотеку"
-              onClick={() => setLocation(`/knowledge/${crawlJob.baseId}`)}
+              onClick={() => setLocation(`/knowledge/${job.baseId}`)}
             >
               Открыть библиотеку
             </ToastAction>
           ),
         });
-      } else if (crawlJob.status === "failed") {
+      } else if (job.status === "failed") {
         toast({
           variant: "destructive",
           title: "Краулинг завершился с ошибкой",
-          description: crawlJob.lastError ?? "Попробуйте изменить настройки и перезапустить краулинг.",
+          description: job.lastError ?? "Попробуйте изменить настройки и перезапустить краулинг.",
         });
-      } else if (crawlJob.status === "canceled") {
+      } else if (job.status === "canceled") {
         toast({
           title: "Краулинг остановлен",
           description: "Задача была отменена.",
@@ -608,8 +594,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       }
     }
 
-    crawlJobPreviousRef.current = crawlJob;
-  }, [crawlJob, selectedBase?.id, setLocation, toast]);
+    crawlJobPreviousRef.current = job;
+  }, [latestCrawlJob, selectedBase?.id, setLocation, toast]);
 
   useEffect(() => {
     setExpandedNodeIds(new Set());
@@ -707,6 +693,51 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return (await res.json()) as KnowledgeBaseNodeDetail;
     },
   });
+
+  const handleCrawlDocumentsSaved = useCallback(
+    (delta: number, job: KnowledgeBaseCrawlJobStatus) => {
+      if (delta <= 0) {
+        return;
+      }
+
+      void basesQuery.refetch();
+      if (selectedBase?.id === job.baseId) {
+        void nodeDetailQuery.refetch();
+      }
+    },
+    [basesQuery, nodeDetailQuery, selectedBase?.id],
+  );
+
+  const retryCrawl = useCallback(async () => {
+    const job = latestCrawlJob;
+    if (!job || job.baseId !== selectedBase?.id) {
+      return;
+    }
+
+    setIsRetryingCrawl(true);
+    try {
+      const response = await apiRequest(
+        "POST",
+        `/api/jobs/${encodeURIComponent(job.jobId)}/retry`,
+      );
+      const payload = (await response.json()) as { job: KnowledgeBaseCrawlJobStatus };
+      handleCrawlStateChange({ running: true, job: payload.job });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Не удалось перезапустить краулинг",
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsRetryingCrawl(false);
+    }
+  }, [handleCrawlStateChange, latestCrawlJob, selectedBase?.id, toast]);
+
+  const crawlJobForSelectedBase =
+    latestCrawlJob && selectedBase?.id === latestCrawlJob.baseId ? latestCrawlJob : null;
+  const isCrawlJobTerminalForSelectedBase = crawlJobForSelectedBase
+    ? TERMINAL_CRAWL_STATUSES.includes(crawlJobForSelectedBase.status)
+    : false;
 
   const documentDetail =
     nodeDetailQuery.data?.type === "document" ? nodeDetailQuery.data : null;
@@ -1819,12 +1850,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           >
             <Plus className="mr-2 h-4 w-4" /> Новый документ
           </Button>
-          {activeCrawlJobForSelectedBase && (
+          {crawlJobForSelectedBase && (
             <Button
               type="button"
               variant="outline"
               className="w-full sm:w-auto"
-              disabled={!isCrawlJobTerminalForSelectedBase || isCrawlRetrying}
+              disabled={!isCrawlJobTerminalForSelectedBase || isRetryingCrawl}
               onClick={() => {
                 if (!isCrawlJobTerminalForSelectedBase) {
                   return;
@@ -1832,12 +1863,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 void retryCrawl();
               }}
             >
-              {isCrawlRetrying ? (
+              {isRetryingCrawl ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
                 <RefreshCw className="mr-2 h-4 w-4" />
               )}
-              {activeCrawlJobForSelectedBase.status === "failed"
+              {crawlJobForSelectedBase.status === "failed"
                 ? "Повторить краулинг"
                 : "Перезапустить краулинг"}
             </Button>
@@ -1926,26 +1957,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       detailContent = renderOverview(detail);
     }
 
-    const showCrawlProgress = Boolean(activeCrawlJobForSelectedBase);
-
     return (
       <div className="space-y-6">
-        {showCrawlProgress && activeCrawlJobForSelectedBase && (
-          <KnowledgeBaseCrawlProgress
-            job={activeCrawlJobForSelectedBase}
-            events={crawlEvents}
-            onPause={pauseCrawl}
-            onResume={resumeCrawl}
-            onCancel={cancelCrawl}
-            onRetry={retryCrawl}
-            isPausing={isCrawlPausing}
-            isResuming={isCrawlResuming}
-            isCanceling={isCrawlCanceling}
-            isRetrying={isCrawlRetrying}
-            connectionError={crawlConnectionError}
-            actionError={crawlActionError}
-          />
-        )}
+        <CrawlInlineProgress
+          baseId={selectedBase?.id}
+          onStateChange={handleCrawlStateChange}
+          onDocumentsSaved={handleCrawlDocumentsSaved}
+        />
         {detailContent}
       </div>
     );

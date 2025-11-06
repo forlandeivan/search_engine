@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, Clock3, PauseCircle, PlayCircle, RefreshCw, StopCircle } from "lucide-react";
-import type { CrawlActivityEvent } from "@/hooks/useKnowledgeBaseCrawlJob";
+import type { CrawlActivityEvent } from "@/types/crawl";
 
 const STATUS_LABELS: Record<KnowledgeBaseCrawlJobStatus["status"], string> = {
   running: "Выполняется",

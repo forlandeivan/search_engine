@@ -45,6 +45,7 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
   headers?: Record<string, string>,
+  options?: { signal?: AbortSignal },
 ): Promise<Response> {
   const res = await fetch(url, {
     method,
@@ -54,6 +55,7 @@ export async function apiRequest(
     },
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
+    signal: options?.signal,
   });
 
   await throwIfResNotOk(res);
