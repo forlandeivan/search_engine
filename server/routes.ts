@@ -21,6 +21,7 @@ import {
   resumeKnowledgeBaseCrawl,
   cancelKnowledgeBaseCrawl,
   retryKnowledgeBaseCrawl,
+  crawlKnowledgeDocumentPage,
 } from "./kb-crawler";
 import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
@@ -7401,6 +7402,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .nullable(),
   });
 
+  const createCrawledKnowledgeDocumentSchema = z.object({
+    url: z
+      .string()
+      .trim()
+      .min(1, "Укажите ссылку на страницу")
+      .refine((value) => {
+        try {
+          const parsed = new URL(value);
+          return parsed.protocol === "http:" || parsed.protocol === "https:";
+        } catch {
+          return false;
+        }
+      }, "Укажите корректный URL страницы"),
+    selectors: crawlSelectorsSchema.optional(),
+    language: z.string().trim().min(1).optional(),
+    version: z.string().trim().min(1).optional(),
+    auth: crawlAuthSchema.optional(),
+  });
+
   const updateKnowledgeDocumentSchema = z.object({
     title: z
       .string()
@@ -7676,6 +7696,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         parentId,
       });
       return res.status(201).json(folder);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const issue = error.issues.at(0);
+        const message = issue?.message ?? "Некорректные данные";
+        return res.status(400).json({ error: message });
+      }
+
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.post("/api/knowledge/bases/:baseId/documents/crawl", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+
+    try {
+      const payload = createCrawledKnowledgeDocumentSchema.parse(req.body ?? {});
+      const parentId = parseKnowledgeNodeParentId(req.body?.parentId);
+      const { id: workspaceId } = getRequestWorkspace(req);
+
+      const selectors = payload.selectors
+        ? {
+            title: payload.selectors.title?.trim() || null,
+            content: payload.selectors.content?.trim() || null,
+          }
+        : null;
+      const authHeaders = payload.auth?.headers
+        ? Object.fromEntries(
+            Object.entries(payload.auth.headers)
+              .map(([key, value]) => [key.trim(), value.trim()])
+              .filter(([key, value]) => key.length > 0 && value.length > 0),
+          )
+        : undefined;
+
+      const result = await crawlKnowledgeDocumentPage(workspaceId, baseId, {
+        url: payload.url,
+        parentId,
+        selectors,
+        language: payload.language?.trim() || null,
+        version: payload.version?.trim() || null,
+        auth: authHeaders ? { headers: authHeaders } : null,
+      });
+
+      return res.status(201).json(result);
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issue = error.issues.at(0);
