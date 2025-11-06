@@ -125,7 +125,7 @@ function buildSnippet(config: {
   }
 
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = \`
     .kms-embed-wrapper { font-family: 'Inter', system-ui, sans-serif; color: #0f172a; }
     .kms-embed-wrapper[data-theme='dark'] { color: #e2e8f0; }
     .kms-embed-surface { border: 1px solid rgba(15,23,42,0.1); border-radius: 16px; padding: 16px; background: rgba(255,255,255,0.95); box-shadow: 0 18px 60px rgba(15, 23, 42, 0.18); }
@@ -155,7 +155,7 @@ function buildSnippet(config: {
     .kms-embed-modal-button { border-radius: 9999px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; padding: 12px 18px; font-weight: 600; border: none; cursor: pointer; box-shadow: 0 14px 40px rgba(79,70,229,0.35); }
     .kms-embed-modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.55); display: flex; align-items: center; justify-content: center; z-index: 2147483600; }
     .kms-embed-modal-surface { width: min(540px, calc(100vw - 32px)); }
-  `;
+  \`;
   document.head.appendChild(style);
 
   function resolveTheme() {
@@ -259,7 +259,7 @@ function buildSnippet(config: {
         credentials: "omit",
       });
       if (!response.ok) {
-        throw new Error(`Suggest failed with ${response.status}`);
+        throw new Error(\`Suggest failed with \${response.status}\`);
       }
       return await response.json();
     }
@@ -298,7 +298,7 @@ function buildSnippet(config: {
         });
 
         if (!response.ok) {
-          throw new Error(`RAG failed with ${response.status}`);
+          throw new Error(\`RAG failed with \${response.status}\`);
         }
 
         const data = await response.json();
