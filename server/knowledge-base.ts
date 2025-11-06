@@ -291,6 +291,7 @@ function buildTreeFromGroups(
     id: child.id,
     title: child.title,
     type: NODE_TYPE_SET.has(child.type) ? child.type : "document",
+    sourceType: child.type === "document" ? resolveNodeSourceType(child) : undefined,
     children: buildTreeFromGroups(groups, child.id),
   }));
 }
