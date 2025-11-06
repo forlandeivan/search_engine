@@ -94,11 +94,18 @@ const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 export async function refreshCorsCache(): Promise<Set<string>> {
   try {
     const sites = await storage.getAllSites();
+    const embedDomains = await storage.listAllWorkspaceEmbedDomains();
     const staticHostnames = getStaticCorsHostnames();
     const hostnames = new Set<string>(staticHostnames);
 
     // Add Tilda domains
     hostnames.add('tilda.ws');
+
+    for (const domain of embedDomains) {
+      if (domain) {
+        hostnames.add(domain);
+      }
+    }
 
     // Process database sites and extract hostnames
     for (const site of sites) {

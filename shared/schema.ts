@@ -159,6 +159,54 @@ export const workspaceVectorCollections = pgTable("workspace_vector_collections"
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+export const workspaceEmbedKeys = pgTable(
+  "workspace_embed_keys",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    knowledgeBaseId: varchar("knowledge_base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    collection: text("collection").notNull(),
+    publicKey: text("public_key")
+      .notNull()
+      .unique()
+      .default(sql`encode(gen_random_bytes(32), 'hex')`),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    workspaceCollectionUnique: uniqueIndex("workspace_embed_keys_workspace_collection_idx").on(
+      table.workspaceId,
+      table.collection,
+    ),
+  }),
+);
+
+export const workspaceEmbedKeyDomains = pgTable(
+  "workspace_embed_key_domains",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    embedKeyId: varchar("embed_key_id")
+      .notNull()
+      .references(() => workspaceEmbedKeys.id, { onDelete: "cascade" }),
+    domain: text("domain").notNull(),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    domainUnique: uniqueIndex("workspace_embed_key_domains_unique_idx").on(
+      table.embedKeyId,
+      table.domain,
+    ),
+  }),
+);
+
 export const personalApiTokens = pgTable("personal_api_tokens", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id")
@@ -990,6 +1038,10 @@ export type InsertPage = z.infer<typeof insertPageSchema>;
 export type SearchIndexEntry = typeof searchIndex.$inferSelect;
 export type InsertSearchIndexEntry = z.infer<typeof insertSearchIndexSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
+export type WorkspaceEmbedKey = typeof workspaceEmbedKeys.$inferSelect;
+export type WorkspaceEmbedKeyInsert = typeof workspaceEmbedKeys.$inferInsert;
+export type WorkspaceEmbedKeyDomain = typeof workspaceEmbedKeyDomains.$inferSelect;
+export type WorkspaceEmbedKeyDomainInsert = typeof workspaceEmbedKeyDomains.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type PublicUser = Omit<
   User,
