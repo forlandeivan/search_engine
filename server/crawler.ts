@@ -7,6 +7,7 @@ import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { JSDOM } from 'jsdom';
+import type { DOMWindow } from 'jsdom';
 import GithubSlugger from 'github-slugger';
 import { spawn } from 'child_process';
 import { storage } from './storage';
@@ -86,6 +87,33 @@ export class WebCrawler {
   constructor() {
     this.logEmitter.setMaxListeners(0);
     this.turndown.use(gfm);
+  }
+
+  private ensureDomGlobals(domWindow: DOMWindow): () => void {
+    const globalObject = globalThis as Record<string, unknown>;
+    const windowObject = domWindow as unknown as Record<string, unknown>;
+    const keysToCopy = [
+      'Node',
+      'NodeFilter',
+      'HTMLElement',
+      'HTMLDocument',
+      'DocumentFragment',
+    ];
+    const addedKeys: string[] = [];
+
+    for (const key of keysToCopy) {
+      const value = windowObject[key];
+      if (typeof value !== 'undefined' && !(key in globalObject)) {
+        globalObject[key] = value;
+        addedKeys.push(key);
+      }
+    }
+
+    return () => {
+      for (const key of addedKeys) {
+        delete globalObject[key];
+      }
+    };
   }
 
   private async loadPuppeteer(): Promise<any | null> {
@@ -616,6 +644,7 @@ export class WebCrawler {
         markdown,
         title: extractedTitle,
         outLinks,
+        stats,
       } = await this.parseContentIntoChunks(html, $, resolvedUrl, canonicalUrl, fallbackTitle);
 
       const title = extractedTitle || fallbackTitle;
@@ -1112,21 +1141,26 @@ export class WebCrawler {
   ): { html: string; title?: string } | null {
     try {
       const dom = new JSDOM(html, { url: pageUrl });
-      const reader = new Readability(dom.window.document);
-      const article = reader.parse();
-      if (!article?.content) {
-        return null;
-      }
+      const restoreGlobals = this.ensureDomGlobals(dom.window);
+      try {
+        const reader = new Readability(dom.window.document);
+        const article = reader.parse();
+        if (!article?.content) {
+          return null;
+        }
 
-      const textContent = this.normalizeText(article.textContent ?? '');
-      if (textContent.length < 200) {
-        return null;
-      }
+        const textContent = this.normalizeText(article.textContent ?? '');
+        if (textContent.length < 200) {
+          return null;
+        }
 
-      return {
-        html: article.content,
-        title: article.title ?? undefined,
-      };
+        return {
+          html: article.content,
+          title: article.title ?? undefined,
+        };
+      } finally {
+        restoreGlobals();
+      }
     } catch (error) {
       this.logForCurrentSite('debug', 'Readability не смог извлечь контент', {
         url: pageUrl,
@@ -1256,6 +1290,12 @@ export class WebCrawler {
     wordCount: number;
     markdown: string;
     outLinks: string[];
+    stats: {
+      headingCount: number;
+      listCount: number;
+      tableCount: number;
+      codeBlockCount: number;
+    };
   } | null {
     const sanitizedHtml = typeof html === 'string' ? html.trim() : '';
     if (!sanitizedHtml) {
@@ -1264,11 +1304,14 @@ export class WebCrawler {
 
     const baseUrl = canonicalUrl || pageUrl;
     const dom = new JSDOM(`<!DOCTYPE html><html><body>${sanitizedHtml}</body></html>`, { url: baseUrl });
-    const document = dom.window.document;
-    const body = document.body;
-    if (!body) {
-      return null;
-    }
+    const restoreGlobals = this.ensureDomGlobals(dom.window);
+
+    try {
+      const document = dom.window.document;
+      const body = document.body;
+      if (!body) {
+        return null;
+      }
 
     const slugger = new GithubSlugger();
     const outLinksSet = new Set<string>();
@@ -1455,13 +1498,24 @@ export class WebCrawler {
       .filter((entry): entry is string => Boolean(entry))
       .join('\n\n');
 
+    const stats = {
+      headingCount: headingElements.length,
+      listCount: body.querySelectorAll('ul, ol').length,
+      tableCount: body.querySelectorAll('table').length,
+      codeBlockCount: body.querySelectorAll('pre, code').length,
+    };
+
     return {
       chunks: finalChunks,
       aggregatedText,
       wordCount: this.countWords(aggregatedText),
       markdown,
       outLinks: Array.from(outLinksSet),
+      stats,
     };
+    } finally {
+      restoreGlobals();
+    }
   }
 
   private ensureAnchorId(
@@ -1549,6 +1603,12 @@ export class WebCrawler {
     markdown: string;
     title?: string;
     outLinks: string[];
+    stats: {
+      headingCount: number;
+      listCount: number;
+      tableCount: number;
+      codeBlockCount: number;
+    };
   }> {
     const articleFromReadability = this.extractWithReadability(rawHtml, pageUrl);
     if (articleFromReadability && articleFromReadability.html) {
@@ -1589,6 +1649,12 @@ export class WebCrawler {
       wordCount: 0,
       markdown: '',
       outLinks: [],
+      stats: {
+        headingCount: 0,
+        listCount: 0,
+        tableCount: 0,
+        codeBlockCount: 0,
+      },
     };
   }
 
@@ -1638,6 +1704,7 @@ export class WebCrawler {
       fetchedAt: new Date().toISOString(),
       markdown: options.markdown,
       outLinks: options.outLinks,
+      plainText: aggregatedText,
       extractedAt: new Date().toISOString(),
       totalChunks: chunks.length,
       wordCount,

@@ -77,6 +77,7 @@ export interface PageMetadata {
   fetchedAt?: string;
   markdown?: string;
   outLinks?: string[];
+  plainText?: string;
   extractedAt: string;
   totalChunks: number;
   wordCount: number;
