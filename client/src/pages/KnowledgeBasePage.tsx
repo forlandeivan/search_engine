@@ -88,6 +88,7 @@ import type {
   KnowledgeBaseChildNode,
   DeleteKnowledgeNodeResponse,
   CreateKnowledgeDocumentResponse,
+  CreateCrawledKnowledgeDocumentResponse,
   DeleteKnowledgeBaseResponse,
   KnowledgeBaseDocumentDetail,
   KnowledgeDocumentChunkSet,
@@ -263,6 +264,7 @@ const DOCUMENT_STATUS_LABELS: Record<string, string> = {
 const DOCUMENT_SOURCE_LABELS: Record<string, string> = {
   manual: "Создан вручную",
   import: "Импортированный документ",
+  crawl: "Импорт со страницы",
 };
 
 const normalizeBlockText = (value: string): string =>
@@ -1108,6 +1110,53 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     onError: (error) => {
       toast({
         title: "Не удалось создать документ",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const crawlDocumentMutation = useMutation<
+    CreateCrawledKnowledgeDocumentResponse,
+    Error,
+    { baseId: string; parentId: string | null; url: string }
+  >({
+    mutationFn: async ({ baseId, parentId, url }) => {
+      const res = await apiRequest("POST", `/api/knowledge/bases/${baseId}/documents/crawl`, {
+        url,
+        parentId,
+      });
+      return (await res.json()) as CreateCrawledKnowledgeDocumentResponse;
+    },
+    onSuccess: (result, variables) => {
+      const document = result.document;
+      const title =
+        result.status === "updated"
+          ? "Документ обновлён"
+          : result.status === "skipped"
+            ? "Документ уже актуален"
+            : "Документ создан";
+      const description =
+        result.status === "created"
+          ? "Страница успешно импортирована в базу знаний."
+          : result.status === "updated"
+            ? "Содержимое страницы обновлено."
+            : "Изменений не обнаружено, документ остался без изменений.";
+
+      toast({ title, description });
+      setIsCreateDocumentDialogOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const [key, baseId] = query.queryKey as [unknown, unknown, ...unknown[]];
+          return key === "knowledge-node" && baseId === variables.baseId;
+        },
+      });
+      setLocation(`/knowledge/${variables.baseId}/node/${document.id}`);
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось импортировать страницу",
         description: error.message,
         variant: "destructive",
       });
@@ -1969,6 +2018,28 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     );
   };
 
+  const handleCreateDocumentSubmit = async (values: CreateKnowledgeDocumentFormValues) => {
+    if (!selectedBase) {
+      throw new Error("База знаний не выбрана");
+    }
+
+    if (values.sourceType === "crawl") {
+      const url = values.crawlUrl?.trim();
+      if (!url) {
+        throw new Error("Укажите ссылку на страницу");
+      }
+
+      await crawlDocumentMutation.mutateAsync({
+        baseId: selectedBase.id,
+        parentId: values.parentId ?? null,
+        url,
+      });
+      return;
+    }
+
+    await createDocumentMutation.mutateAsync({ ...values, baseId: selectedBase.id });
+  };
+
   const normalizedHierarchySelectedParentId =
     hierarchySelectedParentId === ROOT_PARENT_VALUE ? null : hierarchySelectedParentId;
   const isHierarchySaving =
@@ -2245,13 +2316,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         defaultParentId={documentDialogParentId}
         baseName={selectedBase?.name ?? "База знаний"}
         parentLabel={documentDialogParentTitle}
-        isSubmitting={createDocumentMutation.isPending}
-        onSubmit={async (values) => {
-          if (!selectedBase) {
-            throw new Error("База знаний не выбрана");
-          }
-          await createDocumentMutation.mutateAsync({ ...values, baseId: selectedBase.id });
-        }}
+        isSubmitting={createDocumentMutation.isPending || crawlDocumentMutation.isPending}
+        onSubmit={handleCreateDocumentSubmit}
       />
       <Dialog
         open={Boolean(hierarchyDialogState)}

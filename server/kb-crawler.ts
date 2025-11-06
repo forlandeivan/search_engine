@@ -9,9 +9,17 @@ import {
   type KnowledgeBaseCrawlConfig,
   type KnowledgeBaseCrawlJobStatus,
   type KnowledgeBaseCrawlJobEvent,
+  type KnowledgeBaseCrawlSelectorConfig,
+  type KnowledgeBaseCrawlAuthConfig,
+  type KnowledgeBaseDocumentDetail,
 } from "@shared/knowledge-base";
 import { db } from "./db";
-import { createKnowledgeDocument, updateKnowledgeDocument } from "./knowledge-base";
+import {
+  createKnowledgeDocument,
+  updateKnowledgeDocument,
+  getKnowledgeNodeDetail,
+  KnowledgeBaseError,
+} from "./knowledge-base";
 import { WebCrawler } from "./crawler";
 
 const DEFAULT_RATE_LIMIT = 1;
@@ -116,20 +124,10 @@ function emit(job: InternalJobState): void {
   job.emitter.emit("update", { ...job.status });
 }
 
-async function upsertDocument({
-  workspaceId,
-  baseId,
-  url,
-  title,
-  contentHtml,
-  contentMarkdown,
-  contentPlainText,
-  language,
-  versionTag,
-  metadata,
-}: {
+type UpsertDocumentParams = {
   workspaceId: string;
   baseId: string;
+  parentId?: string | null;
   url: string;
   title: string;
   contentHtml: string;
@@ -138,14 +136,41 @@ async function upsertDocument({
   language?: string | null;
   versionTag?: string | null;
   metadata: Record<string, unknown>;
-}): Promise<"created" | "updated" | "skipped"> {
+};
+
+type UpsertDocumentResult = {
+  status: "created" | "updated" | "skipped";
+  nodeId: string;
+  documentId: string;
+};
+
+async function upsertDocument({
+  workspaceId,
+  baseId,
+  parentId,
+  url,
+  title,
+  contentHtml,
+  contentMarkdown,
+  contentPlainText,
+  language,
+  versionTag,
+  metadata,
+}: UpsertDocumentParams): Promise<UpsertDocumentResult> {
   const normalizedMarkdown = contentMarkdown.trim();
   const normalizedHtml = contentHtml.trim();
   const normalizedPlainText = contentPlainText.trim() || normalizedMarkdown || normalizedHtml;
   const hashSource = normalizedMarkdown || normalizedHtml;
-  const hash = createHash("sha256").update(hashSource).digest("hex");
+  const hash = hashSource ? createHash("sha256").update(hashSource).digest("hex") : null;
+  const normalizedTitle = title?.trim() || url;
 
-  let existing;
+  let existing:
+    | {
+        documentId: string;
+        nodeId: string;
+        contentHash: string | null;
+      }
+    | undefined;
   try {
     [existing] = await db
       .select({
@@ -177,11 +202,12 @@ async function upsertDocument({
 
   if (!existing) {
     const created = await createKnowledgeDocument(baseId, workspaceId, {
-      title: title || url,
+      title: normalizedTitle,
       content: normalizedHtml,
       contentMarkdown: normalizedMarkdown,
       contentPlainText: normalizedPlainText,
       sourceType: "crawl",
+      parentId: parentId ?? null,
     });
 
     try {
@@ -214,19 +240,30 @@ async function upsertDocument({
       .set({ sourceConfig: { sourceUrl: url } })
       .where(eq(knowledgeNodes.id, created.id));
 
-    return "created";
+    return { status: "created", nodeId: created.id, documentId: created.documentId };
   }
 
   if (existing.contentHash === hash) {
     await db
       .update(knowledgeDocuments)
-      .set({ crawledAt: now, metadata })
+      .set({
+        crawledAt: now,
+        metadata,
+        language: language ?? null,
+        versionTag: versionTag ?? null,
+      })
       .where(eq(knowledgeDocuments.id, existing.documentId));
-    return "skipped";
+
+    await db
+      .update(knowledgeNodes)
+      .set({ sourceConfig: { sourceUrl: url } })
+      .where(eq(knowledgeNodes.id, existing.nodeId));
+
+    return { status: "skipped", nodeId: existing.nodeId, documentId: existing.documentId };
   }
 
   await updateKnowledgeDocument(baseId, existing.nodeId, workspaceId, {
-    title: title || url,
+    title: normalizedTitle,
     content: normalizedHtml,
     contentMarkdown: normalizedMarkdown,
     contentPlainText: normalizedPlainText,
@@ -243,7 +280,109 @@ async function upsertDocument({
     })
     .where(eq(knowledgeDocuments.id, existing.documentId));
 
-  return "updated";
+  await db
+    .update(knowledgeNodes)
+    .set({ sourceConfig: { sourceUrl: url } })
+    .where(eq(knowledgeNodes.id, existing.nodeId));
+
+  return { status: "updated", nodeId: existing.nodeId, documentId: existing.documentId };
+}
+
+type CrawlDocumentParams = {
+  url: string;
+  parentId?: string | null;
+  selectors?: KnowledgeBaseCrawlSelectorConfig | null;
+  language?: string | null;
+  version?: string | null;
+  auth?: KnowledgeBaseCrawlAuthConfig | null;
+};
+
+export async function crawlKnowledgeDocumentPage(
+  workspaceId: string,
+  baseId: string,
+  params: CrawlDocumentParams,
+): Promise<{ status: "created" | "updated" | "skipped"; document: KnowledgeBaseDocumentDetail }>
+{
+  const normalizedUrl = normalizeUrl(params.url);
+  if (!normalizedUrl) {
+    throw new KnowledgeBaseError("Укажите корректный URL страницы", 400);
+  }
+
+  const selectors = params.selectors
+    ? {
+        title: params.selectors.title?.trim() || null,
+        content: params.selectors.content?.trim() || null,
+      }
+    : null;
+  const language = params.language?.trim() || null;
+  const version = params.version?.trim() || null;
+
+  const config: KnowledgeBaseCrawlConfig = {
+    startUrls: [normalizedUrl],
+    sitemapUrl: null,
+    allowedDomains: undefined,
+    include: undefined,
+    exclude: undefined,
+    maxPages: 1,
+    maxDepth: 0,
+    rateLimitRps: null,
+    robotsTxt: true,
+    selectors,
+    language,
+    version,
+    auth: params.auth ?? null,
+  };
+
+  let html: string;
+  try {
+    html = await fetchPage(normalizedUrl, config);
+  } catch (error) {
+    console.error("[KB-CRAWLER] Не удалось загрузить страницу для импорта:", {
+      url: normalizedUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new KnowledgeBaseError("Не удалось загрузить страницу по указанной ссылке", 502);
+  }
+
+  let extracted: Awaited<ReturnType<typeof extractContent>>;
+  try {
+    extracted = await extractContent(normalizedUrl, html, config);
+  } catch (error) {
+    console.error("[KB-CRAWLER] Не удалось обработать содержимое страницы:", {
+      url: normalizedUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new KnowledgeBaseError("Не удалось обработать содержимое страницы", 500);
+  }
+
+  const metadata = {
+    sourceUrl: normalizedUrl,
+    extractedAt: new Date().toISOString(),
+    status: "fetched" as const,
+    structureStats: extracted.stats,
+    markdownLength: extracted.markdown.length,
+  };
+
+  const result = await upsertDocument({
+    workspaceId,
+    baseId,
+    parentId: params.parentId ?? null,
+    url: normalizedUrl,
+    title: extracted.title,
+    contentHtml: extracted.html,
+    contentMarkdown: extracted.markdown,
+    contentPlainText: extracted.plainText,
+    language,
+    versionTag: version,
+    metadata,
+  });
+
+  const detail = await getKnowledgeNodeDetail(baseId, result.nodeId, workspaceId);
+  if (detail.type !== "document") {
+    throw new KnowledgeBaseError("Не удалось получить данные документа после импорта", 500);
+  }
+
+  return { status: result.status, document: detail };
 }
 
 async function fetchPage(url: string, config: KnowledgeBaseCrawlConfig): Promise<string> {
@@ -458,10 +597,10 @@ async function processJob(job: InternalJobState): Promise<void> {
         metadata,
       });
 
-      if (result === "created") {
+      if (result.status === "created") {
         job.status.saved += 1;
         job.status.pagesNew = (job.status.pagesNew ?? 0) + 1;
-      } else if (result === "updated") {
+      } else if (result.status === "updated") {
         job.status.saved += 1;
         job.status.pagesUpdated = (job.status.pagesUpdated ?? 0) + 1;
       } else {

@@ -201,6 +201,20 @@ export type CreateKnowledgeDocumentPayload = {
   importFileName?: string | null;
 };
 
+export type CreateCrawledKnowledgeDocumentPayload = {
+  url: string;
+  parentId?: string | null;
+  selectors?: KnowledgeBaseCrawlSelectorConfig | null;
+  language?: string | null;
+  version?: string | null;
+  auth?: KnowledgeBaseCrawlAuthConfig | null;
+};
+
+export type CreateCrawledKnowledgeDocumentResponse = {
+  status: "created" | "updated" | "skipped";
+  document: KnowledgeBaseDocumentDetail;
+};
+
 export type UpdateKnowledgeDocumentPayload = {
   title: string;
   content?: string;

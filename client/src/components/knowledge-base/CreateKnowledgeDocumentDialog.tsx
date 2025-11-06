@@ -38,6 +38,7 @@ import {
   AlertCircle,
   FileText,
   Folder,
+  Globe,
   Loader2,
   Trash2,
   Upload,
@@ -59,6 +60,7 @@ export type CreateKnowledgeDocumentFormValues = {
   content: string;
   sourceType: KnowledgeNodeSourceType;
   importFileName: string | null;
+  crawlUrl?: string | null;
 };
 
 interface CreateKnowledgeDocumentDialogProps {
@@ -108,6 +110,7 @@ export function CreateKnowledgeDocumentDialog({
   const [parentValue, setParentValue] = useState<string>(resolveDefaultParentValue(defaultParentId));
   const [mode, setMode] = useState<KnowledgeNodeSourceType>("manual");
   const [manualContent, setManualContent] = useState("");
+  const [crawlUrl, setCrawlUrl] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importHtml, setImportHtml] = useState("");
   const [importDetectedTitle, setImportDetectedTitle] = useState<string | null>(null);
@@ -127,6 +130,7 @@ export function CreateKnowledgeDocumentDialog({
     } else {
       setTitle("");
       setManualContent("");
+      setCrawlUrl("");
       setImportFile(null);
       setImportHtml("");
       setImportDetectedTitle(null);
@@ -157,11 +161,26 @@ export function CreateKnowledgeDocumentDialog({
       setImportDetectedTitle(null);
       setImportError(null);
       setIsDragActive(false);
+      setCrawlUrl("");
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
-    } else {
+    } else if (newMode === "import") {
       setManualContent("");
+      setCrawlUrl("");
+    } else if (newMode === "crawl") {
+      setManualContent("");
+      setImportFile(null);
+      setImportHtml("");
+      setImportDetectedTitle(null);
+      setImportError(null);
+      setIsDragActive(false);
+      setCrawlUrl("");
+      setTitle("");
+      setHasTitleBeenEdited(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   };
 
@@ -283,12 +302,45 @@ export function CreateKnowledgeDocumentDialog({
     setFormError(null);
 
     const trimmedTitle = title.trim();
+    const parentId = parentValue === ROOT_PARENT_VALUE ? null : parentValue;
+
+    if (mode === "crawl") {
+      const trimmedUrl = crawlUrl.trim();
+      if (!trimmedUrl) {
+        setFormError("Укажите ссылку на страницу для импорта.");
+        return;
+      }
+
+      try {
+        const parsed = new URL(trimmedUrl);
+        if (!parsed.protocol.startsWith("http")) {
+          throw new Error("Invalid protocol");
+        }
+      } catch {
+        setFormError("Укажите корректный URL страницы.");
+        return;
+      }
+
+      try {
+        await onSubmit({
+          title: trimmedTitle,
+          parentId,
+          content: "",
+          sourceType: "crawl",
+          importFileName: null,
+          crawlUrl: trimmedUrl,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Не удалось импортировать страницу";
+        setFormError(message);
+      }
+      return;
+    }
+
     if (!trimmedTitle) {
       setFormError("Укажите название документа.");
       return;
     }
-
-    const parentId = parentValue === ROOT_PARENT_VALUE ? null : parentValue;
 
     if (mode === "manual") {
       if (manualContent.length > MAX_CONTENT_LENGTH) {
@@ -349,6 +401,19 @@ export function CreateKnowledgeDocumentDialog({
   };
 
   const parentDescription = parentValue === ROOT_PARENT_VALUE ? "В корне базы" : parentLabel;
+  const submitLabel =
+    mode === "crawl"
+      ? "Импортировать страницу"
+      : mode === "import"
+        ? "Импортировать файл"
+        : "Создать документ";
+  const submitPendingLabel =
+    mode === "crawl"
+      ? "Импорт..."
+      : mode === "import"
+        ? "Импорт..."
+        : "Создание...";
+  const SubmitIcon = mode === "crawl" ? Globe : mode === "import" ? Upload : FileText;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -368,10 +433,20 @@ export function CreateKnowledgeDocumentDialog({
                 id="knowledge-document-title"
                 value={title}
                 onChange={handleTitleChange}
-                placeholder="Например, Руководство по продукту"
+                placeholder={
+                  mode === "crawl"
+                    ? "Будет заполнено автоматически после импорта"
+                    : "Например, Руководство по продукту"
+                }
                 maxLength={500}
                 autoFocus
+                disabled={mode === "crawl" || isSubmitting}
               />
+              {mode === "crawl" && (
+                <p className="text-xs text-muted-foreground">
+                  После импорта название будет установлено по заголовку страницы.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -405,7 +480,7 @@ export function CreateKnowledgeDocumentDialog({
               <RadioGroup
                 value={mode}
                 onValueChange={(value) => handleModeChange(value as KnowledgeNodeSourceType)}
-                className="grid gap-2 sm:grid-cols-2"
+                className="grid gap-2 sm:grid-cols-3"
               >
                 <label
                   htmlFor="knowledge-document-mode-manual"
@@ -415,7 +490,11 @@ export function CreateKnowledgeDocumentDialog({
                   )}
                 >
                   <div className="flex items-center gap-2">
-                    <RadioGroupItem value="manual" id="knowledge-document-mode-manual" />
+                    <RadioGroupItem
+                      value="manual"
+                      id="knowledge-document-mode-manual"
+                      disabled={isSubmitting}
+                    />
                     <span className="font-medium">Пустой документ</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -431,11 +510,35 @@ export function CreateKnowledgeDocumentDialog({
                   )}
                 >
                   <div className="flex items-center gap-2">
-                    <RadioGroupItem value="import" id="knowledge-document-mode-import" />
+                    <RadioGroupItem
+                      value="import"
+                      id="knowledge-document-mode-import"
+                      disabled={isSubmitting}
+                    />
                     <span className="font-medium">Импорт из файла</span>
                   </div>
                   <p className="text-xs text-muted-foreground">
                   Загрузите текстовый документ до 20 МБ. Поддерживаются {SUPPORTED_FORMAT_LABEL}.
+                  </p>
+                </label>
+
+                <label
+                  htmlFor="knowledge-document-mode-crawl"
+                  className={cn(
+                    "flex cursor-pointer flex-col gap-1 rounded-md border p-3 text-sm transition",
+                    mode === "crawl" ? "border-primary bg-primary/5" : "hover:border-primary/40",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem
+                      value="crawl"
+                      id="knowledge-document-mode-crawl"
+                      disabled={isSubmitting}
+                    />
+                    <span className="font-medium">Импорт со страницы</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Укажите ссылку, и мы извлечём контент так же, как при краулинге базы знаний.
                   </p>
                 </label>
               </RadioGroup>
@@ -456,7 +559,7 @@ export function CreateKnowledgeDocumentDialog({
                   Длина: {manualContent.length.toLocaleString("ru-RU")} символов из {MAX_CONTENT_LENGTH.toLocaleString("ru-RU")}.
                 </p>
               </div>
-            ) : (
+            ) : mode === "import" ? (
               <div className="space-y-3">
                 <div className="space-y-2">
                   <Label htmlFor="knowledge-document-file">Файл документа</Label>
@@ -525,6 +628,22 @@ export function CreateKnowledgeDocumentDialog({
                   </div>
                 )}
               </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="knowledge-document-crawl-url">Ссылка на страницу</Label>
+                <Input
+                  id="knowledge-document-crawl-url"
+                  type="url"
+                  value={crawlUrl}
+                  onChange={(event) => setCrawlUrl(event.target.value)}
+                  placeholder="https://example.com/article"
+                  disabled={isSubmitting}
+                  autoComplete="off"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Заголовок документа будет определён автоматически по содержимому страницы.
+                </p>
+              </div>
             )}
           </div>
 
@@ -550,11 +669,11 @@ export function CreateKnowledgeDocumentDialog({
             >
               {isSubmitting ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Создание...
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {submitPendingLabel}
                 </>
               ) : (
                 <>
-                  <Upload className="mr-2 h-4 w-4" /> Создать документ
+                  <SubmitIcon className="mr-2 h-4 w-4" /> {submitLabel}
                 </>
               )}
             </Button>
