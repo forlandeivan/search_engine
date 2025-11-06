@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Settings, Search as SearchIcon, RefreshCcw, HelpCircle, History } from "lucide-react";
+import { Settings, Search as SearchIcon, RefreshCcw, HelpCircle, History, Globe } from "lucide-react";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import SearchQuickSwitcher from "@/components/search/SearchQuickSwitcher";
 import DOMPurify from "dompurify";
@@ -43,6 +43,7 @@ import type {
 } from "@/types/search";
 import { useSuggestSearch } from "@/hooks/useSuggestSearch";
 import type { SessionResponse } from "@/types/session";
+import { EmbedDialog } from "@/components/embed/EmbedDialog";
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -506,6 +507,7 @@ export default function SearchPlaygroundPage() {
   const [settings, setSettings] = useState<PlaygroundSettings>(DEFAULT_SETTINGS);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isEmbedDialogOpen, setIsEmbedDialogOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"search" | "rag">("search");
   const [query, setQuery] = useState("");
   const [suggestResponse, setSuggestResponse] = useState<SuggestResponsePayload | null>(null);
@@ -750,6 +752,22 @@ export default function SearchPlaygroundPage() {
   const knowledgeBaseName = useMemo(() => {
     return knowledgeBases.find((base) => base.id === settings.knowledgeBaseId)?.name ?? "";
   }, [knowledgeBases, settings.knowledgeBaseId]);
+
+  const embedDisabledReason = useMemo(() => {
+    if (!settings.knowledgeBaseId) {
+      return "Выберите базу знаний";
+    }
+    if (!settings.rag.collection.trim()) {
+      return "Укажите коллекцию в настройках RAG";
+    }
+    if (!settings.rag.embeddingProviderId) {
+      return "Выберите провайдера эмбеддингов";
+    }
+    if (!settings.rag.llmProviderId) {
+      return "Выберите провайдера LLM";
+    }
+    return null;
+  }, [settings.knowledgeBaseId, settings.rag.collection, settings.rag.embeddingProviderId, settings.rag.llmProviderId]);
 
   const vectorLayerReady = useMemo(() => {
     const providerId = settings.rag.embeddingProviderId?.trim() ?? "";
@@ -2100,6 +2118,17 @@ export default function SearchPlaygroundPage() {
                 Сбросить
               </Button>
               <Button
+                variant="default"
+                size="sm"
+                className="h-11 gap-2 px-3 text-sm"
+                onClick={() => setIsEmbedDialogOpen(true)}
+                disabled={Boolean(embedDisabledReason)}
+                title={embedDisabledReason ?? undefined}
+              >
+                <Globe className="h-4 w-4" />
+                Встроить на сайт
+              </Button>
+              <Button
                 variant="outline"
                 size="sm"
                 className="h-11 gap-2 px-3 text-sm"
@@ -2607,6 +2636,20 @@ export default function SearchPlaygroundPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <EmbedDialog
+        open={isEmbedDialogOpen}
+        onOpenChange={setIsEmbedDialogOpen}
+        workspaceId={workspaceId}
+        knowledgeBaseId={settings.knowledgeBaseId}
+        knowledgeBaseName={knowledgeBaseName}
+        collection={settings.rag.collection.trim()}
+        embeddingProviderId={settings.rag.embeddingProviderId}
+        llmProviderId={settings.rag.llmProviderId}
+        llmModel={settings.rag.llmModel}
+        limit={Math.max(settings.rag.vectorLimit, settings.rag.topK)}
+        contextLimit={settings.rag.topK}
+        responseFormat={(settings.rag.responseFormat || "text") as "text" | "markdown" | "html"}
+      />
     </div>
   );
 }

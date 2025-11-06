@@ -16,6 +16,8 @@ import {
   knowledgeDocuments,
   knowledgeDocumentChunkItems,
   knowledgeDocumentChunkSets,
+  workspaceEmbedKeys,
+  workspaceEmbedKeyDomains,
   type Site,
   type SiteInsert,
   type Page,
@@ -34,6 +36,8 @@ import {
   type AuthProvider,
   type AuthProviderInsert,
   type AuthProviderType,
+  type WorkspaceEmbedKey,
+  type WorkspaceEmbedKeyDomain,
 } from "@shared/schema";
 import { db } from "./db";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
@@ -573,6 +577,30 @@ export interface IStorage {
   getCollectionWorkspace(collectionName: string): Promise<string | null>;
   upsertCollectionWorkspace(collectionName: string, workspaceId: string): Promise<void>;
   removeCollectionWorkspace(collectionName: string): Promise<void>;
+
+  // Workspace embed keys
+  getOrCreateWorkspaceEmbedKey(
+    workspaceId: string,
+    collection: string,
+    knowledgeBaseId: string,
+  ): Promise<WorkspaceEmbedKey>;
+  getWorkspaceEmbedKey(id: string, workspaceId?: string): Promise<WorkspaceEmbedKey | undefined>;
+  getWorkspaceEmbedKeyByPublicKey(publicKey: string): Promise<WorkspaceEmbedKey | undefined>;
+  listWorkspaceEmbedKeyDomains(
+    embedKeyId: string,
+    workspaceId?: string,
+  ): Promise<WorkspaceEmbedKeyDomain[]>;
+  addWorkspaceEmbedKeyDomain(
+    embedKeyId: string,
+    workspaceId: string,
+    domain: string,
+  ): Promise<WorkspaceEmbedKeyDomain | undefined>;
+  removeWorkspaceEmbedKeyDomain(
+    embedKeyId: string,
+    domainId: string,
+    workspaceId: string,
+  ): Promise<boolean>;
+  listAllWorkspaceEmbedDomains(): Promise<string[]>;
 
   // Database health diagnostics
   getDatabaseHealthInfo(): Promise<{
@@ -2780,7 +2808,241 @@ export class DatabaseStorage implements IStorage {
       .where(eq(workspaceVectorCollections.collectionName, collectionName));
   }
 
+  async getOrCreateWorkspaceEmbedKey(
+    workspaceId: string,
+    collection: string,
+    knowledgeBaseId: string,
+  ): Promise<WorkspaceEmbedKey> {
+    const trimmedCollection = collection.trim();
+
+    const [existing] = await this.db
+      .select()
+      .from(workspaceEmbedKeys)
+      .where(
+        and(
+          eq(workspaceEmbedKeys.workspaceId, workspaceId),
+          eq(workspaceEmbedKeys.collection, trimmedCollection),
+        ),
+      )
+      .limit(1);
+
+    if (existing) {
+      if (existing.knowledgeBaseId !== knowledgeBaseId) {
+        const [updated] = await this.db
+          .update(workspaceEmbedKeys)
+          .set({ knowledgeBaseId, updatedAt: sql`CURRENT_TIMESTAMP` })
+          .where(eq(workspaceEmbedKeys.id, existing.id))
+          .returning();
+
+        return updated ?? existing;
+      }
+
+      return existing;
+    }
+
+    const [created] = await this.db
+      .insert(workspaceEmbedKeys)
+      .values({
+        workspaceId,
+        collection: trimmedCollection,
+        knowledgeBaseId,
+      })
+      .returning();
+
+    if (!created) {
+      throw new Error("Не удалось создать публичный ключ для коллекции");
+    }
+
+    return created;
+  }
+
+  async getWorkspaceEmbedKey(id: string, workspaceId?: string): Promise<WorkspaceEmbedKey | undefined> {
+    const condition = workspaceId
+      ? and(eq(workspaceEmbedKeys.id, id), eq(workspaceEmbedKeys.workspaceId, workspaceId))
+      : eq(workspaceEmbedKeys.id, id);
+
+    const [entry] = await this.db.select().from(workspaceEmbedKeys).where(condition).limit(1);
+    return entry ?? undefined;
+  }
+
+  async getWorkspaceEmbedKeyByPublicKey(publicKey: string): Promise<WorkspaceEmbedKey | undefined> {
+    const normalized = publicKey.trim();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const [entry] = await this.db
+      .select()
+      .from(workspaceEmbedKeys)
+      .where(eq(workspaceEmbedKeys.publicKey, normalized))
+      .limit(1);
+
+    return entry ?? undefined;
+  }
+
+  async listWorkspaceEmbedKeyDomains(
+    embedKeyId: string,
+    workspaceId?: string,
+  ): Promise<WorkspaceEmbedKeyDomain[]> {
+    const conditions: SQL[] = [eq(workspaceEmbedKeyDomains.embedKeyId, embedKeyId)];
+
+    if (workspaceId) {
+      conditions.push(eq(workspaceEmbedKeyDomains.workspaceId, workspaceId));
+    }
+
+    return await this.db
+      .select()
+      .from(workspaceEmbedKeyDomains)
+      .where(and(...conditions));
+  }
+
+  async addWorkspaceEmbedKeyDomain(
+    embedKeyId: string,
+    workspaceId: string,
+    domain: string,
+  ): Promise<WorkspaceEmbedKeyDomain | undefined> {
+    const normalized = domain.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const [existing] = await this.db
+      .select()
+      .from(workspaceEmbedKeyDomains)
+      .where(
+        and(
+          eq(workspaceEmbedKeyDomains.embedKeyId, embedKeyId),
+          eq(workspaceEmbedKeyDomains.domain, normalized),
+        ),
+      )
+      .limit(1);
+
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      const [created] = await this.db
+        .insert(workspaceEmbedKeyDomains)
+        .values({
+          embedKeyId,
+          workspaceId,
+          domain: normalized,
+        })
+        .returning();
+
+      return created ?? undefined;
+    } catch (error) {
+      swallowPgError(error, ["23505"]);
+      const [created] = await this.db
+        .select()
+        .from(workspaceEmbedKeyDomains)
+        .where(
+          and(
+            eq(workspaceEmbedKeyDomains.embedKeyId, embedKeyId),
+            eq(workspaceEmbedKeyDomains.domain, normalized),
+          ),
+        )
+        .limit(1);
+
+      return created ?? undefined;
+    }
+  }
+
+  async removeWorkspaceEmbedKeyDomain(
+    embedKeyId: string,
+    domainId: string,
+    workspaceId: string,
+  ): Promise<boolean> {
+    const result = await this.db
+      .delete(workspaceEmbedKeyDomains)
+      .where(
+        and(
+          eq(workspaceEmbedKeyDomains.id, domainId),
+          eq(workspaceEmbedKeyDomains.embedKeyId, embedKeyId),
+          eq(workspaceEmbedKeyDomains.workspaceId, workspaceId),
+        ),
+      );
+
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async listAllWorkspaceEmbedDomains(): Promise<string[]> {
+    const result = await this.db.execute(sql`
+      SELECT DISTINCT lower("domain") AS domain
+      FROM "workspace_embed_key_domains"
+    `);
+
+    const domains = new Set<string>();
+    for (const row of result.rows) {
+      const value = getRowString(row, "domain");
+      if (value) {
+        domains.add(value);
+      }
+    }
+
+    return Array.from(domains);
+  }
+
   async getKnowledgeBase(baseId: string): Promise<KnowledgeBaseRow | null> {
+    try {
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "workspace_embed_keys" (
+          "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+          "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+          "knowledge_base_id" varchar NOT NULL REFERENCES "knowledge_bases"("id") ON DELETE CASCADE,
+          "collection" text NOT NULL,
+          "public_key" text NOT NULL UNIQUE DEFAULT ${randomHex32Expression},
+          "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07"]);
+    }
+
+    try {
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "workspace_embed_key_domains" (
+          "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+          "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+          "embed_key_id" varchar NOT NULL REFERENCES "workspace_embed_keys"("id") ON DELETE CASCADE,
+          "domain" text NOT NULL,
+          "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07"]);
+    }
+
+    try {
+      await db.execute(sql`
+        CREATE UNIQUE INDEX IF NOT EXISTS workspace_embed_keys_workspace_collection_idx
+          ON "workspace_embed_keys" ("workspace_id", "collection")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07", "42710"]);
+    }
+
+    try {
+      await db.execute(sql`
+        CREATE UNIQUE INDEX IF NOT EXISTS workspace_embed_key_domains_unique_idx
+          ON "workspace_embed_key_domains" ("embed_key_id", "domain")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07", "42710"]);
+    }
+
+    try {
+      await db.execute(sql`
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS workspace_embed_key_domains_domain_idx
+          ON "workspace_embed_key_domains" (lower("domain"))
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42P07", "42710", "55006"]);
+    }
+
     await ensureKnowledgeBaseTables();
 
     const [row] = await this.db

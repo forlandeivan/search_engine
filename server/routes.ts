@@ -67,6 +67,7 @@ import {
   type ContentChunk,
   type Page,
   type Site,
+  type WorkspaceEmbedKey,
   DEFAULT_QDRANT_CONFIG,
   DEFAULT_LLM_REQUEST_CONFIG,
   DEFAULT_LLM_RESPONSE_CONFIG,
@@ -148,6 +149,75 @@ function pickFirstString(...candidates: Array<unknown>): string | null {
   return null;
 }
 
+function normalizeDomainCandidate(candidate: unknown): string | null {
+  if (typeof candidate !== "string") {
+    return null;
+  }
+
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const withScheme = /^(https?:)?\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    const url = new URL(withScheme);
+    return url.hostname.toLowerCase();
+  } catch {
+    const withoutScheme = trimmed.replace(/^[a-z]+:\/\//i, "");
+    const hostname = withoutScheme.split(/[/?#]/, 1)[0]?.split(":", 1)[0]?.trim() ?? "";
+    return hostname ? hostname.toLowerCase() : null;
+  }
+}
+
+function extractRequestDomain(req: Request, bodySource: Record<string, unknown>): string | null {
+  const headerOrigin = Array.isArray(req.headers["x-embed-origin"]) ? req.headers["x-embed-origin"][0] : req.headers["x-embed-origin"];
+  const headerCandidates = [
+    headerOrigin,
+    req.headers.origin,
+    req.headers.referer,
+  ];
+
+  for (const value of headerCandidates) {
+    const normalized = normalizeDomainCandidate(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const queryCandidates = [
+    req.query.origin,
+    req.query.domain,
+    req.query.host,
+  ];
+
+  for (const value of queryCandidates) {
+    const normalized = normalizeDomainCandidate(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const bodyCandidates = [bodySource.origin, bodySource.domain, bodySource.host];
+  for (const value of bodyCandidates) {
+    const normalized = normalizeDomainCandidate(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+interface PublicCollectionContext {
+  apiKey: string;
+  workspaceId: string;
+  site?: Site;
+  embedKey?: WorkspaceEmbedKey;
+  knowledgeBaseId?: string;
+}
+
 function normalizeResponseFormat(
   value: unknown,
 ): RagResponseFormat | null | undefined {
@@ -183,10 +253,68 @@ function normalizeResponseFormat(
   return null;
 }
 
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+function buildSourceSnippet(...candidates: Array<unknown>): string | null {
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") {
+      continue;
+    }
+
+    const normalized = candidate.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      continue;
+    }
+
+    if (normalized.length > 240) {
+      return `${normalized.slice(0, 240)}…`;
+    }
+
+    return normalized;
+  }
+
+  return null;
+}
+
+function pickAbsoluteUrl(baseUrls: string[], ...candidates: Array<unknown>): string | null {
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") {
+      continue;
+    }
+
+    const trimmed = candidate.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    try {
+      const direct = new URL(trimmed);
+      return direct.toString();
+    } catch {
+      for (const base of baseUrls) {
+        try {
+          const resolved = new URL(trimmed, base);
+          return resolved.toString();
+        } catch {
+          // ignore invalid base resolution
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 async function resolvePublicCollectionRequest(
   req: Request,
   res: Response,
-): Promise<{ site: Site; apiKey: string } | null> {
+): Promise<PublicCollectionContext | null> {
   const bodySource: Record<string, unknown> =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? { ...(req.body as Record<string, unknown>) }
@@ -215,39 +343,51 @@ async function resolvePublicCollectionRequest(
     req.query.siteId,
   );
 
-  const workspaceId = pickFirstString(
+  const workspaceIdCandidate = pickFirstString(
     bodySource.workspaceId,
     bodySource.workspace_id,
     req.query.workspaceId,
     req.query.workspace_id,
   );
 
-  if (!workspaceId) {
-    res.status(400).json({ error: "Передайте workspace_id в теле запроса" });
-    return null;
-  }
+  const requestDomain = extractRequestDomain(req, bodySource);
 
-  console.log(`[RAG DEBUG] API Key: ${apiKey.substring(0, 10)}..., Workspace ID: ${workspaceId}, Public ID: ${publicId || 'none'}`);
-
-  const workspaceMemberships = getRequestWorkspaceMemberships(req);
-  if (workspaceMemberships.length > 0) {
-    const hasAccess = workspaceMemberships.some((entry) => entry.id === workspaceId);
-    if (!hasAccess) {
-      res.status(403).json({ error: "Нет доступа к рабочему пространству" });
-      return null;
-    }
-  } else {
-    const user = await resolveOptionalUser(req);
-    if (user) {
-      const isMember = await storage.isWorkspaceMember(workspaceId, user.id);
-      if (!isMember) {
+  async function ensureWorkspaceAccess(targetWorkspaceId: string): Promise<boolean> {
+    const workspaceMemberships = getRequestWorkspaceMemberships(req);
+    if (workspaceMemberships.length > 0) {
+      const hasAccess = workspaceMemberships.some((entry) => entry.id === targetWorkspaceId);
+      if (!hasAccess) {
         res.status(403).json({ error: "Нет доступа к рабочему пространству" });
-        return null;
+        return false;
+      }
+    } else {
+      const user = await resolveOptionalUser(req);
+      if (user) {
+        const isMember = await storage.isWorkspaceMember(targetWorkspaceId, user.id);
+        if (!isMember) {
+          res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+          return false;
+        }
       }
     }
+
+    return true;
   }
 
   if (publicId) {
+    if (!workspaceIdCandidate) {
+      res.status(400).json({ error: "Передайте workspace_id в теле запроса" });
+      return null;
+    }
+
+    console.log(
+      `[RAG DEBUG] API Key: ${apiKey.substring(0, 10)}..., Workspace ID: ${workspaceIdCandidate}, Public ID: ${publicId}`,
+    );
+
+    if (!(await ensureWorkspaceAccess(workspaceIdCandidate))) {
+      return null;
+    }
+
     const site = await storage.getSiteByPublicId(publicId);
 
     if (!site) {
@@ -255,7 +395,7 @@ async function resolvePublicCollectionRequest(
       return null;
     }
 
-    if (site.workspaceId !== workspaceId) {
+    if (site.workspaceId !== workspaceIdCandidate) {
       res.status(403).json({ error: "Нет доступа к рабочему пространству" });
       return null;
     }
@@ -265,30 +405,74 @@ async function resolvePublicCollectionRequest(
       return null;
     }
 
-    return { site, apiKey };
+    return { site, apiKey, workspaceId: workspaceIdCandidate };
   }
 
   console.log(`[RAG DEBUG] Looking up site by API key...`);
   const site = await storage.getSiteByPublicApiKey(apiKey);
 
-  console.log(`[RAG DEBUG] getSiteByPublicApiKey result: ${site ? `found site ${site.id}, workspace ${site.workspaceId}` : 'NOT FOUND'}`);
+  if (site) {
+    console.log(`[RAG DEBUG] getSiteByPublicApiKey result: found site ${site.id}, workspace ${site.workspaceId}`);
 
-  if (!site) {
+    if (workspaceIdCandidate && site.workspaceId !== workspaceIdCandidate) {
+      res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+      return null;
+    }
+
+    if (!(await ensureWorkspaceAccess(site.workspaceId))) {
+      return null;
+    }
+
+    if (site.publicApiKey !== apiKey) {
+      res.status(401).json({ error: "Некорректный API-ключ" });
+      return null;
+    }
+
+    return { site, apiKey, workspaceId: site.workspaceId };
+  }
+
+  console.log(`[RAG DEBUG] public site not found, checking embed key context`);
+  const embedKey = await storage.getWorkspaceEmbedKeyByPublicKey(apiKey);
+
+  if (!embedKey) {
     res.status(404).json({ error: "Коллекция не найдена" });
     return null;
   }
 
-  if (site.workspaceId !== workspaceId) {
+  if (workspaceIdCandidate && workspaceIdCandidate !== embedKey.workspaceId) {
     res.status(403).json({ error: "Нет доступа к рабочему пространству" });
     return null;
   }
 
-  if (site.publicApiKey !== apiKey) {
-    res.status(401).json({ error: "Некорректный API-ключ" });
+  if (!(await ensureWorkspaceAccess(embedKey.workspaceId))) {
     return null;
   }
 
-  return { site, apiKey };
+  const allowedDomains = await storage.listWorkspaceEmbedKeyDomains(embedKey.id);
+  const allowedDomainSet = new Set(
+    allowedDomains
+      .map((entry) => typeof entry.domain === "string" ? entry.domain.trim().toLowerCase() : "")
+      .filter((domain) => domain.length > 0),
+  );
+
+  if (allowedDomainSet.size > 0) {
+    if (!requestDomain) {
+      res.status(403).json({ error: "Домен запроса не определён. Передайте заголовок Origin или X-Embed-Origin." });
+      return null;
+    }
+
+    if (!allowedDomainSet.has(requestDomain)) {
+      res.status(403).json({ error: `Домен ${requestDomain} не добавлен в allowlist для данного ключа` });
+      return null;
+    }
+  }
+
+  return {
+    apiKey,
+    workspaceId: embedKey.workspaceId,
+    embedKey,
+    knowledgeBaseId: embedKey.knowledgeBaseId,
+  };
 }
 
 async function resolveGenerativeWorkspace(
@@ -324,7 +508,7 @@ async function resolveGenerativeWorkspace(
     return null;
   }
 
-  return { workspaceId: publicContext.site.workspaceId, site: publicContext.site, isPublic: true };
+  return { workspaceId: publicContext.workspaceId, site: publicContext.site ?? null, isPublic: true };
 }
 
 class HttpError extends Error {
@@ -2740,6 +2924,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/public/embed/suggest", async (req, res) => {
+    try {
+      const publicContext = await resolvePublicCollectionRequest(req, res);
+      if (!publicContext) {
+        return;
+      }
+
+      if (!publicContext.embedKey || !publicContext.knowledgeBaseId) {
+        res.status(403).json({ error: "Публичный ключ не поддерживает подсказки по базе знаний" });
+        return;
+      }
+
+      const queryParam =
+        typeof req.query.q === "string"
+          ? req.query.q
+          : typeof req.query.query === "string"
+            ? req.query.query
+            : "";
+      const query = queryParam.trim();
+
+      if (!query) {
+        res.status(400).json({ error: "Укажите поисковый запрос" });
+        return;
+      }
+
+      const requestedKbId =
+        typeof req.query.kb_id === "string"
+          ? req.query.kb_id.trim()
+          : typeof req.query.kbId === "string"
+            ? req.query.kbId.trim()
+            : "";
+
+      if (requestedKbId && requestedKbId !== publicContext.knowledgeBaseId) {
+        res.status(403).json({ error: "Доступ к указанной базе знаний запрещён" });
+        return;
+      }
+
+      const limitCandidate = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
+      const limitValue = Number.isFinite(limitCandidate) ? Math.max(1, Math.min(10, Number(limitCandidate))) : 3;
+
+      const knowledgeBaseId = publicContext.knowledgeBaseId;
+      const base = await storage.getKnowledgeBase(knowledgeBaseId);
+
+      if (!base) {
+        res.status(404).json({ error: "База знаний не найдена" });
+        return;
+      }
+
+      const startedAt = performance.now();
+      const suggestions = await storage.searchKnowledgeBaseSuggestions(knowledgeBaseId, query, limitValue);
+      const duration = performance.now() - startedAt;
+
+      const sections = suggestions.sections.map((entry) => ({
+        chunk_id: entry.chunkId,
+        doc_id: entry.documentId,
+        doc_title: entry.docTitle,
+        section_title: entry.sectionTitle,
+        snippet: entry.snippet,
+        score: entry.score,
+        source: entry.source,
+      }));
+
+      res.json({
+        query,
+        kb_id: knowledgeBaseId,
+        normalized_query: suggestions.normalizedQuery || query,
+        ask_ai: {
+          label: "Спросить AI",
+          query: suggestions.normalizedQuery || query,
+        },
+        sections,
+        timings: {
+          total_ms: Number(duration.toFixed(2)),
+        },
+      });
+    } catch (error) {
+      console.error("Ошибка подсказок для встраиваемого поиска:", error);
+      res.status(500).json({ error: "Не удалось получить подсказки" });
+    }
+  });
+
   app.post("/public/rag/answer", async (req, res) => {
     const parsed = knowledgeRagRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -3185,7 +3450,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return;
       }
 
-      const { site } = publicContext;
+      if (!publicContext.site) {
+        res.status(404).json({ error: "Коллекция не найдена" });
+        return;
+      }
+
+      const workspaceId = publicContext.workspaceId;
+      const site = publicContext.site ?? null;
 
       const payloadSource: Record<string, unknown> = {};
       if (req.body && typeof req.body === "object") {
@@ -3329,7 +3600,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return;
       }
 
-      const { site } = publicContext;
+      const workspaceId = publicContext.workspaceId;
+      const site = publicContext.site ?? null;
       const bodySource: Record<string, unknown> =
         req.body && typeof req.body === "object" && !Array.isArray(req.body)
           ? { ...(req.body as Record<string, unknown>) }
@@ -3342,7 +3614,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const collectionName = collection.trim();
       const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
 
-      if (!ownerWorkspaceId || ownerWorkspaceId !== site.workspaceId) {
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({ error: "Коллекция не найдена" });
       }
 
@@ -3440,7 +3712,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return;
       }
 
-      const { site } = publicContext;
+      const workspaceId = publicContext.workspaceId;
       const bodySource: Record<string, unknown> =
         req.body && typeof req.body === "object" && !Array.isArray(req.body)
           ? { ...(req.body as Record<string, unknown>) }
@@ -3448,7 +3720,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete bodySource.workspaceId;
       delete bodySource.workspace_id;
       const body = publicVectorizeSchema.parse(bodySource);
-      const provider = await storage.getEmbeddingProvider(body.embeddingProviderId, site.workspaceId);
+      const provider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
 
       if (!provider) {
         return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
@@ -3470,7 +3742,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (collectionName) {
         const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
-        if (!ownerWorkspaceId || ownerWorkspaceId !== site.workspaceId) {
+        if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
           return res.status(404).json({ error: "Коллекция не найдена" });
         }
 
@@ -3556,6 +3828,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { site } = publicContext;
+      const embedKey = publicContext.embedKey ?? null;
+
+      const baseUrlSet = new Set<string>();
+      const registerBaseUrl = (value: unknown) => {
+        if (typeof value !== "string") {
+          return;
+        }
+
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return;
+        }
+
+        try {
+          const parsed = new URL(trimmed);
+          baseUrlSet.add(parsed.toString());
+          baseUrlSet.add(`${parsed.origin}/`);
+        } catch {
+          // ignore invalid base url candidates
+        }
+      };
+
+      registerBaseUrl(site?.url);
+      if (Array.isArray(site?.startUrls)) {
+        for (const startUrl of site.startUrls) {
+          registerBaseUrl(startUrl);
+        }
+      }
+
+      const baseUrls = Array.from(baseUrlSet);
 
       const payloadSource: Record<string, unknown> =
         req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -3680,6 +3982,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const body = publicGenerativeSearchSchema.parse(payloadSource);
       collectionName = body.collection.trim();
 
+      if (embedKey && collectionName !== embedKey.collection) {
+        return res.status(403).json({ error: "Коллекция недоступна для данного ключа" });
+      }
+
       const responseFormatCandidate = normalizeResponseFormat(body.responseFormat);
       if (responseFormatCandidate === null) {
         return res.status(400).json({
@@ -3694,13 +4000,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`[RAG DEBUG] Looking up collection "${collectionName}" workspace...`);
       const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
-      console.log(`[RAG DEBUG] Collection workspace: ${ownerWorkspaceId || 'NOT FOUND'}, Site workspace: ${site.workspaceId}, Match: ${ownerWorkspaceId === site.workspaceId}`);
-      
-      if (!ownerWorkspaceId || ownerWorkspaceId !== site.workspaceId) {
+      console.log(
+        `[RAG DEBUG] Collection workspace: ${ownerWorkspaceId || 'NOT FOUND'}, Request workspace: ${workspaceId}, Match: ${ownerWorkspaceId === workspaceId}`,
+      );
+
+      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({ error: "Коллекция не найдена" });
       }
 
-      const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, site.workspaceId);
+      const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
       if (!embeddingProvider) {
         return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
       }
@@ -3709,7 +4017,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
       }
 
-      const llmProvider = await storage.getLlmProvider(body.llmProviderId, site.workspaceId);
+      const llmProvider = await storage.getLlmProvider(body.llmProviderId, workspaceId);
       if (!llmProvider) {
         return res.status(404).json({ error: "Провайдер LLM не найден" });
       }
@@ -3813,6 +4121,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
       });
 
+      const sourcesMap = new Map<
+        string,
+        {
+          url: string;
+          title: string | null;
+          snippet: string | null;
+          chunkId: string | null;
+          documentId: string | null;
+        }
+      >();
+
+      for (const entry of sanitizedResults) {
+        const payloadRecord = toRecord(entry.payload);
+        if (!payloadRecord) {
+          continue;
+        }
+
+        const chunkRecord = toRecord(payloadRecord.chunk);
+        const documentRecord = toRecord(payloadRecord.document);
+        const metadataRecord = toRecord(chunkRecord?.metadata);
+
+        const sourceUrl = pickAbsoluteUrl(
+          baseUrls,
+          metadataRecord?.sourceUrl,
+          metadataRecord?.source_url,
+          chunkRecord?.deepLink,
+          chunkRecord?.sourceUrl,
+          documentRecord?.sourceUrl,
+          documentRecord?.url,
+          documentRecord?.path,
+        );
+
+        if (!sourceUrl) {
+          continue;
+        }
+
+        const sourceTitle = pickFirstString(
+          chunkRecord?.title,
+          metadataRecord?.title,
+          metadataRecord?.heading,
+          metadataRecord?.sectionTitle,
+          documentRecord?.title,
+        );
+
+        const snippet = buildSourceSnippet(
+          metadataRecord?.snippet,
+          metadataRecord?.excerpt,
+          chunkRecord?.excerpt,
+          chunkRecord?.text,
+          documentRecord?.excerpt,
+        );
+
+        const chunkId = pickFirstString(chunkRecord?.id);
+        const documentId = pickFirstString(documentRecord?.id);
+
+        if (!sourcesMap.has(sourceUrl)) {
+          sourcesMap.set(sourceUrl, {
+            url: sourceUrl,
+            title: sourceTitle ?? null,
+            snippet,
+            chunkId: chunkId ?? null,
+            documentId: documentId ?? null,
+          });
+        }
+      }
+
       const desiredContext = body.contextLimit ?? sanitizedResults.length;
       const contextLimit = Math.max(0, Math.min(desiredContext, sanitizedResults.length));
       const contextRecords: LlmContextRecord[] = sanitizedResults.slice(0, contextLimit).map((entry, index) => {
@@ -3889,6 +4263,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         collection: collectionName,
       };
 
+      const maxSources = (() => {
+        if (contextLimit > 0) {
+          return contextLimit;
+        }
+        if (body.limit && body.limit > 0) {
+          return body.limit;
+        }
+        return sourcesMap.size;
+      })();
+
+      const limitedSources = Array.from(sourcesMap.values()).slice(0, maxSources);
+      if (limitedSources.length > 0) {
+        responsePayload.sources = limitedSources.map((source) => ({
+          url: source.url,
+          title: source.title,
+          snippet: source.snippet,
+          chunkId: source.chunkId,
+          documentId: source.documentId,
+        }));
+      }
+
       if (includeContextInResponse) {
         responsePayload.context = sanitizedResults;
       }
@@ -3943,6 +4338,133 @@ export async function registerRoutes(app: Express): Promise<Server> {
     publicRagSearchHandler,
   );
   registerPublicCollectionRoute("/api/public/collections/search/rag", publicRagSearchHandler);
+
+  app.post("/api/embed/keys", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const collection = typeof req.body?.collection === "string" ? req.body.collection.trim() : "";
+      const knowledgeBaseId =
+        typeof req.body?.knowledgeBaseId === "string"
+          ? req.body.knowledgeBaseId.trim()
+          : typeof req.body?.knowledge_base_id === "string"
+            ? req.body.knowledge_base_id.trim()
+            : "";
+
+      if (!collection) {
+        return res.status(400).json({ error: "Укажите идентификатор коллекции" });
+      }
+
+      if (!knowledgeBaseId) {
+        return res.status(400).json({ error: "Укажите идентификатор базы знаний" });
+      }
+
+      const base = await storage.getKnowledgeBase(knowledgeBaseId);
+      if (!base || base.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "База знаний не найдена в текущем workspace" });
+      }
+
+      const embedKey = await storage.getOrCreateWorkspaceEmbedKey(workspaceId, collection, knowledgeBaseId);
+      const domains = await storage.listWorkspaceEmbedKeyDomains(embedKey.id, workspaceId);
+
+      res.json({ key: embedKey, domains });
+    } catch (error) {
+      console.error("Не удалось получить публичный ключ встраивания:", error);
+      res.status(500).json({ error: "Не удалось подготовить публичный ключ" });
+    }
+  });
+
+  app.get("/api/embed/keys/:id/domains", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const embedKey = await storage.getWorkspaceEmbedKey(req.params.id, workspaceId);
+
+      if (!embedKey) {
+        return res.status(404).json({ error: "Публичный ключ не найден" });
+      }
+
+      const domains = await storage.listWorkspaceEmbedKeyDomains(embedKey.id, workspaceId);
+      res.json({ key: embedKey, domains });
+    } catch (error) {
+      console.error("Не удалось получить список доменов для ключа:", error);
+      res.status(500).json({ error: "Не удалось получить список доменов" });
+    }
+  });
+
+  app.post("/api/embed/keys/:id/domains", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const embedKey = await storage.getWorkspaceEmbedKey(req.params.id, workspaceId);
+
+      if (!embedKey) {
+        return res.status(404).json({ error: "Публичный ключ не найден" });
+      }
+
+      const domainCandidate =
+        typeof req.body?.domain === "string"
+          ? req.body.domain
+          : typeof req.body?.hostname === "string"
+            ? req.body.hostname
+            : "";
+
+      const normalized = normalizeDomainCandidate(domainCandidate);
+      if (!normalized) {
+        return res.status(400).json({ error: "Укажите корректное доменное имя" });
+      }
+
+      const domainEntry = await storage.addWorkspaceEmbedKeyDomain(embedKey.id, workspaceId, normalized);
+      if (!domainEntry) {
+        return res.status(500).json({ error: "Не удалось добавить домен" });
+      }
+
+      invalidateCorsCache();
+      res.status(201).json(domainEntry);
+    } catch (error) {
+      console.error("Не удалось добавить домен для публичного ключа:", error);
+      res.status(500).json({ error: "Не удалось добавить домен" });
+    }
+  });
+
+  app.delete("/api/embed/keys/:id/domains/:domainId", async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const embedKey = await storage.getWorkspaceEmbedKey(req.params.id, workspaceId);
+
+      if (!embedKey) {
+        return res.status(404).json({ error: "Публичный ключ не найден" });
+      }
+
+      const removed = await storage.removeWorkspaceEmbedKeyDomain(embedKey.id, req.params.domainId, workspaceId);
+      if (!removed) {
+        return res.status(404).json({ error: "Домен не найден" });
+      }
+
+      invalidateCorsCache();
+      res.status(204).send();
+    } catch (error) {
+      console.error("Не удалось удалить домен из allowlist:", error);
+      res.status(500).json({ error: "Не удалось удалить домен" });
+    }
+  });
 
   app.get("/api/auth/providers", (_req, res) => {
     const googleAuthEnabled = isGoogleAuthEnabled();
