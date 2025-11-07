@@ -23,13 +23,13 @@ import {
   ChevronRight,
   ArrowLeft,
   HardDrive,
-  CircleUser,
   ShieldCheck,
   Building2,
   Bot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
+import { UserAvatar } from "@/components/UserAvatar";
 
 interface SidebarItem {
   title: string;
@@ -219,11 +219,18 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
             >
               <Link
                 href="/profile"
-                className={cn("flex flex-1 items-center gap-2", isCollapsed && "justify-center gap-0")}
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-2",
+                  isCollapsed && "justify-center gap-0"
+                )}
               >
-                <CircleUser className={cn("h-5 w-5", isCollapsed && "mx-auto")} />
+                <UserAvatar
+                  user={user}
+                  size={isCollapsed ? "sm" : "md"}
+                  className={cn(isCollapsed && "mx-auto")}
+                />
                 {!isCollapsed && (
-                  <div className="flex flex-col text-left leading-tight">
+                  <div className="flex min-w-0 flex-col text-left leading-tight">
                     <span className="text-sm font-medium">Профиль</span>
                     <span className="text-xs text-muted-foreground truncate">{user.fullName}</span>
                     <span className="text-[11px] text-muted-foreground/70 truncate">{user.email}</span>
