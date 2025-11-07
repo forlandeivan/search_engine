@@ -1063,6 +1063,8 @@ const testEmbeddingCredentialsSchema = z.object({
 });
 
 const TEST_EMBEDDING_TEXT = "привет!";
+const KNOWLEDGE_DOCUMENT_PAYLOAD_TEXT_LIMIT = 4000;
+const KNOWLEDGE_DOCUMENT_PAYLOAD_HTML_LIMIT = 6000;
 
 function parseJson(text: string): unknown {
   if (!text) return null;
@@ -1160,6 +1162,23 @@ function buildDocumentExcerpt(text: string, maxLength = 200): string {
   }
 
   return `${normalized.slice(0, maxLength).trim()}…`;
+}
+
+function truncatePayloadValue(value: unknown, limit: number): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (limit <= 0 || trimmed.length <= limit) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, Math.max(0, limit - 1)).trim()}…`;
 }
 
 interface KnowledgeDocumentChunk {
@@ -8933,6 +8952,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? vectorDocument.excerpt
           : normalizedDocumentText.slice(0, 160);
 
+      const documentTextForPayload = truncatePayloadValue(
+        documentText,
+        KNOWLEDGE_DOCUMENT_PAYLOAD_TEXT_LIMIT,
+      );
+      const documentHtmlForPayload = truncatePayloadValue(
+        vectorDocument.html,
+        KNOWLEDGE_DOCUMENT_PAYLOAD_HTML_LIMIT,
+      );
+
       const vectorRecordMappings: Array<{ chunkId: string; vectorRecordId: string }> = [];
 
       const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
@@ -8952,7 +8980,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             id: vectorDocument.id,
             title: vectorDocument.title ?? null,
             text: documentText,
+            textPreview: documentTextForPayload,
             html: vectorDocument.html ?? null,
+            htmlPreview: documentHtmlForPayload,
             path: vectorDocument.path ?? null,
             updatedAt: vectorDocument.updatedAt ?? null,
             charCount: resolvedCharCount,
@@ -8996,8 +9026,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           document: {
             id: vectorDocument.id,
             title: vectorDocument.title ?? null,
-            text: documentText,
-            html: vectorDocument.html ?? null,
+            text: documentTextForPayload,
+            html: documentHtmlForPayload,
             path: vectorDocument.path ?? null,
             updatedAt: vectorDocument.updatedAt ?? null,
             charCount: resolvedCharCount,
