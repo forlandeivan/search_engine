@@ -34,6 +34,7 @@ type SentenceUnit = {
   charStart: number;
   charEnd: number;
   tokenCount: number;
+  anchorId?: string | null;
 };
 
 type GeneratedChunk = KnowledgeDocumentChunkItem & {
@@ -47,6 +48,7 @@ interface DocumentContext {
   versionNumber: number | null;
   content: string;
   documentHash: string | null;
+  sourceUrl: string | null;
 }
 
 const headingLevels: Record<string, number> = {
@@ -193,14 +195,16 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
   let normalizedText = "";
   let offset = 0;
   let currentPage: number | null = null;
+  let currentHeadingAnchor: string | null = null;
 
   const getSectionPath = () => headingStack.map((entry) => entry.title);
 
-  const pushHeading = (level: number, text: string) => {
+  const pushHeading = (level: number, text: string, anchorId?: string | null) => {
     while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= level) {
       headingStack.pop();
     }
     headingStack.push({ level, title: text });
+    currentHeadingAnchor = anchorId ?? null;
 
     const headingPath = getSectionPath();
     const tokens = countTokens(text);
@@ -223,6 +227,7 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
       charStart: start,
       charEnd: end,
       tokenCount: tokens,
+      anchorId: anchorId ?? null,
     });
   };
 
@@ -249,6 +254,7 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
         charStart: start,
         charEnd: end,
         tokenCount: countTokens(sentence),
+        anchorId: currentHeadingAnchor,
       });
     });
   };
@@ -285,7 +291,8 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
     if (headingLevels[tag]) {
       const text = sanitizeWhitespace($(node).text());
       if (text) {
-        pushHeading(headingLevels[tag], text);
+        const anchorId = typeof node.attribs?.id === "string" ? node.attribs.id.trim() : null;
+        pushHeading(headingLevels[tag], text, anchorId);
       }
       currentPage = previousPage;
       return;
@@ -318,6 +325,7 @@ const generateChunks = (
   sentences: SentenceUnit[],
   normalizedText: string,
   config: KnowledgeDocumentChunkConfig,
+  documentSourceUrl: string | null,
 ): GeneratedChunk[] => {
   if (sentences.length === 0) {
     return [];
@@ -381,6 +389,27 @@ const generateChunks = (
     return result;
   };
 
+  const buildAnchorUrl = (anchorId: string): string | null => {
+    const trimmedAnchor = anchorId.trim();
+    if (!trimmedAnchor) {
+      return null;
+    }
+
+    if (documentSourceUrl) {
+      try {
+        const base = new URL(documentSourceUrl);
+        base.hash = `#${encodeURIComponent(trimmedAnchor)}`;
+        return base.toString();
+      } catch {
+        const [base] = documentSourceUrl.split("#", 1);
+        const sanitizedBase = base || documentSourceUrl;
+        return `${sanitizedBase}#${encodeURIComponent(trimmedAnchor)}`;
+      }
+    }
+
+    return `#${encodeURIComponent(trimmedAnchor)}`;
+  };
+
   const finalizeChunk = (reason: "limit" | "page" | "heading" | "section" | null) => {
     if (currentUnits.length === 0) {
       return;
@@ -412,6 +441,15 @@ const generateChunks = (
       charEnd: last.charEnd,
       tokenCount,
     };
+
+    const anchorUnit = currentUnits.find((unit) => typeof unit.anchorId === "string" && unit.anchorId.trim().length > 0);
+    if (anchorUnit?.anchorId) {
+      metadata.anchorId = anchorUnit.anchorId;
+      const anchorUrl = buildAnchorUrl(anchorUnit.anchorId);
+      if (anchorUrl) {
+        metadata.sourceUrl = anchorUrl;
+      }
+    }
 
     if (sectionPathCandidate.length > 0) {
       metadata.heading = sectionPathCandidate[sectionPathCandidate.length - 1];
@@ -466,6 +504,13 @@ const generateChunks = (
         ? "heading"
         : "section";
       finalizeChunk(reason);
+
+      if (reason === "limit" && currentUnits.length > 0) {
+        while (currentUnits.length > 0 && wouldExceed(currentUnits, sentence)) {
+          currentUnits.shift();
+        }
+        currentSectionPath = currentUnits.length > 0 ? currentUnits[0].headingPath : null;
+      }
     }
 
     currentUnits.push(sentence);
@@ -495,6 +540,7 @@ const fetchDocumentContext = async (
       versionNumber: knowledgeDocumentVersions.versionNo,
       content: knowledgeDocumentVersions.contentText,
       storedHash: knowledgeDocumentVersions.hash,
+      sourceUrl: knowledgeDocuments.sourceUrl,
     })
     .from(knowledgeDocuments)
     .innerJoin(knowledgeNodes, eq(knowledgeDocuments.nodeId, knowledgeNodes.id))
@@ -533,6 +579,7 @@ const fetchDocumentContext = async (
     versionNumber: row.versionNumber ?? null,
     content,
     documentHash,
+    sourceUrl: typeof row.sourceUrl === "string" && row.sourceUrl.trim().length > 0 ? row.sourceUrl.trim() : null,
   } satisfies DocumentContext;
 };
 
@@ -611,7 +658,12 @@ export const previewKnowledgeDocumentChunks = async (
   const context = await fetchDocumentContext(baseId, nodeId, workspaceId);
   const normalizedConfig = normalizeChunkingConfig(inputConfig);
   const { sentences, normalizedText } = extractSentences(context.content ?? "");
-  const generatedChunks = generateChunks(sentences, normalizedText, normalizedConfig);
+  const generatedChunks = generateChunks(
+    sentences,
+    normalizedText,
+    normalizedConfig,
+    context.sourceUrl,
+  );
 
   const totalTokens = generatedChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0);
   const totalChars = generatedChunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
@@ -675,7 +727,12 @@ export const createKnowledgeDocumentChunkSet = async (
   const context = await fetchDocumentContext(baseId, nodeId, workspaceId);
   const normalizedConfig = normalizeChunkingConfig(inputConfig);
   const { sentences, normalizedText } = extractSentences(context.content ?? "");
-  const generatedChunks = generateChunks(sentences, normalizedText, normalizedConfig);
+  const generatedChunks = generateChunks(
+    sentences,
+    normalizedText,
+    normalizedConfig,
+    context.sourceUrl,
+  );
   console.log("[CHUNKS] Сгенерировано чанков:", { 
     count: generatedChunks.length, 
     allHaveHashes: generatedChunks.every(c => !!c.contentHash) 
