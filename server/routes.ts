@@ -105,14 +105,80 @@ import {
 
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
-    const causeMessage = error.cause instanceof Error ? error.cause.message : undefined;
-    if (causeMessage) {
-      return `${error.message}: ${causeMessage}`;
+    const segments: string[] = [];
+
+    const baseMessage = typeof error.message === "string" ? error.message.trim() : "";
+    if (baseMessage.length > 0) {
+      segments.push(baseMessage);
     }
-    return error.message;
+
+    const metadata = error as unknown as Record<string, unknown>;
+
+    const appendDetail = (label: string) => {
+      const value = metadata[label];
+      if (typeof value === "string" && value.trim().length > 0) {
+        segments.push(`${label}=${value.trim()}`);
+      }
+    };
+
+    appendDetail("code");
+    appendDetail("detail");
+    appendDetail("hint");
+    appendDetail("schema");
+    appendDetail("table");
+    appendDetail("column");
+    appendDetail("constraint");
+
+    const contextValue = metadata["context"];
+    if (contextValue && typeof contextValue === "object") {
+      try {
+        segments.push(`context=${JSON.stringify(contextValue)}`);
+      } catch {
+        segments.push("context=[unserializable]");
+      }
+    }
+
+    if (error.cause instanceof Error) {
+      const causeMessage = error.cause.message?.trim();
+      if (causeMessage) {
+        segments.push(`cause=${causeMessage}`);
+      }
+    } else if (typeof error.cause === "string" && error.cause.trim().length > 0) {
+      segments.push(`cause=${error.cause.trim()}`);
+    }
+
+    if (typeof error.stack === "string") {
+      const [, firstStackLine] = error.stack.split("\n");
+      if (firstStackLine) {
+        segments.push(`stack=${firstStackLine.trim()}`);
+      }
+    }
+
+    if (segments.length === 0) {
+      segments.push(error.name || "Error");
+    }
+
+    return segments.join("; ");
   }
 
-  return String(error);
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function createQueryPreview(value: string, maxLength = 120): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
 function maskSensitiveInfoInUrl(rawUrl: string): string {
@@ -2877,23 +2943,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const knowledgeBaseId = kb_id.trim();
     const limitValue = limit !== undefined ? Math.max(1, Math.min(Number(limit), 10)) : 3;
 
+    const requestStartedAt = performance.now();
+    const logContext = {
+      kb_id: knowledgeBaseId,
+      query_length: query.length,
+      query_preview: createQueryPreview(query),
+      limit: limitValue,
+    };
+
+    console.info("[public/search/suggest] Получен запрос", logContext);
+
     if (!query) {
+      console.warn("[public/search/suggest] Пустой запрос", logContext);
       return res.status(400).json({ error: "Укажите поисковый запрос" });
     }
 
     try {
       const base = await storage.getKnowledgeBase(knowledgeBaseId);
       if (!base) {
+        console.warn("[public/search/suggest] База знаний не найдена", logContext);
         return res.status(404).json({ error: "База знаний не найдена" });
       }
 
-      const startedAt = performance.now();
       const suggestions = await storage.searchKnowledgeBaseSuggestions(
         knowledgeBaseId,
         query,
         limitValue,
       );
-      const duration = performance.now() - startedAt;
+      const duration = performance.now() - requestStartedAt;
 
       const sections = suggestions.sections.map((entry) => ({
         chunk_id: entry.chunkId,
@@ -2918,8 +2995,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
           total_ms: Number(duration.toFixed(2)),
         },
       });
+
+      console.info("[public/search/suggest] Ответ сформирован", {
+        ...logContext,
+        workspace_id: base.workspaceId,
+        normalized_query: suggestions.normalizedQuery || query,
+        sections: sections.length,
+        duration_ms: Number(duration.toFixed(2)),
+      });
     } catch (error) {
-      console.error("Ошибка подсказок по базе знаний:", error);
+      const durationMs = Number((performance.now() - requestStartedAt).toFixed(2));
+      const errorDetails = getErrorDetails(error);
+
+      console.error(
+        `[public/search/suggest] Ошибка выдачи подсказок: ${errorDetails}`,
+        {
+          ...logContext,
+          duration_ms: durationMs,
+        },
+      );
+
+      if (error instanceof Error) {
+        console.error(error.stack ?? error);
+      } else {
+        console.error(error);
+      }
       res.status(500).json({ error: "Не удалось получить подсказки" });
     }
   });
