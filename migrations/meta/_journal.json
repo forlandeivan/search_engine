@@ -169,6 +169,13 @@
       "when": 1758104608559,
       "tag": "0028_knowledge_document_chunks_content_hash",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1762515611117,
+      "tag": "0030_embedding_providers_max_tokens",
+      "breakpoints": true
     }
   ]
 }

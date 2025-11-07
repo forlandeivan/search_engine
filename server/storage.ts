@@ -1867,6 +1867,15 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
     try {
       await db.execute(sql`
         ALTER TABLE "embedding_providers"
+        ADD COLUMN "max_tokens_per_vectorization" integer
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "embedding_providers"
         ADD COLUMN "allow_self_signed_certificate" boolean DEFAULT FALSE
       `);
     } catch (error) {

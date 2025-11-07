@@ -5826,6 +5826,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (payload.authorizationKey !== undefined) updates.authorizationKey = payload.authorizationKey;
       if (payload.scope !== undefined) updates.scope = payload.scope;
       if (payload.model !== undefined) updates.model = payload.model;
+      if (payload.maxTokensPerVectorization !== undefined)
+        updates.maxTokensPerVectorization = payload.maxTokensPerVectorization;
       if (payload.requestHeaders !== undefined) updates.requestHeaders = payload.requestHeaders;
       if (payload.allowSelfSignedCertificate !== undefined)
         updates.allowSelfSignedCertificate = payload.allowSelfSignedCertificate;

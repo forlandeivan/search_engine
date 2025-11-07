@@ -676,6 +676,7 @@ export const embeddingProviders = pgTable("embedding_providers", {
   authorizationKey: text("authorization_key").notNull(),
   scope: text("scope").notNull(),
   model: text("model").notNull(),
+  maxTokensPerVectorization: integer("max_tokens_per_vectorization"),
   allowSelfSignedCertificate: boolean("allow_self_signed_certificate").notNull().default(false),
   requestHeaders: jsonb("request_headers").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
   requestConfig: jsonb("request_config").$type<EmbeddingRequestConfig>().notNull().default(sql`'{}'::jsonb`),
@@ -816,6 +817,12 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
     scope: z.string().trim().min(1, "Укажите OAuth scope"),
     model: z.string().trim().min(1, "Укажите модель"),
     allowSelfSignedCertificate: z.boolean().default(false),
+    maxTokensPerVectorization: z
+      .number({ invalid_type_error: "Введите максимальное количество токенов" })
+      .int("Значение должно быть целым")
+      .positive("Значение должно быть больше нуля")
+      .max(100000, "Значение слишком большое")
+      .optional(),
     requestHeaders: z.record(z.string()).default({}),
     requestConfig: z
       .any()
@@ -856,6 +863,13 @@ export const updateEmbeddingProviderSchema = z
     scope: z.string().trim().min(1, "Укажите OAuth scope").optional(),
     model: z.string().trim().min(1, "Укажите модель").optional(),
     allowSelfSignedCertificate: z.boolean().optional(),
+    maxTokensPerVectorization: z
+      .number({ invalid_type_error: "Введите максимальное количество токенов" })
+      .int("Значение должно быть целым")
+      .positive("Значение должно быть больше нуля")
+      .max(100000, "Значение слишком большое")
+      .nullable()
+      .optional(),
     requestHeaders: z.record(z.string()).optional(),
     qdrantConfig: z.record(z.any()).optional(),
   })
