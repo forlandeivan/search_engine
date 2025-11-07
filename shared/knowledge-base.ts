@@ -107,6 +107,9 @@ export type KnowledgeDocumentChunkSet = {
   chunkCount: number;
   totalTokens: number;
   totalChars: number;
+  maxChunkTokens?: number | null;
+  maxChunkIndex?: number | null;
+  maxChunkId?: string | null;
   createdAt: string;
   updatedAt: string;
   config: KnowledgeDocumentChunkConfig;
@@ -122,6 +125,9 @@ export type KnowledgeDocumentChunkPreview = {
   totalChunks: number;
   totalTokens: number;
   totalChars: number;
+  maxChunkTokens?: number | null;
+  maxChunkIndex?: number | null;
+  maxChunkId?: string | null;
   config: KnowledgeDocumentChunkConfig;
   items: KnowledgeDocumentChunkItem[];
 };

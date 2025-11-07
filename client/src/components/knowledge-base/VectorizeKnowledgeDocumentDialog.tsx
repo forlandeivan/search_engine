@@ -95,6 +95,102 @@ interface VectorizeKnowledgeDocumentResponse {
   totalChunks?: number;
 }
 
+type ChunkTokenStats = {
+  tokens: number;
+  index: number;
+  id?: string | null;
+};
+
+const getMaxTokenStatsFromChunkItems = (
+  items: KnowledgeDocumentChunkSet["chunks"],
+): ChunkTokenStats | null => {
+  let stats: ChunkTokenStats | null = null;
+
+  items.forEach((chunk) => {
+    const tokens =
+      typeof chunk.tokenCount === "number" && Number.isFinite(chunk.tokenCount)
+        ? chunk.tokenCount
+        : null;
+
+    if (tokens === null) {
+      return;
+    }
+
+    const chunkIndex = typeof chunk.index === "number" ? chunk.index : 0;
+
+    if (!stats || tokens > stats.tokens) {
+      stats = {
+        tokens,
+        index: chunkIndex,
+        id: typeof chunk.id === "string" ? chunk.id : null,
+      };
+    }
+  });
+
+  return stats;
+};
+
+const resolveChunkSetMaxTokenStats = (
+  chunkSet: KnowledgeDocumentChunkSet | null | undefined,
+): ChunkTokenStats | null => {
+  if (!chunkSet) {
+    return null;
+  }
+
+  const aggregatedTokens =
+    typeof chunkSet.maxChunkTokens === "number" && Number.isFinite(chunkSet.maxChunkTokens)
+      ? chunkSet.maxChunkTokens
+      : null;
+  const aggregatedIndex =
+    typeof chunkSet.maxChunkIndex === "number" && Number.isFinite(chunkSet.maxChunkIndex)
+      ? chunkSet.maxChunkIndex
+      : null;
+
+  if (aggregatedTokens !== null && aggregatedIndex !== null) {
+    return {
+      tokens: aggregatedTokens,
+      index: Math.max(0, Math.floor(aggregatedIndex)),
+      id: chunkSet.maxChunkId ?? null,
+    };
+  }
+
+  return getMaxTokenStatsFromChunkItems(chunkSet.chunks);
+};
+
+const computeSelectedChunksMaxTokenStats = (
+  chunkSet: KnowledgeDocumentChunkSet | null | undefined,
+  selectedIds: Set<string>,
+  documentId: string,
+): ChunkTokenStats | null => {
+  if (!chunkSet || selectedIds.size === 0) {
+    return null;
+  }
+
+  const relevant: KnowledgeDocumentChunkSet["chunks"] = chunkSet.chunks.filter((chunk) => {
+    const chunkId =
+      typeof chunk.id === "string" && chunk.id.trim().length > 0
+        ? chunk.id.trim()
+        : buildDocumentChunkId(documentId, chunk.index);
+
+    return selectedIds.has(chunkId);
+  });
+
+  if (relevant.length === 0) {
+    return null;
+  }
+
+  return getMaxTokenStatsFromChunkItems(relevant);
+};
+
+const formatChunkTokenSummary = (stats: ChunkTokenStats | null): string | null => {
+  if (!stats) {
+    return null;
+  }
+
+  const chunkNumber = stats.index + 1;
+  return `${stats.tokens.toLocaleString("ru-RU")} (чанк #${chunkNumber.toLocaleString("ru-RU")})`;
+};
+
 interface VectorizeKnowledgeDocumentDialogProps {
   document: KnowledgeDocumentForVectorization;
   base: KnowledgeBaseForVectorization | null;
@@ -504,11 +600,35 @@ export function VectorizeKnowledgeDocumentDialog({
   const [chunkOverlapInput, setChunkOverlapInput] = useState<string>(String(defaultChunkOverlap));
   const availableChunks = chunkSet?.chunks ?? [];
   const chunkSettingsLocked = availableChunks.length > 0;
+  const chunkSetMaxTokenStats = useMemo(
+    () => resolveChunkSetMaxTokenStats(chunkSet ?? null),
+    [chunkSet],
+  );
+  const chunkSetMaxTokenLabel = useMemo(
+    () => formatChunkTokenSummary(chunkSetMaxTokenStats),
+    [chunkSetMaxTokenStats],
+  );
   const [selectedChunkIds, setSelectedChunkIds] = useState<string[]>(() =>
     availableChunks.map((chunk) => chunk.id ?? buildDocumentChunkId(document.id, chunk.index)),
   );
   const lastVectorizationSelectionRef = useRef<KnowledgeDocumentVectorizationSelection | null>(null);
   const jobReportedRef = useRef(false);
+  const selectedChunkIdSet = useMemo(() => new Set(selectedChunkIds), [selectedChunkIds]);
+  const selectedChunksMaxTokenStats = useMemo(
+    () => computeSelectedChunksMaxTokenStats(chunkSet ?? null, selectedChunkIdSet, document.id),
+    [chunkSet, selectedChunkIdSet, document.id],
+  );
+  const selectedChunksMaxTokenLabel = useMemo(
+    () => formatChunkTokenSummary(selectedChunksMaxTokenStats),
+    [selectedChunksMaxTokenStats],
+  );
+  const chunkMaxTokenLabel = useMemo(() => {
+    if (chunkSettingsLocked) {
+      return selectedChunksMaxTokenLabel ?? chunkSetMaxTokenLabel;
+    }
+
+    return chunkSetMaxTokenLabel;
+  }, [chunkSettingsLocked, chunkSetMaxTokenLabel, selectedChunksMaxTokenLabel]);
 
   const { data: collectionsData, isLoading: collectionsLoading, isFetching: collectionsFetching, error: collectionsError } =
     useQuery<VectorCollectionListResponse>({
@@ -1813,6 +1933,7 @@ export function VectorizeKnowledgeDocumentDialog({
           <p className="break-all">{documentPath}</p>
           <p>Символов: {formatNumber(documentCharCount)}</p>
           <p>Оценка токенов: {tokensHint}</p>
+          <p>Макс. токенов: {chunkMaxTokenLabel ?? "недоступно"}</p>
           <p>Размер чанка: {chunkSizeDisplay}</p>
           <p>Перехлёст: {chunkOverlapDisplay}</p>
           {chunkSettingsLocked ? (

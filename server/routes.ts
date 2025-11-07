@@ -1084,6 +1084,81 @@ function createEmbeddingRequestBody(model: string, sampleText: string): Record<s
   };
 }
 
+function parsePositiveInteger(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (value <= 0) {
+      return null;
+    }
+
+    return Math.round(value);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      return null;
+    }
+
+    return parsed;
+  }
+
+  return null;
+}
+
+function extractEmbeddingTokenLimit(provider: EmbeddingProvider): number | null {
+  const limitKeys = ["max_tokens_per_vectorization", "maxTokensPerVectorization"];
+
+  const getFromRecord = (record: Record<string, unknown> | null | undefined): number | null => {
+    if (!record) {
+      return null;
+    }
+
+    for (const key of limitKeys) {
+      if (key in record) {
+        const parsed = parsePositiveInteger(record[key]);
+        if (parsed !== null) {
+          return parsed;
+        }
+
+        const raw = record[key];
+        if (raw === 0 || raw === "0") {
+          return null;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const providerRecord = provider as Record<string, unknown>;
+  const directLimit = getFromRecord(providerRecord);
+  if (directLimit !== null) {
+    return directLimit;
+  }
+
+  const requestConfig =
+    provider.requestConfig && typeof provider.requestConfig === "object"
+      ? (provider.requestConfig as Record<string, unknown>)
+      : null;
+
+  const configLimit = getFromRecord(requestConfig);
+  if (configLimit !== null) {
+    return configLimit;
+  }
+
+  const additionalFields =
+    requestConfig && typeof requestConfig.additionalBodyFields === "object"
+      ? (requestConfig.additionalBodyFields as Record<string, unknown>)
+      : null;
+
+  return getFromRecord(additionalFields);
+}
+
 function ensureNumberArray(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -1189,6 +1264,7 @@ interface KnowledgeDocumentChunk {
   end: number;
   charCount: number;
   wordCount: number;
+  tokenCount: number;
   excerpt: string;
   vectorRecordId?: string | null;
 }
@@ -1223,6 +1299,7 @@ function createKnowledgeDocumentChunks(
 
     const charCount = trimmed.length;
     const wordCount = countPlainTextWords(trimmed);
+    const tokenCount = wordCount;
     const excerpt = buildDocumentExcerpt(trimmed);
 
     chunks.push({
@@ -1233,6 +1310,7 @@ function createKnowledgeDocumentChunks(
       end,
       charCount,
       wordCount,
+      tokenCount,
       excerpt,
     });
 
@@ -2754,6 +2832,7 @@ type KnowledgeDocumentVectorizationJobInternal = KnowledgeDocumentVectorizationJ
 
 const knowledgeDocumentVectorizationJobs = new Map<string, KnowledgeDocumentVectorizationJobInternal>();
 const knowledgeDocumentVectorizationJobCleanup = new Map<string, NodeJS.Timeout>();
+const VECTORIZE_JOB_FAILURE_CLEANUP_DELAY_MS = 5_000;
 
 function updateKnowledgeDocumentVectorizationJob(
   jobId: string,
@@ -2770,7 +2849,7 @@ function updateKnowledgeDocumentVectorizationJob(
   });
 }
 
-function scheduleKnowledgeDocumentVectorizationJobCleanup(jobId: string) {
+function scheduleKnowledgeDocumentVectorizationJobCleanup(jobId: string, delayMs = 60_000) {
   const existing = knowledgeDocumentVectorizationJobCleanup.get(jobId);
   if (existing) {
     clearTimeout(existing);
@@ -2779,7 +2858,7 @@ function scheduleKnowledgeDocumentVectorizationJobCleanup(jobId: string) {
   const timeout = setTimeout(() => {
     knowledgeDocumentVectorizationJobs.delete(jobId);
     knowledgeDocumentVectorizationJobCleanup.delete(jobId);
-  }, 60_000);
+  }, delayMs);
 
   knowledgeDocumentVectorizationJobCleanup.set(jobId, timeout);
 }
@@ -8591,6 +8670,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Выбранный сервис эмбеддингов отключён" });
       }
 
+      const embeddingChunkTokenLimit = extractEmbeddingTokenLimit(provider);
+
       const documentTextRaw = vectorDocument.text;
       const documentText = documentTextRaw.trim();
       if (documentText.length === 0) {
@@ -8659,6 +8740,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
             const charCountValue = content.length;
             const wordCountValue = countPlainTextWords(content);
+            const providedTokenCount = (item as { tokenCount?: unknown }).tokenCount;
+            const tokenCountValue =
+              typeof providedTokenCount === "number" && Number.isFinite(providedTokenCount)
+                ? Math.max(0, Math.round(providedTokenCount))
+                : wordCountValue;
             const excerptValue = buildDocumentExcerpt(content);
 
             const idValue =
@@ -8684,6 +8770,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               end: endValue,
               charCount: charCountValue,
               wordCount: wordCountValue,
+              tokenCount: tokenCountValue,
               excerpt: excerptValue,
               vectorRecordId,
             };
@@ -8754,6 +8841,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Не удалось разбить документ на чанки" });
       }
 
+      if (embeddingChunkTokenLimit !== null) {
+        let oversizedChunk: { index: number; tokenCount: number; id?: string } | null = null;
+
+        for (const chunk of documentChunks) {
+          if (
+            typeof chunk.tokenCount === "number" &&
+            Number.isFinite(chunk.tokenCount) &&
+            chunk.tokenCount > embeddingChunkTokenLimit &&
+            (!oversizedChunk || chunk.tokenCount > oversizedChunk.tokenCount)
+          ) {
+            oversizedChunk = { index: chunk.index, tokenCount: chunk.tokenCount, id: chunk.id };
+          }
+        }
+
+        if (oversizedChunk) {
+          const chunkNumber = oversizedChunk.index + 1;
+          const limitMessage =
+            `Чанк #${chunkNumber} превышает допустимый лимит ${embeddingChunkTokenLimit.toLocaleString("ru-RU")} токенов ` +
+            `(получилось ${oversizedChunk.tokenCount.toLocaleString("ru-RU")}).`;
+
+          return res.status(400).json({
+            error: limitMessage,
+            chunkIndex: chunkNumber,
+            chunkId: oversizedChunk.id ?? null,
+            tokenCount: oversizedChunk.tokenCount,
+            tokenLimit: embeddingChunkTokenLimit,
+          });
+        }
+      }
+
       const totalChunks = totalChunksPlanned ?? documentChunks.length;
 
       if (totalChunks > 0 && !jobId) {
@@ -8797,7 +8914,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           error: message,
           finishedAt: new Date().toISOString(),
         });
-        scheduleKnowledgeDocumentVectorizationJobCleanup(jobId);
+        scheduleKnowledgeDocumentVectorizationJobCleanup(jobId, VECTORIZE_JOB_FAILURE_CLEANUP_DELAY_MS);
         if (responseSent) {
           throw new HttpError(status, message, details);
         }
@@ -8895,7 +9012,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         } catch (embeddingError) {
           console.error("Ошибка эмбеддинга чанка документа базы знаний", embeddingError);
-          throw embeddingError;
+          const errorMessage =
+            embeddingError instanceof Error ? embeddingError.message : String(embeddingError);
+          throw new Error(`Ошибка эмбеддинга чанка #${index + 1}: ${errorMessage}`);
         }
       }
 
@@ -9014,6 +9133,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             text: chunk.content,
             charCount: chunk.charCount,
             wordCount: chunk.wordCount,
+            tokenCount: chunk.tokenCount,
             excerpt: chunk.excerpt,
           },
           embedding: {
@@ -9159,7 +9279,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             error: message,
             finishedAt: new Date().toISOString(),
           });
-          scheduleKnowledgeDocumentVectorizationJobCleanup(jobId);
+          scheduleKnowledgeDocumentVectorizationJobCleanup(jobId, VECTORIZE_JOB_FAILURE_CLEANUP_DELAY_MS);
         }
       };
 
