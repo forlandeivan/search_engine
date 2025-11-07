@@ -447,12 +447,14 @@ export function EmbedDialog({
   const [embedKey, setEmbedKey] = useState<WorkspaceEmbedKey | null>(null);
   const [domains, setDomains] = useState<WorkspaceEmbedKeyDomain[]>([]);
 
-  const ensureKeyMutation = useMutation(async () => {
-    const response = await apiRequest("POST", "/api/embed/keys", {
-      collection,
-      knowledgeBaseId,
-    });
-    return (await response.json()) as EmbedKeyResponse;
+  const ensureKeyMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/embed/keys", {
+        collection,
+        knowledgeBaseId,
+      });
+      return (await response.json()) as EmbedKeyResponse;
+    },
   });
 
   useEffect(() => {
@@ -473,42 +475,38 @@ export function EmbedDialog({
     });
   }, [open, knowledgeBaseId, collection, toast, onOpenChange, ensureKeyMutation]);
 
-  const addDomainMutation = useMutation(
-    async (domain: string) => {
+  const addDomainMutation = useMutation({
+    mutationFn: async (domain: string) => {
       const response = await apiRequest("POST", `/api/embed/keys/${embedKey?.id ?? ""}/domains`, {
         domain,
       });
       return (await response.json()) as WorkspaceEmbedKeyDomain;
     },
-    {
-      onSuccess: (domain) => {
-        setDomains((prev) => [...prev, domain]);
-        setDomainInput("");
-        toast({ title: "Домен добавлен", description: `Домен ${domain.domain} успешно добавлен в allowlist.` });
-      },
-      onError: (error: unknown) => {
-        const message = error instanceof Error ? error.message : "Не удалось добавить домен";
-        toast({ title: "Ошибка", description: message, variant: "destructive" });
-      },
+    onSuccess: (domain) => {
+      setDomains((prev) => [...prev, domain]);
+      setDomainInput("");
+      toast({ title: "Домен добавлен", description: `Домен ${domain.domain} успешно добавлен в allowlist.` });
     },
-  );
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Не удалось добавить домен";
+      toast({ title: "Ошибка", description: message, variant: "destructive" });
+    },
+  });
 
-  const removeDomainMutation = useMutation(
-    async (domainId: string) => {
+  const removeDomainMutation = useMutation({
+    mutationFn: async (domainId: string) => {
       await apiRequest("DELETE", `/api/embed/keys/${embedKey?.id ?? ""}/domains/${domainId}`);
       return domainId;
     },
-    {
-      onSuccess: (domainId) => {
-        setDomains((prev) => prev.filter((domain) => domain.id !== domainId));
-        toast({ title: "Домен удалён", description: "Домен убран из allowlist." });
-      },
-      onError: (error: unknown) => {
-        const message = error instanceof Error ? error.message : "Не удалось удалить домен";
-        toast({ title: "Ошибка", description: message, variant: "destructive" });
-      },
+    onSuccess: (domainId) => {
+      setDomains((prev) => prev.filter((domain) => domain.id !== domainId));
+      toast({ title: "Домен удалён", description: "Домен убран из allowlist." });
     },
-  );
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Не удалось удалить домен";
+      toast({ title: "Ошибка", description: message, variant: "destructive" });
+    },
+  });
 
   const snippet = useMemo(() => {
     if (!embedKey) {
