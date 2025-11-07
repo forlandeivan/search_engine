@@ -27,7 +27,6 @@ import {
   ChevronLeft,
   Settings,
   Shield,
-  CircleUser,
   Users,
   LayoutDashboard,
   Bot,
@@ -41,6 +40,7 @@ import {
 } from "@/lib/knowledge-base";
 import { apiRequest } from "@/lib/queryClient";
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
+import { UserAvatar } from "@/components/UserAvatar";
 
 interface SidebarItem {
   title: string;
@@ -333,7 +333,11 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
                 href="/profile"
                 className={cn("flex flex-1 items-center gap-2", isCollapsed && "justify-center gap-0")}
               >
-                <CircleUser className={cn("h-5 w-5", isCollapsed && "mx-auto")} />
+                <UserAvatar
+                  user={user}
+                  size={isCollapsed ? "sm" : "md"}
+                  className={cn(isCollapsed && "mx-auto")}
+                />
                 {!isCollapsed && (
                   <div className="flex flex-col text-left leading-tight">
                     <span className="text-sm font-medium">Профиль</span>
