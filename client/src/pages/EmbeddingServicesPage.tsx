@@ -44,6 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
   embeddingProviderTypes,
@@ -58,8 +59,16 @@ const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
 const defaultRequestHeaders: Record<string, string> = {};
 
 const formatBoolean = (value: boolean) => (value ? "да" : "нет");
+const numberFormatter = new Intl.NumberFormat("ru-RU");
+const formatNullableNumber = (value?: number | null) =>
+  typeof value === "number" && Number.isFinite(value) ? numberFormatter.format(value) : "—";
 
 const buildCopyDescription = (label: string, value: string) => `${label} «${value}» скопирован в буфер обмена.`;
+
+const GIGACHAT_BATCH_LIMIT = 16;
+const GIGACHAT_RATE_LIMIT_PER_SECOND = 5;
+const GIGACHAT_RATE_LIMIT_PER_MINUTE = 300;
+const GIGACHAT_TOKEN_TTL_MINUTES = 30;
 
 type DebugStage = "token-request" | "token-response" | "embedding-request" | "embedding-response";
 
@@ -105,6 +114,7 @@ type FormValues = {
   authorizationKey: string;
   scope: string;
   model: string;
+  maxTokensPerVectorization: string;
   allowSelfSignedCertificate: boolean;
   requestHeaders: string;
 };
@@ -119,6 +129,7 @@ const emptyFormValues: FormValues = {
   authorizationKey: "",
   scope: "",
   model: "",
+  maxTokensPerVectorization: "",
   allowSelfSignedCertificate: false,
   requestHeaders: formatJson(defaultRequestHeaders),
 };
@@ -181,6 +192,9 @@ const mapProviderToFormValues = (provider: PublicEmbeddingProvider): FormValues 
   authorizationKey: "",
   scope: provider.scope,
   model: provider.model,
+  maxTokensPerVectorization: provider.maxTokensPerVectorization
+    ? String(provider.maxTokensPerVectorization)
+    : "",
   allowSelfSignedCertificate: provider.allowSelfSignedCertificate ?? false,
   requestHeaders: formatJson(provider.requestHeaders ?? defaultRequestHeaders),
 });
@@ -191,6 +205,7 @@ export default function EmbeddingServicesPage() {
   const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [debugSteps, setDebugSteps] = useState<DebugStep[]>(() => buildDebugSteps());
+  const [activeTab, setActiveTab] = useState<"settings" | "docs">("settings");
 
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/embedding/services"],
@@ -202,6 +217,7 @@ export default function EmbeddingServicesPage() {
     () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
     [providers, selectedProviderId],
   );
+  const isGigachatProvider = selectedProvider?.providerType === "gigachat";
 
   useEffect(() => {
     if (providers.length === 0) {
@@ -221,12 +237,14 @@ export default function EmbeddingServicesPage() {
       form.reset(mapProviderToFormValues(selectedProvider));
       setIsAuthorizationVisible(false);
       setDebugSteps(buildDebugSteps());
+      setActiveTab("settings");
       return;
     }
 
     form.reset(emptyFormValues);
     setIsAuthorizationVisible(false);
     setDebugSteps(buildDebugSteps());
+    setActiveTab("settings");
   }, [selectedProvider, form]);
 
   const updateProviderMutation = useMutation<
@@ -314,6 +332,21 @@ export default function EmbeddingServicesPage() {
       );
 
       const trimmedAuthorizationKey = values.authorizationKey.trim();
+      const trimmedMaxTokens = values.maxTokensPerVectorization.trim();
+
+      if (!trimmedMaxTokens) {
+        const message = "Укажите максимальное количество токенов";
+        form.setError("maxTokensPerVectorization", { type: "manual", message });
+        throw new Error(message);
+      }
+
+      const parsedMaxTokens = Number.parseInt(trimmedMaxTokens, 10);
+
+      if (!Number.isFinite(parsedMaxTokens) || parsedMaxTokens <= 0) {
+        const message = "Введите положительное целое число";
+        form.setError("maxTokensPerVectorization", { type: "manual", message });
+        throw new Error(message);
+      }
 
       const payload: UpdateEmbeddingProvider = {
         providerType: values.providerType,
@@ -324,6 +357,7 @@ export default function EmbeddingServicesPage() {
         embeddingsUrl: values.embeddingsUrl.trim(),
         scope: values.scope.trim(),
         model: values.model.trim(),
+        maxTokensPerVectorization: parsedMaxTokens,
         allowSelfSignedCertificate: values.allowSelfSignedCertificate,
         requestHeaders,
       } satisfies UpdateEmbeddingProvider;
@@ -501,6 +535,328 @@ export default function EmbeddingServicesPage() {
     }
   };
 
+  const settingsFormContent = (
+    <form onSubmit={handleUpdate} className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2">
+        <FormField
+          control={form.control}
+          name="providerType"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Провайдер</FormLabel>
+              <FormControl>
+                <Select onValueChange={field.onChange} value={field.value}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите провайдера" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {embeddingProviderTypes.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {type === "gigachat" ? "GigaChat" : type}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FormControl>
+              <FormDescription>Определяет преднастроенные параметры интеграции.</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="isActive"
+          render={({ field }) => (
+            <FormItem className="flex items-center justify-between rounded-lg border p-3">
+              <div className="space-y-1">
+                <FormLabel className="text-sm">Статус сервиса</FormLabel>
+                <FormDescription className="text-xs">
+                  Только активные сервисы доступны в настройках векторизации.
+                </FormDescription>
+              </div>
+              <FormControl>
+                <Switch checked={field.value} onCheckedChange={field.onChange} />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Название</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="Например, GigaChat Embeddings Prod" required />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="description"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Описание</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="Для чего используется этот сервис" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <FormField
+          control={form.control}
+          name="tokenUrl"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Endpoint для Access Token</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="https://ngw.devices.sberbank.ru:9443/api/v2/oauth" required />
+              </FormControl>
+              <FormDescription>
+                {isGigachatProvider
+                  ? "Сервис GigaChat требует предварительный запрос для получения токена доступа."
+                  : "Введите endpoint OAuth-сервера, который возвращает access token."}
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="embeddingsUrl"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Endpoint эмбеддингов</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="https://gigachat.devices.sberbank.ru/api/v1/embeddings" required />
+              </FormControl>
+              <FormDescription>Именно сюда будет отправляться текст для расчёта векторов.</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <FormField
+        control={form.control}
+        name="authorizationKey"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Authorization key</FormLabel>
+            <FormControl>
+              <div className="relative">
+                <Input
+                  {...field}
+                  type={isAuthorizationVisible ? "text" : "password"}
+                  placeholder="Значение заголовка Authorization"
+                  autoComplete="new-password"
+                  className="pr-10"
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
+                  onClick={() => setIsAuthorizationVisible((previous) => !previous)}
+                  aria-label={isAuthorizationVisible ? "Скрыть Authorization key" : "Показать Authorization key"}
+                >
+                  {isAuthorizationVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+            </FormControl>
+            <FormDescription>
+              {isGigachatProvider ? (
+                <>
+                  Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
+                </>
+              ) : (
+                "Вставьте значение заголовка Authorization, которое требуется для получения токена."
+              )}
+            </FormDescription>
+            <div className="flex flex-col gap-3 pt-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => testCredentialsMutation.mutate()}
+                  disabled={testCredentialsMutation.isPending}
+                >
+                  {testCredentialsMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверяем...
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="mr-2 h-4 w-4" /> Проверить авторизацию
+                    </>
+                  )}
+                </Button>
+                {testCredentialsMutation.isSuccess && !testCredentialsMutation.isPending ? (
+                  <span className="flex items-center gap-1 text-sm text-emerald-600">
+                    <ShieldCheck className="h-4 w-4" /> {testCredentialsMutation.data?.message}
+                  </span>
+                ) : null}
+                {testCredentialsMutation.isError && !testCredentialsMutation.isPending ? (
+                  <span className="flex items-center gap-1 text-sm text-destructive">
+                    <AlertCircle className="h-4 w-4" /> {testCredentialsMutation.error?.message}
+                  </span>
+                ) : null}
+              </div>
+
+              {hasActiveDebugSteps ? (
+                <div className="rounded-lg border bg-muted/50 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Ход проверки</p>
+                  <div className="mt-3 space-y-2">
+                    {debugSteps.map((step) => {
+                      const statusColor =
+                        step.status === "error"
+                          ? "text-destructive"
+                          : step.status === "success"
+                            ? "text-emerald-600"
+                            : "text-muted-foreground";
+
+                      return (
+                        <div key={step.stage} className="flex items-start gap-2 text-sm">
+                          {step.status === "pending" ? (
+                            <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-muted-foreground" />
+                          ) : step.status === "success" ? (
+                            <ShieldCheck className="mt-0.5 h-4 w-4 text-emerald-600" />
+                          ) : step.status === "error" ? (
+                            <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
+                          ) : (
+                            <Sparkles className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                          )}
+                          <div className="space-y-1">
+                            <div className={cn("font-medium", statusColor)}>{step.title}</div>
+                            {step.detail ? <div className={cn("text-sm", statusColor)}>{step.detail}</div> : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <FormField
+          control={form.control}
+          name="scope"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>OAuth scope</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="GIGACHAT_API_PERS" required />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="model"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Модель эмбеддингов</FormLabel>
+              <FormControl>
+                <Input {...field} placeholder="embeddings" required />
+              </FormControl>
+              <FormDescription>Посмотрите актуальные названия моделей в документации провайдера.</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="maxTokensPerVectorization"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Максимальное количество токенов</FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="Например, 4096"
+                  required
+                />
+              </FormControl>
+              <FormDescription>
+                Используется для проверки чанков до отправки в сервис. Значение указывается в токенах на один элемент массива
+                <code>input</code>.
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <FormField
+        control={form.control}
+        name="allowSelfSignedCertificate"
+        render={({ field }) => (
+          <FormItem className="flex items-center justify-between rounded-lg border p-3">
+            <div className="space-y-1">
+              <FormLabel className="text-sm">Доверять самоподписанным сертификатам</FormLabel>
+              <FormDescription className="text-xs">
+                Включите, если сервис размещён во внутреннем контуре с self-signed SSL.
+              </FormDescription>
+            </div>
+            <FormControl>
+              <Switch checked={field.value} onCheckedChange={field.onChange} />
+            </FormControl>
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={form.control}
+        name="requestHeaders"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Дополнительные заголовки</FormLabel>
+            <FormControl>
+              <Textarea {...field} spellCheck={false} rows={4} placeholder='{"Accept": "application/json"}' />
+            </FormControl>
+            <FormDescription>
+              JSON-объект со строковыми значениями. Добавьте заголовки только если они требуются вашим API.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <div className="flex justify-end">
+        <Button type="submit" disabled={updateProviderMutation.isPending}>
+          {updateProviderMutation.isPending ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Сохраняем...
+            </>
+          ) : (
+            "Сохранить изменения"
+          )}
+        </Button>
+      </div>
+    </form>
+  );
+
   return (
     <div className="space-y-6 p-6">
       <div className="space-y-1">
@@ -570,6 +926,7 @@ export default function EmbeddingServicesPage() {
                           <span>Модель: {provider.model}</span>
                           <span>Token: {formatBoolean(provider.hasAuthorizationKey)}</span>
                           <span>SSL: {provider.allowSelfSignedCertificate ? "self-signed" : "строгая проверка"}</span>
+                          <span>Макс. токенов: {formatNullableNumber(provider.maxTokensPerVectorization)}</span>
                         </div>
                       </div>
 
@@ -639,329 +996,197 @@ export default function EmbeddingServicesPage() {
                     <Copy className="h-3.5 w-3.5" /> model: {selectedProvider.model}
                   </Badge>
                 ) : null}
+                {typeof selectedProvider.maxTokensPerVectorization === "number" ? (
+                  <Badge variant="outline" className="gap-1 text-[10px] uppercase tracking-wide">
+                    max tokens: {formatNullableNumber(selectedProvider.maxTokensPerVectorization)}
+                  </Badge>
+                ) : null}
               </div>
             ) : null}
           </CardHeader>
           <CardContent>
             <Form {...form}>
-              <form onSubmit={handleUpdate} className="space-y-6">
-                {!selectedProvider ? (
-                  <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                    Нет доступных сервисов для настройки.
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <FormField
-                        control={form.control}
-                        name="providerType"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Провайдер</FormLabel>
-                            <FormControl>
-                              <Select onValueChange={field.onChange} value={field.value}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Выберите провайдера" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {embeddingProviderTypes.map((type) => (
-                                    <SelectItem key={type} value={type}>
-                                      {type === "gigachat" ? "GigaChat" : type}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </FormControl>
-                            <FormDescription>Определяет преднастроенные параметры интеграции.</FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="isActive"
-                        render={({ field }) => (
-                          <FormItem className="flex items-center justify-between rounded-lg border p-3">
-                            <div className="space-y-1">
-                              <FormLabel className="text-sm">Статус сервиса</FormLabel>
-                              <FormDescription className="text-xs">
-                                Только активные сервисы доступны в настройках векторизации.
-                              </FormDescription>
-                            </div>
-                            <FormControl>
-                              <Switch checked={field.value} onCheckedChange={field.onChange} />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Название</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Например, GigaChat Embeddings Prod" required />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="description"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Описание</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Для чего используется этот сервис" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <FormField
-                        control={form.control}
-                        name="tokenUrl"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Endpoint для Access Token</FormLabel>
-                            <FormControl>
-                              <Input
-                                {...field}
-                                placeholder="https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-                                required
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              Сервис GigaChat требует предварительный запрос для получения токена доступа.
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="embeddingsUrl"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Endpoint эмбеддингов</FormLabel>
-                            <FormControl>
-                              <Input
-                                {...field}
-                                placeholder="https://gigachat.devices.sberbank.ru/api/v1/embeddings"
-                                required
-                              />
-                            </FormControl>
-                            <FormDescription>Именно сюда будет отправляться текст для расчёта векторов.</FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <FormField
-                      control={form.control}
-                      name="authorizationKey"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Authorization key</FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <Input
-                                {...field}
-                                type={isAuthorizationVisible ? "text" : "password"}
-                                placeholder="Значение заголовка Authorization"
-                                autoComplete="new-password"
-                                className="pr-10"
-                              />
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                className="absolute inset-y-0 right-0 h-full px-3 text-muted-foreground"
-                                onClick={() => setIsAuthorizationVisible((previous) => !previous)}
-                                aria-label={
-                                  isAuthorizationVisible
-                                    ? "Скрыть Authorization key"
-                                    : "Показать Authorization key"
-                                }
-                              >
-                                {isAuthorizationVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                              </Button>
-                            </div>
-                          </FormControl>
-                          <FormDescription>
-                            Скопируйте готовый ключ из личного кабинета GigaChat (формат <code>Basic &lt;token&gt;</code>).
-                          </FormDescription>
-                          <div className="flex flex-col gap-3 pt-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => testCredentialsMutation.mutate()}
-                                disabled={testCredentialsMutation.isPending}
-                              >
-                                {testCredentialsMutation.isPending ? (
-                                  <>
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Проверяем...
-                                  </>
-                                ) : (
-                                  <>
-                                    <ShieldCheck className="mr-2 h-4 w-4" /> Проверить авторизацию
-                                  </>
-                                )}
-                              </Button>
-                              {testCredentialsMutation.isSuccess && !testCredentialsMutation.isPending ? (
-                                <span className="flex items-center gap-1 text-sm text-emerald-600">
-                                  <ShieldCheck className="h-4 w-4" /> {testCredentialsMutation.data?.message}
-                                </span>
-                              ) : null}
-                              {testCredentialsMutation.isError && !testCredentialsMutation.isPending ? (
-                                <span className="flex items-center gap-1 text-sm text-destructive">
-                                  <AlertCircle className="h-4 w-4" /> {testCredentialsMutation.error?.message}
-                                </span>
-                              ) : null}
-                            </div>
-
-                            {hasActiveDebugSteps ? (
-                              <div className="rounded-lg border bg-muted/50 p-4">
-                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  Ход проверки
-                                </p>
-                                <div className="mt-3 space-y-2">
-                                  {debugSteps.map((step) => {
-                                    const statusColor =
-                                      step.status === "error"
-                                        ? "text-destructive"
-                                        : step.status === "success"
-                                          ? "text-emerald-600"
-                                          : "text-muted-foreground";
-
-                                    return (
-                                      <div key={step.stage} className="flex items-start gap-2 text-sm">
-                                        {step.status === "pending" ? (
-                                          <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-muted-foreground" />
-                                        ) : step.status === "success" ? (
-                                          <ShieldCheck className="mt-0.5 h-4 w-4 text-emerald-600" />
-                                        ) : step.status === "error" ? (
-                                          <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
-                                        ) : (
-                                          <Sparkles className="mt-0.5 h-4 w-4 text-muted-foreground" />
-                                        )}
-                                        <div className="space-y-1">
-                                          <div className={cn("font-medium", statusColor)}>{step.title}</div>
-                                          {step.detail ? <div className={cn("text-sm", statusColor)}>{step.detail}</div> : null}
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <FormField
-                        control={form.control}
-                        name="scope"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>OAuth scope</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="GIGACHAT_API_PERS" required />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="model"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Модель эмбеддингов</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="embeddings" required />
-                            </FormControl>
-                            <FormDescription>Посмотрите актуальные названия моделей в документации провайдера.</FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <FormField
-                      control={form.control}
-                      name="allowSelfSignedCertificate"
-                      render={({ field }) => (
-                        <FormItem className="flex items-center justify-between rounded-lg border p-3">
-                          <div className="space-y-1">
-                            <FormLabel className="text-sm">Доверять самоподписанным сертификатам</FormLabel>
-                            <FormDescription className="text-xs">
-                              Включите, если сервис размещён во внутреннем контуре с self-signed SSL.
-                            </FormDescription>
-                          </div>
-                          <FormControl>
-                            <Switch checked={field.value} onCheckedChange={field.onChange} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="requestHeaders"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Дополнительные заголовки</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              {...field}
-                              spellCheck={false}
-                              rows={4}
-                              placeholder='{"Accept": "application/json"}'
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            JSON-объект со строковыми значениями. Добавьте заголовки только если они требуются вашим API.
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </>
-                )}
-
-                <div className="flex justify-end">
-                  <Button type="submit" disabled={!selectedProvider || updateProviderMutation.isPending}>
-                    {updateProviderMutation.isPending ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Сохраняем...
-                      </>
-                    ) : (
-                      "Сохранить изменения"
-                    )}
-                  </Button>
+              {!selectedProvider ? (
+                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                  Нет доступных сервисов для настройки.
                 </div>
-              </form>
+              ) : isGigachatProvider ? (
+                <Tabs
+                  value={activeTab}
+                  onValueChange={(value) => setActiveTab(value as "settings" | "docs")}
+                  className="space-y-6"
+                >
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="settings">Настройки</TabsTrigger>
+                    <TabsTrigger value="docs">Документация</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="settings">{settingsFormContent}</TabsContent>
+                  <TabsContent value="docs">
+                    <GigachatEmbeddingDocumentation provider={selectedProvider} />
+                  </TabsContent>
+                </Tabs>
+              ) : (
+                settingsFormContent
+              )}
             </Form>
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+type GigachatEmbeddingDocumentationProps = {
+  provider: PublicEmbeddingProvider;
+};
+
+function GigachatEmbeddingDocumentation({ provider }: GigachatEmbeddingDocumentationProps) {
+  const maxTokens = provider.maxTokensPerVectorization;
+  const formattedMaxTokens = formatNullableNumber(maxTokens);
+  const batchLimitLabel = numberFormatter.format(GIGACHAT_BATCH_LIMIT);
+  const rateLimitPerSecond = numberFormatter.format(GIGACHAT_RATE_LIMIT_PER_SECOND);
+  const rateLimitPerMinute = numberFormatter.format(GIGACHAT_RATE_LIMIT_PER_MINUTE);
+  const tokenTtlLabel = numberFormatter.format(GIGACHAT_TOKEN_TTL_MINUTES);
+
+  return (
+    <div className="space-y-6">
+      <section className="space-y-3 rounded-lg border bg-muted/30 p-6">
+        <h3 className="text-lg font-semibold">Пайплайн интеграции</h3>
+        <p className="text-sm text-muted-foreground">
+          Сервис GigaChat Embeddings требует предварительной выдачи access token. После получения токена выполняется отдельный
+          запрос на расчёт векторов. Ниже перечислены шаги, которые выполняет платформа при каждом обращении.
+        </p>
+        <ol className="list-decimal space-y-2 pl-4 text-sm text-muted-foreground">
+          <li>
+            <span className="font-medium text-foreground">POST {" "}</span>
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">{provider.tokenUrl}</code>
+            <span className="block">
+              Отправляем OAuth-запрос с заголовком <code>Authorization: Basic &lt;key&gt;</code> и телом
+              <code>grant_type=client_credentials&amp;scope={provider.scope}</code>. Ответ содержит <code>access_token</code> и время
+              жизни токена.
+            </span>
+          </li>
+          <li>
+            <span className="font-medium text-foreground">Проверка токена</span>
+            <span className="block">
+              Сохраняем TTL (≈ {tokenTtlLabel} минут) и повторно используем токен, пока он валиден. При ошибке авторизации
+              инициируем повторный запрос токена.
+            </span>
+          </li>
+          <li>
+            <span className="font-medium text-foreground">POST {" "}</span>
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">{provider.embeddingsUrl}</code>
+            <span className="block">
+              Формируем JSON:
+              <code className="mt-1 block break-all">
+                {`{ "model": "${provider.model}", "input": ["chunk"], "encoding_format": "float" }`}
+              </code>
+              В заголовках передаём <code>Authorization: Bearer &lt;access_token&gt;</code>{" "}
+              и <code>Content-Type: application/json</code>.
+            </span>
+          </li>
+          <li>
+            <span className="font-medium text-foreground">Анализ ответа</span>
+            <span className="block">
+              Если сервис вернул массив <code>data</code>, извлекаем <code>embedding</code>, <code>usage.total_tokens</code> и, при
+              наличии, <code>id</code> вектора. Ошибки сервиса пробрасываются в админку вместе с телом ответа.
+            </span>
+          </li>
+        </ol>
+      </section>
+
+      <section className="space-y-4 rounded-lg border bg-background p-6">
+        <h3 className="text-lg font-semibold">HTTP параметры и примеры</h3>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-2 rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Запрос за токеном</p>
+            <pre className="overflow-x-auto rounded bg-background p-3 text-xs text-foreground">
+              {`POST ${provider.tokenUrl}
+Authorization: Basic <key>
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&scope=${provider.scope}`}
+            </pre>
+            <p>Ответ хранится {tokenTtlLabel} минут. При истечении срока необходимо запросить новый токен.</p>
+          </div>
+
+          <div className="space-y-2 rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Запрос эмбеддингов</p>
+            <pre className="overflow-x-auto rounded bg-background p-3 text-xs text-foreground">
+              {`POST ${provider.embeddingsUrl}
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "model": "${provider.model}",
+  "input": ["текст чанка"],
+  "encoding_format": "float"
+}`}
+            </pre>
+            <p>
+              Поле <code>input</code> принимает массив строк: один запрос может содержать сразу несколько чанков (батч).
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-3 rounded-lg border bg-muted/30 p-6">
+        <h3 className="text-lg font-semibold">Ограничения сервиса</h3>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="space-y-1 rounded-lg border bg-background/80 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Частота запросов</p>
+            <p className="text-sm font-medium text-foreground">до {rateLimitPerSecond} RPS ({rateLimitPerMinute} в минуту)</p>
+            <p className="text-xs text-muted-foreground">
+              Настройте throttling при масcовой векторизации, чтобы не получить 429 от провайдера.
+            </p>
+          </div>
+
+          <div className="space-y-1 rounded-lg border bg-background/80 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Размер батча</p>
+            <p className="text-sm font-medium text-foreground">до {batchLimitLabel} элементов</p>
+            <p className="text-xs text-muted-foreground">
+              Ограничение действует на длину массива <code>input</code>. При большем количестве чанков разбивайте запросы.
+            </p>
+          </div>
+
+          <div className="space-y-1 rounded-lg border bg-background/80 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Максимум токенов</p>
+            <p className="text-sm font-medium text-foreground">
+              {typeof maxTokens === "number" ? `${formattedMaxTokens} токенов` : "Укажите значение во вкладке «Настройки»"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Лимит применяется к одному элементу массива <code>input</code>. Общий размер батча равен сумме лимитов по каждому
+              элементу.
+            </p>
+          </div>
+
+          <div className="space-y-1 rounded-lg border bg-background/80 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">Время жизни токена</p>
+            <p className="text-sm font-medium text-foreground">≈ {tokenTtlLabel} минут</p>
+            <p className="text-xs text-muted-foreground">
+              Кэшируйте токен и обновляйте его заранее, чтобы не прерывать пакетную обработку документов.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-2 rounded-lg border bg-background p-6 text-sm text-muted-foreground">
+        <h3 className="text-lg font-semibold text-foreground">Практические советы</h3>
+        <ul className="list-disc space-y-1 pl-4">
+          <li>
+            Сверяйте размер чанков с полем «Максимальное количество токенов» перед векторизацией. При превышении лучше сразу
+            пересобрать чанки, чем ждать ошибку 400 от сервиса.
+          </li>
+          <li>
+            Держите очередь запросов в соответствии с лимитами ({rateLimitPerSecond} RPS / {rateLimitPerMinute} RPM), особенно при
+            массовой индексации.
+          </li>
+          <li>
+            Используйте батчи (до {batchLimitLabel} элементов), чтобы экономить на сетевых вызовах, но следите за суммарным
+            размером данных и лимитами токенов.
+          </li>
+        </ul>
+      </section>
     </div>
   );
 }
