@@ -337,6 +337,121 @@ const generateChunks = (
   const overlapTokens = config.overlapTokens ?? null;
   const overlapChars = config.overlapChars ?? null;
 
+  const splitSentenceByTokens = (unit: SentenceUnit): SentenceUnit[] => {
+    if (tokenLimit === null || unit.tokenCount <= tokenLimit) {
+      return [unit];
+    }
+
+    const original = normalizedText.slice(unit.charStart, unit.charEnd);
+    const tokenMatches = Array.from(original.matchAll(/\S+/gu));
+
+    if (tokenMatches.length === 0) {
+      return [unit];
+    }
+
+    const segments: SentenceUnit[] = [];
+    let segmentStartTokenIndex = 0;
+    let tokensInSegment = 0;
+
+    for (let index = 0; index < tokenMatches.length; index += 1) {
+      tokensInSegment += 1;
+      const isLastToken = index === tokenMatches.length - 1;
+      const nextTokenStart = isLastToken ? original.length : tokenMatches[index + 1]?.index ?? original.length;
+
+      if (tokensInSegment >= tokenLimit || isLastToken) {
+        const firstToken = tokenMatches[segmentStartTokenIndex];
+        const startOffset = firstToken?.index ?? 0;
+        const endOffset = nextTokenStart;
+        const charStart = unit.charStart + startOffset;
+        const charEnd = unit.charStart + endOffset;
+        const text = sanitizeWhitespace(normalizedText.slice(charStart, charEnd));
+
+        segments.push({
+          ...unit,
+          text,
+          charStart,
+          charEnd,
+          tokenCount: countTokens(text),
+        });
+
+        segmentStartTokenIndex = index + 1;
+        tokensInSegment = 0;
+      }
+    }
+
+    return segments;
+  };
+
+  const splitSentenceByChars = (unit: SentenceUnit): SentenceUnit[] => {
+    if (charLimit === null) {
+      return [unit];
+    }
+
+    const original = normalizedText.slice(unit.charStart, unit.charEnd);
+    if (original.length <= charLimit) {
+      return [unit];
+    }
+
+    const segments: SentenceUnit[] = [];
+    let localStart = 0;
+
+    while (localStart < original.length) {
+      let localEnd = Math.min(localStart + charLimit, original.length);
+
+      if (localEnd < original.length) {
+        const lastSpace = original.lastIndexOf(" ", localEnd - 1);
+        if (lastSpace > localStart) {
+          localEnd = lastSpace + 1;
+        }
+      }
+
+      const charStart = unit.charStart + localStart;
+      const charEnd = unit.charStart + localEnd;
+      const text = sanitizeWhitespace(normalizedText.slice(charStart, charEnd));
+
+      if (text) {
+        segments.push({
+          ...unit,
+          text,
+          charStart,
+          charEnd,
+          tokenCount: countTokens(text),
+        });
+      }
+
+      localStart = localEnd;
+      while (localStart < original.length && original[localStart] === " ") {
+        localStart += 1;
+      }
+    }
+
+    return segments.length > 0 ? segments : [unit];
+  };
+
+  const enforceSentenceLimits = (unit: SentenceUnit): SentenceUnit[] => {
+    const queue: SentenceUnit[] = [unit];
+    const result: SentenceUnit[] = [];
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (tokenLimit !== null && current.tokenCount > tokenLimit) {
+        queue.unshift(...splitSentenceByTokens(current));
+        continue;
+      }
+
+      if (charLimit !== null && current.charEnd - current.charStart > charLimit) {
+        queue.unshift(...splitSentenceByChars(current));
+        continue;
+      }
+
+      result.push(current);
+    }
+
+    return result;
+  };
+
+  const processedSentences = sentences.flatMap((unit) => enforceSentenceLimits(unit));
+
   let currentUnits: SentenceUnit[] = [];
   let currentSectionPath: string[] | null = null;
 
@@ -480,7 +595,7 @@ const generateChunks = (
     }
   };
 
-  for (const sentence of sentences) {
+  for (const sentence of processedSentences) {
     const limitExceeded = wouldExceed(currentUnits, sentence);
     const pageChanged =
       config.splitByPages &&
@@ -942,3 +1057,9 @@ export async function updateKnowledgeDocumentChunkVectorRecords({
       );
   });
 }
+
+export const __test__ = {
+  extractSentences,
+  generateChunks,
+  normalizeChunkingConfig,
+};
