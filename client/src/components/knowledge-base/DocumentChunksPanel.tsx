@@ -63,6 +63,84 @@ const formatNumber = (value: number | null | undefined) => {
   return value.toLocaleString("ru-RU");
 };
 
+type ChunkTokenStats = {
+  tokens: number;
+  index: number;
+  id?: string | null;
+};
+
+const getMaxTokenStatsFromItems = (items: KnowledgeDocumentChunkItem[]): ChunkTokenStats | null => {
+  let result: ChunkTokenStats | null = null;
+
+  items.forEach((chunk) => {
+    const tokens =
+      typeof chunk.tokenCount === "number" && Number.isFinite(chunk.tokenCount)
+        ? chunk.tokenCount
+        : null;
+
+    if (tokens === null) {
+      return;
+    }
+
+    const chunkIndex = typeof chunk.index === "number" ? chunk.index : 0;
+    if (!result || tokens > result.tokens) {
+      result = {
+        tokens,
+        index: chunkIndex,
+        id: typeof chunk.id === "string" ? chunk.id : null,
+      };
+    }
+  });
+
+  return result;
+};
+
+const resolveMaxTokenStats = (
+  aggregatedTokens: number | null | undefined,
+  aggregatedIndex: number | null | undefined,
+  aggregatedId: string | null | undefined,
+  items: KnowledgeDocumentChunkItem[] | undefined,
+): ChunkTokenStats | null => {
+  const hasAggregatedTokens = typeof aggregatedTokens === "number" && Number.isFinite(aggregatedTokens);
+  const hasAggregatedIndex = typeof aggregatedIndex === "number" && Number.isFinite(aggregatedIndex);
+
+  if (hasAggregatedTokens && hasAggregatedIndex) {
+    return {
+      tokens: aggregatedTokens as number,
+      index: Math.max(0, Math.floor(aggregatedIndex as number)),
+      id: aggregatedId ?? null,
+    };
+  }
+
+  if (hasAggregatedTokens && items && items.length > 0) {
+    const matched = items.find((chunk) => chunk.tokenCount === aggregatedTokens);
+    if (matched) {
+      return {
+        tokens: aggregatedTokens as number,
+        index: typeof matched.index === "number" ? matched.index : 0,
+        id: typeof matched.id === "string" ? matched.id : null,
+      };
+    }
+  }
+
+  if (items && items.length > 0) {
+    return getMaxTokenStatsFromItems(items);
+  }
+
+  return null;
+};
+
+const formatMaxTokenSummary = (stats: ChunkTokenStats | null): string | null => {
+  if (!stats) {
+    return null;
+  }
+
+  const chunkNumber = stats.index + 1;
+  const tokensLabel = stats.tokens.toLocaleString("ru-RU");
+  const chunkLabel = chunkNumber.toLocaleString("ru-RU");
+  return `${tokensLabel} (чанк #${chunkLabel})`;
+};
+
 type ChunkSizeMode = "tokens" | "chars";
 
 const buildChunkConfigPayload = (state: ChunkConfigState, mode: ChunkSizeMode): KnowledgeDocumentChunkConfig => {
@@ -190,6 +268,38 @@ export function DocumentChunksPanel({
   const [chunksPage, setChunksPage] = useState(1);
   const [chunksPerPage, setChunksPerPage] = useState(10);
   const isCrawledDocument = sourceType === "crawl";
+  const previewMaxTokenStats = useMemo(
+    () =>
+      preview
+        ? resolveMaxTokenStats(
+            preview.maxChunkTokens,
+            preview.maxChunkIndex,
+            preview.maxChunkId,
+            preview.items,
+          )
+        : null,
+    [preview],
+  );
+  const previewMaxTokenLabel = useMemo(
+    () => formatMaxTokenSummary(previewMaxTokenStats),
+    [previewMaxTokenStats],
+  );
+  const chunkSetMaxTokenStats = useMemo(
+    () =>
+      chunkSet
+        ? resolveMaxTokenStats(
+            chunkSet.maxChunkTokens,
+            chunkSet.maxChunkIndex,
+            chunkSet.maxChunkId,
+            chunkSet.chunks,
+          )
+        : null,
+    [chunkSet],
+  );
+  const chunkSetMaxTokenLabel = useMemo(
+    () => formatMaxTokenSummary(chunkSetMaxTokenStats),
+    [chunkSetMaxTokenStats],
+  );
 
   useEffect(() => {
     setChunksPage(1);
@@ -404,6 +514,9 @@ export function DocumentChunksPanel({
             <Badge variant="outline">Чанков: {chunkSet.chunkCount.toLocaleString("ru-RU")}</Badge>
             <Badge variant="outline">Токенов: {chunkSet.totalTokens.toLocaleString("ru-RU")}</Badge>
             <Badge variant="outline">Символов: {chunkSet.totalChars.toLocaleString("ru-RU")}</Badge>
+            {chunkSetMaxTokenLabel && (
+              <Badge variant="outline">Макс. токенов: {chunkSetMaxTokenLabel}</Badge>
+            )}
             {chunkSummary && (
               <>
                 <span>Лимит: {chunkSummary.sizeLabel}</span>
@@ -641,6 +754,9 @@ export function DocumentChunksPanel({
                   <Badge variant="outline">Чанков: {preview.totalChunks.toLocaleString("ru-RU")}</Badge>
                   <Badge variant="outline">Токенов: {preview.totalTokens.toLocaleString("ru-RU")}</Badge>
                   <Badge variant="outline">Символов: {preview.totalChars.toLocaleString("ru-RU")}</Badge>
+                  {previewMaxTokenLabel && (
+                    <Badge variant="outline">Макс. токенов: {previewMaxTokenLabel}</Badge>
+                  )}
                 </div>
                 <ScrollArea className="h-60 pr-3">
                   <ChunkList

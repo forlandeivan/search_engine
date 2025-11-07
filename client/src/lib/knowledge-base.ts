@@ -425,6 +425,18 @@ const normalizeDocumentChunkSet = (raw: unknown): KnowledgeDocumentChunkSet | nu
       : typeof record.document_hash === "string"
       ? record.document_hash
       : undefined;
+  const maxChunkTokens = parseNumber(record.maxChunkTokens ?? record.max_chunk_tokens);
+  const maxChunkIndexRaw = parseNumber(record.maxChunkIndex ?? record.max_chunk_index);
+  const rawMaxChunkId =
+    typeof record.maxChunkId === "string" && record.maxChunkId.trim().length > 0
+      ? record.maxChunkId.trim()
+      : typeof record.max_chunk_id === "string" && record.max_chunk_id.trim().length > 0
+      ? record.max_chunk_id.trim()
+      : null;
+  const maxChunkIndex =
+    typeof maxChunkIndexRaw === "number" && Number.isFinite(maxChunkIndexRaw)
+      ? Math.max(0, Math.floor(maxChunkIndexRaw))
+      : null;
 
   return {
     id,
@@ -434,6 +446,9 @@ const normalizeDocumentChunkSet = (raw: unknown): KnowledgeDocumentChunkSet | nu
     chunkCount,
     totalTokens,
     totalChars,
+    maxChunkTokens: typeof maxChunkTokens === "number" && Number.isFinite(maxChunkTokens) ? maxChunkTokens : null,
+    maxChunkIndex,
+    maxChunkId: rawMaxChunkId,
     createdAt,
     updatedAt,
     config,

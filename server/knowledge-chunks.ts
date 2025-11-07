@@ -549,6 +549,10 @@ const mapChunkSet = (
     respectHeadings: Boolean(setRow.respectHeadings),
   };
 
+  let maxChunkTokens: number | null = null;
+  let maxChunkIndex: number | null = null;
+  let maxChunkId: string | null = null;
+
   const items: KnowledgeDocumentChunkItem[] = itemRows.map((item) => ({
     id: item.id,
     index: item.chunkIndex,
@@ -563,6 +567,23 @@ const mapChunkSet = (
     vectorRecordId: item.vectorRecordId ?? null,
   }));
 
+  for (const item of itemRows) {
+    const tokens =
+      typeof item.tokenCount === "number" && Number.isFinite(item.tokenCount)
+        ? item.tokenCount
+        : null;
+
+    if (tokens === null) {
+      continue;
+    }
+
+    if (maxChunkTokens === null || tokens > maxChunkTokens) {
+      maxChunkTokens = tokens;
+      maxChunkIndex = typeof item.chunkIndex === "number" ? item.chunkIndex : null;
+      maxChunkId = typeof item.id === "string" ? item.id : null;
+    }
+  }
+
   return {
     id: setRow.id,
     documentId: setRow.documentId,
@@ -571,6 +592,9 @@ const mapChunkSet = (
     chunkCount: setRow.chunkCount,
     totalTokens: setRow.totalTokens,
     totalChars: setRow.totalChars,
+    maxChunkTokens,
+    maxChunkIndex,
+    maxChunkId,
     createdAt: setRow.createdAt?.toISOString?.() ?? new Date().toISOString(),
     updatedAt: setRow.updatedAt?.toISOString?.() ?? new Date().toISOString(),
     config,
@@ -591,6 +615,24 @@ export const previewKnowledgeDocumentChunks = async (
 
   const totalTokens = generatedChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0);
   const totalChars = generatedChunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
+  let maxChunkTokens: number | null = null;
+  let maxChunkIndex: number | null = null;
+  let maxChunkId: string | null = null;
+
+  for (const chunk of generatedChunks) {
+    const tokens = typeof chunk.tokenCount === "number" && Number.isFinite(chunk.tokenCount)
+      ? chunk.tokenCount
+      : null;
+    if (tokens === null) {
+      continue;
+    }
+
+    if (maxChunkTokens === null || tokens > maxChunkTokens) {
+      maxChunkTokens = tokens;
+      maxChunkIndex = typeof chunk.index === "number" ? chunk.index : null;
+      maxChunkId = typeof chunk.id === "string" ? chunk.id : null;
+    }
+  }
 
   const previewItems = generatedChunks.slice(0, 10).map((chunk): KnowledgeDocumentChunkItem => ({
     id: chunk.id,
@@ -615,6 +657,9 @@ export const previewKnowledgeDocumentChunks = async (
     totalChunks: generatedChunks.length,
     totalTokens,
     totalChars,
+    maxChunkTokens,
+    maxChunkIndex,
+    maxChunkId,
     config: normalizedConfig,
     items: previewItems,
   } satisfies KnowledgeDocumentChunkPreview;
