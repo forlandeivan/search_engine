@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Dialog,
@@ -446,34 +446,60 @@ export function EmbedDialog({
   const [domainInput, setDomainInput] = useState("");
   const [embedKey, setEmbedKey] = useState<WorkspaceEmbedKey | null>(null);
   const [domains, setDomains] = useState<WorkspaceEmbedKeyDomain[]>([]);
+  const lastRequestedKeyRef = useRef<string | null>(null);
 
   const ensureKeyMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({
+      collection: collectionName,
+      knowledgeBaseId: baseId,
+    }: {
+      collection: string;
+      knowledgeBaseId: string;
+    }) => {
       const response = await apiRequest("POST", "/api/embed/keys", {
-        collection,
-        knowledgeBaseId,
+        collection: collectionName,
+        knowledgeBaseId: baseId,
       });
       return (await response.json()) as EmbedKeyResponse;
     },
+    onSuccess: (data) => {
+      setEmbedKey(data.key);
+      setDomains(data.domains);
+    },
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : "Не удалось получить публичный ключ";
+      toast({ title: "Ошибка", description: message, variant: "destructive" });
+      onOpenChange(false);
+    },
   });
+
+  const { mutate: ensureEmbedKey } = ensureKeyMutation;
 
   useEffect(() => {
     if (!open) {
+      lastRequestedKeyRef.current = null;
       return;
     }
 
-    ensureKeyMutation.mutate(undefined, {
-      onSuccess: (data) => {
-        setEmbedKey(data.key);
-        setDomains(data.domains);
-      },
-      onError: (error: unknown) => {
-        const message = error instanceof Error ? error.message : "Не удалось получить публичный ключ";
-        toast({ title: "Ошибка", description: message, variant: "destructive" });
-        onOpenChange(false);
-      },
+    const trimmedCollection = collection.trim();
+    const trimmedKnowledgeBaseId = knowledgeBaseId.trim();
+
+    if (!trimmedCollection || !trimmedKnowledgeBaseId) {
+      return;
+    }
+
+    const requestKey = `${trimmedCollection}::${trimmedKnowledgeBaseId}`;
+    if (lastRequestedKeyRef.current === requestKey) {
+      return;
+    }
+
+    lastRequestedKeyRef.current = requestKey;
+
+    ensureEmbedKey({
+      collection: trimmedCollection,
+      knowledgeBaseId: trimmedKnowledgeBaseId,
     });
-  }, [open, knowledgeBaseId, collection, toast, onOpenChange, ensureKeyMutation]);
+  }, [open, collection, knowledgeBaseId, ensureEmbedKey]);
 
   const addDomainMutation = useMutation({
     mutationFn: async (domain: string) => {
