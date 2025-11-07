@@ -2985,6 +2985,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getKnowledgeBase(baseId: string): Promise<KnowledgeBaseRow | null> {
+    const uuidExpression = await getUuidGenerationExpression();
+    const randomHex32Expression = await getRandomHexExpression(32);
+
     try {
       await db.execute(sql`
         CREATE TABLE IF NOT EXISTS "workspace_embed_keys" (

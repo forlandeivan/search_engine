@@ -3829,6 +3829,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { site } = publicContext;
       const embedKey = publicContext.embedKey ?? null;
+      const workspaceId = publicContext.workspaceId;
 
       const baseUrlSet = new Set<string>();
       const registerBaseUrl = (value: unknown) => {
