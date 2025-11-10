@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://search-engine-backend-git-dev-ivans-projects-b95f0de9.vercel.app/api/$1"
+    }
+  ]
+}
