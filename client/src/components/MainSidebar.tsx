@@ -20,7 +20,6 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   Search,
-  Database,
   BookOpen,
   Boxes,
   Brain,
@@ -212,13 +211,6 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
     {
       label: "Данные",
       items: [
-        {
-          title: "Индексированные страницы",
-          url: "/pages",
-          icon: Database,
-          badge: stats?.pages ? stats.pages.total.toString() : "0",
-          badgeVariant: "default",
-        },
         {
           title: "Коллекции",
           url: "/vector/collections",
