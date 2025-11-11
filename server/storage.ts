@@ -42,14 +42,10 @@ import {
 import { db } from "./db";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
+import { isPgError, swallowPgError } from "./pg-utils";
+import { ensurePagesContentColumns } from "./pages-schema";
 
 let globalUserAuthSchemaReady = false;
-
-type PgError = Error & { code?: string };
-
-function isPgError(error: unknown): error is PgError {
-  return typeof error === "object" && error !== null && "message" in error;
-}
 
 type KnowledgeBaseRow = typeof knowledgeBases.$inferSelect;
 
@@ -63,17 +59,6 @@ export type KnowledgeChunkSearchEntry = {
   score: number;
   source: "sections" | "content";
 };
-
-function swallowPgError(error: unknown, allowedCodes: string[]): void {
-  if (!isPgError(error)) {
-    throw error;
-  }
-
-  const code = (error as PgError).code;
-  if (!code || !allowedCodes.includes(code)) {
-    throw error;
-  }
-}
 
 function getRowString(row: Record<string, unknown>, key: string): string {
   const value = row[key];
@@ -4867,23 +4852,7 @@ export async function ensureDatabaseSchema(): Promise<void> {
       SET "crawl_frequency" = COALESCE(NULLIF("crawl_frequency", ''), 'manual')
     `);
 
-    try {
-      await db.execute(sql`
-        ALTER TABLE "pages"
-        ADD COLUMN "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL
-      `);
-    } catch (error) {
-      swallowPgError(error, ["42701"]);
-    }
-
-    try {
-      await db.execute(sql`
-        ALTER TABLE "pages"
-        ADD COLUMN "chunks" jsonb DEFAULT '[]'::jsonb NOT NULL
-      `);
-    } catch (error) {
-      swallowPgError(error, ["42701"]);
-    }
+    await ensurePagesContentColumns();
 
     await ensureKnowledgeBaseTables();
 
