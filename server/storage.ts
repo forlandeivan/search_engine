@@ -547,12 +547,10 @@ export interface IStorage {
   // Pages management
   createPage(page: InsertPage): Promise<Page>;
   getPage(id: string, workspaceId?: string): Promise<Page | undefined>;
-  getAllPages(workspaceId?: string): Promise<Page[]>;
   getPagesByUrl(url: string): Promise<Page[]>;
   getPagesBySiteId(siteId: string, workspaceId?: string): Promise<Page[]>;
   updatePage(id: string, updates: Partial<Page>, workspaceId?: string): Promise<Page | undefined>;
   deletePage(id: string, workspaceId?: string): Promise<boolean>;
-  bulkDeletePages(pageIds: string[], workspaceId?: string): Promise<{ deletedCount: number; notFoundCount: number }>;
   deletePagesBySiteId(siteId: string, workspaceId?: string): Promise<number>;
 
   // Search index management
@@ -2579,14 +2577,6 @@ export class DatabaseStorage implements IStorage {
     return page ?? undefined;
   }
 
-  async getAllPages(workspaceId?: string): Promise<Page[]> {
-    const query = workspaceId
-      ? this.db.select().from(pages).where(eq(pages.workspaceId, workspaceId))
-      : this.db.select().from(pages);
-
-    return await query.orderBy(desc(pages.createdAt));
-  }
-
   async getPagesByUrl(url: string): Promise<Page[]> {
     return await this.db.select().from(pages).where(eq(pages.url, url));
   }
@@ -2633,47 +2623,6 @@ export class DatabaseStorage implements IStorage {
     await this.db.delete(searchIndex).where(eq(searchIndex.pageId, id));
     const result = await this.db.delete(pages).where(eq(pages.id, id));
     return (result.rowCount ?? 0) > 0;
-  }
-
-  async bulkDeletePages(pageIds: string[], workspaceId?: string): Promise<{ deletedCount: number; notFoundCount: number }> {
-    if (pageIds.length === 0) {
-      return { deletedCount: 0, notFoundCount: 0 };
-    }
-
-    let accessibleIds: string[];
-
-    if (workspaceId) {
-      const rows: Array<{ id: string }> = await this.db
-        .select({ id: pages.id })
-        .from(pages)
-        .where(and(inArray(pages.id, pageIds), eq(pages.workspaceId, workspaceId)));
-
-      accessibleIds = rows.map((row) => row.id);
-    } else {
-      const rows: Array<{ id: string }> = await this.db
-        .select({ id: pages.id })
-        .from(pages)
-        .where(inArray(pages.id, pageIds));
-
-      accessibleIds = rows.map((row) => row.id);
-    }
-
-    const existingPageIds = new Set<string>(accessibleIds);
-
-    const notFoundCount = pageIds.length - existingPageIds.size;
-
-    if (existingPageIds.size === 0) {
-      return { deletedCount: 0, notFoundCount };
-    }
-
-    const ids = Array.from(existingPageIds.values());
-    await this.db.delete(searchIndex).where(inArray(searchIndex.pageId, ids));
-    const deleteResult = await this.db.delete(pages).where(inArray(pages.id, ids));
-
-    return {
-      deletedCount: deleteResult.rowCount ?? 0,
-      notFoundCount,
-    };
   }
 
   async deletePagesBySiteId(siteId: string, workspaceId?: string): Promise<number> {

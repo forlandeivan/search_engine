@@ -10,7 +10,6 @@ import ThemeToggle from "@/components/ThemeToggle";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 import SearchPage from "@/pages/SearchPage";
 import SearchPlaygroundPage from "@/pages/SearchPlaygroundPage";
-import PagesPage from "@/pages/PagesPage";
 import TildaApiPage from "@/pages/TildaApiPage";
 import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
 import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
@@ -55,7 +54,6 @@ function MainRouter() {
       <Route path="/knowledge/:knowledgeBaseId/node/:nodeId" component={KnowledgeBasePage} />
       <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
       <Route path="/knowledge" component={KnowledgeBasePage} />
-      <Route path="/pages" component={PagesPage} />
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
       <Route path="/integrations/widget" component={WidgetScriptPage} />
