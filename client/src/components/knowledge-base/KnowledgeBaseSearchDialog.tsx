@@ -205,6 +205,22 @@ export function KnowledgeBaseSearchDialog({
     return parts.length > 0 ? parts.join(" · ") : null;
   }, [limit, searchOptions?.bm25Weight, searchOptions?.collection, searchOptions?.embeddingProviderId, searchOptions?.embeddingProviderName, searchOptions?.vectorWeight]);
 
+  const infoLines = useMemo(() => {
+    const lines: string[] = [];
+
+    if (base) {
+      lines.push(`Поиск выполняется в базе «${base.name}». Диалог использует локальные параметры страницы.`);
+    } else {
+      lines.push("Выберите базу знаний на странице, чтобы выполнить поиск и применить локальные параметры.");
+    }
+
+    if (configSummary) {
+      lines.push(configSummary);
+    }
+
+    return lines;
+  }, [base, configSummary]);
+
   const handleSelect = useCallback(
     (result: KnowledgeBaseSearchResult) => {
       onSelectResult?.(result);
@@ -215,11 +231,19 @@ export function KnowledgeBaseSearchDialog({
 
   const listContent = (() => {
     if (!base) {
-      return <CommandEmpty>Выберите базу знаний, чтобы выполнять поиск.</CommandEmpty>;
+      return (
+        <CommandEmpty>
+          Выберите базу знаний в основной панели — диалог поиска работает в контексте выбранной базы.
+        </CommandEmpty>
+      );
     }
 
     if (!query.trim()) {
-      return <CommandEmpty>Введите запрос, чтобы найти документы в базе «{base.name}».</CommandEmpty>;
+      return (
+        <CommandEmpty>
+          Введите запрос — поиск выполнится внутри базы «{base.name}» с учётом локальных настроек.
+        </CommandEmpty>
+      );
     }
 
     if (status === "loading") {
@@ -239,7 +263,11 @@ export function KnowledgeBaseSearchDialog({
     }
 
     if (results.length === 0) {
-      return <CommandEmpty>Ничего не найдено для запроса «{query.trim()}».</CommandEmpty>;
+      return (
+        <CommandEmpty>
+          Ничего не найдено для запроса «{query.trim()}». Попробуйте скорректировать параметры поиска на странице базы знаний.
+        </CommandEmpty>
+      );
     }
 
     return (
@@ -296,8 +324,14 @@ export function KnowledgeBaseSearchDialog({
         placeholder={base ? `Поиск по базе «${base.name}»...` : "Сначала выберите базу знаний"}
         autoFocus
       />
-      {configSummary && (
-        <div className="border-b px-3 py-2 text-xs text-muted-foreground">{configSummary}</div>
+      {infoLines.length > 0 && (
+        <div className="border-b px-3 py-2 text-xs text-muted-foreground">
+          <div className="space-y-1">
+            {infoLines.map((line, index) => (
+              <p key={`${line}-${index}`}>{line}</p>
+            ))}
+          </div>
+        </div>
       )}
       <CommandList>{listContent}</CommandList>
     </CommandDialog>
