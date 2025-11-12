@@ -9,7 +9,6 @@ import MainSidebar from "@/components/MainSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 import SearchPage from "@/pages/SearchPage";
-import SearchPlaygroundPage from "@/pages/SearchPlaygroundPage";
 import TildaApiPage from "@/pages/TildaApiPage";
 import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
 import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
@@ -60,7 +59,6 @@ function MainRouter() {
       <Route path="/integrations/api" component={TildaApiPage} />
       <Route path="/workspaces/members" component={WorkspaceMembersPage} />
       <Route path="/profile" component={ProfilePage} />
-      <Route path="/search/playground" component={SearchPlaygroundPage} />
       <Route path="/search" component={SearchPage} />
       <Route path="/" component={DashboardPage} />
       <Route component={NotFound} />
