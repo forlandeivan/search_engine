@@ -20,6 +20,15 @@ import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 const SEARCH_LIMIT = 8;
 const SEARCH_DEBOUNCE_MS = 200;
 
+export type KnowledgeBaseSearchDialogOptions = {
+  topK?: number | null;
+  bm25Weight?: number | null;
+  vectorWeight?: number | null;
+  embeddingProviderId?: string | null;
+  embeddingProviderName?: string | null;
+  collection?: string | null;
+};
+
 export interface KnowledgeBaseSearchResult {
   id: string;
   title: string;
@@ -37,6 +46,7 @@ interface KnowledgeBaseSearchDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelectResult?: (result: KnowledgeBaseSearchResult) => void;
+  searchOptions?: KnowledgeBaseSearchDialogOptions | null;
 }
 
 function normalizeString(value: unknown) {
@@ -117,16 +127,27 @@ function buildResults(payload: SuggestResponsePayload | null): KnowledgeBaseSear
   return [];
 }
 
+const clampTopK = (value: number | null | undefined): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return SEARCH_LIMIT;
+  }
+
+  const rounded = Math.round(value);
+  return Math.max(1, Math.min(10, rounded));
+};
+
 export function KnowledgeBaseSearchDialog({
   base,
   open,
   onOpenChange,
   onSelectResult,
+  searchOptions,
 }: KnowledgeBaseSearchDialogProps) {
   const [query, setQuery] = useState("");
+  const limit = useMemo(() => clampTopK(searchOptions?.topK), [searchOptions?.topK]);
   const { data, error, status, search, reset } = useSuggestSearch({
     knowledgeBaseId: base?.id ?? "",
-    limit: SEARCH_LIMIT,
+    limit,
   });
 
   useEffect(() => {
@@ -154,6 +175,35 @@ export function KnowledgeBaseSearchDialog({
   }, [open, query, search]);
 
   const results = useMemo(() => buildResults(data), [data]);
+
+  const configSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (limit) {
+      parts.push(`Top-K: ${limit}`);
+    }
+
+    const bm25Weight = searchOptions?.bm25Weight;
+    if (typeof bm25Weight === "number" && Number.isFinite(bm25Weight)) {
+      parts.push(`BM25 вес: ${bm25Weight}`);
+    }
+
+    const vectorWeight = searchOptions?.vectorWeight;
+    if (typeof vectorWeight === "number" && Number.isFinite(vectorWeight)) {
+      parts.push(`Вектор вес: ${vectorWeight}`);
+    }
+
+    if (searchOptions?.collection) {
+      parts.push(`Коллекция: ${searchOptions.collection}`);
+    }
+
+    if (searchOptions?.embeddingProviderName) {
+      parts.push(`Провайдер: ${searchOptions.embeddingProviderName}`);
+    } else if (searchOptions?.embeddingProviderId) {
+      parts.push(`Провайдер: ${searchOptions.embeddingProviderId}`);
+    }
+
+    return parts.length > 0 ? parts.join(" · ") : null;
+  }, [limit, searchOptions?.bm25Weight, searchOptions?.collection, searchOptions?.embeddingProviderId, searchOptions?.embeddingProviderName, searchOptions?.vectorWeight]);
 
   const handleSelect = useCallback(
     (result: KnowledgeBaseSearchResult) => {
@@ -246,6 +296,9 @@ export function KnowledgeBaseSearchDialog({
         placeholder={base ? `Поиск по базе «${base.name}»...` : "Сначала выберите базу знаний"}
         autoFocus
       />
+      {configSummary && (
+        <div className="border-b px-3 py-2 text-xs text-muted-foreground">{configSummary}</div>
+      )}
       <CommandList>{listContent}</CommandList>
     </CommandDialog>
   );
