@@ -58,6 +58,13 @@ export function CrawlInlineProgress({
   const previousJobRef = useRef<KnowledgeBaseCrawlJobStatus | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onStateChangeRef = useRef(onStateChange);
+  const onDocumentsSavedRef = useRef(onDocumentsSaved);
+
+  useEffect(() => {
+    onStateChangeRef.current = onStateChange;
+    onDocumentsSavedRef.current = onDocumentsSaved;
+  }, [onStateChange, onDocumentsSaved]);
 
   useEffect(() => {
     return () => {
@@ -90,7 +97,7 @@ export function CrawlInlineProgress({
         if (baseId) {
           updateKnowledgeBaseCrawlJob(baseId, null);
         }
-        onStateChange?.({ running: false, job: null, lastRun: incoming });
+        onStateChangeRef.current?.({ running: false, job: null, lastRun: incoming });
         return;
       }
 
@@ -183,7 +190,7 @@ export function CrawlInlineProgress({
       if (normalizedPrevious) {
         const savedDiff = incoming.saved - normalizedPrevious.saved;
         if (savedDiff > 0) {
-          onDocumentsSaved?.(savedDiff, incoming);
+          onDocumentsSavedRef.current?.(savedDiff, incoming);
         }
       }
 
@@ -194,9 +201,9 @@ export function CrawlInlineProgress({
       if (baseId) {
         updateKnowledgeBaseCrawlJob(baseId, incoming);
       }
-      onStateChange?.({ running: true, job: incoming });
+      onStateChangeRef.current?.({ running: true, job: incoming });
     },
-    [baseId, onDocumentsSaved, onStateChange],
+    [baseId],
   );
 
   useEffect(() => {
@@ -212,7 +219,7 @@ export function CrawlInlineProgress({
       setConnectionError(null);
       setActionError(null);
       previousJobRef.current = null;
-      onStateChange?.({ running: false, job: null });
+      onStateChangeRef.current?.({ running: false, job: null });
       return;
     }
 
@@ -256,7 +263,11 @@ export function CrawlInlineProgress({
           if (baseId) {
             updateKnowledgeBaseCrawlJob(baseId, null);
           }
-          onStateChange?.({ running: false, job: null, lastRun: lastRun ?? undefined });
+          onStateChangeRef.current?.({
+            running: false,
+            job: null,
+            lastRun: lastRun ?? undefined,
+          });
         } else {
           if (!payload.job) {
             throw new Error("Не удалось получить детали активного краулинга");
@@ -293,7 +304,7 @@ export function CrawlInlineProgress({
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
     };
-  }, [baseId, pollIntervalMs, handleJobUpdate, onStateChange]);
+  }, [baseId, pollIntervalMs, handleJobUpdate]);
 
   const executeJobCommand = useCallback(
     async (
