@@ -1,7 +1,5 @@
 import {
   sites,
-  pages,
-  searchIndex,
   users,
   personalApiTokens,
   embeddingProviders,
@@ -20,10 +18,6 @@ import {
   workspaceEmbedKeyDomains,
   type Site,
   type SiteInsert,
-  type Page,
-  type InsertPage,
-  type SearchIndexEntry,
-  type InsertSearchIndexEntry,
   type User,
   type PersonalApiToken,
   type InsertUser,
@@ -43,7 +37,6 @@ import { db } from "./db";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
-import { ensurePagesContentColumns } from "./pages-schema";
 
 let globalUserAuthSchemaReady = false;
 
@@ -529,34 +522,6 @@ export interface IStorage {
     workspaceId?: string,
   ): Promise<{ site: Site; apiKey: string } | undefined>;
 
-  // Pages management
-  createPage(page: InsertPage): Promise<Page>;
-  getPage(id: string, workspaceId?: string): Promise<Page | undefined>;
-  getAllPages(workspaceId?: string): Promise<Page[]>;
-  getPagesByUrl(url: string): Promise<Page[]>;
-  getPagesBySiteId(siteId: string, workspaceId?: string): Promise<Page[]>;
-  updatePage(id: string, updates: Partial<Page>, workspaceId?: string): Promise<Page | undefined>;
-  deletePage(id: string, workspaceId?: string): Promise<boolean>;
-  bulkDeletePages(pageIds: string[], workspaceId?: string): Promise<{ deletedCount: number; notFoundCount: number }>;
-  deletePagesBySiteId(siteId: string, workspaceId?: string): Promise<number>;
-
-  // Search index management
-  createSearchIndexEntry(entry: InsertSearchIndexEntry): Promise<SearchIndexEntry>;
-  deleteSearchIndexByPageId(pageId: string): Promise<number>;
-  searchPages(
-    query: string,
-    limit?: number,
-    offset?: number,
-    workspaceId?: string,
-  ): Promise<{ results: Page[]; total: number }>;
-  searchPagesByCollection(
-    query: string,
-    siteId: string,
-    limit?: number,
-    offset?: number,
-    workspaceId?: string,
-  ): Promise<{ results: Page[]; total: number }>;
-
   // Vector collections ownership
   listWorkspaceCollections(workspaceId: string): Promise<string[]>;
   getCollectionWorkspace(collectionName: string): Promise<string | null>;
@@ -676,13 +641,6 @@ export interface IStorage {
     workspaceId?: string,
   ): Promise<LlmProvider | undefined>;
   deleteLlmProvider(id: string, workspaceId?: string): Promise<boolean>;
-}
-
-function buildWhereClause(conditions: SQL[]): SQL {
-  if (conditions.length === 0) {
-    return sql`TRUE`;
-  }
-  return sql.join(conditions, sql` AND `);
 }
 
 let embeddingProvidersTableEnsured = false;
@@ -2538,163 +2496,6 @@ export class DatabaseStorage implements IStorage {
     return { site: updatedSite, apiKey: newApiKey };
   }
 
-  async createPage(page: InsertPage): Promise<Page> {
-    const [siteWorkspace] = await this.db
-      .select({ workspaceId: sites.workspaceId })
-      .from(sites)
-      .where(eq(sites.id, page.siteId));
-
-    if (!siteWorkspace) {
-      throw new Error(`Не удалось определить рабочее пространство для проекта ${page.siteId}`);
-    }
-
-    const [newPage] = await this.db
-      .insert(pages)
-      .values({ ...page, workspaceId: siteWorkspace.workspaceId })
-      .returning();
-    return newPage;
-  }
-
-  async getPage(id: string, workspaceId?: string): Promise<Page | undefined> {
-    const condition = workspaceId
-      ? and(eq(pages.id, id), eq(pages.workspaceId, workspaceId))
-      : eq(pages.id, id);
-
-    const [page] = await this.db.select().from(pages).where(condition);
-    return page ?? undefined;
-  }
-
-  async getAllPages(workspaceId?: string): Promise<Page[]> {
-    const query = workspaceId
-      ? this.db.select().from(pages).where(eq(pages.workspaceId, workspaceId))
-      : this.db.select().from(pages);
-
-    return await query.orderBy(desc(pages.createdAt));
-  }
-
-  async getPagesByUrl(url: string): Promise<Page[]> {
-    return await this.db.select().from(pages).where(eq(pages.url, url));
-  }
-
-  async getPagesBySiteId(siteId: string, workspaceId?: string): Promise<Page[]> {
-    if (workspaceId) {
-      const site = await this.getSite(siteId, workspaceId);
-      if (!site) {
-        return [];
-      }
-    }
-
-    return await this.db
-      .select()
-      .from(pages)
-      .where(eq(pages.siteId, siteId))
-      .orderBy(desc(pages.lastCrawled));
-  }
-
-  async updatePage(id: string, updates: Partial<Page>, workspaceId?: string): Promise<Page | undefined> {
-    if (workspaceId) {
-      const page = await this.getPage(id, workspaceId);
-      if (!page) {
-        return undefined;
-      }
-    }
-
-    const [updatedPage] = await this.db
-      .update(pages)
-      .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
-      .where(eq(pages.id, id))
-      .returning();
-    return updatedPage ?? undefined;
-  }
-
-  async deletePage(id: string, workspaceId?: string): Promise<boolean> {
-    if (workspaceId) {
-      const page = await this.getPage(id, workspaceId);
-      if (!page) {
-        return false;
-      }
-    }
-
-    await this.db.delete(searchIndex).where(eq(searchIndex.pageId, id));
-    const result = await this.db.delete(pages).where(eq(pages.id, id));
-    return (result.rowCount ?? 0) > 0;
-  }
-
-  async bulkDeletePages(pageIds: string[], workspaceId?: string): Promise<{ deletedCount: number; notFoundCount: number }> {
-    if (pageIds.length === 0) {
-      return { deletedCount: 0, notFoundCount: 0 };
-    }
-
-    let accessibleIds: string[];
-
-    if (workspaceId) {
-      const rows: Array<{ id: string }> = await this.db
-        .select({ id: pages.id })
-        .from(pages)
-        .where(and(inArray(pages.id, pageIds), eq(pages.workspaceId, workspaceId)));
-
-      accessibleIds = rows.map((row) => row.id);
-    } else {
-      const rows: Array<{ id: string }> = await this.db
-        .select({ id: pages.id })
-        .from(pages)
-        .where(inArray(pages.id, pageIds));
-
-      accessibleIds = rows.map((row) => row.id);
-    }
-
-    const existingPageIds = new Set<string>(accessibleIds);
-
-    const notFoundCount = pageIds.length - existingPageIds.size;
-
-    if (existingPageIds.size === 0) {
-      return { deletedCount: 0, notFoundCount };
-    }
-
-    const ids = Array.from(existingPageIds.values());
-    await this.db.delete(searchIndex).where(inArray(searchIndex.pageId, ids));
-    const deleteResult = await this.db.delete(pages).where(inArray(pages.id, ids));
-
-    return {
-      deletedCount: deleteResult.rowCount ?? 0,
-      notFoundCount,
-    };
-  }
-
-  async deletePagesBySiteId(siteId: string, workspaceId?: string): Promise<number> {
-    if (workspaceId) {
-      const site = await this.getSite(siteId, workspaceId);
-      if (!site) {
-        return 0;
-      }
-    }
-
-    const result = await this.db.delete(pages).where(eq(pages.siteId, siteId));
-    return result.rowCount ?? 0;
-  }
-
-  async createSearchIndexEntry(entry: InsertSearchIndexEntry): Promise<SearchIndexEntry> {
-    const [pageWorkspace] = await this.db
-      .select({ workspaceId: pages.workspaceId })
-      .from(pages)
-      .where(eq(pages.id, entry.pageId));
-
-    if (!pageWorkspace) {
-      throw new Error(`Не найдена страница ${entry.pageId} для добавления в индекс`);
-    }
-
-    const [newEntry] = await this.db
-      .insert(searchIndex)
-      .values({ ...entry, workspaceId: pageWorkspace.workspaceId })
-      .returning();
-    return newEntry;
-  }
-
-  async deleteSearchIndexByPageId(pageId: string): Promise<number> {
-    const result = await this.db.delete(searchIndex).where(eq(searchIndex.pageId, pageId));
-    return result.rowCount ?? 0;
-  }
-
   async listWorkspaceCollections(workspaceId: string): Promise<string[]> {
     await ensureWorkspaceVectorCollectionsTable();
 
@@ -3387,123 +3188,6 @@ export class DatabaseStorage implements IStorage {
         vectorRecordId: row.vectorRecordId ?? null,
       };
     });
-  }
-
-  private buildWorkspaceCondition(workspaceId?: string): SQL | undefined {
-    if (!workspaceId) {
-      return undefined;
-    }
-
-    return sql`p.workspace_id = ${workspaceId}`;
-  }
-
-  private async runFullTextSearch(
-    query: string,
-    limit: number,
-    offset: number,
-    additionalConditions: SQL[],
-    workspaceId?: string,
-  ): Promise<{ rows: Page[]; total: number }> {
-    const tsQuery = sql`plainto_tsquery('english', ${query})`;
-    const ownerCondition = this.buildWorkspaceCondition(workspaceId);
-    const conditions = [sql`p.search_vector_combined @@ ${tsQuery}`, ...additionalConditions];
-    if (ownerCondition) {
-      conditions.push(ownerCondition);
-    }
-    const whereClause = buildWhereClause(conditions);
-
-    const results = await this.db.execute(sql`
-      SELECT p.*, ts_rank(p.search_vector_combined, ${tsQuery}) AS score
-      FROM pages p
-      WHERE ${whereClause}
-      ORDER BY score DESC, p.last_crawled DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `);
-
-    const countResult = await this.db.execute(sql`
-      SELECT COUNT(*) as count
-      FROM pages p
-      WHERE ${whereClause}
-    `);
-
-    const total = Number(countResult.rows[0]?.count ?? 0);
-    return { rows: results.rows as Page[], total };
-  }
-
-  private async runFallbackSearch(
-    query: string,
-    limit: number,
-    offset: number,
-    additionalConditions: SQL[],
-    workspaceId?: string,
-  ): Promise<{ results: Page[]; total: number }> {
-    const likeCondition = sql`(
-      COALESCE(p.title, '') ILIKE '%' || ${query} || '%'
-      OR COALESCE(p.content, '') ILIKE '%' || ${query} || '%'
-    )`;
-    const ownerCondition = this.buildWorkspaceCondition(workspaceId);
-    const conditions = [...additionalConditions, likeCondition];
-    if (ownerCondition) {
-      conditions.push(ownerCondition);
-    }
-    const whereClause = buildWhereClause(conditions);
-
-    const results = await this.db.execute(sql`
-      SELECT p.*
-      FROM pages p
-      WHERE ${whereClause}
-      ORDER BY p.last_crawled DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `);
-
-    const countResult = await this.db.execute(sql`
-      SELECT COUNT(*) as count
-      FROM pages p
-      WHERE ${whereClause}
-    `);
-
-    const total = Number(countResult.rows[0]?.count ?? 0);
-    return { results: results.rows as Page[], total };
-  }
-
-  async searchPages(
-    query: string,
-    limit: number = 10,
-    offset: number = 0,
-    workspaceId?: string,
-  ): Promise<{ results: Page[]; total: number }> {
-    const cleanQuery = query.trim();
-    if (!cleanQuery) {
-      return { results: [], total: 0 };
-    }
-
-    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, [], workspaceId);
-    if (total > 0) {
-      return { results: rows, total };
-    }
-
-    return await this.runFallbackSearch(cleanQuery, limit, offset, [], workspaceId);
-  }
-
-  async searchPagesByCollection(
-    query: string,
-    siteId: string,
-    limit: number = 10,
-    offset: number = 0,
-    workspaceId?: string,
-  ): Promise<{ results: Page[]; total: number }> {
-    const cleanQuery = query.trim();
-    if (!cleanQuery) {
-      return { results: [], total: 0 };
-    }
-
-    const additionalConditions = [sql`p.site_id = ${siteId}`];
-    const { rows, total } = await this.runFullTextSearch(cleanQuery, limit, offset, additionalConditions, workspaceId);
-    if (total > 0) {
-      return { results: rows, total };
-    }
-
-    return await this.runFallbackSearch(cleanQuery, limit, offset, [sql`p.site_id = ${siteId}`], workspaceId);
   }
 
   async getDatabaseHealthInfo() {
@@ -4851,8 +4535,6 @@ export async function ensureDatabaseSchema(): Promise<void> {
       UPDATE "sites"
       SET "crawl_frequency" = COALESCE(NULLIF("crawl_frequency", ''), 'manual')
     `);
-
-    await ensurePagesContentColumns();
 
     await ensureKnowledgeBaseTables();
 
