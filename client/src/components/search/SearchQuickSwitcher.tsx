@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { ArrowLeft, CircleStop, LoaderCircle, Search, Sparkles } from "lucide-react";
+import { useLocation } from "wouter";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -110,6 +111,9 @@ function resolveNumber(value: unknown): number | null {
 function sanitizeSuggestItem(item: SuggestResponseItem, fallbackId: string): SuggestResponseItem {
   const trimmedUrl = normalizeString(item.url);
   const trimmedTitle = normalizeString(item.title);
+  const resolvedNodeId = normalizeString(
+    item.nodeId ?? (item as { node_id?: string | null }).node_id ?? item.docId,
+  );
 
   return {
     ...item,
@@ -118,6 +122,7 @@ function sanitizeSuggestItem(item: SuggestResponseItem, fallbackId: string): Sug
     title: trimmedTitle || item.title || fallbackId,
     breadcrumbs: Array.isArray(item.breadcrumbs) ? item.breadcrumbs : [],
     snippet_html: typeof item.snippet_html === "string" ? item.snippet_html : "",
+    nodeId: resolvedNodeId || null,
   };
 }
 
@@ -145,6 +150,7 @@ function mapSectionToItem(section: SuggestResponseSection, index: number): Sugge
     ? section.breadcrumbs.map(normalizeString).filter(Boolean)
     : [];
   const score = resolveNumber(section.score);
+  const nodeId = normalizeString(section.node_id) || docId || chunkId;
 
   const baseId = chunkId || `${docId || "doc"}-${index + 1}`;
   const displayDocTitle = docTitle || sectionTitle || `Документ ${index + 1}`;
@@ -175,6 +181,7 @@ function mapSectionToItem(section: SuggestResponseSection, index: number): Sugge
     docId: docId || null,
     chunkId: chunkId || null,
     anchor: null,
+    nodeId: nodeId || null,
   } satisfies SuggestResponseItem;
 }
 
@@ -432,6 +439,7 @@ export function SearchQuickSwitcher({
   askOptions,
   renderTrigger,
 }: SearchQuickSwitcherProps) {
+  const [, setLocation] = useLocation();
   const askHook = useKnowledgeBaseAskAi(askOptions ?? EMPTY_ASK_OPTIONS);
   const isHookManaged = Boolean(askOptions);
   const resolvedAskState = isHookManaged ? askHook.state : askState;
@@ -459,6 +467,7 @@ export function SearchQuickSwitcher({
   const normalizedQuery = localQuery.trim();
   const canSubmitAskAi = normalizedQuery.length >= ASK_AI_MIN_QUERY_LENGTH;
   const shouldRenderAskAiRow = normalizedQuery.length > 0;
+  const knowledgeBaseId = useMemo(() => normalizeString(suggest?.kb_id), [suggest?.kb_id]);
   const rows = useMemo(() => {
     const baseRows = buildVirtualRows(groups);
     if (!shouldRenderAskAiRow) {
@@ -466,6 +475,55 @@ export function SearchQuickSwitcher({
     }
     return ([{ type: "ask" }] as VirtualRow[]).concat(baseRows);
   }, [groups, shouldRenderAskAiRow]);
+
+  const handleResultOpenInternal = useCallback(
+    (item: SuggestResponseItem, options?: { newTab?: boolean }) => {
+      const newTab = Boolean(options?.newTab);
+      onResultOpen(item, options);
+
+      const resolvedNodeId = normalizeString(
+        item.nodeId ?? (item as { node_id?: string | null }).node_id ?? item.docId,
+      );
+
+      if (knowledgeBaseId && resolvedNodeId) {
+        const encodedBaseId = encodeURIComponent(knowledgeBaseId);
+        const encodedNodeId = encodeURIComponent(resolvedNodeId);
+        const targetPath = `/knowledge/${encodedBaseId}/node/${encodedNodeId}`;
+
+        if (typeof window !== "undefined") {
+          if (newTab) {
+            window.open(targetPath, "_blank", "noopener,noreferrer");
+          } else {
+            setLocation(targetPath);
+          }
+        } else if (!newTab) {
+          setLocation(targetPath);
+        }
+
+        return true;
+      }
+
+      const normalizedUrl = normalizeString(item.url);
+      if (normalizedUrl) {
+        if (typeof window !== "undefined") {
+          if (newTab) {
+            window.open(normalizedUrl, "_blank", "noopener,noreferrer");
+          } else if (normalizedUrl.startsWith("/")) {
+            setLocation(normalizedUrl);
+          } else {
+            window.location.assign(normalizedUrl);
+          }
+        } else if (!newTab && normalizedUrl.startsWith("/")) {
+          setLocation(normalizedUrl);
+        }
+
+        return true;
+      }
+
+      return false;
+    },
+    [knowledgeBaseId, onResultOpen, setLocation],
+  );
 
   useEffect(() => {
     setLocalQuery(query);
@@ -711,9 +769,10 @@ export function SearchQuickSwitcher({
         const group = groups[activeRow.groupIndex];
         const item = group?.items[activeRow.itemIndex];
         if (item) {
-          onResultOpen(item, { newTab: event.shiftKey });
-          setOpen(false);
-          return;
+          if (handleResultOpenInternal(item, { newTab: event.shiftKey })) {
+            setOpen(false);
+            return;
+          }
         }
       }
 
@@ -803,8 +862,9 @@ export function SearchQuickSwitcher({
         const group = groups[activeRow.groupIndex];
         const item = group?.items[activeRow.itemIndex];
         if (item) {
-          onResultOpen(item, { newTab: event.shiftKey });
-          setOpen(false);
+          if (handleResultOpenInternal(item, { newTab: event.shiftKey })) {
+            setOpen(false);
+          }
         }
       }
       return;
@@ -886,6 +946,9 @@ export function SearchQuickSwitcher({
     const displayTitle = getDisplayTitle(item);
     const truncatedTitle = truncateMiddle(displayTitle, 80);
     const highlightedTitle = highlightText(truncatedTitle, tokens);
+    const breadcrumbsText = item.breadcrumbs && item.breadcrumbs.length > 0 ? item.breadcrumbs.join(" › ") : "";
+    const truncatedBreadcrumbs = truncateMiddle(breadcrumbsText, 120);
+    const highlightedBreadcrumbs = highlightText(truncatedBreadcrumbs, tokens);
     const snippetText = getPlainSnippet(item);
     const truncatedSnippet = truncateEnd(snippetText, 140);
     const highlightedSnippet = highlightText(truncatedSnippet, tokens);
@@ -904,9 +967,10 @@ export function SearchQuickSwitcher({
         )}
         onMouseEnter={() => setActiveRowIndex(rowIndex)}
         onMouseDown={(event) => event.preventDefault()}
-        onClick={() => {
-          onResultOpen(item);
-          setOpen(false);
+        onClick={(event) => {
+          if (handleResultOpenInternal(item, { newTab: event.shiftKey })) {
+            setOpen(false);
+          }
         }}
       >
         <div className="flex items-center gap-2">
@@ -915,6 +979,11 @@ export function SearchQuickSwitcher({
           </span>
           <span className="shrink-0 text-[11px] text-muted-foreground">↵</span>
         </div>
+        {breadcrumbsText && (
+          <div className="truncate text-[11px] text-muted-foreground" title={breadcrumbsText}>
+            {highlightedBreadcrumbs}
+          </div>
+        )}
         {snippetText && (
           <div className="truncate text-xs text-muted-foreground" title={snippetText}>
             {highlightedSnippet}

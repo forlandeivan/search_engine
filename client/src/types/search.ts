@@ -14,6 +14,7 @@ export interface SuggestResponseItem {
   docId?: string | null;
   chunkId?: string | null;
   anchor?: string | null;
+  nodeId?: string | null;
 }
 
 export interface SuggestResponseGroup {
