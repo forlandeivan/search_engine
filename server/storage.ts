@@ -3311,6 +3311,7 @@ export class DatabaseStorage implements IStorage {
     sectionTitle: string | null;
     text: string;
     nodeId: string | null;
+    nodeSlug: string | null;
   }>> {
     if (chunkIds.length === 0) {
       return [];
@@ -3327,6 +3328,7 @@ export class DatabaseStorage implements IStorage {
         sectionPath: knowledgeDocumentChunkItems.sectionPath,
         docTitle: knowledgeNodes.title,
         nodeId: knowledgeNodes.id,
+        nodeSlug: knowledgeNodes.slug,
       })
       .from(knowledgeDocumentChunkItems)
       .innerJoin(
@@ -3353,6 +3355,8 @@ export class DatabaseStorage implements IStorage {
       const sectionTitle = this.resolveSectionTitle(metadata ?? null, row.sectionPath, row.docTitle ?? "");
       const nodeIdValue = typeof row.nodeId === "string" ? row.nodeId.trim() : "";
       const nodeId = nodeIdValue.length > 0 ? nodeIdValue : null;
+      const nodeSlugValue = typeof row.nodeSlug === "string" ? row.nodeSlug.trim() : "";
+      const nodeSlug = nodeSlugValue.length > 0 ? nodeSlugValue : null;
 
       return {
         chunkId: row.chunkId,
@@ -3361,6 +3365,7 @@ export class DatabaseStorage implements IStorage {
         sectionTitle,
         text: row.text ?? "",
         nodeId,
+        nodeSlug,
       };
     });
   }
@@ -3376,6 +3381,7 @@ export class DatabaseStorage implements IStorage {
     text: string;
     vectorRecordId: string | null;
     nodeId: string | null;
+    nodeSlug: string | null;
   }>> {
     if (recordIds.length === 0) {
       return [];
@@ -3393,6 +3399,7 @@ export class DatabaseStorage implements IStorage {
         docTitle: knowledgeNodes.title,
         vectorRecordId: knowledgeDocumentChunkItems.vectorRecordId,
         nodeId: knowledgeNodes.id,
+        nodeSlug: knowledgeNodes.slug,
       })
       .from(knowledgeDocumentChunkItems)
       .innerJoin(
@@ -3419,6 +3426,8 @@ export class DatabaseStorage implements IStorage {
       const sectionTitle = this.resolveSectionTitle(metadata ?? null, row.sectionPath, row.docTitle ?? "");
       const nodeIdValue = typeof row.nodeId === "string" ? row.nodeId.trim() : "";
       const nodeId = nodeIdValue.length > 0 ? nodeIdValue : null;
+      const nodeSlugValue = typeof row.nodeSlug === "string" ? row.nodeSlug.trim() : "";
+      const nodeSlug = nodeSlugValue.length > 0 ? nodeSlugValue : null;
 
       return {
         chunkId: row.chunkId,
@@ -3428,6 +3437,7 @@ export class DatabaseStorage implements IStorage {
         text: row.text ?? "",
         vectorRecordId: row.vectorRecordId ?? null,
         nodeId,
+        nodeSlug,
       };
     });
   }

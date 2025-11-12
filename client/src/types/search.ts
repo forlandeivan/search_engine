@@ -15,6 +15,7 @@ export interface SuggestResponseItem {
   chunkId?: string | null;
   anchor?: string | null;
   nodeId?: string | null;
+  nodeSlug?: string | null;
 }
 
 export interface SuggestResponseGroup {
@@ -78,6 +79,7 @@ export interface RagChunk {
   score: number;
   scores?: { bm25?: number; vector?: number };
   node_id?: string | null;
+  node_slug?: string | null;
 }
 
 export interface RagContextEntry {

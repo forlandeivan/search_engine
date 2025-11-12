@@ -378,6 +378,7 @@ export type KnowledgeBaseRagChunk = {
   score: number;
   scores?: { bm25?: number | null; vector?: number | null };
   nodeId?: string | null;
+  nodeSlug?: string | null;
 };
 
 export type KnowledgeBaseRagAnswer = {
