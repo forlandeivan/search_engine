@@ -3,30 +3,6 @@ import type { AddressInfo } from "net";
 
 const executeMock = vi.fn<(query: unknown) => Promise<{ rows: Record<string, unknown>[] }>>();
 
-function toSqlText(query: unknown): string {
-  if (typeof query === "string") {
-    return query;
-  }
-
-  if (query && typeof query === "object" && "queryChunks" in query) {
-    const chunks = (query as { queryChunks: Array<{ value: unknown }> }).queryChunks;
-    return chunks
-      .map((chunk) => {
-        const value = chunk.value;
-        if (typeof value === "string") {
-          return value;
-        }
-        if (Array.isArray(value)) {
-          return value.join(" ");
-        }
-        return String(value ?? "");
-      })
-      .join(" ");
-  }
-
-  return String(query ?? "");
-}
-
 function setupDbMock(): void {
   vi.doMock("../server/db", () => ({
     db: {
@@ -136,13 +112,8 @@ function setupKnowledgeChunksMock(): void {
 }
 
 function setupKnowledgeBaseMock(): void {
-  vi.doMock("../server/knowledge-base", async () => {
-    const { ensurePagesContentColumns } = await import("../server/pages-schema");
-    const listKnowledgeBases = vi.fn(async () => {
-      await ensurePagesContentColumns();
-      return [];
-    });
-
+  vi.doMock("../server/knowledge-base", () => {
+    const listKnowledgeBases = vi.fn(async () => []);
     const asyncStub = vi.fn(async () => ({}));
 
     class KnowledgeBaseError extends Error {
@@ -171,36 +142,15 @@ function setupKnowledgeBaseMock(): void {
 beforeEach(() => {
   vi.resetModules();
   executeMock.mockReset();
+  executeMock.mockResolvedValue({ rows: [] });
 });
 
 afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("ensurePagesContentColumns", () => {
-  it("пропускает изменения, если таблица pages отсутствует", async () => {
-    setupDbMock();
-
-    const { ensurePagesContentColumns, __resetPagesSchemaForTests } = await import("../server/pages-schema");
-
-    executeMock.mockImplementation(async (query) => {
-      const text = toSqlText(query);
-      if (text.includes("to_regclass('public.pages')")) {
-        return { rows: [{ tableName: null }] };
-      }
-      return { rows: [] };
-    });
-
-    await ensurePagesContentColumns();
-
-    expect(executeMock).toHaveBeenCalledTimes(1);
-
-    __resetPagesSchemaForTests();
-  });
-});
-
 describe("GET /api/knowledge/bases", () => {
-  it("возвращает 200 при отсутствии таблицы pages", async () => {
+  it("возвращает 200 при пустом списке баз знаний", async () => {
     setupDbMock();
     setupStorageMock();
     setupAuthMock();
@@ -210,21 +160,6 @@ describe("GET /api/knowledge/bases", () => {
     setupQdrantMock();
     setupKnowledgeChunksMock();
     setupKnowledgeBaseMock();
-
-    const { __resetPagesSchemaForTests } = await import("../server/pages-schema");
-
-    executeMock.mockImplementation(async (query) => {
-      const text = toSqlText(query);
-      if (text.includes("to_regclass('public.pages')")) {
-        return { rows: [{ tableName: null }] };
-      }
-      if (text.includes('ALTER TABLE "pages"')) {
-        const error = new Error("relation \"pages\" does not exist");
-        (error as Error & { code?: string }).code = "42P01";
-        throw error;
-      }
-      return { rows: [] };
-    });
 
     const expressModule = await import("express");
     const app = expressModule.default();
@@ -244,10 +179,6 @@ describe("GET /api/knowledge/bases", () => {
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(Array.isArray(body)).toBe(true);
-
-      const queriedSql = executeMock.mock.calls.map(([query]) => toSqlText(query));
-      expect(queriedSql.some((text) => text.includes("to_regclass('public.pages')"))).toBe(true);
-      expect(queriedSql.some((text) => text.includes('ALTER TABLE "pages"'))).toBe(false);
     } finally {
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => {
@@ -258,7 +189,6 @@ describe("GET /api/knowledge/bases", () => {
           }
         });
       });
-      __resetPagesSchemaForTests();
     }
   });
 });

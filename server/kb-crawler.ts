@@ -943,3 +943,7 @@ export function getKnowledgeBaseCrawlJobStateForBase(
     latest: latest ? { ...latest.status } : null,
   };
 }
+
+export const __test__ = {
+  extractStructuredContentFromHtml,
+};
