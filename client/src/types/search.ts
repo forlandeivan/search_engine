@@ -76,6 +76,7 @@ export interface RagChunk {
   text?: string;
   score: number;
   scores?: { bm25?: number; vector?: number };
+  node_id?: string | null;
 }
 
 export interface RagContextEntry {

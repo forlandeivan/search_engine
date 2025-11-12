@@ -344,3 +344,33 @@ export type KnowledgeBaseSuggestResponse = {
   normalizedQuery: string;
   sections: KnowledgeBaseSuggestSection[];
 };
+
+export type KnowledgeBaseRagChunk = {
+  chunkId: string;
+  docId: string;
+  docTitle: string;
+  sectionTitle: string | null;
+  snippet: string;
+  text?: string;
+  score: number;
+  scores?: { bm25?: number | null; vector?: number | null };
+  nodeId?: string | null;
+};
+
+export type KnowledgeBaseRagAnswer = {
+  answer: string;
+  format?: "text" | "markdown" | "html";
+  query?: string;
+  kbId?: string;
+  normalizedQuery?: string;
+  citations: KnowledgeBaseRagChunk[];
+  chunks?: KnowledgeBaseRagChunk[];
+  usage?: { embeddingTokens?: number | null; llmTokens?: number | null };
+  timings?: {
+    total_ms?: number;
+    retrieval_ms?: number;
+    bm25_ms?: number;
+    vector_ms?: number;
+    llm_ms?: number;
+  };
+};

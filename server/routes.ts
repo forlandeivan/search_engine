@@ -2967,7 +2967,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const chunkDetailsMap = new Map<
         string,
-        { documentId: string; docTitle: string; sectionTitle: string | null; text: string }
+        {
+          documentId: string;
+          docTitle: string;
+          sectionTitle: string | null;
+          text: string;
+          nodeId: string | null;
+        }
       >();
       const recordToChunk = new Map<string, string>();
 
@@ -2977,6 +2983,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           docTitle: detail.docTitle,
           sectionTitle: detail.sectionTitle,
           text: detail.text,
+          nodeId: detail.nodeId,
         });
       }
 
@@ -2986,6 +2993,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           docTitle: detail.docTitle,
           sectionTitle: detail.sectionTitle,
           text: detail.text,
+          nodeId: detail.nodeId,
         });
 
         if (detail.vectorRecordId) {
@@ -3004,6 +3012,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           snippet: string;
           bm25Score: number;
           vectorScore: number;
+          nodeId: string | null;
         }
       >();
 
@@ -3026,6 +3035,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           snippet,
           bm25Score: entry.score,
           vectorScore: 0,
+          nodeId: entry.nodeId ?? null,
         });
       }
 
@@ -3057,6 +3067,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : null;
 
         const snippet = baseSnippet ?? existing?.snippet ?? buildSnippet(detail.text);
+        const nodeId = detail.nodeId ?? existing?.nodeId ?? null;
 
         aggregated.set(chunkId, {
           chunkId,
@@ -3067,6 +3078,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           snippet,
           bm25Score: existing?.bm25Score ?? 0,
           vectorScore: Math.max(existing?.vectorScore ?? 0, entry.score),
+          nodeId,
         });
       }
 
@@ -3174,6 +3186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           bm25: item.bm25Score,
           vector: item.vectorScore,
         },
+        node_id: item.nodeId ?? null,
       }));
 
       res.json({
@@ -3194,6 +3207,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             bm25: item.bm25Score,
             vector: item.vectorScore,
           },
+          node_id: item.nodeId ?? null,
         })),
         usage: {
           embeddingTokens: embeddingUsageTokens,
