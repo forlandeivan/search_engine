@@ -24,6 +24,10 @@ import {
 import { Button } from "@/components/ui/button";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
+import {
+  KnowledgeBaseSearchDialog,
+  type KnowledgeBaseSearchResult,
+} from "@/components/knowledge-base/KnowledgeBaseSearchDialog";
 import MarkdownRenderer from "@/components/ui/markdown";
 import VectorizeKnowledgeDocumentDialog, {
   type KnowledgeDocumentVectorizationSelection,
@@ -465,6 +469,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     base: KnowledgeBaseSummary | null;
     isOpen: boolean;
   } | null>(null);
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
   const [documentVectorizationProgress, setDocumentVectorizationProgress] =
     useState<DocumentVectorizationProgressState | null>(null);
   const [shouldPollVectorizationJob, setShouldPollVectorizationJob] = useState(false);
@@ -609,6 +614,32 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   useEffect(() => {
     setExpandedNodeIds(new Set());
   }, [selectedBase?.id]);
+
+  useEffect(() => {
+    if (!selectedBase) {
+      setIsSearchDialogOpen(false);
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) {
+        return;
+      }
+
+      if (event.key.toLowerCase() !== "k") {
+        return;
+      }
+
+      event.preventDefault();
+      setIsSearchDialogOpen((prev) => !prev);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [selectedBase]);
 
   useEffect(() => {
     if (!bases.length) {
@@ -2066,6 +2097,29 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     Boolean(hierarchyDialogState) &&
     normalizedHierarchySelectedParentId !== hierarchyDialogState?.currentParentId;
 
+  const handleSearchResultSelect = useCallback(
+    (result: KnowledgeBaseSearchResult) => {
+      if (!selectedBase) {
+        return;
+      }
+
+      setIsSearchDialogOpen(false);
+
+      if (result.docId) {
+        setLocation(`/knowledge/${selectedBase.id}/node/${result.docId}`);
+        return;
+      }
+
+      if (result.url) {
+        window.open(result.url, "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      setLocation(`/knowledge/${selectedBase.id}`);
+    },
+    [selectedBase, setLocation],
+  );
+
   return (
     <div className="flex h-full min-h-[calc(100vh-4rem)] bg-background">
       <aside className="flex w-80 flex-col border-r">
@@ -2175,6 +2229,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           )}
         </div>
       </main>
+      <KnowledgeBaseSearchDialog
+        base={selectedBase}
+        open={isSearchDialogOpen}
+        onOpenChange={(open) => setIsSearchDialogOpen(open && Boolean(selectedBase))}
+        onSelectResult={handleSearchResultSelect}
+      />
       {vectorizeDialogState && (
         <VectorizeKnowledgeDocumentDialog
           open={vectorizeDialogState.isOpen}
