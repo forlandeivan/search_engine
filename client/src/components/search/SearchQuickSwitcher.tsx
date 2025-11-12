@@ -6,6 +6,8 @@ import { ArrowLeft, CircleStop, LoaderCircle, Search, Sparkles } from "lucide-re
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { useKnowledgeBaseAskAi } from "@/hooks/useKnowledgeBaseAskAi";
+import type { UseKnowledgeBaseAskAiOptions } from "@/hooks/useKnowledgeBaseAskAi";
 import { cn } from "@/lib/utils";
 import type {
   RagChunk,
@@ -18,15 +20,21 @@ const GROUP_ITEM_LIMIT = 5;
 const ASK_AI_MIN_QUERY_LENGTH = 2;
 const SEARCH_DEBOUNCE_MS = 150;
 const ASK_AI_OPTION_ID = "search-option-ask";
+const EMPTY_ASK_OPTIONS: UseKnowledgeBaseAskAiOptions = {
+  knowledgeBaseId: null,
+  hybrid: null,
+  llm: null,
+  baseUrl: null,
+};
 
 interface SearchQuickSwitcherProps {
   query: string;
-  isAskAiEnabled: boolean;
+  isAskAiEnabled?: boolean;
   suggest: SuggestResponsePayload | null;
   status: "idle" | "loading" | "success" | "error";
   error: string | null;
   onQueryChange: (value: string) => void;
-  onAskAi: (query: string) => Promise<void> | void;
+  onAskAi?: (query: string) => Promise<void> | void;
   askState?: {
     isActive: boolean;
     question: string;
@@ -44,6 +52,7 @@ interface SearchQuickSwitcherProps {
   onPrefetch?: (query: string) => void;
   closeOnAsk?: boolean;
   disabledReason?: string | null;
+  askOptions?: UseKnowledgeBaseAskAiOptions | null;
   renderTrigger?: (options: { open: () => void; isOpen: boolean }) => ReactNode;
 }
 
@@ -420,8 +429,21 @@ export function SearchQuickSwitcher({
   isAskAiEnabled,
   closeOnAsk = true,
   disabledReason,
+  askOptions,
   renderTrigger,
 }: SearchQuickSwitcherProps) {
+  const askHook = useKnowledgeBaseAskAi(askOptions ?? EMPTY_ASK_OPTIONS);
+  const isHookManaged = Boolean(askOptions);
+  const resolvedAskState = isHookManaged ? askHook.state : askState;
+  const resolvedOnAskAi = isHookManaged ? askHook.ask : onAskAi;
+  const resolvedOnAskAiStop = isHookManaged ? askHook.stop : onAskAiStop;
+  const resolvedIsAskAiEnabled = isHookManaged
+    ? askHook.isEnabled
+    : isAskAiEnabled ?? true;
+  const resolvedDisabledReason = isHookManaged
+    ? askHook.disabledReason
+    : disabledReason ?? null;
+
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"search" | "ask">("search");
   const [isComposing, setIsComposing] = useState(false);
@@ -581,7 +603,7 @@ export function SearchQuickSwitcher({
   };
 
   const handleAskAi = async () => {
-    if (!isAskAiEnabled || !canSubmitAskAi) {
+    if (!resolvedIsAskAiEnabled || !canSubmitAskAi || !resolvedOnAskAi) {
       return;
     }
 
@@ -591,7 +613,7 @@ export function SearchQuickSwitcher({
     setActiveTab("ask");
 
     try {
-      await onAskAi(normalizedQuery);
+      await resolvedOnAskAi(normalizedQuery);
       if (closeOnAsk) {
         setOpen(false);
       }
@@ -797,7 +819,7 @@ export function SearchQuickSwitcher({
   const renderRow = (row: VirtualRow, rowIndex: number) => {
     if (row.type === "ask") {
       const isActive = rowIndex === activeRowIndex;
-      const isDisabled = !isAskAiEnabled || !canSubmitAskAi;
+      const isDisabled = !resolvedIsAskAiEnabled || !canSubmitAskAi;
       return (
         <div
           id={ASK_AI_OPTION_ID}
@@ -986,17 +1008,17 @@ export function SearchQuickSwitcher({
                   <ArrowLeft className="h-4 w-4" />
                   <span>Задать другой вопрос…</span>
                 </button>
-                {askState?.isStreaming && onAskAiStop && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 gap-2 px-3 text-xs"
-                    onClick={() => onAskAiStop()}
-                  >
-                    <CircleStop className="h-4 w-4" />
-                    Stop
-                  </Button>
-                )}
+                  {resolvedAskState?.isStreaming && resolvedOnAskAiStop && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-2 px-3 text-xs"
+                      onClick={() => resolvedOnAskAiStop()}
+                    >
+                      <CircleStop className="h-4 w-4" />
+                      Stop
+                    </Button>
+                  )}
               </div>
             )}
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1092,21 +1114,21 @@ export function SearchQuickSwitcher({
                   <div className="rounded border px-3 py-2 text-sm">
                     <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Вопрос</div>
                     <div className="mt-1 text-sm font-semibold text-foreground">
-                      {askState?.question || normalizedQuery || "—"}
+                      {resolvedAskState?.question || normalizedQuery || "—"}
                     </div>
                   </div>
-                  {askState?.showIndicator && (
+                  {resolvedAskState?.showIndicator && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
                       <LoaderCircle className="h-4 w-4 animate-spin text-primary" />
-                      <span>{askState.statusMessage ?? "Готовим ответ…"}</span>
+                      <span>{resolvedAskState.statusMessage ?? "Готовим ответ…"}</span>
                     </div>
                   )}
-                  {askState?.error && (
+                  {resolvedAskState?.error && (
                     <div
                       role="alert"
                       className="rounded border border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive"
                     >
-                      {askState.error}
+                      {resolvedAskState.error}
                     </div>
                   )}
                   <div
@@ -1114,12 +1136,12 @@ export function SearchQuickSwitcher({
                     role="status"
                     aria-live="polite"
                   >
-                    {askState?.answerHtml ? (
+                    {resolvedAskState?.answerHtml ? (
                       <div
                         className="prose prose-sm max-w-none text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
-                        dangerouslySetInnerHTML={{ __html: askState.answerHtml }}
+                        dangerouslySetInnerHTML={{ __html: resolvedAskState.answerHtml }}
                       />
-                    ) : askState?.isStreaming ? (
+                    ) : resolvedAskState?.isStreaming ? (
                       <span className="text-muted-foreground">Готовим ответ…</span>
                     ) : (
                       <span className="text-muted-foreground">
@@ -1127,6 +1149,45 @@ export function SearchQuickSwitcher({
                       </span>
                     )}
                   </div>
+                  {resolvedAskState?.sources && resolvedAskState.sources.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Цитаты</div>
+                      <div className="flex flex-col gap-2">
+                        {resolvedAskState.sources.map((source, index) => {
+                          const title = source.doc_title?.trim() || `Документ ${index + 1}`;
+                          const sectionTitle = source.section_title?.trim() || "";
+                          const snippet =
+                            typeof source.snippet === "string" && source.snippet.trim().length > 0
+                              ? source.snippet.trim()
+                              : typeof source.text === "string"
+                                ? source.text.trim()
+                                : "";
+
+                          return (
+                            <div
+                              key={source.chunk_id || source.doc_id || `source-${index}`}
+                              className="space-y-2 rounded border px-3 py-2 text-xs"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm font-semibold text-foreground">{title}</div>
+                                  {sectionTitle && (
+                                    <div className="truncate text-xs text-muted-foreground">{sectionTitle}</div>
+                                  )}
+                                </div>
+                                {source.node_id && (
+                                  <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-[11px] font-mono text-muted-foreground">
+                                    nodeId: {source.node_id}
+                                  </span>
+                                )}
+                              </div>
+                              {snippet && <p className="text-xs text-muted-foreground leading-relaxed">{snippet}</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1140,7 +1201,7 @@ export function SearchQuickSwitcher({
                     </span>
                   ))}
                 </div>
-                {disabledReason && <span className="text-destructive">{disabledReason}</span>}
+                {resolvedDisabledReason && <span className="text-destructive">{resolvedDisabledReason}</span>}
               </div>
             </div>
           </div>
