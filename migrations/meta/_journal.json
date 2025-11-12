@@ -176,6 +176,13 @@
       "when": 1762515611117,
       "tag": "0030_embedding_providers_max_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 0,
+      "tag": "0031_drop_pages_tables",
+      "breakpoints": true
     }
   ]
 }
