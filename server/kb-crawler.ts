@@ -4,6 +4,11 @@ import { load } from "cheerio";
 import { marked } from "marked";
 import { URL } from "url";
 import { and, eq } from "drizzle-orm";
+import fetch, { Headers } from "node-fetch";
+import TurndownService from "turndown";
+import { gfm } from "turndown-plugin-gfm";
+import { JSDOM } from "jsdom";
+import { Readability } from "@mozilla/readability";
 import { knowledgeDocuments, knowledgeNodes } from "@shared/schema";
 import {
   type KnowledgeBaseCrawlConfig,
@@ -20,7 +25,14 @@ import {
   getKnowledgeNodeDetail,
   KnowledgeBaseError,
 } from "./knowledge-base";
-import { WebCrawler } from "./crawler";
+
+const turndown = new TurndownService({
+  headingStyle: "atx",
+  codeBlockStyle: "fenced",
+  bulletListMarker: "-",
+});
+
+turndown.use(gfm);
 
 const DEFAULT_RATE_LIMIT = 1;
 const DEFAULT_MAX_DEPTH = 3;
@@ -60,7 +72,117 @@ type InternalJobState = {
 
 const jobs = new Map<string, InternalJobState>();
 
-const structuredCrawler = new WebCrawler();
+async function fetchPageHtml(
+  url: string,
+  options: { userAgent?: string; headers?: Record<string, string> } = {},
+): Promise<{ html: string; statusCode: number; finalUrl: string }> {
+  const headerInit = new Headers();
+  if (options.headers) {
+    for (const [key, value] of Object.entries(options.headers)) {
+      if (typeof key === "string" && key.trim().length > 0 && typeof value === "string") {
+        headerInit.set(key, value);
+      }
+    }
+  }
+
+  if (options.userAgent?.trim()) {
+    headerInit.set("User-Agent", options.userAgent.trim());
+  }
+
+  const response = await fetch(url, {
+    headers: headerInit,
+    redirect: "follow",
+  });
+
+  const contentType = response.headers.get("content-type");
+  if (contentType && !contentType.includes("text/html")) {
+    throw new Error(`Неподдерживаемый тип контента: ${contentType}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  const html = await response.text();
+  const finalUrl = response.url ?? url;
+
+  return {
+    html,
+    statusCode: response.status,
+    finalUrl,
+  };
+}
+
+async function extractStructuredContentFromHtml(
+  rawHtml: string,
+  pageUrl: string,
+  canonicalUrl?: string,
+  fallbackTitle?: string,
+): Promise<{
+  html: string;
+  markdown: string;
+  aggregatedText: string;
+  title?: string;
+  outLinks: string[];
+  plainText: string;
+  stats: {
+    headingCount: number;
+    listCount: number;
+    tableCount: number;
+    codeBlockCount: number;
+  };
+}> {
+  const baseUrl = canonicalUrl ?? pageUrl;
+  const dom = new JSDOM(rawHtml, { url: baseUrl });
+  const reader = new Readability(dom.window.document);
+  const article = reader.parse();
+
+  const articleHtml = article?.content?.trim() ? article.content : rawHtml;
+  const articleTitle = article?.title?.trim() || fallbackTitle || undefined;
+  const textContent = article?.textContent?.trim() || dom.window.document.body?.textContent?.trim() || "";
+
+  let markdown = "";
+  try {
+    markdown = turndown.turndown(articleHtml);
+  } catch (error) {
+    console.warn("[KB-CRAWLER] Не удалось преобразовать HTML в Markdown", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    markdown = textContent;
+  }
+
+  const $ = load(articleHtml);
+  const stats = {
+    headingCount: $("h1, h2, h3, h4, h5, h6").length,
+    listCount: $("ul, ol").length,
+    tableCount: $("table").length,
+    codeBlockCount: $("pre, code").length,
+  };
+
+  const outLinks = new Set<string>();
+  $("a[href]").each((_, element) => {
+    const href = $(element).attr("href");
+    if (!href) {
+      return;
+    }
+    try {
+      const resolved = new URL(href, baseUrl).toString();
+      outLinks.add(resolved);
+    } catch {
+      // ignore invalid URLs
+    }
+  });
+
+  return {
+    html: articleHtml,
+    markdown,
+    aggregatedText: textContent,
+    plainText: textContent,
+    title: articleTitle,
+    outLinks: Array.from(outLinks),
+    stats,
+  };
+}
 
 const escapeHtml = (value: string) =>
   value
@@ -397,7 +519,7 @@ async function fetchPage(url: string, config: KnowledgeBaseCrawlConfig): Promise
     }
   }
 
-  const { html } = await structuredCrawler.fetchPageHtml(url, {
+  const { html } = await fetchPageHtml(url, {
     userAgent,
     headers,
   });
@@ -432,7 +554,7 @@ async function extractContent(
   const selectionHtml = contentRoot && contentRoot.length > 0 ? contentRoot.html() ?? "" : "";
   const extractionHtml = selectionHtml.trim() ? `<article>${selectionHtml}</article>` : html;
 
-  const structured = await structuredCrawler.extractStructuredContentFromHtml(
+  const structured = await extractStructuredContentFromHtml(
     extractionHtml,
     baseUrl,
     baseUrl,
