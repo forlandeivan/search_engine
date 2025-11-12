@@ -3102,6 +3102,7 @@ export class DatabaseStorage implements IStorage {
     docTitle: string;
     sectionTitle: string | null;
     text: string;
+    nodeId: string | null;
   }>> {
     if (chunkIds.length === 0) {
       return [];
@@ -3117,6 +3118,7 @@ export class DatabaseStorage implements IStorage {
         metadata: knowledgeDocumentChunkItems.metadata,
         sectionPath: knowledgeDocumentChunkItems.sectionPath,
         docTitle: knowledgeNodes.title,
+        nodeId: knowledgeNodes.id,
       })
       .from(knowledgeDocumentChunkItems)
       .innerJoin(
@@ -3141,6 +3143,8 @@ export class DatabaseStorage implements IStorage {
     return rows.map((row: typeof rows[number]) => {
       const metadata = row.metadata as Record<string, unknown> | null;
       const sectionTitle = this.resolveSectionTitle(metadata ?? null, row.sectionPath, row.docTitle ?? "");
+      const nodeIdValue = typeof row.nodeId === "string" ? row.nodeId.trim() : "";
+      const nodeId = nodeIdValue.length > 0 ? nodeIdValue : null;
 
       return {
         chunkId: row.chunkId,
@@ -3148,6 +3152,7 @@ export class DatabaseStorage implements IStorage {
         docTitle: row.docTitle ?? "",
         sectionTitle,
         text: row.text ?? "",
+        nodeId,
       };
     });
   }
@@ -3162,6 +3167,7 @@ export class DatabaseStorage implements IStorage {
     sectionTitle: string | null;
     text: string;
     vectorRecordId: string | null;
+    nodeId: string | null;
   }>> {
     if (recordIds.length === 0) {
       return [];
@@ -3178,6 +3184,7 @@ export class DatabaseStorage implements IStorage {
         sectionPath: knowledgeDocumentChunkItems.sectionPath,
         docTitle: knowledgeNodes.title,
         vectorRecordId: knowledgeDocumentChunkItems.vectorRecordId,
+        nodeId: knowledgeNodes.id,
       })
       .from(knowledgeDocumentChunkItems)
       .innerJoin(
@@ -3202,6 +3209,8 @@ export class DatabaseStorage implements IStorage {
     return rows.map((row: typeof rows[number]) => {
       const metadata = row.metadata as Record<string, unknown> | null;
       const sectionTitle = this.resolveSectionTitle(metadata ?? null, row.sectionPath, row.docTitle ?? "");
+      const nodeIdValue = typeof row.nodeId === "string" ? row.nodeId.trim() : "";
+      const nodeId = nodeIdValue.length > 0 ? nodeIdValue : null;
 
       return {
         chunkId: row.chunkId,
@@ -3210,6 +3219,7 @@ export class DatabaseStorage implements IStorage {
         sectionTitle,
         text: row.text ?? "",
         vectorRecordId: row.vectorRecordId ?? null,
+        nodeId,
       };
     });
   }
