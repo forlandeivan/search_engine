@@ -26,6 +26,7 @@ import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
 import {
   KnowledgeBaseSearchDialog,
+  type KnowledgeBaseSearchDialogOptions,
   type KnowledgeBaseSearchResult,
 } from "@/components/knowledge-base/KnowledgeBaseSearchDialog";
 import MarkdownRenderer from "@/components/ui/markdown";
@@ -100,6 +101,7 @@ import type {
   KnowledgeBaseCrawlJobStatus,
 } from "@shared/knowledge-base";
 import type { PublicEmbeddingProvider } from "@shared/schema";
+import type { SessionResponse } from "@/types/session";
 import {
   ChevronDown,
   ChevronRight,
@@ -166,6 +168,91 @@ type DocumentVectorizationProgressState = {
   status: DocumentVectorizationProgressStatus;
   errorMessage: string | null;
   selection?: KnowledgeDocumentVectorizationSelection | null;
+};
+
+type VectorCollectionSummary = {
+  name: string;
+};
+
+type VectorCollectionsResponse = {
+  collections: VectorCollectionSummary[];
+};
+
+type KnowledgeBaseSearchSettings = {
+  topK: number | null;
+  bm25Weight: number | null;
+  vectorWeight: number | null;
+  embeddingProviderId: string | null;
+  collection: string | null;
+};
+
+const DEFAULT_SEARCH_SETTINGS: KnowledgeBaseSearchSettings = {
+  topK: null,
+  bm25Weight: null,
+  vectorWeight: null,
+  embeddingProviderId: null,
+  collection: null,
+};
+
+const clampTopKValue = (value: number | null): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  return Math.max(1, Math.min(10, rounded));
+};
+
+const clampWeightValue = (value: number | null): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const normalized = Math.max(0, Math.min(1, value));
+  return Number(normalized.toFixed(2));
+};
+
+const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings => {
+  if (!value || typeof value !== "object") {
+    return DEFAULT_SEARCH_SETTINGS;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  const resolveNumber = (
+    raw: unknown,
+    clamp: (val: number | null) => number | null,
+  ): number | null => {
+    if (typeof raw === "number") {
+      return clamp(raw);
+    }
+
+    if (typeof raw === "string") {
+      const parsed = Number(raw);
+      if (!Number.isNaN(parsed)) {
+        return clamp(parsed);
+      }
+    }
+
+    return null;
+  };
+
+  const resolveString = (raw: unknown): string | null => {
+    if (typeof raw !== "string") {
+      return null;
+    }
+
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
+  return {
+    topK: resolveNumber(record.topK, clampTopKValue),
+    bm25Weight: resolveNumber(record.bm25Weight, clampWeightValue),
+    vectorWeight: resolveNumber(record.vectorWeight, clampWeightValue),
+    embeddingProviderId: resolveString(record.embeddingProviderId),
+    collection: resolveString(record.collection),
+  };
 };
 
 const formatDateTime = (value?: string | null) => {
@@ -500,6 +587,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [hierarchySelectedParentId, setHierarchySelectedParentId] =
     useState<string>(ROOT_PARENT_VALUE);
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(() => new Set());
+  const [searchSettings, setSearchSettings] = useState<KnowledgeBaseSearchSettings>(
+    DEFAULT_SEARCH_SETTINGS,
+  );
+  const [isSearchSettingsReady, setIsSearchSettingsReady] = useState(false);
   const handleOpenCreateBase = (mode: KnowledgeBaseSourceType = "blank") => {
     setCreateBaseMode(mode);
     setIsCreateBaseDialogOpen(true);
@@ -509,6 +600,60 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     setLocation(`/knowledge/${base.id}`);
     setCreateBaseMode("blank");
   };
+  const handleTopKInputChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, topK: null };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, topK: clampTopKValue(parsed) };
+    });
+  };
+  const handleBm25WeightChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, bm25Weight: null };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, bm25Weight: clampWeightValue(parsed) };
+    });
+  };
+  const handleVectorWeightChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, vectorWeight: null };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, vectorWeight: clampWeightValue(parsed) };
+    });
+  };
+  const handleEmbeddingProviderChange = (value: string) => {
+    setSearchSettings((prev) => ({
+      ...prev,
+      embeddingProviderId: value ? value : null,
+    }));
+  };
+  const handleCollectionChange = (value: string) => {
+    setSearchSettings((prev) => {
+      const trimmed = value.trim();
+      return { ...prev, collection: trimmed.length > 0 ? trimmed : null };
+    });
+  };
 
   const basesQuery = useQuery({
     queryKey: ["knowledge-bases"],
@@ -516,6 +661,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       const res = await apiRequest("GET", "/api/knowledge/bases");
       return (await res.json()) as KnowledgeBaseSummary[];
     },
+  });
+
+  const { data: session } = useQuery<SessionResponse>({
+    queryKey: ["/api/auth/session"],
+    staleTime: 0,
   });
 
   useEffect(() => {
@@ -553,10 +703,125 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => (embeddingServices?.providers ?? []).filter((provider) => provider.isActive),
     [embeddingServices?.providers],
   );
+  const workspaceId = session?.workspace.active.id ?? null;
+  const { data: vectorCollectionsResponse, isLoading: isVectorCollectionsLoading } =
+    useQuery<VectorCollectionsResponse>({
+      queryKey: ["/api/vector/collections"],
+      staleTime: 5 * 60 * 1000,
+      enabled: Boolean(workspaceId),
+    });
+  const vectorCollections = vectorCollectionsResponse?.collections ?? [];
   const selectedBase = useMemo(
     () => bases.find((base) => base.id === knowledgeBaseId) ?? null,
     [bases, knowledgeBaseId],
   );
+  const storageKey = useMemo(() => {
+    if (!workspaceId || !selectedBase?.id) {
+      return null;
+    }
+
+    return `${workspaceId}/${selectedBase.id}`;
+  }, [workspaceId, selectedBase?.id]);
+  const selectedEmbeddingProvider = useMemo(
+    () =>
+      searchSettings.embeddingProviderId
+        ? activeEmbeddingProviders.find(
+            (provider) => provider.id === searchSettings.embeddingProviderId,
+          ) ?? null
+        : null,
+    [activeEmbeddingProviders, searchSettings.embeddingProviderId],
+  );
+  const normalizedTopK = useMemo(() => clampTopKValue(searchSettings.topK), [searchSettings.topK]);
+  const searchDialogOptions = useMemo<KnowledgeBaseSearchDialogOptions>(
+    () => ({
+      topK: normalizedTopK,
+      bm25Weight: searchSettings.bm25Weight,
+      vectorWeight: searchSettings.vectorWeight,
+      embeddingProviderId: searchSettings.embeddingProviderId,
+      embeddingProviderName: selectedEmbeddingProvider?.name ?? null,
+      collection: searchSettings.collection,
+    }),
+    [
+      normalizedTopK,
+      searchSettings.bm25Weight,
+      searchSettings.vectorWeight,
+      searchSettings.embeddingProviderId,
+      selectedEmbeddingProvider?.name,
+      searchSettings.collection,
+    ],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!storageKey) {
+      setIsSearchSettingsReady(false);
+      setSearchSettings(DEFAULT_SEARCH_SETTINGS);
+      return;
+    }
+
+    setIsSearchSettingsReady(false);
+
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) {
+        setSearchSettings(DEFAULT_SEARCH_SETTINGS);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as unknown;
+      setSearchSettings(parseStoredSearchSettings(parsed));
+    } catch (error) {
+      console.error("Не удалось прочитать параметры поиска из localStorage", error);
+      setSearchSettings(DEFAULT_SEARCH_SETTINGS);
+    } finally {
+      setIsSearchSettingsReady(true);
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey || typeof window === "undefined") {
+      return;
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== storageKey) {
+        return;
+      }
+
+      if (!event.newValue) {
+        setSearchSettings(DEFAULT_SEARCH_SETTINGS);
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(event.newValue) as unknown;
+        setSearchSettings(parseStoredSearchSettings(parsed));
+      } catch (error) {
+        console.error("Не удалось синхронизировать параметры поиска", error);
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey || !isSearchSettingsReady || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(searchSettings));
+    } catch (error) {
+      console.error("Не удалось сохранить параметры поиска", error);
+    }
+  }, [searchSettings, storageKey, isSearchSettingsReady]);
   const [latestCrawlJob, setLatestCrawlJob] = useState<KnowledgeBaseCrawlJobStatus | null>(null);
   const crawlJobPreviousRef = useRef<KnowledgeBaseCrawlJobStatus | null>(null);
   const handleCrawlStateChange = useCallback((state: CrawlInlineState) => {
@@ -1931,6 +2196,212 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     );
   };
 
+  const renderSearchSettingsCard = () => {
+    if (!selectedBase || !storageKey) {
+      return null;
+    }
+
+    const hints: ReactNode[] = [];
+    const embeddingProviderValue = searchSettings.embeddingProviderId ?? "";
+    const collectionValue = searchSettings.collection ?? "";
+    const isCustomProvider =
+      embeddingProviderValue.length > 0 &&
+      !activeEmbeddingProviders.some((provider) => provider.id === embeddingProviderValue);
+    const isCustomCollection =
+      collectionValue.length > 0 &&
+      vectorCollections.length > 0 &&
+      !vectorCollections.some((collection) => collection.name === collectionValue);
+    const vectorWeightActive = (searchSettings.vectorWeight ?? 0) > 0;
+
+    if (activeEmbeddingProviders.length === 0) {
+      hints.push(
+        <Alert key="hint-no-providers" variant="default">
+          <AlertTitle>Нет активных провайдеров эмбеддингов</AlertTitle>
+          <AlertDescription>
+            Подключите сервис в разделе «Сервисы эмбеддингов», чтобы включить векторный поиск.
+          </AlertDescription>
+        </Alert>,
+      );
+    }
+
+    if (!isVectorCollectionsLoading && vectorCollections.length === 0) {
+      hints.push(
+        <Alert key="hint-no-collections" variant="default">
+          <AlertTitle>Коллекции Qdrant не найдены</AlertTitle>
+          <AlertDescription>
+            Создайте коллекцию в разделе «Векторные коллекции», чтобы сохранять векторные данные.
+          </AlertDescription>
+        </Alert>,
+      );
+    }
+
+    if (isCustomProvider) {
+      hints.push(
+        <Alert key="hint-provider-missing" variant="default">
+          <AlertTitle>Сохранённый провайдер недоступен</AlertTitle>
+          <AlertDescription>
+            Провайдер эмбеддингов отсутствует среди активных. Выберите актуальный сервис.
+          </AlertDescription>
+        </Alert>,
+      );
+    }
+
+    if (collectionValue && isCustomCollection) {
+      hints.push(
+        <Alert key="hint-collection-missing" variant="default">
+          <AlertTitle>Коллекция не найдена</AlertTitle>
+          <AlertDescription>
+            Проверьте название коллекции или создайте новую в Qdrant, затем обновите список.
+          </AlertDescription>
+        </Alert>,
+      );
+    }
+
+    if (vectorWeightActive && !searchSettings.embeddingProviderId) {
+      hints.push(
+        <Alert key="hint-provider-required" variant="default">
+          <AlertTitle>Укажите сервис эмбеддингов</AlertTitle>
+          <AlertDescription>Для векторного поиска нужен активный провайдер эмбеддингов.</AlertDescription>
+        </Alert>,
+      );
+    }
+
+    if (vectorWeightActive && !searchSettings.collection) {
+      hints.push(
+        <Alert key="hint-collection-required" variant="default">
+          <AlertTitle>Укажите коллекцию Qdrant</AlertTitle>
+          <AlertDescription>Для векторного поиска требуется коллекция с векторами документов.</AlertDescription>
+        </Alert>,
+      );
+    }
+
+    const disabled = !isSearchSettingsReady;
+    const collectionDatalistId = "kb-search-collection-suggestions";
+
+    return (
+      <Card>
+        <CardHeader className="space-y-1.5 py-3">
+          <CardTitle className="text-base">Параметры поиска</CardTitle>
+          <CardDescription>
+            Настройки применяются к диалогу поиска по базе «{selectedBase.name}» и сохраняются локально.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="kb-search-topk">Top-K</Label>
+              <Input
+                id="kb-search-topk"
+                type="number"
+                min={1}
+                max={10}
+                step={1}
+                inputMode="numeric"
+                value={searchSettings.topK ?? ""}
+                onChange={(event) => handleTopKInputChange(event.target.value)}
+                disabled={disabled}
+              />
+              <p className="text-xs text-muted-foreground">Количество результатов, отображаемых в подсказках.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="kb-search-bm25-weight">Вес BM25</Label>
+              <Input
+                id="kb-search-bm25-weight"
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                inputMode="decimal"
+                value={searchSettings.bm25Weight ?? ""}
+                onChange={(event) => handleBm25WeightChange(event.target.value)}
+                disabled={disabled}
+              />
+              <p className="text-xs text-muted-foreground">Чем выше значение, тем сильнее вклад текстового поиска.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="kb-search-vector-weight">Вес вектора</Label>
+              <Input
+                id="kb-search-vector-weight"
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                inputMode="decimal"
+                value={searchSettings.vectorWeight ?? ""}
+                onChange={(event) => handleVectorWeightChange(event.target.value)}
+                disabled={disabled}
+              />
+              <p className="text-xs text-muted-foreground">Определяет вклад векторного поиска в выдачу.</p>
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="kb-search-embedding-provider">Сервис эмбеддингов</Label>
+              <Select
+                value={embeddingProviderValue}
+                onValueChange={handleEmbeddingProviderChange}
+                disabled={disabled}
+              >
+                <SelectTrigger
+                  id="kb-search-embedding-provider"
+                  disabled={disabled}
+                >
+                  <SelectValue
+                    placeholder={
+                      activeEmbeddingProviders.length === 0
+                        ? "Нет доступных провайдеров"
+                        : "Выберите провайдера"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Не выбрано</SelectItem>
+                  {activeEmbeddingProviders.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </SelectItem>
+                  ))}
+                  {isCustomProvider && embeddingProviderValue && (
+                    <SelectItem value={embeddingProviderValue}>
+                      {embeddingProviderValue} (не найден)
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Используется для генерации векторных представлений документов.</p>
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="kb-search-collection">Коллекция Qdrant</Label>
+              <Input
+                id="kb-search-collection"
+                value={collectionValue}
+                onChange={(event) => handleCollectionChange(event.target.value)}
+                placeholder={
+                  isVectorCollectionsLoading ? "Загрузка списка коллекций..." : "Укажите название коллекции"
+                }
+                list={vectorCollections.length > 0 ? collectionDatalistId : undefined}
+                disabled={disabled}
+              />
+              {vectorCollections.length > 0 && (
+                <datalist id={collectionDatalistId}>
+                  {vectorCollections.map((collection) => (
+                    <option key={collection.name} value={collection.name} />
+                  ))}
+                </datalist>
+              )}
+              <p className="text-xs text-muted-foreground">Коллекция, в которой хранятся вектора документов.</p>
+            </div>
+          </div>
+          {hints.length > 0 && <div className="space-y-2">{hints}</div>}
+        </CardContent>
+        <CardFooter className="py-3 text-xs text-muted-foreground">
+          <p>
+            Данные сохраняются в localStorage с ключом
+            <span className="ml-1 font-mono text-[11px]">{storageKey}</span>.
+          </p>
+        </CardFooter>
+      </Card>
+    );
+  };
+
   const renderOverview = (detail: Extract<KnowledgeBaseNodeDetail, { type: "base" }>) => (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -2060,6 +2531,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           onStateChange={handleCrawlStateChange}
           onDocumentsSaved={handleCrawlDocumentsSaved}
         />
+        {renderSearchSettingsCard()}
         {detailContent}
       </div>
     );
@@ -2234,6 +2706,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         open={isSearchDialogOpen}
         onOpenChange={(open) => setIsSearchDialogOpen(open && Boolean(selectedBase))}
         onSelectResult={handleSearchResultSelect}
+        searchOptions={searchDialogOptions}
       />
       {vectorizeDialogState && (
         <VectorizeKnowledgeDocumentDialog
