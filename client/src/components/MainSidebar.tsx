@@ -20,7 +20,6 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   Search,
-  Database,
   BookOpen,
   Boxes,
   Brain,
@@ -51,10 +50,6 @@ interface SidebarItem {
   locked?: boolean;
 }
 
-interface Stats {
-  pages: { total: number; };
-}
-
 interface MainSidebarProps {
   showAdminLink?: boolean;
   user: PublicUser;
@@ -74,11 +69,6 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
       const res = await apiRequest("GET", "/api/knowledge/bases");
       return (await res.json()) as KnowledgeBaseSummary[];
     },
-  });
-
-  const { data: stats } = useQuery<Stats>({
-    queryKey: ['/api/stats'],
-    refetchInterval: 10000,
   });
 
   useEffect(() => {
@@ -212,13 +202,6 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
     {
       label: "Данные",
       items: [
-        {
-          title: "Индексированные страницы",
-          url: "/pages",
-          icon: Database,
-          badge: stats?.pages ? stats.pages.total.toString() : "0",
-          badgeVariant: "default",
-        },
         {
           title: "Коллекции",
           url: "/vector/collections",
