@@ -40,6 +40,8 @@ export interface SuggestResponseSection {
   source?: string | null;
   url?: string | null;
   breadcrumbs?: string[] | null;
+  node_id?: string | null;
+  node_slug?: string | null;
 }
 
 export interface SuggestResponseAskAi {

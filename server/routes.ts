@@ -2665,6 +2665,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         snippet: entry.snippet,
         score: entry.score,
         source: entry.source,
+        node_id: entry.nodeId ?? null,
+        node_slug: entry.nodeSlug ?? null,
       }));
 
       res.json({
@@ -2769,6 +2771,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         snippet: entry.snippet,
         score: entry.score,
         source: entry.source,
+        node_id: entry.nodeId ?? null,
+        node_slug: entry.nodeSlug ?? null,
       }));
 
       res.json({

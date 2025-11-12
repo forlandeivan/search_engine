@@ -325,3 +325,22 @@ export type UpdateKnowledgeNodeParentRequest = {
 export type DeleteKnowledgeNodeResponse = {
   deletedIds: string[];
 };
+
+export type KnowledgeBaseSuggestSection = {
+  chunkId: string;
+  documentId: string;
+  docTitle: string;
+  sectionTitle: string | null;
+  snippet: string;
+  score: number;
+  source: "sections" | "content";
+  nodeId?: string | null;
+  nodeSlug?: string | null;
+};
+
+export type KnowledgeBaseSuggestResponse = {
+  query: string;
+  knowledgeBaseId: string;
+  normalizedQuery: string;
+  sections: KnowledgeBaseSuggestSection[];
+};

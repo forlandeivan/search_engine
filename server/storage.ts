@@ -51,6 +51,8 @@ export type KnowledgeChunkSearchEntry = {
   text: string;
   score: number;
   source: "sections" | "content";
+  nodeId: string | null;
+  nodeSlug: string | null;
 };
 
 function getRowString(row: Record<string, unknown>, key: string): string {
@@ -2916,6 +2918,8 @@ export class DatabaseStorage implements IStorage {
       SELECT
         chunk.id AS chunk_id,
         chunk.document_id,
+        node.id AS node_id,
+        node.slug AS node_slug,
         node.title AS doc_title,
         COALESCE(chunk.metadata->>'heading', (chunk.section_path[array_length(chunk.section_path, 1)])) AS section_title,
         chunk.text,
@@ -2951,6 +2955,8 @@ export class DatabaseStorage implements IStorage {
           SELECT
             chunk.id AS chunk_id,
             chunk.document_id,
+            node.id AS node_id,
+            node.slug AS node_slug,
             node.title AS doc_title,
             COALESCE(chunk.metadata->>'heading', (chunk.section_path[array_length(chunk.section_path, 1)])) AS section_title,
             chunk.text,
@@ -2970,6 +2976,8 @@ export class DatabaseStorage implements IStorage {
         SELECT
           ranked.chunk_id,
           ranked.document_id,
+          ranked.node_id,
+          ranked.node_slug,
           ranked.doc_title,
           ranked.section_title,
           ranked.text,
@@ -2994,6 +3002,9 @@ export class DatabaseStorage implements IStorage {
       }
 
       const docTitle = getRowString(rowRecord, "doc_title");
+      const nodeIdValue = getRowString(rowRecord, "node_id");
+      const nodeSlugValue = getRowString(rowRecord, "node_slug");
+      const documentIdValue = getRowString(rowRecord, "document_id");
 
       const sectionTitleRaw = rowRecord.section_title;
       const resolvedTitle =
@@ -3005,16 +3016,21 @@ export class DatabaseStorage implements IStorage {
 
       const snippet = text.length > 320 ? `${text.slice(0, 320)}…` : text;
       const score = Number(rowRecord.score ?? 0) || 0;
+      const documentId = documentIdValue.trim().length > 0 ? documentIdValue.trim() : documentIdValue;
+      const nodeId = nodeIdValue.length > 0 ? nodeIdValue : null;
+      const nodeSlug = nodeSlugValue.length > 0 ? nodeSlugValue : null;
 
       combined.set(chunkId, {
         chunkId,
-        documentId: String(rowRecord.document_id ?? ""),
+        documentId,
         docTitle,
         sectionTitle: resolvedTitle,
         snippet,
         text,
         score,
         source: "sections",
+        nodeId,
+        nodeSlug,
       });
     }
 
@@ -3027,6 +3043,9 @@ export class DatabaseStorage implements IStorage {
 
       const docTitle = getRowString(rowRecord, "doc_title");
       const text = getRowString(rowRecord, "text");
+      const nodeIdValue = getRowString(rowRecord, "node_id");
+      const nodeSlugValue = getRowString(rowRecord, "node_slug");
+      const documentIdValue = getRowString(rowRecord, "document_id");
 
       const snippetValue = (() => {
         const snippet = getRowString(rowRecord, "snippet");
@@ -3047,17 +3066,22 @@ export class DatabaseStorage implements IStorage {
 
       const rank = Number(rowRecord.rank ?? 0) || 0;
       const existing = combined.get(chunkId);
+      const documentId = documentIdValue.trim().length > 0 ? documentIdValue.trim() : documentIdValue;
+      const nodeId = nodeIdValue.length > 0 ? nodeIdValue : null;
+      const nodeSlug = nodeSlugValue.length > 0 ? nodeSlugValue : null;
 
       if (!existing || rank > existing.score) {
         combined.set(chunkId, {
           chunkId,
-          documentId: String(rowRecord.document_id ?? ""),
+          documentId,
           docTitle,
           sectionTitle: resolvedTitle,
           snippet: snippetValue,
           text,
           score: rank,
           source: "content",
+          nodeId: nodeId ?? existing?.nodeId ?? null,
+          nodeSlug: nodeSlug ?? existing?.nodeSlug ?? null,
         });
       }
     }
