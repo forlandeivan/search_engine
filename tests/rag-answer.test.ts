@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import type { AddressInfo } from "net";
+import { DEFAULT_LLM_REQUEST_CONFIG } from "@shared/schema";
 
 const executeMock = vi.fn<(query: unknown) => Promise<{ rows: Record<string, unknown>[] }>>();
 
@@ -274,7 +275,28 @@ describe("POST /public/rag/answer", () => {
       const body = await response.json();
 
       expect(Array.isArray(body.citations)).toBe(true);
-      expect(body.citations[0]).toMatchObject({ node_id: "node-1" });
+      expect(body.citations[0]).toMatchObject({ node_id: "node-1", node_slug: "node-slug" });
+      expect(Array.isArray(body.chunks)).toBe(true);
+      expect(body.chunks[0]).toMatchObject({ node_id: "node-1", node_slug: "node-slug" });
+
+      const completionCall = mockFetch.mock.calls.find(([input]) => {
+        const url = typeof input === "string" ? input : input?.url;
+        return url === "https://llm.example/completions";
+      });
+
+      expect(completionCall).toBeDefined();
+
+      const completionInit = completionCall?.[1] as { body?: string } | undefined;
+      expect(completionInit).toBeDefined();
+
+      const parsedRequest = JSON.parse(String(completionInit?.body ?? "{}"));
+      const messagesField = DEFAULT_LLM_REQUEST_CONFIG.messagesField;
+      const messages = parsedRequest[messagesField];
+      expect(Array.isArray(messages)).toBe(true);
+      const lastMessage = Array.isArray(messages) ? messages[messages.length - 1] : null;
+      expect(typeof lastMessage?.content).toBe("string");
+      expect(lastMessage?.content).toContain("node-1");
+      expect(lastMessage?.content).toContain("node-slug");
     } finally {
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => {

@@ -26,6 +26,13 @@ import { invalidateCorsCache } from "./cors-cache";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
 import {
+  buildLlmRequestBody,
+  mergeLlmRequestConfig,
+  mergeLlmResponseConfig,
+  type LlmContextRecord,
+  type RagResponseFormat,
+} from "./search/utils";
+import {
   listKnowledgeBases,
   getKnowledgeNodeDetail,
   deleteKnowledgeNode,
@@ -1574,12 +1581,6 @@ async function fetchEmbeddingVector(
   };
 }
 
-type LlmContextRecord = {
-  index: number;
-  score?: number | null;
-  payload: Record<string, unknown> | null;
-};
-
 interface LlmCompletionResult {
   answer: string;
   usageTokens?: number | null;
@@ -1613,8 +1614,6 @@ type GigachatStreamOptions = {
   includeQueryVectorInResponse: boolean;
   collectionName: string;
 };
-
-type RagResponseFormat = "text" | "markdown" | "html";
 
 function sendSseEvent(res: Response, eventName: string, data?: unknown) {
   const body =
@@ -1955,30 +1954,6 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
   res.end();
 }
 
-function mergeLlmRequestConfig(provider: LlmProvider): LlmRequestConfig {
-  const config =
-    provider.requestConfig && typeof provider.requestConfig === "object"
-      ? (provider.requestConfig as Partial<LlmRequestConfig>)
-      : undefined;
-
-  return {
-    ...DEFAULT_LLM_REQUEST_CONFIG,
-    ...(config ?? {}),
-  };
-}
-
-function mergeLlmResponseConfig(provider: LlmProvider): LlmResponseConfig {
-  const config =
-    provider.responseConfig && typeof provider.responseConfig === "object"
-      ? (provider.responseConfig as Partial<LlmResponseConfig>)
-      : undefined;
-
-  return {
-    ...DEFAULT_LLM_RESPONSE_CONFIG,
-    ...(config ?? {}),
-  };
-}
-
 function getValueByJsonPath(source: unknown, path: string): unknown {
   if (!path || typeof path !== "string") {
     return undefined;
@@ -2014,101 +1989,6 @@ function getValueByJsonPath(source: unknown, path: string): unknown {
   }
 
   return current;
-}
-
-function stringifyPayloadForContext(payload: Record<string, unknown> | null): string {
-  if (!payload || Object.keys(payload).length === 0) {
-    return "Нет данных";
-  }
-
-  try {
-    const serialized = JSON.stringify(payload, null, 2);
-    return serialized.length > 4000 ? `${serialized.slice(0, 4000)}…` : serialized;
-  } catch {
-    return String(payload);
-  }
-}
-
-function buildLlmRequestBody(
-  provider: LlmProvider,
-  query: string,
-  context: LlmContextRecord[],
-  modelOverride?: string,
-  options?: { stream?: boolean; responseFormat?: RagResponseFormat },
-) {
-  const requestConfig = mergeLlmRequestConfig(provider);
-  const messages: Array<{ role: string; content: string }> = [];
-
-  if (requestConfig.systemPrompt && requestConfig.systemPrompt.trim()) {
-    messages.push({ role: "system", content: requestConfig.systemPrompt.trim() });
-  }
-
-  const contextText = context
-    .map(({ index, score, payload }) => {
-      const scoreText = typeof score === "number" ? ` (score: ${score.toFixed(4)})` : "";
-      return `Источник ${index}${scoreText}:\n${stringifyPayloadForContext(payload)}`;
-    })
-    .join("\n\n");
-
-  const responseFormat = options?.responseFormat ?? "text";
-  let formatInstruction = "Ответ верни в виде обычного текста.";
-
-  if (responseFormat === "markdown") {
-    formatInstruction =
-      "Используй Markdown-разметку (заголовки, списки, ссылки) для структурирования ответа. Не добавляй внешний CSS.";
-  } else if (responseFormat === "html") {
-    formatInstruction =
-      "Верни ответ в виде чистого HTML без внешних стилей. Используй семантичные теги <p>, <ul>, <li>, <strong>, <a>.";
-  }
-
-  const userParts = [
-    `Вопрос: ${query}`,
-    context.length > 0
-      ? `Контекст:\n${contextText}`
-      : "Контекст отсутствует. Если ответ не найден, честно сообщи об этом.",
-    `Сформируй понятный ответ на русском языке, опираясь только на предоставленный контекст. Если ответ не найден, сообщи об этом. Не придумывай фактов. ${formatInstruction}`.trim(),
-  ];
-
-  messages.push({ role: "user", content: userParts.join("\n\n") });
-
-  const effectiveModel = modelOverride && modelOverride.trim().length > 0 ? modelOverride.trim() : provider.model;
-
-  const body: Record<string, unknown> = {
-    [requestConfig.modelField]: effectiveModel,
-    [requestConfig.messagesField]: messages,
-  };
-
-  if (requestConfig.temperature !== undefined) {
-    body.temperature = requestConfig.temperature;
-  }
-
-  if (requestConfig.maxTokens !== undefined) {
-    body.max_tokens = requestConfig.maxTokens;
-  }
-
-  if (requestConfig.topP !== undefined) {
-    body.top_p = requestConfig.topP;
-  }
-
-  if (requestConfig.presencePenalty !== undefined) {
-    body.presence_penalty = requestConfig.presencePenalty;
-  }
-
-  if (requestConfig.frequencyPenalty !== undefined) {
-    body.frequency_penalty = requestConfig.frequencyPenalty;
-  }
-
-  for (const [key, value] of Object.entries(requestConfig.additionalBodyFields ?? {})) {
-    if (body[key] === undefined) {
-      body[key] = value;
-    }
-  }
-
-  if (options?.stream !== undefined) {
-    body.stream = options.stream;
-  }
-
-  return body;
 }
 
 async function fetchLlmCompletion(
@@ -2974,6 +2854,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sectionTitle: string | null;
           text: string;
           nodeId: string | null;
+          nodeSlug: string | null;
         }
       >();
       const recordToChunk = new Map<string, string>();
@@ -2985,6 +2866,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sectionTitle: detail.sectionTitle,
           text: detail.text,
           nodeId: detail.nodeId,
+          nodeSlug: detail.nodeSlug,
         });
       }
 
@@ -2995,6 +2877,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sectionTitle: detail.sectionTitle,
           text: detail.text,
           nodeId: detail.nodeId,
+          nodeSlug: detail.nodeSlug,
         });
 
         if (detail.vectorRecordId) {
@@ -3014,6 +2897,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           bm25Score: number;
           vectorScore: number;
           nodeId: string | null;
+          nodeSlug: string | null;
         }
       >();
 
@@ -3037,6 +2921,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           bm25Score: entry.score,
           vectorScore: 0,
           nodeId: entry.nodeId ?? null,
+          nodeSlug: entry.nodeSlug ?? null,
         });
       }
 
@@ -3069,6 +2954,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const snippet = baseSnippet ?? existing?.snippet ?? buildSnippet(detail.text);
         const nodeId = detail.nodeId ?? existing?.nodeId ?? null;
+        const nodeSlug = detail.nodeSlug ?? existing?.nodeSlug ?? null;
 
         aggregated.set(chunkId, {
           chunkId,
@@ -3080,6 +2966,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           bm25Score: existing?.bm25Score ?? 0,
           vectorScore: Math.max(existing?.vectorScore ?? 0, entry.score),
           nodeId,
+          nodeSlug,
         });
       }
 
@@ -3111,10 +2998,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             text: item.text,
             snippet: item.snippet,
             sectionTitle: item.sectionTitle,
+            nodeId: item.nodeId,
+            nodeSlug: item.nodeSlug,
           },
           document: {
             id: item.documentId,
             title: item.docTitle,
+            nodeId: item.nodeId,
+            nodeSlug: item.nodeSlug,
           },
           scores: {
             bm25: item.bm25Score,
@@ -3202,6 +3093,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           vector: item.vectorScore,
         },
         node_id: item.nodeId ?? null,
+        node_slug: item.nodeSlug ?? null,
       }));
 
       res.json({
@@ -3223,6 +3115,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             vector: item.vectorScore,
           },
           node_id: item.nodeId ?? null,
+          node_slug: item.nodeSlug ?? null,
         })),
         usage: {
           embeddingTokens: embeddingUsageTokens,

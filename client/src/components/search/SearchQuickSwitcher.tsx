@@ -114,6 +114,9 @@ function sanitizeSuggestItem(item: SuggestResponseItem, fallbackId: string): Sug
   const resolvedNodeId = normalizeString(
     item.nodeId ?? (item as { node_id?: string | null }).node_id ?? item.docId,
   );
+  const resolvedNodeSlug = normalizeString(
+    item.nodeSlug ?? (item as { node_slug?: string | null }).node_slug ?? "",
+  );
 
   return {
     ...item,
@@ -123,6 +126,7 @@ function sanitizeSuggestItem(item: SuggestResponseItem, fallbackId: string): Sug
     breadcrumbs: Array.isArray(item.breadcrumbs) ? item.breadcrumbs : [],
     snippet_html: typeof item.snippet_html === "string" ? item.snippet_html : "",
     nodeId: resolvedNodeId || null,
+    nodeSlug: resolvedNodeSlug || null,
   };
 }
 
@@ -151,6 +155,7 @@ function mapSectionToItem(section: SuggestResponseSection, index: number): Sugge
     : [];
   const score = resolveNumber(section.score);
   const nodeId = normalizeString(section.node_id) || docId || chunkId;
+  const nodeSlug = normalizeString(section.node_slug);
 
   const baseId = chunkId || `${docId || "doc"}-${index + 1}`;
   const displayDocTitle = docTitle || sectionTitle || `Документ ${index + 1}`;
@@ -182,6 +187,7 @@ function mapSectionToItem(section: SuggestResponseSection, index: number): Sugge
     chunkId: chunkId || null,
     anchor: null,
     nodeId: nodeId || null,
+    nodeSlug: nodeSlug || null,
   } satisfies SuggestResponseItem;
 }
 
@@ -989,6 +995,20 @@ export function SearchQuickSwitcher({
             {highlightedSnippet}
           </div>
         )}
+        {(item.nodeId || item.nodeSlug) && (
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            {item.nodeId && (
+              <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono">
+                nodeId: {truncateMiddle(item.nodeId, 28)}
+              </span>
+            )}
+            {item.nodeSlug && (
+              <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono">
+                slug: {truncateMiddle(item.nodeSlug, 28)}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -1244,10 +1264,19 @@ export function SearchQuickSwitcher({
                                     <div className="truncate text-xs text-muted-foreground">{sectionTitle}</div>
                                   )}
                                 </div>
-                                {source.node_id && (
-                                  <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-[11px] font-mono text-muted-foreground">
-                                    nodeId: {source.node_id}
-                                  </span>
+                                {(source.node_id || source.node_slug) && (
+                                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                                    {source.node_id && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono">
+                                        nodeId: {truncateMiddle(source.node_id, 28)}
+                                      </span>
+                                    )}
+                                    {source.node_slug && (
+                                      <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono">
+                                        slug: {truncateMiddle(source.node_slug, 28)}
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                               {snippet && <p className="text-xs text-muted-foreground leading-relaxed">{snippet}</p>}

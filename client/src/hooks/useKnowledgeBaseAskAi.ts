@@ -241,6 +241,7 @@ const normalizeChunk = (entry: unknown, fallbackIndex: number): RagChunk | null 
   const bm25Score = scoresRecord ? getNumber(scoresRecord, "bm25") ?? null : null;
   const vectorScore = scoresRecord ? getNumber(scoresRecord, "vector") ?? null : null;
   const nodeId = getString(record, "node_id") ?? getString(record, "nodeId") ?? null;
+  const nodeSlug = getString(record, "node_slug") ?? getString(record, "nodeSlug") ?? null;
 
   return {
     chunk_id: chunkId,
@@ -258,6 +259,7 @@ const normalizeChunk = (entry: unknown, fallbackIndex: number): RagChunk | null 
           }
         : undefined,
     node_id: nodeId ?? undefined,
+    node_slug: nodeSlug ?? undefined,
   };
 };
 
