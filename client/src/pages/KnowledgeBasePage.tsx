@@ -73,6 +73,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -112,6 +113,7 @@ import {
   GitBranch,
   Globe2,
   Loader2,
+  Info,
   MoreVertical,
   PencilLine,
   Plus,
@@ -2281,9 +2283,23 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     return (
       <Card>
         <CardHeader className="space-y-1.5 py-3">
-          <CardTitle className="text-base">Параметры поиска</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-base">Параметры поиска</CardTitle>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs leading-relaxed">
+                  Диалог поиска работает только внутри выбранной базы. Откройте его сочетанием Ctrl+K или ⌘K —
+                  подсказки будут использовать сохранённые ниже локальные параметры.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
           <CardDescription>
-            Настройки применяются к диалогу поиска по базе «{selectedBase.name}» и сохраняются локально.
+            Диалог поиска (Ctrl+K или ⌘K) работает в контексте базы «{selectedBase.name}», использует локальные параметры ниже
+            и сохраняет их в браузере.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

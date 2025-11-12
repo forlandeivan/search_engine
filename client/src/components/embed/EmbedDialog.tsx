@@ -737,7 +737,7 @@ export function EmbedDialog({
                 </div>
                 <Textarea value={snippet} readOnly className="h-64 font-mono text-xs" />
                 <p className="text-xs text-muted-foreground">
-                  При необходимости обновите параметры (провайдеры, лимиты) в песочнице и сформируйте код заново.
+                  При необходимости обновите параметры (провайдеры, лимиты) в настройках интеграции и сформируйте код заново.
                 </p>
               </section>
             </div>
