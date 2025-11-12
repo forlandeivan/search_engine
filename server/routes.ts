@@ -75,6 +75,7 @@ import type {
   KnowledgeDocumentVectorizationJobResult,
   KnowledgeBaseCrawlJobStatus,
   KnowledgeBaseCrawlConfig,
+  KnowledgeBaseRagConfigResponse,
 } from "@shared/knowledge-base";
 import {
   castValueToType,
@@ -3174,6 +3175,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const llmDuration = performance.now() - llmStart;
 
       const totalDuration = performance.now() - totalStart;
+
+      await storage.recordKnowledgeBaseRagRequest({
+        workspaceId,
+        knowledgeBaseId,
+        topK: body.top_k ?? null,
+        bm25Weight,
+        bm25Limit,
+        vectorWeight,
+        vectorLimit: vectorConfigured ? vectorLimit : null,
+        embeddingProviderId: vectorConfigured
+          ? body.hybrid.vector.embedding_provider_id?.trim() || null
+          : null,
+        collection: vectorConfigured ? body.hybrid.vector.collection?.trim() || null : null,
+      });
 
       const citations = combinedResults.map((item) => ({
         chunk_id: item.chunkId,
@@ -6958,6 +6973,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json(bases);
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.get("/api/knowledge/bases/:baseId/rag/config/latest", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const base = await storage.getKnowledgeBase(baseId);
+
+      if (!base || base.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "База знаний не найдена" });
+      }
+
+      const config = await storage.getLatestKnowledgeBaseRagConfig(workspaceId, baseId);
+      const response: KnowledgeBaseRagConfigResponse = {
+        config:
+          config ?? {
+            workspaceId,
+            knowledgeBaseId: baseId,
+            topK: null,
+            bm25: null,
+            vector: null,
+            recordedAt: null,
+          },
+      };
+
+      return res.json(response);
+    } catch (error) {
+      console.error("Не удалось получить конфигурацию RAG для базы знаний:", error);
+      return res.status(500).json({ error: "Не удалось получить конфигурацию RAG" });
     }
   });
 

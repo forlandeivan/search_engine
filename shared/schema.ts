@@ -12,6 +12,7 @@ import {
   foreignKey,
   uniqueIndex,
   index,
+  doublePrecision,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -596,6 +597,26 @@ export const embeddingProviders = pgTable("embedding_providers", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+export const knowledgeBaseRagRequests = pgTable("knowledge_base_rag_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+  workspaceId: varchar("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  knowledgeBaseId: varchar("knowledge_base_id")
+    .notNull()
+    .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+  topK: integer("top_k"),
+  bm25Weight: doublePrecision("bm25_weight"),
+  bm25Limit: integer("bm25_limit"),
+  vectorWeight: doublePrecision("vector_weight"),
+  vectorLimit: integer("vector_limit"),
+  embeddingProviderId: varchar("embedding_provider_id").references(() => embeddingProviders.id, {
+    onDelete: "set null",
+  }),
+  collection: text("collection"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 export const llmProviders = pgTable("llm_providers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
   name: text("name").notNull(),
@@ -961,6 +982,8 @@ export type PublicLlmProvider = Omit<LlmProvider, "authorizationKey" | "availabl
   hasAuthorizationKey: boolean;
   availableModels: LlmModelOption[];
 };
+export type KnowledgeBaseRagRequest = typeof knowledgeBaseRagRequests.$inferSelect;
+export type KnowledgeBaseRagRequestInsert = typeof knowledgeBaseRagRequests.$inferInsert;
 export type KnowledgeDocumentChunkSet = typeof knowledgeDocumentChunkSets.$inferSelect;
 export type KnowledgeDocumentChunkSetInsert = typeof knowledgeDocumentChunkSets.$inferInsert;
 export type KnowledgeDocumentChunkItem = typeof knowledgeDocumentChunkItems.$inferSelect;

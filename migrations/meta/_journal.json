@@ -183,6 +183,13 @@
       "when": 0,
       "tag": "0031_drop_pages_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 0,
+      "tag": "0032_knowledge_base_rag_requests",
+      "breakpoints": true
     }
   ]
 }
