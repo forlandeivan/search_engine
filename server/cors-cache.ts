@@ -93,34 +93,15 @@ const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 // Function to refresh the CORS hostname cache
 export async function refreshCorsCache(): Promise<Set<string>> {
   try {
-    const sites = await storage.getAllSites();
     const embedDomains = await storage.listAllWorkspaceEmbedDomains();
     const staticHostnames = getStaticCorsHostnames();
     const hostnames = new Set<string>(staticHostnames);
 
-    // Add Tilda domains
     hostnames.add('tilda.ws');
 
     for (const domain of embedDomains) {
       if (domain) {
         hostnames.add(domain);
-      }
-    }
-
-    // Process database sites and extract hostnames
-    for (const site of sites) {
-      const urlsToProcess = site.startUrls?.length ? site.startUrls : site.url ? [site.url] : [];
-
-      for (const rawUrl of urlsToProcess) {
-        if (!rawUrl) {
-          continue;
-        }
-        try {
-          const url = new URL(rawUrl);
-          hostnames.add(url.hostname);
-        } catch (urlError) {
-          log(`CORS cache: Invalid URL in database: ${rawUrl} - ${urlError}`);
-        }
       }
     }
 
@@ -130,7 +111,7 @@ export async function refreshCorsCache(): Promise<Set<string>> {
       timestamp: Date.now()
     };
 
-    log(`CORS cache refreshed with ${hostnames.size} hostnames: [${Array.from(hostnames).join(', ')}]`);
+    log(`CORS cache refreshed with ${hostnames.size} хостов (источники: статические переменные и встраивание)`);
     return hostnames;
   } catch (error) {
     const staticHostnames = getStaticCorsHostnames();

@@ -1,8 +1,8 @@
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
-import { storage, ensureDatabaseSchema } from "./storage";
+import { setupVite, log } from "./vite";
+import { ensureDatabaseSchema } from "./storage";
 import { getAllowedHostnames } from "./cors-cache";
 import fs from "fs";
 import path from "path";
@@ -271,17 +271,6 @@ app.use((req, res, next) => {
         log(`Не удалось подготовить схему базы данных: ${error instanceof Error ? error.message : String(error)}`);
       }
 
-      // Reset any stuck crawling sites on server startup
-      try {
-        const sites = await storage.getAllSites();
-        const stuckSites = sites.filter(site => site.status === 'crawling');
-        for (const site of stuckSites) {
-          await storage.updateSite(site.id, { status: 'idle' });
-          log(`Reset stuck crawling status for site: ${site.url ?? 'без URL'}`);
-        }
-      } catch (error) {
-        log(`Warning: Failed to reset stuck crawling sites: ${error}`);
-      }
     })(),
     new Promise((_, reject) => 
       setTimeout(() => reject(new Error('Database initialization timeout')), 30000)
