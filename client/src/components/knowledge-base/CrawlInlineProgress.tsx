@@ -266,14 +266,16 @@ export function CrawlInlineProgress({
 
         setConnectionError(null);
       } catch (error) {
-        if (cancelled || abortControllerRef.current?.signal.aborted) {
+        if (cancelled || controller.signal.aborted) {
           return;
         }
         const message =
           error instanceof Error ? error.message : "Не удалось получить статус краулинга";
         setConnectionError(message);
       } finally {
-        abortControllerRef.current = null;
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
         if (!cancelled) {
           scheduleNextPoll();
         }
