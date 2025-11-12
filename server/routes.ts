@@ -62,7 +62,6 @@ import {
   type LlmRequestConfig,
   type LlmResponseConfig,
   type AuthProviderInsert,
-  type ContentChunk,
   type Site,
   type WorkspaceEmbedKey,
   DEFAULT_QDRANT_CONFIG,

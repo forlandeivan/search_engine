@@ -1,4 +1,4 @@
-import { sql, relations } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -7,7 +7,6 @@ import {
   integer,
   boolean,
   jsonb,
-  doublePrecision,
   customType,
   primaryKey,
   foreignKey,
@@ -29,60 +28,6 @@ const ltree = customType<{ data: string; driverData: string }>({
     return "ltree";
   },
 });
-
-export interface ChunkMedia {
-  src: string;
-  alt?: string;
-}
-
-export interface ChunkMetadata {
-  images: ChunkMedia[];
-  links: string[];
-  position: number;
-  wordCount: number;
-  charCount: number;
-  estimatedReadingTimeSec: number;
-  excerpt: string;
-  anchorId?: string;
-  headingLevel?: number;
-  headingText?: string;
-  sectionPath?: string[];
-  orderIndex?: number;
-  charRange?: [number, number];
-  sourceUrl?: string;
-  markdown?: string;
-}
-
-export interface ContentChunk {
-  id: string;
-  heading: string;
-  level: number;
-  content: string;
-  deepLink: string;
-  markdown?: string;
-  metadata: ChunkMetadata;
-}
-
-export interface PageMetadata {
-  description?: string;
-  keywords?: string;
-  author?: string;
-  publishDate?: string;
-  images?: string[];
-  links?: string[];
-  language?: string;
-  lang?: string;
-  canonicalUrl?: string;
-  finalUrl?: string;
-  fetchedAt?: string;
-  markdown?: string;
-  outLinks?: string[];
-  plainText?: string;
-  extractedAt: string;
-  totalChunks: number;
-  wordCount: number;
-  estimatedReadingTimeSec: number;
-}
 
 // Users table for platform authentication
 export const userRoles = ["admin", "user"] as const;
@@ -627,44 +572,6 @@ export const sites = pgTable("sites", {
     .notNull(),
 });
 
-// Pages table for storing crawled page content
-export const pages = pgTable("pages", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  siteId: varchar("site_id").notNull().references(() => sites.id, { onDelete: "cascade" }),
-  url: text("url").notNull().unique(),
-  title: text("title"),
-  content: text("content"), // Extracted text content
-  metaDescription: text("meta_description"),
-  metadata: jsonb("metadata").$type<PageMetadata>().default(sql`'{}'::jsonb`).notNull(),
-  chunks: jsonb("chunks").$type<ContentChunk[]>().default(sql`'[]'::jsonb`).notNull(),
-  statusCode: integer("status_code"),
-  lastCrawled: timestamp("last_crawled").notNull(),
-  contentHash: text("content_hash"), // For detecting content changes
-  // Full-Text Search vectors with weights (A=highest, D=lowest)
-  searchVectorTitle: tsvector("search_vector_title"), // tsvector for title (weight A)
-  searchVectorContent: tsvector("search_vector_content"), // tsvector for content+meta (weight C+B)
-  searchVectorCombined: tsvector("search_vector_combined"), // combined tsvector with weights
-  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-  workspaceId: varchar("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-});
-
-// Search index for fast text search
-export const searchIndex = pgTable("search_index", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  pageId: varchar("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
-  term: text("term").notNull(),
-  frequency: integer("frequency").notNull().default(1),
-  position: integer("position").notNull(),
-  relevance: doublePrecision("relevance"), // Add missing relevance column
-  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-  workspaceId: varchar("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-});
-
 export const embeddingProviders = pgTable("embedding_providers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -715,25 +622,6 @@ export const llmProviders = pgTable("llm_providers", {
 });
 
 // Relations
-export const sitesRelations = relations(sites, ({ many }) => ({
-  pages: many(pages),
-}));
-
-export const pagesRelations = relations(pages, ({ one, many }) => ({
-  site: one(sites, {
-    fields: [pages.siteId],
-    references: [sites.id],
-  }),
-  searchIndex: many(searchIndex),
-}));
-
-export const searchIndexRelations = relations(searchIndex, ({ one }) => ({
-  page: one(pages, {
-    fields: [searchIndex.pageId],
-    references: [pages.id],
-  }),
-}));
-
 // Zod schemas for validation
 export const insertSiteSchema = createInsertSchema(sites)
   .omit({
@@ -774,19 +662,6 @@ export const insertSiteSchema = createInsertSchema(sites)
     followExternalLinks: z.boolean().optional(),
     excludePatterns: z.array(z.string()).optional(),
   });
-
-export const insertPageSchema = createInsertSchema(pages).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-  workspaceId: true,
-});
-
-export const insertSearchIndexSchema = createInsertSchema(searchIndex).omit({
-  id: true,
-  createdAt: true,
-  workspaceId: true,
-});
 
 export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProviders)
   .omit({
@@ -1047,10 +922,6 @@ export const upsertAuthProviderSchema = z
 export type Site = typeof sites.$inferSelect;
 export type InsertSite = z.infer<typeof insertSiteSchema>;
 export type SiteInsert = typeof sites.$inferInsert;
-export type Page = typeof pages.$inferSelect;
-export type InsertPage = z.infer<typeof insertPageSchema>;
-export type SearchIndexEntry = typeof searchIndex.$inferSelect;
-export type InsertSearchIndexEntry = z.infer<typeof insertSearchIndexSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type WorkspaceEmbedKey = typeof workspaceEmbedKeys.$inferSelect;
 export type WorkspaceEmbedKeyInsert = typeof workspaceEmbedKeys.$inferInsert;
