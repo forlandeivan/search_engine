@@ -16,6 +16,7 @@ import {
   knowledgeDocumentChunkSets,
   workspaceEmbedKeys,
   workspaceEmbedKeyDomains,
+  knowledgeBaseRagRequests,
   type Site,
   type SiteInsert,
   type User,
@@ -32,11 +33,13 @@ import {
   type AuthProviderType,
   type WorkspaceEmbedKey,
   type WorkspaceEmbedKeyDomain,
+  type KnowledgeBaseRagRequest,
 } from "@shared/schema";
 import { db } from "./db";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
+import type { KnowledgeBaseRagConfig } from "@shared/knowledge-base";
 
 let globalUserAuthSchemaReady = false;
 
@@ -643,6 +646,23 @@ export interface IStorage {
     workspaceId?: string,
   ): Promise<LlmProvider | undefined>;
   deleteLlmProvider(id: string, workspaceId?: string): Promise<boolean>;
+
+  // Knowledge base RAG telemetry
+  recordKnowledgeBaseRagRequest(entry: {
+    workspaceId: string;
+    knowledgeBaseId: string;
+    topK: number | null;
+    bm25Weight: number | null;
+    bm25Limit: number | null;
+    vectorWeight: number | null;
+    vectorLimit: number | null;
+    embeddingProviderId: string | null;
+    collection: string | null;
+  }): Promise<void>;
+  getLatestKnowledgeBaseRagConfig(
+    workspaceId: string,
+    knowledgeBaseId: string,
+  ): Promise<KnowledgeBaseRagConfig | null>;
 }
 
 let embeddingProvidersTableEnsured = false;
@@ -662,6 +682,9 @@ let ensuringWorkspaceMembersTable: Promise<void> | null = null;
 
 let workspaceCollectionsTableEnsured = false;
 let ensuringWorkspaceCollectionsTable: Promise<void> | null = null;
+
+let knowledgeBaseRagRequestsTableEnsured = false;
+let ensuringKnowledgeBaseRagRequestsTable: Promise<void> | null = null;
 
 let knowledgeBaseTablesEnsured = false;
 let ensuringKnowledgeBaseTables: Promise<void> | null = null;
@@ -1897,6 +1920,57 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
   }
 }
 
+async function ensureKnowledgeBaseRagRequestsTable(): Promise<void> {
+  if (knowledgeBaseRagRequestsTableEnsured) {
+    return;
+  }
+
+  if (ensuringKnowledgeBaseRagRequestsTable) {
+    await ensuringKnowledgeBaseRagRequestsTable;
+    return;
+  }
+
+  ensuringKnowledgeBaseRagRequestsTable = (async () => {
+    await ensureWorkspacesTable();
+    await ensureKnowledgeBaseTables();
+    await ensureEmbeddingProvidersTable();
+
+    const uuidExpression = await getUuidGenerationExpression();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_base_rag_requests" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+        "knowledge_base_id" varchar NOT NULL REFERENCES "knowledge_bases"("id") ON DELETE CASCADE,
+        "top_k" integer,
+        "bm25_weight" double precision,
+        "bm25_limit" integer,
+        "vector_weight" double precision,
+        "vector_limit" integer,
+        "embedding_provider_id" varchar REFERENCES "embedding_providers"("id") ON DELETE SET NULL,
+        "collection" text,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    try {
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS knowledge_base_rag_requests_workspace_base_created_idx
+          ON "knowledge_base_rag_requests" ("workspace_id", "knowledge_base_id", "created_at")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42710", "42P07"]);
+    }
+  })();
+
+  try {
+    await ensuringKnowledgeBaseRagRequestsTable;
+    knowledgeBaseRagRequestsTableEnsured = true;
+  } finally {
+    ensuringKnowledgeBaseRagRequestsTable = null;
+  }
+}
+
 async function ensureLlmProvidersTable(): Promise<void> {
   if (llmProvidersTableEnsured) {
     return;
@@ -3091,6 +3165,140 @@ export class DatabaseStorage implements IStorage {
       .slice(0, limit);
 
     return { normalizedQuery, sections };
+  }
+
+  async recordKnowledgeBaseRagRequest(entry: {
+    workspaceId: string;
+    knowledgeBaseId: string;
+    topK: number | null;
+    bm25Weight: number | null;
+    bm25Limit: number | null;
+    vectorWeight: number | null;
+    vectorLimit: number | null;
+    embeddingProviderId: string | null;
+    collection: string | null;
+  }): Promise<void> {
+    await ensureKnowledgeBaseRagRequestsTable();
+
+    const sanitizedCollection = entry.collection?.trim() ?? null;
+
+    await this.db.insert(knowledgeBaseRagRequests).values({
+      workspaceId: entry.workspaceId,
+      knowledgeBaseId: entry.knowledgeBaseId,
+      topK: entry.topK ?? null,
+      bm25Weight: entry.bm25Weight ?? null,
+      bm25Limit: entry.bm25Limit ?? null,
+      vectorWeight: entry.vectorWeight ?? null,
+      vectorLimit: entry.vectorLimit ?? null,
+      embeddingProviderId: entry.embeddingProviderId ?? null,
+      collection: sanitizedCollection && sanitizedCollection.length > 0 ? sanitizedCollection : null,
+    });
+  }
+
+  async getLatestKnowledgeBaseRagConfig(
+    workspaceId: string,
+    knowledgeBaseId: string,
+  ): Promise<KnowledgeBaseRagConfig | null> {
+    await ensureKnowledgeBaseRagRequestsTable();
+
+    const [latest] = await this.db
+      .select()
+      .from(knowledgeBaseRagRequests)
+      .where(
+        and(
+          eq(knowledgeBaseRagRequests.workspaceId, workspaceId),
+          eq(knowledgeBaseRagRequests.knowledgeBaseId, knowledgeBaseId),
+        ),
+      )
+      .orderBy(desc(knowledgeBaseRagRequests.createdAt))
+      .limit(1);
+
+    let collection: string | null = latest?.collection ?? null;
+
+    if (!collection) {
+      const [embedKey] = await this.db
+        .select({ collection: workspaceEmbedKeys.collection })
+        .from(workspaceEmbedKeys)
+        .where(
+          and(
+            eq(workspaceEmbedKeys.workspaceId, workspaceId),
+            eq(workspaceEmbedKeys.knowledgeBaseId, knowledgeBaseId),
+          ),
+        )
+        .orderBy(desc(workspaceEmbedKeys.createdAt))
+        .limit(1);
+
+      if (embedKey?.collection) {
+        collection = embedKey.collection;
+      }
+    }
+
+    if (!latest && !collection) {
+      return {
+        workspaceId,
+        knowledgeBaseId,
+        topK: null,
+        bm25: null,
+        vector: null,
+        recordedAt: null,
+      };
+    }
+
+    const recordedAt = (() => {
+      const value = latest?.createdAt;
+      if (!value) {
+        return null;
+      }
+
+      if (value instanceof Date) {
+        return value.toISOString();
+      }
+
+      try {
+        const parsed = new Date(value as string);
+        return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+      } catch {
+        return null;
+      }
+    })();
+
+    const bm25Config =
+      latest && (latest.bm25Weight !== null || latest.bm25Limit !== null)
+        ? {
+            weight: latest.bm25Weight ?? null,
+            limit: latest.bm25Limit ?? null,
+          }
+        : null;
+
+    const vectorConfig =
+      latest &&
+      (latest.vectorWeight !== null ||
+        latest.vectorLimit !== null ||
+        latest.embeddingProviderId !== null ||
+        (collection && collection.length > 0))
+        ? {
+            weight: latest.vectorWeight ?? null,
+            limit: latest.vectorLimit ?? null,
+            embeddingProviderId: latest.embeddingProviderId ?? null,
+            collection: collection ?? null,
+          }
+        : collection
+          ? {
+              weight: null,
+              limit: null,
+              embeddingProviderId: null,
+              collection,
+            }
+          : null;
+
+    return {
+      workspaceId,
+      knowledgeBaseId,
+      topK: latest?.topK ?? null,
+      bm25: bm25Config,
+      vector: vectorConfig,
+      recordedAt,
+    };
   }
 
   async getKnowledgeChunksByIds(

@@ -161,6 +161,29 @@ export type KnowledgeDocumentVectorizationJobStatus = {
   result?: KnowledgeDocumentVectorizationJobResult | null;
 };
 
+export type KnowledgeBaseRagConfigWeights = {
+  weight?: number | null;
+  limit?: number | null;
+};
+
+export type KnowledgeBaseRagVectorConfig = KnowledgeBaseRagConfigWeights & {
+  embeddingProviderId?: string | null;
+  collection?: string | null;
+};
+
+export type KnowledgeBaseRagConfig = {
+  workspaceId: string;
+  knowledgeBaseId: string;
+  topK?: number | null;
+  bm25?: KnowledgeBaseRagConfigWeights | null;
+  vector?: KnowledgeBaseRagVectorConfig | null;
+  recordedAt?: string | null;
+};
+
+export type KnowledgeBaseRagConfigResponse = {
+  config: KnowledgeBaseRagConfig;
+};
+
 export type KnowledgeBaseTreeNode = {
   id: string;
   title: string;

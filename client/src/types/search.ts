@@ -111,3 +111,26 @@ export interface RagResponsePayload {
   vectorLength?: number | null;
   debug?: { vectorSearch?: Array<Record<string, unknown>> | null };
 }
+
+export interface KnowledgeBaseRagConfigWeights {
+  weight?: number | null;
+  limit?: number | null;
+}
+
+export interface KnowledgeBaseRagVectorConfig extends KnowledgeBaseRagConfigWeights {
+  embeddingProviderId?: string | null;
+  collection?: string | null;
+}
+
+export interface KnowledgeBaseRagConfigPayload {
+  workspaceId: string;
+  knowledgeBaseId: string;
+  topK?: number | null;
+  bm25?: KnowledgeBaseRagConfigWeights | null;
+  vector?: KnowledgeBaseRagVectorConfig | null;
+  recordedAt?: string | null;
+}
+
+export interface KnowledgeBaseRagConfigResponsePayload {
+  config: KnowledgeBaseRagConfigPayload;
+}
