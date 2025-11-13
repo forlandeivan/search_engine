@@ -77,6 +77,7 @@ import {
   workspaceMemberRoles,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
+import type { KnowledgeBaseSearchSettingsRow } from "@shared/schema";
 import type {
   KnowledgeDocumentVectorizationJobStatus,
   KnowledgeDocumentVectorizationJobResult,
@@ -84,6 +85,12 @@ import type {
   KnowledgeBaseCrawlConfig,
   KnowledgeBaseRagConfigResponse,
 } from "@shared/knowledge-base";
+import {
+  KNOWLEDGE_BASE_SEARCH_CONSTRAINTS,
+  mergeChunkSearchSettings,
+  mergeRagSearchSettings,
+  type KnowledgeBaseSearchSettingsResponsePayload,
+} from "@shared/knowledge-base-search";
 import {
   castValueToType,
   collectionFieldTypes,
@@ -194,6 +201,114 @@ function maskSensitiveInfoInUrl(rawUrl: string): string {
   } catch {
     return rawUrl.replace(/:[^:@]*@/, ":***@");
   }
+}
+
+const chunkSearchConstraints = KNOWLEDGE_BASE_SEARCH_CONSTRAINTS.chunk;
+const ragSearchConstraints = KNOWLEDGE_BASE_SEARCH_CONSTRAINTS.rag;
+
+const chunkSearchSettingsSchema = z
+  .object({
+    topK: z.number().int().min(chunkSearchConstraints.topK.min).max(chunkSearchConstraints.topK.max).optional(),
+    bm25Weight: z
+      .number()
+      .min(chunkSearchConstraints.bm25Weight.min)
+      .max(chunkSearchConstraints.bm25Weight.max)
+      .optional(),
+    synonyms: z.array(z.string()).max(chunkSearchConstraints.synonyms.maxItems ?? 100).optional(),
+    includeDrafts: z.boolean().optional(),
+    highlightResults: z.boolean().optional(),
+    filters: z.string().max(8000).optional(),
+  })
+  .partial();
+
+const ragSearchSettingsSchema = z
+  .object({
+    topK: z.number().int().min(ragSearchConstraints.topK.min).max(ragSearchConstraints.topK.max).optional(),
+    bm25Weight: z
+      .number()
+      .min(ragSearchConstraints.bm25Weight.min)
+      .max(ragSearchConstraints.bm25Weight.max)
+      .optional(),
+    bm25Limit: z
+      .number()
+      .int()
+      .min(ragSearchConstraints.bm25Limit.min)
+      .max(ragSearchConstraints.bm25Limit.max)
+      .nullable()
+      .optional(),
+    vectorWeight: z
+      .number()
+      .min(ragSearchConstraints.vectorWeight.min)
+      .max(ragSearchConstraints.vectorWeight.max)
+      .nullable()
+      .optional(),
+    vectorLimit: z
+      .number()
+      .int()
+      .min(ragSearchConstraints.vectorLimit.min)
+      .max(ragSearchConstraints.vectorLimit.max)
+      .nullable()
+      .optional(),
+    embeddingProviderId: z.string().max(255).optional(),
+    collection: z.string().max(255).optional(),
+    llmProviderId: z.string().max(255).optional(),
+    llmModel: z.string().max(255).optional(),
+    temperature: z
+      .number()
+      .min(ragSearchConstraints.temperature.min)
+      .max(ragSearchConstraints.temperature.max)
+      .nullable()
+      .optional(),
+    maxTokens: z
+      .number()
+      .int()
+      .min(ragSearchConstraints.maxTokens.min)
+      .max(ragSearchConstraints.maxTokens.max)
+      .nullable()
+      .optional(),
+    systemPrompt: z.string().max(8000).optional(),
+    responseFormat: z.enum(["text", "markdown", "html"]).nullable().optional(),
+  })
+  .partial();
+
+const knowledgeBaseSearchSettingsSchema = z
+  .object({
+    chunkSettings: chunkSearchSettingsSchema.optional(),
+    ragSettings: ragSearchSettingsSchema.optional(),
+  })
+  .default({});
+
+function normalizeTimestamp(value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
+  return null;
+}
+
+function buildSearchSettingsResponse(
+  record: KnowledgeBaseSearchSettingsRow | null,
+): KnowledgeBaseSearchSettingsResponsePayload {
+  const chunkSettings = mergeChunkSearchSettings(record?.chunkSettings ?? null);
+  const ragSettings = mergeRagSearchSettings(record?.ragSettings ?? null, {
+    topK: chunkSettings.topK,
+    bm25Weight: chunkSettings.bm25Weight,
+  });
+
+  return {
+    chunkSettings,
+    ragSettings,
+    updatedAt: normalizeTimestamp(record?.updatedAt ?? null),
+  };
 }
 
 function getNodeErrorCode(error: unknown): string | undefined {
@@ -6866,6 +6981,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json(bases);
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.get("/api/knowledge/bases/:baseId/search/settings", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const base = await storage.getKnowledgeBase(baseId);
+
+      if (!base || base.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "База знаний не найдена" });
+      }
+
+      const record = await storage.getKnowledgeBaseSearchSettings(workspaceId, baseId);
+      const response = buildSearchSettingsResponse(record);
+
+      return res.json(response);
+    } catch (error) {
+      console.error("Не удалось получить настройки поиска базы знаний:", error);
+      return res.status(500).json({ error: "Не удалось получить настройки поиска" });
+    }
+  });
+
+  app.put("/api/knowledge/bases/:baseId/search/settings", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const base = await storage.getKnowledgeBase(baseId);
+
+      if (!base || base.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "База знаний не найдена" });
+      }
+
+      const parsed = knowledgeBaseSearchSettingsSchema.parse(req.body ?? {});
+      const chunkSettings = mergeChunkSearchSettings(parsed.chunkSettings ?? null);
+      const ragSettings = mergeRagSearchSettings(parsed.ragSettings ?? null, {
+        topK: chunkSettings.topK,
+        bm25Weight: chunkSettings.bm25Weight,
+      });
+
+      const record = await storage.upsertKnowledgeBaseSearchSettings(workspaceId, baseId, {
+        chunkSettings: {
+          topK: chunkSettings.topK,
+          bm25Weight: chunkSettings.bm25Weight,
+          synonyms: chunkSettings.synonyms,
+          includeDrafts: chunkSettings.includeDrafts,
+          highlightResults: chunkSettings.highlightResults,
+          filters: chunkSettings.filters,
+        },
+        ragSettings: {
+          topK: ragSettings.topK,
+          bm25Weight: ragSettings.bm25Weight,
+          bm25Limit: ragSettings.bm25Limit,
+          vectorWeight: ragSettings.vectorWeight,
+          vectorLimit: ragSettings.vectorLimit,
+          embeddingProviderId: ragSettings.embeddingProviderId,
+          collection: ragSettings.collection,
+          llmProviderId: ragSettings.llmProviderId,
+          llmModel: ragSettings.llmModel,
+          temperature: ragSettings.temperature,
+          maxTokens: ragSettings.maxTokens,
+          systemPrompt: ragSettings.systemPrompt,
+          responseFormat: ragSettings.responseFormat,
+        },
+      });
+
+      const response = buildSearchSettingsResponse(record);
+      return res.json(response);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Некорректные данные", details: error.errors });
+      }
+
+      console.error("Не удалось сохранить настройки поиска базы знаний:", error);
+      return res.status(500).json({ error: "Не удалось сохранить настройки поиска" });
     }
   });
 

@@ -17,6 +17,10 @@ import {
   workspaceEmbedKeys,
   workspaceEmbedKeyDomains,
   knowledgeBaseRagRequests,
+  knowledgeBaseSearchSettings,
+  type KnowledgeBaseSearchSettingsRow,
+  type KnowledgeBaseChunkSearchSettings,
+  type KnowledgeBaseRagSearchSettings,
   type Site,
   type SiteInsert,
   type User,
@@ -663,6 +667,18 @@ export interface IStorage {
     workspaceId: string,
     knowledgeBaseId: string,
   ): Promise<KnowledgeBaseRagConfig | null>;
+  getKnowledgeBaseSearchSettings(
+    workspaceId: string,
+    knowledgeBaseId: string,
+  ): Promise<KnowledgeBaseSearchSettingsRow | null>;
+  upsertKnowledgeBaseSearchSettings(
+    workspaceId: string,
+    knowledgeBaseId: string,
+    settings: {
+      chunkSettings: KnowledgeBaseChunkSearchSettings;
+      ragSettings: KnowledgeBaseRagSearchSettings;
+    },
+  ): Promise<KnowledgeBaseSearchSettingsRow>;
 }
 
 let embeddingProvidersTableEnsured = false;
@@ -685,6 +701,9 @@ let ensuringWorkspaceCollectionsTable: Promise<void> | null = null;
 
 let knowledgeBaseRagRequestsTableEnsured = false;
 let ensuringKnowledgeBaseRagRequestsTable: Promise<void> | null = null;
+
+let knowledgeBaseSearchSettingsTableEnsured = false;
+let ensuringKnowledgeBaseSearchSettingsTable: Promise<void> | null = null;
 
 let knowledgeBaseTablesEnsured = false;
 let ensuringKnowledgeBaseTables: Promise<void> | null = null;
@@ -1968,6 +1987,40 @@ async function ensureKnowledgeBaseRagRequestsTable(): Promise<void> {
     knowledgeBaseRagRequestsTableEnsured = true;
   } finally {
     ensuringKnowledgeBaseRagRequestsTable = null;
+  }
+}
+
+async function ensureKnowledgeBaseSearchSettingsTable(): Promise<void> {
+  if (knowledgeBaseSearchSettingsTableEnsured) {
+    return;
+  }
+
+  if (ensuringKnowledgeBaseSearchSettingsTable) {
+    await ensuringKnowledgeBaseSearchSettingsTable;
+    return;
+  }
+
+  ensuringKnowledgeBaseSearchSettingsTable = (async () => {
+    await ensureWorkspacesTable();
+    await ensureKnowledgeBaseTables();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_base_search_settings" (
+        "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+        "knowledge_base_id" varchar NOT NULL REFERENCES "knowledge_bases"("id") ON DELETE CASCADE,
+        "chunk_settings" jsonb,
+        "rag_settings" jsonb,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT knowledge_base_search_settings_pk PRIMARY KEY ("workspace_id", "knowledge_base_id")
+      )
+    `);
+  })();
+
+  try {
+    await ensuringKnowledgeBaseSearchSettingsTable;
+    knowledgeBaseSearchSettingsTableEnsured = true;
+  } finally {
+    ensuringKnowledgeBaseSearchSettingsTable = null;
   }
 }
 
@@ -3299,6 +3352,67 @@ export class DatabaseStorage implements IStorage {
       vector: vectorConfig,
       recordedAt,
     };
+  }
+
+  async getKnowledgeBaseSearchSettings(
+    workspaceId: string,
+    knowledgeBaseId: string,
+  ): Promise<KnowledgeBaseSearchSettingsRow | null> {
+    await ensureKnowledgeBaseSearchSettingsTable();
+
+    const [record] = await this.db
+      .select()
+      .from(knowledgeBaseSearchSettings)
+      .where(
+        and(
+          eq(knowledgeBaseSearchSettings.workspaceId, workspaceId),
+          eq(knowledgeBaseSearchSettings.knowledgeBaseId, knowledgeBaseId),
+        ),
+      )
+      .limit(1);
+
+    return record ?? null;
+  }
+
+  async upsertKnowledgeBaseSearchSettings(
+    workspaceId: string,
+    knowledgeBaseId: string,
+    settings: {
+      chunkSettings: KnowledgeBaseChunkSearchSettings;
+      ragSettings: KnowledgeBaseRagSearchSettings;
+    },
+  ): Promise<KnowledgeBaseSearchSettingsRow> {
+    await ensureKnowledgeBaseSearchSettingsTable();
+
+    const chunkPayload = settings.chunkSettings ?? null;
+    const ragPayload = settings.ragSettings ?? null;
+
+    const [record] = await this.db
+      .insert(knowledgeBaseSearchSettings)
+      .values({
+        workspaceId,
+        knowledgeBaseId,
+        chunkSettings: chunkPayload,
+        ragSettings: ragPayload,
+      })
+      .onConflictDoUpdate({
+        target: [
+          knowledgeBaseSearchSettings.workspaceId,
+          knowledgeBaseSearchSettings.knowledgeBaseId,
+        ],
+        set: {
+          chunkSettings: chunkPayload,
+          ragSettings: ragPayload,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        },
+      })
+      .returning();
+
+    if (!record) {
+      throw new Error("Не удалось сохранить настройки поиска базы знаний");
+    }
+
+    return record;
   }
 
   async getKnowledgeChunksByIds(

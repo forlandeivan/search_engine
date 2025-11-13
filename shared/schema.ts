@@ -617,6 +617,49 @@ export const knowledgeBaseRagRequests = pgTable("knowledge_base_rag_requests", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+export type KnowledgeBaseChunkSearchSettings = {
+  topK?: number | null;
+  bm25Weight?: number | null;
+  synonyms?: string[];
+  includeDrafts?: boolean;
+  highlightResults?: boolean;
+  filters?: string | null;
+};
+
+export type KnowledgeBaseRagSearchSettings = {
+  topK?: number | null;
+  bm25Weight?: number | null;
+  bm25Limit?: number | null;
+  vectorWeight?: number | null;
+  vectorLimit?: number | null;
+  embeddingProviderId?: string | null;
+  collection?: string | null;
+  llmProviderId?: string | null;
+  llmModel?: string | null;
+  temperature?: number | null;
+  maxTokens?: number | null;
+  systemPrompt?: string | null;
+  responseFormat?: "text" | "markdown" | "html" | null;
+};
+
+export const knowledgeBaseSearchSettings = pgTable(
+  "knowledge_base_search_settings",
+  {
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    knowledgeBaseId: varchar("knowledge_base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    chunkSettings: jsonb("chunk_settings").$type<KnowledgeBaseChunkSearchSettings | null>(),
+    ragSettings: jsonb("rag_settings").$type<KnowledgeBaseRagSearchSettings | null>(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.knowledgeBaseId] }),
+  }),
+);
+
 export const llmProviders = pgTable("llm_providers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
   name: text("name").notNull(),
@@ -984,6 +1027,8 @@ export type PublicLlmProvider = Omit<LlmProvider, "authorizationKey" | "availabl
 };
 export type KnowledgeBaseRagRequest = typeof knowledgeBaseRagRequests.$inferSelect;
 export type KnowledgeBaseRagRequestInsert = typeof knowledgeBaseRagRequests.$inferInsert;
+export type KnowledgeBaseSearchSettingsRow = typeof knowledgeBaseSearchSettings.$inferSelect;
+export type KnowledgeBaseSearchSettingsInsert = typeof knowledgeBaseSearchSettings.$inferInsert;
 export type KnowledgeDocumentChunkSet = typeof knowledgeDocumentChunkSets.$inferSelect;
 export type KnowledgeDocumentChunkSetInsert = typeof knowledgeDocumentChunkSets.$inferInsert;
 export type KnowledgeDocumentChunkItem = typeof knowledgeDocumentChunkItems.$inferSelect;
