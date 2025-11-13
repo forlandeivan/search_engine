@@ -107,7 +107,7 @@ const KnowledgeBaseSearchSettingsForm = ({
   const hints: ReactNode[] = [];
   const embeddingProviderValue = searchSettings.embeddingProviderId ?? "none";
   const collectionValue = searchSettings.collection ?? "";
-  const llmProviderValue = searchSettings.llmProviderId ?? "none";
+  const llmProviderValue = searchSettings.llmProviderId ?? "";
   const llmModelValue = searchSettings.llmModel ?? "";
   const isCustomProvider =
     embeddingProviderValue !== "none" &&
@@ -244,7 +244,7 @@ const KnowledgeBaseSearchSettingsForm = ({
       : []),
   ];
 
-  const responseFormatValue = searchSettings.responseFormat ?? "auto";
+  const responseFormatValue = searchSettings.responseFormat ?? "";
 
   return (
     <div className={cn("rounded-md border border-border bg-card", className)}>
@@ -305,6 +305,7 @@ const KnowledgeBaseSearchSettingsForm = ({
               min={searchDefaults.topK.min}
               max={searchDefaults.topK.max}
               step={searchDefaults.topK.step}
+              defaultValue={searchDefaults.topK.defaultValue}
               disabled={disabled}
               onChange={(next) => onTopKChange(next === null ? "" : String(next))}
             />
@@ -316,6 +317,7 @@ const KnowledgeBaseSearchSettingsForm = ({
               min={searchDefaults.bm25Weight.min}
               max={searchDefaults.bm25Weight.max}
               step={searchDefaults.bm25Weight.step}
+              defaultValue={searchDefaults.bm25Weight.defaultValue}
               disabled={disabled}
               onChange={(next) => onBm25WeightChange(next === null ? "" : String(next))}
             />
@@ -327,6 +329,7 @@ const KnowledgeBaseSearchSettingsForm = ({
               min={ragDefaults.bm25Limit.min}
               max={ragDefaults.bm25Limit.max}
               step={ragDefaults.bm25Limit.step}
+              defaultValue={ragDefaults.bm25Limit.defaultValue}
               disabled={disabled}
               onChange={(next) => onBm25LimitChange(next === null ? "" : String(next))}
             />
@@ -346,6 +349,7 @@ const KnowledgeBaseSearchSettingsForm = ({
               label="Учитывать черновики"
               tooltip={tooltips.includeDrafts}
               checked={searchSettings.includeDrafts}
+              defaultChecked={searchDefaults.includeDrafts.defaultValue}
               disabled={disabled}
               onChange={onIncludeDraftsChange}
             />
@@ -354,18 +358,20 @@ const KnowledgeBaseSearchSettingsForm = ({
               label="Подсветка совпадений"
               tooltip={tooltips.highlightResults}
               checked={searchSettings.highlightResults}
+              defaultChecked={searchDefaults.highlightResults.defaultValue}
               disabled={disabled}
               onChange={onHighlightResultsChange}
             />
           </div>
-            <JsonEditorField
-              id="kb-search-filters"
-              label="Фильтры Qdrant"
-              tooltip={tooltips.filters}
-              value={searchSettings.filters}
-              disabled={disabled}
-              onChange={onFiltersChange}
-            />
+          <JsonEditorField
+            id="kb-search-filters"
+            label="Фильтры Qdrant"
+            tooltip={tooltips.filters}
+            value={searchSettings.filters}
+            defaultValue={searchDefaults.filters.defaultValue}
+            disabled={disabled}
+            onChange={onFiltersChange}
+          />
         </TabsContent>
         <TabsContent value="rag" className="space-y-3">
           {ragBadges.length > 0 ? (
@@ -390,6 +396,7 @@ const KnowledgeBaseSearchSettingsForm = ({
               min={ragDefaults.vectorLimit.min}
               max={ragDefaults.vectorLimit.max}
               step={ragDefaults.vectorLimit.step}
+              defaultValue={ragDefaults.vectorLimit.defaultValue}
               disabled={disabled}
               onChange={(next) => onVectorLimitChange(next === null ? "" : String(next))}
             />
@@ -401,6 +408,7 @@ const KnowledgeBaseSearchSettingsForm = ({
               min={ragDefaults.temperature.min}
               max={ragDefaults.temperature.max}
               step={ragDefaults.temperature.step}
+              defaultValue={ragDefaults.temperature.defaultValue}
               disabled={disabled}
               onChange={(next) => onTemperatureChange(next === null ? "" : String(next))}
             />
@@ -412,6 +420,7 @@ const KnowledgeBaseSearchSettingsForm = ({
               min={ragDefaults.maxTokens.min}
               max={ragDefaults.maxTokens.max}
               step={ragDefaults.maxTokens.step}
+              defaultValue={ragDefaults.maxTokens.defaultValue}
               disabled={disabled}
               onChange={(next) => onMaxTokensChange(next === null ? "" : String(next))}
             />
@@ -449,6 +458,7 @@ const KnowledgeBaseSearchSettingsForm = ({
               min={ragDefaults.vectorWeight.min}
               max={ragDefaults.vectorWeight.max}
               step={ragDefaults.vectorWeight.step}
+              defaultValue={ragDefaults.vectorWeight.defaultValue}
               disabled={disabled}
               onChange={(next) => onVectorWeightChange(next === null ? "" : String(next))}
             />
@@ -471,11 +481,12 @@ const KnowledgeBaseSearchSettingsForm = ({
               tooltip={tooltips.responseFormat}
               value={responseFormatValue}
               options={[
-                { value: "auto", label: "Авто" },
+                { value: "", label: "Авто" },
                 { value: "text", label: "Text" },
                 { value: "markdown", label: "Markdown" },
                 { value: "html", label: "HTML" },
               ]}
+              defaultValue={ragDefaults.responseFormat.defaultValue}
               disabled={disabled}
               onChange={onResponseFormatChange}
             />

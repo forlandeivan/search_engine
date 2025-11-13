@@ -45,7 +45,7 @@ import DocumentVectorizationProgress, {
   type DocumentVectorizationProgressStatus,
 } from "@/components/knowledge-base/DocumentVectorizationProgress";
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
-import { ragDefaults, searchDefaults } from "@/constants/searchSettings";
+import { searchDefaults } from "@/constants/searchSettings";
 import {
   Card,
   CardContent,
@@ -288,24 +288,24 @@ function KnowledgeBaseQuickSearchTrigger({
 }
 
 const DEFAULT_SEARCH_SETTINGS: KnowledgeBaseSearchSettings = {
-  topK: searchDefaults.topK.defaultValue,
-  vectorLimit: ragDefaults.vectorLimit.defaultValue,
-  bm25Limit: ragDefaults.bm25Limit.defaultValue,
-  bm25Weight: searchDefaults.bm25Weight.defaultValue,
-  vectorWeight: ragDefaults.vectorWeight.defaultValue,
+  topK: null,
+  vectorLimit: null,
+  bm25Limit: null,
+  bm25Weight: null,
+  vectorWeight: null,
   embeddingProviderId: null,
   llmProviderId: null,
   llmModel: null,
   collection: null,
-  synonyms: [...searchDefaults.synonyms.defaultValue],
-  includeDrafts: searchDefaults.includeDrafts.defaultValue,
-  highlightResults: searchDefaults.highlightResults.defaultValue,
-  filters: searchDefaults.filters.defaultValue,
+  synonyms: [],
+  includeDrafts: false,
+  highlightResults: true,
+  filters: "",
   filtersValid: true,
-  temperature: ragDefaults.temperature.defaultValue,
-  maxTokens: ragDefaults.maxTokens.defaultValue,
-  systemPrompt: ragDefaults.systemPrompt.defaultValue,
-  responseFormat: ragDefaults.responseFormat.defaultValue,
+  temperature: null,
+  maxTokens: null,
+  systemPrompt: "",
+  responseFormat: null,
 };
 
 const clampTopKValue = (value: number | null): number | null => {
@@ -417,21 +417,15 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
   };
 
   const responseFormatValue = (() => {
-    const hasResponseFormatKey =
-      Object.prototype.hasOwnProperty.call(record, "responseFormat") ||
-      Object.prototype.hasOwnProperty.call(record, "response_format");
     const value = record.responseFormat ?? record.response_format;
-    if (value === null) {
-      return null;
-    }
     if (typeof value !== "string") {
-      return hasResponseFormatKey ? DEFAULT_SEARCH_SETTINGS.responseFormat : undefined;
+      return null;
     }
     const normalized = value.trim().toLowerCase();
     if (normalized === "text" || normalized === "markdown" || normalized === "html") {
       return normalized;
     }
-    return hasResponseFormatKey ? DEFAULT_SEARCH_SETTINGS.responseFormat : undefined;
+    return null;
   })();
 
   const filtersRaw = typeof record.filters === "string" ? record.filters : "";
@@ -445,12 +439,11 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
   }
 
   return {
-    topK: resolveNumber(record.topK, clampTopKValue) ?? DEFAULT_SEARCH_SETTINGS.topK,
-    vectorLimit: resolveNumber(record.vectorLimit, clampVectorLimitValue) ?? DEFAULT_SEARCH_SETTINGS.vectorLimit,
-    bm25Limit:
-      resolveNumber(record.bm25Limit ?? record.bm25_limit, clampVectorLimitValue) ?? DEFAULT_SEARCH_SETTINGS.bm25Limit,
-    bm25Weight: resolveNumber(record.bm25Weight, clampWeightValue) ?? DEFAULT_SEARCH_SETTINGS.bm25Weight,
-    vectorWeight: resolveNumber(record.vectorWeight, clampWeightValue) ?? DEFAULT_SEARCH_SETTINGS.vectorWeight,
+    topK: resolveNumber(record.topK, clampTopKValue),
+    vectorLimit: resolveNumber(record.vectorLimit, clampVectorLimitValue),
+    bm25Limit: resolveNumber(record.bm25Limit ?? record.bm25_limit, clampVectorLimitValue),
+    bm25Weight: resolveNumber(record.bm25Weight, clampWeightValue),
+    vectorWeight: resolveNumber(record.vectorWeight, clampWeightValue),
     embeddingProviderId: resolveString(record.embeddingProviderId),
     llmProviderId: resolveString(record.llmProviderId),
     llmModel: resolveString(record.llmModel),
@@ -458,15 +451,12 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
     synonyms: resolveStringArray(record.synonyms),
     includeDrafts: resolveBoolean(record.includeDrafts, DEFAULT_SEARCH_SETTINGS.includeDrafts),
     highlightResults: resolveBoolean(record.highlightResults, DEFAULT_SEARCH_SETTINGS.highlightResults),
-    filters: filtersRaw || DEFAULT_SEARCH_SETTINGS.filters,
+    filters: filtersRaw,
     filtersValid,
-    temperature: resolveNumber(record.temperature, clampTemperatureValue) ?? DEFAULT_SEARCH_SETTINGS.temperature,
-    maxTokens:
-      resolveNumber(record.maxTokens ?? record.max_tokens, clampMaxTokensValue) ?? DEFAULT_SEARCH_SETTINGS.maxTokens,
-    systemPrompt:
-      typeof record.systemPrompt === "string" ? record.systemPrompt : DEFAULT_SEARCH_SETTINGS.systemPrompt,
-    responseFormat:
-      responseFormatValue === undefined ? DEFAULT_SEARCH_SETTINGS.responseFormat : responseFormatValue,
+    temperature: resolveNumber(record.temperature, clampTemperatureValue),
+    maxTokens: resolveNumber(record.maxTokens ?? record.max_tokens, clampMaxTokensValue),
+    systemPrompt: typeof record.systemPrompt === "string" ? record.systemPrompt : "",
+    responseFormat: responseFormatValue,
   };
 };
 
@@ -857,7 +847,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleBm25LimitChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, bm25Limit: ragDefaults.bm25Limit.defaultValue };
+        return { ...prev, bm25Limit: null };
       }
 
       const parsed = Number(value);
@@ -939,7 +929,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleTemperatureChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, temperature: ragDefaults.temperature.defaultValue };
+        return { ...prev, temperature: null };
       }
 
       const parsed = Number(value);
@@ -953,7 +943,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleMaxTokensChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, maxTokens: ragDefaults.maxTokens.defaultValue };
+        return { ...prev, maxTokens: null };
       }
 
       const parsed = Number(value);
@@ -970,7 +960,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleResponseFormatChange = (value: string) => {
     setSearchSettings((prev) => ({
       ...prev,
-      responseFormat: value === "auto" ? null : (value as "text" | "markdown" | "html"),
+      responseFormat: value && value.length > 0 ? (value as "text" | "markdown" | "html") : null,
     }));
   };
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
 
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import SettingLabel from "./SettingLabel";
 
 type NumericFieldProps = {
@@ -12,6 +13,7 @@ type NumericFieldProps = {
   min: number;
   max: number;
   step: number;
+  defaultValue: number;
   placeholder?: string;
   disabled?: boolean;
   onChange: (value: number | null) => void;
@@ -42,6 +44,7 @@ const NumericField = ({
   min,
   max,
   step,
+  defaultValue,
   placeholder,
   disabled,
   onChange,
@@ -52,42 +55,46 @@ const NumericField = ({
     setInternal(formatNumber(value));
   }, [value]);
 
-  const { isOutOfRange, hasStepMismatch, isInvalid } = useMemo(() => {
+  const { isOutOfRange, hasStepMismatch, parsedValue } = useMemo(() => {
     if (!internal.trim()) {
-      return { isOutOfRange: false, hasStepMismatch: false, isInvalid: false };
+      return { parsedValue: null, isOutOfRange: false, hasStepMismatch: false };
     }
 
     const parsed = Number(internal);
     if (Number.isNaN(parsed)) {
-      return { isOutOfRange: false, hasStepMismatch: false, isInvalid: true };
+      return { parsedValue: null, isOutOfRange: true, hasStepMismatch: false };
     }
 
     return {
+      parsedValue: parsed,
       isOutOfRange: parsed < min || parsed > max,
       hasStepMismatch: Number.isFinite(step) && step > 0 ? isStepMismatch(parsed, min, step) : false,
-      isInvalid: false,
     };
   }, [internal, max, min, step]);
 
-  const helper = useMemo(() => {
-    if (!internal.trim()) {
-      return null;
-    }
+  const badges = useMemo(() => {
+    const result: Array<{ key: string; label: string; variant?: "secondary" | "destructive" }> = [];
 
-    if (isInvalid) {
-      return { tone: "destructive" as const, text: "Введите корректное число" };
+    if (!internal.trim()) {
+      result.push({ key: "default", label: `По умолчанию: ${formatNumber(defaultValue)}`, variant: "secondary" });
+      return result;
     }
 
     if (isOutOfRange) {
-      return { tone: "destructive" as const, text: `Диапазон ${min}–${max}` };
+      result.push({ key: "range", label: `Диапазон ${min}–${max}`, variant: "destructive" });
+      return result;
     }
 
     if (hasStepMismatch) {
-      return { tone: "muted" as const, text: `Шаг ${step}` };
+      result.push({ key: "step", label: `Шаг ${step}`, variant: "secondary" });
     }
 
-    return null;
-  }, [hasStepMismatch, internal, isInvalid, isOutOfRange, max, min, step]);
+    if (parsedValue !== null && parsedValue !== defaultValue) {
+      result.push({ key: "custom", label: `Текущее: ${formatNumber(parsedValue)}` });
+    }
+
+    return result;
+  }, [defaultValue, hasStepMismatch, internal, isOutOfRange, max, min, parsedValue, step]);
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const raw = event.target.value;
@@ -141,16 +148,18 @@ const NumericField = ({
         disabled={disabled}
         className="h-8"
       />
-      {helper ? (
-        <p
-          className={
-            helper.tone === "destructive"
-              ? "text-[11px] text-destructive"
-              : "text-[11px] text-muted-foreground"
-          }
-        >
-          {helper.text}
-        </p>
+      {badges.length > 0 ? (
+        <div className="flex flex-wrap gap-1 text-[11px]">
+          {badges.map((badge) => (
+            <Badge
+              key={badge.key}
+              variant={badge.variant ?? "outline"}
+              className="rounded-sm px-1.5 py-0 text-[10px] font-medium"
+            >
+              {badge.label}
+            </Badge>
+          ))}
+        </div>
       ) : null}
     </div>
   );
