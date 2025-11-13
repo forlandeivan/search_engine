@@ -45,7 +45,7 @@ import DocumentVectorizationProgress, {
   type DocumentVectorizationProgressStatus,
 } from "@/components/knowledge-base/DocumentVectorizationProgress";
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
-import { searchDefaults } from "@/constants/searchSettings";
+import { ragDefaults, searchDefaults } from "@/constants/searchSettings";
 import {
   Card,
   CardContent,
@@ -287,26 +287,26 @@ function KnowledgeBaseQuickSearchTrigger({
   );
 }
 
-const DEFAULT_SEARCH_SETTINGS: KnowledgeBaseSearchSettings = {
-  topK: null,
-  vectorLimit: null,
-  bm25Limit: null,
-  bm25Weight: null,
-  vectorWeight: null,
+const createDefaultSearchSettings = (): KnowledgeBaseSearchSettings => ({
+  topK: searchDefaults.topK.defaultValue,
+  vectorLimit: ragDefaults.vectorLimit.defaultValue,
+  bm25Limit: ragDefaults.bm25Limit.defaultValue,
+  bm25Weight: searchDefaults.bm25Weight.defaultValue,
+  vectorWeight: ragDefaults.vectorWeight.defaultValue,
   embeddingProviderId: null,
   llmProviderId: null,
   llmModel: null,
   collection: null,
-  synonyms: [],
-  includeDrafts: false,
-  highlightResults: true,
-  filters: "",
+  synonyms: [...searchDefaults.synonyms.defaultValue],
+  includeDrafts: searchDefaults.includeDrafts.defaultValue,
+  highlightResults: searchDefaults.highlightResults.defaultValue,
+  filters: searchDefaults.filters.defaultValue,
   filtersValid: true,
-  temperature: null,
-  maxTokens: null,
-  systemPrompt: "",
+  temperature: ragDefaults.temperature.defaultValue,
+  maxTokens: ragDefaults.maxTokens.defaultValue,
+  systemPrompt: ragDefaults.systemPrompt.defaultValue,
   responseFormat: null,
-};
+});
 
 const clampTopKValue = (value: number | null): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -314,7 +314,7 @@ const clampTopKValue = (value: number | null): number | null => {
   }
 
   const rounded = Math.round(value);
-  return Math.max(1, Math.min(10, rounded));
+  return Math.max(searchDefaults.topK.min, Math.min(searchDefaults.topK.max, rounded));
 };
 
 const clampVectorLimitValue = (value: number | null): number | null => {
@@ -323,7 +323,7 @@ const clampVectorLimitValue = (value: number | null): number | null => {
   }
 
   const rounded = Math.round(value);
-  return Math.max(1, Math.min(20, rounded));
+  return Math.max(ragDefaults.vectorLimit.min, Math.min(ragDefaults.vectorLimit.max, rounded));
 };
 
 const clampTemperatureValue = (value: number | null): number | null => {
@@ -331,7 +331,7 @@ const clampTemperatureValue = (value: number | null): number | null => {
     return null;
   }
 
-  const normalized = Math.max(0, Math.min(2, value));
+  const normalized = Math.max(ragDefaults.temperature.min, Math.min(ragDefaults.temperature.max, value));
   return Number(normalized.toFixed(2));
 };
 
@@ -341,7 +341,7 @@ const clampMaxTokensValue = (value: number | null): number | null => {
   }
 
   const rounded = Math.round(value);
-  return Math.max(16, Math.min(4096, rounded));
+  return Math.max(ragDefaults.maxTokens.min, Math.min(ragDefaults.maxTokens.max, rounded));
 };
 
 const clampWeightValue = (value: number | null): number | null => {
@@ -355,9 +355,10 @@ const clampWeightValue = (value: number | null): number | null => {
 
 const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings => {
   if (!value || typeof value !== "object") {
-    return DEFAULT_SEARCH_SETTINGS;
+    return createDefaultSearchSettings();
   }
 
+  const defaults = createDefaultSearchSettings();
   const record = value as Record<string, unknown>;
 
   const resolveNumber = (
@@ -428,7 +429,11 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
     return null;
   })();
 
-  const filtersRaw = typeof record.filters === "string" ? record.filters : "";
+  let filtersRaw = defaults.filters;
+  if (typeof record.filters === "string") {
+    filtersRaw = record.filters;
+  }
+
   let filtersValid = true;
   if (filtersRaw.trim()) {
     try {
@@ -438,26 +443,77 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
     }
   }
 
-  return {
-    topK: resolveNumber(record.topK, clampTopKValue),
-    vectorLimit: resolveNumber(record.vectorLimit, clampVectorLimitValue),
-    bm25Limit: resolveNumber(record.bm25Limit ?? record.bm25_limit, clampVectorLimitValue),
-    bm25Weight: resolveNumber(record.bm25Weight, clampWeightValue),
-    vectorWeight: resolveNumber(record.vectorWeight, clampWeightValue),
-    embeddingProviderId: resolveString(record.embeddingProviderId),
-    llmProviderId: resolveString(record.llmProviderId),
-    llmModel: resolveString(record.llmModel),
-    collection: resolveString(record.collection),
-    synonyms: resolveStringArray(record.synonyms),
-    includeDrafts: resolveBoolean(record.includeDrafts, DEFAULT_SEARCH_SETTINGS.includeDrafts),
-    highlightResults: resolveBoolean(record.highlightResults, DEFAULT_SEARCH_SETTINGS.highlightResults),
-    filters: filtersRaw,
-    filtersValid,
-    temperature: resolveNumber(record.temperature, clampTemperatureValue),
-    maxTokens: resolveNumber(record.maxTokens ?? record.max_tokens, clampMaxTokensValue),
-    systemPrompt: typeof record.systemPrompt === "string" ? record.systemPrompt : "",
-    responseFormat: responseFormatValue,
+  const result: KnowledgeBaseSearchSettings = {
+    ...defaults,
+    synonyms: [...defaults.synonyms],
   };
+
+  const topKValue = resolveNumber(record.topK, clampTopKValue);
+  if (topKValue !== null) {
+    result.topK = topKValue;
+  }
+
+  const vectorLimitValue = resolveNumber(record.vectorLimit, clampVectorLimitValue);
+  if (vectorLimitValue !== null) {
+    result.vectorLimit = vectorLimitValue;
+  }
+
+  const hasBm25Limit = "bm25Limit" in record || "bm25_limit" in record;
+  if (hasBm25Limit) {
+    result.bm25Limit = resolveNumber(record.bm25Limit ?? record.bm25_limit, clampVectorLimitValue);
+  }
+
+  const bm25WeightValue = resolveNumber(record.bm25Weight, clampWeightValue);
+  if (bm25WeightValue !== null) {
+    result.bm25Weight = bm25WeightValue;
+  }
+
+  const vectorWeightValue = resolveNumber(record.vectorWeight, clampWeightValue);
+  if (vectorWeightValue !== null) {
+    result.vectorWeight = vectorWeightValue;
+  }
+
+  if ("embeddingProviderId" in record) {
+    result.embeddingProviderId = resolveString(record.embeddingProviderId);
+  }
+
+  if ("llmProviderId" in record) {
+    result.llmProviderId = resolveString(record.llmProviderId);
+  }
+
+  if ("llmModel" in record) {
+    result.llmModel = resolveString(record.llmModel);
+  }
+
+  if ("collection" in record) {
+    result.collection = resolveString(record.collection);
+  }
+
+  if ("synonyms" in record) {
+    result.synonyms = resolveStringArray(record.synonyms);
+  }
+
+  result.includeDrafts = resolveBoolean(record.includeDrafts, defaults.includeDrafts);
+  result.highlightResults = resolveBoolean(record.highlightResults, defaults.highlightResults);
+  result.filters = filtersRaw;
+  result.filtersValid = filtersValid;
+
+  if ("temperature" in record) {
+    result.temperature = resolveNumber(record.temperature, clampTemperatureValue);
+  }
+
+  const hasMaxTokens = "maxTokens" in record || "max_tokens" in record;
+  if (hasMaxTokens) {
+    result.maxTokens = resolveNumber(record.maxTokens ?? record.max_tokens, clampMaxTokensValue);
+  }
+
+  if (typeof record.systemPrompt === "string") {
+    result.systemPrompt = record.systemPrompt;
+  }
+
+  result.responseFormat = responseFormatValue;
+
+  return result;
 };
 
 const formatDateTime = (value?: string | null) => {
@@ -793,8 +849,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [hierarchySelectedParentId, setHierarchySelectedParentId] =
     useState<string>(ROOT_PARENT_VALUE);
   const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(() => new Set());
-  const [searchSettings, setSearchSettings] = useState<KnowledgeBaseSearchSettings>(
-    DEFAULT_SEARCH_SETTINGS,
+  const [searchSettings, setSearchSettings] = useState<KnowledgeBaseSearchSettings>(() =>
+    createDefaultSearchSettings(),
   );
   const [isSearchSettingsReady, setIsSearchSettingsReady] = useState(false);
   const [isSearchSettingsOpen, setIsSearchSettingsOpen] = useState(false);
@@ -1166,7 +1222,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
     if (!storageKey) {
       setIsSearchSettingsReady(false);
-      setSearchSettings(DEFAULT_SEARCH_SETTINGS);
+      setSearchSettings(createDefaultSearchSettings());
       return;
     }
 
@@ -1175,7 +1231,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     try {
       const raw = window.localStorage.getItem(storageKey);
       if (!raw) {
-        setSearchSettings(DEFAULT_SEARCH_SETTINGS);
+        setSearchSettings(createDefaultSearchSettings());
         return;
       }
 
@@ -1183,7 +1239,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       setSearchSettings(parseStoredSearchSettings(parsed));
     } catch (error) {
       console.error("Не удалось прочитать параметры поиска из localStorage", error);
-      setSearchSettings(DEFAULT_SEARCH_SETTINGS);
+      setSearchSettings(createDefaultSearchSettings());
     } finally {
       setIsSearchSettingsReady(true);
     }
@@ -1200,7 +1256,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       }
 
       if (!event.newValue) {
-        setSearchSettings(DEFAULT_SEARCH_SETTINGS);
+        setSearchSettings(createDefaultSearchSettings());
         return;
       }
 
