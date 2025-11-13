@@ -207,7 +207,8 @@ const toHtml = (answer: string, format: "text" | "markdown" | "html" | null): st
   }
 
   if (format === "markdown") {
-    return DOMPurify.sanitize(marked.parse(trimmed), { USE_PROFILES: { html: true } });
+    const parsedMarkdown = marked.parse(trimmed, { async: false }) as string;
+    return DOMPurify.sanitize(parsedMarkdown, { USE_PROFILES: { html: true } });
   }
 
   const paragraphs = trimmed
@@ -439,57 +440,50 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
         },
       };
 
+      const hybridPayload = payload.hybrid as Record<string, unknown>;
+      const bm25Payload = ((hybridPayload.bm25 as Record<string, unknown>) ?? {}) as Record<string, unknown>;
+      const vectorPayload = ((hybridPayload.vector as Record<string, unknown>) ?? {}) as Record<string, unknown>;
+
       if (normalized.bm25Weight !== null) {
-        (payload.hybrid as Record<string, unknown>).bm25 = {
-          ...(payload.hybrid as Record<string, unknown>).bm25,
-          weight: normalized.bm25Weight,
-        };
+        bm25Payload.weight = normalized.bm25Weight;
       }
       if (normalized.bm25Limit !== null) {
-        (payload.hybrid as Record<string, unknown>).bm25 = {
-          ...(payload.hybrid as Record<string, unknown>).bm25,
-          limit: normalized.bm25Limit,
-        };
+        bm25Payload.limit = normalized.bm25Limit;
       }
       if (normalized.vectorWeight !== null) {
-        (payload.hybrid as Record<string, unknown>).vector = {
-          ...(payload.hybrid as Record<string, unknown>).vector,
-          weight: normalized.vectorWeight,
-        };
+        vectorPayload.weight = normalized.vectorWeight;
       }
       if (normalized.vectorLimit !== null) {
-        (payload.hybrid as Record<string, unknown>).vector = {
-          ...(payload.hybrid as Record<string, unknown>).vector,
-          limit: normalized.vectorLimit,
-        };
+        vectorPayload.limit = normalized.vectorLimit;
       }
       if (normalized.vectorCollection) {
-        (payload.hybrid as Record<string, unknown>).vector = {
-          ...(payload.hybrid as Record<string, unknown>).vector,
-          collection: normalized.vectorCollection,
-        };
+        vectorPayload.collection = normalized.vectorCollection;
       }
       if (normalized.embeddingProviderId) {
-        (payload.hybrid as Record<string, unknown>).vector = {
-          ...(payload.hybrid as Record<string, unknown>).vector,
-          embedding_provider_id: normalized.embeddingProviderId,
-        };
+        vectorPayload.embedding_provider_id = normalized.embeddingProviderId;
       }
+
+      hybridPayload.bm25 = bm25Payload;
+      hybridPayload.vector = vectorPayload;
+
+      const llmPayload = (payload.llm as Record<string, unknown>) ?? {};
       if (normalized.llmModel) {
-        (payload.llm as Record<string, unknown>).model = normalized.llmModel;
+        llmPayload.model = normalized.llmModel;
       }
       if (normalized.temperature !== null) {
-        (payload.llm as Record<string, unknown>).temperature = normalized.temperature;
+        llmPayload.temperature = normalized.temperature;
       }
       if (normalized.maxTokens !== null) {
-        (payload.llm as Record<string, unknown>).max_tokens = normalized.maxTokens;
+        llmPayload.max_tokens = normalized.maxTokens;
       }
       if (normalized.systemPrompt && normalized.systemPrompt.trim()) {
-        (payload.llm as Record<string, unknown>).system_prompt = normalized.systemPrompt;
+        llmPayload.system_prompt = normalized.systemPrompt;
       }
       if (normalized.responseFormat) {
-        (payload.llm as Record<string, unknown>).response_format = normalized.responseFormat;
+        llmPayload.response_format = normalized.responseFormat;
       }
+
+      payload.llm = llmPayload;
 
       try {
         const response = await fetch(normalized.endpoint, {

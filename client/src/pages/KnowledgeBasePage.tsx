@@ -45,6 +45,7 @@ import DocumentVectorizationProgress, {
   type DocumentVectorizationProgressStatus,
 } from "@/components/knowledge-base/DocumentVectorizationProgress";
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
+import { ragDefaults, searchDefaults } from "@/constants/searchSettings";
 import {
   Card,
   CardContent,
@@ -287,13 +288,24 @@ function KnowledgeBaseQuickSearchTrigger({
 }
 
 const DEFAULT_SEARCH_SETTINGS: KnowledgeBaseSearchSettings = {
-  topK: null,
-  vectorLimit: null,
-  bm25Weight: null,
-  vectorWeight: null,
+  topK: searchDefaults.topK.defaultValue,
+  vectorLimit: ragDefaults.vectorLimit.defaultValue,
+  bm25Limit: ragDefaults.bm25Limit.defaultValue,
+  bm25Weight: searchDefaults.bm25Weight.defaultValue,
+  vectorWeight: ragDefaults.vectorWeight.defaultValue,
   embeddingProviderId: null,
   llmProviderId: null,
+  llmModel: null,
   collection: null,
+  synonyms: [...searchDefaults.synonyms.defaultValue],
+  includeDrafts: searchDefaults.includeDrafts.defaultValue,
+  highlightResults: searchDefaults.highlightResults.defaultValue,
+  filters: searchDefaults.filters.defaultValue,
+  filtersValid: true,
+  temperature: ragDefaults.temperature.defaultValue,
+  maxTokens: ragDefaults.maxTokens.defaultValue,
+  systemPrompt: ragDefaults.systemPrompt.defaultValue,
+  responseFormat: ragDefaults.responseFormat.defaultValue,
 };
 
 const clampTopKValue = (value: number | null): number | null => {
@@ -312,6 +324,24 @@ const clampVectorLimitValue = (value: number | null): number | null => {
 
   const rounded = Math.round(value);
   return Math.max(1, Math.min(20, rounded));
+};
+
+const clampTemperatureValue = (value: number | null): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const normalized = Math.max(0, Math.min(2, value));
+  return Number(normalized.toFixed(2));
+};
+
+const clampMaxTokensValue = (value: number | null): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  return Math.max(16, Math.min(4096, rounded));
 };
 
 const clampWeightValue = (value: number | null): number | null => {
@@ -357,14 +387,86 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
     return trimmed.length > 0 ? trimmed : null;
   };
 
+  const resolveBoolean = (raw: unknown, fallback: boolean): boolean => {
+    if (typeof raw === "boolean") {
+      return raw;
+    }
+
+    if (raw === "true") {
+      return true;
+    }
+
+    if (raw === "false") {
+      return false;
+    }
+
+    return fallback;
+  };
+
+  const resolveStringArray = (raw: unknown): string[] => {
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+
+    const normalized = raw
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter((item) => item.length > 0);
+
+    const unique = Array.from(new Set(normalized));
+    return unique.slice(0, searchDefaults.synonyms.maxItems ?? unique.length);
+  };
+
+  const responseFormatValue = (() => {
+    const hasResponseFormatKey =
+      Object.prototype.hasOwnProperty.call(record, "responseFormat") ||
+      Object.prototype.hasOwnProperty.call(record, "response_format");
+    const value = record.responseFormat ?? record.response_format;
+    if (value === null) {
+      return null;
+    }
+    if (typeof value !== "string") {
+      return hasResponseFormatKey ? DEFAULT_SEARCH_SETTINGS.responseFormat : undefined;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "text" || normalized === "markdown" || normalized === "html") {
+      return normalized;
+    }
+    return hasResponseFormatKey ? DEFAULT_SEARCH_SETTINGS.responseFormat : undefined;
+  })();
+
+  const filtersRaw = typeof record.filters === "string" ? record.filters : "";
+  let filtersValid = true;
+  if (filtersRaw.trim()) {
+    try {
+      JSON.parse(filtersRaw);
+    } catch (error) {
+      filtersValid = false;
+    }
+  }
+
   return {
-    topK: resolveNumber(record.topK, clampTopKValue),
-    vectorLimit: resolveNumber(record.vectorLimit, clampVectorLimitValue),
-    bm25Weight: resolveNumber(record.bm25Weight, clampWeightValue),
-    vectorWeight: resolveNumber(record.vectorWeight, clampWeightValue),
+    topK: resolveNumber(record.topK, clampTopKValue) ?? DEFAULT_SEARCH_SETTINGS.topK,
+    vectorLimit: resolveNumber(record.vectorLimit, clampVectorLimitValue) ?? DEFAULT_SEARCH_SETTINGS.vectorLimit,
+    bm25Limit:
+      resolveNumber(record.bm25Limit ?? record.bm25_limit, clampVectorLimitValue) ?? DEFAULT_SEARCH_SETTINGS.bm25Limit,
+    bm25Weight: resolveNumber(record.bm25Weight, clampWeightValue) ?? DEFAULT_SEARCH_SETTINGS.bm25Weight,
+    vectorWeight: resolveNumber(record.vectorWeight, clampWeightValue) ?? DEFAULT_SEARCH_SETTINGS.vectorWeight,
     embeddingProviderId: resolveString(record.embeddingProviderId),
     llmProviderId: resolveString(record.llmProviderId),
+    llmModel: resolveString(record.llmModel),
     collection: resolveString(record.collection),
+    synonyms: resolveStringArray(record.synonyms),
+    includeDrafts: resolveBoolean(record.includeDrafts, DEFAULT_SEARCH_SETTINGS.includeDrafts),
+    highlightResults: resolveBoolean(record.highlightResults, DEFAULT_SEARCH_SETTINGS.highlightResults),
+    filters: filtersRaw || DEFAULT_SEARCH_SETTINGS.filters,
+    filtersValid,
+    temperature: resolveNumber(record.temperature, clampTemperatureValue) ?? DEFAULT_SEARCH_SETTINGS.temperature,
+    maxTokens:
+      resolveNumber(record.maxTokens ?? record.max_tokens, clampMaxTokensValue) ?? DEFAULT_SEARCH_SETTINGS.maxTokens,
+    systemPrompt:
+      typeof record.systemPrompt === "string" ? record.systemPrompt : DEFAULT_SEARCH_SETTINGS.systemPrompt,
+    responseFormat:
+      responseFormatValue === undefined ? DEFAULT_SEARCH_SETTINGS.responseFormat : responseFormatValue,
   };
 };
 
@@ -727,7 +829,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleTopKInputChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, topK: null };
+        return { ...prev, topK: searchDefaults.topK.defaultValue };
       }
 
       const parsed = Number(value);
@@ -741,7 +843,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleVectorLimitChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, vectorLimit: null };
+        return { ...prev, vectorLimit: ragDefaults.vectorLimit.defaultValue };
       }
 
       const parsed = Number(value);
@@ -752,10 +854,24 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return { ...prev, vectorLimit: clampVectorLimitValue(parsed) };
     });
   };
+  const handleBm25LimitChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, bm25Limit: ragDefaults.bm25Limit.defaultValue };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, bm25Limit: clampVectorLimitValue(parsed) };
+    });
+  };
   const handleBm25WeightChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, bm25Weight: null };
+        return { ...prev, bm25Weight: searchDefaults.bm25Weight.defaultValue };
       }
 
       const parsed = Number(value);
@@ -769,7 +885,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleVectorWeightChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, vectorWeight: null };
+        return { ...prev, vectorWeight: ragDefaults.vectorWeight.defaultValue };
       }
 
       const parsed = Number(value);
@@ -792,11 +908,70 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       llmProviderId: value && value !== "none" ? value : null,
     }));
   };
+  const handleLlmModelChange = (value: string) => {
+    setSearchSettings((prev) => {
+      const trimmed = value.trim();
+      return { ...prev, llmModel: trimmed.length > 0 ? trimmed : null };
+    });
+  };
   const handleCollectionChange = (value: string) => {
     setSearchSettings((prev) => {
       const trimmed = value.trim();
       return { ...prev, collection: trimmed.length > 0 ? trimmed : null };
     });
+  };
+  const handleSynonymsChange = (synonyms: string[]) => {
+    const limit = searchDefaults.synonyms.maxItems ?? synonyms.length;
+    setSearchSettings((prev) => ({
+      ...prev,
+      synonyms: synonyms.slice(0, limit),
+    }));
+  };
+  const handleIncludeDraftsChange = (checked: boolean) => {
+    setSearchSettings((prev) => ({ ...prev, includeDrafts: checked }));
+  };
+  const handleHighlightResultsChange = (checked: boolean) => {
+    setSearchSettings((prev) => ({ ...prev, highlightResults: checked }));
+  };
+  const handleFiltersChange = (value: string, isValid: boolean) => {
+    setSearchSettings((prev) => ({ ...prev, filters: value, filtersValid: isValid }));
+  };
+  const handleTemperatureChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, temperature: ragDefaults.temperature.defaultValue };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, temperature: clampTemperatureValue(parsed) };
+    });
+  };
+  const handleMaxTokensChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, maxTokens: ragDefaults.maxTokens.defaultValue };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, maxTokens: clampMaxTokensValue(parsed) };
+    });
+  };
+  const handleSystemPromptChange = (value: string) => {
+    setSearchSettings((prev) => ({ ...prev, systemPrompt: value }));
+  };
+  const handleResponseFormatChange = (value: string) => {
+    setSearchSettings((prev) => ({
+      ...prev,
+      responseFormat: value === "auto" ? null : (value as "text" | "markdown" | "html"),
+    }));
   };
 
   const basesQuery = useQuery({
@@ -888,6 +1063,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => clampVectorLimitValue(searchSettings.vectorLimit),
     [searchSettings.vectorLimit],
   );
+  const normalizedBm25Limit = useMemo(
+    () => clampVectorLimitValue(searchSettings.bm25Limit),
+    [searchSettings.bm25Limit],
+  );
   const normalizedBm25Weight = useMemo(
     () => clampWeightValue(searchSettings.bm25Weight),
     [searchSettings.bm25Weight],
@@ -895,6 +1074,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const normalizedVectorWeight = useMemo(
     () => clampWeightValue(searchSettings.vectorWeight),
     [searchSettings.vectorWeight],
+  );
+  const normalizedTemperature = useMemo(
+    () => clampTemperatureValue(searchSettings.temperature),
+    [searchSettings.temperature],
+  );
+  const normalizedMaxTokens = useMemo(
+    () => clampMaxTokensValue(searchSettings.maxTokens),
+    [searchSettings.maxTokens],
   );
   const suggestLimit = normalizedTopK ?? 8;
   const { 
@@ -914,10 +1101,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
 
     const bm25Options =
-      normalizedBm25Weight !== null
+      normalizedBm25Weight !== null || normalizedBm25Limit !== null
         ? {
             weight: normalizedBm25Weight,
-            limit: null,
+            limit: normalizedBm25Limit,
           }
         : null;
 
@@ -934,6 +1121,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           }
         : null;
 
+    const systemPrompt = searchSettings.systemPrompt?.trim() ?? "";
+
     return {
       knowledgeBaseId: selectedBase.id,
       hybrid: {
@@ -943,16 +1132,27 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       },
       llm: {
         providerId: searchSettings.llmProviderId ?? null,
+        model: searchSettings.llmModel ?? null,
+        temperature: normalizedTemperature,
+        maxTokens: normalizedMaxTokens,
+        systemPrompt: systemPrompt.length > 0 ? systemPrompt : null,
+        responseFormat: searchSettings.responseFormat ?? null,
       },
     } satisfies UseKnowledgeBaseAskAiOptions;
   }, [
+    normalizedBm25Limit,
     normalizedBm25Weight,
     normalizedTopK,
     normalizedVectorLimit,
     normalizedVectorWeight,
+    normalizedMaxTokens,
+    normalizedTemperature,
     searchSettings.collection,
     searchSettings.embeddingProviderId,
     searchSettings.llmProviderId,
+    searchSettings.llmModel,
+    searchSettings.responseFormat,
+    searchSettings.systemPrompt,
     selectedBase,
   ]);
   const handleQuickSearchQueryChange = useCallback(
@@ -2595,11 +2795,21 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   isVectorCollectionsLoading={isVectorCollectionsLoading}
                   onTopKChange={handleTopKInputChange}
                   onVectorLimitChange={handleVectorLimitChange}
+                  onBm25LimitChange={handleBm25LimitChange}
                   onBm25WeightChange={handleBm25WeightChange}
                   onVectorWeightChange={handleVectorWeightChange}
                   onEmbeddingProviderChange={handleEmbeddingProviderChange}
                   onLlmProviderChange={handleLlmProviderChange}
+                  onLlmModelChange={handleLlmModelChange}
                   onCollectionChange={handleCollectionChange}
+                  onSynonymsChange={handleSynonymsChange}
+                  onIncludeDraftsChange={handleIncludeDraftsChange}
+                  onHighlightResultsChange={handleHighlightResultsChange}
+                  onFiltersChange={handleFiltersChange}
+                  onTemperatureChange={handleTemperatureChange}
+                  onMaxTokensChange={handleMaxTokensChange}
+                  onSystemPromptChange={handleSystemPromptChange}
+                  onResponseFormatChange={handleResponseFormatChange}
                 />
               ) : (
                 <div className="p-4 text-sm text-muted-foreground">
