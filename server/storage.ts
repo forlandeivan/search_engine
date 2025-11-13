@@ -18,9 +18,11 @@ import {
   workspaceEmbedKeyDomains,
   knowledgeBaseRagRequests,
   knowledgeBaseSearchSettings,
+  knowledgeBaseAskAiRuns,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
   type KnowledgeBaseRagSearchSettings,
+  type KnowledgeBaseAskAiPipelineStepLog,
   type Site,
   type SiteInsert,
   type User,
@@ -30,6 +32,8 @@ import {
   type EmbeddingProviderInsert,
   type LlmProvider,
   type LlmProviderInsert,
+  type KnowledgeBaseAskAiRun,
+  type KnowledgeBaseAskAiRunInsert,
   type Workspace,
   type WorkspaceMember,
   type AuthProvider,
@@ -43,7 +47,11 @@ import { db } from "./db";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
-import type { KnowledgeBaseRagConfig } from "@shared/knowledge-base";
+import type {
+  KnowledgeBaseAskAiRunDetail,
+  KnowledgeBaseAskAiRunSummary,
+  KnowledgeBaseRagConfig,
+} from "@shared/knowledge-base";
 
 let globalUserAuthSchemaReady = false;
 
@@ -65,6 +73,25 @@ export type KnowledgeChunkSearchEntry = {
 function getRowString(row: Record<string, unknown>, key: string): string {
   const value = row[key];
   return typeof value === "string" ? value : "";
+}
+
+function toIsoTimestamp(value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  return null;
 }
 
 function sanitizeWorkspaceNameCandidate(source: string): string {
@@ -518,6 +545,38 @@ export interface WorkspaceAdminSummary {
   managerFullName: string | null;
 }
 
+export type KnowledgeBaseAskAiRunRecordInput = {
+  workspaceId: string;
+  knowledgeBaseId: string;
+  prompt: string;
+  normalizedQuery: string | null;
+  status: "success" | "error";
+  errorMessage: string | null;
+  topK: number | null;
+  bm25Weight: number | null;
+  bm25Limit: number | null;
+  vectorWeight: number | null;
+  vectorLimit: number | null;
+  vectorCollection: string | null;
+  embeddingProviderId: string | null;
+  llmProviderId: string | null;
+  llmModel: string | null;
+  bm25ResultCount: number | null;
+  vectorResultCount: number | null;
+  vectorDocumentCount: number | null;
+  combinedResultCount: number | null;
+  embeddingTokens: number | null;
+  llmTokens: number | null;
+  totalTokens: number | null;
+  retrievalDurationMs: number | null;
+  bm25DurationMs: number | null;
+  vectorDurationMs: number | null;
+  llmDurationMs: number | null;
+  totalDurationMs: number | null;
+  startedAt: string | null;
+  pipelineLog: KnowledgeBaseAskAiPipelineStepLog[];
+};
+
 export interface IStorage {
   // Sites management
   createSite(site: SiteInsert): Promise<Site>;
@@ -679,6 +738,21 @@ export interface IStorage {
       ragSettings: KnowledgeBaseRagSearchSettings;
     },
   ): Promise<KnowledgeBaseSearchSettingsRow>;
+  recordKnowledgeBaseAskAiRun(entry: KnowledgeBaseAskAiRunRecordInput): Promise<void>;
+  listKnowledgeBaseAskAiRuns(
+    workspaceId: string,
+    knowledgeBaseId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<{
+    items: KnowledgeBaseAskAiRunSummary[];
+    hasMore: boolean;
+    nextOffset: number | null;
+  }>;
+  getKnowledgeBaseAskAiRun(
+    runId: string,
+    workspaceId: string,
+    knowledgeBaseId: string,
+  ): Promise<KnowledgeBaseAskAiRunDetail | null>;
 }
 
 let embeddingProvidersTableEnsured = false;
@@ -704,6 +778,9 @@ let ensuringKnowledgeBaseRagRequestsTable: Promise<void> | null = null;
 
 let knowledgeBaseSearchSettingsTableEnsured = false;
 let ensuringKnowledgeBaseSearchSettingsTable: Promise<void> | null = null;
+
+let knowledgeBaseAskAiRunsTableEnsured = false;
+let ensuringKnowledgeBaseAskAiRunsTable: Promise<void> | null = null;
 
 let knowledgeBaseTablesEnsured = false;
 let ensuringKnowledgeBaseTables: Promise<void> | null = null;
@@ -1990,6 +2067,78 @@ async function ensureKnowledgeBaseRagRequestsTable(): Promise<void> {
   }
 }
 
+async function ensureKnowledgeBaseAskAiRunsTable(): Promise<void> {
+  if (knowledgeBaseAskAiRunsTableEnsured) {
+    return;
+  }
+
+  if (ensuringKnowledgeBaseAskAiRunsTable) {
+    await ensuringKnowledgeBaseAskAiRunsTable;
+    return;
+  }
+
+  ensuringKnowledgeBaseAskAiRunsTable = (async () => {
+    await ensureWorkspacesTable();
+    await ensureKnowledgeBaseTables();
+    await ensureEmbeddingProvidersTable();
+    await ensureLlmProvidersTable();
+
+    const uuidExpression = await getUuidGenerationExpression();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_base_ask_ai_runs" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+        "knowledge_base_id" varchar NOT NULL REFERENCES "knowledge_bases"("id") ON DELETE CASCADE,
+        "prompt" text NOT NULL,
+        "normalized_query" text,
+        "status" text NOT NULL DEFAULT 'success',
+        "error_message" text,
+        "top_k" integer,
+        "bm25_weight" double precision,
+        "bm25_limit" integer,
+        "vector_weight" double precision,
+        "vector_limit" integer,
+        "vector_collection" text,
+        "embedding_provider_id" varchar REFERENCES "embedding_providers"("id") ON DELETE SET NULL,
+        "llm_provider_id" varchar REFERENCES "llm_providers"("id") ON DELETE SET NULL,
+        "llm_model" text,
+        "bm25_result_count" integer,
+        "vector_result_count" integer,
+        "vector_document_count" integer,
+        "combined_result_count" integer,
+        "embedding_tokens" integer,
+        "llm_tokens" integer,
+        "total_tokens" integer,
+        "retrieval_duration_ms" double precision,
+        "bm25_duration_ms" double precision,
+        "vector_duration_ms" double precision,
+        "llm_duration_ms" double precision,
+        "total_duration_ms" double precision,
+        "started_at" timestamp,
+        "pipeline_log" jsonb,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    try {
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS knowledge_base_ask_ai_runs_workspace_base_created_idx
+          ON "knowledge_base_ask_ai_runs" ("workspace_id", "knowledge_base_id", "created_at")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42710", "42P07"]);
+    }
+  })();
+
+  try {
+    await ensuringKnowledgeBaseAskAiRunsTable;
+    knowledgeBaseAskAiRunsTableEnsured = true;
+  } finally {
+    ensuringKnowledgeBaseAskAiRunsTable = null;
+  }
+}
+
 async function ensureKnowledgeBaseSearchSettingsTable(): Promise<void> {
   if (knowledgeBaseSearchSettingsTableEnsured) {
     return;
@@ -2537,6 +2686,50 @@ export class DatabaseStorage implements IStorage {
     } finally {
       this.ensuringUserAuthColumns = null;
     }
+  }
+
+  private buildAskAiRunSummary(row: KnowledgeBaseAskAiRun): KnowledgeBaseAskAiRunSummary {
+    return {
+      id: row.id,
+      workspaceId: row.workspaceId,
+      knowledgeBaseId: row.knowledgeBaseId,
+      prompt: row.prompt,
+      normalizedQuery: row.normalizedQuery ?? null,
+      status: (row.status as "success" | "error") ?? "success",
+      errorMessage: row.errorMessage ?? null,
+      createdAt: toIsoTimestamp(row.createdAt) ?? new Date().toISOString(),
+      startedAt: toIsoTimestamp(row.startedAt),
+      topK: row.topK ?? null,
+      bm25Weight: row.bm25Weight ?? null,
+      bm25Limit: row.bm25Limit ?? null,
+      vectorWeight: row.vectorWeight ?? null,
+      vectorLimit: row.vectorLimit ?? null,
+      vectorCollection: row.vectorCollection ?? null,
+      embeddingProviderId: row.embeddingProviderId ?? null,
+      llmProviderId: row.llmProviderId ?? null,
+      llmModel: row.llmModel ?? null,
+      bm25ResultCount: row.bm25ResultCount ?? null,
+      vectorResultCount: row.vectorResultCount ?? null,
+      vectorDocumentCount: row.vectorDocumentCount ?? null,
+      combinedResultCount: row.combinedResultCount ?? null,
+      embeddingTokens: row.embeddingTokens ?? null,
+      llmTokens: row.llmTokens ?? null,
+      totalTokens: row.totalTokens ?? null,
+      retrievalDurationMs: row.retrievalDurationMs ?? null,
+      bm25DurationMs: row.bm25DurationMs ?? null,
+      vectorDurationMs: row.vectorDurationMs ?? null,
+      llmDurationMs: row.llmDurationMs ?? null,
+      totalDurationMs: row.totalDurationMs ?? null,
+    };
+  }
+
+  private buildAskAiRunDetail(row: KnowledgeBaseAskAiRun): KnowledgeBaseAskAiRunDetail {
+    const summary = this.buildAskAiRunSummary(row);
+    const pipeline = Array.isArray(row.pipelineLog)
+      ? (row.pipelineLog as KnowledgeBaseAskAiPipelineStepLog[])
+      : [];
+
+    return { ...summary, pipelineLog: pipeline };
   }
 
   async createSite(site: SiteInsert): Promise<Site> {
@@ -3246,6 +3439,105 @@ export class DatabaseStorage implements IStorage {
       embeddingProviderId: entry.embeddingProviderId ?? null,
       collection: sanitizedCollection && sanitizedCollection.length > 0 ? sanitizedCollection : null,
     });
+  }
+
+  async recordKnowledgeBaseAskAiRun(entry: KnowledgeBaseAskAiRunRecordInput): Promise<void> {
+    await ensureKnowledgeBaseAskAiRunsTable();
+
+    const sanitizedCollection = entry.vectorCollection?.trim() ?? null;
+    const startedAt = entry.startedAt ? toIsoTimestamp(entry.startedAt) : null;
+    const startedAtDate = startedAt ? new Date(startedAt) : null;
+
+    await this.db.insert(knowledgeBaseAskAiRuns).values({
+      workspaceId: entry.workspaceId,
+      knowledgeBaseId: entry.knowledgeBaseId,
+      prompt: entry.prompt,
+      normalizedQuery: entry.normalizedQuery ?? null,
+      status: entry.status,
+      errorMessage: entry.errorMessage ?? null,
+      topK: entry.topK ?? null,
+      bm25Weight: entry.bm25Weight ?? null,
+      bm25Limit: entry.bm25Limit ?? null,
+      vectorWeight: entry.vectorWeight ?? null,
+      vectorLimit: entry.vectorLimit ?? null,
+      vectorCollection: sanitizedCollection && sanitizedCollection.length > 0 ? sanitizedCollection : null,
+      embeddingProviderId: entry.embeddingProviderId ?? null,
+      llmProviderId: entry.llmProviderId ?? null,
+      llmModel: entry.llmModel ?? null,
+      bm25ResultCount: entry.bm25ResultCount ?? null,
+      vectorResultCount: entry.vectorResultCount ?? null,
+      vectorDocumentCount: entry.vectorDocumentCount ?? null,
+      combinedResultCount: entry.combinedResultCount ?? null,
+      embeddingTokens: entry.embeddingTokens ?? null,
+      llmTokens: entry.llmTokens ?? null,
+      totalTokens: entry.totalTokens ?? null,
+      retrievalDurationMs: entry.retrievalDurationMs ?? null,
+      bm25DurationMs: entry.bm25DurationMs ?? null,
+      vectorDurationMs: entry.vectorDurationMs ?? null,
+      llmDurationMs: entry.llmDurationMs ?? null,
+      totalDurationMs: entry.totalDurationMs ?? null,
+      startedAt: startedAtDate,
+      pipelineLog: entry.pipelineLog && entry.pipelineLog.length > 0 ? entry.pipelineLog : null,
+    });
+  }
+
+  async listKnowledgeBaseAskAiRuns(
+    workspaceId: string,
+    knowledgeBaseId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<{ items: KnowledgeBaseAskAiRunSummary[]; hasMore: boolean; nextOffset: number | null }> {
+    await ensureKnowledgeBaseAskAiRunsTable();
+
+    const limit = Math.max(1, Math.min(options?.limit ?? 20, 100));
+    const offset = Math.max(0, options?.offset ?? 0);
+
+    const rows = (await this.db
+      .select()
+      .from(knowledgeBaseAskAiRuns)
+      .where(
+        and(
+          eq(knowledgeBaseAskAiRuns.workspaceId, workspaceId),
+          eq(knowledgeBaseAskAiRuns.knowledgeBaseId, knowledgeBaseId),
+        ),
+      )
+      .orderBy(desc(knowledgeBaseAskAiRuns.createdAt), desc(knowledgeBaseAskAiRuns.id))
+      .limit(limit + 1)
+      .offset(offset)) as KnowledgeBaseAskAiRun[];
+
+    const hasMore = rows.length > limit;
+    const items = rows.slice(0, limit).map((row) => this.buildAskAiRunSummary(row));
+
+    return {
+      items,
+      hasMore,
+      nextOffset: hasMore ? offset + limit : null,
+    };
+  }
+
+  async getKnowledgeBaseAskAiRun(
+    runId: string,
+    workspaceId: string,
+    knowledgeBaseId: string,
+  ): Promise<KnowledgeBaseAskAiRunDetail | null> {
+    await ensureKnowledgeBaseAskAiRunsTable();
+
+    const [row] = (await this.db
+      .select()
+      .from(knowledgeBaseAskAiRuns)
+      .where(
+        and(
+          eq(knowledgeBaseAskAiRuns.id, runId),
+          eq(knowledgeBaseAskAiRuns.workspaceId, workspaceId),
+          eq(knowledgeBaseAskAiRuns.knowledgeBaseId, knowledgeBaseId),
+        ),
+      )
+      .limit(1)) as KnowledgeBaseAskAiRun[];
+
+    if (!row) {
+      return null;
+    }
+
+    return this.buildAskAiRunDetail(row);
   }
 
   async getLatestKnowledgeBaseRagConfig(

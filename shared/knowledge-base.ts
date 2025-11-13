@@ -1,4 +1,8 @@
-import type { KnowledgeNodeSourceType, KnowledgeDocumentStatus } from "./schema";
+import type {
+  KnowledgeNodeSourceType,
+  KnowledgeDocumentStatus,
+  KnowledgeBaseAskAiPipelineStepLog,
+} from "./schema";
 
 export type KnowledgeBaseCrawlSelectorConfig = {
   title?: string | null;
@@ -198,6 +202,49 @@ export type KnowledgeBaseSummary = {
   description: string;
   updatedAt: string;
   rootNodes: KnowledgeBaseTreeNode[];
+};
+
+export type KnowledgeBaseAskAiRunSummary = {
+  id: string;
+  workspaceId: string;
+  knowledgeBaseId: string;
+  prompt: string;
+  normalizedQuery?: string | null;
+  status: "success" | "error";
+  errorMessage?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  topK?: number | null;
+  bm25Weight?: number | null;
+  bm25Limit?: number | null;
+  vectorWeight?: number | null;
+  vectorLimit?: number | null;
+  vectorCollection?: string | null;
+  embeddingProviderId?: string | null;
+  llmProviderId?: string | null;
+  llmModel?: string | null;
+  bm25ResultCount?: number | null;
+  vectorResultCount?: number | null;
+  vectorDocumentCount?: number | null;
+  combinedResultCount?: number | null;
+  embeddingTokens?: number | null;
+  llmTokens?: number | null;
+  totalTokens?: number | null;
+  retrievalDurationMs?: number | null;
+  bm25DurationMs?: number | null;
+  vectorDurationMs?: number | null;
+  llmDurationMs?: number | null;
+  totalDurationMs?: number | null;
+};
+
+export type KnowledgeBaseAskAiRunDetail = KnowledgeBaseAskAiRunSummary & {
+  pipelineLog: KnowledgeBaseAskAiPipelineStepLog[];
+};
+
+export type KnowledgeBaseAskAiRunListResponse = {
+  items: KnowledgeBaseAskAiRunSummary[];
+  hasMore: boolean;
+  nextOffset: number | null;
 };
 
 export type CreateKnowledgeBasePayload = {

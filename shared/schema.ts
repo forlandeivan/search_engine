@@ -617,6 +617,18 @@ export const knowledgeBaseRagRequests = pgTable("knowledge_base_rag_requests", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+export type KnowledgeBaseAskAiPipelineStepLog = {
+  key: string;
+  title?: string | null;
+  status: "success" | "skipped" | "error";
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  durationMs?: number | null;
+  input?: Record<string, unknown> | null;
+  output?: Record<string, unknown> | null;
+  error?: string | null;
+};
+
 export type KnowledgeBaseChunkSearchSettings = {
   topK?: number | null;
   bm25Weight?: number | null;
@@ -683,6 +695,48 @@ export const llmProviders = pgTable("llm_providers", {
     .references(() => workspaces.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const knowledgeBaseAskAiRuns = pgTable("knowledge_base_ask_ai_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+  workspaceId: varchar("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  knowledgeBaseId: varchar("knowledge_base_id")
+    .notNull()
+    .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+  prompt: text("prompt").notNull(),
+  normalizedQuery: text("normalized_query"),
+  status: text("status").notNull().default("success"),
+  errorMessage: text("error_message"),
+  topK: integer("top_k"),
+  bm25Weight: doublePrecision("bm25_weight"),
+  bm25Limit: integer("bm25_limit"),
+  vectorWeight: doublePrecision("vector_weight"),
+  vectorLimit: integer("vector_limit"),
+  vectorCollection: text("vector_collection"),
+  embeddingProviderId: varchar("embedding_provider_id").references(() => embeddingProviders.id, {
+    onDelete: "set null",
+  }),
+  llmProviderId: varchar("llm_provider_id").references(() => llmProviders.id, {
+    onDelete: "set null",
+  }),
+  llmModel: text("llm_model"),
+  bm25ResultCount: integer("bm25_result_count"),
+  vectorResultCount: integer("vector_result_count"),
+  vectorDocumentCount: integer("vector_document_count"),
+  combinedResultCount: integer("combined_result_count"),
+  embeddingTokens: integer("embedding_tokens"),
+  llmTokens: integer("llm_tokens"),
+  totalTokens: integer("total_tokens"),
+  retrievalDurationMs: doublePrecision("retrieval_duration_ms"),
+  bm25DurationMs: doublePrecision("bm25_duration_ms"),
+  vectorDurationMs: doublePrecision("vector_duration_ms"),
+  llmDurationMs: doublePrecision("llm_duration_ms"),
+  totalDurationMs: doublePrecision("total_duration_ms"),
+  startedAt: timestamp("started_at"),
+  pipelineLog: jsonb("pipeline_log").$type<KnowledgeBaseAskAiPipelineStepLog[] | null>(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 // Relations
@@ -1029,6 +1083,8 @@ export type KnowledgeBaseRagRequest = typeof knowledgeBaseRagRequests.$inferSele
 export type KnowledgeBaseRagRequestInsert = typeof knowledgeBaseRagRequests.$inferInsert;
 export type KnowledgeBaseSearchSettingsRow = typeof knowledgeBaseSearchSettings.$inferSelect;
 export type KnowledgeBaseSearchSettingsInsert = typeof knowledgeBaseSearchSettings.$inferInsert;
+export type KnowledgeBaseAskAiRun = typeof knowledgeBaseAskAiRuns.$inferSelect;
+export type KnowledgeBaseAskAiRunInsert = typeof knowledgeBaseAskAiRuns.$inferInsert;
 export type KnowledgeDocumentChunkSet = typeof knowledgeDocumentChunkSets.$inferSelect;
 export type KnowledgeDocumentChunkSetInsert = typeof knowledgeDocumentChunkSets.$inferInsert;
 export type KnowledgeDocumentChunkItem = typeof knowledgeDocumentChunkItems.$inferSelect;

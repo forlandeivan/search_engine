@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
 import MarkdownRenderer from "@/components/ui/markdown";
+import { AskAiRunJournalDialog } from "@/components/knowledge-base/AskAiRunJournalDialog";
 import SearchQuickSwitcher from "@/components/search/SearchQuickSwitcher";
 import KnowledgeBaseSearchSettingsForm, {
   type KnowledgeBaseSearchSettings,
@@ -129,6 +130,7 @@ import {
   Folder,
   GitBranch,
   Globe2,
+  History,
   Loader2,
   MoreVertical,
   PencilLine,
@@ -988,6 +990,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [isSearchSettingsDirty, setIsSearchSettingsDirty] = useState(false);
   const [isSearchSettingsReady, setIsSearchSettingsReady] = useState(false);
   const [isSearchSettingsOpen, setIsSearchSettingsOpen] = useState(false);
+  const [isAskAiJournalOpen, setIsAskAiJournalOpen] = useState(false);
   const [searchSettingsError, setSearchSettingsError] = useState<string | null>(null);
   const [searchSettingsUpdatedAt, setSearchSettingsUpdatedAt] = useState<string | null>(null);
 
@@ -1311,6 +1314,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   useEffect(() => {
     setIsSearchSettingsOpen(false);
   }, [selectedBase?.id, storageKey]);
+
+  useEffect(() => {
+    setIsAskAiJournalOpen(false);
+  }, [selectedBase?.id]);
   useEffect(() => {
     if (!isQuickSwitcherOpen) {
       return;
@@ -3147,6 +3154,22 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               )}
             />
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Журнал Ask AI"
+            disabled={!selectedBase?.id}
+            onClick={() => {
+              if (!selectedBase?.id) {
+                return;
+              }
+
+              setIsAskAiJournalOpen(true);
+            }}
+          >
+            <History className="h-4 w-4" />
+          </Button>
           <Popover
             open={isSearchSettingsOpen}
             onOpenChange={(open) => {
@@ -3507,6 +3530,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           }}
         />
       )}
+      <AskAiRunJournalDialog
+        open={isAskAiJournalOpen}
+        onOpenChange={setIsAskAiJournalOpen}
+        knowledgeBaseId={selectedBase?.id ?? null}
+      />
       <CreateKnowledgeBaseDialog
         open={isCreateBaseDialogOpen}
         onOpenChange={(open) => {
