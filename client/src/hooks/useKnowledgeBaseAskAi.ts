@@ -488,7 +488,10 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
       try {
         const response = await fetch(normalized.endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream, application/json",
+          },
           body: JSON.stringify(payload),
           signal: controller.signal,
         });
@@ -507,21 +510,55 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           const decoder = new TextDecoder("utf-8");
           let buffer = "";
           let aggregatedAnswer = "";
+          let typedAnswer = "";
+          let typingQueue = "";
+          let typingTimer: ReturnType<typeof setInterval> | null = null;
           let currentFormat = normalized.responseFormat ?? "text";
           let citations: RagChunk[] = [];
           let statusMessage: string | null = ASK_STATUS_PENDING;
           let completed = false;
 
+          const stopTypingTimer = () => {
+            if (typingTimer !== null) {
+              clearInterval(typingTimer);
+              typingTimer = null;
+            }
+          };
+
+          const flushTypingQueue = () => {
+            stopTypingTimer();
+            if (typingQueue) {
+              typedAnswer += typingQueue;
+              typingQueue = "";
+            }
+          };
+
           const pushUpdate = () => {
             setState((prev) => ({
               ...prev,
-              answerHtml: toHtml(aggregatedAnswer, currentFormat),
+              answerHtml: toHtml(typedAnswer, currentFormat),
               sources: citations,
               statusMessage,
               showIndicator: true,
               isStreaming: true,
               error: null,
             }));
+          };
+
+          const startTypingTimer = () => {
+            if (typingTimer !== null) {
+              return;
+            }
+            typingTimer = setInterval(() => {
+              if (!typingQueue) {
+                stopTypingTimer();
+                return;
+              }
+              const nextChar = typingQueue.slice(0, 1);
+              typingQueue = typingQueue.slice(1);
+              typedAnswer += nextChar;
+              pushUpdate();
+            }, 18);
           };
 
           const applyRecord = (recordValue: unknown) => {
@@ -556,6 +593,8 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
 
             if (delta) {
               aggregatedAnswer += delta;
+              typingQueue += delta;
+              startTypingTimer();
             }
 
             if (typeof record.completed === "boolean" && record.completed) {
@@ -563,99 +602,114 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             }
           };
 
-          while (!completed) {
-            const { value, done } = await reader.read();
-            if (done) {
-              break;
-            }
+          pushUpdate();
 
-            buffer += decoder.decode(value, { stream: true });
-            let boundaryIndex = buffer.indexOf("\n\n");
-
-            while (boundaryIndex !== -1) {
-              const rawEvent = buffer.slice(0, boundaryIndex).replace(/\r/g, "");
-              buffer = buffer.slice(boundaryIndex + 2);
-              boundaryIndex = buffer.indexOf("\n\n");
-
-              if (!rawEvent.trim()) {
-                continue;
-              }
-
-              const lines = rawEvent.split("\n");
-              let eventName = "message";
-              const dataLines: string[] = [];
-
-              for (const line of lines) {
-                if (line.startsWith("event:")) {
-                  eventName = line.slice(6).trim();
-                } else if (line.startsWith("data:")) {
-                  dataLines.push(line.slice(5));
-                }
-              }
-
-              const dataPayload = dataLines.join("\n").trim();
-              if (!dataPayload) {
-                continue;
-              }
-
-              if (dataPayload === "[DONE]") {
-                completed = true;
+          let streamingError: unknown = null;
+          try {
+            while (!completed) {
+              const { value, done } = await reader.read();
+              if (done) {
                 break;
               }
 
-              if (eventName === "error") {
-                let message = dataPayload;
-                if (dataPayload.startsWith("{") || dataPayload.startsWith("[")) {
-                  try {
-                    const parsed = JSON.parse(dataPayload) as { message?: string; error?: string };
-                    message = parsed.message || parsed.error || message;
-                  } catch {
-                    // ignore
+              buffer += decoder.decode(value, { stream: true });
+              let boundaryIndex = buffer.indexOf("\n\n");
+
+              while (boundaryIndex !== -1) {
+                const rawEvent = buffer.slice(0, boundaryIndex).replace(/\r/g, "");
+                buffer = buffer.slice(boundaryIndex + 2);
+                boundaryIndex = buffer.indexOf("\n\n");
+
+                if (!rawEvent.trim()) {
+                  continue;
+                }
+
+                const lines = rawEvent.split("\n");
+                let eventName = "message";
+                const dataLines: string[] = [];
+
+                for (const line of lines) {
+                  if (line.startsWith("event:")) {
+                    eventName = line.slice(6).trim();
+                  } else if (line.startsWith("data:")) {
+                    dataLines.push(line.slice(5));
                   }
                 }
-                throw new Error(message || "Ошибка при выполнении запроса");
-              }
 
-              let parsedPayload: unknown = dataPayload;
-              if (dataPayload.startsWith("{") || dataPayload.startsWith("[")) {
-                try {
-                  parsedPayload = JSON.parse(dataPayload);
-                } catch {
-                  parsedPayload = dataPayload;
+                const dataPayload = dataLines.join("\n").trim();
+                if (!dataPayload) {
+                  continue;
                 }
-              }
 
-              if (eventName === "metadata") {
-                applyRecord(parsedPayload);
+                if (dataPayload === "[DONE]") {
+                  completed = true;
+                  break;
+                }
+
+                if (eventName === "error") {
+                  let message = dataPayload;
+                  if (dataPayload.startsWith("{") || dataPayload.startsWith("[")) {
+                    try {
+                      const parsed = JSON.parse(dataPayload) as { message?: string; error?: string };
+                      message = parsed.message || parsed.error || message;
+                    } catch {
+                      // ignore
+                    }
+                  }
+                  throw new Error(message || "Ошибка при выполнении запроса");
+                }
+
+                let parsedPayload: unknown = dataPayload;
+                if (dataPayload.startsWith("{") || dataPayload.startsWith("[")) {
+                  try {
+                    parsedPayload = JSON.parse(dataPayload);
+                  } catch {
+                    parsedPayload = dataPayload;
+                  }
+                }
+
+                if (eventName === "metadata") {
+                  applyRecord(parsedPayload);
+                  pushUpdate();
+                  continue;
+                }
+
+                if (eventName === "complete") {
+                  applyRecord(parsedPayload);
+                  completed = true;
+                  break;
+                }
+
+                if (typeof parsedPayload === "string") {
+                  aggregatedAnswer += parsedPayload;
+                  typingQueue += parsedPayload;
+                  startTypingTimer();
+                } else {
+                  applyRecord(parsedPayload);
+                }
+
                 pushUpdate();
-                continue;
               }
+            }
+          } catch (error) {
+            streamingError = error;
+          } finally {
+            flushTypingQueue();
 
-              if (eventName === "complete") {
-                applyRecord(parsedPayload);
-                completed = true;
-                break;
-              }
-
-              if (typeof parsedPayload === "string") {
-                aggregatedAnswer += parsedPayload;
-              } else {
-                applyRecord(parsedPayload);
-              }
-
-              pushUpdate();
+            try {
+              reader.releaseLock();
+            } catch {
+              // ignore
             }
           }
 
-          try {
-            reader.releaseLock();
-          } catch {
-            // ignore
+          if (streamingError) {
+            throw streamingError;
           }
 
           setState((prev) => ({
             ...prev,
-            answerHtml: toHtml(aggregatedAnswer, currentFormat),
+            answerHtml: toHtml(typedAnswer || aggregatedAnswer, currentFormat),
             sources: citations,
             statusMessage: null,
             showIndicator: false,
