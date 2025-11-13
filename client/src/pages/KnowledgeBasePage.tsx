@@ -638,6 +638,13 @@ const buildSearchSettingsHash = (settings: KnowledgeBaseSearchSettings): string 
     responseFormat: settings.responseFormat,
   });
 
+const cloneSearchSettings = (
+  settings: KnowledgeBaseSearchSettings,
+): KnowledgeBaseSearchSettings => ({
+  ...settings,
+  synonyms: [...settings.synonyms],
+});
+
 const formatDateTime = (value?: string | null) => {
   if (!value) {
     return "Недавно";
@@ -975,23 +982,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     createDefaultSearchSettings(),
   );
   const searchSettingsBaselineHashRef = useRef<string>(buildSearchSettingsHash(searchSettings));
+  const searchSettingsBaselineRef = useRef<KnowledgeBaseSearchSettings>(
+    cloneSearchSettings(searchSettings),
+  );
   const [isSearchSettingsDirty, setIsSearchSettingsDirty] = useState(false);
   const [isSearchSettingsReady, setIsSearchSettingsReady] = useState(false);
   const [isSearchSettingsOpen, setIsSearchSettingsOpen] = useState(false);
   const [searchSettingsError, setSearchSettingsError] = useState<string | null>(null);
   const [searchSettingsUpdatedAt, setSearchSettingsUpdatedAt] = useState<string | null>(null);
-  const skipSearchSettingsSyncRef = useRef(false);
-  const saveSearchSettingsTimeoutRef = useRef<number | null>(null);
-  const latestSearchSettingsRef = useRef<KnowledgeBaseSearchSettings | null>(null);
 
   const commitSearchSettingsBaseline = useCallback((next: KnowledgeBaseSearchSettings) => {
     searchSettingsBaselineHashRef.current = buildSearchSettingsHash(next);
+    searchSettingsBaselineRef.current = cloneSearchSettings(next);
     setIsSearchSettingsDirty(false);
   }, []);
-
-  useEffect(() => {
-    latestSearchSettingsRef.current = searchSettings;
-  }, [searchSettings]);
 
   useEffect(() => {
     const hash = buildSearchSettingsHash(searchSettings);
@@ -1022,7 +1026,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         data,
       );
       const normalized = composeSearchSettingsFromApi(data);
-      skipSearchSettingsSyncRef.current = true;
       setSearchSettings(normalized);
       commitSearchSettingsBaseline(normalized);
       setSearchSettingsUpdatedAt(data.updatedAt ?? new Date().toISOString());
@@ -1479,7 +1482,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
 
     if (!storageKey) {
-      skipSearchSettingsSyncRef.current = true;
       setIsSearchSettingsReady(false);
       const defaults = createDefaultSearchSettings();
       setSearchSettings(defaults);
@@ -1496,7 +1498,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       const raw = window.localStorage.getItem(storageKey);
       if (!raw) {
         const defaults = createDefaultSearchSettings();
-        skipSearchSettingsSyncRef.current = true;
         setSearchSettings(defaults);
         commitSearchSettingsBaseline(defaults);
         setSearchSettingsError(null);
@@ -1505,14 +1506,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
       const parsed = JSON.parse(raw) as unknown;
       const normalized = parseStoredSearchSettings(parsed);
-      skipSearchSettingsSyncRef.current = true;
       setSearchSettings(normalized);
       commitSearchSettingsBaseline(normalized);
       setSearchSettingsError(null);
     } catch (error) {
       console.error("Не удалось прочитать параметры поиска из localStorage", error);
       const defaults = createDefaultSearchSettings();
-      skipSearchSettingsSyncRef.current = true;
       setSearchSettings(defaults);
       commitSearchSettingsBaseline(defaults);
     } finally {
@@ -1531,7 +1530,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       }
 
       if (!event.newValue) {
-        skipSearchSettingsSyncRef.current = true;
         const defaults = createDefaultSearchSettings();
         setSearchSettings(defaults);
         commitSearchSettingsBaseline(defaults);
@@ -1540,7 +1538,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
       try {
         const parsed = JSON.parse(event.newValue) as unknown;
-        skipSearchSettingsSyncRef.current = true;
         const normalized = parseStoredSearchSettings(parsed);
         setSearchSettings(normalized);
         commitSearchSettingsBaseline(normalized);
@@ -1578,7 +1575,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
     if (searchSettingsQuery.data) {
       const next = composeSearchSettingsFromApi(searchSettingsQuery.data);
-      skipSearchSettingsSyncRef.current = true;
       setSearchSettings(next);
       commitSearchSettingsBaseline(next);
       setSearchSettingsUpdatedAt(searchSettingsQuery.data.updatedAt ?? null);
@@ -1606,47 +1602,31 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
   }, [searchSettings, storageKey, isSearchSettingsReady]);
 
-  useEffect(() => {
-    if (!isSearchSettingsReady || !selectedBase?.id) {
+  const handleSaveSearchSettings = useCallback(() => {
+    if (
+      !selectedBase?.id ||
+      !isSearchSettingsReady ||
+      !isSearchSettingsDirty ||
+      isSavingSearchSettings
+    ) {
       return;
     }
 
-    if (skipSearchSettingsSyncRef.current) {
-      skipSearchSettingsSyncRef.current = false;
-      return;
-    }
-
-    if (!isSearchSettingsDirty) {
-      return;
-    }
-
-    if (saveSearchSettingsTimeoutRef.current) {
-      clearTimeout(saveSearchSettingsTimeoutRef.current);
-    }
-
-    saveSearchSettingsTimeoutRef.current = window.setTimeout(() => {
-      const current = latestSearchSettingsRef.current;
-      if (!current || !selectedBase?.id) {
-        return;
-      }
-
-      const payload = buildSearchSettingsUpdatePayload(current);
-      saveSearchSettings({ knowledgeBaseId: selectedBase.id, payload });
-    }, 800);
-
-    return () => {
-      if (saveSearchSettingsTimeoutRef.current) {
-        clearTimeout(saveSearchSettingsTimeoutRef.current);
-        saveSearchSettingsTimeoutRef.current = null;
-      }
-    };
+    const payload = buildSearchSettingsUpdatePayload(searchSettings);
+    saveSearchSettings({ knowledgeBaseId: selectedBase.id, payload });
   }, [
+    isSearchSettingsReady,
+    isSavingSearchSettings,
+    isSearchSettingsDirty,
     saveSearchSettings,
     searchSettings,
-    isSearchSettingsReady,
     selectedBase?.id,
-    isSearchSettingsDirty,
   ]);
+
+  const handleResetSearchSettingsChanges = useCallback(() => {
+    setSearchSettings(cloneSearchSettings(searchSettingsBaselineRef.current));
+    setSearchSettingsError(null);
+  }, []);
   const [latestCrawlJob, setLatestCrawlJob] = useState<KnowledgeBaseCrawlJobStatus | null>(null);
   const crawlJobPreviousRef = useRef<KnowledgeBaseCrawlJobStatus | null>(null);
   const handleCrawlStateChange = useCallback((state: CrawlInlineState) => {
@@ -3205,9 +3185,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   ) : null}
                   <KnowledgeBaseSearchSettingsForm
                     baseName={selectedBase.name}
-                    storageKey={storageKey}
                     searchSettings={searchSettings}
                     isSearchSettingsReady={isSearchSettingsReady}
+                    isDirty={isSearchSettingsDirty}
+                    isSaving={isSavingSearchSettings}
+                    isSaveDisabled={!searchSettings.filtersValid}
+                    onSave={handleSaveSearchSettings}
+                    onCancel={handleResetSearchSettingsChanges}
                     activeEmbeddingProviders={activeEmbeddingProviders}
                     activeLlmProviders={activeLlmProviders}
                     vectorCollections={vectorCollections}

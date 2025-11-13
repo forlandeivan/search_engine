@@ -2,7 +2,7 @@ import { type ReactNode, useMemo } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -47,9 +47,13 @@ export type VectorCollectionSummary = {
 
 export type KnowledgeBaseSearchSettingsFormProps = {
   baseName: string;
-  storageKey: string;
   searchSettings: KnowledgeBaseSearchSettings;
   isSearchSettingsReady: boolean;
+  isDirty: boolean;
+  isSaving: boolean;
+  isSaveDisabled?: boolean;
+  onSave: () => void;
+  onCancel: () => void;
   activeEmbeddingProviders: PublicEmbeddingProvider[];
   activeLlmProviders: PublicLlmProvider[];
   vectorCollections: VectorCollectionSummary[];
@@ -76,9 +80,13 @@ export type KnowledgeBaseSearchSettingsFormProps = {
 
 const KnowledgeBaseSearchSettingsForm = ({
   baseName,
-  storageKey,
   searchSettings,
   isSearchSettingsReady,
+  isDirty,
+  isSaving,
+  isSaveDisabled = false,
+  onSave,
+  onCancel,
   activeEmbeddingProviders,
   activeLlmProviders,
   vectorCollections,
@@ -314,10 +322,6 @@ const KnowledgeBaseSearchSettingsForm = ({
           <p className="text-xs text-muted-foreground">
             Быстрый поиск в контексте «{baseName}». Настройки сохраняются в браузере и влияют на Quick Switcher и Ask AI.
           </p>
-        </div>
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <span>Storage key:</span>
-          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">{storageKey}</span>
         </div>
       </div>
       <Tabs defaultValue="search" className="px-4 pb-4 pt-3">
@@ -566,6 +570,21 @@ const KnowledgeBaseSearchSettingsForm = ({
         </TabsContent>
       </Tabs>
       {hints.length > 0 ? <div className="space-y-2 border-t border-border px-4 py-3 text-xs">{hints}</div> : null}
+      {isDirty || isSaving ? (
+        <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
+          <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={isSaving}>
+            Отмена
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={onSave}
+            disabled={!isDirty || isSaving || isSaveDisabled}
+          >
+            {isSaving ? "Сохраняем…" : "Сохранить"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 };
