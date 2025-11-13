@@ -75,6 +75,7 @@ import {
   DEFAULT_LLM_REQUEST_CONFIG,
   DEFAULT_LLM_RESPONSE_CONFIG,
   workspaceMemberRoles,
+  type KnowledgeBaseAskAiPipelineStepLog,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type { KnowledgeBaseSearchSettingsRow } from "@shared/schema";
@@ -84,6 +85,8 @@ import type {
   KnowledgeBaseCrawlJobStatus,
   KnowledgeBaseCrawlConfig,
   KnowledgeBaseRagConfigResponse,
+  KnowledgeBaseAskAiRunListResponse,
+  KnowledgeBaseAskAiRunDetail,
 } from "@shared/knowledge-base";
 import {
   KNOWLEDGE_BASE_SEARCH_CONSTRAINTS,
@@ -2807,22 +2810,171 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ error: "Укажите поисковый запрос" });
     }
 
+    const pipelineLog: KnowledgeBaseAskAiPipelineStepLog[] = [];
+    const runStartedAt = new Date();
+    let runStatus: "success" | "error" = "success";
+    let runErrorMessage: string | null = null;
+    let workspaceId: string | null = null;
+    let normalizedQuery = query;
+
+    let bm25Limit = body.hybrid.bm25.limit ?? body.top_k;
+    let vectorLimit = body.hybrid.vector.limit ?? body.top_k;
+    let vectorConfigured = Boolean(
+      body.hybrid.vector.collection && body.hybrid.vector.embedding_provider_id,
+    );
+
+    let bm25Weight = body.hybrid.bm25.weight ?? (vectorConfigured ? 0.5 : 1);
+    let vectorWeight = vectorConfigured ? body.hybrid.vector.weight ?? 0.5 : 0;
+
+    let bm25Duration: number | null = null;
+    let vectorDuration: number | null = null;
+    let retrievalDuration: number | null = null;
+    let llmDuration: number | null = null;
+    let totalDuration: number | null = null;
+
+    let embeddingUsageTokens: number | null = null;
+    let llmUsageTokens: number | null = null;
+
+    let bm25ResultCount: number | null = null;
+    let vectorResultCount: number | null = null;
+    let vectorDocumentCount: number | null = null;
+    let combinedResultCount: number | null = null;
+
+    let vectorSearchDetails: Array<Record<string, unknown>> | null = null;
+
+    const vectorDocumentIds = new Set<string>();
+    const vectorChunks: Array<{
+      chunkId: string;
+      score: number;
+      recordId: string | null;
+      payload: Record<string, unknown> | null;
+    }> = [];
+
+    let embeddingProviderId = vectorConfigured
+      ? body.hybrid.vector.embedding_provider_id?.trim() || null
+      : null;
+    let vectorCollection = vectorConfigured
+      ? body.hybrid.vector.collection?.trim() || null
+      : null;
+    let llmProviderId = body.llm.provider?.trim() || null;
+    let llmModel = body.llm.model?.trim() || null;
+
+    const startPipelineStep = (
+      key: string,
+      input: Record<string, unknown> | null,
+      title: string,
+    ) => {
+      const step: KnowledgeBaseAskAiPipelineStepLog = {
+        key,
+        title,
+        status: "success",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        durationMs: null,
+        input,
+        output: null,
+        error: null,
+      };
+      pipelineLog.push(step);
+      const startedAt = performance.now();
+      return {
+        finish(output?: Record<string, unknown> | null) {
+          step.finishedAt = new Date().toISOString();
+          step.durationMs = Number((performance.now() - startedAt).toFixed(2));
+          step.output = output ?? null;
+        },
+        fail(error: unknown) {
+          step.finishedAt = new Date().toISOString();
+          step.durationMs = Number((performance.now() - startedAt).toFixed(2));
+          step.status = "error";
+          step.error = getErrorDetails(error);
+        },
+      };
+    };
+
+    const skipPipelineStep = (key: string, title: string, reason: string) => {
+      pipelineLog.push({
+        key,
+        title,
+        status: "skipped",
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        input: { reason },
+        output: null,
+        error: null,
+      });
+    };
+
+    const finalizeRunLog = async () => {
+      if (!workspaceId) {
+        return;
+      }
+
+      const toNumber = (value: number | null) =>
+        value === null ? null : Number(value.toFixed(2));
+      const totalTokens =
+        embeddingUsageTokens === null && llmUsageTokens === null
+          ? null
+          : (embeddingUsageTokens ?? 0) + (llmUsageTokens ?? 0);
+
+      try {
+        await storage.recordKnowledgeBaseAskAiRun({
+          workspaceId,
+          knowledgeBaseId,
+          prompt: query,
+          normalizedQuery,
+          status: runStatus,
+          errorMessage: runErrorMessage,
+          topK: body.top_k ?? null,
+          bm25Weight,
+          bm25Limit,
+          vectorWeight,
+          vectorLimit: vectorConfigured ? vectorLimit : null,
+          vectorCollection: vectorConfigured ? vectorCollection : null,
+          embeddingProviderId: vectorConfigured ? embeddingProviderId : null,
+          llmProviderId,
+          llmModel,
+          bm25ResultCount,
+          vectorResultCount,
+          vectorDocumentCount,
+          combinedResultCount,
+          embeddingTokens: embeddingUsageTokens,
+          llmTokens: llmUsageTokens,
+          totalTokens,
+          retrievalDurationMs: toNumber(retrievalDuration),
+          bm25DurationMs: toNumber(bm25Duration),
+          vectorDurationMs: vectorResultCount !== null ? toNumber(vectorDuration) : null,
+          llmDurationMs:
+            llmUsageTokens !== null || (llmDuration !== null && llmDuration > 0)
+              ? toNumber(llmDuration)
+              : null,
+          totalDurationMs: toNumber(totalDuration),
+          startedAt: runStartedAt.toISOString(),
+          pipelineLog,
+        });
+      } catch (logError) {
+        console.error(
+          `[public/rag/answer] Не удалось сохранить журнал выполнения Ask AI: ${getErrorDetails(
+            logError,
+          )}`,
+          { workspaceId, knowledgeBaseId },
+        );
+      }
+    };
+
     try {
       const base = await storage.getKnowledgeBase(knowledgeBaseId);
       if (!base) {
+        runStatus = "error";
+        runErrorMessage = "База знаний не найдена";
+        await finalizeRunLog();
         return res.status(404).json({ error: "База знаний не найдена" });
       }
 
-      const workspaceId = base.workspaceId;
-      const bm25Limit = body.hybrid.bm25.limit ?? body.top_k;
-      const vectorLimit = body.hybrid.vector.limit ?? body.top_k;
-      const vectorConfigured = Boolean(
-        body.hybrid.vector.collection && body.hybrid.vector.embedding_provider_id,
-      );
+      workspaceId = base.workspaceId;
 
-      let bm25Weight = body.hybrid.bm25.weight ?? (vectorConfigured ? 0.5 : 1);
-      let vectorWeight = vectorConfigured ? body.hybrid.vector.weight ?? 0.5 : 0;
-
+      vectorConfigured = Boolean(vectorCollection && embeddingProviderId);
       if (!vectorConfigured) {
         vectorWeight = 0;
         if (bm25Weight <= 0) {
@@ -2843,31 +2995,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const retrievalStart = performance.now();
       const suggestionLimit = Math.max(bm25Limit, vectorLimit, body.top_k);
 
-      const bm25Start = performance.now();
-      const bm25Suggestions = await storage.searchKnowledgeBaseSuggestions(
-        knowledgeBaseId,
-        query,
-        suggestionLimit,
-      );
-      const bm25Duration = performance.now() - bm25Start;
-      const normalizedQuery = bm25Suggestions.normalizedQuery || query;
-      const bm25Candidates = bm25Suggestions.sections
-        .filter((entry) => entry.source === "content")
-        .slice(0, bm25Limit);
+      type SuggestSections = Awaited<
+        ReturnType<typeof storage.searchKnowledgeBaseSuggestions>
+      >["sections"];
+      let bm25Sections: SuggestSections = [];
 
-      const vectorChunks: Array<{
-        chunkId: string;
-        score: number;
-        recordId: string | null;
-        payload: Record<string, unknown> | null;
-      }> = [];
-      let vectorDuration = 0;
-      let embeddingUsageTokens: number | null = null;
-      let vectorSearchDetails: Array<Record<string, unknown>> | null = null;
+      const bm25Step = startPipelineStep(
+        "bm25_search",
+        { limit: suggestionLimit, weight: bm25Weight },
+        "BM25 поиск",
+      );
+      const bm25Start = performance.now();
+      try {
+        const bm25Suggestions = await storage.searchKnowledgeBaseSuggestions(
+          knowledgeBaseId,
+          query,
+          suggestionLimit,
+        );
+        bm25Duration = performance.now() - bm25Start;
+        normalizedQuery = bm25Suggestions.normalizedQuery || query;
+        bm25Sections = bm25Suggestions.sections
+          .filter((entry) => entry.source === "content")
+          .slice(0, bm25Limit);
+        bm25ResultCount = bm25Sections.length;
+        bm25Step.finish({
+          normalizedQuery,
+          candidates: bm25ResultCount,
+        });
+      } catch (error) {
+        bm25Duration = performance.now() - bm25Start;
+        bm25Step.fail(error);
+        throw error;
+      }
 
       if (vectorWeight > 0) {
+        const vectorStep = startPipelineStep(
+          "vector_search",
+          {
+            limit: vectorLimit,
+            collection: vectorCollection,
+            embeddingProviderId,
+          },
+          "Векторный поиск",
+        );
+        const vectorStart = performance.now();
         try {
-          const vectorStart = performance.now();
           const embeddingProvider = await storage.getEmbeddingProvider(
             body.hybrid.vector.embedding_provider_id!,
             workspaceId,
@@ -2881,8 +3053,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
           }
 
+          embeddingProviderId = embeddingProvider.id;
+
           const client = getQdrantClient();
           const collectionName = body.hybrid.vector.collection!.trim();
+          vectorCollection = collectionName;
           const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
           const embeddingResult = await fetchEmbeddingVector(
             embeddingProvider,
@@ -2914,48 +3089,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }));
 
           for (const item of vectorResults) {
-            const payload = (item.payload ?? null) as Record<string, unknown> | null;
-            let chunkId: string | null = null;
-            if (payload && typeof payload === "object") {
-              const chunkInfo = (payload as { chunk?: { id?: unknown } }).chunk;
-              if (chunkInfo && typeof chunkInfo.id === "string" && chunkInfo.id.trim().length > 0) {
-                chunkId = chunkInfo.id.trim();
-              }
-            }
-
-            const recordId =
-              typeof item.id === "string"
-                ? item.id
-                : typeof item.id === "number" && Number.isFinite(item.id)
-                  ? String(item.id)
-                  : null;
-
-            const score = Number(item.score ?? 0) || 0;
-            vectorChunks.push({ chunkId: chunkId ?? "", score, recordId, payload });
+            vectorChunks.push({
+              chunkId: typeof item.payload?.chunk_id === "string" ? item.payload.chunk_id : "",
+              score: item.score ?? 0,
+              recordId: typeof item.id === "string" ? item.id : null,
+              payload: (item.payload as Record<string, unknown> | undefined) ?? null,
+            });
           }
+
+          vectorResultCount = vectorChunks.length;
+          vectorStep.finish({
+            hits: vectorResultCount,
+            usageTokens: embeddingUsageTokens,
+          });
         } catch (error) {
-          console.error("Ошибка векторного поиска для RAG:", error);
-          vectorWeight = 0;
-          bm25Weight = 1;
+          vectorDuration = performance.now() - vectorStart;
+          vectorStep.fail(error);
+          throw error;
         }
-      }
-
-      const retrievalDuration = performance.now() - retrievalStart;
-
-      const vectorChunkIds = new Set<string>();
-      const vectorRecordIds: string[] = [];
-      for (const entry of vectorChunks) {
-        if (entry.chunkId) {
-          vectorChunkIds.add(entry.chunkId);
-        } else if (entry.recordId) {
-          vectorRecordIds.push(entry.recordId);
-        }
+      } else {
+        skipPipelineStep("vector_search", "Векторный поиск", "Векторный поиск отключён");
       }
 
       const chunkDetailsFromVector = await storage.getKnowledgeChunksByIds(
         knowledgeBaseId,
-        Array.from(vectorChunkIds),
+        Array.from(new Set(vectorChunks.map((entry) => entry.chunkId).filter(Boolean))),
       );
+      const vectorRecordIds = vectorChunks
+        .map((entry) => entry.recordId)
+        .filter((value): value is string => Boolean(value));
       const chunkDetailsFromRecords =
         vectorRecordIds.length > 0
           ? await storage.getKnowledgeChunksByVectorRecords(knowledgeBaseId, vectorRecordIds)
@@ -3024,7 +3186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return `${trimmed.slice(0, 320)}…`;
       };
 
-      for (const entry of bm25Candidates) {
+      for (const entry of bm25Sections) {
         const snippet = entry.snippet || buildSnippet(entry.text);
         aggregated.set(entry.chunkId, {
           chunkId: entry.chunkId,
@@ -3083,10 +3245,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           nodeId,
           nodeSlug,
         });
+
+        vectorDocumentIds.add(detail.documentId);
       }
 
       const bm25Max = Math.max(...Array.from(aggregated.values()).map((item) => item.bm25Score), 0);
       const vectorMax = Math.max(...Array.from(aggregated.values()).map((item) => item.vectorScore), 0);
+
+      const combinedStep = startPipelineStep(
+        "combine_results",
+        { topK: body.top_k, bm25Weight, vectorWeight },
+        "Агрегация результатов",
+      );
 
       const combinedResults = Array.from(aggregated.values())
         .map((item) => {
@@ -3103,6 +3273,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .sort((a, b) => b.combinedScore - a.combinedScore)
         .slice(0, body.top_k);
+
+      combinedResultCount = combinedResults.length;
+      vectorDocumentCount = vectorResultCount !== null ? vectorDocumentIds.size : null;
+      combinedStep.finish({ combined: combinedResultCount, vectorDocuments: vectorDocumentCount });
 
       const contextRecords: LlmContextRecord[] = combinedResults.map((item, index) => ({
         index,
@@ -3131,8 +3305,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       }));
 
+      retrievalDuration = performance.now() - retrievalStart;
+
       const ragResponseFormat = normalizeResponseFormat(body.llm.response_format);
       if (ragResponseFormat === null) {
+        runStatus = "error";
+        runErrorMessage = "Некорректный формат ответа";
+        await finalizeRunLog();
         return res.status(400).json({
           error: "Некорректный формат ответа",
           details: "Поддерживаются значения text, md/markdown или html",
@@ -3142,6 +3321,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const llmProvider = await storage.getLlmProvider(body.llm.provider, workspaceId);
       if (!llmProvider) {
+        runStatus = "error";
+        runErrorMessage = "Провайдер LLM не найден";
+        await finalizeRunLog();
         return res.status(404).json({ error: "Провайдер LLM не найден" });
       }
 
@@ -3168,19 +3350,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         requestConfig,
       };
 
-      const llmAccessToken = await fetchAccessToken(configuredProvider);
-      const llmStart = performance.now();
-      const completion = await fetchLlmCompletion(
-        configuredProvider,
-        llmAccessToken,
-        normalizedQuery,
-        contextRecords,
-        body.llm.model,
-        { responseFormat },
-      );
-      const llmDuration = performance.now() - llmStart;
+      llmProviderId = llmProvider.id;
 
-      const totalDuration = performance.now() - totalStart;
+      const llmAccessToken = await fetchAccessToken(configuredProvider);
+      const llmStep = startPipelineStep(
+        "llm_completion",
+        { providerId: llmProviderId, model: llmModel },
+        "Генерация ответа LLM",
+      );
+      const llmStart = performance.now();
+      let completion;
+      try {
+        completion = await fetchLlmCompletion(
+          configuredProvider,
+          llmAccessToken,
+          normalizedQuery,
+          contextRecords,
+          body.llm.model,
+          { responseFormat },
+        );
+        llmDuration = performance.now() - llmStart;
+        llmUsageTokens = completion.usageTokens ?? null;
+        llmStep.finish({ tokens: llmUsageTokens });
+      } catch (error) {
+        llmDuration = performance.now() - llmStart;
+        llmStep.fail(error);
+        throw error;
+      }
+
+      totalDuration = performance.now() - totalStart;
 
       await storage.recordKnowledgeBaseRagRequest({
         workspaceId,
@@ -3190,10 +3388,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         bm25Limit,
         vectorWeight,
         vectorLimit: vectorConfigured ? vectorLimit : null,
-        embeddingProviderId: vectorConfigured
-          ? body.hybrid.vector.embedding_provider_id?.trim() || null
-          : null,
-        collection: vectorConfigured ? body.hybrid.vector.collection?.trim() || null : null,
+        embeddingProviderId: vectorConfigured ? embeddingProviderId : null,
+        collection: vectorConfigured ? vectorCollection : null,
       });
 
       const citations = combinedResults.map((item) => ({
@@ -3210,6 +3406,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         node_id: item.nodeId ?? null,
         node_slug: item.nodeSlug ?? null,
       }));
+
+      await finalizeRunLog();
 
       res.json({
         query,
@@ -3234,22 +3432,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })),
         usage: {
           embeddingTokens: embeddingUsageTokens,
-          llmTokens: completion.usageTokens ?? null,
+          llmTokens: llmUsageTokens,
         },
         timings: {
-          total_ms: Number(totalDuration.toFixed(2)),
-          retrieval_ms: Number(retrievalDuration.toFixed(2)),
-          bm25_ms: Number(bm25Duration.toFixed(2)),
-          vector_ms: Number(vectorDuration.toFixed(2)),
-          llm_ms: Number(llmDuration.toFixed(2)),
+          total_ms: Number((totalDuration ?? 0).toFixed(2)),
+          retrieval_ms: Number((retrievalDuration ?? 0).toFixed(2)),
+          bm25_ms: Number((bm25Duration ?? 0).toFixed(2)),
+          vector_ms: Number((vectorDuration ?? 0).toFixed(2)),
+          llm_ms: Number((llmDuration ?? 0).toFixed(2)),
         },
         debug: {
           vectorSearch: vectorSearchDetails,
         },
       });
     } catch (error) {
+      runStatus = "error";
+      runErrorMessage = getErrorDetails(error);
+      await finalizeRunLog();
+
       if (error instanceof HttpError) {
-        return res.status(error.status).json({ error: error.message, details: error.details ?? null });
+        return res.status(error.status).json({
+          error: error.message,
+          details: error.details ?? null,
+        });
       }
 
       if (error instanceof QdrantConfigurationError) {
@@ -7098,6 +7303,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(500).json({ error: "Не удалось получить конфигурацию RAG" });
     }
   });
+
+  app.get("/api/knowledge/bases/:baseId/ask-ai/runs", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      await ensureKnowledgeBaseAccessible(baseId, workspaceId);
+
+      const limitParam = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+      const offsetParam = typeof req.query.offset === "string" ? Number(req.query.offset) : undefined;
+
+      const result = await storage.listKnowledgeBaseAskAiRuns(workspaceId, baseId, {
+        limit: Number.isFinite(limitParam) ? Number(limitParam) : undefined,
+        offset: Number.isFinite(offsetParam) ? Number(offsetParam) : undefined,
+      });
+
+      const response: KnowledgeBaseAskAiRunListResponse = {
+        items: result.items,
+        hasMore: result.hasMore,
+        nextOffset: result.nextOffset,
+      };
+
+      return res.json(response);
+    } catch (error) {
+      if (error instanceof KnowledgeBaseError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+
+      console.error("Не удалось получить журнал Ask AI:", error);
+      return res.status(500).json({ error: "Не удалось получить журнал Ask AI" });
+    }
+  });
+
+  app.get(
+    "/api/knowledge/bases/:baseId/ask-ai/runs/:runId",
+    requireAuth,
+    async (req, res) => {
+      const { baseId, runId } = req.params;
+
+      try {
+        const { id: workspaceId } = getRequestWorkspace(req);
+        await ensureKnowledgeBaseAccessible(baseId, workspaceId);
+
+        const run = await storage.getKnowledgeBaseAskAiRun(runId, workspaceId, baseId);
+        if (!run) {
+          return res.status(404).json({ error: "Запуск не найден" });
+        }
+
+        const response: KnowledgeBaseAskAiRunDetail = run;
+        return res.json(response);
+      } catch (error) {
+        if (error instanceof KnowledgeBaseError) {
+          return res.status(error.status).json({ error: error.message });
+        }
+
+        console.error("Не удалось получить подробности запуска Ask AI:", error);
+        return res.status(500).json({ error: "Не удалось получить детали запуска" });
+      }
+    },
+  );
 
   app.get("/api/jobs/:jobId", requireAuth, (req, res) => {
     const { jobId } = req.params;
