@@ -34,6 +34,10 @@ import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
 import MarkdownRenderer from "@/components/ui/markdown";
 import SearchQuickSwitcher from "@/components/search/SearchQuickSwitcher";
+import KnowledgeBaseSearchSettingsForm, {
+  type KnowledgeBaseSearchSettings,
+  type VectorCollectionSummary,
+} from "@/components/knowledge-base/KnowledgeBaseSearchSettingsForm";
 import VectorizeKnowledgeDocumentDialog, {
   type KnowledgeDocumentVectorizationSelection,
 } from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
@@ -75,9 +79,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -118,12 +122,12 @@ import {
   GitBranch,
   Globe2,
   Loader2,
-  Info,
   MoreVertical,
   PencilLine,
   Search,
   Plus,
   RefreshCw,
+  Settings,
   SquareStack,
   Sparkles,
   Trash2,
@@ -176,10 +180,6 @@ type DocumentVectorizationProgressState = {
   status: DocumentVectorizationProgressStatus;
   errorMessage: string | null;
   selection?: KnowledgeDocumentVectorizationSelection | null;
-};
-
-type VectorCollectionSummary = {
-  name: string;
 };
 
 type VectorCollectionsResponse = {
@@ -284,14 +284,6 @@ function KnowledgeBaseQuickSearchTrigger({
     </button>
   );
 }
-
-type KnowledgeBaseSearchSettings = {
-  topK: number | null;
-  bm25Weight: number | null;
-  vectorWeight: number | null;
-  embeddingProviderId: string | null;
-  collection: string | null;
-};
 
 const DEFAULT_SEARCH_SETTINGS: KnowledgeBaseSearchSettings = {
   topK: null,
@@ -699,6 +691,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     DEFAULT_SEARCH_SETTINGS,
   );
   const [isSearchSettingsReady, setIsSearchSettingsReady] = useState(false);
+  const [isSearchSettingsOpen, setIsSearchSettingsOpen] = useState(false);
   const handleOpenCreateBase = (mode: KnowledgeBaseSourceType = "blank") => {
     setCreateBaseMode(mode);
     setIsCreateBaseDialogOpen(true);
@@ -839,6 +832,16 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
     return `${workspaceId}/${selectedBase.id}`;
   }, [workspaceId, selectedBase?.id]);
+  useEffect(() => {
+    setIsSearchSettingsOpen(false);
+  }, [selectedBase?.id, storageKey]);
+  useEffect(() => {
+    if (!isQuickSwitcherOpen) {
+      return;
+    }
+
+    setIsSearchSettingsOpen(false);
+  }, [isQuickSwitcherOpen]);
   const normalizedTopK = useMemo(() => clampTopKValue(searchSettings.topK), [searchSettings.topK]);
   const suggestLimit = normalizedTopK ?? 8;
   const {
@@ -2298,226 +2301,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     );
   };
 
-  const renderSearchSettingsCard = () => {
-    if (!selectedBase || !storageKey) {
-      return null;
-    }
-
-    const hints: ReactNode[] = [];
-    const embeddingProviderValue = searchSettings.embeddingProviderId ?? "none";
-    const collectionValue = searchSettings.collection ?? "";
-    const isCustomProvider =
-      embeddingProviderValue !== "none" &&
-      !activeEmbeddingProviders.some((provider) => provider.id === embeddingProviderValue);
-    const isCustomCollection =
-      collectionValue.length > 0 &&
-      vectorCollections.length > 0 &&
-      !vectorCollections.some((collection) => collection.name === collectionValue);
-    const vectorWeightActive = (searchSettings.vectorWeight ?? 0) > 0;
-
-    if (activeEmbeddingProviders.length === 0) {
-      hints.push(
-        <Alert key="hint-no-providers" variant="default">
-          <AlertTitle>Нет активных провайдеров эмбеддингов</AlertTitle>
-          <AlertDescription>
-            Подключите сервис в разделе «Сервисы эмбеддингов», чтобы включить векторный поиск.
-          </AlertDescription>
-        </Alert>,
-      );
-    }
-
-    if (!isVectorCollectionsLoading && vectorCollections.length === 0) {
-      hints.push(
-        <Alert key="hint-no-collections" variant="default">
-          <AlertTitle>Коллекции Qdrant не найдены</AlertTitle>
-          <AlertDescription>
-            Создайте коллекцию в разделе «Векторные коллекции», чтобы сохранять векторные данные.
-          </AlertDescription>
-        </Alert>,
-      );
-    }
-
-    if (isCustomProvider) {
-      hints.push(
-        <Alert key="hint-provider-missing" variant="default">
-          <AlertTitle>Сохранённый провайдер недоступен</AlertTitle>
-          <AlertDescription>
-            Провайдер эмбеддингов отсутствует среди активных. Выберите актуальный сервис.
-          </AlertDescription>
-        </Alert>,
-      );
-    }
-
-    if (collectionValue && isCustomCollection) {
-      hints.push(
-        <Alert key="hint-collection-missing" variant="default">
-          <AlertTitle>Коллекция не найдена</AlertTitle>
-          <AlertDescription>
-            Проверьте название коллекции или создайте новую в Qdrant, затем обновите список.
-          </AlertDescription>
-        </Alert>,
-      );
-    }
-
-    if (vectorWeightActive && !searchSettings.embeddingProviderId) {
-      hints.push(
-        <Alert key="hint-provider-required" variant="default">
-          <AlertTitle>Укажите сервис эмбеддингов</AlertTitle>
-          <AlertDescription>Для векторного поиска нужен активный провайдер эмбеддингов.</AlertDescription>
-        </Alert>,
-      );
-    }
-
-    if (vectorWeightActive && !searchSettings.collection) {
-      hints.push(
-        <Alert key="hint-collection-required" variant="default">
-          <AlertTitle>Укажите коллекцию Qdrant</AlertTitle>
-          <AlertDescription>Для векторного поиска требуется коллекция с векторами документов.</AlertDescription>
-        </Alert>,
-      );
-    }
-
-    const disabled = !isSearchSettingsReady;
-    const collectionDatalistId = "kb-search-collection-suggestions";
-
-    return (
-      <Card>
-        <CardHeader className="space-y-1.5 py-3">
-          <div className="flex items-center gap-2">
-            <CardTitle className="text-base">Параметры поиска</CardTitle>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Info className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-xs leading-relaxed">
-                  Окно быстрого поиска работает только внутри выбранной базы. Откройте его сочетанием Ctrl+K или ⌘K —
-                  подсказки будут использовать сохранённые ниже локальные параметры.
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-          <CardDescription>
-            Быстрый поиск (Ctrl+K или ⌘K) работает в контексте базы «{selectedBase.name}», использует локальные параметры ниже
-            и сохраняет их в браузере.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="kb-search-topk">Top-K</Label>
-              <Input
-                id="kb-search-topk"
-                type="number"
-                min={1}
-                max={10}
-                step={1}
-                inputMode="numeric"
-                value={searchSettings.topK ?? ""}
-                onChange={(event) => handleTopKInputChange(event.target.value)}
-                disabled={disabled}
-              />
-              <p className="text-xs text-muted-foreground">Количество результатов, отображаемых в подсказках.</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="kb-search-bm25-weight">Вес BM25</Label>
-              <Input
-                id="kb-search-bm25-weight"
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                inputMode="decimal"
-                value={searchSettings.bm25Weight ?? ""}
-                onChange={(event) => handleBm25WeightChange(event.target.value)}
-                disabled={disabled}
-              />
-              <p className="text-xs text-muted-foreground">Чем выше значение, тем сильнее вклад текстового поиска.</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="kb-search-vector-weight">Вес вектора</Label>
-              <Input
-                id="kb-search-vector-weight"
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                inputMode="decimal"
-                value={searchSettings.vectorWeight ?? ""}
-                onChange={(event) => handleVectorWeightChange(event.target.value)}
-                disabled={disabled}
-              />
-              <p className="text-xs text-muted-foreground">Определяет вклад векторного поиска в выдачу.</p>
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="kb-search-embedding-provider">Сервис эмбеддингов</Label>
-              <Select
-                value={embeddingProviderValue}
-                onValueChange={handleEmbeddingProviderChange}
-                disabled={disabled}
-              >
-                <SelectTrigger
-                  id="kb-search-embedding-provider"
-                  disabled={disabled}
-                >
-                  <SelectValue
-                    placeholder={
-                      activeEmbeddingProviders.length === 0
-                        ? "Нет доступных провайдеров"
-                        : "Выберите провайдера"
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Не выбрано</SelectItem>
-                  {activeEmbeddingProviders.map((provider) => (
-                    <SelectItem key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </SelectItem>
-                  ))}
-                  {isCustomProvider && embeddingProviderValue && (
-                    <SelectItem value={embeddingProviderValue}>
-                      {embeddingProviderValue} (не найден)
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">Используется для генерации векторных представлений документов.</p>
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="kb-search-collection">Коллекция Qdrant</Label>
-              <Input
-                id="kb-search-collection"
-                value={collectionValue}
-                onChange={(event) => handleCollectionChange(event.target.value)}
-                placeholder={
-                  isVectorCollectionsLoading ? "Загрузка списка коллекций..." : "Укажите название коллекции"
-                }
-                list={vectorCollections.length > 0 ? collectionDatalistId : undefined}
-                disabled={disabled}
-              />
-              {vectorCollections.length > 0 && (
-                <datalist id={collectionDatalistId}>
-                  {vectorCollections.map((collection) => (
-                    <option key={collection.name} value={collection.name} />
-                  ))}
-                </datalist>
-              )}
-              <p className="text-xs text-muted-foreground">Коллекция, в которой хранятся вектора документов.</p>
-            </div>
-          </div>
-          {hints.length > 0 && <div className="space-y-2">{hints}</div>}
-        </CardContent>
-        <CardFooter className="py-3 text-xs text-muted-foreground">
-          <p>
-            Данные сохраняются в localStorage с ключом
-            <span className="ml-1 font-mono text-[11px]">{storageKey}</span>.
-          </p>
-        </CardFooter>
-      </Card>
-    );
-  };
-
   const renderOverview = (detail: Extract<KnowledgeBaseNodeDetail, { type: "base" }>) => (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -2644,39 +2427,89 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       ? `Быстрый поиск по базе «${selectedBase.name}»`
       : "Быстрый поиск по базе";
 
+    const isSearchSettingsAvailable = Boolean(selectedBase && storageKey);
+
     return (
       <div className="space-y-6">
-        <SearchQuickSwitcher
-          key={selectedBase?.id ?? "no-base"}
-          query={quickSearchQuery}
-          suggest={suggestData}
-          status={suggestStatus}
-          error={suggestError ?? null}
-          onQueryChange={handleQuickSearchQueryChange}
-          onPrefetch={handleQuickSearchPrefetch}
-          onClose={handleQuickSwitcherClose}
-          renderTrigger={({ open, isOpen }) => (
-            <KnowledgeBaseQuickSearchTrigger
+        <div className="flex items-start gap-2">
+          <div className="flex-1">
+            <SearchQuickSwitcher
+              key={selectedBase?.id ?? "no-base"}
               query={quickSearchQuery}
-              placeholder={searchPlaceholder}
-              isOpen={isOpen}
-              onOpen={() => {
-                if (!selectedBase?.id || isQuickSwitcherOpen) {
-                  return;
-                }
+              suggest={suggestData}
+              status={suggestStatus}
+              error={suggestError ?? null}
+              onQueryChange={handleQuickSearchQueryChange}
+              onPrefetch={handleQuickSearchPrefetch}
+              onClose={handleQuickSwitcherClose}
+              renderTrigger={({ open, isOpen }) => (
+                <KnowledgeBaseQuickSearchTrigger
+                  query={quickSearchQuery}
+                  placeholder={searchPlaceholder}
+                  isOpen={isOpen}
+                  onOpen={() => {
+                    if (!selectedBase?.id || isQuickSwitcherOpen) {
+                      return;
+                    }
 
-                open();
-              }}
-              onOpenStateChange={handleQuickSwitcherOpenState}
+                    open();
+                  }}
+                  onOpenStateChange={handleQuickSwitcherOpenState}
+                />
+              )}
             />
-          )}
-        />
+          </div>
+          <Popover
+            open={isSearchSettingsOpen}
+            onOpenChange={(open) => {
+              if (!isSearchSettingsAvailable) {
+                setIsSearchSettingsOpen(false);
+                return;
+              }
+
+              setIsSearchSettingsOpen(open);
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="Настройки поиска"
+                disabled={!isSearchSettingsAvailable}
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-[420px] p-0">
+              {isSearchSettingsAvailable && selectedBase && storageKey ? (
+                <KnowledgeBaseSearchSettingsForm
+                  baseName={selectedBase.name}
+                  storageKey={storageKey}
+                  searchSettings={searchSettings}
+                  isSearchSettingsReady={isSearchSettingsReady}
+                  activeEmbeddingProviders={activeEmbeddingProviders}
+                  vectorCollections={vectorCollections}
+                  isVectorCollectionsLoading={isVectorCollectionsLoading}
+                  onTopKChange={handleTopKInputChange}
+                  onBm25WeightChange={handleBm25WeightChange}
+                  onVectorWeightChange={handleVectorWeightChange}
+                  onEmbeddingProviderChange={handleEmbeddingProviderChange}
+                  onCollectionChange={handleCollectionChange}
+                />
+              ) : (
+                <div className="p-4 text-sm text-muted-foreground">
+                  Выберите базу знаний, чтобы настроить параметры поиска.
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
         <CrawlInlineProgress
           baseId={selectedBase?.id}
           onStateChange={handleCrawlStateChange}
           onDocumentsSaved={handleCrawlDocumentsSaved}
         />
-        {renderSearchSettingsCard()}
         {detailContent}
       </div>
     );
