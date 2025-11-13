@@ -647,7 +647,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleEmbeddingProviderChange = (value: string) => {
     setSearchSettings((prev) => ({
       ...prev,
-      embeddingProviderId: value ? value : null,
+      embeddingProviderId: value && value !== "none" ? value : null,
     }));
   };
   const handleCollectionChange = (value: string) => {
@@ -2369,7 +2369,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Не выбрано</SelectItem>
+                  <SelectItem value="none">Не выбрано</SelectItem>
                   {activeEmbeddingProviders.map((provider) => (
                     <SelectItem key={provider.id} value={provider.id}>
                       {provider.name}
