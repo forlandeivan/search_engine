@@ -708,19 +708,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     setLocation(`/knowledge/${base.id}`);
     setCreateBaseMode("blank");
   };
-  const handleQuickSearchQueryChange = useCallback(
-    (value: string) => {
-      setQuickSearchQuery(value);
-      runSuggestSearch(value);
-    },
-    [runSuggestSearch],
-  );
-  const handleQuickSearchPrefetch = useCallback(
-    (value: string) => {
-      prefetchSuggest(value);
-    },
-    [prefetchSuggest],
-  );
   const handleQuickSwitcherOpenState = useCallback(
     (open: boolean) => {
       setIsQuickSwitcherOpen(open);
@@ -865,6 +852,19 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     knowledgeBaseId: selectedBase?.id ?? "",
     limit: suggestLimit,
   });
+  const handleQuickSearchQueryChange = useCallback(
+    (value: string) => {
+      setQuickSearchQuery(value);
+      runSuggestSearch(value);
+    },
+    [runSuggestSearch],
+  );
+  const handleQuickSearchPrefetch = useCallback(
+    (value: string) => {
+      prefetchSuggest(value);
+    },
+    [prefetchSuggest],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") {
