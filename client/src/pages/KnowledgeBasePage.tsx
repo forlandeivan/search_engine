@@ -848,6 +848,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   useEffect(() => {
     setIsSearchSettingsOpen(false);
   }, [selectedBase?.id, storageKey]);
+  useEffect(() => {
+    if (!isQuickSwitcherOpen) {
+      return;
+    }
+
+    setIsSearchSettingsOpen(false);
+  }, [isQuickSwitcherOpen]);
   const normalizedTopK = useMemo(() => clampTopKValue(searchSettings.topK), [searchSettings.topK]);
   const suggestLimit = normalizedTopK ?? 8;
   const {
