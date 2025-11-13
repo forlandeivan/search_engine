@@ -283,7 +283,12 @@ const buildEndpoint = (baseUrl: string): string => {
   if (!trimmed) {
     return "/public/rag/answer";
   }
-  const normalized = trimmed.replace(/\/$/, "");
+
+  const normalized = trimmed.replace(/\/+$/, "");
+  if (/\/(rag|answer)(?:\b|\/|\?|#)/.test(normalized)) {
+    return normalized;
+  }
+
   return `${normalized}/public/rag/answer`;
 };
 
