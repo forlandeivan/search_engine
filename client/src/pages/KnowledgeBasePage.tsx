@@ -45,6 +45,7 @@ import DocumentVectorizationProgress, {
   type DocumentVectorizationProgressStatus,
 } from "@/components/knowledge-base/DocumentVectorizationProgress";
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
+import { searchDefaults } from "@/constants/searchSettings";
 import {
   Card,
   CardContent,
@@ -289,11 +290,22 @@ function KnowledgeBaseQuickSearchTrigger({
 const DEFAULT_SEARCH_SETTINGS: KnowledgeBaseSearchSettings = {
   topK: null,
   vectorLimit: null,
+  bm25Limit: null,
   bm25Weight: null,
   vectorWeight: null,
   embeddingProviderId: null,
   llmProviderId: null,
+  llmModel: null,
   collection: null,
+  synonyms: [],
+  includeDrafts: false,
+  highlightResults: true,
+  filters: "",
+  filtersValid: true,
+  temperature: null,
+  maxTokens: null,
+  systemPrompt: "",
+  responseFormat: null,
 };
 
 const clampTopKValue = (value: number | null): number | null => {
@@ -312,6 +324,24 @@ const clampVectorLimitValue = (value: number | null): number | null => {
 
   const rounded = Math.round(value);
   return Math.max(1, Math.min(20, rounded));
+};
+
+const clampTemperatureValue = (value: number | null): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const normalized = Math.max(0, Math.min(2, value));
+  return Number(normalized.toFixed(2));
+};
+
+const clampMaxTokensValue = (value: number | null): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  return Math.max(16, Math.min(4096, rounded));
 };
 
 const clampWeightValue = (value: number | null): number | null => {
@@ -357,14 +387,76 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
     return trimmed.length > 0 ? trimmed : null;
   };
 
+  const resolveBoolean = (raw: unknown, fallback: boolean): boolean => {
+    if (typeof raw === "boolean") {
+      return raw;
+    }
+
+    if (raw === "true") {
+      return true;
+    }
+
+    if (raw === "false") {
+      return false;
+    }
+
+    return fallback;
+  };
+
+  const resolveStringArray = (raw: unknown): string[] => {
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+
+    const normalized = raw
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter((item) => item.length > 0);
+
+    const unique = Array.from(new Set(normalized));
+    return unique.slice(0, searchDefaults.synonyms.maxItems ?? unique.length);
+  };
+
+  const responseFormatValue = (() => {
+    const value = record.responseFormat ?? record.response_format;
+    if (typeof value !== "string") {
+      return null;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "text" || normalized === "markdown" || normalized === "html") {
+      return normalized;
+    }
+    return null;
+  })();
+
+  const filtersRaw = typeof record.filters === "string" ? record.filters : "";
+  let filtersValid = true;
+  if (filtersRaw.trim()) {
+    try {
+      JSON.parse(filtersRaw);
+    } catch (error) {
+      filtersValid = false;
+    }
+  }
+
   return {
     topK: resolveNumber(record.topK, clampTopKValue),
     vectorLimit: resolveNumber(record.vectorLimit, clampVectorLimitValue),
+    bm25Limit: resolveNumber(record.bm25Limit ?? record.bm25_limit, clampVectorLimitValue),
     bm25Weight: resolveNumber(record.bm25Weight, clampWeightValue),
     vectorWeight: resolveNumber(record.vectorWeight, clampWeightValue),
     embeddingProviderId: resolveString(record.embeddingProviderId),
     llmProviderId: resolveString(record.llmProviderId),
+    llmModel: resolveString(record.llmModel),
     collection: resolveString(record.collection),
+    synonyms: resolveStringArray(record.synonyms),
+    includeDrafts: resolveBoolean(record.includeDrafts, DEFAULT_SEARCH_SETTINGS.includeDrafts),
+    highlightResults: resolveBoolean(record.highlightResults, DEFAULT_SEARCH_SETTINGS.highlightResults),
+    filters: filtersRaw,
+    filtersValid,
+    temperature: resolveNumber(record.temperature, clampTemperatureValue),
+    maxTokens: resolveNumber(record.maxTokens ?? record.max_tokens, clampMaxTokensValue),
+    systemPrompt: typeof record.systemPrompt === "string" ? record.systemPrompt : "",
+    responseFormat: responseFormatValue,
   };
 };
 
@@ -752,6 +844,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return { ...prev, vectorLimit: clampVectorLimitValue(parsed) };
     });
   };
+  const handleBm25LimitChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, bm25Limit: null };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, bm25Limit: clampVectorLimitValue(parsed) };
+    });
+  };
   const handleBm25WeightChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
@@ -792,11 +898,70 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       llmProviderId: value && value !== "none" ? value : null,
     }));
   };
+  const handleLlmModelChange = (value: string) => {
+    setSearchSettings((prev) => {
+      const trimmed = value.trim();
+      return { ...prev, llmModel: trimmed.length > 0 ? trimmed : null };
+    });
+  };
   const handleCollectionChange = (value: string) => {
     setSearchSettings((prev) => {
       const trimmed = value.trim();
       return { ...prev, collection: trimmed.length > 0 ? trimmed : null };
     });
+  };
+  const handleSynonymsChange = (synonyms: string[]) => {
+    const limit = searchDefaults.synonyms.maxItems ?? synonyms.length;
+    setSearchSettings((prev) => ({
+      ...prev,
+      synonyms: synonyms.slice(0, limit),
+    }));
+  };
+  const handleIncludeDraftsChange = (checked: boolean) => {
+    setSearchSettings((prev) => ({ ...prev, includeDrafts: checked }));
+  };
+  const handleHighlightResultsChange = (checked: boolean) => {
+    setSearchSettings((prev) => ({ ...prev, highlightResults: checked }));
+  };
+  const handleFiltersChange = (value: string, isValid: boolean) => {
+    setSearchSettings((prev) => ({ ...prev, filters: value, filtersValid: isValid }));
+  };
+  const handleTemperatureChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, temperature: null };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, temperature: clampTemperatureValue(parsed) };
+    });
+  };
+  const handleMaxTokensChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, maxTokens: null };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, maxTokens: clampMaxTokensValue(parsed) };
+    });
+  };
+  const handleSystemPromptChange = (value: string) => {
+    setSearchSettings((prev) => ({ ...prev, systemPrompt: value }));
+  };
+  const handleResponseFormatChange = (value: string) => {
+    setSearchSettings((prev) => ({
+      ...prev,
+      responseFormat: value && value.length > 0 ? (value as "text" | "markdown" | "html") : null,
+    }));
   };
 
   const basesQuery = useQuery({
@@ -888,6 +1053,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => clampVectorLimitValue(searchSettings.vectorLimit),
     [searchSettings.vectorLimit],
   );
+  const normalizedBm25Limit = useMemo(
+    () => clampVectorLimitValue(searchSettings.bm25Limit),
+    [searchSettings.bm25Limit],
+  );
   const normalizedBm25Weight = useMemo(
     () => clampWeightValue(searchSettings.bm25Weight),
     [searchSettings.bm25Weight],
@@ -895,6 +1064,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const normalizedVectorWeight = useMemo(
     () => clampWeightValue(searchSettings.vectorWeight),
     [searchSettings.vectorWeight],
+  );
+  const normalizedTemperature = useMemo(
+    () => clampTemperatureValue(searchSettings.temperature),
+    [searchSettings.temperature],
+  );
+  const normalizedMaxTokens = useMemo(
+    () => clampMaxTokensValue(searchSettings.maxTokens),
+    [searchSettings.maxTokens],
   );
   const suggestLimit = normalizedTopK ?? 8;
   const { 
@@ -914,10 +1091,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
 
     const bm25Options =
-      normalizedBm25Weight !== null
+      normalizedBm25Weight !== null || normalizedBm25Limit !== null
         ? {
             weight: normalizedBm25Weight,
-            limit: null,
+            limit: normalizedBm25Limit,
           }
         : null;
 
@@ -934,6 +1111,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           }
         : null;
 
+    const systemPrompt = searchSettings.systemPrompt?.trim() ?? "";
+
     return {
       knowledgeBaseId: selectedBase.id,
       hybrid: {
@@ -943,16 +1122,27 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       },
       llm: {
         providerId: searchSettings.llmProviderId ?? null,
+        model: searchSettings.llmModel ?? null,
+        temperature: normalizedTemperature,
+        maxTokens: normalizedMaxTokens,
+        systemPrompt: systemPrompt.length > 0 ? systemPrompt : null,
+        responseFormat: searchSettings.responseFormat ?? null,
       },
     } satisfies UseKnowledgeBaseAskAiOptions;
   }, [
+    normalizedBm25Limit,
     normalizedBm25Weight,
     normalizedTopK,
     normalizedVectorLimit,
     normalizedVectorWeight,
+    normalizedMaxTokens,
+    normalizedTemperature,
     searchSettings.collection,
     searchSettings.embeddingProviderId,
     searchSettings.llmProviderId,
+    searchSettings.llmModel,
+    searchSettings.responseFormat,
+    searchSettings.systemPrompt,
     selectedBase,
   ]);
   const handleQuickSearchQueryChange = useCallback(
@@ -2595,11 +2785,21 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   isVectorCollectionsLoading={isVectorCollectionsLoading}
                   onTopKChange={handleTopKInputChange}
                   onVectorLimitChange={handleVectorLimitChange}
+                  onBm25LimitChange={handleBm25LimitChange}
                   onBm25WeightChange={handleBm25WeightChange}
                   onVectorWeightChange={handleVectorWeightChange}
                   onEmbeddingProviderChange={handleEmbeddingProviderChange}
                   onLlmProviderChange={handleLlmProviderChange}
+                  onLlmModelChange={handleLlmModelChange}
                   onCollectionChange={handleCollectionChange}
+                  onSynonymsChange={handleSynonymsChange}
+                  onIncludeDraftsChange={handleIncludeDraftsChange}
+                  onHighlightResultsChange={handleHighlightResultsChange}
+                  onFiltersChange={handleFiltersChange}
+                  onTemperatureChange={handleTemperatureChange}
+                  onMaxTokensChange={handleMaxTokensChange}
+                  onSystemPromptChange={handleSystemPromptChange}
+                  onResponseFormatChange={handleResponseFormatChange}
                 />
               ) : (
                 <div className="p-4 text-sm text-muted-foreground">
