@@ -249,10 +249,10 @@ const ragSearchSettingsSchema = z
       .max(ragSearchConstraints.vectorLimit.max)
       .nullable()
       .optional(),
-    embeddingProviderId: z.string().max(255).optional(),
-    collection: z.string().max(255).optional(),
-    llmProviderId: z.string().max(255).optional(),
-    llmModel: z.string().max(255).optional(),
+    embeddingProviderId: z.string().max(255).nullable().optional(),
+    collection: z.string().max(255).nullable().optional(),
+    llmProviderId: z.string().max(255).nullable().optional(),
+    llmModel: z.string().max(255).nullable().optional(),
     temperature: z
       .number()
       .min(ragSearchConstraints.temperature.min)

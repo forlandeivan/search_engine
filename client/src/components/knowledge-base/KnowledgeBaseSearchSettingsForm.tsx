@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -74,8 +74,6 @@ export type KnowledgeBaseSearchSettingsFormProps = {
   className?: string;
 };
 
-const COLLECTION_DATALIST_ID = "kb-search-collection-suggestions";
-
 const KnowledgeBaseSearchSettingsForm = ({
   baseName,
   storageKey,
@@ -107,8 +105,13 @@ const KnowledgeBaseSearchSettingsForm = ({
   const hints: ReactNode[] = [];
   const embeddingProviderValue = searchSettings.embeddingProviderId ?? "none";
   const collectionValue = searchSettings.collection ?? "";
-  const llmProviderValue = searchSettings.llmProviderId ?? "";
+  const llmProviderValue = searchSettings.llmProviderId ?? "none";
   const llmModelValue = searchSettings.llmModel ?? "";
+  const selectedLlmProvider =
+    llmProviderValue !== "none"
+      ? activeLlmProviders.find((provider) => provider.id === llmProviderValue) ?? null
+      : null;
+  const availableLlmModels = selectedLlmProvider?.availableModels ?? [];
   const isCustomProvider =
     embeddingProviderValue !== "none" &&
     embeddingProviderValue.length > 0 &&
@@ -121,7 +124,51 @@ const KnowledgeBaseSearchSettingsForm = ({
     collectionValue.length > 0 &&
     vectorCollections.length > 0 &&
     !vectorCollections.some((collection) => collection.name === collectionValue);
+  const isCustomLlmModel =
+    llmModelValue.length > 0 &&
+    availableLlmModels.every((model) => model.value !== llmModelValue);
   const vectorWeightActive = (searchSettings.vectorWeight ?? 0) > 0;
+  const collectionOptions = useMemo<SelectOption[]>(() => {
+    const baseOptions = vectorCollections.map((collection) => ({
+      value: collection.name,
+      label: collection.name,
+    }));
+
+    const items: SelectOption[] = [{ value: "", label: "Не выбрано" }, ...baseOptions];
+
+    if (isCustomCollection && collectionValue.length > 0) {
+      items.push({ value: collectionValue, label: `${collectionValue} (не найдена)` });
+    }
+
+    return items;
+  }, [collectionValue, isCustomCollection, vectorCollections]);
+
+  const llmModelOptions = useMemo<SelectOption[]>(() => {
+    const baseOptions = availableLlmModels.map((model) => ({
+      value: model.value,
+      label: model.label ?? model.value,
+    }));
+
+    const items: SelectOption[] = [{ value: "", label: "Не выбрано" }, ...baseOptions];
+
+    if (isCustomLlmModel && llmModelValue.length > 0) {
+      items.push({ value: llmModelValue, label: `${llmModelValue} (не найдена)` });
+    }
+
+    return items;
+  }, [availableLlmModels, isCustomLlmModel, llmModelValue]);
+
+  const collectionPlaceholder = isVectorCollectionsLoading
+    ? "Загрузка списка коллекций..."
+    : vectorCollections.length > 0
+      ? "Выберите коллекцию"
+      : "Коллекции не найдены";
+
+  const llmModelPlaceholder = selectedLlmProvider
+    ? availableLlmModels.length > 0
+      ? "Выберите модель"
+      : "Нет доступных моделей"
+    : "Сначала выберите LLM сервис";
 
   if (activeEmbeddingProviders.length === 0) {
     hints.push(
@@ -210,14 +257,14 @@ const KnowledgeBaseSearchSettingsForm = ({
   const disabled = !isSearchSettingsReady;
 
   const quickSearchBadges: Array<{ key: string; label: string; variant?: "secondary" | "destructive" }> = [];
-  if (!searchSettings.filtersValid) {
-    quickSearchBadges.push({ key: "filters", label: "Проверьте JSON фильтров", variant: "destructive" });
-  }
   if (searchSettings.synonyms.length > 0) {
     quickSearchBadges.push({ key: "synonyms", label: `Синонимов: ${searchSettings.synonyms.length}` });
   }
 
   const ragBadges: Array<{ key: string; label: string; variant?: "secondary" | "destructive" }> = [];
+  if (!searchSettings.filtersValid) {
+    ragBadges.push({ key: "filters", label: "Проверьте JSON фильтров", variant: "destructive" });
+  }
   if (vectorWeightActive && !searchSettings.embeddingProviderId) {
     ragBadges.push({ key: "provider", label: "Нужен сервис эмбеддингов", variant: "destructive" });
   }
@@ -363,15 +410,6 @@ const KnowledgeBaseSearchSettingsForm = ({
               onChange={onHighlightResultsChange}
             />
           </div>
-          <JsonEditorField
-            id="kb-search-filters"
-            label="Фильтры Qdrant"
-            tooltip={tooltips.filters}
-            value={searchSettings.filters}
-            defaultValue={searchDefaults.filters.defaultValue}
-            disabled={disabled}
-            onChange={onFiltersChange}
-          />
         </TabsContent>
         <TabsContent value="rag" className="space-y-3">
           {ragBadges.length > 0 ? (
@@ -464,17 +502,18 @@ const KnowledgeBaseSearchSettingsForm = ({
             />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <SettingLabel id="kb-search-llm-model" label="Модель LLM" tooltip={tooltips.llmModel} />
-              <Input
-                id="kb-search-llm-model"
-                value={llmModelValue}
-                onChange={(event) => onLlmModelChange(event.target.value)}
-                disabled={disabled}
-                placeholder="Модель (опционально)"
-                className="h-8"
-              />
-            </div>
+            <SelectField
+              id="kb-search-llm-model"
+              label="Модель LLM"
+              tooltip={tooltips.llmModel}
+              value={llmModelValue}
+              placeholder={llmModelPlaceholder}
+              options={llmModelOptions}
+              disabled={disabled || !selectedLlmProvider || availableLlmModels.length === 0}
+              isMissing={isCustomLlmModel}
+              missingLabel="Модель не найдена"
+              onChange={onLlmModelChange}
+            />
             <SelectField
               id="kb-search-response-format"
               label="Формат ответа"
@@ -503,25 +542,27 @@ const KnowledgeBaseSearchSettingsForm = ({
               placeholder="Например: Ты — помощник, отвечающий на вопросы по базе знаний"
             />
           </div>
-          <div className="space-y-1.5">
-            <SettingLabel id="kb-search-collection" label="Коллекция Qdrant" tooltip={tooltips.collection} />
-            <Input
-              id="kb-search-collection"
-              value={collectionValue}
-              onChange={(event) => onCollectionChange(event.target.value)}
-              placeholder={isVectorCollectionsLoading ? "Загрузка списка коллекций..." : "Укажите коллекцию"}
-              list={vectorCollections.length > 0 ? COLLECTION_DATALIST_ID : undefined}
-              disabled={disabled}
-              className="h-8"
-            />
-            {vectorCollections.length > 0 && (
-              <datalist id={COLLECTION_DATALIST_ID}>
-                {vectorCollections.map((collection) => (
-                  <option key={collection.name} value={collection.name} />
-                ))}
-              </datalist>
-            )}
-          </div>
+          <SelectField
+            id="kb-search-collection"
+            label="Коллекция Qdrant"
+            tooltip={tooltips.collection}
+            value={collectionValue}
+            placeholder={collectionPlaceholder}
+            options={collectionOptions}
+            disabled={disabled}
+            isMissing={isCustomCollection}
+            missingLabel="Коллекция не найдена"
+            onChange={onCollectionChange}
+          />
+          <JsonEditorField
+            id="kb-search-filters"
+            label="Фильтры Qdrant"
+            tooltip={tooltips.filters}
+            value={searchSettings.filters}
+            defaultValue={searchDefaults.filters.defaultValue}
+            disabled={disabled}
+            onChange={onFiltersChange}
+          />
         </TabsContent>
       </Tabs>
       {hints.length > 0 ? <div className="space-y-2 border-t border-border px-4 py-3 text-xs">{hints}</div> : null}
