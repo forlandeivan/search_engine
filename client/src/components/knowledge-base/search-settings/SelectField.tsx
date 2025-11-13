@@ -25,6 +25,7 @@ type SelectFieldProps = {
   defaultValue?: string;
   disabled?: boolean;
   isMissing?: boolean;
+  missingLabel?: string;
   onChange: (value: string) => void;
 };
 
@@ -40,6 +41,7 @@ const SelectField = ({
   defaultValue,
   disabled,
   isMissing,
+  missingLabel,
   onChange,
 }: SelectFieldProps) => {
   const badges = useMemo(() => {
@@ -54,7 +56,11 @@ const SelectField = ({
     }
 
     if (isMissing) {
-      list.push({ key: "missing", label: "Сервис не найден", variant: "destructive" });
+      list.push({
+        key: "missing",
+        label: missingLabel ?? "Сервис не найден",
+        variant: "destructive",
+      });
       return list;
     }
 

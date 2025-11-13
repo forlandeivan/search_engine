@@ -1138,22 +1138,30 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }));
   };
   const handleLlmProviderChange = (value: string) => {
-    setSearchSettings((prev) => ({
-      ...prev,
-      llmProviderId: value && value !== "none" ? value : null,
-    }));
+    setSearchSettings((prev) => {
+      const nextProviderId = value && value !== "none" ? value : null;
+      if (prev.llmProviderId === nextProviderId) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        llmProviderId: nextProviderId,
+        llmModel: null,
+      };
+    });
   };
   const handleLlmModelChange = (value: string) => {
-    setSearchSettings((prev) => {
-      const trimmed = value.trim();
-      return { ...prev, llmModel: trimmed.length > 0 ? trimmed : null };
-    });
+    setSearchSettings((prev) => ({
+      ...prev,
+      llmModel: value && value.trim().length > 0 ? value.trim() : null,
+    }));
   };
   const handleCollectionChange = (value: string) => {
-    setSearchSettings((prev) => {
-      const trimmed = value.trim();
-      return { ...prev, collection: trimmed.length > 0 ? trimmed : null };
-    });
+    setSearchSettings((prev) => ({
+      ...prev,
+      collection: value && value.trim().length > 0 ? value.trim() : null,
+    }));
   };
   const handleSynonymsChange = (synonyms: string[]) => {
     const limit = searchDefaults.synonyms.maxItems ?? synonyms.length;
