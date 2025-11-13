@@ -1557,6 +1557,22 @@ function summarizeVectorForLog(vector: unknown): unknown {
   return vector;
 }
 
+function buildVectorPayload<TVector extends number[]>(
+  vector: TVector,
+  vectorFieldName: string | null | undefined,
+): Schemas["NamedVectorStruct"] | TVector {
+  if (!Array.isArray(vector) || vector.length === 0) {
+    return vector;
+  }
+
+  const trimmedName = typeof vectorFieldName === "string" ? vectorFieldName.trim() : "";
+  if (!trimmedName) {
+    return vector;
+  }
+
+  return { name: trimmedName, vector } satisfies Schemas["NamedVectorStruct"];
+}
+
 function normalizeBaseUrl(value: string | undefined | null): string | null {
   if (!value) {
     return null;
@@ -3259,10 +3275,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             `${apiBaseUrl}/`,
           ).toString();
 
+          const vectorPayload = buildVectorPayload(
+            embeddingResult.vector,
+            embeddingProvider.qdrantConfig?.vectorFieldName,
+          );
+
           const vectorRequestPayload = removeUndefinedDeep({
             collection: collectionName,
             workspace_id: workspaceId,
-            vector: embeddingResult.vector as Schemas["NamedVectorStruct"],
+            vector: vectorPayload,
             limit: vectorLimit,
             filter: {
               must: [
@@ -4248,7 +4269,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const searchPayload: Parameters<QdrantClient["search"]>[1] = {
-        vector: embeddingResult.vector as unknown as Schemas["NamedVectorStruct"],
+        vector: buildVectorPayload(
+          embeddingResult.vector,
+          embeddingProvider.qdrantConfig?.vectorFieldName,
+        ),
         limit: body.limit,
       };
 
@@ -6593,7 +6617,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const searchPayload: Parameters<QdrantClient["search"]>[1] = {
-        vector: embeddingResult.vector as unknown as Schemas["NamedVectorStruct"],
+        vector: buildVectorPayload(
+          embeddingResult.vector,
+          provider.qdrantConfig?.vectorFieldName,
+        ),
         limit: body.limit,
       };
 
@@ -6789,7 +6816,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const searchPayload: Parameters<QdrantClient["search"]>[1] = {
-        vector: embeddingResult.vector as unknown as Schemas["NamedVectorStruct"],
+        vector: buildVectorPayload(
+          embeddingResult.vector,
+          embeddingProvider.qdrantConfig?.vectorFieldName,
+        ),
         limit: body.limit,
       };
 
@@ -8532,9 +8562,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const payloadSource = customPayload ?? rawPayload;
         const payload = removeUndefinedDeep(payloadSource) as Record<string, unknown>;
 
+        const pointVectorPayload = buildVectorPayload(
+          vector,
+          provider.qdrantConfig?.vectorFieldName,
+        ) as Schemas["PointStruct"]["vector"];
+
         return {
           id: pointId,
-          vector: vector as Schemas["PointStruct"]["vector"],
+          vector: pointVectorPayload,
           payload,
         };
       });
