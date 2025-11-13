@@ -47,6 +47,12 @@ import DocumentVectorizationProgress, {
 import { CreateKnowledgeBaseDialog } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
 import { ragDefaults, searchDefaults } from "@/constants/searchSettings";
 import {
+  mergeChunkSearchSettings,
+  mergeRagSearchSettings,
+  type KnowledgeBaseSearchSettingsResponsePayload,
+  type KnowledgeBaseSearchSettingsUpdatePayload,
+} from "@shared/knowledge-base-search";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -287,26 +293,52 @@ function KnowledgeBaseQuickSearchTrigger({
   );
 }
 
-const createDefaultSearchSettings = (): KnowledgeBaseSearchSettings => ({
-  topK: searchDefaults.topK.defaultValue,
-  vectorLimit: ragDefaults.vectorLimit.defaultValue,
-  bm25Limit: ragDefaults.bm25Limit.defaultValue,
-  bm25Weight: searchDefaults.bm25Weight.defaultValue,
-  vectorWeight: ragDefaults.vectorWeight.defaultValue,
-  embeddingProviderId: null,
-  llmProviderId: null,
-  llmModel: null,
-  collection: null,
-  synonyms: [...searchDefaults.synonyms.defaultValue],
-  includeDrafts: searchDefaults.includeDrafts.defaultValue,
-  highlightResults: searchDefaults.highlightResults.defaultValue,
-  filters: searchDefaults.filters.defaultValue,
-  filtersValid: true,
-  temperature: ragDefaults.temperature.defaultValue,
-  maxTokens: ragDefaults.maxTokens.defaultValue,
-  systemPrompt: ragDefaults.systemPrompt.defaultValue,
-  responseFormat: null,
-});
+const buildSearchSettingsFromResolved = (
+  chunk: ReturnType<typeof mergeChunkSearchSettings>,
+  rag: ReturnType<typeof mergeRagSearchSettings>,
+): KnowledgeBaseSearchSettings => {
+  const filtersValue = typeof chunk.filters === "string" ? chunk.filters : "";
+  let filtersValid = true;
+
+  if (filtersValue.trim()) {
+    try {
+      JSON.parse(filtersValue);
+    } catch {
+      filtersValid = false;
+    }
+  }
+
+  return {
+    topK: chunk.topK,
+    vectorLimit: rag.vectorLimit,
+    bm25Limit: rag.bm25Limit,
+    bm25Weight: chunk.bm25Weight,
+    vectorWeight: rag.vectorWeight,
+    embeddingProviderId: rag.embeddingProviderId,
+    llmProviderId: rag.llmProviderId,
+    llmModel: rag.llmModel,
+    collection: rag.collection,
+    synonyms: [...chunk.synonyms],
+    includeDrafts: chunk.includeDrafts,
+    highlightResults: chunk.highlightResults,
+    filters: filtersValue,
+    filtersValid,
+    temperature: rag.temperature,
+    maxTokens: rag.maxTokens,
+    systemPrompt: rag.systemPrompt,
+    responseFormat: rag.responseFormat,
+  };
+};
+
+const createDefaultSearchSettings = (): KnowledgeBaseSearchSettings => {
+  const chunk = mergeChunkSearchSettings(null);
+  const rag = mergeRagSearchSettings(null, {
+    topK: chunk.topK,
+    bm25Weight: chunk.bm25Weight,
+  });
+
+  return buildSearchSettingsFromResolved(chunk, rag);
+};
 
 const clampTopKValue = (value: number | null): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -315,6 +347,22 @@ const clampTopKValue = (value: number | null): number | null => {
 
   const rounded = Math.round(value);
   return Math.max(searchDefaults.topK.min, Math.min(searchDefaults.topK.max, rounded));
+};
+
+const composeSearchSettingsFromApi = (
+  payload: KnowledgeBaseSearchSettingsResponsePayload | null | undefined,
+): KnowledgeBaseSearchSettings => {
+  if (!payload) {
+    return createDefaultSearchSettings();
+  }
+
+  const chunk = mergeChunkSearchSettings(payload.chunkSettings ?? null);
+  const rag = mergeRagSearchSettings(payload.ragSettings ?? null, {
+    topK: chunk.topK,
+    bm25Weight: chunk.bm25Weight,
+  });
+
+  return buildSearchSettingsFromResolved(chunk, rag);
 };
 
 const clampVectorLimitValue = (value: number | null): number | null => {
@@ -434,15 +482,6 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
     filtersRaw = record.filters;
   }
 
-  let filtersValid = true;
-  if (filtersRaw.trim()) {
-    try {
-      JSON.parse(filtersRaw);
-    } catch (error) {
-      filtersValid = false;
-    }
-  }
-
   const result: KnowledgeBaseSearchSettings = {
     ...defaults,
     synonyms: [...defaults.synonyms],
@@ -496,7 +535,6 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
   result.includeDrafts = resolveBoolean(record.includeDrafts, defaults.includeDrafts);
   result.highlightResults = resolveBoolean(record.highlightResults, defaults.highlightResults);
   result.filters = filtersRaw;
-  result.filtersValid = filtersValid;
 
   if ("temperature" in record) {
     result.temperature = resolveNumber(record.temperature, clampTemperatureValue);
@@ -513,8 +551,92 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
 
   result.responseFormat = responseFormatValue;
 
-  return result;
+  const chunkSanitized = mergeChunkSearchSettings({
+    topK: result.topK,
+    bm25Weight: result.bm25Weight,
+    synonyms: result.synonyms,
+    includeDrafts: result.includeDrafts,
+    highlightResults: result.highlightResults,
+    filters: result.filters,
+  });
+
+  const ragSanitized = mergeRagSearchSettings(
+    {
+      topK: result.topK,
+      bm25Weight: result.bm25Weight,
+      bm25Limit: result.bm25Limit,
+      vectorWeight: result.vectorWeight,
+      vectorLimit: result.vectorLimit,
+      embeddingProviderId: result.embeddingProviderId,
+      collection: result.collection,
+      llmProviderId: result.llmProviderId,
+      llmModel: result.llmModel,
+      temperature: result.temperature,
+      maxTokens: result.maxTokens,
+      systemPrompt: result.systemPrompt,
+      responseFormat: result.responseFormat,
+    },
+    { topK: chunkSanitized.topK, bm25Weight: chunkSanitized.bm25Weight },
+  );
+
+  return buildSearchSettingsFromResolved(chunkSanitized, ragSanitized);
 };
+
+const buildSearchSettingsUpdatePayload = (
+  settings: KnowledgeBaseSearchSettings,
+): KnowledgeBaseSearchSettingsUpdatePayload => {
+  const chunk = mergeChunkSearchSettings({
+    topK: settings.topK,
+    bm25Weight: settings.bm25Weight,
+    synonyms: settings.synonyms,
+    includeDrafts: settings.includeDrafts,
+    highlightResults: settings.highlightResults,
+    filters: settings.filters,
+  });
+
+  const rag = mergeRagSearchSettings(
+    {
+      topK: settings.topK,
+      bm25Weight: settings.bm25Weight,
+      bm25Limit: settings.bm25Limit,
+      vectorWeight: settings.vectorWeight,
+      vectorLimit: settings.vectorLimit,
+      embeddingProviderId: settings.embeddingProviderId,
+      collection: settings.collection,
+      llmProviderId: settings.llmProviderId,
+      llmModel: settings.llmModel,
+      temperature: settings.temperature,
+      maxTokens: settings.maxTokens,
+      systemPrompt: settings.systemPrompt,
+      responseFormat: settings.responseFormat,
+    },
+    { topK: chunk.topK, bm25Weight: chunk.bm25Weight },
+  );
+
+  return { chunkSettings: chunk, ragSettings: rag };
+};
+
+const buildSearchSettingsHash = (settings: KnowledgeBaseSearchSettings): string =>
+  JSON.stringify({
+    topK: settings.topK,
+    vectorLimit: settings.vectorLimit,
+    bm25Limit: settings.bm25Limit,
+    bm25Weight: settings.bm25Weight,
+    vectorWeight: settings.vectorWeight,
+    embeddingProviderId: settings.embeddingProviderId,
+    llmProviderId: settings.llmProviderId,
+    llmModel: settings.llmModel,
+    collection: settings.collection,
+    synonyms: [...settings.synonyms],
+    includeDrafts: settings.includeDrafts,
+    highlightResults: settings.highlightResults,
+    filters: settings.filters,
+    filtersValid: settings.filtersValid,
+    temperature: settings.temperature,
+    maxTokens: settings.maxTokens,
+    systemPrompt: settings.systemPrompt,
+    responseFormat: settings.responseFormat,
+  });
 
 const formatDateTime = (value?: string | null) => {
   if (!value) {
@@ -852,8 +974,75 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const [searchSettings, setSearchSettings] = useState<KnowledgeBaseSearchSettings>(() =>
     createDefaultSearchSettings(),
   );
+  const searchSettingsBaselineHashRef = useRef<string>(buildSearchSettingsHash(searchSettings));
+  const [isSearchSettingsDirty, setIsSearchSettingsDirty] = useState(false);
   const [isSearchSettingsReady, setIsSearchSettingsReady] = useState(false);
   const [isSearchSettingsOpen, setIsSearchSettingsOpen] = useState(false);
+  const [searchSettingsError, setSearchSettingsError] = useState<string | null>(null);
+  const [searchSettingsUpdatedAt, setSearchSettingsUpdatedAt] = useState<string | null>(null);
+  const skipSearchSettingsSyncRef = useRef(false);
+  const saveSearchSettingsTimeoutRef = useRef<number | null>(null);
+  const latestSearchSettingsRef = useRef<KnowledgeBaseSearchSettings | null>(null);
+
+  const commitSearchSettingsBaseline = useCallback((next: KnowledgeBaseSearchSettings) => {
+    searchSettingsBaselineHashRef.current = buildSearchSettingsHash(next);
+    setIsSearchSettingsDirty(false);
+  }, []);
+
+  useEffect(() => {
+    latestSearchSettingsRef.current = searchSettings;
+  }, [searchSettings]);
+
+  useEffect(() => {
+    const hash = buildSearchSettingsHash(searchSettings);
+    const dirty = hash !== searchSettingsBaselineHashRef.current;
+    setIsSearchSettingsDirty((prev) => (prev === dirty ? prev : dirty));
+  }, [searchSettings]);
+
+  const {
+    mutate: saveSearchSettings,
+    reset: resetSearchSettingsMutation,
+    isPending: isSavingSearchSettings,
+  } = useMutation<
+    KnowledgeBaseSearchSettingsResponsePayload,
+    Error,
+    { knowledgeBaseId: string; payload: KnowledgeBaseSearchSettingsUpdatePayload }
+  >({
+    mutationFn: async ({ knowledgeBaseId, payload }) => {
+      const res = await apiRequest(
+        "PUT",
+        `/api/knowledge/bases/${knowledgeBaseId}/search/settings`,
+        payload,
+      );
+      return (await res.json()) as KnowledgeBaseSearchSettingsResponsePayload;
+    },
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(
+        ["/api/knowledge/bases", variables.knowledgeBaseId, "search", "settings"],
+        data,
+      );
+      const normalized = composeSearchSettingsFromApi(data);
+      skipSearchSettingsSyncRef.current = true;
+      setSearchSettings(normalized);
+      commitSearchSettingsBaseline(normalized);
+      setSearchSettingsUpdatedAt(data.updatedAt ?? new Date().toISOString());
+      setSearchSettingsError(null);
+    },
+    onError: (error) => {
+      const message = error.message || "Не удалось сохранить настройки поиска";
+      setSearchSettingsError(message);
+      toast({
+        variant: "destructive",
+        title: "Не удалось сохранить настройки поиска",
+        description: message,
+      });
+    },
+  });
+
+  useEffect(() => {
+    resetSearchSettingsMutation();
+    setSearchSettingsError(null);
+  }, [resetSearchSettingsMutation, knowledgeBaseId]);
   const handleOpenCreateBase = (mode: KnowledgeBaseSourceType = "blank") => {
     setCreateBaseMode(mode);
     setIsCreateBaseDialogOpen(true);
@@ -1087,6 +1276,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => bases.find((base) => base.id === knowledgeBaseId) ?? null,
     [bases, knowledgeBaseId],
   );
+  const searchSettingsQueryKey = useMemo(
+    () =>
+      selectedBase
+        ? ["/api/knowledge/bases", selectedBase.id, "search", "settings"] as const
+        : null,
+    [selectedBase?.id],
+  );
+  const searchSettingsQuery = useQuery<KnowledgeBaseSearchSettingsResponsePayload>({
+    queryKey: searchSettingsQueryKey ?? ["/api/knowledge/bases", "search", "settings"],
+    enabled: Boolean(searchSettingsQueryKey),
+  });
+  const isSearchSettingsInitialLoading = Boolean(searchSettingsQueryKey) && searchSettingsQuery.isPending;
+  const isSearchSettingsRefetching =
+    Boolean(searchSettingsQueryKey) && searchSettingsQuery.isFetching && !searchSettingsQuery.isPending;
   const storageKey = useMemo(() => {
     if (!workspaceId || !selectedBase?.id) {
       return null;
@@ -1215,35 +1418,99 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     [prefetchSuggest],
   );
 
+  const searchSettingsStatus = useMemo(() => {
+    if (isSearchSettingsInitialLoading) {
+      return (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загрузка настроек…
+        </>
+      );
+    }
+
+    if (isSearchSettingsRefetching) {
+      return (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Обновление…
+        </>
+      );
+    }
+
+    if (isSavingSearchSettings) {
+      return (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Сохранение…
+        </>
+      );
+    }
+
+    if (searchSettingsError) {
+      return <>Ошибка синхронизации</>;
+    }
+
+    if (isSearchSettingsDirty) {
+      return <>Изменения не сохранены</>;
+    }
+
+    if (searchSettingsUpdatedAt) {
+      return <>Сохранено {formatDateTime(searchSettingsUpdatedAt)}</>;
+    }
+
+    return <>Локальные настройки</>;
+  }, [
+    isSearchSettingsInitialLoading,
+    isSearchSettingsRefetching,
+    isSavingSearchSettings,
+    searchSettingsError,
+    isSearchSettingsDirty,
+    searchSettingsUpdatedAt,
+  ]);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
 
     if (!storageKey) {
+      skipSearchSettingsSyncRef.current = true;
       setIsSearchSettingsReady(false);
-      setSearchSettings(createDefaultSearchSettings());
+      const defaults = createDefaultSearchSettings();
+      setSearchSettings(defaults);
+      commitSearchSettingsBaseline(defaults);
+      setSearchSettingsUpdatedAt(null);
+      setSearchSettingsError(null);
       return;
     }
 
+    setSearchSettingsUpdatedAt(null);
     setIsSearchSettingsReady(false);
 
     try {
       const raw = window.localStorage.getItem(storageKey);
       if (!raw) {
-        setSearchSettings(createDefaultSearchSettings());
+        const defaults = createDefaultSearchSettings();
+        skipSearchSettingsSyncRef.current = true;
+        setSearchSettings(defaults);
+        commitSearchSettingsBaseline(defaults);
+        setSearchSettingsError(null);
         return;
       }
 
       const parsed = JSON.parse(raw) as unknown;
-      setSearchSettings(parseStoredSearchSettings(parsed));
+      const normalized = parseStoredSearchSettings(parsed);
+      skipSearchSettingsSyncRef.current = true;
+      setSearchSettings(normalized);
+      commitSearchSettingsBaseline(normalized);
+      setSearchSettingsError(null);
     } catch (error) {
       console.error("Не удалось прочитать параметры поиска из localStorage", error);
-      setSearchSettings(createDefaultSearchSettings());
+      const defaults = createDefaultSearchSettings();
+      skipSearchSettingsSyncRef.current = true;
+      setSearchSettings(defaults);
+      commitSearchSettingsBaseline(defaults);
     } finally {
       setIsSearchSettingsReady(true);
     }
-  }, [storageKey]);
+  }, [storageKey, commitSearchSettingsBaseline]);
 
   useEffect(() => {
     if (!storageKey || typeof window === "undefined") {
@@ -1256,13 +1523,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       }
 
       if (!event.newValue) {
-        setSearchSettings(createDefaultSearchSettings());
+        skipSearchSettingsSyncRef.current = true;
+        const defaults = createDefaultSearchSettings();
+        setSearchSettings(defaults);
+        commitSearchSettingsBaseline(defaults);
         return;
       }
 
       try {
         const parsed = JSON.parse(event.newValue) as unknown;
-        setSearchSettings(parseStoredSearchSettings(parsed));
+        skipSearchSettingsSyncRef.current = true;
+        const normalized = parseStoredSearchSettings(parsed);
+        setSearchSettings(normalized);
+        commitSearchSettingsBaseline(normalized);
+        setSearchSettingsError(null);
       } catch (error) {
         console.error("Не удалось синхронизировать параметры поиска", error);
       }
@@ -1273,7 +1547,44 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     return () => {
       window.removeEventListener("storage", handleStorage);
     };
-  }, [storageKey]);
+  }, [storageKey, commitSearchSettingsBaseline]);
+
+  useEffect(() => {
+    if (!searchSettingsQueryKey) {
+      return;
+    }
+
+    if (searchSettingsQuery.isPending) {
+      return;
+    }
+
+    if (searchSettingsQuery.isError) {
+      const message =
+        (searchSettingsQuery.error as Error | undefined)?.message ||
+        "Не удалось получить настройки поиска";
+      setSearchSettingsError(message);
+      setSearchSettingsUpdatedAt(null);
+      setIsSearchSettingsReady(true);
+      return;
+    }
+
+    if (searchSettingsQuery.data) {
+      const next = composeSearchSettingsFromApi(searchSettingsQuery.data);
+      skipSearchSettingsSyncRef.current = true;
+      setSearchSettings(next);
+      commitSearchSettingsBaseline(next);
+      setSearchSettingsUpdatedAt(searchSettingsQuery.data.updatedAt ?? null);
+      setSearchSettingsError(null);
+      setIsSearchSettingsReady(true);
+    }
+  }, [
+    searchSettingsQueryKey,
+    searchSettingsQuery.data,
+    searchSettingsQuery.isError,
+    searchSettingsQuery.error,
+    searchSettingsQuery.isPending,
+    commitSearchSettingsBaseline,
+  ]);
 
   useEffect(() => {
     if (!storageKey || !isSearchSettingsReady || typeof window === "undefined") {
@@ -1286,6 +1597,48 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       console.error("Не удалось сохранить параметры поиска", error);
     }
   }, [searchSettings, storageKey, isSearchSettingsReady]);
+
+  useEffect(() => {
+    if (!isSearchSettingsReady || !selectedBase?.id) {
+      return;
+    }
+
+    if (skipSearchSettingsSyncRef.current) {
+      skipSearchSettingsSyncRef.current = false;
+      return;
+    }
+
+    if (!isSearchSettingsDirty) {
+      return;
+    }
+
+    if (saveSearchSettingsTimeoutRef.current) {
+      clearTimeout(saveSearchSettingsTimeoutRef.current);
+    }
+
+    saveSearchSettingsTimeoutRef.current = window.setTimeout(() => {
+      const current = latestSearchSettingsRef.current;
+      if (!current || !selectedBase?.id) {
+        return;
+      }
+
+      const payload = buildSearchSettingsUpdatePayload(current);
+      saveSearchSettings({ knowledgeBaseId: selectedBase.id, payload });
+    }, 800);
+
+    return () => {
+      if (saveSearchSettingsTimeoutRef.current) {
+        clearTimeout(saveSearchSettingsTimeoutRef.current);
+        saveSearchSettingsTimeoutRef.current = null;
+      }
+    };
+  }, [
+    saveSearchSettings,
+    searchSettings,
+    isSearchSettingsReady,
+    selectedBase?.id,
+    isSearchSettingsDirty,
+  ]);
   const [latestCrawlJob, setLatestCrawlJob] = useState<KnowledgeBaseCrawlJobStatus | null>(null);
   const crawlJobPreviousRef = useRef<KnowledgeBaseCrawlJobStatus | null>(null);
   const handleCrawlStateChange = useCallback((state: CrawlInlineState) => {
@@ -2830,33 +3183,46 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             </PopoverTrigger>
             <PopoverContent align="end" className="w-[420px] p-0">
               {isSearchSettingsAvailable && selectedBase && storageKey ? (
-                <KnowledgeBaseSearchSettingsForm
-                  baseName={selectedBase.name}
-                  storageKey={storageKey}
-                  searchSettings={searchSettings}
-                  isSearchSettingsReady={isSearchSettingsReady}
-                  activeEmbeddingProviders={activeEmbeddingProviders}
-                  activeLlmProviders={activeLlmProviders}
-                  vectorCollections={vectorCollections}
-                  isVectorCollectionsLoading={isVectorCollectionsLoading}
-                  onTopKChange={handleTopKInputChange}
-                  onVectorLimitChange={handleVectorLimitChange}
-                  onBm25LimitChange={handleBm25LimitChange}
-                  onBm25WeightChange={handleBm25WeightChange}
-                  onVectorWeightChange={handleVectorWeightChange}
-                  onEmbeddingProviderChange={handleEmbeddingProviderChange}
-                  onLlmProviderChange={handleLlmProviderChange}
-                  onLlmModelChange={handleLlmModelChange}
-                  onCollectionChange={handleCollectionChange}
-                  onSynonymsChange={handleSynonymsChange}
-                  onIncludeDraftsChange={handleIncludeDraftsChange}
-                  onHighlightResultsChange={handleHighlightResultsChange}
-                  onFiltersChange={handleFiltersChange}
-                  onTemperatureChange={handleTemperatureChange}
-                  onMaxTokensChange={handleMaxTokensChange}
-                  onSystemPromptChange={handleSystemPromptChange}
-                  onResponseFormatChange={handleResponseFormatChange}
-                />
+                <div className="max-h-[70vh] overflow-y-auto">
+                  <div className="flex items-center justify-between border-b px-4 py-2 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-2">
+                      {searchSettingsStatus}
+                    </span>
+                  </div>
+                  {searchSettingsError ? (
+                    <Alert variant="destructive" className="m-4">
+                      <AlertTitle>Ошибка синхронизации</AlertTitle>
+                      <AlertDescription>{searchSettingsError}</AlertDescription>
+                    </Alert>
+                  ) : null}
+                  <KnowledgeBaseSearchSettingsForm
+                    baseName={selectedBase.name}
+                    storageKey={storageKey}
+                    searchSettings={searchSettings}
+                    isSearchSettingsReady={isSearchSettingsReady}
+                    activeEmbeddingProviders={activeEmbeddingProviders}
+                    activeLlmProviders={activeLlmProviders}
+                    vectorCollections={vectorCollections}
+                    isVectorCollectionsLoading={isVectorCollectionsLoading}
+                    onTopKChange={handleTopKInputChange}
+                    onVectorLimitChange={handleVectorLimitChange}
+                    onBm25LimitChange={handleBm25LimitChange}
+                    onBm25WeightChange={handleBm25WeightChange}
+                    onVectorWeightChange={handleVectorWeightChange}
+                    onEmbeddingProviderChange={handleEmbeddingProviderChange}
+                    onLlmProviderChange={handleLlmProviderChange}
+                    onLlmModelChange={handleLlmModelChange}
+                    onCollectionChange={handleCollectionChange}
+                    onSynonymsChange={handleSynonymsChange}
+                    onIncludeDraftsChange={handleIncludeDraftsChange}
+                    onHighlightResultsChange={handleHighlightResultsChange}
+                    onFiltersChange={handleFiltersChange}
+                    onTemperatureChange={handleTemperatureChange}
+                    onMaxTokensChange={handleMaxTokensChange}
+                    onSystemPromptChange={handleSystemPromptChange}
+                    onResponseFormatChange={handleResponseFormatChange}
+                  />
+                </div>
               ) : (
                 <div className="p-4 text-sm text-muted-foreground">
                   Выберите базу знаний, чтобы настроить параметры поиска.

@@ -190,6 +190,13 @@
       "when": 0,
       "tag": "0032_knowledge_base_rag_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 0,
+      "tag": "0033_knowledge_base_search_settings",
+      "breakpoints": true
     }
   ]
 }

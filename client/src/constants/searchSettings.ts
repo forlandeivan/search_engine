@@ -1,4 +1,8 @@
 import type { KnowledgeBaseSearchSettings } from "@/components/knowledge-base/KnowledgeBaseSearchSettingsForm";
+import {
+  KNOWLEDGE_BASE_SEARCH_CONSTRAINTS,
+  type KnowledgeBaseSearchResponseFormat,
+} from "@shared/knowledge-base-search";
 
 export type NumericSettingDefaults = {
   defaultValue: number;
@@ -24,16 +28,19 @@ export type TextSettingDefaults = {
   defaultValue: string;
 };
 
-export type ResponseFormat = "text" | "markdown" | "html";
+const chunkConstraints = KNOWLEDGE_BASE_SEARCH_CONSTRAINTS.chunk;
+const ragConstraints = KNOWLEDGE_BASE_SEARCH_CONSTRAINTS.rag;
+
+export type ResponseFormat = KnowledgeBaseSearchResponseFormat;
 
 export const searchDefaults = {
-  topK: { defaultValue: 6, min: 1, max: 10, step: 1 },
-  bm25Weight: { defaultValue: 0.6, min: 0, max: 1, step: 0.05 },
-  vectorWeight: { defaultValue: 0.4, min: 0, max: 1, step: 0.05 },
-  synonyms: { defaultValue: [], maxItems: 12 },
-  includeDrafts: { defaultValue: false },
-  highlightResults: { defaultValue: true },
-  filters: { defaultValue: "" },
+  topK: chunkConstraints.topK,
+  bm25Weight: chunkConstraints.bm25Weight,
+  vectorWeight: ragConstraints.vectorWeight,
+  synonyms: chunkConstraints.synonyms,
+  includeDrafts: chunkConstraints.includeDrafts,
+  highlightResults: chunkConstraints.highlightResults,
+  filters: chunkConstraints.filters,
 } satisfies {
   topK: NumericSettingDefaults;
   bm25Weight: NumericSettingDefaults;
@@ -45,15 +52,15 @@ export const searchDefaults = {
 };
 
 export const ragDefaults = {
-  topK: { defaultValue: 6, min: 1, max: 20, step: 1 },
-  bm25Weight: { defaultValue: 0.5, min: 0, max: 1, step: 0.05 },
-  bm25Limit: { defaultValue: 6, min: 1, max: 20, step: 1 },
-  vectorWeight: { defaultValue: 0.5, min: 0, max: 1, step: 0.05 },
-  vectorLimit: { defaultValue: 8, min: 1, max: 20, step: 1 },
-  temperature: { defaultValue: 0.2, min: 0, max: 2, step: 0.1 },
-  maxTokens: { defaultValue: 2048, min: 16, max: 4096, step: 1 },
-  systemPrompt: { defaultValue: "" },
-  responseFormat: { defaultValue: "markdown" as ResponseFormat },
+  topK: ragConstraints.topK,
+  bm25Weight: ragConstraints.bm25Weight,
+  bm25Limit: ragConstraints.bm25Limit,
+  vectorWeight: ragConstraints.vectorWeight,
+  vectorLimit: ragConstraints.vectorLimit,
+  temperature: ragConstraints.temperature,
+  maxTokens: ragConstraints.maxTokens,
+  systemPrompt: ragConstraints.systemPrompt,
+  responseFormat: { defaultValue: ragConstraints.responseFormat.defaultValue as ResponseFormat },
 } satisfies {
   topK: NumericSettingDefaults;
   bm25Weight: NumericSettingDefaults;
