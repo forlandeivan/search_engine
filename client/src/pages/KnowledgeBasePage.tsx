@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { Link, useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -24,12 +32,8 @@ import {
 import { Button } from "@/components/ui/button";
 import DocumentEditor from "@/components/knowledge-base/DocumentEditor";
 import DocumentChunksPanel from "@/components/knowledge-base/DocumentChunksPanel";
-import {
-  KnowledgeBaseSearchDialog,
-  type KnowledgeBaseSearchDialogOptions,
-  type KnowledgeBaseSearchResult,
-} from "@/components/knowledge-base/KnowledgeBaseSearchDialog";
 import MarkdownRenderer from "@/components/ui/markdown";
+import SearchQuickSwitcher from "@/components/search/SearchQuickSwitcher";
 import VectorizeKnowledgeDocumentDialog, {
   type KnowledgeDocumentVectorizationSelection,
 } from "@/components/knowledge-base/VectorizeKnowledgeDocumentDialog";
@@ -77,6 +81,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSuggestSearch } from "@/hooks/useSuggestSearch";
 import { ToastAction } from "@/components/ui/toast";
 import { escapeHtml, getSanitizedContent } from "@/lib/document-import";
 import {
@@ -116,6 +121,7 @@ import {
   Info,
   MoreVertical,
   PencilLine,
+  Search,
   Plus,
   RefreshCw,
   SquareStack,
@@ -179,6 +185,105 @@ type VectorCollectionSummary = {
 type VectorCollectionsResponse = {
   collections: VectorCollectionSummary[];
 };
+
+type QuickSearchTriggerProps = {
+  query: string;
+  placeholder: string;
+  isOpen: boolean;
+  onOpen: () => void;
+  onOpenStateChange: (open: boolean) => void;
+};
+
+function KnowledgeBaseQuickSearchTrigger({
+  query,
+  placeholder,
+  isOpen,
+  onOpen,
+  onOpenStateChange,
+}: QuickSearchTriggerProps) {
+  const [isApplePlatform, setIsApplePlatform] = useState(false);
+  const previousIsOpenRef = useRef(isOpen);
+  const skipNextFocusRef = useRef(false);
+
+  useEffect(() => {
+    onOpenStateChange(isOpen);
+  }, [isOpen, onOpenStateChange]);
+
+  useEffect(() => {
+    if (previousIsOpenRef.current && !isOpen) {
+      skipNextFocusRef.current = true;
+    }
+    previousIsOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined") {
+      return;
+    }
+
+    const platform = navigator.userAgent || navigator.platform || "";
+    setIsApplePlatform(/Mac|iP(ad|hone|od)/i.test(platform));
+  }, []);
+
+  const handleOpen = useCallback(() => {
+    onOpen();
+  }, [onOpen]);
+
+  const handleFocus = useCallback(() => {
+    if (skipNextFocusRef.current) {
+      skipNextFocusRef.current = false;
+      return;
+    }
+
+    handleOpen();
+  }, [handleOpen]);
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        handleOpen();
+        return;
+      }
+
+      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        handleOpen();
+      }
+    },
+    [handleOpen],
+  );
+
+  const displayText = query.trim() ? query : placeholder;
+  const isPlaceholder = !query.trim();
+  const hotkeyLabel = isApplePlatform ? "⌘K" : "Ctrl+K";
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "group flex w-full items-center gap-3 rounded-md border border-input bg-card px-3 py-2 text-left text-sm shadow-sm transition",
+        isOpen && "border-primary ring-2 ring-primary/30",
+      )}
+      onClick={handleOpen}
+      onFocus={handleFocus}
+      onKeyDown={handleKeyDown}
+      aria-haspopup="dialog"
+      aria-expanded={isOpen}
+    >
+      <Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+      <span className={cn("flex-1 truncate", isPlaceholder ? "text-muted-foreground" : "text-foreground")}>
+        {displayText}
+      </span>
+      <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+        <kbd className="rounded border border-input bg-background px-1.5 py-0.5 text-[10px] leading-none">{hotkeyLabel}</kbd>
+      </span>
+    </button>
+  );
+}
 
 type KnowledgeBaseSearchSettings = {
   topK: number | null;
@@ -558,7 +663,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     base: KnowledgeBaseSummary | null;
     isOpen: boolean;
   } | null>(null);
-  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
+  const [isQuickSwitcherOpen, setIsQuickSwitcherOpen] = useState(false);
+  const [quickSearchQuery, setQuickSearchQuery] = useState("");
   const [documentVectorizationProgress, setDocumentVectorizationProgress] =
     useState<DocumentVectorizationProgressState | null>(null);
   const [shouldPollVectorizationJob, setShouldPollVectorizationJob] = useState(false);
@@ -602,6 +708,28 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     setLocation(`/knowledge/${base.id}`);
     setCreateBaseMode("blank");
   };
+  const handleQuickSearchQueryChange = useCallback(
+    (value: string) => {
+      setQuickSearchQuery(value);
+      runSuggestSearch(value);
+    },
+    [runSuggestSearch],
+  );
+  const handleQuickSearchPrefetch = useCallback(
+    (value: string) => {
+      prefetchSuggest(value);
+    },
+    [prefetchSuggest],
+  );
+  const handleQuickSwitcherOpenState = useCallback(
+    (open: boolean) => {
+      setIsQuickSwitcherOpen(open);
+    },
+    [setIsQuickSwitcherOpen],
+  );
+  const handleQuickSwitcherClose = useCallback(() => {
+    setIsQuickSwitcherOpen(false);
+  }, [setIsQuickSwitcherOpen]);
   const handleTopKInputChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
@@ -724,34 +852,19 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
     return `${workspaceId}/${selectedBase.id}`;
   }, [workspaceId, selectedBase?.id]);
-  const selectedEmbeddingProvider = useMemo(
-    () =>
-      searchSettings.embeddingProviderId
-        ? activeEmbeddingProviders.find(
-            (provider) => provider.id === searchSettings.embeddingProviderId,
-          ) ?? null
-        : null,
-    [activeEmbeddingProviders, searchSettings.embeddingProviderId],
-  );
   const normalizedTopK = useMemo(() => clampTopKValue(searchSettings.topK), [searchSettings.topK]);
-  const searchDialogOptions = useMemo<KnowledgeBaseSearchDialogOptions>(
-    () => ({
-      topK: normalizedTopK,
-      bm25Weight: searchSettings.bm25Weight,
-      vectorWeight: searchSettings.vectorWeight,
-      embeddingProviderId: searchSettings.embeddingProviderId,
-      embeddingProviderName: selectedEmbeddingProvider?.name ?? null,
-      collection: searchSettings.collection,
-    }),
-    [
-      normalizedTopK,
-      searchSettings.bm25Weight,
-      searchSettings.vectorWeight,
-      searchSettings.embeddingProviderId,
-      selectedEmbeddingProvider?.name,
-      searchSettings.collection,
-    ],
-  );
+  const suggestLimit = normalizedTopK ?? 8;
+  const {
+    data: suggestData,
+    error: suggestError,
+    status: suggestStatus,
+    search: runSuggestSearch,
+    prefetch: prefetchSuggest,
+    reset: resetSuggest,
+  } = useSuggestSearch({
+    knowledgeBaseId: selectedBase?.id ?? "",
+    limit: suggestLimit,
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -883,30 +996,17 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   }, [selectedBase?.id]);
 
   useEffect(() => {
-    if (!selectedBase) {
-      setIsSearchDialogOpen(false);
+    if (!selectedBase?.id) {
+      setIsQuickSwitcherOpen(false);
+      setQuickSearchQuery("");
+      resetSuggest();
       return;
     }
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) {
-        return;
-      }
-
-      if (event.key.toLowerCase() !== "k") {
-        return;
-      }
-
-      event.preventDefault();
-      setIsSearchDialogOpen((prev) => !prev);
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [selectedBase]);
+    setIsQuickSwitcherOpen(false);
+    setQuickSearchQuery("");
+    resetSuggest();
+  }, [selectedBase?.id, resetSuggest]);
 
   useEffect(() => {
     if (!bases.length) {
@@ -2204,10 +2304,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
 
     const hints: ReactNode[] = [];
-    const embeddingProviderValue = searchSettings.embeddingProviderId ?? "";
+    const embeddingProviderValue = searchSettings.embeddingProviderId ?? "none";
     const collectionValue = searchSettings.collection ?? "";
     const isCustomProvider =
-      embeddingProviderValue.length > 0 &&
+      embeddingProviderValue !== "none" &&
       !activeEmbeddingProviders.some((provider) => provider.id === embeddingProviderValue);
     const isCustomCollection =
       collectionValue.length > 0 &&
@@ -2291,14 +2391,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   <Info className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs text-xs leading-relaxed">
-                  Диалог поиска работает только внутри выбранной базы. Откройте его сочетанием Ctrl+K или ⌘K —
+                  Окно быстрого поиска работает только внутри выбранной базы. Откройте его сочетанием Ctrl+K или ⌘K —
                   подсказки будут использовать сохранённые ниже локальные параметры.
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
           </div>
           <CardDescription>
-            Диалог поиска (Ctrl+K или ⌘K) работает в контексте базы «{selectedBase.name}», использует локальные параметры ниже
+            Быстрый поиск (Ctrl+K или ⌘K) работает в контексте базы «{selectedBase.name}», использует локальные параметры ниже
             и сохраняет их в браузере.
           </CardDescription>
         </CardHeader>
@@ -2540,8 +2640,37 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       detailContent = renderOverview(detail);
     }
 
+    const searchPlaceholder = selectedBase?.name
+      ? `Быстрый поиск по базе «${selectedBase.name}»`
+      : "Быстрый поиск по базе";
+
     return (
       <div className="space-y-6">
+        <SearchQuickSwitcher
+          key={selectedBase?.id ?? "no-base"}
+          query={quickSearchQuery}
+          suggest={suggestData}
+          status={suggestStatus}
+          error={suggestError ?? null}
+          onQueryChange={handleQuickSearchQueryChange}
+          onPrefetch={handleQuickSearchPrefetch}
+          onClose={handleQuickSwitcherClose}
+          renderTrigger={({ open, isOpen }) => (
+            <KnowledgeBaseQuickSearchTrigger
+              query={quickSearchQuery}
+              placeholder={searchPlaceholder}
+              isOpen={isOpen}
+              onOpen={() => {
+                if (!selectedBase?.id || isQuickSwitcherOpen) {
+                  return;
+                }
+
+                open();
+              }}
+              onOpenStateChange={handleQuickSwitcherOpenState}
+            />
+          )}
+        />
         <CrawlInlineProgress
           baseId={selectedBase?.id}
           onStateChange={handleCrawlStateChange}
@@ -2584,29 +2713,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const hasHierarchyChanges =
     Boolean(hierarchyDialogState) &&
     normalizedHierarchySelectedParentId !== hierarchyDialogState?.currentParentId;
-
-  const handleSearchResultSelect = useCallback(
-    (result: KnowledgeBaseSearchResult) => {
-      if (!selectedBase) {
-        return;
-      }
-
-      setIsSearchDialogOpen(false);
-
-      if (result.docId) {
-        setLocation(`/knowledge/${selectedBase.id}/node/${result.docId}`);
-        return;
-      }
-
-      if (result.url) {
-        window.open(result.url, "_blank", "noopener,noreferrer");
-        return;
-      }
-
-      setLocation(`/knowledge/${selectedBase.id}`);
-    },
-    [selectedBase, setLocation],
-  );
 
   return (
     <div className="flex h-full min-h-[calc(100vh-4rem)] bg-background">
@@ -2717,13 +2823,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           )}
         </div>
       </main>
-      <KnowledgeBaseSearchDialog
-        base={selectedBase}
-        open={isSearchDialogOpen}
-        onOpenChange={(open) => setIsSearchDialogOpen(open && Boolean(selectedBase))}
-        onSelectResult={handleSearchResultSelect}
-        searchOptions={searchDialogOptions}
-      />
       {vectorizeDialogState && (
         <VectorizeKnowledgeDocumentDialog
           open={vectorizeDialogState.isOpen}
