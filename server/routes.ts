@@ -1517,6 +1517,46 @@ function removeUndefinedDeep<T>(value: T): T {
   return value;
 }
 
+function sanitizeHeadersForLog(headers: Headers): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+
+  for (const [key, value] of headers.entries()) {
+    if (key.toLowerCase().includes("authorization")) {
+      sanitized[key] = "***";
+    } else {
+      sanitized[key] = value;
+    }
+  }
+
+  return sanitized;
+}
+
+function summarizeVectorForLog(vector: unknown): unknown {
+  if (Array.isArray(vector)) {
+    return {
+      dimensions: vector.length,
+      preview: vector.slice(0, 8),
+    };
+  }
+
+  if (vector && typeof vector === "object") {
+    const record = vector as Record<string, unknown>;
+    if (Array.isArray(record.vector)) {
+      return {
+        ...Object.fromEntries(
+          Object.entries(record).filter(([key]) => key !== "vector"),
+        ),
+        vector: {
+          dimensions: record.vector.length,
+          preview: record.vector.slice(0, 8),
+        },
+      };
+    }
+  }
+
+  return vector;
+}
+
 function buildCustomPayloadFromSchema(
   fields: CollectionSchemaFieldInput[],
   context: Record<string, unknown>,
@@ -1535,11 +1575,18 @@ function buildCustomPayloadFromSchema(
   }, {});
 }
 
+interface ApiRequestLog {
+  url: string;
+  headers: Record<string, string>;
+  body: unknown;
+}
+
 interface EmbeddingVectorResult {
   vector: number[];
   usageTokens?: number;
   embeddingId?: string | number;
   rawResponse: unknown;
+  request: ApiRequestLog;
 }
 
 type OAuthProviderConfig = Pick<
@@ -1636,6 +1683,7 @@ async function fetchEmbeddingVector(
   provider: EmbeddingProvider,
   accessToken: string,
   text: string,
+  options?: { onBeforeRequest?: (details: ApiRequestLog) => void },
 ): Promise<EmbeddingVectorResult> {
   const embeddingHeaders = new Headers();
   embeddingHeaders.set("Content-Type", "application/json");
@@ -1650,6 +1698,13 @@ async function fetchEmbeddingVector(
   }
 
   const embeddingBody = createEmbeddingRequestBody(provider.model, text);
+  const sanitizedHeaders = sanitizeHeadersForLog(embeddingHeaders);
+
+  options?.onBeforeRequest?.({
+    url: provider.embeddingsUrl,
+    headers: sanitizedHeaders,
+    body: embeddingBody,
+  });
 
   let embeddingResponse: FetchResponse;
 
@@ -1696,6 +1751,11 @@ async function fetchEmbeddingVector(
     usageTokens,
     embeddingId,
     rawResponse: parsedBody,
+    request: {
+      url: provider.embeddingsUrl,
+      headers: sanitizedHeaders,
+      body: embeddingBody,
+    },
   };
 }
 
@@ -1703,6 +1763,7 @@ interface LlmCompletionResult {
   answer: string;
   usageTokens?: number | null;
   rawResponse: unknown;
+  request: ApiRequestLog;
 }
 
 type GenerativeContextEntry = {
@@ -2115,7 +2176,7 @@ async function fetchLlmCompletion(
   query: string,
   context: LlmContextRecord[],
   modelOverride?: string,
-  options?: { responseFormat?: RagResponseFormat },
+  options?: { responseFormat?: RagResponseFormat; onBeforeRequest?: (details: ApiRequestLog) => void },
 ): Promise<LlmCompletionResult> {
   const requestBody = buildLlmRequestBody(provider, query, context, modelOverride, {
     responseFormat: options?.responseFormat,
@@ -2147,6 +2208,12 @@ async function fetchLlmCompletion(
       },
       provider.allowSelfSignedCertificate,
     );
+
+    options?.onBeforeRequest?.({
+      url: provider.completionUrl,
+      headers: sanitizeHeadersForLog(llmHeaders),
+      body: requestBody,
+    });
 
     completionResponse = await fetch(provider.completionUrl, requestOptions);
   } catch (error) {
@@ -2225,6 +2292,11 @@ async function fetchLlmCompletion(
     answer,
     usageTokens,
     rawResponse: parsedBody,
+    request: {
+      url: provider.completionUrl,
+      headers: sanitizeHeadersForLog(llmHeaders),
+      body: requestBody,
+    },
   };
 }
 
@@ -2864,33 +2936,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       input: Record<string, unknown> | null,
       title: string,
     ) => {
-      const step: KnowledgeBaseAskAiPipelineStepLog = {
-        key,
-        title,
-        status: "success",
-        startedAt: new Date().toISOString(),
-        finishedAt: null,
-        durationMs: null,
-        input,
-        output: null,
-        error: null,
-      };
-      pipelineLog.push(step);
-      const startedAt = performance.now();
-      return {
-        finish(output?: Record<string, unknown> | null) {
-          step.finishedAt = new Date().toISOString();
-          step.durationMs = Number((performance.now() - startedAt).toFixed(2));
-          step.output = output ?? null;
-        },
-        fail(error: unknown) {
-          step.finishedAt = new Date().toISOString();
-          step.durationMs = Number((performance.now() - startedAt).toFixed(2));
-          step.status = "error";
-          step.error = getErrorDetails(error);
-        },
-      };
+    const step: KnowledgeBaseAskAiPipelineStepLog = {
+      key,
+      title,
+      status: "success",
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      durationMs: null,
+      input: input ? removeUndefinedDeep(input) : null,
+      output: null,
+      error: null,
     };
+    pipelineLog.push(step);
+    const startedAt = performance.now();
+    return {
+      setInput(nextInput?: Record<string, unknown> | null) {
+        step.input = nextInput ? removeUndefinedDeep(nextInput) : null;
+      },
+      finish(output?: Record<string, unknown> | null) {
+        step.finishedAt = new Date().toISOString();
+        step.durationMs = Number((performance.now() - startedAt).toFixed(2));
+        step.output = output ? removeUndefinedDeep(output) : null;
+      },
+      fail(error: unknown) {
+        step.finishedAt = new Date().toISOString();
+        step.durationMs = Number((performance.now() - startedAt).toFixed(2));
+        step.status = "error";
+        step.error = getErrorDetails(error);
+      },
+    };
+  };
 
     const skipPipelineStep = (key: string, title: string, reason: string) => {
       pipelineLog.push({
@@ -3055,16 +3130,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           embeddingProviderId = embeddingProvider.id;
 
+          const embeddingStep = startPipelineStep(
+            "vector_embedding",
+            {
+              providerId: embeddingProvider.id,
+              model: embeddingProvider.model,
+              text: normalizedQuery,
+            },
+            "Векторизация запроса",
+          );
+
+          let embeddingResult: EmbeddingVectorResult;
+          try {
+            const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
+            embeddingResult = await fetchEmbeddingVector(
+              embeddingProvider,
+              embeddingAccessToken,
+              normalizedQuery,
+              {
+                onBeforeRequest(details) {
+                  embeddingStep.setInput({
+                    providerId: embeddingProvider.id,
+                    model: embeddingProvider.model,
+                    text: normalizedQuery,
+                    request: details,
+                  });
+                },
+              },
+            );
+            embeddingUsageTokens = embeddingResult.usageTokens ?? null;
+            embeddingStep.finish({
+              usageTokens: embeddingUsageTokens,
+              embeddingId: embeddingResult.embeddingId ?? null,
+              vectorDimensions: embeddingResult.vector.length,
+              response: embeddingResult.rawResponse,
+            });
+          } catch (error) {
+            embeddingUsageTokens = null;
+            embeddingStep.fail(error);
+            throw error;
+          }
+
           const client = getQdrantClient();
           const collectionName = body.hybrid.vector.collection!.trim();
           vectorCollection = collectionName;
-          const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
-          const embeddingResult = await fetchEmbeddingVector(
-            embeddingProvider,
-            embeddingAccessToken,
-            normalizedQuery,
-          );
-          embeddingUsageTokens = embeddingResult.usageTokens ?? null;
 
           const searchPayload: Parameters<QdrantClient["search"]>[1] = {
             vector: embeddingResult.vector as Schemas["NamedVectorStruct"],
@@ -3079,6 +3188,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ],
             },
           };
+
+          vectorStep.setInput({
+            limit: vectorLimit,
+            collection: vectorCollection,
+            embeddingProviderId,
+            request: {
+              url: process.env.QDRANT_URL ?? "",
+              payload: {
+                ...searchPayload,
+                vector: summarizeVectorForLog(searchPayload.vector),
+              },
+            },
+          });
 
           const vectorResults = await client.search(collectionName, searchPayload);
           vectorDuration = performance.now() - vectorStart;
@@ -3101,6 +3223,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           vectorStep.finish({
             hits: vectorResultCount,
             usageTokens: embeddingUsageTokens,
+            response: vectorSearchDetails,
           });
         } catch (error) {
           vectorDuration = performance.now() - vectorStart;
@@ -3108,6 +3231,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           throw error;
         }
       } else {
+        skipPipelineStep(
+          "vector_embedding",
+          "Векторизация запроса",
+          "Векторный поиск отключён",
+        );
         skipPipelineStep("vector_search", "Векторный поиск", "Векторный поиск отключён");
       }
 
@@ -3367,11 +3495,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           normalizedQuery,
           contextRecords,
           body.llm.model,
-          { responseFormat },
+          {
+            responseFormat,
+            onBeforeRequest(details) {
+              llmStep.setInput({
+                providerId: llmProviderId,
+                model: llmModel,
+                request: details,
+              });
+            },
+          },
         );
         llmDuration = performance.now() - llmStart;
         llmUsageTokens = completion.usageTokens ?? null;
-        llmStep.finish({ tokens: llmUsageTokens });
+        llmStep.finish({
+          tokens: llmUsageTokens,
+          response: completion.rawResponse,
+          answerPreview: completion.answer.slice(0, 160),
+        });
       } catch (error) {
         llmDuration = performance.now() - llmStart;
         llmStep.fail(error);
