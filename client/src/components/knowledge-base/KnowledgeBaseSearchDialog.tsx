@@ -22,11 +22,14 @@ const SEARCH_DEBOUNCE_MS = 200;
 
 export type KnowledgeBaseSearchDialogOptions = {
   topK?: number | null;
+  vectorLimit?: number | null;
   bm25Weight?: number | null;
   vectorWeight?: number | null;
   embeddingProviderId?: string | null;
   embeddingProviderName?: string | null;
   collection?: string | null;
+  llmProviderId?: string | null;
+  llmProviderName?: string | null;
 };
 
 export interface KnowledgeBaseSearchResult {
@@ -136,6 +139,15 @@ const clampTopK = (value: number | null | undefined): number => {
   return Math.max(1, Math.min(10, rounded));
 };
 
+const clampVectorLimit = (value: number | null | undefined): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  return Math.max(1, Math.min(20, rounded));
+};
+
 export function KnowledgeBaseSearchDialog({
   base,
   open,
@@ -182,6 +194,11 @@ export function KnowledgeBaseSearchDialog({
       parts.push(`Top-K: ${limit}`);
     }
 
+    const vectorLimit = clampVectorLimit(searchOptions?.vectorLimit ?? null);
+    if (vectorLimit !== null) {
+      parts.push(`Top-K для LLM: ${vectorLimit}`);
+    }
+
     const bm25Weight = searchOptions?.bm25Weight;
     if (typeof bm25Weight === "number" && Number.isFinite(bm25Weight)) {
       parts.push(`BM25 вес: ${bm25Weight}`);
@@ -202,8 +219,24 @@ export function KnowledgeBaseSearchDialog({
       parts.push(`Провайдер: ${searchOptions.embeddingProviderId}`);
     }
 
+    if (searchOptions?.llmProviderName) {
+      parts.push(`LLM: ${searchOptions.llmProviderName}`);
+    } else if (searchOptions?.llmProviderId) {
+      parts.push(`LLM: ${searchOptions.llmProviderId}`);
+    }
+
     return parts.length > 0 ? parts.join(" · ") : null;
-  }, [limit, searchOptions?.bm25Weight, searchOptions?.collection, searchOptions?.embeddingProviderId, searchOptions?.embeddingProviderName, searchOptions?.vectorWeight]);
+  }, [
+    limit,
+    searchOptions?.bm25Weight,
+    searchOptions?.collection,
+    searchOptions?.embeddingProviderId,
+    searchOptions?.embeddingProviderName,
+    searchOptions?.llmProviderId,
+    searchOptions?.llmProviderName,
+    searchOptions?.vectorLimit,
+    searchOptions?.vectorWeight,
+  ]);
 
   const infoLines = useMemo(() => {
     const lines: string[] = [];

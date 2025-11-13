@@ -19,14 +19,16 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { PublicEmbeddingProvider } from "@shared/schema";
+import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import { Info } from "lucide-react";
 
 export type KnowledgeBaseSearchSettings = {
   topK: number | null;
+  vectorLimit: number | null;
   bm25Weight: number | null;
   vectorWeight: number | null;
   embeddingProviderId: string | null;
+  llmProviderId: string | null;
   collection: string | null;
 };
 
@@ -40,12 +42,15 @@ export type KnowledgeBaseSearchSettingsFormProps = {
   searchSettings: KnowledgeBaseSearchSettings;
   isSearchSettingsReady: boolean;
   activeEmbeddingProviders: PublicEmbeddingProvider[];
+  activeLlmProviders: PublicLlmProvider[];
   vectorCollections: VectorCollectionSummary[];
   isVectorCollectionsLoading: boolean;
   onTopKChange: (value: string) => void;
+  onVectorLimitChange: (value: string) => void;
   onBm25WeightChange: (value: string) => void;
   onVectorWeightChange: (value: string) => void;
   onEmbeddingProviderChange: (value: string) => void;
+  onLlmProviderChange: (value: string) => void;
   onCollectionChange: (value: string) => void;
   className?: string;
 };
@@ -58,21 +63,28 @@ const KnowledgeBaseSearchSettingsForm = ({
   searchSettings,
   isSearchSettingsReady,
   activeEmbeddingProviders,
+  activeLlmProviders,
   vectorCollections,
   isVectorCollectionsLoading,
   onTopKChange,
+  onVectorLimitChange,
   onBm25WeightChange,
   onVectorWeightChange,
   onEmbeddingProviderChange,
+  onLlmProviderChange,
   onCollectionChange,
   className,
 }: KnowledgeBaseSearchSettingsFormProps) => {
   const hints: ReactNode[] = [];
   const embeddingProviderValue = searchSettings.embeddingProviderId ?? "";
   const collectionValue = searchSettings.collection ?? "";
+  const llmProviderValue = searchSettings.llmProviderId ?? "";
   const isCustomProvider =
     embeddingProviderValue.length > 0 &&
     !activeEmbeddingProviders.some((provider) => provider.id === embeddingProviderValue);
+  const isCustomLlmProvider =
+    llmProviderValue.length > 0 &&
+    !activeLlmProviders.some((provider) => provider.id === llmProviderValue);
   const isCustomCollection =
     collectionValue.length > 0 &&
     vectorCollections.length > 0 &&
@@ -85,6 +97,17 @@ const KnowledgeBaseSearchSettingsForm = ({
         <AlertTitle>Нет активных провайдеров эмбеддингов</AlertTitle>
         <AlertDescription>
           Подключите сервис в разделе «Сервисы эмбеддингов», чтобы включить векторный поиск.
+        </AlertDescription>
+      </Alert>,
+    );
+  }
+
+  if (activeLlmProviders.length === 0) {
+    hints.push(
+      <Alert key="hint-no-llm-providers" variant="default">
+        <AlertTitle>Нет активных LLM-сервисов</AlertTitle>
+        <AlertDescription>
+          Подключите LLM-провайдера в разделе «LLM сервисы», чтобы Ask AI мог генерировать ответы.
         </AlertDescription>
       </Alert>,
     );
@@ -107,6 +130,17 @@ const KnowledgeBaseSearchSettingsForm = ({
         <AlertTitle>Сохранённый провайдер недоступен</AlertTitle>
         <AlertDescription>
           Провайдер эмбеддингов отсутствует среди активных. Выберите актуальный сервис.
+        </AlertDescription>
+      </Alert>,
+    );
+  }
+
+  if (isCustomLlmProvider) {
+    hints.push(
+      <Alert key="hint-llm-provider-missing" variant="default">
+        <AlertTitle>Сохранённый LLM-сервис недоступен</AlertTitle>
+        <AlertDescription>
+          Провайдер LLM отсутствует среди активных. Выберите доступный сервис для Ask AI.
         </AlertDescription>
       </Alert>,
     );
@@ -183,6 +217,21 @@ const KnowledgeBaseSearchSettingsForm = ({
             <p className="text-xs text-muted-foreground">Количество результатов, отображаемых в подсказках.</p>
           </div>
           <div className="space-y-1.5">
+            <Label htmlFor="kb-search-vector-limit">Top-K статей для LLM</Label>
+            <Input
+              id="kb-search-vector-limit"
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              inputMode="numeric"
+              value={searchSettings.vectorLimit ?? ""}
+              onChange={(event) => onVectorLimitChange(event.target.value)}
+              disabled={disabled}
+            />
+            <p className="text-xs text-muted-foreground">Сколько документов передаётся модели для генерации ответа.</p>
+          </div>
+          <div className="space-y-1.5">
             <Label htmlFor="kb-search-bm25-weight">Вес BM25</Label>
             <Input
               id="kb-search-bm25-weight"
@@ -235,6 +284,28 @@ const KnowledgeBaseSearchSettingsForm = ({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">Используется для генерации векторных представлений документов.</p>
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="kb-search-llm-provider">LLM сервис для RAG</Label>
+            <Select value={llmProviderValue} onValueChange={onLlmProviderChange} disabled={disabled}>
+              <SelectTrigger id="kb-search-llm-provider" disabled={disabled}>
+                <SelectValue
+                  placeholder={activeLlmProviders.length === 0 ? "Нет доступных LLM сервисов" : "Выберите сервис"}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Не выбрано</SelectItem>
+                {activeLlmProviders.map((provider) => (
+                  <SelectItem key={provider.id} value={provider.id}>
+                    {provider.name}
+                  </SelectItem>
+                ))}
+                {isCustomLlmProvider && llmProviderValue && (
+                  <SelectItem value={llmProviderValue}>{llmProviderValue} (не найден)</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">LLM отвечает за генерацию ответов в Ask AI и Quick Switcher.</p>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="kb-search-collection">Коллекция Qdrant</Label>

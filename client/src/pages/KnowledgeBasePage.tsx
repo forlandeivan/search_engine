@@ -110,8 +110,9 @@ import type {
   KnowledgeDocumentVectorizationJobStatus,
   KnowledgeBaseCrawlJobStatus,
 } from "@shared/knowledge-base";
-import type { PublicEmbeddingProvider } from "@shared/schema";
+import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { SessionResponse } from "@/types/session";
+import type { UseKnowledgeBaseAskAiOptions } from "@/hooks/useKnowledgeBaseAskAi";
 import {
   ChevronDown,
   ChevronRight,
@@ -287,9 +288,11 @@ function KnowledgeBaseQuickSearchTrigger({
 
 const DEFAULT_SEARCH_SETTINGS: KnowledgeBaseSearchSettings = {
   topK: null,
+  vectorLimit: null,
   bm25Weight: null,
   vectorWeight: null,
   embeddingProviderId: null,
+  llmProviderId: null,
   collection: null,
 };
 
@@ -300,6 +303,15 @@ const clampTopKValue = (value: number | null): number | null => {
 
   const rounded = Math.round(value);
   return Math.max(1, Math.min(10, rounded));
+};
+
+const clampVectorLimitValue = (value: number | null): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  return Math.max(1, Math.min(20, rounded));
 };
 
 const clampWeightValue = (value: number | null): number | null => {
@@ -347,9 +359,11 @@ const parseStoredSearchSettings = (value: unknown): KnowledgeBaseSearchSettings 
 
   return {
     topK: resolveNumber(record.topK, clampTopKValue),
+    vectorLimit: resolveNumber(record.vectorLimit, clampVectorLimitValue),
     bm25Weight: resolveNumber(record.bm25Weight, clampWeightValue),
     vectorWeight: resolveNumber(record.vectorWeight, clampWeightValue),
     embeddingProviderId: resolveString(record.embeddingProviderId),
+    llmProviderId: resolveString(record.llmProviderId),
     collection: resolveString(record.collection),
   };
 };
@@ -724,6 +738,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return { ...prev, topK: clampTopKValue(parsed) };
     });
   };
+  const handleVectorLimitChange = (value: string) => {
+    setSearchSettings((prev) => {
+      if (value === "") {
+        return { ...prev, vectorLimit: null };
+      }
+
+      const parsed = Number(value);
+      if (Number.isNaN(parsed)) {
+        return prev;
+      }
+
+      return { ...prev, vectorLimit: clampVectorLimitValue(parsed) };
+    });
+  };
   const handleBm25WeightChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
@@ -756,6 +784,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     setSearchSettings((prev) => ({
       ...prev,
       embeddingProviderId: value && value !== "none" ? value : null,
+    }));
+  };
+  const handleLlmProviderChange = (value: string) => {
+    setSearchSettings((prev) => ({
+      ...prev,
+      llmProviderId: value && value !== "none" ? value : null,
     }));
   };
   const handleCollectionChange = (value: string) => {
@@ -813,6 +847,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => (embeddingServices?.providers ?? []).filter((provider) => provider.isActive),
     [embeddingServices?.providers],
   );
+  const { data: llmProvidersResponse } = useQuery<{ providers: PublicLlmProvider[] }>({
+    queryKey: ["/api/llm/providers"],
+  });
+  const activeLlmProviders = useMemo(
+    () => (llmProvidersResponse?.providers ?? []).filter((provider) => provider.isActive),
+    [llmProvidersResponse?.providers],
+  );
   const workspaceId = session?.workspace.active.id ?? null;
   const { data: vectorCollectionsResponse, isLoading: isVectorCollectionsLoading } =
     useQuery<VectorCollectionsResponse>({
@@ -843,8 +884,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     setIsSearchSettingsOpen(false);
   }, [isQuickSwitcherOpen]);
   const normalizedTopK = useMemo(() => clampTopKValue(searchSettings.topK), [searchSettings.topK]);
+  const normalizedVectorLimit = useMemo(
+    () => clampVectorLimitValue(searchSettings.vectorLimit),
+    [searchSettings.vectorLimit],
+  );
+  const normalizedBm25Weight = useMemo(
+    () => clampWeightValue(searchSettings.bm25Weight),
+    [searchSettings.bm25Weight],
+  );
+  const normalizedVectorWeight = useMemo(
+    () => clampWeightValue(searchSettings.vectorWeight),
+    [searchSettings.vectorWeight],
+  );
   const suggestLimit = normalizedTopK ?? 8;
-  const {
+  const { 
     data: suggestData,
     error: suggestError,
     status: suggestStatus,
@@ -855,6 +908,53 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     knowledgeBaseId: selectedBase?.id ?? "",
     limit: suggestLimit,
   });
+  const askOptions = useMemo<UseKnowledgeBaseAskAiOptions | null>(() => {
+    if (!selectedBase) {
+      return null;
+    }
+
+    const bm25Options =
+      normalizedBm25Weight !== null
+        ? {
+            weight: normalizedBm25Weight,
+            limit: null,
+          }
+        : null;
+
+    const vectorOptions =
+      normalizedVectorWeight !== null ||
+      normalizedVectorLimit !== null ||
+      Boolean(searchSettings.collection) ||
+      Boolean(searchSettings.embeddingProviderId)
+        ? {
+            weight: normalizedVectorWeight,
+            limit: normalizedVectorLimit,
+            collection: searchSettings.collection ?? null,
+            embeddingProviderId: searchSettings.embeddingProviderId ?? null,
+          }
+        : null;
+
+    return {
+      knowledgeBaseId: selectedBase.id,
+      hybrid: {
+        topK: normalizedTopK,
+        bm25: bm25Options,
+        vector: vectorOptions,
+      },
+      llm: {
+        providerId: searchSettings.llmProviderId ?? null,
+      },
+    } satisfies UseKnowledgeBaseAskAiOptions;
+  }, [
+    normalizedBm25Weight,
+    normalizedTopK,
+    normalizedVectorLimit,
+    normalizedVectorWeight,
+    searchSettings.collection,
+    searchSettings.embeddingProviderId,
+    searchSettings.llmProviderId,
+    selectedBase,
+  ]);
   const handleQuickSearchQueryChange = useCallback(
     (value: string) => {
       setQuickSearchQuery(value);
@@ -2442,6 +2542,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               onQueryChange={handleQuickSearchQueryChange}
               onPrefetch={handleQuickSearchPrefetch}
               onClose={handleQuickSwitcherClose}
+              askOptions={askOptions}
               renderTrigger={({ open, isOpen }) => (
                 <KnowledgeBaseQuickSearchTrigger
                   query={quickSearchQuery}
@@ -2489,12 +2590,15 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   searchSettings={searchSettings}
                   isSearchSettingsReady={isSearchSettingsReady}
                   activeEmbeddingProviders={activeEmbeddingProviders}
+                  activeLlmProviders={activeLlmProviders}
                   vectorCollections={vectorCollections}
                   isVectorCollectionsLoading={isVectorCollectionsLoading}
                   onTopKChange={handleTopKInputChange}
+                  onVectorLimitChange={handleVectorLimitChange}
                   onBm25WeightChange={handleBm25WeightChange}
                   onVectorWeightChange={handleVectorWeightChange}
                   onEmbeddingProviderChange={handleEmbeddingProviderChange}
+                  onLlmProviderChange={handleLlmProviderChange}
                   onCollectionChange={handleCollectionChange}
                 />
               ) : (
