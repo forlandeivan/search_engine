@@ -6984,82 +6984,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/knowledge/bases/:baseId/search/settings", requireAuth, async (req, res) => {
-    const { baseId } = req.params;
+  const knowledgeBaseSearchSettingsPath = "/api/knowledge/bases/:baseId/search/settings";
 
-    try {
-      const { id: workspaceId } = getRequestWorkspace(req);
-      const base = await storage.getKnowledgeBase(baseId);
-
-      if (!base || base.workspaceId !== workspaceId) {
-        return res.status(404).json({ error: "База знаний не найдена" });
-      }
-
-      const record = await storage.getKnowledgeBaseSearchSettings(workspaceId, baseId);
-      const response = buildSearchSettingsResponse(record);
-
-      return res.json(response);
-    } catch (error) {
-      console.error("Не удалось получить настройки поиска базы знаний:", error);
-      return res.status(500).json({ error: "Не удалось получить настройки поиска" });
+  async function ensureKnowledgeBaseAccessible(baseId: string, workspaceId: string) {
+    const base = await storage.getKnowledgeBase(baseId);
+    if (!base || base.workspaceId !== workspaceId) {
+      throw new KnowledgeBaseError("База знаний не найдена", 404);
     }
-  });
+  }
 
-  app.put("/api/knowledge/bases/:baseId/search/settings", requireAuth, async (req, res) => {
-    const { baseId } = req.params;
+  app
+    .route(knowledgeBaseSearchSettingsPath)
+    .get(requireAuth, async (req, res) => {
+      const { baseId } = req.params;
 
-    try {
-      const { id: workspaceId } = getRequestWorkspace(req);
-      const base = await storage.getKnowledgeBase(baseId);
+      try {
+        const { id: workspaceId } = getRequestWorkspace(req);
+        await ensureKnowledgeBaseAccessible(baseId, workspaceId);
 
-      if (!base || base.workspaceId !== workspaceId) {
-        return res.status(404).json({ error: "База знаний не найдена" });
+        const record = await storage.getKnowledgeBaseSearchSettings(workspaceId, baseId);
+        return res.json(buildSearchSettingsResponse(record));
+      } catch (error) {
+        if (error instanceof KnowledgeBaseError) {
+          return res.status(error.status).json({ error: error.message });
+        }
+
+        console.error("Не удалось получить настройки поиска базы знаний:", error);
+        return res.status(500).json({ error: "Не удалось получить настройки поиска" });
       }
+    })
+    .put(requireAuth, async (req, res) => {
+      const { baseId } = req.params;
 
-      const parsed = knowledgeBaseSearchSettingsSchema.parse(req.body ?? {});
-      const chunkSettings = mergeChunkSearchSettings(parsed.chunkSettings ?? null);
-      const ragSettings = mergeRagSearchSettings(parsed.ragSettings ?? null, {
-        topK: chunkSettings.topK,
-        bm25Weight: chunkSettings.bm25Weight,
-      });
+      try {
+        const { id: workspaceId } = getRequestWorkspace(req);
+        await ensureKnowledgeBaseAccessible(baseId, workspaceId);
 
-      const record = await storage.upsertKnowledgeBaseSearchSettings(workspaceId, baseId, {
-        chunkSettings: {
+        const parsed = knowledgeBaseSearchSettingsSchema.parse(req.body ?? {});
+        const chunkSettings = mergeChunkSearchSettings(parsed.chunkSettings ?? null);
+        const ragSettings = mergeRagSearchSettings(parsed.ragSettings ?? null, {
           topK: chunkSettings.topK,
           bm25Weight: chunkSettings.bm25Weight,
-          synonyms: chunkSettings.synonyms,
-          includeDrafts: chunkSettings.includeDrafts,
-          highlightResults: chunkSettings.highlightResults,
-          filters: chunkSettings.filters,
-        },
-        ragSettings: {
-          topK: ragSettings.topK,
-          bm25Weight: ragSettings.bm25Weight,
-          bm25Limit: ragSettings.bm25Limit,
-          vectorWeight: ragSettings.vectorWeight,
-          vectorLimit: ragSettings.vectorLimit,
-          embeddingProviderId: ragSettings.embeddingProviderId,
-          collection: ragSettings.collection,
-          llmProviderId: ragSettings.llmProviderId,
-          llmModel: ragSettings.llmModel,
-          temperature: ragSettings.temperature,
-          maxTokens: ragSettings.maxTokens,
-          systemPrompt: ragSettings.systemPrompt,
-          responseFormat: ragSettings.responseFormat,
-        },
-      });
+        });
 
-      const response = buildSearchSettingsResponse(record);
-      return res.json(response);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Некорректные данные", details: error.errors });
+        const record = await storage.upsertKnowledgeBaseSearchSettings(workspaceId, baseId, {
+          chunkSettings: {
+            topK: chunkSettings.topK,
+            bm25Weight: chunkSettings.bm25Weight,
+            synonyms: chunkSettings.synonyms,
+            includeDrafts: chunkSettings.includeDrafts,
+            highlightResults: chunkSettings.highlightResults,
+            filters: chunkSettings.filters,
+          },
+          ragSettings: {
+            topK: ragSettings.topK,
+            bm25Weight: ragSettings.bm25Weight,
+            bm25Limit: ragSettings.bm25Limit,
+            vectorWeight: ragSettings.vectorWeight,
+            vectorLimit: ragSettings.vectorLimit,
+            embeddingProviderId: ragSettings.embeddingProviderId,
+            collection: ragSettings.collection,
+            llmProviderId: ragSettings.llmProviderId,
+            llmModel: ragSettings.llmModel,
+            temperature: ragSettings.temperature,
+            maxTokens: ragSettings.maxTokens,
+            systemPrompt: ragSettings.systemPrompt,
+            responseFormat: ragSettings.responseFormat,
+          },
+        });
+
+        return res.json(buildSearchSettingsResponse(record));
+      } catch (error) {
+        if (error instanceof KnowledgeBaseError) {
+          return res.status(error.status).json({ error: error.message });
+        }
+
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ error: "Некорректные данные", details: error.errors });
+        }
+
+        console.error("Не удалось сохранить настройки поиска базы знаний:", error);
+        return res.status(500).json({ error: "Не удалось сохранить настройки поиска" });
       }
-
-      console.error("Не удалось сохранить настройки поиска базы знаний:", error);
-      return res.status(500).json({ error: "Не удалось сохранить настройки поиска" });
-    }
-  });
+    });
 
   app.get("/api/knowledge/bases/:baseId/rag/config/latest", requireAuth, async (req, res) => {
     const { baseId } = req.params;
