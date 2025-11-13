@@ -1557,6 +1557,76 @@ function summarizeVectorForLog(vector: unknown): unknown {
   return vector;
 }
 
+function normalizeBaseUrl(value: string | undefined | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    parsed.pathname = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch (error) {
+    console.warn(
+      `[public-api] Некорректный базовый URL публичного API: ${trimmed}. ${getErrorDetails(error)}`,
+    );
+    return null;
+  }
+}
+
+function resolvePublicApiBaseUrl(req: Request): string {
+  const candidates = [process.env.PUBLIC_API_BASE_URL, process.env.PUBLIC_RAG_API_BASE_URL];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeBaseUrl(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const forwardedProtoHeader = req.headers["x-forwarded-proto"];
+  const forwardedProto = Array.isArray(forwardedProtoHeader)
+    ? forwardedProtoHeader[0]
+    : forwardedProtoHeader;
+  const protocolCandidate =
+    typeof forwardedProto === "string" && forwardedProto.trim().length > 0
+      ? forwardedProto.split(",")[0]?.trim()
+      : req.protocol;
+  const protocol = protocolCandidate && protocolCandidate.length > 0 ? protocolCandidate : "http";
+  const host = req.get("host");
+
+  if (!host) {
+    throw new Error(
+      "Не удалось определить базовый URL публичного API. Укажите PUBLIC_API_BASE_URL в переменных окружения.",
+    );
+  }
+
+  const parsed = new URL(`${protocol}://${host}`);
+  return parsed.toString().replace(/\/$/, "");
+}
+
+function normalizeVectorScore(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
 function buildCustomPayloadFromSchema(
   fields: CollectionSchemaFieldInput[],
   context: Record<string, unknown>,
@@ -3171,14 +3241,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
             throw error;
           }
 
-          const client = getQdrantClient();
           const collectionName = body.hybrid.vector.collection!.trim();
           vectorCollection = collectionName;
 
-          const searchPayload: Parameters<QdrantClient["search"]>[1] = {
+          if (!workspaceId) {
+            throw new Error("Не удалось определить рабочее пространство для публичного API поиска");
+          }
+
+          const embedKey = await storage.getOrCreateWorkspaceEmbedKey(
+            workspaceId,
+            collectionName,
+            knowledgeBaseId,
+          );
+          const apiBaseUrl = resolvePublicApiBaseUrl(req);
+          const requestUrl = new URL(
+            "/api/public/collections/search/vector",
+            `${apiBaseUrl}/`,
+          ).toString();
+
+          const vectorRequestPayload = removeUndefinedDeep({
+            collection: collectionName,
+            workspace_id: workspaceId,
             vector: embeddingResult.vector as Schemas["NamedVectorStruct"],
             limit: vectorLimit,
-            with_payload: true,
             filter: {
               must: [
                 {
@@ -3187,35 +3272,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 },
               ],
             },
-          };
+            withPayload: true,
+          });
 
           vectorStep.setInput({
             limit: vectorLimit,
             collection: vectorCollection,
             embeddingProviderId,
             request: {
-              url: process.env.QDRANT_URL ?? "",
+              url: requestUrl,
+              headers: {
+                "Content-Type": "application/json",
+                "X-API-Key": "***",
+              },
               payload: {
-                ...searchPayload,
-                vector: summarizeVectorForLog(searchPayload.vector),
+                ...vectorRequestPayload,
+                vector: summarizeVectorForLog(vectorRequestPayload.vector),
               },
             },
           });
 
-          const vectorResults = await client.search(collectionName, searchPayload);
+          let vectorResponse: FetchResponse;
+          try {
+            vectorResponse = await fetch(requestUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-API-Key": embedKey.publicKey,
+              },
+              body: JSON.stringify(vectorRequestPayload),
+            });
+          } catch (networkError) {
+            throw new Error(
+              `Не удалось выполнить запрос к публичному API векторного поиска: ${getErrorDetails(networkError)}`,
+            );
+          }
+
+          const rawVectorResponse = await vectorResponse.text();
           vectorDuration = performance.now() - vectorStart;
+          const parsedVectorResponse = parseJson(rawVectorResponse);
+
+          if (!vectorResponse.ok) {
+            const errorMessage =
+              parsedVectorResponse && typeof parsedVectorResponse === "object" &&
+              typeof (parsedVectorResponse as Record<string, unknown>).error === "string"
+                ? ((parsedVectorResponse as Record<string, unknown>).error as string)
+                : `Публичное API векторного поиска вернуло статус ${vectorResponse.status}`;
+            throw new HttpError(vectorResponse.status, errorMessage, parsedVectorResponse);
+          }
+
+          if (
+            !parsedVectorResponse ||
+            typeof parsedVectorResponse !== "object" ||
+            !Array.isArray((parsedVectorResponse as Record<string, unknown>).results)
+          ) {
+            throw new Error("Публичное API векторного поиска вернуло некорректный ответ");
+          }
+
+          const vectorResults = (parsedVectorResponse as {
+            results: Array<Record<string, unknown>>;
+          }).results;
           vectorSearchDetails = vectorResults.map((item) => ({
-            id: item.id,
-            score: item.score ?? null,
-            payload: item.payload ?? null,
+            id: item.id ?? null,
+            score: normalizeVectorScore(item.score),
+            payload: (item.payload as Record<string, unknown> | undefined) ?? null,
           }));
 
           for (const item of vectorResults) {
+            const payload = (item.payload as Record<string, unknown> | undefined) ?? null;
+            const rawScore = normalizeVectorScore(item.score);
+
             vectorChunks.push({
-              chunkId: typeof item.payload?.chunk_id === "string" ? item.payload.chunk_id : "",
-              score: item.score ?? 0,
+              chunkId: typeof payload?.chunk_id === "string" ? payload.chunk_id : "",
+              score: rawScore ?? 0,
               recordId: typeof item.id === "string" ? item.id : null,
-              payload: (item.payload as Record<string, unknown> | undefined) ?? null,
+              payload,
             });
           }
 
@@ -3223,7 +3354,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           vectorStep.finish({
             hits: vectorResultCount,
             usageTokens: embeddingUsageTokens,
-            response: vectorSearchDetails,
+            response: {
+              status: vectorResponse.status,
+              collection:
+                typeof (parsedVectorResponse as Record<string, unknown>).collection === "string"
+                  ? ((parsedVectorResponse as Record<string, unknown>).collection as string)
+                  : collectionName,
+              results: vectorSearchDetails,
+            },
           });
         } catch (error) {
           vectorDuration = performance.now() - vectorStart;
