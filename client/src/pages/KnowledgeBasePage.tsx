@@ -819,7 +819,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleTopKInputChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, topK: null };
+        return { ...prev, topK: searchDefaults.topK.defaultValue };
       }
 
       const parsed = Number(value);
@@ -833,7 +833,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleVectorLimitChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, vectorLimit: null };
+        return { ...prev, vectorLimit: ragDefaults.vectorLimit.defaultValue };
       }
 
       const parsed = Number(value);
@@ -861,7 +861,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleBm25WeightChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, bm25Weight: null };
+        return { ...prev, bm25Weight: searchDefaults.bm25Weight.defaultValue };
       }
 
       const parsed = Number(value);
@@ -875,7 +875,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   const handleVectorWeightChange = (value: string) => {
     setSearchSettings((prev) => {
       if (value === "") {
-        return { ...prev, vectorWeight: null };
+        return { ...prev, vectorWeight: ragDefaults.vectorWeight.defaultValue };
       }
 
       const parsed = Number(value);

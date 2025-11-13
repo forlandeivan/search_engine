@@ -105,14 +105,16 @@ const KnowledgeBaseSearchSettingsForm = ({
   className,
 }: KnowledgeBaseSearchSettingsFormProps) => {
   const hints: ReactNode[] = [];
-  const embeddingProviderValue = searchSettings.embeddingProviderId ?? "";
+  const embeddingProviderValue = searchSettings.embeddingProviderId ?? "none";
   const collectionValue = searchSettings.collection ?? "";
   const llmProviderValue = searchSettings.llmProviderId ?? "";
   const llmModelValue = searchSettings.llmModel ?? "";
   const isCustomProvider =
+    embeddingProviderValue !== "none" &&
     embeddingProviderValue.length > 0 &&
     !activeEmbeddingProviders.some((provider) => provider.id === embeddingProviderValue);
   const isCustomLlmProvider =
+    llmProviderValue !== "none" &&
     llmProviderValue.length > 0 &&
     !activeLlmProviders.some((provider) => provider.id === llmProviderValue);
   const isCustomCollection =
