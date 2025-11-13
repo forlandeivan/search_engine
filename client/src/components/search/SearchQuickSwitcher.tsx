@@ -922,6 +922,11 @@ export function SearchQuickSwitcher({
 
     if (row.type === "group") {
       const group = groups[row.groupIndex];
+      if (!group) {
+        return null;
+      }
+
+      const groupTitle = truncateEnd(group.title || "", 56);
       return (
         <div
           className={cn(
@@ -931,7 +936,7 @@ export function SearchQuickSwitcher({
           role="presentation"
         >
           <span className="block truncate" title={group.title}>
-            {truncateEnd(group.title, 56)}
+            {groupTitle}
           </span>
         </div>
       );
@@ -946,7 +951,14 @@ export function SearchQuickSwitcher({
     }
 
     const group = groups[row.groupIndex];
+    if (!group) {
+      return null;
+    }
+
     const item = group.items[row.itemIndex];
+    if (!item) {
+      return null;
+    }
     const isActive = rowIndex === activeRowIndex;
 
     const displayTitle = getDisplayTitle(item);
