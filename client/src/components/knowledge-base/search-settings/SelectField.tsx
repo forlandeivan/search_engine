@@ -28,6 +28,8 @@ type SelectFieldProps = {
   onChange: (value: string) => void;
 };
 
+const EMPTY_VALUE = "__empty__select_value__";
+
 const SelectField = ({
   id,
   label,
@@ -63,15 +65,38 @@ const SelectField = ({
     return list;
   }, [defaultValue, isMissing, value]);
 
+  const hasEmptyOption = useMemo(() => options.some((option) => option.value.length === 0), [options]);
+
+  const normalizedOptions = useMemo<SelectOption[]>(() => {
+    if (!hasEmptyOption) {
+      return options;
+    }
+
+    return options.map((option) =>
+      option.value.length === 0 ? { ...option, value: EMPTY_VALUE } : option,
+    );
+  }, [hasEmptyOption, options]);
+
+  const normalizedValue = hasEmptyOption && value.length === 0 ? EMPTY_VALUE : value;
+
+  const handleValueChange = (nextValue: string) => {
+    if (hasEmptyOption && nextValue === EMPTY_VALUE) {
+      onChange("");
+      return;
+    }
+
+    onChange(nextValue);
+  };
+
   return (
     <div className="space-y-1.5">
       <SettingLabel id={id} label={label} tooltip={tooltip} />
-      <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <Select value={normalizedValue} onValueChange={handleValueChange} disabled={disabled}>
         <SelectTrigger id={id} className="h-8">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
-          {options.map((option) => (
+          {normalizedOptions.map((option) => (
             <SelectItem key={option.value} value={option.value}>
               {option.label}
             </SelectItem>
