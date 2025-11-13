@@ -2304,10 +2304,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }
 
     const hints: ReactNode[] = [];
-    const embeddingProviderValue = searchSettings.embeddingProviderId ?? "";
+    const embeddingProviderValue = searchSettings.embeddingProviderId ?? "none";
     const collectionValue = searchSettings.collection ?? "";
     const isCustomProvider =
-      embeddingProviderValue.length > 0 &&
+      embeddingProviderValue !== "none" &&
       !activeEmbeddingProviders.some((provider) => provider.id === embeddingProviderValue);
     const isCustomCollection =
       collectionValue.length > 0 &&
