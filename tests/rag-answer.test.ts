@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import type { AddressInfo } from "net";
@@ -92,8 +93,9 @@ function setupCorsCacheMock(): void {
 function setupQdrantMock(): void {
   class QdrantConfigurationError extends Error {}
   vi.doMock("../server/qdrant", () => ({
-    getQdrantClient: vi.fn(async () => ({
+    getQdrantClient: vi.fn(() => ({
       search: vi.fn(async () => []),
+      getCollection: vi.fn(() => ({ config: { params: { vectors: { size: 3 } } } })),
     })),
     QdrantConfigurationError,
   }));
@@ -297,6 +299,724 @@ describe("POST /public/rag/answer", () => {
       expect(typeof lastMessage?.content).toBe("string");
       expect(lastMessage?.content).toContain("node-1");
       expect(lastMessage?.content).toContain("node-slug");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+  });
+});
+
+describe("POST /api/public/collections/search/rag", () => {
+  it("использует гибридный пайплайн, когда передан kb_id", async () => {
+    setupDbMock();
+    setupStorageMock();
+    setupAuthMock();
+    setupCrawlerMock();
+    setupKBCrawlerMock();
+    setupCorsCacheMock();
+    setupQdrantMock();
+    setupKnowledgeChunksMock();
+    setupKnowledgeBaseMock();
+
+    const actualNodeFetch = await vi.importActual<typeof import("node-fetch")>("node-fetch");
+    const mockFetch = vi.fn(async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input?.url ?? "";
+
+      if (url.includes("/api/public/collections/search/vector")) {
+        return new actualNodeFetch.Response(
+          JSON.stringify({
+            results: [
+              {
+                id: "vec-1",
+                score: 0.75,
+                payload: {
+                  chunk_id: "chunk-1",
+                  chunk: {
+                    id: "chunk-1",
+                    metadata: { sourceUrl: "https://docs.example/article" },
+                  },
+                  document: { id: "doc-1" },
+                },
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://embedding.example/token") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({ access_token: "embedding-token" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://embedding.example/embeddings") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "embed-1",
+                embedding: [0.1, 0.2, 0.3],
+              },
+            ],
+            usage: { total_tokens: 12 },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://llm.example/token") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({ access_token: "llm-token" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://llm.example/completions") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: { content: "Ответ" },
+              },
+            ],
+            usage: { total_tokens: 42 },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      throw new Error(`Unexpected fetch call to ${url}`);
+    });
+
+    vi.doMock("node-fetch", () => ({
+      ...actualNodeFetch,
+      default: mockFetch,
+    }));
+
+    const expressModule = await import("express");
+    const { storage } = await import("../server/storage");
+    const qdrantModule = await import("../server/qdrant");
+
+    const vectorClient = {
+      search: vi.fn(),
+      getCollection: vi.fn(async () => ({ config: { params: { vectors: { size: 3 } } } })),
+    };
+    (qdrantModule.getQdrantClient as unknown as Mock).mockImplementation(() => vectorClient);
+
+    (storage.getSiteByPublicApiKey as unknown as Mock).mockResolvedValue(null);
+    (storage.getWorkspaceEmbedKeyByPublicKey as unknown as Mock).mockResolvedValue({
+      id: "embed-1",
+      workspaceId: "workspace-1",
+      knowledgeBaseId: "kb-1",
+      publicKey: "public-key",
+      collection: "collection-1",
+    });
+    (storage.listWorkspaceEmbedKeyDomains as unknown as Mock).mockResolvedValue([]);
+    (storage.isWorkspaceMember as unknown as Mock).mockResolvedValue(true);
+    (storage.getCollectionWorkspace as unknown as Mock).mockResolvedValue("workspace-1");
+    (storage.getKnowledgeBase as unknown as Mock).mockResolvedValue({
+      id: "kb-1",
+      workspaceId: "workspace-1",
+    });
+    (storage.searchKnowledgeBaseSuggestions as unknown as Mock).mockResolvedValue({
+      normalizedQuery: "что такое тест",
+      sections: [
+        {
+          chunkId: "chunk-1",
+          documentId: "doc-1",
+          docTitle: "Документ",
+          sectionTitle: "Раздел",
+          text: "Полный текст",
+          snippet: "Сниппет",
+          score: 1,
+          source: "content",
+          nodeId: "node-1",
+          nodeSlug: "node-slug",
+        },
+      ],
+    });
+    (storage.getKnowledgeChunksByIds as unknown as Mock).mockResolvedValue([
+      {
+        chunkId: "chunk-1",
+        documentId: "doc-1",
+        docTitle: "Документ",
+        sectionTitle: "Раздел",
+        text: "Полный текст",
+        nodeId: "node-1",
+        nodeSlug: "node-slug",
+      },
+    ]);
+    (storage.getKnowledgeChunksByVectorRecords as unknown as Mock).mockResolvedValue([
+      {
+        chunkId: "chunk-1",
+        documentId: "doc-1",
+        docTitle: "Документ",
+        sectionTitle: "Раздел",
+        text: "Полный текст",
+        nodeId: "node-1",
+        nodeSlug: "node-slug",
+        vectorRecordId: "vec-1",
+      },
+    ]);
+    (storage.getEmbeddingProvider as unknown as Mock).mockResolvedValue({
+      id: "embedding-1",
+      name: "Embedding",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://embedding.example/token",
+      embeddingsUrl: "https://embedding.example/embeddings",
+      authorizationKey: "Basic embedding",
+      scope: "scope",
+      model: "embedding-model",
+      allowSelfSignedCertificate: true,
+      requestHeaders: {},
+      requestConfig: {},
+      responseConfig: {},
+      qdrantConfig: { vectorFieldName: "content_vector" },
+      workspaceId: "workspace-1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    (storage.getOrCreateWorkspaceEmbedKey as unknown as Mock).mockResolvedValue({
+      id: "embed-1",
+      workspaceId: "workspace-1",
+      knowledgeBaseId: "kb-1",
+      publicKey: "public-key",
+      collection: "collection-1",
+    });
+    (storage.recordKnowledgeBaseAskAiRun as unknown as Mock).mockResolvedValue(undefined);
+    (storage.recordKnowledgeBaseRagRequest as unknown as Mock).mockResolvedValue(undefined);
+    (storage.getLlmProvider as unknown as Mock).mockResolvedValue({
+      id: "llm-1",
+      name: "LLM",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://llm.example/token",
+      completionUrl: "https://llm.example/completions",
+      authorizationKey: "Basic test",
+      scope: "scope",
+      model: "test-model",
+      availableModels: [{ value: "test-model", label: "Test" }],
+      allowSelfSignedCertificate: true,
+      requestHeaders: {},
+      requestConfig: {},
+      responseConfig: {},
+      workspaceId: "workspace-1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const app = expressModule.default();
+    app.use(expressModule.json());
+
+    const routesModule = await import("../server/routes");
+    const httpServer = await routesModule.registerRoutes(app);
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(0, resolve);
+    });
+
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/public/collections/search/rag`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": "public-key",
+        },
+        body: JSON.stringify({
+          collection: "collection-1",
+          query: "Что такое тест?",
+          embeddingProviderId: "embedding-1",
+          llmProviderId: "llm-1",
+          kbId: "kb-1",
+        }),
+      });
+
+      const body = await response.json();
+
+      expect(response.status, JSON.stringify(body)).toBe(200);
+
+      expect(body).toMatchObject({
+        answer: "Ответ",
+        citations: [
+          expect.objectContaining({ node_id: "node-1", node_slug: "node-slug" }),
+        ],
+        chunks: [
+          expect.objectContaining({ node_id: "node-1", node_slug: "node-slug" }),
+        ],
+        provider: expect.objectContaining({ id: "llm-1" }),
+        embeddingProvider: expect.objectContaining({ id: "embedding-1" }),
+      });
+
+      expect(mockFetch.mock.calls.some(([input]) => {
+        const url = typeof input === "string" ? input : input?.url;
+        return typeof url === "string" && url.includes("/api/public/collections/search/vector");
+      })).toBe(true);
+
+      expect((storage.recordKnowledgeBaseRagRequest as unknown as Mock)).toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+  });
+
+  it("сохраняет обратную совместимость, когда kb_id не передан", async () => {
+    setupDbMock();
+    setupStorageMock();
+    setupAuthMock();
+    setupCrawlerMock();
+    setupKBCrawlerMock();
+    setupCorsCacheMock();
+    setupQdrantMock();
+    setupKnowledgeChunksMock();
+    setupKnowledgeBaseMock();
+
+    const actualNodeFetch = await vi.importActual<typeof import("node-fetch")>("node-fetch");
+    const mockFetch = vi.fn(async (input: any) => {
+      const url = typeof input === "string" ? input : input?.url ?? "";
+
+      if (url === "https://embedding.example/token") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({ access_token: "embedding-token" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://embedding.example/embeddings") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "embed-1",
+                embedding: [0.1, 0.2, 0.3],
+              },
+            ],
+            usage: { total_tokens: 10 },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://llm.example/token") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({ access_token: "llm-token" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://llm.example/completions") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: { content: "Ответ" },
+              },
+            ],
+            usage: { total_tokens: 21 },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      throw new Error(`Unexpected fetch call to ${url}`);
+    });
+
+    vi.doMock("node-fetch", () => ({
+      ...actualNodeFetch,
+      default: mockFetch,
+    }));
+
+    const expressModule = await import("express");
+    const { storage } = await import("../server/storage");
+    const qdrantModule = await import("../server/qdrant");
+
+    const searchResults = [
+      {
+        id: "chunk-1",
+        score: 0.6,
+        payload: {
+          chunk: {
+            id: "chunk-1",
+            text: "Полный текст",
+            metadata: { sourceUrl: "https://docs.example/article" },
+          },
+          document: { id: "doc-1", title: "Документ" },
+        },
+      },
+    ];
+
+    const qdrantClient = {
+      getCollection: vi.fn(async () => ({ config: { params: { vectors: { size: 3 } } } })),
+      search: vi.fn(async () => searchResults),
+    };
+    (qdrantModule.getQdrantClient as unknown as Mock).mockImplementation(() => qdrantClient);
+
+    const resolvedClient = qdrantModule.getQdrantClient();
+    expect(resolvedClient).toBe(qdrantClient);
+
+    (storage.isWorkspaceMember as unknown as Mock).mockResolvedValue(true);
+    (storage.getSiteByPublicApiKey as unknown as Mock).mockResolvedValue({
+      id: "site-1",
+      workspaceId: "workspace-1",
+      publicApiKey: "api-key",
+      url: "https://docs.example",
+      startUrls: [],
+    });
+    (storage.getCollectionWorkspace as unknown as Mock).mockResolvedValue("workspace-1");
+    const recordRagRequestMock = vi.fn();
+    (storage.recordKnowledgeBaseRagRequest as unknown as Mock).mockImplementation(recordRagRequestMock);
+    (storage.getEmbeddingProvider as unknown as Mock).mockResolvedValue({
+      id: "embedding-1",
+      name: "Embedding",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://embedding.example/token",
+      embeddingsUrl: "https://embedding.example/embeddings",
+      authorizationKey: "Basic embedding",
+      scope: "scope",
+      model: "embedding-model",
+      allowSelfSignedCertificate: true,
+      requestHeaders: {},
+      requestConfig: {},
+      responseConfig: {},
+      qdrantConfig: { vectorFieldName: "content_vector", vectorSize: 3 },
+      workspaceId: "workspace-1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    (storage.getLlmProvider as unknown as Mock).mockResolvedValue({
+      id: "llm-1",
+      name: "LLM",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://llm.example/token",
+      completionUrl: "https://llm.example/completions",
+      authorizationKey: "Basic test",
+      scope: "scope",
+      model: "test-model",
+      availableModels: [{ value: "test-model", label: "Test" }],
+      allowSelfSignedCertificate: true,
+      requestHeaders: {},
+      requestConfig: {},
+      responseConfig: {},
+      workspaceId: "workspace-1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const app = expressModule.default();
+    app.use(expressModule.json());
+
+    const routesModule = await import("../server/routes");
+    const httpServer = await routesModule.registerRoutes(app);
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(0, resolve);
+    });
+
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/public/collections/search/rag`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": "api-key",
+        },
+        body: JSON.stringify({
+          collection: "collection-1",
+          query: "Что такое тест?",
+          embeddingProviderId: "embedding-1",
+          llmProviderId: "llm-1",
+        }),
+      });
+
+      const body = await response.json();
+
+      expect(response.status, JSON.stringify(body)).toBe(200);
+
+      expect(body).toMatchObject({
+        answer: "Ответ",
+        sources: [
+          expect.objectContaining({ url: "https://docs.example/article" }),
+        ],
+        provider: expect.objectContaining({ id: "llm-1" }),
+      });
+
+      expect(recordRagRequestMock).not.toHaveBeenCalled();
+      expect(mockFetch.mock.calls.some(([input]) => {
+        const url = typeof input === "string" ? input : input?.url;
+        return typeof url === "string" && url.includes("/api/public/collections/search/vector");
+      })).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+  });
+});
+
+describe("POST /api/public/collections/:publicId/search/rag", () => {
+  it("пробрасывает SSE-события для Gigachat", async () => {
+    setupDbMock();
+    setupStorageMock();
+    setupAuthMock();
+    setupCrawlerMock();
+    setupKBCrawlerMock();
+    setupCorsCacheMock();
+    setupQdrantMock();
+    setupKnowledgeChunksMock();
+    setupKnowledgeBaseMock();
+
+    const actualNodeFetch = await vi.importActual<typeof import("node-fetch")>("node-fetch");
+    const mockFetch = vi.fn(async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input?.url ?? "";
+
+      if (url === "https://embedding.example/token") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({ access_token: "embedding-token" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://embedding.example/embeddings") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "embed-1",
+                embedding: [0.1, 0.2, 0.3],
+              },
+            ],
+            usage: { total_tokens: 10 },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://llm.example/token") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({ access_token: "llm-token" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://llm.example/completions") {
+        const sseStream = Readable.from([
+          Buffer.from(
+            "event: message\ndata: {\"choices\":[{\"delta\":{\"content\":\"Привет\"}}]}\n\n",
+            "utf8",
+          ),
+          Buffer.from(
+            "event: message\ndata: {\"usage\":{\"total_tokens\":33}}\n\n",
+            "utf8",
+          ),
+          Buffer.from("event: message\ndata: [DONE]\n\n", "utf8"),
+        ]);
+
+        return new actualNodeFetch.Response(sseStream as any, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call to ${url}`);
+    });
+
+    vi.doMock("node-fetch", () => ({
+      ...actualNodeFetch,
+      default: mockFetch,
+    }));
+
+    const expressModule = await import("express");
+    const { storage } = await import("../server/storage");
+    const qdrantModule = await import("../server/qdrant");
+
+    const qdrantClient = {
+      getCollection: vi.fn(async () => ({ config: { params: { vectors: { size: 3 } } } })),
+      search: vi.fn(async () => [
+        {
+          id: "chunk-1",
+          score: 0.9,
+          payload: {
+            chunk: {
+              id: "chunk-1",
+              text: "Полный текст",
+              metadata: { sourceUrl: "https://docs.example/article" },
+            },
+            document: { id: "doc-1", title: "Документ" },
+          },
+        },
+      ]),
+    };
+    (qdrantModule.getQdrantClient as unknown as Mock).mockImplementation(() => qdrantClient);
+
+    const resolvedClient = qdrantModule.getQdrantClient();
+    expect(resolvedClient).toBe(qdrantClient);
+
+    (storage.isWorkspaceMember as unknown as Mock).mockResolvedValue(true);
+    (storage.getSiteByPublicId as unknown as Mock).mockResolvedValue({
+      id: "site-1",
+      workspaceId: "workspace-1",
+      publicApiKey: "api-key",
+      url: "https://docs.example",
+      startUrls: [],
+    });
+    (storage.getCollectionWorkspace as unknown as Mock).mockResolvedValue("workspace-1");
+    (storage.getEmbeddingProvider as unknown as Mock).mockResolvedValue({
+      id: "embedding-1",
+      name: "Embedding",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://embedding.example/token",
+      embeddingsUrl: "https://embedding.example/embeddings",
+      authorizationKey: "Basic embedding",
+      scope: "scope",
+      model: "embedding-model",
+      allowSelfSignedCertificate: true,
+      requestHeaders: {},
+      requestConfig: {},
+      responseConfig: {},
+      qdrantConfig: { vectorFieldName: "content_vector", vectorSize: 3 },
+      workspaceId: "workspace-1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    (storage.getLlmProvider as unknown as Mock).mockResolvedValue({
+      id: "llm-1",
+      name: "LLM",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://llm.example/token",
+      completionUrl: "https://llm.example/completions",
+      authorizationKey: "Basic test",
+      scope: "scope",
+      model: "test-model",
+      availableModels: [{ value: "test-model", label: "Test" }],
+      allowSelfSignedCertificate: true,
+      requestHeaders: {},
+      requestConfig: {},
+      responseConfig: {},
+      workspaceId: "workspace-1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const app = expressModule.default();
+    app.use(expressModule.json());
+
+    const routesModule = await import("../server/routes");
+    const httpServer = await routesModule.registerRoutes(app);
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(0, resolve);
+    });
+
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/public/collections/test-collection/search/rag`,
+        {
+          method: "POST",
+          headers: {
+            Accept: "text/event-stream",
+            "content-type": "application/json",
+            "x-api-key": "api-key",
+          },
+          body: JSON.stringify({
+            workspace_id: "workspace-1",
+            collection: "collection-1",
+            query: "Что такое тест?",
+            embeddingProviderId: "embedding-1",
+            llmProviderId: "llm-1",
+          }),
+        },
+      );
+
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      let payload = "";
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          payload += new TextDecoder().decode(value);
+        }
+      }
+
+      expect(response.status, payload).toBe(200);
+      expect(payload).toContain("event: status");
+      expect(payload).toContain("event: delta");
+      expect(payload).toContain("Привет");
+      expect(payload).toContain("event: done");
     } finally {
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => {
