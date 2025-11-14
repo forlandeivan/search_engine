@@ -2455,8 +2455,40 @@ const publicVectorizeSchema = z.object({
   collection: z.string().trim().min(1, "Укажите коллекцию Qdrant").optional(),
 });
 
+const publicHybridBm25Schema = z
+  .object({
+    weight: z.coerce.number().min(0).max(1).optional(),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+  })
+  .optional()
+  .default({});
+
+const publicHybridVectorSchema = z
+  .object({
+    weight: z.coerce.number().min(0).max(1).optional(),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+    collection: z.string().trim().min(1).optional(),
+    embeddingProviderId: z.string().trim().min(1).optional(),
+  })
+  .optional()
+  .default({});
+
+const publicHybridConfigSchema = z
+  .object({
+    bm25: publicHybridBm25Schema,
+    vector: publicHybridVectorSchema,
+  })
+  .default({ bm25: {}, vector: {} });
+
 const publicGenerativeSearchSchema = generativeSearchPointsSchema.extend({
   collection: z.string().trim().min(1, "Укажите коллекцию Qdrant"),
+  kbId: z.string().trim().min(1, "Укажите базу знаний").optional(),
+  topK: z.coerce.number().int().min(1).max(20).optional(),
+  hybrid: publicHybridConfigSchema,
+  llmTemperature: z.coerce.number().min(0).max(2).optional(),
+  llmMaxTokens: z.coerce.number().int().min(16).max(4_096).optional(),
+  llmSystemPrompt: z.string().optional(),
+  llmResponseFormat: z.string().optional(),
 });
 
 const scrollCollectionSchema = z.object({
@@ -4285,6 +4317,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return undefined;
       };
 
+      const parseNumberParam = (value: unknown): number | undefined => {
+        if (typeof value === "number") {
+          return Number.isFinite(value) ? value : undefined;
+        }
+
+        if (typeof value === "string") {
+          const parsed = Number(value);
+          if (Number.isFinite(parsed)) {
+            return parsed;
+          }
+        }
+
+        return undefined;
+      };
+
       delete payloadSource.apiKey;
       delete payloadSource.publicId;
       delete payloadSource.sitePublicId;
@@ -4323,6 +4370,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (parsedContextLimit !== undefined) {
           payloadSource.contextLimit = parsedContextLimit;
         }
+      }
+
+      if (!("topK" in payloadSource)) {
+        const parsedTopK = parseIntegerParam(req.query.topK ?? req.query.top_k);
+        if (parsedTopK !== undefined) {
+          payloadSource.topK = parsedTopK;
+        }
+      }
+
+      if (!("kbId" in payloadSource)) {
+        const kbCandidate =
+          typeof req.query.kbId === "string"
+            ? req.query.kbId
+            : typeof req.query.kb_id === "string"
+            ? req.query.kb_id
+            : undefined;
+        if (kbCandidate) {
+          payloadSource.kbId = kbCandidate;
+        }
+      }
+
+      if (!("llmTemperature" in payloadSource)) {
+        const parsedTemperature = parseNumberParam(req.query.llmTemperature);
+        if (parsedTemperature !== undefined) {
+          payloadSource.llmTemperature = parsedTemperature;
+        }
+      }
+
+      if (!("llmMaxTokens" in payloadSource)) {
+        const parsedMaxTokens = parseIntegerParam(
+          req.query.llmMaxTokens ?? req.query.maxTokens,
+        );
+        if (parsedMaxTokens !== undefined) {
+          payloadSource.llmMaxTokens = parsedMaxTokens;
+        }
+      }
+
+      if (!("llmSystemPrompt" in payloadSource) && typeof req.query.llmSystemPrompt === "string") {
+        payloadSource.llmSystemPrompt = req.query.llmSystemPrompt;
+      }
+
+      if (!("llmResponseFormat" in payloadSource) && typeof req.query.llmResponseFormat === "string") {
+        payloadSource.llmResponseFormat = req.query.llmResponseFormat;
       }
 
       if (!("includeContext" in payloadSource)) {
@@ -4385,6 +4475,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const responseFormat: RagResponseFormat = responseFormatCandidate ?? "text";
       const includeContextInResponse = body.includeContext ?? true;
       const includeQueryVectorInResponse = body.includeQueryVector ?? true;
+
+      const llmResponseFormatCandidate = normalizeResponseFormat(body.llmResponseFormat);
+      if (llmResponseFormatCandidate === null) {
+        return res.status(400).json({
+          error: "Некорректный формат ответа LLM",
+          details: "Поддерживаются значения text, md/markdown или html",
+        });
+      }
+
+      const llmResponseFormatRaw =
+        llmResponseFormatCandidate ??
+        (typeof body.responseFormat === "string" ? body.responseFormat : responseFormat);
+      const llmResponseFormatNormalized =
+        llmResponseFormatCandidate ?? responseFormat;
 
       console.log(`[RAG DEBUG] Looking up collection "${collectionName}" workspace...`);
       const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
@@ -4590,7 +4694,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new HttpError(400, "Выбранный провайдер LLM отключён");
       }
 
-      const sanitizedModels = sanitizeLlmModelOptions(llmProvider.availableModels);
+      const llmRequestConfig = mergeLlmRequestConfig(llmProvider);
+
+      if (body.llmSystemPrompt !== undefined) {
+        llmRequestConfig.systemPrompt = body.llmSystemPrompt || undefined;
+      }
+
+      if (body.llmTemperature !== undefined) {
+        llmRequestConfig.temperature = body.llmTemperature;
+      }
+
+      if (body.llmMaxTokens !== undefined) {
+        llmRequestConfig.maxTokens = body.llmMaxTokens;
+      }
+
+      const configuredLlmProvider: LlmProvider = {
+        ...llmProvider,
+        requestConfig: llmRequestConfig,
+      };
+
+      const sanitizedModels = sanitizeLlmModelOptions(configuredLlmProvider.availableModels);
       const requestedModel = typeof body.llmModel === "string" ? body.llmModel.trim() : "";
       const normalizedModelFromList =
         sanitizedModels.find((model) => model.value === requestedModel)?.value ??
@@ -4601,7 +4724,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? normalizedModelFromList.trim()
           : undefined) ??
         (requestedModel.length > 0 ? requestedModel : undefined) ??
-        llmProvider.model;
+        configuredLlmProvider.model;
       const selectedModelMeta =
         sanitizedModels.find((model) => model.value === selectedModelValue) ?? null;
 
@@ -4773,16 +4896,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } satisfies LlmContextRecord;
       });
 
-      const llmAccessToken = await fetchAccessToken(llmProvider);
+      const llmAccessToken = await fetchAccessToken(configuredLlmProvider);
       const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
       const wantsStreamingResponse =
-        llmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
+        configuredLlmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
 
       if (wantsStreamingResponse) {
         await streamGigachatCompletion({
           req,
           res,
-          provider: llmProvider,
+          provider: configuredLlmProvider,
           accessToken: llmAccessToken,
           query: body.query,
           context: contextRecords,
@@ -4793,7 +4916,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           selectedModelMeta,
           limit: body.limit,
           contextLimit,
-          responseFormat,
+          responseFormat: llmResponseFormatNormalized,
           includeContextInResponse,
           includeQueryVectorInResponse,
           collectionName: typeof req.params.name === "string" ? req.params.name : "",
@@ -4802,24 +4925,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const completion = await fetchLlmCompletion(
-        llmProvider,
+        configuredLlmProvider,
         llmAccessToken,
         body.query,
         contextRecords,
         selectedModelValue,
-        { responseFormat },
+        { responseFormat: llmResponseFormatNormalized },
       );
 
       const responsePayload: Record<string, unknown> = {
         answer: completion.answer,
-        format: responseFormat,
+        format: llmResponseFormatNormalized,
         usage: {
           embeddingTokens: embeddingResult.usageTokens ?? null,
           llmTokens: completion.usageTokens ?? null,
         },
         provider: {
-          id: llmProvider.id,
-          name: llmProvider.name,
+          id: configuredLlmProvider.id,
+          name: configuredLlmProvider.name,
           model: selectedModelValue,
           modelLabel: selectedModelMeta?.label ?? selectedModelValue,
         },
@@ -7136,7 +7259,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new HttpError(400, "Выбранный провайдер LLM отключён");
       }
 
-      const sanitizedModels = sanitizeLlmModelOptions(llmProvider.availableModels);
+      const llmRequestConfig = mergeLlmRequestConfig(llmProvider);
+
+      if (body.llmSystemPrompt !== undefined) {
+        llmRequestConfig.systemPrompt = body.llmSystemPrompt || undefined;
+      }
+
+      if (body.llmTemperature !== undefined) {
+        llmRequestConfig.temperature = body.llmTemperature;
+      }
+
+      if (body.llmMaxTokens !== undefined) {
+        llmRequestConfig.maxTokens = body.llmMaxTokens;
+      }
+
+      const configuredLlmProvider: LlmProvider = {
+        ...llmProvider,
+        requestConfig: llmRequestConfig,
+      };
+
+      const sanitizedModels = sanitizeLlmModelOptions(configuredLlmProvider.availableModels);
       const requestedModel = typeof body.llmModel === "string" ? body.llmModel.trim() : "";
       const normalizedModelFromList =
         sanitizedModels.find((model) => model.value === requestedModel)?.value ??
@@ -7147,7 +7289,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? normalizedModelFromList.trim()
           : undefined) ??
         (requestedModel.length > 0 ? requestedModel : undefined) ??
-        llmProvider.model;
+        configuredLlmProvider.model;
       const selectedModelMeta =
         sanitizedModels.find((model) => model.value === selectedModelValue) ?? null;
 
@@ -7257,16 +7399,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } satisfies LlmContextRecord;
       });
 
-      const llmAccessToken = await fetchAccessToken(llmProvider);
+      const llmAccessToken = await fetchAccessToken(configuredLlmProvider);
       const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
       const wantsStreamingResponse =
-        llmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
+        configuredLlmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
 
       if (wantsStreamingResponse) {
         await streamGigachatCompletion({
           req,
           res,
-          provider: llmProvider,
+          provider: configuredLlmProvider,
           accessToken: llmAccessToken,
           query: body.query,
           context: contextRecords,
@@ -7277,7 +7419,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           selectedModelMeta,
           limit: body.limit,
           contextLimit,
-          responseFormat,
+          responseFormat: llmResponseFormatNormalized,
           includeContextInResponse,
           includeQueryVectorInResponse,
           collectionName: typeof req.params.name === "string" ? req.params.name : "",
@@ -7286,12 +7428,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const completion = await fetchLlmCompletion(
-        llmProvider,
+        configuredLlmProvider,
         llmAccessToken,
         body.query,
         contextRecords,
         selectedModelValue,
-        { responseFormat },
+        { responseFormat: llmResponseFormatNormalized },
       );
 
       const responsePayload: Record<string, unknown> = {
