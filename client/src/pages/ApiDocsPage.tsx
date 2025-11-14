@@ -1,717 +1,477 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Button } from "@/components/ui/button";
-import { Copy, ExternalLink, Search, Database, Code } from "lucide-react";
-import { useState } from "react";
+import { Copy, ExternalLink, Sparkles, Workflow } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+const EXTERNAL_API_HOST = "https://aiknowledge.ru";
+
+type DocId = "vector-search" | "rag-search";
+
+type RequestField = {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+};
+
+type DocSection = {
+  id: DocId;
+  title: string;
+  description: string;
+  icon: typeof Workflow;
+  method: "POST";
+  endpointPath: string;
+  steps: string[];
+  requestFields: RequestField[];
+  requestExample: string;
+  responseExample: string;
+  tips: string[];
+};
+
+const DOC_SECTIONS: DocSection[] = [
+  {
+    id: "vector-search",
+    title: "Векторный поиск",
+    description: "Используйте готовый вектор, чтобы получить ближайшие документы в Qdrant.",
+    icon: Workflow,
+    method: "POST",
+    endpointPath: "/api/public/collections/search/vector",
+    steps: [
+      "Создайте запрос POST и укажите тело в формате raw JSON.",
+      "В заголовках добавьте X-API-Key со значением публичного ключа коллекции и Content-Type: application/json.",
+      "Передайте workspace_id вашего рабочего пространства и имя коллекции (collection).",
+      "Заполните поле vector — передайте массив чисел или именованный вектор, полученный из сервиса эмбеддингов.",
+      "Добавьте limit/offset и флаги withPayload, withVector при необходимости и отправьте запрос.",
+    ],
+    requestFields: [
+      {
+        name: "workspace_id",
+        type: "string",
+        required: true,
+        description: "Идентификатор рабочего пространства. Используется для валидации публичного ключа.",
+      },
+      {
+        name: "collection",
+        type: "string",
+        required: true,
+        description: "Имя коллекции в Qdrant, из которой нужно получить результаты.",
+      },
+      {
+        name: "vector",
+        type: "number[] | { name: string; vector: number[] }",
+        required: true,
+        description: "Сам вектор поиска. Можно передать массив чисел или именованный вектор для коллекций с несколькими пространствами.",
+      },
+      {
+        name: "limit",
+        type: "number",
+        required: false,
+        description: "Количество точек в ответе. По умолчанию 10, максимум 100.",
+      },
+      {
+        name: "offset",
+        type: "number",
+        required: false,
+        description: "Смещение результатов. Удобно для постраничного просмотра.",
+      },
+      {
+        name: "withPayload",
+        type: "boolean | object",
+        required: false,
+        description: "Передайте true, чтобы получить исходные данные документа вместе с точкой.",
+      },
+    ],
+    requestExample: `POST ${EXTERNAL_API_HOST}/api/public/collections/search/vector\nX-API-Key: pk_live_your_key\nContent-Type: application/json\n\n{\n  "workspace_id": "ws_1234567890",\n  "collection": "kb_public_docs",\n  "vector": [0.1123, -0.0648, 0.3201, 0.4872, -0.1924],\n  "limit": 5,\n  "offset": 0,\n  "withPayload": true,\n  "withVector": false\n}`,
+    responseExample: `{
+  "collection": "kb_public_docs",
+  "results": [
+    {
+      "id": "73442d5a-1b28-4a6f-9f1a-2a2e2db0f730",
+      "score": 0.8321,
+      "payload": {
+        "title": "FAQ: Интеграция",
+        "url": "https://docs.example.com/faq",
+        "snippet": "Используйте публичный API ключ, чтобы инициализировать поиск..."
+      },
+      "vector": null
+    }
+  ]
+}`,
+    tips: [
+      "Если коллекция работает с именованными векторами, вместо массива передайте объект { name, vector }.",
+      "В withPayload можно указать объект с выборкой полей (как в Qdrant), чтобы сократить ответ.",
+      "Для фильтрации результатов используйте параметр filter из синтаксиса Qdrant.",
+    ],
+  },
+  {
+    id: "rag-search",
+    title: "RAG-поиск",
+    description: "Полный поиск с генерацией ответа на основе контента базы знаний.",
+    icon: Sparkles,
+    method: "POST",
+    endpointPath: "/api/public/collections/search/rag",
+    steps: [
+      "Создайте запрос POST и включите ключ X-API-Key плюс заголовок Content-Type: application/json.",
+      "В теле запроса обязательно передайте workspace_id, collection и сам текстовый запрос (query).",
+      "Укажите embeddingProviderId и llmProviderId. Дополнительно можно выбрать llmModel, температуру и лимиты.",
+      "Добавьте contextLimit или limit, чтобы управлять количеством источников, возвращаемых в ответе.",
+      "При необходимости задайте responseFormat (text, markdown, html) и флаги includeContext / includeQueryVector.",
+    ],
+    requestFields: [
+      {
+        name: "workspace_id",
+        type: "string",
+        required: true,
+        description: "Рабочее пространство, к которому привязан публичный ключ.",
+      },
+      {
+        name: "collection",
+        type: "string",
+        required: true,
+        description: "Имя коллекции Qdrant с документами базы знаний.",
+      },
+      {
+        name: "query",
+        type: "string",
+        required: true,
+        description: "Пользовательский вопрос, для которого нужно получить ответ.",
+      },
+      {
+        name: "embeddingProviderId",
+        type: "string",
+        required: true,
+        description: "ID сервиса эмбеддингов из настроек рабочей области.",
+      },
+      {
+        name: "llmProviderId",
+        type: "string",
+        required: true,
+        description: "ID провайдера LLM, который будет генерировать ответ.",
+      },
+      {
+        name: "llmModel",
+        type: "string",
+        required: false,
+        description: "Конкретная модель провайдера. Если не указано, используется значение по умолчанию.",
+      },
+      {
+        name: "contextLimit",
+        type: "number",
+        required: false,
+        description: "Максимум контекстных чанков, добавляемых в ответ и в LLM.",
+      },
+      {
+        name: "responseFormat",
+        type: "\"text\" | \"markdown\" | \"html\"",
+        required: false,
+        description: "Формат финального ответа. По умолчанию text.",
+      },
+      {
+        name: "includeContext",
+        type: "boolean",
+        required: false,
+        description: "Передайте true, чтобы в ответе пришёл список чанков, отправленных в LLM.",
+      },
+    ],
+    requestExample: `POST ${EXTERNAL_API_HOST}/api/public/collections/search/rag\nX-API-Key: pk_live_your_key\nContent-Type: application/json\n\n{\n  "workspace_id": "ws_1234567890",\n  "collection": "kb_public_docs",\n  "query": "Как подключить поиск к сайту?",\n  "embeddingProviderId": "openai-embeddings",\n  "llmProviderId": "openai",\n  "llmModel": "gpt-4o-mini",\n  "limit": 5,\n  "contextLimit": 8,\n  "responseFormat": "markdown",\n  "includeContext": true,\n  "includeQueryVector": false\n}`,
+    responseExample: `{
+  "answer": "1. Создайте публичный API-ключ в админке.\n2. Подключите виджет или вызывайте эндпоинт /search/vector.\n3. При необходимости используйте RAG, чтобы получить готовый ответ.",
+  "format": "markdown",
+  "usage": {
+    "embeddingTokens": 154,
+    "llmTokens": 512
+  },
+  "provider": {
+    "id": "openai",
+    "name": "OpenAI",
+    "model": "gpt-4o-mini",
+    "modelLabel": "GPT-4o mini"
+  },
+  "embeddingProvider": {
+    "id": "openai-embeddings",
+    "name": "OpenAI Embeddings"
+  },
+  "collection": "kb_public_docs",
+  "sources": [
+    {
+      "url": "https://docs.example.com/setup",
+      "title": "Настройка интеграции",
+      "snippet": "Добавьте скрипт виджета на сайт и укажите публичный ключ...",
+      "chunkId": "chunk_9d12",
+      "documentId": "doc_a1b2"
+    }
+  ],
+  "context": [
+    {
+      "id": "chunk_9d12",
+      "score": 0.9123,
+      "payload": {
+        "title": "Настройка интеграции",
+        "url": "https://docs.example.com/setup"
+      }
+    }
+  ]
+}`,
+    tips: [
+      "Если используете Embed Key, убедитесь, что Origin в Postman совпадает с доменом из allowlist — добавьте заголовок X-Embed-Origin.",
+      "Передайте kbId, чтобы ограничить поиск конкретной базой знаний внутри рабочего пространства.",
+      "Для гибридного поиска добавьте объект hybrid с настройками bm25 и vector (weight, limit).",
+    ],
+  },
+];
 
 export default function ApiDocsPage() {
   const { toast } = useToast();
-  const [copiedEndpoint, setCopiedEndpoint] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<DocId>("vector-search");
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
-  const copyToClipboard = async (text: string, endpoint: string) => {
+  const sectionsById = useMemo(() => {
+    return new Map(DOC_SECTIONS.map((section) => [section.id, section]));
+  }, []);
+
+  const activeDoc = sectionsById.get(activeSection);
+
+  const copyToClipboard = async (text: string, token: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedEndpoint(endpoint);
-      setTimeout(() => setCopiedEndpoint(null), 2000);
-      toast({
-        title: "Скопировано",
-        description: "Код скопирован в буфер обмена",
-      });
-    } catch (err) {
-      toast({
-        title: "Ошибка",
-        description: "Не удалось скопировать",
-        variant: "destructive",
-      });
+      setCopiedToken(token);
+      setTimeout(() => setCopiedToken(null), 2000);
+      toast({ title: "Скопировано", description: "Содержимое отправлено в буфер обмена" });
+    } catch {
+      toast({ title: "Ошибка", description: "Не удалось скопировать", variant: "destructive" });
     }
   };
 
-  const apiBaseUrl = window.location.origin;
-
   return (
-    <div className="container mx-auto p-6 max-w-6xl" data-testid="page-api-docs">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2" data-testid="heading-api-docs">
-          API для интеграции с Тильдой
-        </h1>
-        <p className="text-muted-foreground text-lg" data-testid="text-api-description">
-          Полная документация для подключения поискового движка к вашему сайту на Тильде
+    <div className="mx-auto w-full max-w-6xl px-6 py-6" data-testid="page-api-docs">
+      <div className="mb-6">
+        <h1 className="text-3xl font-semibold text-foreground">Документация API</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Выберите инструкцию слева, чтобы увидеть пошаговое описание и примеры для Postman.
         </p>
       </div>
 
-      <Tabs defaultValue="overview" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4" data-testid="tabs-api-navigation">
-          <TabsTrigger value="overview" data-testid="tab-overview">Обзор</TabsTrigger>
-          <TabsTrigger value="search" data-testid="tab-search">Поиск</TabsTrigger>
-          <TabsTrigger value="crawling" data-testid="tab-crawling">Краулинг</TabsTrigger>
-          <TabsTrigger value="examples" data-testid="tab-examples">Примеры</TabsTrigger>
-        </TabsList>
+      <div className="grid gap-6 md:grid-cols-[260px_1fr]">
+        <aside className="rounded-lg border bg-background">
+          <ScrollArea className="h-[calc(100vh-220px)] p-3">
+            <nav className="space-y-2">
+              {DOC_SECTIONS.map((section) => {
+                const Icon = section.icon;
+                const isActive = activeSection === section.id;
+                return (
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => setActiveSection(section.id)}
+                    className={`flex w-full items-start gap-3 rounded-md border px-3 py-3 text-left transition ${
+                      isActive
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-transparent hover:border-muted hover:bg-muted"
+                    }`}
+                    data-testid={`nav-${section.id}`}
+                  >
+                    <Icon className="mt-0.5 h-4 w-4" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">{section.title}</p>
+                      <p className="text-xs text-muted-foreground">{section.description}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </nav>
+          </ScrollArea>
+        </aside>
 
-        <TabsContent value="overview" className="space-y-6">
+        <div className="space-y-6">
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Database className="h-5 w-5" />
-                Быстрый старт
-              </CardTitle>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg font-semibold">Перед началом</CardTitle>
               <CardDescription>
-                Подключите поисковый движок к вашему сайту на Тильде за несколько шагов
+                Эти инструкции подходят для внешних интеграций и тестирования через Postman.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <Card className="p-4">
-                  <h3 className="font-semibold mb-2">1. Добавить сайт для краулинга</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Зарегистрируйте ваш домен в админ-панели для начала индексации
-                  </p>
-                </Card>
-                <Card className="p-4">
-                  <h3 className="font-semibold mb-2">2. Дождаться индексации</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Система автоматически проиндексирует все страницы вашего сайта
-                  </p>
-                </Card>
-                <Card className="p-4">
-                  <h3 className="font-semibold mb-2">3. Интегрировать поиск</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Используйте API поиска для добавления функции поиска на сайт
-                  </p>
-                </Card>
-                <Card className="p-4">
-                  <h3 className="font-semibold mb-2">4. Настроить дизайн</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Адаптируйте результаты поиска под дизайн вашего сайта
-                  </p>
-                </Card>
-              </div>
-              
-              <Separator />
-              
-              <div className="bg-muted p-4 rounded-lg">
-                <h4 className="font-semibold mb-2">Базовый URL API:</h4>
-                <div className="flex items-center gap-2">
-                  <code className="bg-background px-2 py-1 rounded text-sm flex-1" data-testid="text-base-url">
-                    {apiBaseUrl}
-                  </code>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <p>
+                1. Получите публичный ключ коллекции в админ-панели (Раздел «Интеграции» → «Публичный API»).
+              </p>
+              <p>
+                2. Скопируйте workspace_id рабочего пространства — он нужен в теле запроса вместе с коллекцией.
+              </p>
+              <p>
+                3. В Postman используйте метод <strong>POST</strong>, добавьте заголовок X-API-Key и передавайте тело как raw JSON.
+              </p>
+              <p>
+                4. Если для ключа настроен allowlist доменов, добавьте заголовок <code>X-Embed-Origin</code> с доменом.
+              </p>
+            </CardContent>
+          </Card>
+
+          {activeDoc ? (
+            <Card data-testid={`content-${activeDoc.id}`}>
+              <CardHeader className="pb-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <Badge variant="outline" className="font-semibold uppercase">
+                        {activeDoc.method}
+                      </Badge>
+                      <code className="text-sm font-mono">
+                        {`${EXTERNAL_API_HOST}${activeDoc.endpointPath}`}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                          copyToClipboard(
+                            `${EXTERNAL_API_HOST}${activeDoc.endpointPath}`,
+                            `${activeDoc.id}-endpoint`,
+                          )
+                        }
+                        aria-label="Скопировать URL"
+                      >
+                        {copiedToken === `${activeDoc.id}-endpoint` ? (
+                          <span className="text-xs">Ок</span>
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                    <CardTitle className="mt-3 text-2xl font-semibold">{activeDoc.title}</CardTitle>
+                    <CardDescription className="mt-1 text-sm">
+                      {activeDoc.description}
+                    </CardDescription>
+                  </div>
                   <Button
                     variant="outline"
-                    size="sm"
-                    onClick={() => copyToClipboard(apiBaseUrl, 'baseUrl')}
-                    data-testid="button-copy-base-url"
+                    size="icon"
+                    asChild
+                    className="shrink-0"
+                    aria-label="Открыть описание в новой вкладке"
                   >
-                    <Copy className="h-3 w-3" />
+                    <a
+                      href={`${EXTERNAL_API_HOST}${activeDoc.endpointPath}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
                   </Button>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <section className="space-y-2 text-sm">
+                  <h3 className="text-base font-semibold text-foreground">Как протестировать в Postman</h3>
+                  <ol className="list-decimal space-y-2 pl-4 text-muted-foreground">
+                    {activeDoc.steps.map((step, index) => (
+                      <li key={index}>{step}</li>
+                    ))}
+                  </ol>
+                </section>
 
-        <TabsContent value="search" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Search className="h-5 w-5" />
-                API поиска
-              </CardTitle>
-              <CardDescription>
-                Выполнение поисковых запросов по проиндексированному контенту
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="default">GET</Badge>
-                    <code className="text-sm">/api/search</code>
-                  </div>
-                  <p className="text-muted-foreground text-sm mb-4">
-                    Основной endpoint для выполнения поисковых запросов
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">Параметры запроса:</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="grid grid-cols-4 gap-2 font-medium">
-                      <span>Параметр</span>
+                <section>
+                  <h3 className="text-base font-semibold text-foreground">Поля тела запроса</h3>
+                  <div className="mt-3 overflow-hidden rounded-md border">
+                    <div className="grid grid-cols-[150px_130px_1fr] gap-3 bg-muted px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <span>Поле</span>
                       <span>Тип</span>
-                      <span>Обязательный</span>
                       <span>Описание</span>
                     </div>
-                    <Separator />
-                    <div className="grid grid-cols-4 gap-2">
-                      <code>q</code>
-                      <span>string</span>
-                      <Badge variant="destructive" className="w-fit">Да</Badge>
-                      <span>Поисковый запрос</span>
-                    </div>
-                    <div className="grid grid-cols-4 gap-2">
-                      <code>limit</code>
-                      <span>number</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Количество результатов (по умолчанию: 10)</span>
-                    </div>
-                    <div className="grid grid-cols-4 gap-2">
-                      <code>offset</code>
-                      <span>number</span>
-                      <Badge variant="secondary" className="w-fit">Нет</Badge>
-                      <span>Смещение для пагинации (по умолчанию: 0)</span>
+                    <div className="divide-y text-sm">
+                      {activeDoc.requestFields.map((field) => (
+                        <div key={field.name} className="grid grid-cols-[150px_130px_1fr] gap-3 px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <code>{field.name}</code>
+                            {field.required ? (
+                              <Badge variant="destructive" className="px-1 text-[10px] uppercase">
+                                Обязательное
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <span className="text-xs text-muted-foreground">{field.type}</span>
+                          <span className="text-sm text-muted-foreground">{field.description}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                </div>
+                </section>
 
-                <Separator />
-
-                <div>
-                  <h4 className="font-semibold mb-2">Пример запроса:</h4>
-                  <div className="bg-muted p-4 rounded-lg relative">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="absolute top-2 right-2"
-                      onClick={() => copyToClipboard(`${apiBaseUrl}/api/search?q=услуги&limit=5`, 'searchExample')}
-                      data-testid="button-copy-search-example"
-                    >
-                      {copiedEndpoint === 'searchExample' ? 'Скопировано!' : <Copy className="h-3 w-3" />}
-                    </Button>
-                    <code className="text-sm" data-testid="code-search-example">
-                      GET {apiBaseUrl}/api/search?q=услуги&limit=5
-                    </code>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">Пример ответа:</h4>
-                  <ScrollArea className="h-64 w-full">
-                    <div className="bg-muted p-4 rounded-lg relative">
+                <section>
+                  <h3 className="text-base font-semibold text-foreground">Пример запроса</h3>
+                  <div className="mt-3 rounded-md border bg-muted/60">
+                    <div className="flex items-center justify-between border-b px-3 py-2">
+                      <span className="text-xs font-medium uppercase text-muted-foreground">Curl / Raw</span>
                       <Button
                         variant="ghost"
-                        size="sm"
-                        className="absolute top-2 right-2"
-                        onClick={() => copyToClipboard(`{
-  "results": [
-    {
-      "id": "abc123",
-      "title": "Наши услуги",
-      "url": "https://example.com/services",
-      "content": "Мы предоставляем широкий спектр услуг...",
-      "metaDescription": "Описание наших услуг и преимуществ",
-      "siteId": "site123"
-    }
-  ],
-  "total": 15,
-  "query": "услуги",
-  "limit": 5,
-  "offset": 0
-}`, 'searchResponse')}
-                        data-testid="button-copy-search-response"
+                        size="icon"
+                        onClick={() => copyToClipboard(activeDoc.requestExample, `${activeDoc.id}-request`) }
+                        aria-label="Скопировать пример запроса"
                       >
-                        {copiedEndpoint === 'searchResponse' ? 'Скопировано!' : <Copy className="h-3 w-3" />}
+                        {copiedToken === `${activeDoc.id}-request` ? (
+                          <span className="text-xs">Ок</span>
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
                       </Button>
-                      <pre className="text-xs" data-testid="code-search-response">
-{`{
-  "results": [
-    {
-      "id": "abc123",
-      "title": "Наши услуги",
-      "url": "https://example.com/services", 
-      "content": "Мы предоставляем широкий спектр услуг...",
-      "metaDescription": "Описание наших услуг и преимуществ",
-      "siteId": "site123"
-    }
-  ],
-  "total": 15,
-  "query": "услуги",
-  "limit": 5,
-  "offset": 0
-}`}
-                      </pre>
                     </div>
-                  </ScrollArea>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="crawling" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Database className="h-5 w-5" />
-                API управления краулингом
-              </CardTitle>
-              <CardDescription>
-                Управление процессом индексации сайтов
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-6">
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="default">POST</Badge>
-                    <code className="text-sm">/api/sites</code>
+                    <ScrollArea className="max-h-72">
+                      <pre className="whitespace-pre-wrap px-3 py-3 text-xs text-muted-foreground">
+                        {activeDoc.requestExample}
+                      </pre>
+                    </ScrollArea>
                   </div>
-                  <p className="text-muted-foreground text-sm mb-4">
-                    Добавление нового сайта для индексации
-                  </p>
-                  
-                  <div className="bg-muted p-4 rounded-lg relative">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="absolute top-2 right-2"
-                      onClick={() => copyToClipboard(`{
-  "url": "https://your-site.com",
-  "crawlDepth": 3,
-  "followExternalLinks": false,
-  "crawlFrequency": "daily"
-}`, 'addSite')}
-                      data-testid="button-copy-add-site"
-                    >
-                      {copiedEndpoint === 'addSite' ? 'Скопировано!' : <Copy className="h-3 w-3" />}
-                    </Button>
-                    <pre className="text-xs" data-testid="code-add-site">
-{`{
-  "url": "https://your-site.com",
-  "crawlDepth": 3,
-  "followExternalLinks": false,
-  "crawlFrequency": "daily"
-}`}
-                    </pre>
-                  </div>
-                </div>
+                </section>
 
-                <Separator />
-
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="default">GET</Badge>
-                    <code className="text-sm">/api/sites</code>
-                  </div>
-                  <p className="text-muted-foreground text-sm">
-                    Получение списка всех добавленных сайтов
-                  </p>
-                </div>
-
-                <Separator />
-
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="outline">POST</Badge>
-                    <code className="text-sm">/api/crawl/:siteId</code>
-                  </div>
-                  <p className="text-muted-foreground text-sm">
-                    Запуск процесса краулинга для конкретного сайта
-                  </p>
-                </div>
-
-                <Separator />
-
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="default">GET</Badge>
-                    <code className="text-sm">/api/stats</code>
-                  </div>
-                  <p className="text-muted-foreground text-sm">
-                    Получение статистики по индексации (количество сайтов, страниц и т.д.)
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="examples" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Code className="h-5 w-5" />
-                Примеры интеграции с Тильдой
-              </CardTitle>
-              <CardDescription>
-                Готовые решения для добавления поиска на ваш сайт
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-6">
-                <div>
-                  <h4 className="font-semibold mb-3">HTML + JavaScript (для вставки в блок T123)</h4>
-                  <ScrollArea className="h-96 w-full">
-                    <div className="bg-muted p-4 rounded-lg relative">
+                <section>
+                  <h3 className="text-base font-semibold text-foreground">Пример ответа</h3>
+                  <div className="mt-3 rounded-md border bg-muted/60">
+                    <div className="flex items-center justify-between border-b px-3 py-2">
+                      <span className="text-xs font-medium uppercase text-muted-foreground">JSON</span>
                       <Button
                         variant="ghost"
-                        size="sm"
-                        className="absolute top-2 right-2"
-                        onClick={() => copyToClipboard(`<!-- Стили для поиска -->
-<style>
-.search-container {
-  max-width: 600px;
-  margin: 20px auto;
-  font-family: Arial, sans-serif;
-}
-
-.search-input {
-  width: 100%;
-  padding: 12px 16px;
-  border: 2px solid #e1e5e9;
-  border-radius: 8px;
-  font-size: 16px;
-  outline: none;
-  transition: border-color 0.2s;
-}
-
-.search-input:focus {
-  border-color: #007bff;
-}
-
-.search-results {
-  margin-top: 20px;
-}
-
-.search-result {
-  padding: 16px;
-  border: 1px solid #e1e5e9;
-  border-radius: 8px;
-  margin-bottom: 12px;
-  background: white;
-}
-
-.result-title {
-  font-size: 18px;
-  font-weight: bold;
-  margin-bottom: 8px;
-  color: #007bff;
-  text-decoration: none;
-}
-
-.result-url {
-  font-size: 14px;
-  color: #28a745;
-  margin-bottom: 8px;
-}
-
-.result-description {
-  font-size: 14px;
-  color: #6c757d;
-  line-height: 1.4;
-}
-
-.search-loading {
-  text-align: center;
-  padding: 20px;
-  color: #6c757d;
-}
-
-.search-stats {
-  margin: 10px 0;
-  font-size: 14px;
-  color: #6c757d;
-}
-</style>
-
-<!-- HTML разметка -->
-<div class="search-container">
-  <input 
-    type="text" 
-    id="searchInput" 
-    class="search-input" 
-    placeholder="Поиск по сайту..."
-  >
-  <div id="searchStats" class="search-stats"></div>
-  <div id="searchResults" class="search-results"></div>
-</div>
-
-<script>
-// Конфигурация
-const API_BASE_URL = '${apiBaseUrl}';
-let searchTimeout;
-
-// Элементы DOM
-const searchInput = document.getElementById('searchInput');
-const searchResults = document.getElementById('searchResults');
-const searchStats = document.getElementById('searchStats');
-
-// Функция поиска
-async function performSearch(query) {
-  if (!query.trim()) {
-    searchResults.innerHTML = '';
-    searchStats.innerHTML = '';
-    return;
-  }
-
-  try {
-    searchResults.innerHTML = '<div class="search-loading">Поиск...</div>';
-    
-    const response = await fetch(\`\${API_BASE_URL}/api/search?q=\${encodeURIComponent(query)}&limit=10\`);
-    const data = await response.json();
-    
-    // Отображение статистики
-    searchStats.innerHTML = \`Найдено \${data.total} результатов\`;
-    
-    // Отображение результатов
-    if (data.results.length === 0) {
-      searchResults.innerHTML = '<div class="search-loading">Ничего не найдено</div>';
-      return;
-    }
-
-    const resultsHTML = data.results.map(result => \`
-      <div class="search-result">
-        <a href="\${result.url}" class="result-title" target="_blank">
-          \${result.title || 'Без названия'}
-        </a>
-        <div class="result-url">\${result.url}</div>
-        <div class="result-description">
-          \${result.metaDescription || result.content?.substring(0, 200) + '...' || ''}
-        </div>
-      </div>
-    \`).join('');
-    
-    searchResults.innerHTML = resultsHTML;
-  } catch (error) {
-    console.error('Ошибка поиска:', error);
-    searchResults.innerHTML = '<div class="search-loading">Ошибка при выполнении поиска</div>';
-  }
-}
-
-// Обработчик ввода с задержкой
-searchInput.addEventListener('input', (e) => {
-  clearTimeout(searchTimeout);
-  searchTimeout = setTimeout(() => {
-    performSearch(e.target.value);
-  }, 300);
-});
-
-// Поиск по Enter
-searchInput.addEventListener('keypress', (e) => {
-  if (e.key === 'Enter') {
-    clearTimeout(searchTimeout);
-    performSearch(e.target.value);
-  }
-});
-</script>`, 'tildeExample')}
-                        data-testid="button-copy-tilde-example"
+                        size="icon"
+                        onClick={() => copyToClipboard(activeDoc.responseExample, `${activeDoc.id}-response`) }
+                        aria-label="Скопировать пример ответа"
                       >
-                        {copiedEndpoint === 'tildeExample' ? 'Скопировано!' : <Copy className="h-3 w-3" />}
+                        {copiedToken === `${activeDoc.id}-response` ? (
+                          <span className="text-xs">Ок</span>
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
                       </Button>
-                      <pre className="text-xs" data-testid="code-tilde-example">
-{`<!-- Стили для поиска -->
-<style>
-.search-container {
-  max-width: 600px;
-  margin: 20px auto;
-  font-family: Arial, sans-serif;
-}
-
-.search-input {
-  width: 100%;
-  padding: 12px 16px;
-  border: 2px solid #e1e5e9;
-  border-radius: 8px;
-  font-size: 16px;
-  outline: none;
-  transition: border-color 0.2s;
-}
-
-.search-input:focus {
-  border-color: #007bff;
-}
-
-.search-results {
-  margin-top: 20px;
-}
-
-.search-result {
-  padding: 16px;
-  border: 1px solid #e1e5e9;
-  border-radius: 8px;
-  margin-bottom: 12px;
-  background: white;
-}
-
-.result-title {
-  font-size: 18px;
-  font-weight: bold;
-  margin-bottom: 8px;
-  color: #007bff;
-  text-decoration: none;
-}
-
-.result-url {
-  font-size: 14px;
-  color: #28a745;
-  margin-bottom: 8px;
-}
-
-.result-description {
-  font-size: 14px;
-  color: #6c757d;
-  line-height: 1.4;
-}
-
-.search-loading {
-  text-align: center;
-  padding: 20px;
-  color: #6c757d;
-}
-
-.search-stats {
-  margin: 10px 0;
-  font-size: 14px;
-  color: #6c757d;
-}
-</style>
-
-<!-- HTML разметка -->
-<div class="search-container">
-  <input 
-    type="text" 
-    id="searchInput" 
-    class="search-input" 
-    placeholder="Поиск по сайту..."
-  >
-  <div id="searchStats" class="search-stats"></div>
-  <div id="searchResults" class="search-results"></div>
-</div>
-
-<script>
-// Конфигурация
-const API_BASE_URL = '${apiBaseUrl}';
-let searchTimeout;
-
-// Элементы DOM
-const searchInput = document.getElementById('searchInput');
-const searchResults = document.getElementById('searchResults');
-const searchStats = document.getElementById('searchStats');
-
-// Функция поиска
-async function performSearch(query) {
-  if (!query.trim()) {
-    searchResults.innerHTML = '';
-    searchStats.innerHTML = '';
-    return;
-  }
-
-  try {
-    searchResults.innerHTML = '<div class="search-loading">Поиск...</div>';
-    
-    const response = await fetch(\`\${API_BASE_URL}/api/search?q=\${encodeURIComponent(query)}&limit=10\`);
-    const data = await response.json();
-    
-    // Отображение статистики
-    searchStats.innerHTML = \`Найдено \${data.total} результатов\`;
-    
-    // Отображение результатов
-    if (data.results.length === 0) {
-      searchResults.innerHTML = '<div class="search-loading">Ничего не найдено</div>';
-      return;
-    }
-
-    const resultsHTML = data.results.map(result => \`
-      <div class="search-result">
-        <a href="\${result.url}" class="result-title" target="_blank">
-          \${result.title || 'Без названия'}
-        </a>
-        <div class="result-url">\${result.url}</div>
-        <div class="result-description">
-          \${result.metaDescription || result.content?.substring(0, 200) + '...' || ''}
-        </div>
-      </div>
-    \`).join('');
-    
-    searchResults.innerHTML = resultsHTML;
-  } catch (error) {
-    console.error('Ошибка поиска:', error);
-    searchResults.innerHTML = '<div class="search-loading">Ошибка при выполнении поиска</div>';
-  }
-}
-
-// Обработчик ввода с задержкой
-searchInput.addEventListener('input', (e) => {
-  clearTimeout(searchTimeout);
-  searchTimeout = setTimeout(() => {
-    performSearch(e.target.value);
-  }, 300);
-});
-
-// Поиск по Enter
-searchInput.addEventListener('keypress', (e) => {
-  if (e.key === 'Enter') {
-    clearTimeout(searchTimeout);
-    performSearch(e.target.value);
-  }
-});
-</script>`}
+                    </div>
+                    <ScrollArea className="max-h-72">
+                      <pre className="whitespace-pre-wrap px-3 py-3 text-xs text-muted-foreground">
+                        {activeDoc.responseExample}
                       </pre>
-                    </div>
-                  </ScrollArea>
-                </div>
-
-                <Separator />
-
-                <div>
-                  <h4 className="font-semibold mb-3">Инструкция по добавлению в Тильду</h4>
-                  <div className="space-y-3 text-sm">
-                    <div className="flex items-start gap-3">
-                      <Badge variant="outline" className="mt-0.5">1</Badge>
-                      <div>
-                        <strong>Создайте новую страницу</strong> или откройте существующую в редакторе Тильды
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <Badge variant="outline" className="mt-0.5">2</Badge>
-                      <div>
-                        <strong>Добавьте блок T123</strong> (HTML/CSS/JS код) на страницу
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <Badge variant="outline" className="mt-0.5">3</Badge>
-                      <div>
-                        <strong>Скопируйте код выше</strong> и вставьте его в блок T123
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <Badge variant="outline" className="mt-0.5">4</Badge>
-                      <div>
-                        <strong>Убедитесь</strong>, что ваш сайт уже добавлен для индексации в админ-панели
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <Badge variant="outline" className="mt-0.5">5</Badge>
-                      <div>
-                        <strong>Опубликуйте страницу</strong> и протестируйте поиск
-                      </div>
-                    </div>
+                    </ScrollArea>
                   </div>
-                </div>
+                </section>
+
+                <section>
+                  <h3 className="text-base font-semibold text-foreground">Подсказки</h3>
+                  <ul className="mt-2 space-y-2 text-sm text-muted-foreground">
+                    {activeDoc.tips.map((tip, index) => (
+                      <li key={index} className="flex items-start gap-2">
+                        <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                        <span>{tip}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
 
                 <Separator />
 
-                <div className="bg-blue-50 dark:bg-blue-950 p-4 rounded-lg">
-                  <h4 className="font-semibold mb-2 text-blue-900 dark:text-blue-100">💡 Совет</h4>
-                  <p className="text-sm text-blue-800 dark:text-blue-200">
-                    Вы можете настроить стили CSS под дизайн вашего сайта. Измените цвета, шрифты и размеры в секции &lt;style&gt; для идеальной интеграции.
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      <div className="mt-8 text-center">
-        <Button asChild data-testid="button-admin-panel">
-          <a href="/admin">
-            <ExternalLink className="h-4 w-4 mr-2" />
-            Перейти в админ-панель
-          </a>
-        </Button>
+                <p className="text-xs text-muted-foreground">
+                  Нужны дополнительные примеры? Напишите в поддержку, и мы подготовим готовые коллекции Postman.
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
+        </div>
       </div>
     </div>
   );
