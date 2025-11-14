@@ -398,7 +398,7 @@ function extractRequestDomain(req: Request, bodySource: Record<string, unknown>)
 }
 
 interface PublicCollectionContext {
-  apiKey: string;
+  apiKey?: string;
   workspaceId: string;
   site?: Site;
   embedKey?: WorkspaceEmbedKey;
@@ -515,11 +515,6 @@ async function resolvePublicCollectionRequest(
     req.query.apikey,
   );
 
-  if (!apiKey) {
-    res.status(401).json({ error: "Укажите X-API-Key в заголовке или apiKey в запросе" });
-    return null;
-  }
-
   const paramPublicId = typeof req.params?.publicId === "string" ? req.params.publicId : undefined;
   const publicId = pickFirstString(
     paramPublicId,
@@ -535,6 +530,13 @@ async function resolvePublicCollectionRequest(
     bodySource.workspace_id,
     req.query.workspaceId,
     req.query.workspace_id,
+  );
+
+  const knowledgeBaseIdCandidate = pickFirstString(
+    bodySource.kbId,
+    bodySource.kb_id,
+    req.query.kbId,
+    req.query.kb_id,
   );
 
   const requestDomain = extractRequestDomain(req, bodySource);
@@ -559,6 +561,55 @@ async function resolvePublicCollectionRequest(
     }
 
     return true;
+  }
+
+  if (!apiKey) {
+    let resolvedWorkspaceId = workspaceIdCandidate;
+
+    if (!resolvedWorkspaceId) {
+      const user = await resolveOptionalUser(req);
+      if (!user) {
+        res.status(401).json({ error: "Укажите X-API-Key в заголовке или apiKey в запросе" });
+        return null;
+      }
+
+      try {
+        const context = await ensureWorkspaceContext(req, user);
+        resolvedWorkspaceId = context.active.id;
+      } catch (error) {
+        if (error instanceof WorkspaceContextError) {
+          res.status(error.status).json({ error: error.message });
+          return null;
+        }
+        throw error;
+      }
+    }
+
+    if (!resolvedWorkspaceId) {
+      res.status(400).json({ error: "Передайте workspace_id или X-Workspace-Id" });
+      return null;
+    }
+
+    if (!(await ensureWorkspaceAccess(resolvedWorkspaceId))) {
+      return null;
+    }
+
+    if (knowledgeBaseIdCandidate) {
+      const base = await storage.getKnowledgeBase(knowledgeBaseIdCandidate);
+      if (!base) {
+        res.status(404).json({ error: "База знаний не найдена" });
+        return null;
+      }
+
+      if (base.workspaceId !== resolvedWorkspaceId) {
+        res.status(403).json({ error: "Нет доступа к базе знаний" });
+        return null;
+      }
+
+      return { workspaceId: resolvedWorkspaceId, knowledgeBaseId: base.id };
+    }
+
+    return { workspaceId: resolvedWorkspaceId };
   }
 
   if (publicId) {
