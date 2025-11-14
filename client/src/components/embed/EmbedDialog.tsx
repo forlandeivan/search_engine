@@ -62,6 +62,23 @@ function buildSnippet(config: {
   mode: "inline" | "modal";
   theme: "light" | "dark" | "system";
   language: "ru" | "en";
+  kbId?: string;
+  topK?: number;
+  hybrid?: {
+    bm25?: { weight?: number; limit?: number };
+    vector?: {
+      weight?: number;
+      limit?: number;
+      collection?: string;
+      embeddingProviderId?: string;
+    };
+  };
+  llmTemperature?: number;
+  llmMaxTokens?: number;
+  llmSystemPrompt?: string;
+  llmResponseFormat?: string;
+  includeContext: boolean;
+  includeQueryVector: boolean;
 }): string {
   const sanitizedBaseUrl = config.baseUrl.replace(/\/?$/, "");
   const embedConfig = {
@@ -79,6 +96,15 @@ function buildSnippet(config: {
     mode: config.mode,
     theme: config.theme,
     language: config.language,
+    kbId: config.kbId,
+    topK: config.topK,
+    hybrid: config.hybrid,
+    llmTemperature: config.llmTemperature,
+    llmMaxTokens: config.llmMaxTokens,
+    llmSystemPrompt: config.llmSystemPrompt,
+    llmResponseFormat: config.llmResponseFormat,
+    includeContext: config.includeContext,
+    includeQueryVector: config.includeQueryVector,
   } as const;
 
   const serializedConfig = JSON.stringify(embedConfig, null, 2);
@@ -247,7 +273,7 @@ function buildSnippet(config: {
       url.searchParams.set("q", query);
       url.searchParams.set("limit", String(CONFIG.limit));
       url.searchParams.set("workspace_id", CONFIG.workspaceId);
-      url.searchParams.set("kb_id", CONFIG.knowledgeBaseId);
+      url.searchParams.set("kb_id", CONFIG.kbId || CONFIG.knowledgeBaseId);
       url.searchParams.set("collection", CONFIG.collection);
       const response = await fetch(url.toString(), {
         headers: {
@@ -272,6 +298,48 @@ function buildSnippet(config: {
       result.style.display = "none";
       suggestions.style.display = "none";
       try {
+        const requestBody = {
+          workspace_id: CONFIG.workspaceId,
+          collection: CONFIG.collection,
+          query: trimmed,
+          embeddingProviderId: CONFIG.embeddingProviderId,
+          llmProviderId: CONFIG.llmProviderId,
+          llmModel: CONFIG.llmModel,
+          limit: CONFIG.limit,
+          contextLimit: CONFIG.contextLimit,
+          includeContext: CONFIG.includeContext,
+          includeQueryVector: CONFIG.includeQueryVector,
+          responseFormat: CONFIG.responseFormat,
+        };
+
+        if (CONFIG.kbId) {
+          requestBody.kbId = CONFIG.kbId;
+        }
+
+        if (CONFIG.topK) {
+          requestBody.topK = CONFIG.topK;
+        }
+
+        if (typeof CONFIG.llmTemperature === "number") {
+          requestBody.llmTemperature = CONFIG.llmTemperature;
+        }
+
+        if (typeof CONFIG.llmMaxTokens === "number") {
+          requestBody.llmMaxTokens = CONFIG.llmMaxTokens;
+        }
+
+        if (typeof CONFIG.llmSystemPrompt === "string" && CONFIG.llmSystemPrompt.length > 0) {
+          requestBody.llmSystemPrompt = CONFIG.llmSystemPrompt;
+        }
+
+        if (typeof CONFIG.llmResponseFormat === "string" && CONFIG.llmResponseFormat.length > 0) {
+          requestBody.llmResponseFormat = CONFIG.llmResponseFormat;
+        }
+
+        if (CONFIG.hybrid) {
+          requestBody.hybrid = CONFIG.hybrid;
+        }
+
         const response = await fetch(CONFIG.baseUrl + "/api/public/collections/search/rag", {
           method: "POST",
           headers: {
@@ -280,19 +348,7 @@ function buildSnippet(config: {
             "X-API-Key": CONFIG.apiKey,
             "X-Embed-Origin": window.location.hostname,
           },
-          body: JSON.stringify({
-            workspace_id: CONFIG.workspaceId,
-            collection: CONFIG.collection,
-            query: trimmed,
-            embeddingProviderId: CONFIG.embeddingProviderId,
-            llmProviderId: CONFIG.llmProviderId,
-            llmModel: CONFIG.llmModel,
-            limit: CONFIG.limit,
-            contextLimit: CONFIG.contextLimit,
-            includeContext: true,
-            includeQueryVector: false,
-            responseFormat: CONFIG.responseFormat,
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         if (!response.ok) {
@@ -447,6 +503,19 @@ export function EmbedDialog({
   const [embedKey, setEmbedKey] = useState<WorkspaceEmbedKey | null>(null);
   const [domains, setDomains] = useState<WorkspaceEmbedKeyDomain[]>([]);
   const lastRequestedKeyRef = useRef<string | null>(null);
+  const defaultTopKValue = Math.max(1, Math.min(contextLimit || limit || 6, 20));
+  const [kbIdOverride, setKbIdOverride] = useState(knowledgeBaseId);
+  const [topKInput, setTopKInput] = useState(String(defaultTopKValue));
+  const [bm25WeightInput, setBm25WeightInput] = useState("");
+  const [bm25LimitInput, setBm25LimitInput] = useState("");
+  const [vectorWeightInput, setVectorWeightInput] = useState("");
+  const [vectorLimitInput, setVectorLimitInput] = useState("");
+  const [vectorCollectionInput, setVectorCollectionInput] = useState("");
+  const [vectorEmbeddingProviderInput, setVectorEmbeddingProviderInput] = useState("");
+  const [llmTemperatureInput, setLlmTemperatureInput] = useState("");
+  const [llmMaxTokensInput, setLlmMaxTokensInput] = useState("");
+  const [llmSystemPromptInput, setLlmSystemPromptInput] = useState("");
+  const [llmResponseFormatInput, setLlmResponseFormatInput] = useState<string>(responseFormat);
 
   const ensureKeyMutation = useMutation({
     mutationFn: async ({
@@ -474,6 +543,25 @@ export function EmbedDialog({
   });
 
   const { mutate: ensureEmbedKey } = ensureKeyMutation;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setKbIdOverride(knowledgeBaseId);
+    setTopKInput(String(Math.max(1, Math.min(contextLimit || limit || 6, 20))));
+    setBm25WeightInput("");
+    setBm25LimitInput("");
+    setVectorWeightInput("");
+    setVectorLimitInput("");
+    setVectorCollectionInput("");
+    setVectorEmbeddingProviderInput("");
+    setLlmTemperatureInput("");
+    setLlmMaxTokensInput("");
+    setLlmSystemPromptInput("");
+    setLlmResponseFormatInput(responseFormat);
+  }, [open, knowledgeBaseId, contextLimit, limit, responseFormat]);
 
   useEffect(() => {
     if (!open) {
@@ -539,6 +627,145 @@ export function EmbedDialog({
       return "";
     }
 
+    const parseIntegerValue = (value: string): number | undefined => {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return undefined;
+      }
+
+      const numeric = Number.parseInt(trimmed, 10);
+      if (!Number.isFinite(numeric)) {
+        return undefined;
+      }
+
+      return numeric;
+    };
+
+    const parseFloatValue = (value: string): number | undefined => {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return undefined;
+      }
+
+      const numeric = Number.parseFloat(trimmed);
+      if (!Number.isFinite(numeric)) {
+        return undefined;
+      }
+
+      return numeric;
+    };
+
+    const clampNumber = (value: number, min: number, max: number) => {
+      if (Number.isNaN(value)) {
+        return value;
+      }
+      return Math.min(Math.max(value, min), max);
+    };
+
+    const sanitizedKbId = (() => {
+      const trimmed = (kbIdOverride || "").trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    })();
+
+    const topKValue = (() => {
+      const parsed = parseIntegerValue(topKInput);
+      if (parsed === undefined) {
+        return undefined;
+      }
+      return clampNumber(parsed, 1, 20);
+    })();
+
+    const bm25WeightValue = (() => {
+      const parsed = parseFloatValue(bm25WeightInput);
+      if (parsed === undefined) {
+        return undefined;
+      }
+      return clampNumber(parsed, 0, 1);
+    })();
+
+    const bm25LimitValue = (() => {
+      const parsed = parseIntegerValue(bm25LimitInput);
+      if (parsed === undefined) {
+        return undefined;
+      }
+      return clampNumber(parsed, 1, 50);
+    })();
+
+    const vectorWeightValue = (() => {
+      const parsed = parseFloatValue(vectorWeightInput);
+      if (parsed === undefined) {
+        return undefined;
+      }
+      return clampNumber(parsed, 0, 1);
+    })();
+
+    const vectorLimitValue = (() => {
+      const parsed = parseIntegerValue(vectorLimitInput);
+      if (parsed === undefined) {
+        return undefined;
+      }
+      return clampNumber(parsed, 1, 50);
+    })();
+
+    const vectorCollectionValue = vectorCollectionInput.trim();
+    const vectorEmbeddingProviderValue = vectorEmbeddingProviderInput.trim();
+
+    const llmTemperatureValue = (() => {
+      const parsed = parseFloatValue(llmTemperatureInput);
+      if (parsed === undefined) {
+        return undefined;
+      }
+      return clampNumber(parsed, 0, 2);
+    })();
+
+    const llmMaxTokensValue = (() => {
+      const parsed = parseIntegerValue(llmMaxTokensInput);
+      if (parsed === undefined) {
+        return undefined;
+      }
+      return clampNumber(parsed, 16, 4096);
+    })();
+
+    const llmSystemPromptValue = llmSystemPromptInput.trim();
+    const llmResponseFormatValue = llmResponseFormatInput.trim();
+
+    const bm25Payload: { weight?: number; limit?: number } = {};
+    if (bm25WeightValue !== undefined) {
+      bm25Payload.weight = bm25WeightValue;
+    }
+    if (bm25LimitValue !== undefined) {
+      bm25Payload.limit = bm25LimitValue;
+    }
+
+    const vectorPayload: { weight?: number; limit?: number; collection?: string; embeddingProviderId?: string } = {};
+    if (vectorWeightValue !== undefined) {
+      vectorPayload.weight = vectorWeightValue;
+    }
+    if (vectorLimitValue !== undefined) {
+      vectorPayload.limit = vectorLimitValue;
+    }
+    if (vectorCollectionValue.length > 0) {
+      vectorPayload.collection = vectorCollectionValue;
+    }
+    if (vectorEmbeddingProviderValue.length > 0) {
+      vectorPayload.embeddingProviderId = vectorEmbeddingProviderValue;
+    }
+
+    const hybridPayload: {
+      bm25?: { weight?: number; limit?: number };
+      vector?: { weight?: number; limit?: number; collection?: string; embeddingProviderId?: string };
+    } = {};
+
+    if (Object.keys(bm25Payload).length > 0) {
+      hybridPayload.bm25 = bm25Payload;
+    }
+
+    if (Object.keys(vectorPayload).length > 0) {
+      hybridPayload.vector = vectorPayload;
+    }
+
+    const hybridValue = Object.keys(hybridPayload).length > 0 ? hybridPayload : undefined;
+
     return buildSnippet({
       baseUrl,
       workspaceId,
@@ -554,6 +781,15 @@ export function EmbedDialog({
       mode,
       theme,
       language,
+      kbId: sanitizedKbId,
+      topK: topKValue,
+      hybrid: hybridValue,
+      llmTemperature: llmTemperatureValue,
+      llmMaxTokens: llmMaxTokensValue,
+      llmSystemPrompt: llmSystemPromptValue.length > 0 ? llmSystemPromptValue : undefined,
+      llmResponseFormat: llmResponseFormatValue.length > 0 ? llmResponseFormatValue : undefined,
+      includeContext: true,
+      includeQueryVector: false,
     });
   }, [
     embedKey,
@@ -570,6 +806,18 @@ export function EmbedDialog({
     mode,
     theme,
     language,
+    kbIdOverride,
+    topKInput,
+    bm25WeightInput,
+    bm25LimitInput,
+    vectorWeightInput,
+    vectorLimitInput,
+    vectorCollectionInput,
+    vectorEmbeddingProviderInput,
+    llmTemperatureInput,
+    llmMaxTokensInput,
+    llmSystemPromptInput,
+    llmResponseFormatInput,
   ]);
 
   const handleCopySnippet = async () => {
@@ -675,6 +923,163 @@ export function EmbedDialog({
                         <TabsTrigger value="en">English</TabsTrigger>
                       </TabsList>
                     </Tabs>
+                  </div>
+                </div>
+              </section>
+
+              <Separator />
+
+              <section className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="embed-kb-id">kb_id для RAG-запроса</Label>
+                    <Input
+                      id="embed-kb-id"
+                      value={kbIdOverride}
+                      onChange={(event) => setKbIdOverride(event.target.value)}
+                      placeholder={knowledgeBaseId}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Оставьте пустым, чтобы использовать базу из embed-ключа.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="embed-top-k">Top K (агрегация)</Label>
+                    <Input
+                      id="embed-top-k"
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={topKInput}
+                      onChange={(event) => setTopKInput(event.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Количество чанков после объединения результатов BM25 и вектора.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">BM25 параметры</Label>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <Input
+                        id="embed-bm25-weight"
+                        type="number"
+                        min={0}
+                        max={1}
+                        step="0.05"
+                        value={bm25WeightInput}
+                        onChange={(event) => setBm25WeightInput(event.target.value)}
+                        placeholder="вес"
+                      />
+                      <Input
+                        id="embed-bm25-limit"
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={bm25LimitInput}
+                        onChange={(event) => setBm25LimitInput(event.target.value)}
+                        placeholder="лимит"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Пустые значения означают автонастройку (limit = topK).
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Векторный поиск</Label>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <Input
+                        id="embed-vector-weight"
+                        type="number"
+                        min={0}
+                        max={1}
+                        step="0.05"
+                        value={vectorWeightInput}
+                        onChange={(event) => setVectorWeightInput(event.target.value)}
+                        placeholder="вес"
+                      />
+                      <Input
+                        id="embed-vector-limit"
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={vectorLimitInput}
+                        onChange={(event) => setVectorLimitInput(event.target.value)}
+                        placeholder="лимит"
+                      />
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <Input
+                        id="embed-vector-collection"
+                        value={vectorCollectionInput}
+                        onChange={(event) => setVectorCollectionInput(event.target.value)}
+                        placeholder="override коллекции"
+                      />
+                      <Input
+                        id="embed-vector-provider"
+                        value={vectorEmbeddingProviderInput}
+                        onChange={(event) => setVectorEmbeddingProviderInput(event.target.value)}
+                        placeholder="override провайдера"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Заполните поля, если хотите задать отдельную коллекцию или сервис эмбеддингов.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="embed-llm-temperature">Температура LLM</Label>
+                    <Input
+                      id="embed-llm-temperature"
+                      type="number"
+                      min={0}
+                      max={2}
+                      step="0.1"
+                      value={llmTemperatureInput}
+                      onChange={(event) => setLlmTemperatureInput(event.target.value)}
+                      placeholder="0.0 — 2.0"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Пустое значение использует настройку провайдера.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="embed-llm-max-tokens">Максимум токенов</Label>
+                    <Input
+                      id="embed-llm-max-tokens"
+                      type="number"
+                      min={16}
+                      max={4096}
+                      value={llmMaxTokensInput}
+                      onChange={(event) => setLlmMaxTokensInput(event.target.value)}
+                      placeholder="например, 1024"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="embed-llm-response-format">Формат ответа LLM</Label>
+                    <Input
+                      id="embed-llm-response-format"
+                      value={llmResponseFormatInput}
+                      onChange={(event) => setLlmResponseFormatInput(event.target.value)}
+                      placeholder={responseFormat}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Поддерживаются text, md/markdown или html.
+                    </p>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="embed-llm-system-prompt">Системный промпт</Label>
+                    <Textarea
+                      id="embed-llm-system-prompt"
+                      value={llmSystemPromptInput}
+                      onChange={(event) => setLlmSystemPromptInput(event.target.value)}
+                      placeholder="Например: Ты — ассистент службы поддержки..."
+                      className="h-24"
+                    />
                   </div>
                 </div>
               </section>

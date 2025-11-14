@@ -71,11 +71,37 @@ curl -X POST "https://ваш-домен.replit.dev/api/public/collections/search
     "embeddingProviderId": "gigachat-embeddings",
     "llmProviderId": "gigachat-llm",
     "llmModel": "GigaChat-Pro",
+    "kbId": "KB_ID",
     "limit": 5,
     "contextLimit": 3,
+    "topK": 6,
+    "hybrid": {
+      "bm25": { "weight": 0.4, "limit": 6 },
+      "vector": {
+        "weight": 0.6,
+        "limit": 8,
+        "collection": "support_faq_vectors_override",
+        "embeddingProviderId": "alt-embeddings"
+      }
+    },
+    "llmTemperature": 0.2,
+    "llmMaxTokens": 1200,
+    "llmSystemPrompt": "Ты — ассистент службы поддержки.",
+    "llmResponseFormat": "md",
     "responseFormat": "md"
   }'
 ```
+
+**Новые опциональные параметры запроса:**
+
+- `kbId` — принудительно использовать конкретную базу знаний (по умолчанию берётся из публичного ключа).
+- `topK` — ограничить число чанков после объединения BM25 и векторного поиска.
+- `hybrid.bm25.*` и `hybrid.vector.*` — управлять весами, лимитами и при необходимости задать альтернативную коллекцию или сервис эмбеддингов.
+- `llmTemperature`, `llmMaxTokens` — тонкая настройка генерации ответа LLM.
+- `llmSystemPrompt` — переопределить системный промпт модели.
+- `llmResponseFormat` — форматировать ответ LLM независимо от поля `responseFormat`.
+
+Если параметры не переданы, используется прежнее поведение (topK рассчитывается из `contextLimit`, веса нормализуются автоматически, формат LLM совпадает с `responseFormat`).
 
 **Пример успешного ответа:**
 
@@ -114,6 +140,7 @@ curl -X POST "https://ваш-домен.replit.dev/api/public/collections/search
 ```
 **Особенности:**
 
+- Можно управлять гибридным поиском через поля `topK` и `hybrid`: при отсутствии значений сервер автоматически нормализует веса и лимиты.
 - Если у провайдера LLM включена поддержка SSE-стриминга (например, GigaChat), можно указать заголовок `Accept: text/event-stream`, тогда ответ придёт постепенно.
 - Поле `context` содержит усечённый список документов, который реально попал в контекст LLM (определяется `contextLimit`).
 - Значения `limit` и `contextLimit` ограничены сервером: максимум 100 результатов и 50 контекстных записей.

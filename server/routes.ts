@@ -9,7 +9,7 @@ import { createHash, randomUUID, randomBytes } from "crypto";
 import { performance } from "perf_hooks";
 import { Agent as HttpsAgent } from "https";
 import { storage } from "./storage";
-import type { WorkspaceMemberWithUser } from "./storage";
+import type { KnowledgeChunkSearchEntry, WorkspaceMemberWithUser } from "./storage";
 import {
   startKnowledgeBaseCrawl,
   getKnowledgeBaseCrawlJob,
@@ -2455,8 +2455,40 @@ const publicVectorizeSchema = z.object({
   collection: z.string().trim().min(1, "Укажите коллекцию Qdrant").optional(),
 });
 
+const publicHybridBm25Schema = z
+  .object({
+    weight: z.coerce.number().min(0).max(1).optional(),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+  })
+  .optional()
+  .default({});
+
+const publicHybridVectorSchema = z
+  .object({
+    weight: z.coerce.number().min(0).max(1).optional(),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+    collection: z.string().trim().min(1).optional(),
+    embeddingProviderId: z.string().trim().min(1).optional(),
+  })
+  .optional()
+  .default({});
+
+const publicHybridConfigSchema = z
+  .object({
+    bm25: publicHybridBm25Schema,
+    vector: publicHybridVectorSchema,
+  })
+  .default({ bm25: {}, vector: {} });
+
 const publicGenerativeSearchSchema = generativeSearchPointsSchema.extend({
   collection: z.string().trim().min(1, "Укажите коллекцию Qdrant"),
+  kbId: z.string().trim().min(1, "Укажите базу знаний").optional(),
+  topK: z.coerce.number().int().min(1).max(20).optional(),
+  hybrid: publicHybridConfigSchema,
+  llmTemperature: z.coerce.number().min(0).max(2).optional(),
+  llmMaxTokens: z.coerce.number().int().min(16).max(4_096).optional(),
+  llmSystemPrompt: z.string().optional(),
+  llmResponseFormat: z.string().optional(),
 });
 
 const scrollCollectionSchema = z.object({
@@ -2674,6 +2706,969 @@ const knowledgeRagRequestSchema = z.object({
     response_format: z.string().optional(),
   }),
 });
+
+type KnowledgeRagRequest = z.infer<typeof knowledgeRagRequestSchema>;
+
+interface KnowledgeBaseRagCombinedChunk {
+  chunkId: string;
+  documentId: string;
+  docTitle: string;
+  sectionTitle: string | null;
+  text: string;
+  snippet: string;
+  bm25Score: number;
+  vectorScore: number;
+  bm25Normalized: number;
+  vectorNormalized: number;
+  combinedScore: number;
+  nodeId: string | null;
+  nodeSlug: string | null;
+}
+
+interface SanitizedVectorSearchResult {
+  id: unknown;
+  payload: Record<string, unknown> | null;
+  score: number | null;
+  shard_key: unknown;
+  order_value: unknown;
+}
+
+interface KnowledgeBaseRagPipelineSuccess {
+  response: {
+    query: string;
+    knowledgeBaseId: string;
+    normalizedQuery: string;
+    answer: string;
+    citations: Array<{
+      chunk_id: string;
+      doc_id: string;
+      doc_title: string;
+      section_title: string | null;
+      snippet: string;
+      score: number;
+      scores: { bm25: number; vector: number };
+      node_id: string | null;
+      node_slug: string | null;
+    }>;
+    chunks: Array<{
+      chunk_id: string;
+      doc_id: string;
+      doc_title: string;
+      section_title: string | null;
+      snippet: string;
+      text: string;
+      score: number;
+      scores: { bm25: number; vector: number };
+      node_id: string | null;
+      node_slug: string | null;
+    }>;
+    usage: { embeddingTokens: number | null; llmTokens: number | null };
+    timings: {
+      total_ms: number;
+      retrieval_ms: number;
+      bm25_ms: number;
+      vector_ms: number;
+      llm_ms: number;
+    };
+    debug: { vectorSearch: Array<Record<string, unknown>> | null };
+    responseFormat: RagResponseFormat;
+  };
+  metadata: {
+    pipelineLog: KnowledgeBaseAskAiPipelineStepLog[];
+    workspaceId: string;
+    embeddingProvider: EmbeddingProvider | null;
+    embeddingResult: EmbeddingVectorResult | null;
+    llmProvider: LlmProvider;
+    llmModel: string | null;
+    llmModelLabel: string | null;
+    sanitizedVectorResults: SanitizedVectorSearchResult[];
+    bm25Sections: Array<KnowledgeChunkSearchEntry>;
+    bm25Weight: number;
+    bm25Limit: number;
+    vectorWeight: number;
+    vectorLimit: number;
+    vectorCollection: string | null;
+    vectorResultCount: number | null;
+    vectorDocumentCount: number | null;
+    combinedResultCount: number | null;
+    embeddingUsageTokens: number | null;
+    llmUsageTokens: number | null;
+    retrievalDuration: number | null;
+    bm25Duration: number | null;
+    vectorDuration: number | null;
+    llmDuration: number | null;
+    totalDuration: number | null;
+    normalizedQuery: string;
+    combinedResults: KnowledgeBaseRagCombinedChunk[];
+  };
+}
+
+async function runKnowledgeBaseRagPipeline(options: {
+  req: Request;
+  body: KnowledgeRagRequest;
+}): Promise<KnowledgeBaseRagPipelineSuccess> {
+  const { req, body } = options;
+
+  const query = body.q.trim();
+  const knowledgeBaseId = body.kb_id.trim();
+
+  if (!query) {
+    throw new HttpError(400, "Укажите поисковый запрос");
+  }
+
+  const pipelineLog: KnowledgeBaseAskAiPipelineStepLog[] = [];
+  const runStartedAt = new Date();
+  let runStatus: "success" | "error" = "success";
+  let runErrorMessage: string | null = null;
+  let workspaceId: string | null = null;
+  let normalizedQuery = query;
+
+  let bm25Limit = body.hybrid.bm25.limit ?? body.top_k;
+  let vectorLimit = body.hybrid.vector.limit ?? body.top_k;
+  let vectorConfigured = Boolean(
+    body.hybrid.vector.collection && body.hybrid.vector.embedding_provider_id,
+  );
+
+  let bm25Weight = body.hybrid.bm25.weight ?? (vectorConfigured ? 0.5 : 1);
+  let vectorWeight = vectorConfigured ? body.hybrid.vector.weight ?? 0.5 : 0;
+
+  let bm25Duration: number | null = null;
+  let vectorDuration: number | null = null;
+  let retrievalDuration: number | null = null;
+  let llmDuration: number | null = null;
+  let totalDuration: number | null = null;
+
+  let embeddingUsageTokens: number | null = null;
+  let llmUsageTokens: number | null = null;
+
+  let bm25ResultCount: number | null = null;
+  let vectorResultCount: number | null = null;
+  let vectorDocumentCount: number | null = null;
+  let combinedResultCount: number | null = null;
+
+  let vectorSearchDetails: Array<Record<string, unknown>> | null = null;
+
+  const vectorDocumentIds = new Set<string>();
+  const vectorChunks: Array<{
+    chunkId: string;
+    score: number;
+    recordId: string | null;
+    payload: Record<string, unknown> | null;
+  }> = [];
+  const sanitizedVectorResults: SanitizedVectorSearchResult[] = [];
+
+  let embeddingProviderId = vectorConfigured
+    ? body.hybrid.vector.embedding_provider_id?.trim() || null
+    : null;
+  let vectorCollection = vectorConfigured
+    ? body.hybrid.vector.collection?.trim() || null
+    : null;
+  let llmProviderId = body.llm.provider?.trim() || null;
+  let llmModel = body.llm.model?.trim() || null;
+  let llmModelLabel: string | null = null;
+
+  let selectedEmbeddingProvider: EmbeddingProvider | null = null;
+  let embeddingResultForMetadata: EmbeddingVectorResult | null = null;
+
+  const startPipelineStep = (
+    key: string,
+    input: Record<string, unknown> | null,
+    title: string,
+  ) => {
+    const step: KnowledgeBaseAskAiPipelineStepLog = {
+      key,
+      title,
+      status: "success",
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      durationMs: null,
+      input: input ? removeUndefinedDeep(input) : null,
+      output: null,
+      error: null,
+    };
+    pipelineLog.push(step);
+    const startedAt = performance.now();
+    return {
+      setInput(nextInput?: Record<string, unknown> | null) {
+        step.input = nextInput ? removeUndefinedDeep(nextInput) : null;
+      },
+      finish(output?: Record<string, unknown> | null) {
+        step.finishedAt = new Date().toISOString();
+        step.durationMs = Number((performance.now() - startedAt).toFixed(2));
+        step.output = output ? removeUndefinedDeep(output) : null;
+      },
+      fail(error: unknown) {
+        step.finishedAt = new Date().toISOString();
+        step.durationMs = Number((performance.now() - startedAt).toFixed(2));
+        step.status = "error";
+        step.error = getErrorDetails(error);
+      },
+    };
+  };
+
+  const skipPipelineStep = (key: string, title: string, reason: string) => {
+    pipelineLog.push({
+      key,
+      title,
+      status: "skipped",
+      startedAt: null,
+      finishedAt: null,
+      durationMs: null,
+      input: { reason },
+      output: null,
+      error: null,
+    });
+  };
+
+  const finalizeRunLog = async () => {
+    if (!workspaceId) {
+      return;
+    }
+
+    const toNumber = (value: number | null) =>
+      value === null ? null : Number(value.toFixed(2));
+    const totalTokens =
+      embeddingUsageTokens === null && llmUsageTokens === null
+        ? null
+        : (embeddingUsageTokens ?? 0) + (llmUsageTokens ?? 0);
+
+    try {
+      await storage.recordKnowledgeBaseAskAiRun({
+        workspaceId,
+        knowledgeBaseId,
+        prompt: query,
+        normalizedQuery,
+        status: runStatus,
+        errorMessage: runErrorMessage,
+        topK: body.top_k ?? null,
+        bm25Weight,
+        bm25Limit,
+        vectorWeight,
+        vectorLimit: vectorConfigured ? vectorLimit : null,
+        vectorCollection: vectorConfigured ? vectorCollection : null,
+        embeddingProviderId: vectorConfigured ? embeddingProviderId : null,
+        llmProviderId,
+        llmModel,
+        bm25ResultCount,
+        vectorResultCount,
+        vectorDocumentCount,
+        combinedResultCount,
+        embeddingTokens: embeddingUsageTokens,
+        llmTokens: llmUsageTokens,
+        totalTokens,
+        retrievalDurationMs: toNumber(retrievalDuration),
+        bm25DurationMs: toNumber(bm25Duration),
+        vectorDurationMs: vectorResultCount !== null ? toNumber(vectorDuration) : null,
+        llmDurationMs:
+          llmUsageTokens !== null || (llmDuration !== null && llmDuration > 0)
+            ? toNumber(llmDuration)
+            : null,
+        totalDurationMs: toNumber(totalDuration),
+        startedAt: runStartedAt.toISOString(),
+        pipelineLog,
+      });
+    } catch (logError) {
+      console.error(
+        `[public/rag/answer] Не удалось сохранить журнал выполнения Ask AI: ${getErrorDetails(
+          logError,
+        )}`,
+        { workspaceId, knowledgeBaseId },
+      );
+    }
+  };
+
+  try {
+    const base = await storage.getKnowledgeBase(knowledgeBaseId);
+    if (!base) {
+      runStatus = "error";
+      runErrorMessage = "База знаний не найдена";
+      await finalizeRunLog();
+      throw new HttpError(404, "База знаний не найдена");
+    }
+
+    workspaceId = base.workspaceId;
+
+    vectorConfigured = Boolean(vectorCollection && embeddingProviderId);
+    if (!vectorConfigured) {
+      vectorWeight = 0;
+      if (bm25Weight <= 0) {
+        bm25Weight = 1;
+      }
+    }
+
+    const weightSum = bm25Weight + vectorWeight;
+    if (weightSum > 0) {
+      bm25Weight /= weightSum;
+      vectorWeight /= weightSum;
+    } else {
+      bm25Weight = 1;
+      vectorWeight = 0;
+    }
+
+    const totalStart = performance.now();
+    const retrievalStart = performance.now();
+    const suggestionLimit = Math.max(bm25Limit, vectorLimit, body.top_k);
+
+    type SuggestSections = Awaited<
+      ReturnType<typeof storage.searchKnowledgeBaseSuggestions>
+    >["sections"];
+    let bm25Sections: SuggestSections = [];
+
+    const bm25Step = startPipelineStep(
+      "bm25_search",
+      { limit: suggestionLimit, weight: bm25Weight },
+      "BM25 поиск",
+    );
+    const bm25Start = performance.now();
+    try {
+      const bm25Suggestions = await storage.searchKnowledgeBaseSuggestions(
+        knowledgeBaseId,
+        query,
+        suggestionLimit,
+      );
+      bm25Duration = performance.now() - bm25Start;
+      normalizedQuery = bm25Suggestions.normalizedQuery || query;
+      bm25Sections = bm25Suggestions.sections
+        .filter((entry) => entry.source === "content")
+        .slice(0, bm25Limit);
+      bm25ResultCount = bm25Sections.length;
+      bm25Step.finish({
+        normalizedQuery,
+        candidates: bm25ResultCount,
+      });
+    } catch (error) {
+      bm25Duration = performance.now() - bm25Start;
+      bm25Step.fail(error);
+      throw error;
+    }
+
+    if (vectorWeight > 0) {
+      const vectorStep = startPipelineStep(
+        "vector_search",
+        {
+          limit: vectorLimit,
+          collection: vectorCollection,
+          embeddingProviderId,
+        },
+        "Векторный поиск",
+      );
+      const vectorStart = performance.now();
+      try {
+        const embeddingProvider = await storage.getEmbeddingProvider(
+          body.hybrid.vector.embedding_provider_id!,
+          workspaceId,
+        );
+
+        if (!embeddingProvider) {
+          throw new HttpError(404, "Сервис эмбеддингов не найден");
+        }
+
+        if (!embeddingProvider.isActive) {
+          throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+        }
+
+        embeddingProviderId = embeddingProvider.id;
+        selectedEmbeddingProvider = embeddingProvider;
+
+        const embeddingStep = startPipelineStep(
+          "vector_embedding",
+          {
+            providerId: embeddingProvider.id,
+            model: embeddingProvider.model,
+            text: normalizedQuery,
+          },
+          "Векторизация запроса",
+        );
+
+        let embeddingResult: EmbeddingVectorResult;
+        try {
+          const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
+          embeddingResult = await fetchEmbeddingVector(
+            embeddingProvider,
+            embeddingAccessToken,
+            normalizedQuery,
+            {
+              onBeforeRequest(details) {
+                embeddingStep.setInput({
+                  providerId: embeddingProvider.id,
+                  model: embeddingProvider.model,
+                  text: normalizedQuery,
+                  request: details,
+                });
+              },
+            },
+          );
+          embeddingUsageTokens = embeddingResult.usageTokens ?? null;
+          embeddingResultForMetadata = embeddingResult;
+          embeddingStep.finish({
+            usageTokens: embeddingUsageTokens,
+            embeddingId: embeddingResult.embeddingId ?? null,
+            vectorDimensions: embeddingResult.vector.length,
+            response: embeddingResult.rawResponse,
+          });
+        } catch (error) {
+          embeddingUsageTokens = null;
+          embeddingResultForMetadata = null;
+          embeddingStep.fail(error);
+          throw error;
+        }
+
+        const collectionName = body.hybrid.vector.collection!.trim();
+        vectorCollection = collectionName;
+
+        if (!workspaceId) {
+          throw new Error("Не удалось определить рабочее пространство для публичного API поиска");
+        }
+
+        const embedKey = await storage.getOrCreateWorkspaceEmbedKey(
+          workspaceId,
+          collectionName,
+          knowledgeBaseId,
+        );
+        const apiBaseUrl = resolvePublicApiBaseUrl(req);
+        const requestUrl = new URL(
+          "/api/public/collections/search/vector",
+          `${apiBaseUrl}/`,
+        ).toString();
+
+        const vectorPayload = buildVectorPayload(
+          embeddingResult.vector,
+          embeddingProvider.qdrantConfig?.vectorFieldName,
+        );
+
+        const vectorRequestPayload = removeUndefinedDeep({
+          collection: collectionName,
+          workspace_id: workspaceId,
+          vector: vectorPayload,
+          limit: vectorLimit,
+          filter: {
+            must: [
+              {
+                key: "base.id",
+                match: { value: knowledgeBaseId },
+              },
+            ],
+          },
+          withPayload: true,
+        });
+
+        vectorStep.setInput({
+          limit: vectorLimit,
+          collection: vectorCollection,
+          embeddingProviderId,
+          request: {
+            url: requestUrl,
+            headers: {
+              "Content-Type": "application/json",
+              "X-API-Key": "***",
+            },
+            payload: {
+              ...vectorRequestPayload,
+              vector: summarizeVectorForLog(vectorRequestPayload.vector),
+            },
+          },
+        });
+
+        let vectorResponse: FetchResponse;
+        try {
+          vectorResponse = await fetch(requestUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-API-Key": embedKey.publicKey,
+            },
+            body: JSON.stringify(vectorRequestPayload),
+          });
+        } catch (networkError) {
+          throw new Error(
+            `Не удалось выполнить запрос к публичному API векторного поиска: ${getErrorDetails(networkError)}`,
+          );
+        }
+
+        const rawVectorResponse = await vectorResponse.text();
+        vectorDuration = performance.now() - vectorStart;
+        const parsedVectorResponse = parseJson(rawVectorResponse);
+
+        if (!vectorResponse.ok) {
+          const errorMessage =
+            parsedVectorResponse && typeof parsedVectorResponse === "object" &&
+            typeof (parsedVectorResponse as Record<string, unknown>).error === "string"
+              ? ((parsedVectorResponse as Record<string, unknown>).error as string)
+              : `Публичное API векторного поиска вернуло статус ${vectorResponse.status}`;
+          throw new HttpError(vectorResponse.status, errorMessage, parsedVectorResponse);
+        }
+
+        if (
+          !parsedVectorResponse ||
+          typeof parsedVectorResponse !== "object" ||
+          !Array.isArray((parsedVectorResponse as Record<string, unknown>).results)
+        ) {
+          throw new Error("Публичное API векторного поиска вернуло некорректный ответ");
+        }
+
+        const vectorResults = (parsedVectorResponse as {
+          results: Array<Record<string, unknown>>;
+        }).results;
+        vectorSearchDetails = vectorResults.map((item) => ({
+          id: item.id ?? null,
+          score: normalizeVectorScore(item.score),
+          payload: (item.payload as Record<string, unknown> | undefined) ?? null,
+        }));
+
+        sanitizedVectorResults.push(
+          ...vectorResults.map((item) => ({
+            id: item.id ?? null,
+            payload: (item.payload as Record<string, unknown> | undefined) ?? null,
+            score: normalizeVectorScore(item.score),
+            shard_key: (item as Record<string, unknown>).shard_key ?? null,
+            order_value: (item as Record<string, unknown>).order_value ?? null,
+          })),
+        );
+
+        for (const item of vectorResults) {
+          const payload = (item.payload as Record<string, unknown> | undefined) ?? null;
+          const rawScore = normalizeVectorScore(item.score);
+
+          vectorChunks.push({
+            chunkId: typeof payload?.chunk_id === "string" ? payload.chunk_id : "",
+            score: rawScore ?? 0,
+            recordId: typeof item.id === "string" ? item.id : null,
+            payload,
+          });
+        }
+
+        vectorResultCount = vectorChunks.length;
+        vectorStep.finish({
+          hits: vectorResultCount,
+          usageTokens: embeddingUsageTokens,
+          response: {
+            status: vectorResponse.status,
+            collection:
+              typeof (parsedVectorResponse as Record<string, unknown>).collection === "string"
+                ? ((parsedVectorResponse as Record<string, unknown>).collection as string)
+                : collectionName,
+            results: vectorSearchDetails,
+          },
+        });
+      } catch (error) {
+        vectorDuration = performance.now() - vectorStart;
+        vectorStep.fail(error);
+        throw error;
+      }
+    } else {
+      skipPipelineStep(
+        "vector_embedding",
+        "Векторизация запроса",
+        "Векторный поиск отключён",
+      );
+      skipPipelineStep("vector_search", "Векторный поиск", "Векторный поиск отключён");
+    }
+
+    const chunkDetailsFromVector = await storage.getKnowledgeChunksByIds(
+      knowledgeBaseId,
+      Array.from(new Set(vectorChunks.map((entry) => entry.chunkId).filter(Boolean))),
+    );
+    const vectorRecordIds = vectorChunks
+      .map((entry) => entry.recordId)
+      .filter((value): value is string => Boolean(value));
+    const chunkDetailsFromRecords =
+      vectorRecordIds.length > 0
+        ? await storage.getKnowledgeChunksByVectorRecords(knowledgeBaseId, vectorRecordIds)
+        : [];
+
+    const chunkDetailsMap = new Map<
+      string,
+      {
+        documentId: string;
+        docTitle: string;
+        sectionTitle: string | null;
+        text: string;
+        nodeId: string | null;
+        nodeSlug: string | null;
+      }
+    >();
+    const recordToChunk = new Map<string, string>();
+
+    for (const detail of chunkDetailsFromVector) {
+      chunkDetailsMap.set(detail.chunkId, {
+        documentId: detail.documentId,
+        docTitle: detail.docTitle,
+        sectionTitle: detail.sectionTitle,
+        text: detail.text,
+        nodeId: detail.nodeId,
+        nodeSlug: detail.nodeSlug,
+      });
+    }
+
+    for (const detail of chunkDetailsFromRecords) {
+      chunkDetailsMap.set(detail.chunkId, {
+        documentId: detail.documentId,
+        docTitle: detail.docTitle,
+        sectionTitle: detail.sectionTitle,
+        text: detail.text,
+        nodeId: detail.nodeId,
+        nodeSlug: detail.nodeSlug,
+      });
+
+      if (detail.vectorRecordId) {
+        recordToChunk.set(detail.vectorRecordId, detail.chunkId);
+      }
+    }
+
+    const aggregated = new Map<
+      string,
+      {
+        chunkId: string;
+        documentId: string;
+        docTitle: string;
+        sectionTitle: string | null;
+        text: string;
+        snippet: string;
+        bm25Score: number;
+        vectorScore: number;
+        nodeId: string | null;
+        nodeSlug: string | null;
+      }
+    >();
+
+    const buildSnippet = (text: string) => {
+      const trimmed = text.trim();
+      if (trimmed.length <= 320) {
+        return trimmed;
+      }
+      return `${trimmed.slice(0, 320)}…`;
+    };
+
+    for (const entry of bm25Sections) {
+      const snippet = entry.snippet || buildSnippet(entry.text);
+      aggregated.set(entry.chunkId, {
+        chunkId: entry.chunkId,
+        documentId: entry.documentId,
+        docTitle: entry.docTitle,
+        sectionTitle: entry.sectionTitle,
+        text: entry.text,
+        snippet,
+        bm25Score: entry.score,
+        vectorScore: 0,
+        nodeId: entry.nodeId ?? null,
+        nodeSlug: entry.nodeSlug ?? null,
+      });
+    }
+
+    for (const entry of vectorChunks) {
+      let chunkId = entry.chunkId;
+      if (!chunkId && entry.recordId) {
+        chunkId = recordToChunk.get(entry.recordId) ?? "";
+      }
+
+      if (!chunkId) {
+        continue;
+      }
+
+      const detail = chunkDetailsMap.get(chunkId);
+      if (!detail) {
+        continue;
+      }
+
+      const existing = aggregated.get(chunkId);
+      const baseSnippet =
+        entry.payload && typeof entry.payload === "object"
+          ? (() => {
+              const chunkPayload = (entry.payload as { chunk?: { excerpt?: unknown } }).chunk;
+              if (chunkPayload && typeof chunkPayload.excerpt === "string") {
+                return chunkPayload.excerpt;
+              }
+              return null;
+            })()
+          : null;
+
+      const snippet = baseSnippet ?? existing?.snippet ?? buildSnippet(detail.text);
+      const nodeId = detail.nodeId ?? existing?.nodeId ?? null;
+      const nodeSlug = detail.nodeSlug ?? existing?.nodeSlug ?? null;
+
+      aggregated.set(chunkId, {
+        chunkId,
+        documentId: detail.documentId,
+        docTitle: detail.docTitle,
+        sectionTitle: detail.sectionTitle,
+        text: detail.text,
+        snippet,
+        bm25Score: existing?.bm25Score ?? 0,
+        vectorScore: Math.max(existing?.vectorScore ?? 0, entry.score),
+        nodeId,
+        nodeSlug,
+      });
+
+      vectorDocumentIds.add(detail.documentId);
+    }
+
+    const bm25Max = Math.max(...Array.from(aggregated.values()).map((item) => item.bm25Score), 0);
+    const vectorMax = Math.max(...Array.from(aggregated.values()).map((item) => item.vectorScore), 0);
+
+    const combinedStep = startPipelineStep(
+      "combine_results",
+      { topK: body.top_k, bm25Weight, vectorWeight },
+      "Агрегация результатов",
+    );
+
+    const combinedResults = Array.from(aggregated.values())
+      .map((item) => {
+        const bm25Normalized = bm25Max > 0 ? item.bm25Score / bm25Max : 0;
+        const vectorNormalized = vectorMax > 0 ? item.vectorScore / vectorMax : 0;
+        const combinedScore = bm25Normalized * bm25Weight + vectorNormalized * vectorWeight;
+
+        return {
+          ...item,
+          combinedScore,
+          bm25Normalized,
+          vectorNormalized,
+        } satisfies KnowledgeBaseRagCombinedChunk;
+      })
+      .sort((a, b) => b.combinedScore - a.combinedScore)
+      .slice(0, body.top_k);
+
+    combinedResultCount = combinedResults.length;
+    vectorDocumentCount = vectorResultCount !== null ? vectorDocumentIds.size : null;
+    combinedStep.finish({ combined: combinedResultCount, vectorDocuments: vectorDocumentCount });
+
+    const contextRecords: LlmContextRecord[] = combinedResults.map((item, index) => ({
+      index,
+      score: item.combinedScore,
+      payload: {
+        chunk: {
+          id: item.chunkId,
+          text: item.text,
+          snippet: item.snippet,
+          sectionTitle: item.sectionTitle,
+          nodeId: item.nodeId,
+          nodeSlug: item.nodeSlug,
+        },
+        document: {
+          id: item.documentId,
+          title: item.docTitle,
+          nodeId: item.nodeId,
+          nodeSlug: item.nodeSlug,
+        },
+        scores: {
+          bm25: item.bm25Score,
+          vector: item.vectorScore,
+          bm25Normalized: item.bm25Normalized,
+          vectorNormalized: item.vectorNormalized,
+        },
+      },
+    }));
+
+    retrievalDuration = performance.now() - retrievalStart;
+
+    const ragResponseFormat = normalizeResponseFormat(body.llm.response_format);
+    if (ragResponseFormat === null) {
+      runStatus = "error";
+      runErrorMessage = "Некорректный формат ответа";
+      await finalizeRunLog();
+      throw new HttpError(400, "Некорректный формат ответа", {
+        details: "Поддерживаются значения text, md/markdown или html",
+      });
+    }
+    const responseFormat: RagResponseFormat = ragResponseFormat ?? "text";
+
+    const llmProvider = await storage.getLlmProvider(body.llm.provider, workspaceId);
+    if (!llmProvider) {
+      runStatus = "error";
+      runErrorMessage = "Провайдер LLM не найден";
+      await finalizeRunLog();
+      throw new HttpError(404, "Провайдер LLM не найден");
+    }
+
+    if (!llmProvider.isActive) {
+      throw new HttpError(400, "Выбранный провайдер LLM отключён");
+    }
+
+    const requestConfig = mergeLlmRequestConfig(llmProvider);
+
+    if (body.llm.system_prompt !== undefined) {
+      requestConfig.systemPrompt = body.llm.system_prompt || undefined;
+    }
+
+    if (body.llm.temperature !== undefined) {
+      requestConfig.temperature = body.llm.temperature;
+    }
+
+    if (body.llm.max_tokens !== undefined) {
+      requestConfig.maxTokens = body.llm.max_tokens;
+    }
+
+    const configuredProvider: LlmProvider = {
+      ...llmProvider,
+      requestConfig,
+    };
+
+    llmProviderId = llmProvider.id;
+
+    const sanitizedModels = sanitizeLlmModelOptions(llmProvider.availableModels);
+    const requestedModel = typeof body.llm.model === "string" ? body.llm.model.trim() : "";
+    const normalizedModelFromList =
+      sanitizedModels.find((model) => model.value === requestedModel)?.value ??
+      sanitizedModels.find((model) => model.label === requestedModel)?.value ??
+      null;
+    const selectedModelValue =
+      (normalizedModelFromList && normalizedModelFromList.trim().length > 0
+        ? normalizedModelFromList.trim()
+        : undefined) ??
+      (requestedModel.length > 0 ? requestedModel : undefined) ??
+      llmProvider.model;
+    const selectedModelMeta =
+      sanitizedModels.find((model) => model.value === selectedModelValue) ?? null;
+    llmModel = selectedModelValue ?? null;
+    llmModelLabel = selectedModelMeta?.label ?? selectedModelValue ?? null;
+
+    const llmAccessToken = await fetchAccessToken(configuredProvider);
+    const llmStep = startPipelineStep(
+      "llm_completion",
+      { providerId: llmProviderId, model: llmModel },
+      "Генерация ответа LLM",
+    );
+    const llmStart = performance.now();
+    let completion;
+    try {
+      completion = await fetchLlmCompletion(
+        configuredProvider,
+        llmAccessToken,
+        normalizedQuery,
+        contextRecords,
+        selectedModelValue,
+        {
+          responseFormat,
+          onBeforeRequest(details) {
+            llmStep.setInput({
+              providerId: llmProviderId,
+              model: llmModel,
+              request: details,
+            });
+          },
+        },
+      );
+      llmDuration = performance.now() - llmStart;
+      llmUsageTokens = completion.usageTokens ?? null;
+      llmStep.finish({
+        tokens: llmUsageTokens,
+        response: completion.rawResponse,
+        answerPreview: completion.answer.slice(0, 160),
+      });
+    } catch (error) {
+      llmDuration = performance.now() - llmStart;
+      llmStep.fail(error);
+      throw error;
+    }
+
+    totalDuration = performance.now() - totalStart;
+
+    await storage.recordKnowledgeBaseRagRequest({
+      workspaceId,
+      knowledgeBaseId,
+      topK: body.top_k ?? null,
+      bm25Weight,
+      bm25Limit,
+      vectorWeight,
+      vectorLimit: vectorConfigured ? vectorLimit : null,
+      embeddingProviderId: vectorConfigured ? embeddingProviderId : null,
+      collection: vectorConfigured ? vectorCollection : null,
+    });
+
+    const citations = combinedResults.map((item) => ({
+      chunk_id: item.chunkId,
+      doc_id: item.documentId,
+      doc_title: item.docTitle,
+      section_title: item.sectionTitle,
+      snippet: item.snippet,
+      score: item.combinedScore,
+      scores: {
+        bm25: item.bm25Score,
+        vector: item.vectorScore,
+      },
+      node_id: item.nodeId ?? null,
+      node_slug: item.nodeSlug ?? null,
+    }));
+
+    const responseChunks = combinedResults.map((item) => ({
+      chunk_id: item.chunkId,
+      doc_id: item.documentId,
+      doc_title: item.docTitle,
+      section_title: item.sectionTitle,
+      snippet: item.snippet,
+      text: item.text,
+      score: item.combinedScore,
+      scores: {
+        bm25: item.bm25Score,
+        vector: item.vectorScore,
+      },
+      node_id: item.nodeId ?? null,
+      node_slug: item.nodeSlug ?? null,
+    }));
+
+    const response = {
+      query,
+      knowledgeBaseId,
+      normalizedQuery,
+      answer: completion.answer,
+      citations,
+      chunks: responseChunks,
+      usage: {
+        embeddingTokens: embeddingUsageTokens,
+        llmTokens: llmUsageTokens,
+      },
+      timings: {
+        total_ms: Number((totalDuration ?? 0).toFixed(2)),
+        retrieval_ms: Number((retrievalDuration ?? 0).toFixed(2)),
+        bm25_ms: Number((bm25Duration ?? 0).toFixed(2)),
+        vector_ms: Number((vectorDuration ?? 0).toFixed(2)),
+        llm_ms: Number((llmDuration ?? 0).toFixed(2)),
+      },
+      debug: {
+        vectorSearch: vectorSearchDetails,
+      },
+      responseFormat,
+    } as const;
+
+    await finalizeRunLog();
+
+    return {
+      response,
+      metadata: {
+        pipelineLog,
+        workspaceId,
+        embeddingProvider: selectedEmbeddingProvider,
+        embeddingResult: embeddingResultForMetadata,
+        llmProvider,
+        llmModel,
+        llmModelLabel,
+        sanitizedVectorResults,
+        bm25Sections,
+        bm25Weight,
+        bm25Limit,
+        vectorWeight,
+        vectorLimit,
+        vectorCollection,
+        vectorResultCount,
+        vectorDocumentCount,
+        combinedResultCount,
+        embeddingUsageTokens,
+        llmUsageTokens,
+        retrievalDuration,
+        bm25Duration,
+        vectorDuration,
+        llmDuration,
+        totalDuration,
+        normalizedQuery,
+        combinedResults,
+      },
+    };
+  } catch (error) {
+    runStatus = "error";
+    runErrorMessage = getErrorDetails(error);
+    await finalizeRunLog();
+    throw error;
+  }
+}
 
 // Public search API request/response schemas
 
@@ -2961,795 +3956,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const body = parsed.data;
-    const query = body.q.trim();
-    const knowledgeBaseId = body.kb_id.trim();
-
-    if (!query) {
-      return res.status(400).json({ error: "Укажите поисковый запрос" });
-    }
-
-    const pipelineLog: KnowledgeBaseAskAiPipelineStepLog[] = [];
-    const runStartedAt = new Date();
-    let runStatus: "success" | "error" = "success";
-    let runErrorMessage: string | null = null;
-    let workspaceId: string | null = null;
-    let normalizedQuery = query;
-
-    let bm25Limit = body.hybrid.bm25.limit ?? body.top_k;
-    let vectorLimit = body.hybrid.vector.limit ?? body.top_k;
-    let vectorConfigured = Boolean(
-      body.hybrid.vector.collection && body.hybrid.vector.embedding_provider_id,
-    );
-
-    let bm25Weight = body.hybrid.bm25.weight ?? (vectorConfigured ? 0.5 : 1);
-    let vectorWeight = vectorConfigured ? body.hybrid.vector.weight ?? 0.5 : 0;
-
-    let bm25Duration: number | null = null;
-    let vectorDuration: number | null = null;
-    let retrievalDuration: number | null = null;
-    let llmDuration: number | null = null;
-    let totalDuration: number | null = null;
-
-    let embeddingUsageTokens: number | null = null;
-    let llmUsageTokens: number | null = null;
-
-    let bm25ResultCount: number | null = null;
-    let vectorResultCount: number | null = null;
-    let vectorDocumentCount: number | null = null;
-    let combinedResultCount: number | null = null;
-
-    let vectorSearchDetails: Array<Record<string, unknown>> | null = null;
-
-    const vectorDocumentIds = new Set<string>();
-    const vectorChunks: Array<{
-      chunkId: string;
-      score: number;
-      recordId: string | null;
-      payload: Record<string, unknown> | null;
-    }> = [];
-
-    let embeddingProviderId = vectorConfigured
-      ? body.hybrid.vector.embedding_provider_id?.trim() || null
-      : null;
-    let vectorCollection = vectorConfigured
-      ? body.hybrid.vector.collection?.trim() || null
-      : null;
-    let llmProviderId = body.llm.provider?.trim() || null;
-    let llmModel = body.llm.model?.trim() || null;
-
-    const startPipelineStep = (
-      key: string,
-      input: Record<string, unknown> | null,
-      title: string,
-    ) => {
-    const step: KnowledgeBaseAskAiPipelineStepLog = {
-      key,
-      title,
-      status: "success",
-      startedAt: new Date().toISOString(),
-      finishedAt: null,
-      durationMs: null,
-      input: input ? removeUndefinedDeep(input) : null,
-      output: null,
-      error: null,
-    };
-    pipelineLog.push(step);
-    const startedAt = performance.now();
-    return {
-      setInput(nextInput?: Record<string, unknown> | null) {
-        step.input = nextInput ? removeUndefinedDeep(nextInput) : null;
-      },
-      finish(output?: Record<string, unknown> | null) {
-        step.finishedAt = new Date().toISOString();
-        step.durationMs = Number((performance.now() - startedAt).toFixed(2));
-        step.output = output ? removeUndefinedDeep(output) : null;
-      },
-      fail(error: unknown) {
-        step.finishedAt = new Date().toISOString();
-        step.durationMs = Number((performance.now() - startedAt).toFixed(2));
-        step.status = "error";
-        step.error = getErrorDetails(error);
-      },
-    };
-  };
-
-    const skipPipelineStep = (key: string, title: string, reason: string) => {
-      pipelineLog.push({
-        key,
-        title,
-        status: "skipped",
-        startedAt: null,
-        finishedAt: null,
-        durationMs: null,
-        input: { reason },
-        output: null,
-        error: null,
-      });
-    };
-
-    const finalizeRunLog = async () => {
-      if (!workspaceId) {
-        return;
-      }
-
-      const toNumber = (value: number | null) =>
-        value === null ? null : Number(value.toFixed(2));
-      const totalTokens =
-        embeddingUsageTokens === null && llmUsageTokens === null
-          ? null
-          : (embeddingUsageTokens ?? 0) + (llmUsageTokens ?? 0);
-
-      try {
-        await storage.recordKnowledgeBaseAskAiRun({
-          workspaceId,
-          knowledgeBaseId,
-          prompt: query,
-          normalizedQuery,
-          status: runStatus,
-          errorMessage: runErrorMessage,
-          topK: body.top_k ?? null,
-          bm25Weight,
-          bm25Limit,
-          vectorWeight,
-          vectorLimit: vectorConfigured ? vectorLimit : null,
-          vectorCollection: vectorConfigured ? vectorCollection : null,
-          embeddingProviderId: vectorConfigured ? embeddingProviderId : null,
-          llmProviderId,
-          llmModel,
-          bm25ResultCount,
-          vectorResultCount,
-          vectorDocumentCount,
-          combinedResultCount,
-          embeddingTokens: embeddingUsageTokens,
-          llmTokens: llmUsageTokens,
-          totalTokens,
-          retrievalDurationMs: toNumber(retrievalDuration),
-          bm25DurationMs: toNumber(bm25Duration),
-          vectorDurationMs: vectorResultCount !== null ? toNumber(vectorDuration) : null,
-          llmDurationMs:
-            llmUsageTokens !== null || (llmDuration !== null && llmDuration > 0)
-              ? toNumber(llmDuration)
-              : null,
-          totalDurationMs: toNumber(totalDuration),
-          startedAt: runStartedAt.toISOString(),
-          pipelineLog,
-        });
-      } catch (logError) {
-        console.error(
-          `[public/rag/answer] Не удалось сохранить журнал выполнения Ask AI: ${getErrorDetails(
-            logError,
-          )}`,
-          { workspaceId, knowledgeBaseId },
-        );
-      }
-    };
 
     try {
-      const base = await storage.getKnowledgeBase(knowledgeBaseId);
-      if (!base) {
-        runStatus = "error";
-        runErrorMessage = "База знаний не найдена";
-        await finalizeRunLog();
-        return res.status(404).json({ error: "База знаний не найдена" });
-      }
-
-      workspaceId = base.workspaceId;
-
-      vectorConfigured = Boolean(vectorCollection && embeddingProviderId);
-      if (!vectorConfigured) {
-        vectorWeight = 0;
-        if (bm25Weight <= 0) {
-          bm25Weight = 1;
-        }
-      }
-
-      const weightSum = bm25Weight + vectorWeight;
-      if (weightSum > 0) {
-        bm25Weight /= weightSum;
-        vectorWeight /= weightSum;
-      } else {
-        bm25Weight = 1;
-        vectorWeight = 0;
-      }
-
-      const totalStart = performance.now();
-      const retrievalStart = performance.now();
-      const suggestionLimit = Math.max(bm25Limit, vectorLimit, body.top_k);
-
-      type SuggestSections = Awaited<
-        ReturnType<typeof storage.searchKnowledgeBaseSuggestions>
-      >["sections"];
-      let bm25Sections: SuggestSections = [];
-
-      const bm25Step = startPipelineStep(
-        "bm25_search",
-        { limit: suggestionLimit, weight: bm25Weight },
-        "BM25 поиск",
-      );
-      const bm25Start = performance.now();
-      try {
-        const bm25Suggestions = await storage.searchKnowledgeBaseSuggestions(
-          knowledgeBaseId,
-          query,
-          suggestionLimit,
-        );
-        bm25Duration = performance.now() - bm25Start;
-        normalizedQuery = bm25Suggestions.normalizedQuery || query;
-        bm25Sections = bm25Suggestions.sections
-          .filter((entry) => entry.source === "content")
-          .slice(0, bm25Limit);
-        bm25ResultCount = bm25Sections.length;
-        bm25Step.finish({
-          normalizedQuery,
-          candidates: bm25ResultCount,
-        });
-      } catch (error) {
-        bm25Duration = performance.now() - bm25Start;
-        bm25Step.fail(error);
-        throw error;
-      }
-
-      if (vectorWeight > 0) {
-        const vectorStep = startPipelineStep(
-          "vector_search",
-          {
-            limit: vectorLimit,
-            collection: vectorCollection,
-            embeddingProviderId,
-          },
-          "Векторный поиск",
-        );
-        const vectorStart = performance.now();
-        try {
-          const embeddingProvider = await storage.getEmbeddingProvider(
-            body.hybrid.vector.embedding_provider_id!,
-            workspaceId,
-          );
-
-          if (!embeddingProvider) {
-            throw new HttpError(404, "Сервис эмбеддингов не найден");
-          }
-
-          if (!embeddingProvider.isActive) {
-            throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
-          }
-
-          embeddingProviderId = embeddingProvider.id;
-
-          const embeddingStep = startPipelineStep(
-            "vector_embedding",
-            {
-              providerId: embeddingProvider.id,
-              model: embeddingProvider.model,
-              text: normalizedQuery,
-            },
-            "Векторизация запроса",
-          );
-
-          let embeddingResult: EmbeddingVectorResult;
-          try {
-            const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
-            embeddingResult = await fetchEmbeddingVector(
-              embeddingProvider,
-              embeddingAccessToken,
-              normalizedQuery,
-              {
-                onBeforeRequest(details) {
-                  embeddingStep.setInput({
-                    providerId: embeddingProvider.id,
-                    model: embeddingProvider.model,
-                    text: normalizedQuery,
-                    request: details,
-                  });
-                },
-              },
-            );
-            embeddingUsageTokens = embeddingResult.usageTokens ?? null;
-            embeddingStep.finish({
-              usageTokens: embeddingUsageTokens,
-              embeddingId: embeddingResult.embeddingId ?? null,
-              vectorDimensions: embeddingResult.vector.length,
-              response: embeddingResult.rawResponse,
-            });
-          } catch (error) {
-            embeddingUsageTokens = null;
-            embeddingStep.fail(error);
-            throw error;
-          }
-
-          const collectionName = body.hybrid.vector.collection!.trim();
-          vectorCollection = collectionName;
-
-          if (!workspaceId) {
-            throw new Error("Не удалось определить рабочее пространство для публичного API поиска");
-          }
-
-          const embedKey = await storage.getOrCreateWorkspaceEmbedKey(
-            workspaceId,
-            collectionName,
-            knowledgeBaseId,
-          );
-          const apiBaseUrl = resolvePublicApiBaseUrl(req);
-          const requestUrl = new URL(
-            "/api/public/collections/search/vector",
-            `${apiBaseUrl}/`,
-          ).toString();
-
-          const vectorPayload = buildVectorPayload(
-            embeddingResult.vector,
-            embeddingProvider.qdrantConfig?.vectorFieldName,
-          );
-
-          const vectorRequestPayload = removeUndefinedDeep({
-            collection: collectionName,
-            workspace_id: workspaceId,
-            vector: vectorPayload,
-            limit: vectorLimit,
-            filter: {
-              must: [
-                {
-                  key: "base.id",
-                  match: { value: knowledgeBaseId },
-                },
-              ],
-            },
-            withPayload: true,
-          });
-
-          vectorStep.setInput({
-            limit: vectorLimit,
-            collection: vectorCollection,
-            embeddingProviderId,
-            request: {
-              url: requestUrl,
-              headers: {
-                "Content-Type": "application/json",
-                "X-API-Key": "***",
-              },
-              payload: {
-                ...vectorRequestPayload,
-                vector: summarizeVectorForLog(vectorRequestPayload.vector),
-              },
-            },
-          });
-
-          let vectorResponse: FetchResponse;
-          try {
-            vectorResponse = await fetch(requestUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-API-Key": embedKey.publicKey,
-              },
-              body: JSON.stringify(vectorRequestPayload),
-            });
-          } catch (networkError) {
-            throw new Error(
-              `Не удалось выполнить запрос к публичному API векторного поиска: ${getErrorDetails(networkError)}`,
-            );
-          }
-
-          const rawVectorResponse = await vectorResponse.text();
-          vectorDuration = performance.now() - vectorStart;
-          const parsedVectorResponse = parseJson(rawVectorResponse);
-
-          if (!vectorResponse.ok) {
-            const errorMessage =
-              parsedVectorResponse && typeof parsedVectorResponse === "object" &&
-              typeof (parsedVectorResponse as Record<string, unknown>).error === "string"
-                ? ((parsedVectorResponse as Record<string, unknown>).error as string)
-                : `Публичное API векторного поиска вернуло статус ${vectorResponse.status}`;
-            throw new HttpError(vectorResponse.status, errorMessage, parsedVectorResponse);
-          }
-
-          if (
-            !parsedVectorResponse ||
-            typeof parsedVectorResponse !== "object" ||
-            !Array.isArray((parsedVectorResponse as Record<string, unknown>).results)
-          ) {
-            throw new Error("Публичное API векторного поиска вернуло некорректный ответ");
-          }
-
-          const vectorResults = (parsedVectorResponse as {
-            results: Array<Record<string, unknown>>;
-          }).results;
-          vectorSearchDetails = vectorResults.map((item) => ({
-            id: item.id ?? null,
-            score: normalizeVectorScore(item.score),
-            payload: (item.payload as Record<string, unknown> | undefined) ?? null,
-          }));
-
-          for (const item of vectorResults) {
-            const payload = (item.payload as Record<string, unknown> | undefined) ?? null;
-            const rawScore = normalizeVectorScore(item.score);
-
-            vectorChunks.push({
-              chunkId: typeof payload?.chunk_id === "string" ? payload.chunk_id : "",
-              score: rawScore ?? 0,
-              recordId: typeof item.id === "string" ? item.id : null,
-              payload,
-            });
-          }
-
-          vectorResultCount = vectorChunks.length;
-          vectorStep.finish({
-            hits: vectorResultCount,
-            usageTokens: embeddingUsageTokens,
-            response: {
-              status: vectorResponse.status,
-              collection:
-                typeof (parsedVectorResponse as Record<string, unknown>).collection === "string"
-                  ? ((parsedVectorResponse as Record<string, unknown>).collection as string)
-                  : collectionName,
-              results: vectorSearchDetails,
-            },
-          });
-        } catch (error) {
-          vectorDuration = performance.now() - vectorStart;
-          vectorStep.fail(error);
-          throw error;
-        }
-      } else {
-        skipPipelineStep(
-          "vector_embedding",
-          "Векторизация запроса",
-          "Векторный поиск отключён",
-        );
-        skipPipelineStep("vector_search", "Векторный поиск", "Векторный поиск отключён");
-      }
-
-      const chunkDetailsFromVector = await storage.getKnowledgeChunksByIds(
-        knowledgeBaseId,
-        Array.from(new Set(vectorChunks.map((entry) => entry.chunkId).filter(Boolean))),
-      );
-      const vectorRecordIds = vectorChunks
-        .map((entry) => entry.recordId)
-        .filter((value): value is string => Boolean(value));
-      const chunkDetailsFromRecords =
-        vectorRecordIds.length > 0
-          ? await storage.getKnowledgeChunksByVectorRecords(knowledgeBaseId, vectorRecordIds)
-          : [];
-
-      const chunkDetailsMap = new Map<
-        string,
-        {
-          documentId: string;
-          docTitle: string;
-          sectionTitle: string | null;
-          text: string;
-          nodeId: string | null;
-          nodeSlug: string | null;
-        }
-      >();
-      const recordToChunk = new Map<string, string>();
-
-      for (const detail of chunkDetailsFromVector) {
-        chunkDetailsMap.set(detail.chunkId, {
-          documentId: detail.documentId,
-          docTitle: detail.docTitle,
-          sectionTitle: detail.sectionTitle,
-          text: detail.text,
-          nodeId: detail.nodeId,
-          nodeSlug: detail.nodeSlug,
-        });
-      }
-
-      for (const detail of chunkDetailsFromRecords) {
-        chunkDetailsMap.set(detail.chunkId, {
-          documentId: detail.documentId,
-          docTitle: detail.docTitle,
-          sectionTitle: detail.sectionTitle,
-          text: detail.text,
-          nodeId: detail.nodeId,
-          nodeSlug: detail.nodeSlug,
-        });
-
-        if (detail.vectorRecordId) {
-          recordToChunk.set(detail.vectorRecordId, detail.chunkId);
-        }
-      }
-
-      const aggregated = new Map<
-        string,
-        {
-          chunkId: string;
-          documentId: string;
-          docTitle: string;
-          sectionTitle: string | null;
-          text: string;
-          snippet: string;
-          bm25Score: number;
-          vectorScore: number;
-          nodeId: string | null;
-          nodeSlug: string | null;
-        }
-      >();
-
-      const buildSnippet = (text: string) => {
-        const trimmed = text.trim();
-        if (trimmed.length <= 320) {
-          return trimmed;
-        }
-        return `${trimmed.slice(0, 320)}…`;
-      };
-
-      for (const entry of bm25Sections) {
-        const snippet = entry.snippet || buildSnippet(entry.text);
-        aggregated.set(entry.chunkId, {
-          chunkId: entry.chunkId,
-          documentId: entry.documentId,
-          docTitle: entry.docTitle,
-          sectionTitle: entry.sectionTitle,
-          text: entry.text,
-          snippet,
-          bm25Score: entry.score,
-          vectorScore: 0,
-          nodeId: entry.nodeId ?? null,
-          nodeSlug: entry.nodeSlug ?? null,
-        });
-      }
-
-      for (const entry of vectorChunks) {
-        let chunkId = entry.chunkId;
-        if (!chunkId && entry.recordId) {
-          chunkId = recordToChunk.get(entry.recordId) ?? "";
-        }
-
-        if (!chunkId) {
-          continue;
-        }
-
-        const detail = chunkDetailsMap.get(chunkId);
-        if (!detail) {
-          continue;
-        }
-
-        const existing = aggregated.get(chunkId);
-        const baseSnippet =
-          entry.payload && typeof entry.payload === "object"
-            ? (() => {
-                const chunkPayload = (entry.payload as { chunk?: { excerpt?: unknown } }).chunk;
-                if (chunkPayload && typeof chunkPayload.excerpt === "string") {
-                  return chunkPayload.excerpt;
-                }
-                return null;
-              })()
-            : null;
-
-        const snippet = baseSnippet ?? existing?.snippet ?? buildSnippet(detail.text);
-        const nodeId = detail.nodeId ?? existing?.nodeId ?? null;
-        const nodeSlug = detail.nodeSlug ?? existing?.nodeSlug ?? null;
-
-        aggregated.set(chunkId, {
-          chunkId,
-          documentId: detail.documentId,
-          docTitle: detail.docTitle,
-          sectionTitle: detail.sectionTitle,
-          text: detail.text,
-          snippet,
-          bm25Score: existing?.bm25Score ?? 0,
-          vectorScore: Math.max(existing?.vectorScore ?? 0, entry.score),
-          nodeId,
-          nodeSlug,
-        });
-
-        vectorDocumentIds.add(detail.documentId);
-      }
-
-      const bm25Max = Math.max(...Array.from(aggregated.values()).map((item) => item.bm25Score), 0);
-      const vectorMax = Math.max(...Array.from(aggregated.values()).map((item) => item.vectorScore), 0);
-
-      const combinedStep = startPipelineStep(
-        "combine_results",
-        { topK: body.top_k, bm25Weight, vectorWeight },
-        "Агрегация результатов",
-      );
-
-      const combinedResults = Array.from(aggregated.values())
-        .map((item) => {
-          const bm25Normalized = bm25Max > 0 ? item.bm25Score / bm25Max : 0;
-          const vectorNormalized = vectorMax > 0 ? item.vectorScore / vectorMax : 0;
-          const combinedScore = bm25Normalized * bm25Weight + vectorNormalized * vectorWeight;
-
-          return {
-            ...item,
-            combinedScore,
-            bm25Normalized,
-            vectorNormalized,
-          };
-        })
-        .sort((a, b) => b.combinedScore - a.combinedScore)
-        .slice(0, body.top_k);
-
-      combinedResultCount = combinedResults.length;
-      vectorDocumentCount = vectorResultCount !== null ? vectorDocumentIds.size : null;
-      combinedStep.finish({ combined: combinedResultCount, vectorDocuments: vectorDocumentCount });
-
-      const contextRecords: LlmContextRecord[] = combinedResults.map((item, index) => ({
-        index,
-        score: item.combinedScore,
-        payload: {
-          chunk: {
-            id: item.chunkId,
-            text: item.text,
-            snippet: item.snippet,
-            sectionTitle: item.sectionTitle,
-            nodeId: item.nodeId,
-            nodeSlug: item.nodeSlug,
-          },
-          document: {
-            id: item.documentId,
-            title: item.docTitle,
-            nodeId: item.nodeId,
-            nodeSlug: item.nodeSlug,
-          },
-          scores: {
-            bm25: item.bm25Score,
-            vector: item.vectorScore,
-            bm25Normalized: item.bm25Normalized,
-            vectorNormalized: item.vectorNormalized,
-          },
-        },
-      }));
-
-      retrievalDuration = performance.now() - retrievalStart;
-
-      const ragResponseFormat = normalizeResponseFormat(body.llm.response_format);
-      if (ragResponseFormat === null) {
-        runStatus = "error";
-        runErrorMessage = "Некорректный формат ответа";
-        await finalizeRunLog();
-        return res.status(400).json({
-          error: "Некорректный формат ответа",
-          details: "Поддерживаются значения text, md/markdown или html",
-        });
-      }
-      const responseFormat: RagResponseFormat = ragResponseFormat ?? "text";
-
-      const llmProvider = await storage.getLlmProvider(body.llm.provider, workspaceId);
-      if (!llmProvider) {
-        runStatus = "error";
-        runErrorMessage = "Провайдер LLM не найден";
-        await finalizeRunLog();
-        return res.status(404).json({ error: "Провайдер LLM не найден" });
-      }
-
-      if (!llmProvider.isActive) {
-        throw new HttpError(400, "Выбранный провайдер LLM отключён");
-      }
-
-      const requestConfig = mergeLlmRequestConfig(llmProvider);
-
-      if (body.llm.system_prompt !== undefined) {
-        requestConfig.systemPrompt = body.llm.system_prompt || undefined;
-      }
-
-      if (body.llm.temperature !== undefined) {
-        requestConfig.temperature = body.llm.temperature;
-      }
-
-      if (body.llm.max_tokens !== undefined) {
-        requestConfig.maxTokens = body.llm.max_tokens;
-      }
-
-      const configuredProvider: LlmProvider = {
-        ...llmProvider,
-        requestConfig,
-      };
-
-      llmProviderId = llmProvider.id;
-
-      const llmAccessToken = await fetchAccessToken(configuredProvider);
-      const llmStep = startPipelineStep(
-        "llm_completion",
-        { providerId: llmProviderId, model: llmModel },
-        "Генерация ответа LLM",
-      );
-      const llmStart = performance.now();
-      let completion;
-      try {
-        completion = await fetchLlmCompletion(
-          configuredProvider,
-          llmAccessToken,
-          normalizedQuery,
-          contextRecords,
-          body.llm.model,
-          {
-            responseFormat,
-            onBeforeRequest(details) {
-              llmStep.setInput({
-                providerId: llmProviderId,
-                model: llmModel,
-                request: details,
-              });
-            },
-          },
-        );
-        llmDuration = performance.now() - llmStart;
-        llmUsageTokens = completion.usageTokens ?? null;
-        llmStep.finish({
-          tokens: llmUsageTokens,
-          response: completion.rawResponse,
-          answerPreview: completion.answer.slice(0, 160),
-        });
-      } catch (error) {
-        llmDuration = performance.now() - llmStart;
-        llmStep.fail(error);
-        throw error;
-      }
-
-      totalDuration = performance.now() - totalStart;
-
-      await storage.recordKnowledgeBaseRagRequest({
-        workspaceId,
-        knowledgeBaseId,
-        topK: body.top_k ?? null,
-        bm25Weight,
-        bm25Limit,
-        vectorWeight,
-        vectorLimit: vectorConfigured ? vectorLimit : null,
-        embeddingProviderId: vectorConfigured ? embeddingProviderId : null,
-        collection: vectorConfigured ? vectorCollection : null,
-      });
-
-      const citations = combinedResults.map((item) => ({
-        chunk_id: item.chunkId,
-        doc_id: item.documentId,
-        doc_title: item.docTitle,
-        section_title: item.sectionTitle,
-        snippet: item.snippet,
-        score: item.combinedScore,
-        scores: {
-          bm25: item.bm25Score,
-          vector: item.vectorScore,
-        },
-        node_id: item.nodeId ?? null,
-        node_slug: item.nodeSlug ?? null,
-      }));
-
-      await finalizeRunLog();
+      const result = await runKnowledgeBaseRagPipeline({ req, body });
 
       res.json({
-        query,
-        kb_id: knowledgeBaseId,
-        normalized_query: normalizedQuery,
-        answer: completion.answer,
-        citations,
-        chunks: combinedResults.map((item) => ({
-          chunk_id: item.chunkId,
-          doc_id: item.documentId,
-          doc_title: item.docTitle,
-          section_title: item.sectionTitle,
-          snippet: item.snippet,
-          text: item.text,
-          score: item.combinedScore,
-          scores: {
-            bm25: item.bm25Score,
-            vector: item.vectorScore,
-          },
-          node_id: item.nodeId ?? null,
-          node_slug: item.nodeSlug ?? null,
-        })),
-        usage: {
-          embeddingTokens: embeddingUsageTokens,
-          llmTokens: llmUsageTokens,
-        },
-        timings: {
-          total_ms: Number((totalDuration ?? 0).toFixed(2)),
-          retrieval_ms: Number((retrievalDuration ?? 0).toFixed(2)),
-          bm25_ms: Number((bm25Duration ?? 0).toFixed(2)),
-          vector_ms: Number((vectorDuration ?? 0).toFixed(2)),
-          llm_ms: Number((llmDuration ?? 0).toFixed(2)),
-        },
-        debug: {
-          vectorSearch: vectorSearchDetails,
-        },
+        query: result.response.query,
+        kb_id: result.response.knowledgeBaseId,
+        normalized_query: result.response.normalizedQuery,
+        answer: result.response.answer,
+        citations: result.response.citations,
+        chunks: result.response.chunks,
+        usage: result.response.usage,
+        timings: result.response.timings,
+        debug: result.response.debug,
       });
     } catch (error) {
-      runStatus = "error";
-      runErrorMessage = getErrorDetails(error);
-      await finalizeRunLog();
-
       if (error instanceof HttpError) {
         return res.status(error.status).json({
           error: error.message,
@@ -4095,6 +4317,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return undefined;
       };
 
+      const parseNumberParam = (value: unknown): number | undefined => {
+        if (typeof value === "number") {
+          return Number.isFinite(value) ? value : undefined;
+        }
+
+        if (typeof value === "string") {
+          const parsed = Number(value);
+          if (Number.isFinite(parsed)) {
+            return parsed;
+          }
+        }
+
+        return undefined;
+      };
+
       delete payloadSource.apiKey;
       delete payloadSource.publicId;
       delete payloadSource.sitePublicId;
@@ -4133,6 +4370,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (parsedContextLimit !== undefined) {
           payloadSource.contextLimit = parsedContextLimit;
         }
+      }
+
+      if (!("topK" in payloadSource)) {
+        const parsedTopK = parseIntegerParam(req.query.topK ?? req.query.top_k);
+        if (parsedTopK !== undefined) {
+          payloadSource.topK = parsedTopK;
+        }
+      }
+
+      if (!("kbId" in payloadSource)) {
+        const kbCandidate =
+          typeof req.query.kbId === "string"
+            ? req.query.kbId
+            : typeof req.query.kb_id === "string"
+            ? req.query.kb_id
+            : undefined;
+        if (kbCandidate) {
+          payloadSource.kbId = kbCandidate;
+        }
+      }
+
+      if (!("llmTemperature" in payloadSource)) {
+        const parsedTemperature = parseNumberParam(req.query.llmTemperature);
+        if (parsedTemperature !== undefined) {
+          payloadSource.llmTemperature = parsedTemperature;
+        }
+      }
+
+      if (!("llmMaxTokens" in payloadSource)) {
+        const parsedMaxTokens = parseIntegerParam(
+          req.query.llmMaxTokens ?? req.query.maxTokens,
+        );
+        if (parsedMaxTokens !== undefined) {
+          payloadSource.llmMaxTokens = parsedMaxTokens;
+        }
+      }
+
+      if (!("llmSystemPrompt" in payloadSource) && typeof req.query.llmSystemPrompt === "string") {
+        payloadSource.llmSystemPrompt = req.query.llmSystemPrompt;
+      }
+
+      if (!("llmResponseFormat" in payloadSource) && typeof req.query.llmResponseFormat === "string") {
+        payloadSource.llmResponseFormat = req.query.llmResponseFormat;
       }
 
       if (!("includeContext" in payloadSource)) {
@@ -4196,6 +4476,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const includeContextInResponse = body.includeContext ?? true;
       const includeQueryVectorInResponse = body.includeQueryVector ?? true;
 
+      const llmResponseFormatCandidate = normalizeResponseFormat(body.llmResponseFormat);
+      if (llmResponseFormatCandidate === null) {
+        return res.status(400).json({
+          error: "Некорректный формат ответа LLM",
+          details: "Поддерживаются значения text, md/markdown или html",
+        });
+      }
+
+      const llmResponseFormatRaw =
+        llmResponseFormatCandidate ??
+        (typeof body.responseFormat === "string" ? body.responseFormat : responseFormat);
+      const llmResponseFormatNormalized =
+        llmResponseFormatCandidate ?? responseFormat;
+
       console.log(`[RAG DEBUG] Looking up collection "${collectionName}" workspace...`);
       const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
       console.log(
@@ -4204,6 +4498,237 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({ error: "Коллекция не найдена" });
+      }
+
+      const embedKnowledgeBaseId = embedKey?.knowledgeBaseId ?? null;
+      const contextKnowledgeBaseId =
+        publicContext.knowledgeBaseId ?? embedKnowledgeBaseId ?? null;
+      const requestedKnowledgeBaseId =
+        typeof body.kbId === "string" && body.kbId.trim().length > 0
+          ? body.kbId.trim()
+          : "";
+      let knowledgeBaseId = contextKnowledgeBaseId;
+
+      if (requestedKnowledgeBaseId) {
+        if (embedKnowledgeBaseId && embedKnowledgeBaseId !== requestedKnowledgeBaseId) {
+          return res.status(403).json({ error: "База знаний недоступна для данного ключа" });
+        }
+
+        knowledgeBaseId = requestedKnowledgeBaseId;
+      }
+
+      if (knowledgeBaseId) {
+        const knowledgeBaseRecord = await storage.getKnowledgeBase(knowledgeBaseId);
+        if (!knowledgeBaseRecord) {
+          return res.status(404).json({ error: "База знаний не найдена" });
+        }
+
+        if (knowledgeBaseRecord.workspaceId !== workspaceId) {
+          return res.status(403).json({ error: "База знаний недоступна для данного ключа" });
+        }
+
+        const hybridConfig = body.hybrid ?? { bm25: {}, vector: {} };
+        const bm25Config = hybridConfig.bm25 ?? {};
+        const vectorConfig = hybridConfig.vector ?? {};
+
+        const ragTopKSource =
+          typeof body.topK === "number"
+            ? body.topK
+            : typeof body.contextLimit === "number"
+            ? body.contextLimit
+            : typeof body.limit === "number"
+            ? body.limit
+            : 6;
+        const ragTopK = Math.max(1, Math.min(ragTopKSource, 20));
+
+        const bm25LimitCandidate =
+          typeof bm25Config.limit === "number" ? bm25Config.limit : ragTopK;
+        const bm25LimitForPipeline = Math.max(1, Math.min(bm25LimitCandidate, 50));
+
+        const vectorLimitCandidate =
+          typeof vectorConfig.limit === "number"
+            ? vectorConfig.limit
+            : typeof body.limit === "number"
+            ? body.limit
+            : ragTopK;
+        const vectorLimitForPipeline = Math.max(1, Math.min(vectorLimitCandidate, 50));
+
+        const vectorCollectionOverride =
+          typeof vectorConfig.collection === "string" && vectorConfig.collection.trim().length > 0
+            ? vectorConfig.collection.trim()
+            : collectionName;
+        const vectorEmbeddingProviderOverride =
+          typeof vectorConfig.embeddingProviderId === "string" &&
+          vectorConfig.embeddingProviderId.trim().length > 0
+            ? vectorConfig.embeddingProviderId.trim()
+            : body.embeddingProviderId;
+
+        const ragRequest: KnowledgeRagRequest = {
+          q: body.query,
+          kb_id: knowledgeBaseId,
+          top_k: ragTopK,
+          hybrid: {
+            bm25: {
+              weight: typeof bm25Config.weight === "number" ? bm25Config.weight : undefined,
+              limit: bm25LimitForPipeline,
+            },
+            vector: {
+              weight: typeof vectorConfig.weight === "number" ? vectorConfig.weight : undefined,
+              limit: vectorLimitForPipeline,
+              collection: vectorCollectionOverride,
+              embedding_provider_id: vectorEmbeddingProviderOverride,
+            },
+          },
+          llm: {
+            provider: body.llmProviderId,
+            model: body.llmModel ?? undefined,
+            temperature:
+              typeof body.llmTemperature === "number" ? body.llmTemperature : undefined,
+            max_tokens:
+              typeof body.llmMaxTokens === "number" ? body.llmMaxTokens : undefined,
+            system_prompt:
+              body.llmSystemPrompt !== undefined ? body.llmSystemPrompt : undefined,
+            response_format: llmResponseFormatRaw,
+          },
+        };
+
+        const pipelineResult = await runKnowledgeBaseRagPipeline({
+          req,
+          body: ragRequest,
+        });
+
+        const sanitizedResults = pipelineResult.metadata.sanitizedVectorResults;
+        const contextLimit = Math.max(
+          0,
+          Math.min(body.contextLimit ?? sanitizedResults.length, sanitizedResults.length),
+        );
+
+        const sourcesMap = new Map<
+          string,
+          {
+            url: string;
+            title: string | null;
+            snippet: string | null;
+            chunkId: string | null;
+            documentId: string | null;
+          }
+        >();
+
+        for (const entry of sanitizedResults) {
+          const payloadRecord = toRecord(entry.payload);
+          if (!payloadRecord) {
+            continue;
+          }
+
+          const chunkRecord = toRecord(payloadRecord.chunk);
+          const documentRecord = toRecord(payloadRecord.document);
+          const metadataRecord = toRecord(chunkRecord?.metadata);
+
+          const sourceUrl = pickAbsoluteUrl(
+            baseUrls,
+            metadataRecord?.sourceUrl,
+            metadataRecord?.source_url,
+            chunkRecord?.deepLink,
+            chunkRecord?.sourceUrl,
+            documentRecord?.sourceUrl,
+            documentRecord?.url,
+            documentRecord?.path,
+          );
+
+          if (!sourceUrl) {
+            continue;
+          }
+
+          const sourceTitle = pickFirstString(
+            chunkRecord?.title,
+            metadataRecord?.title,
+            metadataRecord?.heading,
+            metadataRecord?.sectionTitle,
+            documentRecord?.title,
+          );
+
+          const snippet = buildSourceSnippet(
+            metadataRecord?.snippet,
+            metadataRecord?.excerpt,
+            chunkRecord?.excerpt,
+            chunkRecord?.text,
+            documentRecord?.excerpt,
+          );
+
+          const chunkId = pickFirstString(chunkRecord?.id);
+          const documentId = pickFirstString(documentRecord?.id);
+
+          if (!sourcesMap.has(sourceUrl)) {
+            sourcesMap.set(sourceUrl, {
+              url: sourceUrl,
+              title: sourceTitle ?? null,
+              snippet,
+              chunkId: chunkId ?? null,
+              documentId: documentId ?? null,
+            });
+          }
+        }
+
+        const responsePayload: Record<string, unknown> = {
+          answer: pipelineResult.response.answer,
+          format: pipelineResult.response.responseFormat,
+          usage: pipelineResult.response.usage,
+          provider: {
+            id: pipelineResult.metadata.llmProvider.id,
+            name: pipelineResult.metadata.llmProvider.name,
+            model:
+              pipelineResult.metadata.llmModel ?? pipelineResult.metadata.llmProvider.model,
+            modelLabel:
+              pipelineResult.metadata.llmModelLabel ??
+              pipelineResult.metadata.llmModel ??
+              pipelineResult.metadata.llmProvider.model,
+          },
+          embeddingProvider: pipelineResult.metadata.embeddingProvider
+            ? {
+                id: pipelineResult.metadata.embeddingProvider.id,
+                name: pipelineResult.metadata.embeddingProvider.name,
+              }
+            : null,
+          collection: collectionName,
+          citations: pipelineResult.response.citations,
+          chunks: pipelineResult.response.chunks,
+          timings: pipelineResult.response.timings,
+          debug: pipelineResult.response.debug,
+        };
+
+        const maxSources = (() => {
+          if (contextLimit > 0) {
+            return contextLimit;
+          }
+          if (body.limit && body.limit > 0) {
+            return Math.min(body.limit, sourcesMap.size);
+          }
+          return sourcesMap.size;
+        })();
+
+        const limitedSources = Array.from(sourcesMap.values()).slice(0, maxSources);
+        if (limitedSources.length > 0) {
+          responsePayload.sources = limitedSources.map((source) => ({
+            url: source.url,
+            title: source.title,
+            snippet: source.snippet,
+            chunkId: source.chunkId,
+            documentId: source.documentId,
+          }));
+        }
+
+        if (includeContextInResponse) {
+          responsePayload.context = sanitizedResults;
+        }
+
+        const embeddingResult = pipelineResult.metadata.embeddingResult;
+        if (includeQueryVectorInResponse && embeddingResult) {
+          responsePayload.queryVector = embeddingResult.vector;
+          responsePayload.vectorLength = embeddingResult.vector.length;
+        }
+
+        res.json(responsePayload);
+        return;
       }
 
       const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
@@ -4224,7 +4749,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new HttpError(400, "Выбранный провайдер LLM отключён");
       }
 
-      const sanitizedModels = sanitizeLlmModelOptions(llmProvider.availableModels);
+      const llmRequestConfig = mergeLlmRequestConfig(llmProvider);
+
+      if (body.llmSystemPrompt !== undefined) {
+        llmRequestConfig.systemPrompt = body.llmSystemPrompt || undefined;
+      }
+
+      if (body.llmTemperature !== undefined) {
+        llmRequestConfig.temperature = body.llmTemperature;
+      }
+
+      if (body.llmMaxTokens !== undefined) {
+        llmRequestConfig.maxTokens = body.llmMaxTokens;
+      }
+
+      const configuredLlmProvider: LlmProvider = {
+        ...llmProvider,
+        requestConfig: llmRequestConfig,
+      };
+
+      const sanitizedModels = sanitizeLlmModelOptions(configuredLlmProvider.availableModels);
       const requestedModel = typeof body.llmModel === "string" ? body.llmModel.trim() : "";
       const normalizedModelFromList =
         sanitizedModels.find((model) => model.value === requestedModel)?.value ??
@@ -4235,7 +4779,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? normalizedModelFromList.trim()
           : undefined) ??
         (requestedModel.length > 0 ? requestedModel : undefined) ??
-        llmProvider.model;
+        configuredLlmProvider.model;
       const selectedModelMeta =
         sanitizedModels.find((model) => model.value === selectedModelValue) ?? null;
 
@@ -4407,16 +4951,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } satisfies LlmContextRecord;
       });
 
-      const llmAccessToken = await fetchAccessToken(llmProvider);
+      const llmAccessToken = await fetchAccessToken(configuredLlmProvider);
       const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
       const wantsStreamingResponse =
-        llmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
+        configuredLlmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
 
       if (wantsStreamingResponse) {
         await streamGigachatCompletion({
           req,
           res,
-          provider: llmProvider,
+          provider: configuredLlmProvider,
           accessToken: llmAccessToken,
           query: body.query,
           context: contextRecords,
@@ -4427,7 +4971,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           selectedModelMeta,
           limit: body.limit,
           contextLimit,
-          responseFormat,
+          responseFormat: llmResponseFormatNormalized,
           includeContextInResponse,
           includeQueryVectorInResponse,
           collectionName: typeof req.params.name === "string" ? req.params.name : "",
@@ -4436,24 +4980,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const completion = await fetchLlmCompletion(
-        llmProvider,
+        configuredLlmProvider,
         llmAccessToken,
         body.query,
         contextRecords,
         selectedModelValue,
-        { responseFormat },
+        { responseFormat: llmResponseFormatNormalized },
       );
 
       const responsePayload: Record<string, unknown> = {
         answer: completion.answer,
-        format: responseFormat,
+        format: llmResponseFormatNormalized,
         usage: {
           embeddingTokens: embeddingResult.usageTokens ?? null,
           llmTokens: completion.usageTokens ?? null,
         },
         provider: {
-          id: llmProvider.id,
-          name: llmProvider.name,
+          id: configuredLlmProvider.id,
+          name: configuredLlmProvider.name,
           model: selectedModelValue,
           modelLabel: selectedModelMeta?.label ?? selectedModelValue,
         },
@@ -6770,7 +7314,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new HttpError(400, "Выбранный провайдер LLM отключён");
       }
 
-      const sanitizedModels = sanitizeLlmModelOptions(llmProvider.availableModels);
+      const llmRequestConfig = mergeLlmRequestConfig(llmProvider);
+
+      if (body.llmSystemPrompt !== undefined) {
+        llmRequestConfig.systemPrompt = body.llmSystemPrompt || undefined;
+      }
+
+      if (body.llmTemperature !== undefined) {
+        llmRequestConfig.temperature = body.llmTemperature;
+      }
+
+      if (body.llmMaxTokens !== undefined) {
+        llmRequestConfig.maxTokens = body.llmMaxTokens;
+      }
+
+      const configuredLlmProvider: LlmProvider = {
+        ...llmProvider,
+        requestConfig: llmRequestConfig,
+      };
+
+      const sanitizedModels = sanitizeLlmModelOptions(configuredLlmProvider.availableModels);
       const requestedModel = typeof body.llmModel === "string" ? body.llmModel.trim() : "";
       const normalizedModelFromList =
         sanitizedModels.find((model) => model.value === requestedModel)?.value ??
@@ -6781,7 +7344,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? normalizedModelFromList.trim()
           : undefined) ??
         (requestedModel.length > 0 ? requestedModel : undefined) ??
-        llmProvider.model;
+        configuredLlmProvider.model;
       const selectedModelMeta =
         sanitizedModels.find((model) => model.value === selectedModelValue) ?? null;
 
@@ -6891,16 +7454,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } satisfies LlmContextRecord;
       });
 
-      const llmAccessToken = await fetchAccessToken(llmProvider);
+      const llmAccessToken = await fetchAccessToken(configuredLlmProvider);
       const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
       const wantsStreamingResponse =
-        llmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
+        configuredLlmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
 
       if (wantsStreamingResponse) {
         await streamGigachatCompletion({
           req,
           res,
-          provider: llmProvider,
+          provider: configuredLlmProvider,
           accessToken: llmAccessToken,
           query: body.query,
           context: contextRecords,
@@ -6911,7 +7474,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           selectedModelMeta,
           limit: body.limit,
           contextLimit,
-          responseFormat,
+          responseFormat: llmResponseFormatNormalized,
           includeContextInResponse,
           includeQueryVectorInResponse,
           collectionName: typeof req.params.name === "string" ? req.params.name : "",
@@ -6920,12 +7483,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const completion = await fetchLlmCompletion(
-        llmProvider,
+        configuredLlmProvider,
         llmAccessToken,
         body.query,
         contextRecords,
         selectedModelValue,
-        { responseFormat },
+        { responseFormat: llmResponseFormatNormalized },
       );
 
       const responsePayload: Record<string, unknown> = {
