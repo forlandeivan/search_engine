@@ -1608,20 +1608,50 @@ function summarizeVectorForLog(vector: unknown): unknown {
   return vector;
 }
 
-function buildVectorPayload<TVector extends number[]>(
-  vector: TVector,
+function buildVectorPayload(
+  vector: number[],
   vectorFieldName: string | null | undefined,
-): Schemas["NamedVectorStruct"] | TVector {
+): Schemas["NamedVectorStruct"] | number[] {
   if (!Array.isArray(vector) || vector.length === 0) {
     return vector;
   }
 
+  const sanitizedVector = vector.map((entry, index) => {
+    if (typeof entry !== "number" || Number.isNaN(entry)) {
+      throw new Error(`Некорректное значение компоненты вектора (index=${index})`);
+    }
+
+    if (!Number.isFinite(entry)) {
+      throw new Error(`Компонента вектора содержит бесконечность (index=${index})`);
+    }
+
+    return entry;
+  });
+
   const trimmedName = typeof vectorFieldName === "string" ? vectorFieldName.trim() : "";
   if (!trimmedName) {
-    return vector;
+    return sanitizedVector;
   }
 
-  return { name: trimmedName, vector } satisfies Schemas["NamedVectorStruct"];
+  return { name: trimmedName, vector: sanitizedVector } satisfies Schemas["NamedVectorStruct"];
+}
+
+function cloneVectorPayload(vector: unknown): unknown {
+  if (Array.isArray(vector)) {
+    return vector.slice();
+  }
+
+  if (vector && typeof vector === "object") {
+    const record = vector as Record<string, unknown>;
+    if (Array.isArray(record.vector)) {
+      return {
+        ...record,
+        vector: record.vector.slice(),
+      } satisfies Schemas["NamedVectorStruct"];
+    }
+  }
+
+  return vector;
 }
 
 function normalizeBaseUrl(value: string | undefined | null): string | null {
@@ -3190,7 +3220,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         const vectorRequestPayload = removeUndefinedDeep({
           collection: collectionName,
           workspace_id: workspaceId,
-          vector: vectorPayload,
+          vector: cloneVectorPayload(vectorPayload),
           limit: vectorLimit,
           filter: {
             must: [
@@ -3215,7 +3245,7 @@ async function runKnowledgeBaseRagPipeline(options: {
             },
             payload: {
               ...vectorRequestPayload,
-              vector: summarizeVectorForLog(vectorRequestPayload.vector),
+              vector: summarizeVectorForLog(cloneVectorPayload(vectorPayload)),
             },
           },
         });
