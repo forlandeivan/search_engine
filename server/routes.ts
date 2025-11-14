@@ -3191,15 +3191,8 @@ async function runKnowledgeBaseRagPipeline(options: {
           workspace_id: workspaceId,
           vector: cloneVectorPayload(vectorPayload),
           limit: vectorLimit,
-          filter: {
-            must: [
-              {
-                key: "base.id",
-                match: { value: knowledgeBaseId },
-              },
-            ],
-          },
           withPayload: true,
+          withVector: false,
         });
 
         vectorStep.setInput({
