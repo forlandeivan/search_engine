@@ -37,6 +37,9 @@ export interface UseKnowledgeBaseAskAiOptions {
   hybrid?: KnowledgeBaseAskAiHybridOptions | null;
   llm?: KnowledgeBaseAskAiLlmOptions | null;
   baseUrl?: string | null;
+  workspaceId?: string | null;
+  collection?: string | null;
+  embeddingProviderId?: string | null;
 }
 
 export interface KnowledgeBaseAskAiState {
@@ -279,17 +282,25 @@ const mapCitations = (value: unknown): RagChunk[] => {
 };
 
 const buildEndpoint = (baseUrl: string): string => {
+  const defaultEndpoint = "/api/public/collections/search/rag";
   const trimmed = baseUrl.trim();
   if (!trimmed) {
-    return "/public/rag/answer";
+    return defaultEndpoint;
   }
 
   const normalized = trimmed.replace(/\/+$/, "");
-  if (/\/(rag|answer)(?:\b|\/|\?|#)/.test(normalized)) {
+  const lowerNormalized = normalized.toLowerCase();
+  const knownPatterns = [
+    /\/(?:api\/)?public\/collections\/search\/rag(?:\b|\/|\?|#)/,
+    /\/(?:api\/)?public\/(?:rag|collections\/rag)\/answer(?:\b|\/|\?|#)/,
+  ];
+  if (knownPatterns.some((pattern) => pattern.test(lowerNormalized))) {
     return normalized;
   }
 
-  return `${normalized}/public/rag/answer`;
+  const hasApiSuffix = /\/api(?:\b|\/|\?|#)/.test(`${lowerNormalized}/`);
+  const pathToAppend = hasApiSuffix ? defaultEndpoint.replace(/^\/api/, "") : defaultEndpoint;
+  return `${normalized}${pathToAppend}`;
 };
 
 const extractErrorMessage = async (response: Response): Promise<string> => {
@@ -334,16 +345,24 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
   const normalized = useMemo(() => {
     const baseId = typeof options.knowledgeBaseId === "string" ? options.knowledgeBaseId.trim() : "";
     const hybrid = options.hybrid ?? null;
+    const explicitCollection =
+      typeof options.collection === "string" ? options.collection.trim() : "";
     const bm25Weight = normalizeWeight(hybrid?.bm25?.weight ?? null);
     const bm25Limit = normalizeLimit(hybrid?.bm25?.limit ?? null);
     const vectorWeight = normalizeWeight(hybrid?.vector?.weight ?? null);
     const vectorLimit = normalizeLimit(hybrid?.vector?.limit ?? null);
     const vectorCollection =
       typeof hybrid?.vector?.collection === "string" ? hybrid.vector.collection.trim() : "";
-    const embeddingProviderId =
+    const vectorEmbeddingProviderId =
       typeof hybrid?.vector?.embeddingProviderId === "string"
         ? hybrid.vector.embeddingProviderId.trim()
         : "";
+    const explicitEmbeddingProviderId =
+      typeof options.embeddingProviderId === "string"
+        ? options.embeddingProviderId.trim()
+        : "";
+    const embeddingProviderId = vectorEmbeddingProviderId || explicitEmbeddingProviderId;
+    const collectionName = vectorCollection || explicitCollection;
 
     const topK = normalizeTopK(hybrid?.topK ?? null);
 
@@ -356,6 +375,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
       typeof options.llm?.systemPrompt === "string" ? options.llm.systemPrompt : "";
     const responseFormat = normalizeResponseFormat(options.llm?.responseFormat ?? null);
     const baseUrl = typeof options.baseUrl === "string" ? options.baseUrl : "";
+    const workspaceId = typeof options.workspaceId === "string" ? options.workspaceId.trim() : "";
 
     let disabledReason: string | null = null;
     if (!baseId) {
@@ -363,7 +383,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
     } else if (!llmProviderId) {
       disabledReason = "Настройте провайдера LLM для Ask AI.";
     } else if (vectorWeight !== null && vectorWeight > 0) {
-      if (!vectorCollection) {
+      if (!collectionName) {
         disabledReason = "Укажите коллекцию для векторного поиска.";
       } else if (!embeddingProviderId) {
         disabledReason = "Укажите сервис эмбеддингов для Ask AI.";
@@ -372,12 +392,13 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
 
     return {
       baseId,
+      workspaceId,
       topK,
       bm25Weight,
       bm25Limit,
       vectorWeight,
       vectorLimit,
-      vectorCollection,
+      collection: collectionName,
       embeddingProviderId,
       llmProviderId,
       llmModel,
@@ -388,7 +409,15 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
       disabledReason,
       endpoint: buildEndpoint(baseUrl ?? ""),
     };
-  }, [options.baseUrl, options.hybrid, options.llm, options.knowledgeBaseId]);
+  }, [
+    options.baseUrl,
+    options.collection,
+    options.embeddingProviderId,
+    options.hybrid,
+    options.llm,
+    options.knowledgeBaseId,
+    options.workspaceId,
+  ]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -432,22 +461,10 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
         isDone: false,
       });
 
-      const payload: Record<string, unknown> = {
-        q: question,
-        kb_id: normalized.baseId,
-        top_k: normalized.topK,
-        hybrid: {
-          bm25: {},
-          vector: {},
-        },
-        llm: {
-          provider: normalized.llmProviderId,
-        },
-      };
+      const isLegacyEndpoint = /\/public\/rag\/answer(?:\b|\/|\?|#)/.test(normalized.endpoint);
 
-      const hybridPayload = payload.hybrid as Record<string, unknown>;
-      const bm25Payload = ((hybridPayload.bm25 as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-      const vectorPayload = ((hybridPayload.vector as Record<string, unknown>) ?? {}) as Record<string, unknown>;
+      const bm25Payload: Record<string, unknown> = {};
+      const vectorPayload: Record<string, unknown> = {};
 
       if (normalized.bm25Weight !== null) {
         bm25Payload.weight = normalized.bm25Weight;
@@ -461,34 +478,97 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
       if (normalized.vectorLimit !== null) {
         vectorPayload.limit = normalized.vectorLimit;
       }
-      if (normalized.vectorCollection) {
-        vectorPayload.collection = normalized.vectorCollection;
+      if (normalized.collection) {
+        vectorPayload.collection = normalized.collection;
       }
-      if (normalized.embeddingProviderId) {
-        vectorPayload.embedding_provider_id = normalized.embeddingProviderId;
-      }
+      let payload: Record<string, unknown>;
 
-      hybridPayload.bm25 = bm25Payload;
-      hybridPayload.vector = vectorPayload;
+      if (isLegacyEndpoint) {
+        const llmPayload: Record<string, unknown> = { provider: normalized.llmProviderId };
 
-      const llmPayload = (payload.llm as Record<string, unknown>) ?? {};
-      if (normalized.llmModel) {
-        llmPayload.model = normalized.llmModel;
-      }
-      if (normalized.temperature !== null) {
-        llmPayload.temperature = normalized.temperature;
-      }
-      if (normalized.maxTokens !== null) {
-        llmPayload.max_tokens = normalized.maxTokens;
-      }
-      if (normalized.systemPrompt && normalized.systemPrompt.trim()) {
-        llmPayload.system_prompt = normalized.systemPrompt;
-      }
-      if (normalized.responseFormat) {
-        llmPayload.response_format = normalized.responseFormat;
-      }
+        if (normalized.llmModel) {
+          llmPayload.model = normalized.llmModel;
+        }
+        if (normalized.temperature !== null) {
+          llmPayload.temperature = normalized.temperature;
+        }
+        if (normalized.maxTokens !== null) {
+          llmPayload.max_tokens = normalized.maxTokens;
+        }
+        if (normalized.systemPrompt && normalized.systemPrompt.trim()) {
+          llmPayload.system_prompt = normalized.systemPrompt;
+        }
+        if (normalized.responseFormat) {
+          llmPayload.response_format = normalized.responseFormat;
+        }
 
-      payload.llm = llmPayload;
+        const legacyVectorPayload: Record<string, unknown> = { ...vectorPayload };
+        if (normalized.embeddingProviderId) {
+          legacyVectorPayload.embedding_provider_id = normalized.embeddingProviderId;
+        }
+
+        payload = {
+          q: question,
+          kb_id: normalized.baseId,
+          top_k: normalized.topK,
+          hybrid: {
+            bm25: bm25Payload,
+            vector: legacyVectorPayload,
+          },
+          llm: llmPayload,
+        };
+      } else {
+        payload = {
+          query: question,
+          hybrid: {
+            bm25: bm25Payload,
+            vector: vectorPayload,
+          },
+        };
+
+        if (normalized.embeddingProviderId) {
+          vectorPayload.embeddingProviderId = normalized.embeddingProviderId;
+        }
+
+        if (normalized.baseId) {
+          payload.kbId = normalized.baseId;
+        }
+        if (normalized.workspaceId) {
+          payload.workspace_id = normalized.workspaceId;
+        }
+        if (normalized.collection) {
+          payload.collection = normalized.collection;
+        }
+
+        if (typeof normalized.topK === "number") {
+          payload.topK = normalized.topK;
+        }
+
+        if (normalized.embeddingProviderId) {
+          payload.embeddingProviderId = normalized.embeddingProviderId;
+        }
+
+        if (normalized.llmProviderId) {
+          payload.llmProviderId = normalized.llmProviderId;
+        }
+
+        if (normalized.llmModel) {
+          payload.llmModel = normalized.llmModel;
+        }
+        if (normalized.temperature !== null) {
+          payload.llmTemperature = normalized.temperature;
+        }
+        if (normalized.maxTokens !== null) {
+          payload.llmMaxTokens = normalized.maxTokens;
+        }
+        if (normalized.systemPrompt && normalized.systemPrompt.trim()) {
+          payload.llmSystemPrompt = normalized.systemPrompt;
+        }
+        if (normalized.responseFormat) {
+          payload.llmResponseFormat = normalized.responseFormat;
+          payload.responseFormat = normalized.responseFormat;
+        }
+      }
 
       try {
         const response = await fetch(normalized.endpoint, {
