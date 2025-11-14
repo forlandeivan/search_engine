@@ -2,41 +2,7 @@
 
 ## Overview
 
-This is a lightweight search engine application designed for crawling and indexing websites to provide fast, localized search functionality. The system consists of a React-based admin interface for managing crawl configurations and a public search interface for end users. Built with TypeScript, Express.js backend, and PostgreSQL database, it provides comprehensive web crawling capabilities with real-time status monitoring and search result delivery.
-
-## Recent Changes
-
-### October 31, 2025  
-- **Database management separation**: Created separate configs and scripts for dev (Neon) and production (External PostgreSQL) databases
-- **Migration scripts with safety**: Added `db-push-dev.sh` and `db-push-prod.sh` with credential masking and error handling
-- **Production safety**: Production migration script requires explicit confirmation before running
-- **Clean codebase**: Removed debug logging from routes and knowledge-base modules
-- **Production deployment FIXED**: Server now opens port 5000 immediately, database initialization runs in background with 30s timeout
-- **Fast startup**: Port opens in <1 second, database schema check happens asynchronously without blocking server  
-- **Deployment resilience**: Server starts successfully even if database is slow or temporarily unavailable
-- **Connection timeouts resolved**: Increased PostgreSQL connection timeout from 5s to 30s, idle timeout to 60s, max connections to 20
-- **Session store fixed**: PGSession (connect-pg-simple) now works without connection timeouts
-- **Production database confirmed**: Using external PostgreSQL at 62.113.107.164:5432 (database: tilda_search_db) with 8 knowledge bases in 4 workspaces
-
-### October 30, 2025
-- **Database schema synchronized**: Full schema migration with ltree extension enabled for hierarchical structures
-- **RAG API infrastructure created**: Public RAG search endpoint configured and ready for deployment
-- **Production deployment prepared**: Chromium system dependency installed for Puppeteer support
-- **Demo workspace initialized**: Created test workspace with embedding and LLM providers
-
-### October 2025
-- **Hierarchical document structure**: Full support for nesting documents within other documents (like Confluence)
-- **Document parents**: Documents can now be parents for other documents (folders can only be parented by folders)
-- **Nested children management**: UI shows list of nested documents with ability to create new nested documents
-- **Tree recursion**: TreeMenu component properly displays nested documents at any depth
-- **Backend validation**: Prevents circular dependencies and self-parenting with proper ltree path management
-
-### September 2025
-- **Re-crawl functionality implemented**: Complete system for re-crawling existing sites without creating duplicates
-- **Database flexibility**: Configurable PostgreSQL connection with automatic fallback to Neon
-- **Упрощённая админ-панель**: основной AdminPage с управлением краулингом и повторными обходами
-- **Duplicate prevention**: Crawler now checks existing pages before adding new ones
-- **Real-time status updates**: Live progress tracking during crawling operations
+This project is a lightweight search engine application designed for crawling and indexing websites to provide fast, localized search functionality. It features a React-based admin interface for managing crawl configurations and a public search interface for end users. The system is built with TypeScript, an Express.js backend, and a PostgreSQL database. It offers comprehensive web crawling capabilities with real-time status monitoring and efficient search result delivery, including Retrieval-Augmented Generation (RAG) functionality. The vision is to enable users to quickly set up and manage specialized search engines for their content, enhancing information retrieval and user experience.
 
 ## User Preferences
 
@@ -45,209 +11,73 @@ Preferred communication style: Simple, everyday language.
 ## System Architecture
 
 ### Frontend Architecture
-- **Framework**: React 18 with TypeScript using Vite as the build tool
-- **UI Library**: Shadcn/ui components built on Radix UI primitives with Tailwind CSS
-- **Routing**: Wouter for lightweight client-side routing
-- **State Management**: TanStack Query for server state management and caching
-- **Design System**: Custom design system with Inter font, CSS variables for theming, and consistent spacing/color schemes
+
+The frontend is built using React 18 with TypeScript and Vite. It leverages Shadcn/ui components, based on Radix UI primitives, styled with Tailwind CSS. Wouter is used for client-side routing, and TanStack Query manages server state and caching. The design system incorporates the Inter font, CSS variables for theming, and consistent spacing and color schemes.
 
 ### Backend Architecture
-- **Runtime**: Node.js with Express.js framework
-- **Language**: TypeScript with ES modules
-- **API Design**: RESTful API endpoints for sites, pages, crawling, search operations, and re-crawling functionality
-- **Web Crawler**: Custom crawler using Cheerio for HTML parsing and node-fetch for HTTP requests with duplicate detection
-- **Re-crawl System**: Comprehensive re-crawling capability that resets site status and adds only new pages
-- **Build System**: ESBuild for production bundling
+
+The backend utilizes Node.js with the Express.js framework, written in TypeScript with ES modules. It provides RESTful API endpoints for managing sites, pages, crawling operations, search queries, and re-crawling functionality. A custom web crawler uses Cheerio for HTML parsing and node-fetch for HTTP requests, incorporating duplicate detection. A robust re-crawl system is in place to reset site status and add only new pages efficiently. ESBuild is used for production bundling.
 
 ### Data Storage Solutions
-- **Database**: Flexible PostgreSQL connection with automatic fallback (External → Neon)
-- **Connection Logic**: Configurable external PostgreSQL server with Neon serverless as backup
-- **ORM**: Drizzle ORM for type-safe database operations
-- **Schema Design**: 
-  - Sites table for crawl configurations, status tracking, and re-crawl capabilities
-  - Pages table for crawled content with full-text indexing and duplicate prevention
-  - Search index table for optimized text search performance
-  - Relational design with foreign key constraints and cascading deletes
+
+The application uses a flexible PostgreSQL connection with automatic fallback. It supports both an external PostgreSQL server (for production) and Neon serverless PostgreSQL (for development/backup). Drizzle ORM ensures type-safe database operations. The schema includes tables for `sites` (crawl configurations, status, re-crawl), `pages` (crawled content, full-text indexing, duplicate prevention), and a `search_index` table for optimized text search performance. The design includes relational foreign key constraints and cascading deletes. Separate Drizzle configurations are maintained for development and production databases.
 
 ### Database Management
 
-**Two Separate Databases:**
-
-The application uses two separate PostgreSQL databases with distinct purposes:
-
-1. **Development Database (Neon)**
-   - Purpose: Local development and testing
-   - Connection: `DATABASE_URL` environment variable
-   - Location: Neon serverless PostgreSQL
-   - Config: `drizzle.config.ts`
-   - Safe for experimentation
-
-2. **Production Database (External PostgreSQL)**
-   - Purpose: Live application data at aiknowledge.ru
-   - Connection: `PG_HOST`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE` environment variables
-   - Location: 62.113.107.164:5432 (database: tilda_search_db)
-   - Config: `drizzle.production.config.ts`
-   - **⚠️ CRITICAL: Contains real user data - handle with care**
-
-**Schema Migration Commands:**
-
-To update database schemas, use these commands:
-
-```bash
-# Development database (Neon) - safe to experiment
-./db-push-dev.sh
-# OR
-npx drizzle-kit push
-
-# Production database - requires confirmation
-./db-push-prod.sh
-# OR
-npx drizzle-kit push --config=drizzle.production.config.ts
-```
-
-**Important Rules:**
-
-- ✅ Always test schema changes in development first
-- ✅ Production script (`db-push-prod.sh`) requires confirmation before executing
-- ⚠️ `npm run db:push` defaults to **development** database
-- ⚠️ Never run production migrations without backup
-- ⚠️ Never manually write SQL migrations - use `drizzle-kit push --force` if standard push fails
-
-**Common Issues:**
-
-If you see "column does not exist" errors in production but not in development:
-1. Schema was updated in development but not production
-2. Run `./db-push-prod.sh` to sync production with latest schema
-3. Verify migration succeeded by checking production logs
+Two distinct PostgreSQL databases are used: a development database (Neon) for local testing and a production database (External PostgreSQL) for live application data. Schema migrations are managed via `drizzle-kit`, with shell scripts (`db-push-dev.sh`, `db-push-prod.sh`) to simplify execution. The production migration script includes safety mechanisms like confirmation prompts.
 
 ### Authentication and Authorization
-- **Current State**: No authentication system implemented
-- **Session Management**: Express session infrastructure prepared with connect-pg-simple
-- **Future Ready**: User schema defined for potential admin authentication features
 
-### External Dependencies
-- **Database Hosting**: Neon serverless PostgreSQL
-- **Font Loading**: Google Fonts CDN for Inter font family
-- **Development Tools**: Replit integration with cartographer and runtime error overlay
-- **UI Components**: Radix UI primitives for accessible component foundation
-- **Styling**: Tailwind CSS with PostCSS processing
+Currently, no authentication system is implemented, but Express session infrastructure with `connect-pg-simple` is prepared. A user schema is defined, anticipating future admin authentication features.
 
-## Настройка CORS для кастомных доменов
+### RAG API Configuration
 
-При подключении своего домена убедитесь, что Express-сервер разрешает запросы с этого хоста. Для этого есть два варианта:
+A public RAG search endpoint is available, configured with specific workspaces, API keys, embedding providers (GigaChat), and LLM providers (GigaChat-Max). This infrastructure enables advanced natural language querying against indexed content.
 
-1. Добавьте домен в список сайтов в админ-панели (таблица `sites`). Тогда домен автоматически попадёт в CORS-кэш.
-2. Если база данных временно недоступна (например, на холодном старте), задайте переменную окружения `STATIC_ALLOWED_HOSTNAMES` (или `STATIC_ALLOWED_ORIGINS`) со списком доменов через запятую. Пример значения:
-   ```env
-   STATIC_ALLOWED_HOSTNAMES=aiknowledge.ru,www.aiknowledge.ru
-   ```
+### Production Deployment Notes
 
-Статический список учитывается при каждом обновлении CORS-кэша, поэтому домен будет доступен даже если база данных не успела ответить. В логах сервера появится сообщение с перечнем статически разрешённых доменов.
+For Replit Autoscale deployment, the server binds to `0.0.0.0:5000`. A fast health check endpoint (`/health`) is provided. The server employs a non-blocking startup, allowing asynchronous database initialization. Critical production secrets are validated on startup. Graceful shutdown handlers are implemented to ensure proper resource cleanup upon termination. Chromium is installed as a system dependency for Puppeteer-based crawling, with `PUPPETEER_EXECUTABLE_PATH` configurable via environment variables.
+
+### CORS Configuration
+
+CORS is managed by allowing domains listed in the `sites` table in the admin panel. Additionally, `STATIC_ALLOWED_HOSTNAMES` or `STATIC_ALLOWED_ORIGINS` environment variables can be set for static domain whitelisting, especially during cold starts or database unavailability.
 
 ## External Dependencies
 
 ### Core Dependencies
-- **@neondatabase/serverless**: Serverless PostgreSQL client for Neon database connectivity
-- **pg**: Standard PostgreSQL client for external database connections
-- **drizzle-orm**: Type-safe ORM for database operations and migrations (supports both Neon and standard PostgreSQL)
-- **@tanstack/react-query**: Server state management and caching with real-time updates
-- **cheerio**: Server-side HTML parsing for web crawling
-- **node-fetch**: HTTP client for web crawling requests
+
+-   `@neondatabase/serverless`: Serverless PostgreSQL client.
+-   `pg`: Standard PostgreSQL client.
+-   `drizzle-orm`: Type-safe ORM for database operations.
+-   `@tanstack/react-query`: Server state management and caching.
+-   `cheerio`: Server-side HTML parsing.
+-   `node-fetch`: HTTP client for web crawling.
 
 ### UI and Styling
-- **@radix-ui/***: Accessible UI component primitives (dialog, dropdown, sidebar, etc.)
-- **tailwindcss**: Utility-first CSS framework
-- **class-variance-authority**: Type-safe variant management for components
-- **clsx**: Utility for conditional className joining
+
+-   `@radix-ui/*`: Accessible UI component primitives.
+-   `tailwindcss`: Utility-first CSS framework.
+-   `class-variance-authority`: Type-safe variant management.
+-   `clsx`: Utility for conditional className joining.
 
 ### Development and Build Tools
-- **vite**: Frontend build tool and development server
-- **tsx**: TypeScript execution for Node.js development
-- **esbuild**: Fast JavaScript bundler for production builds
-- **@replit/vite-plugin-***: Replit-specific development enhancements
+
+-   `vite`: Frontend build tool and development server.
+-   `tsx`: TypeScript execution for Node.js development.
+-   `esbuild`: Fast JavaScript bundler.
+-   `@replit/vite-plugin-*`: Replit-specific development enhancements.
 
 ### Runtime Dependencies
-- **express**: Web application framework
-- **wouter**: Lightweight React router
-- **date-fns**: Date manipulation and formatting utilities
-- **cmdk**: Command palette component for enhanced UX
 
-## RAG API Configuration
+-   `express`: Web application framework.
+-   `wouter`: Lightweight React router.
+-   `date-fns`: Date manipulation utilities.
+-   `cmdk`: Command palette component.
 
-### Public RAG Search Endpoint
+### Database Hosting
 
-API endpoint for Retrieval-Augmented Generation (RAG) search is available at:
-```
-POST https://aiknowledge.ru/api/public/collections/search/rag
-```
+-   **Neon serverless PostgreSQL**: For development and backup.
 
-### Current Infrastructure
+### Font Loading
 
-**Workspace:**
-- ID: `eb3ecef0-2e4a-464c-843a-9ce5d24d8051`
-- Name: AI Knowledge Workspace
-
-**API Key:**
-- `1a76fe18f9ee4ba571e2310ea973489aaa7d5b357463eca297269cf0facd05a3`
-
-**Registered Collections:**
-- `new2222222222222222222` (registered in workspace)
-
-**Embedding Provider:**
-- ID: `269022b8-4980-4f6c-8583-a70f73b3e98b`
-- Type: GigaChat
-- Vector Size: 1024
-
-**LLM Provider:**
-- ID: `59f44b6d-0fef-4082-9d76-ffb922c41825`
-- Type: GigaChat
-- Default Model: GigaChat-Max
-- Available Models: GigaChat, GigaChat-Plus, GigaChat-Pro, GigaChat-Max
-
-### ⚠️ Important: API Keys Configuration
-
-The embedding and LLM providers were created with placeholder authorization keys (`'your-authorization-key-here'`). Before using the RAG API in production, you **must** update these providers with real GigaChat API credentials:
-
-**Option 1: Update via SQL**
-```sql
--- Update Embedding Provider
-UPDATE embedding_providers 
-SET authorization_key = 'YOUR_REAL_GIGACHAT_KEY'
-WHERE id = '269022b8-4980-4f6c-8583-a70f73b3e98b';
-
--- Update LLM Provider
-UPDATE llm_providers 
-SET authorization_key = 'YOUR_REAL_GIGACHAT_KEY'
-WHERE id = '59f44b6d-0fef-4082-9d76-ffb922c41825';
-```
-
-**Option 2: Update via Admin Interface**
-Navigate to the providers management page in the admin interface and update the authorization keys there.
-
-### Example Request
-
-```bash
-curl -X POST 'https://aiknowledge.ru/api/public/collections/search/rag' \
-  -H 'Content-Type: application/json' \
-  -H 'X-API-Key: 1a76fe18f9ee4ba571e2310ea973489aaa7d5b357463eca297269cf0facd05a3' \
-  -d '{
-    "collection": "new2222222222222222222",
-    "workspaceId": "eb3ecef0-2e4a-464c-843a-9ce5d24d8051",
-    "embeddingProviderId": "269022b8-4980-4f6c-8583-a70f73b3e98b",
-    "llmProviderId": "59f44b6d-0fef-4082-9d76-ffb922c41825",
-    "llmModel": "GigaChat-Max",
-    "query": "чем полезен сервис?",
-    "responseFormat": "md",
-    "limit": 5,
-    "contextLimit": 4
-  }'
-```
-
-## Production Deployment Notes
-
-### Chromium for Puppeteer
-
-Chromium is installed as a system dependency for web crawling functionality:
-- Path: `/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium`
-- Environment variable: Set `PUPPETEER_EXECUTABLE_PATH` in Replit Secrets for production deployment
-- Fallback: Application will use node-fetch if Chromium is unavailable
+-   **Google Fonts CDN**: For the Inter font family.

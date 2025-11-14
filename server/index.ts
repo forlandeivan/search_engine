@@ -4,12 +4,25 @@ import { registerRoutes } from "./routes";
 import { setupVite, log } from "./vite";
 import { ensureDatabaseSchema } from "./storage";
 import { getAllowedHostnames } from "./cors-cache";
+import { isDatabaseConfigured } from "./db";
 import fs from "fs";
 import path from "path";
 import { configureAuth } from "./auth";
 
 const app = express();
 app.set("trust proxy", 1);
+
+// Health check endpoint - must be FIRST, before any middleware
+// This ensures fast response for Replit deployment health checks
+let dbInitialized = false;
+app.get("/health", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    dbConfigured: isDatabaseConfigured,
+    dbInitialized,
+    timestamp: new Date().toISOString()
+  });
+});
 
 const bodySizeLimitSetting = process.env.BODY_SIZE_LIMIT?.trim() ?? "50mb";
 
@@ -198,7 +211,54 @@ app.use((req, res, next) => {
   next();
 });
 
+// Validate critical environment variables before starting
+function validateProductionSecrets(): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (!isProduction) {
+    return;
+  }
+
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Check database connection
+  const hasCustomDb = process.env.PG_HOST && process.env.PG_USER && 
+                      process.env.PG_PASSWORD && process.env.PG_DATABASE;
+  const hasDatabaseUrl = process.env.DATABASE_URL;
+  
+  if (!hasCustomDb && !hasDatabaseUrl) {
+    errors.push('Database not configured: Set DATABASE_URL or PG_* variables');
+  }
+
+  // Check session secret
+  if (!process.env.SESSION_SECRET) {
+    warnings.push('SESSION_SECRET not set - using default (insecure for production)');
+  }
+
+  if (errors.length > 0) {
+    log('❌ CRITICAL CONFIGURATION ERRORS:');
+    errors.forEach(err => log(`  - ${err}`));
+    throw new Error(`Missing required configuration: ${errors.join(', ')}`);
+  }
+
+  if (warnings.length > 0) {
+    log('⚠️  CONFIGURATION WARNINGS:');
+    warnings.forEach(warn => log(`  - ${warn}`));
+  }
+}
+
 (async () => {
+  // Validate production configuration
+  try {
+    validateProductionSecrets();
+  } catch (error) {
+    log(`Configuration validation failed: ${error instanceof Error ? error.message : String(error)}`);
+    if (process.env.NODE_ENV === 'production') {
+      process.exit(1);
+    }
+  }
+
   // CRITICAL: Register routes and start server FIRST (before database init)
   // This ensures port 5000 opens immediately for production deployment
   const server = await registerRoutes(app);
@@ -261,21 +321,59 @@ app.use((req, res, next) => {
     log(`serving on port ${port}`);
   });
 
-  // Initialize database in background (non-blocking with timeout)
+  // Initialize database in background (non-blocking with 45s timeout)
+  // Server continues running even if database fails to initialize
   Promise.race([
     (async () => {
       try {
         await ensureDatabaseSchema();
-        log("Проверка схемы базы данных выполнена");
+        dbInitialized = true;
+        log("✅ Проверка схемы базы данных выполнена");
       } catch (error) {
-        log(`Не удалось подготовить схему базы данных: ${error instanceof Error ? error.message : String(error)}`);
+        log(`❌ Не удалось подготовить схему базы данных: ${error instanceof Error ? error.message : String(error)}`);
       }
-
     })(),
     new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Database initialization timeout')), 30000)
+      setTimeout(() => reject(new Error('Database initialization timeout after 45s')), 45000)
     )
   ]).catch(error => {
-    log(`Database initialization warning: ${error instanceof Error ? error.message : String(error)}`);
+    log(`⚠️  Database initialization warning: ${error instanceof Error ? error.message : String(error)}`);
   });
+
+  // Graceful shutdown handlers
+  const shutdown = async (signal: string) => {
+    log(`${signal} received, shutting down gracefully...`);
+    
+    const shutdownTimeout = setTimeout(() => {
+      log('Shutdown timeout exceeded, forcing exit');
+      process.exit(1);
+    }, 10000);
+
+    try {
+      // Close HTTP server
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
+      // Close database pool
+      const { pool } = await import("./db");
+      if (pool && typeof pool.end === 'function') {
+        await pool.end();
+      }
+
+      clearTimeout(shutdownTimeout);
+      log('Graceful shutdown complete');
+      process.exit(0);
+    } catch (error) {
+      clearTimeout(shutdownTimeout);
+      log(`Error during shutdown: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 })();
