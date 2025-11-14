@@ -26,6 +26,9 @@ const EMPTY_ASK_OPTIONS: UseKnowledgeBaseAskAiOptions = {
   hybrid: null,
   llm: null,
   baseUrl: null,
+  workspaceId: null,
+  collection: null,
+  embeddingProviderId: null,
 };
 
 interface SearchQuickSwitcherProps {

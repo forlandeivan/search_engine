@@ -1392,6 +1392,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
     return {
       knowledgeBaseId: selectedBase.id,
+      workspaceId,
+      collection: searchSettings.collection ?? null,
+      embeddingProviderId: searchSettings.embeddingProviderId ?? null,
       hybrid: {
         topK: normalizedTopK,
         bm25: bm25Options,
@@ -1421,6 +1424,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     searchSettings.responseFormat,
     searchSettings.systemPrompt,
     selectedBase,
+    workspaceId,
   ]);
   const handleQuickSearchQueryChange = useCallback(
     (value: string) => {
