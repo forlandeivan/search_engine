@@ -4500,68 +4500,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Коллекция не найдена" });
       }
 
-      const embedKnowledgeBaseId = embedKey?.knowledgeBaseId ?? null;
-      const contextKnowledgeBaseId =
-        publicContext.knowledgeBaseId ?? embedKnowledgeBaseId ?? null;
-      const requestedKnowledgeBaseId =
-        typeof body.kbId === "string" && body.kbId.trim().length > 0
-          ? body.kbId.trim()
-          : "";
-      let knowledgeBaseId = contextKnowledgeBaseId;
-
-      if (requestedKnowledgeBaseId) {
-        if (embedKnowledgeBaseId && embedKnowledgeBaseId !== requestedKnowledgeBaseId) {
-          return res.status(403).json({ error: "База знаний недоступна для данного ключа" });
-        }
-
-        knowledgeBaseId = requestedKnowledgeBaseId;
-      }
+      const knowledgeBaseId =
+        publicContext.knowledgeBaseId ?? embedKey?.knowledgeBaseId ?? null;
 
       if (knowledgeBaseId) {
-        const knowledgeBaseRecord = await storage.getKnowledgeBase(knowledgeBaseId);
-        if (!knowledgeBaseRecord) {
-          return res.status(404).json({ error: "База знаний не найдена" });
-        }
-
-        if (knowledgeBaseRecord.workspaceId !== workspaceId) {
-          return res.status(403).json({ error: "База знаний недоступна для данного ключа" });
-        }
-
-        const hybridConfig = body.hybrid ?? { bm25: {}, vector: {} };
-        const bm25Config = hybridConfig.bm25 ?? {};
-        const vectorConfig = hybridConfig.vector ?? {};
-
-        const ragTopKSource =
-          typeof body.topK === "number"
-            ? body.topK
-            : typeof body.contextLimit === "number"
-            ? body.contextLimit
-            : typeof body.limit === "number"
-            ? body.limit
-            : 6;
-        const ragTopK = Math.max(1, Math.min(ragTopKSource, 20));
-
-        const bm25LimitCandidate =
-          typeof bm25Config.limit === "number" ? bm25Config.limit : ragTopK;
-        const bm25LimitForPipeline = Math.max(1, Math.min(bm25LimitCandidate, 50));
-
-        const vectorLimitCandidate =
-          typeof vectorConfig.limit === "number"
-            ? vectorConfig.limit
-            : typeof body.limit === "number"
-            ? body.limit
-            : ragTopK;
-        const vectorLimitForPipeline = Math.max(1, Math.min(vectorLimitCandidate, 50));
-
-        const vectorCollectionOverride =
-          typeof vectorConfig.collection === "string" && vectorConfig.collection.trim().length > 0
-            ? vectorConfig.collection.trim()
-            : collectionName;
-        const vectorEmbeddingProviderOverride =
-          typeof vectorConfig.embeddingProviderId === "string" &&
-          vectorConfig.embeddingProviderId.trim().length > 0
-            ? vectorConfig.embeddingProviderId.trim()
-            : body.embeddingProviderId;
+        const ragTopK = Math.max(
+          1,
+          Math.min(body.contextLimit ?? body.limit ?? 6, 20),
+        );
+        const vectorLimitForPipeline = Math.max(
+          1,
+          Math.min(body.limit ?? ragTopK, 50),
+        );
 
         const ragRequest: KnowledgeRagRequest = {
           q: body.query,
@@ -4569,26 +4519,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           top_k: ragTopK,
           hybrid: {
             bm25: {
-              weight: typeof bm25Config.weight === "number" ? bm25Config.weight : undefined,
-              limit: bm25LimitForPipeline,
+              limit: ragTopK,
             },
             vector: {
-              weight: typeof vectorConfig.weight === "number" ? vectorConfig.weight : undefined,
               limit: vectorLimitForPipeline,
-              collection: vectorCollectionOverride,
-              embedding_provider_id: vectorEmbeddingProviderOverride,
+              collection: collectionName,
+              embedding_provider_id: body.embeddingProviderId,
             },
           },
           llm: {
             provider: body.llmProviderId,
             model: body.llmModel ?? undefined,
-            temperature:
-              typeof body.llmTemperature === "number" ? body.llmTemperature : undefined,
-            max_tokens:
-              typeof body.llmMaxTokens === "number" ? body.llmMaxTokens : undefined,
-            system_prompt:
-              body.llmSystemPrompt !== undefined ? body.llmSystemPrompt : undefined,
-            response_format: llmResponseFormatRaw,
+            temperature: undefined,
+            max_tokens: undefined,
+            system_prompt: undefined,
+            response_format: body.responseFormat,
           },
         };
 
