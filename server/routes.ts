@@ -1610,7 +1610,7 @@ function summarizeVectorForLog(vector: unknown): unknown {
 
 function buildVectorPayload(
   vector: number[],
-  vectorFieldName: string | null | undefined,
+  _vectorFieldName: string | null | undefined,
 ): Schemas["NamedVectorStruct"] | number[] {
   if (!Array.isArray(vector) || vector.length === 0) {
     return vector;
@@ -1628,12 +1628,7 @@ function buildVectorPayload(
     return entry;
   });
 
-  const trimmedName = typeof vectorFieldName === "string" ? vectorFieldName.trim() : "";
-  if (!trimmedName) {
-    return sanitizedVector;
-  }
-
-  return { name: trimmedName, vector: sanitizedVector } satisfies Schemas["NamedVectorStruct"];
+  return sanitizedVector;
 }
 
 function cloneVectorPayload(vector: unknown): unknown {
