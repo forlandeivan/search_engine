@@ -1582,32 +1582,6 @@ function sanitizeHeadersForLog(headers: Headers): Record<string, string> {
   return sanitized;
 }
 
-function summarizeVectorForLog(vector: unknown): unknown {
-  if (Array.isArray(vector)) {
-    return {
-      dimensions: vector.length,
-      preview: vector.slice(0, 8),
-    };
-  }
-
-  if (vector && typeof vector === "object") {
-    const record = vector as Record<string, unknown>;
-    if (Array.isArray(record.vector)) {
-      return {
-        ...Object.fromEntries(
-          Object.entries(record).filter(([key]) => key !== "vector"),
-        ),
-        vector: {
-          dimensions: record.vector.length,
-          preview: record.vector.slice(0, 8),
-        },
-      };
-    }
-  }
-
-  return vector;
-}
-
 function buildVectorPayload(
   vector: number[],
   _vectorFieldName: string | null | undefined,
@@ -3238,10 +3212,7 @@ async function runKnowledgeBaseRagPipeline(options: {
               "Content-Type": "application/json",
               "X-API-Key": "***",
             },
-            payload: {
-              ...vectorRequestPayload,
-              vector: summarizeVectorForLog(cloneVectorPayload(vectorPayload)),
-            },
+            payload: vectorRequestPayload,
           },
         });
 
