@@ -49,6 +49,7 @@ import {
   createKnowledgeDocumentChunkSet,
   updateKnowledgeDocumentChunkVectorRecords,
 } from "./knowledge-chunks";
+import { listSkills, createSkill, updateSkill, deleteSkill, SkillServiceError } from "./skills";
 import passport from "passport";
 import bcrypt from "bcryptjs";
 import {
@@ -79,6 +80,7 @@ import {
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type { KnowledgeBaseSearchSettingsRow } from "@shared/schema";
+import { createSkillSchema, updateSkillSchema } from "@shared/skills";
 import type {
   KnowledgeDocumentVectorizationJobStatus,
   KnowledgeDocumentVectorizationJobResult,
@@ -7484,9 +7486,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const details = getErrorDetails(error);
       console.error(`Ошибка при удалении коллекции ${req.params.name}:`, error);
       res.status(500).json({
-        error: "Не удалось удалить коллекцию",
+        error: "Не удалось удалить коллекцию", 
         details,
       });
+    }
+  });
+
+  app.get("/api/skills", requireAuth, async (req, res, next) => {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const skillsList = await listSkills(workspaceId);
+      res.json({ skills: skillsList });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/skills", requireAuth, async (req, res, next) => {
+    try {
+      const payload = createSkillSchema.parse(req.body);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const skill = await createSkill(workspaceId, payload);
+      res.status(201).json({ skill });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      if (error instanceof SkillServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+
+      next(error);
+    }
+  });
+
+  app.put("/api/skills/:skillId", requireAuth, async (req, res, next) => {
+    try {
+      const payload = updateSkillSchema.parse(req.body);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const skillId = req.params.skillId;
+      if (!skillId) {
+        return res.status(400).json({ message: "Не указан идентификатор навыка" });
+      }
+
+      const skill = await updateSkill(workspaceId, skillId, payload);
+      res.json({ skill });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+
+      if (error instanceof SkillServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+
+      next(error);
+    }
+  });
+
+  app.delete("/api/skills/:skillId", requireAuth, async (req, res, next) => {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const skillId = req.params.skillId;
+      if (!skillId) {
+        return res.status(400).json({ message: "Не указан идентификатор навыка" });
+      }
+
+      const deleted = await deleteSkill(workspaceId, skillId);
+      if (!deleted) {
+        return res.status(404).json({ message: "Навык не найден" });
+      }
+
+      res.status(204).send();
+    } catch (error) {
+      if (error instanceof SkillServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+
+      next(error);
     }
   });
 
