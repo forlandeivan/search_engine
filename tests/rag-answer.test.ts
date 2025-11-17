@@ -350,6 +350,166 @@ describe("POST /public/rag/answer", () => {
       });
     }
   });
+
+  it("стримит SSE-ответ при запросе text/event-stream", async () => {
+    setupDbMock();
+    setupStorageMock();
+    setupAuthMock();
+    setupCrawlerMock();
+    setupKBCrawlerMock();
+    setupCorsCacheMock();
+    setupQdrantMock();
+    setupKnowledgeChunksMock();
+    setupKnowledgeBaseMock();
+
+    const actualNodeFetch = await vi.importActual<typeof import("node-fetch")>("node-fetch");
+    const mockFetch = vi.fn(async (input: any, init?: any) => {
+      const url = typeof input === "string" ? input : input.url;
+
+      if (url === "https://llm.example/token") {
+        return new actualNodeFetch.Response(
+          JSON.stringify({ access_token: "llm-token" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url === "https://llm.example/completions") {
+        const acceptHeader = getHeader(init, "Accept");
+        expect(acceptHeader?.toLowerCase()).toContain("text/event-stream");
+        const sseStream = Readable.from([
+          Buffer.from(
+            "event: message\ndata: {\"choices\":[{\"delta\":{\"content\":\"Ответ\"}}]}\n\n",
+            "utf8",
+          ),
+          Buffer.from("event: message\ndata: [DONE]\n\n", "utf8"),
+        ]);
+
+        return new actualNodeFetch.Response(sseStream as any, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call to ${url}`);
+    });
+
+    vi.doMock("node-fetch", () => ({
+      ...actualNodeFetch,
+      default: mockFetch,
+    }));
+
+    const expressModule = await import("express");
+    const { storage } = await import("../server/storage");
+
+    (storage.getKnowledgeBase as unknown as Mock).mockResolvedValue({
+      id: "kb-1",
+      workspaceId: "workspace-1",
+    });
+
+    (storage.searchKnowledgeBaseSuggestions as unknown as Mock).mockResolvedValue({
+      normalizedQuery: "вопрос",
+      sections: [
+        {
+          chunkId: "chunk-1",
+          documentId: "doc-1",
+          docTitle: "Документ",
+          sectionTitle: "Раздел",
+          snippet: "Фрагмент",
+          text: "Полный текст",
+          score: 1,
+          source: "content",
+          nodeId: "node-1",
+          nodeSlug: "node-slug",
+        },
+      ],
+    });
+
+    (storage.getKnowledgeChunksByIds as unknown as Mock).mockResolvedValue([]);
+    (storage.getKnowledgeChunksByVectorRecords as unknown as Mock).mockResolvedValue([]);
+
+    (storage.getLlmProvider as unknown as Mock).mockResolvedValue({
+      id: "llm-1",
+      name: "LLM",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://llm.example/token",
+      completionUrl: "https://llm.example/completions",
+      authorizationKey: "Basic test",
+      scope: "scope",
+      model: "test-model",
+      availableModels: [],
+      allowSelfSignedCertificate: true,
+      requestHeaders: {},
+      requestConfig: { additionalBodyFields: { stream: true } },
+      responseConfig: {},
+      workspaceId: "workspace-1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const app = expressModule.default();
+    app.use(expressModule.json());
+
+    const routesModule = await import("../server/routes");
+    const httpServer = await routesModule.registerRoutes(app);
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(0, resolve);
+    });
+
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/public/rag/answer`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          q: "Что такое тест?",
+          kb_id: "kb-1",
+          top_k: 3,
+          hybrid: { bm25: { weight: 1, limit: 3 }, vector: { weight: 0 } },
+          llm: { provider: "llm-1", model: "test-model" },
+        }),
+      });
+
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      let payload = "";
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          payload += new TextDecoder().decode(value);
+        }
+      }
+
+      expect(response.status, payload).toBe(200);
+      expect(payload).toContain("event: status");
+      expect(payload).toContain("event: source");
+      expect(payload).toContain("event: delta");
+      expect(payload).toContain("event: done");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+  });
 });
 
 describe("POST /api/public/collections/search/rag", () => {
