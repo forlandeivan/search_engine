@@ -1240,67 +1240,77 @@ export function SearchQuickSwitcher({
                     role="status"
                     aria-live="polite"
                   >
-                    {resolvedAskState?.answerHtml ? (
-                      <div
-                        className="prose prose-sm max-w-none text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
-                        dangerouslySetInnerHTML={{ __html: resolvedAskState.answerHtml }}
-                      />
-                    ) : resolvedAskState?.phase === "connecting" ? (
-                      <span className="text-muted-foreground">Ответ появится после генерации…</span>
-                    ) : (
-                      <span className="text-muted-foreground">
-                        Введите вопрос, чтобы Ask AI подготовил ответ.
-                      </span>
-                    )}
+                    {(() => {
+                      const renderedAnswer =
+                        resolvedAskState?.visibleAnswer || resolvedAskState?.answerHtml;
+                      if (renderedAnswer) {
+                        return (
+                          <div
+                            className="prose prose-sm max-w-none text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
+                            dangerouslySetInnerHTML={{ __html: renderedAnswer }}
+                          />
+                        );
+                      }
+                      if (resolvedAskState?.phase === "connecting") {
+                        return <span className="text-muted-foreground">Ответ появится после генерации…</span>;
+                      }
+                      return (
+                        <span className="text-muted-foreground">
+                          Введите вопрос, чтобы Ask AI подготовил ответ.
+                        </span>
+                      );
+                    })()}
                   </div>
-                  {resolvedAskState?.sources && resolvedAskState.sources.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Цитаты</div>
-                      <div className="flex flex-col gap-2">
-                        {resolvedAskState.sources.map((source, index) => {
-                          const title = source.doc_title?.trim() || `Документ ${index + 1}`;
-                          const sectionTitle = source.section_title?.trim() || "";
-                          const snippet =
-                            typeof source.snippet === "string" && source.snippet.trim().length > 0
-                              ? source.snippet.trim()
-                              : typeof source.text === "string"
-                                ? source.text.trim()
-                                : "";
+                  {resolvedAskState?.isAnswerComplete &&
+                    resolvedAskState.sources &&
+                    resolvedAskState.sources.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Цитаты</div>
+                        <div className="flex flex-col gap-2">
+                          {resolvedAskState.sources.map((source, index) => {
+                            const title = source.doc_title?.trim() || `Документ ${index + 1}`;
+                            const sectionTitle = source.section_title?.trim() || "";
+                            const snippet =
+                              typeof source.snippet === "string" && source.snippet.trim().length > 0
+                                ? source.snippet.trim()
+                                : typeof source.text === "string"
+                                  ? source.text.trim()
+                                  : "";
 
-                          return (
-                            <div
-                              key={source.chunk_id || source.doc_id || `source-${index}`}
-                              className="space-y-2 rounded border px-3 py-2 text-xs"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="truncate text-sm font-semibold text-foreground">{title}</div>
-                                  {sectionTitle && (
-                                    <div className="truncate text-xs text-muted-foreground">{sectionTitle}</div>
-                                  )}
-                                </div>
-                                {(source.node_id || source.node_slug) && (
-                                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                                    {source.node_id && (
-                                      <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono">
-                                        nodeId: {truncateMiddle(source.node_id, 28)}
-                                      </span>
-                                    )}
-                                    {source.node_slug && (
-                                      <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono">
-                                        slug: {truncateMiddle(source.node_slug, 28)}
-                                      </span>
+                            return (
+                              <div
+                                key={source.chunk_id || source.doc_id || `source-${index}`}
+                                className="space-y-2 rounded border px-3 py-2 text-xs"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="truncate text-sm font-semibold text-foreground">{title}</div>
+                                    {sectionTitle && (
+                                      <div className="truncate text-xs text-muted-foreground">{sectionTitle}</div>
                                     )}
                                   </div>
-                                )}
+                                  {(source.node_id || source.node_slug) && (
+                                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                                      {source.node_id && (
+                                        <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono">
+                                          nodeId: {truncateMiddle(source.node_id, 28)}
+                                        </span>
+                                      )}
+                                      {source.node_slug && (
+                                        <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono">
+                                          slug: {truncateMiddle(source.node_slug, 28)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                                {snippet && <p className="text-xs text-muted-foreground leading-relaxed">{snippet}</p>}
                               </div>
-                              {snippet && <p className="text-xs text-muted-foreground leading-relaxed">{snippet}</p>}
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
                 </div>
               </div>
             </div>
