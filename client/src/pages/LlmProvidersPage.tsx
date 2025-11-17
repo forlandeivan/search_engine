@@ -974,7 +974,7 @@ export default function LlmProvidersPage() {
                                     <FormControl>
                                       <Input
                                         {...field}
-                                        value={field.value ?? ""}
+                                        value={field.value ?? modelField.label ?? ""}
                                         placeholder="Например, Lite"
                                       />
                                     </FormControl>
@@ -991,7 +991,7 @@ export default function LlmProvidersPage() {
                                     <FormControl>
                                       <Input
                                         {...field}
-                                        value={field.value ?? ""}
+                                        value={field.value ?? modelField.value ?? ""}
                                         placeholder="Например, GigaChat-Lite"
                                       />
                                     </FormControl>
