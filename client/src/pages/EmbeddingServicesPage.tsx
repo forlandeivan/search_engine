@@ -48,6 +48,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
   embeddingProviderTypes,
+  type EmbeddingProviderType,
+  type InsertEmbeddingProvider,
   type PublicEmbeddingProvider,
   type UpdateEmbeddingProvider,
 } from "@shared/schema";
@@ -104,6 +106,11 @@ type UpdateEmbeddingProviderVariables = {
   formattedRequestHeaders: string;
 };
 
+type CreateEmbeddingProviderVariables = {
+  payload: InsertEmbeddingProvider;
+  formattedRequestHeaders: string;
+};
+
 type FormValues = {
   providerType: (typeof embeddingProviderTypes)[number];
   name: string;
@@ -132,6 +139,34 @@ const emptyFormValues: FormValues = {
   maxTokensPerVectorization: "",
   allowSelfSignedCertificate: false,
   requestHeaders: formatJson(defaultRequestHeaders),
+};
+
+const embeddingTemplates: Record<EmbeddingProviderType, Partial<FormValues>> = {
+  gigachat: {
+    providerType: "gigachat",
+    name: "GigaChat Embeddings",
+    description: "Шаблон dev-стенда с готовыми URL и scope",
+    isActive: true,
+    tokenUrl: "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+    embeddingsUrl: "https://gigachat.devices.sberbank.ru/api/v1/embeddings",
+    scope: "GIGACHAT_API_PERS",
+    model: "embeddings",
+  },
+  custom: {
+    providerType: "custom",
+    isActive: true,
+  },
+};
+
+const buildTemplateValues = (type: EmbeddingProviderType = "gigachat"): FormValues => {
+  const template = embeddingTemplates[type] ?? {};
+
+  return {
+    ...emptyFormValues,
+    ...template,
+    providerType: template.providerType ?? type,
+    requestHeaders: template.requestHeaders ?? formatJson(defaultRequestHeaders),
+  } satisfies FormValues;
 };
 
 const debugStepDefinitions: Array<Pick<DebugStep, "stage" | "title">> = [
@@ -203,25 +238,43 @@ export default function EmbeddingServicesPage() {
   const { toast } = useToast();
   const form = useForm<FormValues>({ defaultValues: emptyFormValues });
   const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
-  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const [selectedProviderId, setSelectedProviderId] = useState<string | "new" | null>(null);
   const [debugSteps, setDebugSteps] = useState<DebugStep[]>(() => buildDebugSteps());
   const [activeTab, setActiveTab] = useState<"settings" | "docs">("settings");
+  const watchedProviderType = form.watch("providerType");
+  const isGigachatProvider = watchedProviderType === "gigachat";
+  const isCreating = selectedProviderId === "new";
 
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/embedding/services"],
   });
 
   const providers = useMemo(() => providersQuery.data?.providers ?? [], [providersQuery.data]);
+  const providersLoaded = providersQuery.isSuccess;
 
   const selectedProvider = useMemo(
-    () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
+    () =>
+      selectedProviderId && selectedProviderId !== "new"
+        ? providers.find((provider) => provider.id === selectedProviderId) ?? null
+        : null,
     [providers, selectedProviderId],
   );
-  const isGigachatProvider = selectedProvider?.providerType === "gigachat";
+  const isSelectedGigachatProvider = selectedProvider?.providerType === "gigachat";
 
   useEffect(() => {
+    if (!providersLoaded) {
+      return;
+    }
+
     if (providers.length === 0) {
-      setSelectedProviderId(null);
+      if (selectedProviderId !== "new") {
+        setSelectedProviderId("new");
+        form.reset(buildTemplateValues());
+      }
+      return;
+    }
+
+    if (selectedProviderId === "new") {
       return;
     }
 
@@ -230,7 +283,7 @@ export default function EmbeddingServicesPage() {
     }
 
     setSelectedProviderId(providers[0].id);
-  }, [providers, selectedProviderId]);
+  }, [providersLoaded, providers, selectedProviderId, form]);
 
   useEffect(() => {
     if (selectedProvider) {
@@ -241,11 +294,18 @@ export default function EmbeddingServicesPage() {
       return;
     }
 
+    if (isCreating) {
+      setIsAuthorizationVisible(false);
+      setDebugSteps(buildDebugSteps());
+      setActiveTab("settings");
+      return;
+    }
+
     form.reset(emptyFormValues);
     setIsAuthorizationVisible(false);
     setDebugSteps(buildDebugSteps());
     setActiveTab("settings");
-  }, [selectedProvider, form]);
+  }, [selectedProvider, form, isCreating]);
 
   const updateProviderMutation = useMutation<
     { provider: PublicEmbeddingProvider },
@@ -284,6 +344,63 @@ export default function EmbeddingServicesPage() {
     },
   });
 
+  const createProviderMutation = useMutation<
+    { provider: PublicEmbeddingProvider },
+    Error,
+    CreateEmbeddingProviderVariables
+  >({
+    mutationFn: async ({ payload }) => {
+      const response = await apiRequest("POST", "/api/embedding/services", payload);
+      const body = (await response.json()) as { provider?: PublicEmbeddingProvider; message?: string };
+
+      if (!response.ok) {
+        throw new Error(body.message ?? "Не удалось создать сервис эмбеддингов");
+      }
+
+      if (!body.provider) {
+        throw new Error("Некорректный ответ сервера");
+      }
+
+      return { provider: body.provider };
+    },
+    onSuccess: ({ provider }, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/embedding/services"] });
+      queryClient.setQueryData<ProvidersResponse>(["/api/embedding/services"], (previous) => {
+        if (!previous) {
+          return { providers: [provider] } satisfies ProvidersResponse;
+        }
+
+        const exists = previous.providers.some((item) => item.id === provider.id);
+        if (exists) {
+          return previous;
+        }
+
+        return { providers: [...previous.providers, provider] } satisfies ProvidersResponse;
+      });
+
+      toast({
+        title: "Сервис создан",
+        description: "Шаблон GigaChat заполнен автоматически, проверьте ключ.",
+      });
+
+      const updatedValues = {
+        ...mapProviderToFormValues(provider),
+        requestHeaders: variables.formattedRequestHeaders,
+      } satisfies FormValues;
+
+      setSelectedProviderId(provider.id);
+      form.reset(updatedValues);
+      setIsAuthorizationVisible(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось создать сервис",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const parseJsonField = <T,>(
     value: string,
     schema: z.ZodType<T>,
@@ -311,6 +428,84 @@ export default function EmbeddingServicesPage() {
     }
   };
 
+  function buildPayloadFromValues(
+    values: FormValues,
+    mode: "create",
+  ): { payload: InsertEmbeddingProvider; formattedRequestHeaders: string };
+  function buildPayloadFromValues(
+    values: FormValues,
+    mode: "update",
+  ): { payload: UpdateEmbeddingProvider; formattedRequestHeaders: string };
+  function buildPayloadFromValues(
+    values: FormValues,
+    mode: "create" | "update",
+  ): { payload: InsertEmbeddingProvider | UpdateEmbeddingProvider; formattedRequestHeaders: string } {
+    const requestHeaders = parseJsonField(
+      values.requestHeaders,
+      requestHeadersSchema,
+      "requestHeaders",
+      "Укажите заголовки запроса в формате JSON",
+    );
+
+    const trimmedAuthorizationKey = values.authorizationKey.trim();
+    const trimmedMaxTokens = values.maxTokensPerVectorization.trim();
+
+    if (!trimmedMaxTokens) {
+      const message = "Укажите максимальное количество токенов";
+      form.setError("maxTokensPerVectorization", { type: "manual", message });
+      throw new Error(message);
+    }
+
+    const parsedMaxTokens = Number.parseInt(trimmedMaxTokens, 10);
+
+    if (!Number.isFinite(parsedMaxTokens) || parsedMaxTokens <= 0) {
+      const message = "Введите положительное целое число";
+      form.setError("maxTokensPerVectorization", { type: "manual", message });
+      throw new Error(message);
+    }
+
+    const payloadBase = {
+      providerType: values.providerType,
+      name: values.name.trim(),
+      description: values.description.trim() ? values.description.trim() : undefined,
+      isActive: values.isActive,
+      tokenUrl: values.tokenUrl.trim(),
+      embeddingsUrl: values.embeddingsUrl.trim(),
+      scope: values.scope.trim(),
+      model: values.model.trim(),
+      maxTokensPerVectorization: parsedMaxTokens,
+      allowSelfSignedCertificate: values.allowSelfSignedCertificate,
+      requestHeaders,
+    } satisfies InsertEmbeddingProvider & UpdateEmbeddingProvider;
+
+    const formattedRequestHeaders = formatJson(requestHeaders);
+
+    if (mode === "create") {
+      if (!trimmedAuthorizationKey) {
+        const message = "Укажите Authorization key";
+        form.setError("authorizationKey", { type: "manual", message });
+        throw new Error(message);
+      }
+
+      const payload: InsertEmbeddingProvider = {
+        ...payloadBase,
+        authorizationKey: trimmedAuthorizationKey,
+      } satisfies InsertEmbeddingProvider;
+
+      return { payload, formattedRequestHeaders };
+    }
+
+    const payload: UpdateEmbeddingProvider = {
+      ...payloadBase,
+    } satisfies UpdateEmbeddingProvider;
+
+    if (trimmedAuthorizationKey.length > 0) {
+      payload.authorizationKey = trimmedAuthorizationKey;
+    }
+
+    return { payload, formattedRequestHeaders };
+  }
+
   const handleUpdate = form.handleSubmit((values) => {
     if (!selectedProvider) {
       toast({
@@ -324,55 +519,27 @@ export default function EmbeddingServicesPage() {
     form.clearErrors();
 
     try {
-      const requestHeaders = parseJsonField(
-        values.requestHeaders,
-        requestHeadersSchema,
-        "requestHeaders",
-        "Укажите заголовки запроса в формате JSON",
-      );
-
-      const trimmedAuthorizationKey = values.authorizationKey.trim();
-      const trimmedMaxTokens = values.maxTokensPerVectorization.trim();
-
-      if (!trimmedMaxTokens) {
-        const message = "Укажите максимальное количество токенов";
-        form.setError("maxTokensPerVectorization", { type: "manual", message });
-        throw new Error(message);
-      }
-
-      const parsedMaxTokens = Number.parseInt(trimmedMaxTokens, 10);
-
-      if (!Number.isFinite(parsedMaxTokens) || parsedMaxTokens <= 0) {
-        const message = "Введите положительное целое число";
-        form.setError("maxTokensPerVectorization", { type: "manual", message });
-        throw new Error(message);
-      }
-
-      const payload: UpdateEmbeddingProvider = {
-        providerType: values.providerType,
-        name: values.name.trim(),
-        description: values.description.trim() ? values.description.trim() : undefined,
-        isActive: values.isActive,
-        tokenUrl: values.tokenUrl.trim(),
-        embeddingsUrl: values.embeddingsUrl.trim(),
-        scope: values.scope.trim(),
-        model: values.model.trim(),
-        maxTokensPerVectorization: parsedMaxTokens,
-        allowSelfSignedCertificate: values.allowSelfSignedCertificate,
-        requestHeaders,
-      } satisfies UpdateEmbeddingProvider;
-
-      if (trimmedAuthorizationKey.length > 0) {
-        payload.authorizationKey = trimmedAuthorizationKey;
-      }
-
-      const formattedRequestHeaders = formatJson(requestHeaders);
-
+      const { payload, formattedRequestHeaders } = buildPayloadFromValues(values, "update");
       updateProviderMutation.mutate({
         id: selectedProvider.id,
         payload,
         formattedRequestHeaders,
       });
+    } catch (error) {
+      toast({
+        title: "Не удалось подготовить данные",
+        description: error instanceof Error ? error.message : "Исправьте ошибки и попробуйте снова.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const handleCreate = form.handleSubmit((values) => {
+    form.clearErrors();
+
+    try {
+      const { payload, formattedRequestHeaders } = buildPayloadFromValues(values, "create");
+      createProviderMutation.mutate({ payload, formattedRequestHeaders });
     } catch (error) {
       toast({
         title: "Не удалось подготовить данные",
@@ -521,6 +688,20 @@ export default function EmbeddingServicesPage() {
 
   const hasActiveDebugSteps = debugSteps.some((step) => step.status !== "idle");
 
+  const handleStartCreate = () => {
+    const currentType = form.getValues("providerType");
+    const fallbackType = embeddingProviderTypes.includes(currentType as EmbeddingProviderType)
+      ? (currentType as EmbeddingProviderType)
+      : "gigachat";
+    const templateValues = buildTemplateValues(fallbackType);
+
+    setSelectedProviderId("new");
+    form.reset(templateValues);
+    setIsAuthorizationVisible(false);
+    setDebugSteps(buildDebugSteps());
+    setActiveTab("settings");
+  };
+
   const handleCopyValue = async (value: string, label: string) => {
     try {
       await navigator.clipboard.writeText(value);
@@ -535,8 +716,12 @@ export default function EmbeddingServicesPage() {
     }
   };
 
+  const isSubmitPending = isCreating
+    ? createProviderMutation.isPending
+    : updateProviderMutation.isPending;
+
   const settingsFormContent = (
-    <form onSubmit={handleUpdate} className="space-y-6">
+    <form onSubmit={isCreating ? handleCreate : handleUpdate} className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2">
         <FormField
           control={form.control}
@@ -558,7 +743,9 @@ export default function EmbeddingServicesPage() {
                   </SelectContent>
                 </Select>
               </FormControl>
-              <FormDescription>Определяет преднастроенные параметры интеграции.</FormDescription>
+              <FormDescription>
+                Определяет преднастроенные параметры интеграции. Для GigaChat мы подставим рабочие URL, scope и модель.
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -844,11 +1031,13 @@ export default function EmbeddingServicesPage() {
       />
 
       <div className="flex justify-end">
-        <Button type="submit" disabled={updateProviderMutation.isPending}>
-          {updateProviderMutation.isPending ? (
+        <Button type="submit" disabled={isSubmitPending}>
+          {isSubmitPending ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Сохраняем...
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isCreating ? "Создаём..." : "Сохраняем..."}
             </>
+          ) : isCreating ? (
+            "Создать сервис"
           ) : (
             "Сохранить изменения"
           )}
@@ -864,16 +1053,26 @@ export default function EmbeddingServicesPage() {
           <Sparkles className="h-5 w-5 text-primary" /> Управление эмбеддингами
         </h1>
         <p className="text-muted-foreground max-w-3xl">
-          Выберите подключённый сервис и настройте ключи, модель и дополнительные заголовки. Добавление новых сервисов
-          выполняется программно, здесь доступны только правки существующих конфигураций.
+          Выберите подключённый сервис и настройте ключи, модель и дополнительные заголовки. Можно добавить новый шаблон —
+          для GigaChat мы автоматически подставим рабочие URL, scope и модель dev-стенда.
         </p>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.9fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <Card className="h-fit">
-          <CardHeader className="pb-4">
-            <CardTitle>Сервисы эмбеддингов</CardTitle>
-            <CardDescription>Выберите сервис, чтобы изменить его параметры.</CardDescription>
+          <CardHeader className="space-y-3 pb-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle>Сервисы эмбеддингов</CardTitle>
+                <CardDescription>Выберите сервис или создайте новый шаблон GigaChat.</CardDescription>
+              </div>
+              <Button size="sm" onClick={handleStartCreate} disabled={isSubmitPending} className="gap-2">
+                <Sparkles className="h-4 w-4" /> Добавить сервис
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Шаблон GigaChat заполнит OAuth endpoint, embeddings URL, scope и модель dev-стенда.
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             {providersQuery.isLoading ? (
@@ -885,8 +1084,12 @@ export default function EmbeddingServicesPage() {
                 {(providersQuery.error as Error).message ?? "Не удалось загрузить сервисы"}
               </div>
             ) : providers.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                Сервисы ещё не настроены. Обратитесь к администратору.
+              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                <p className="mb-3">Сервисы ещё не настроены. Создайте GigaChat по готовому шаблону.</p>
+                <Button size="sm" onClick={handleStartCreate} disabled={isSubmitPending} className="mb-2">
+                  Добавить сервис
+                </Button>
+                <p className="text-xs">Мы автоматически подставим URL, scope и модель dev-стенда.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -972,11 +1175,19 @@ export default function EmbeddingServicesPage() {
 
         <Card>
           <CardHeader className="pb-4">
-            <CardTitle>{selectedProvider ? selectedProvider.name : "Настройки сервиса"}</CardTitle>
+            <CardTitle>
+              {isCreating
+                ? "Новый сервис эмбеддингов"
+                : selectedProvider
+                  ? selectedProvider.name
+                  : "Настройки сервиса"}
+            </CardTitle>
             <CardDescription>
-              {selectedProvider
-                ? "Обновите ключи доступа, модель эмбеддингов и дополнительные параметры."
-                : "Выберите сервис слева, чтобы изменить его настройки."}
+              {isCreating
+                ? "Автозаполнили шаблон GigaChat: проверьте ключ и сохраните."
+                : selectedProvider
+                  ? "Обновите ключи доступа, модель эмбеддингов и дополнительные параметры."
+                  : "Выберите сервис слева или нажмите «Добавить сервис»."}
             </CardDescription>
             {selectedProvider ? (
               <div className="mt-3 flex flex-wrap gap-1.5">
@@ -1006,11 +1217,13 @@ export default function EmbeddingServicesPage() {
           </CardHeader>
           <CardContent>
             <Form {...form}>
-              {!selectedProvider ? (
+              {isCreating ? (
+                settingsFormContent
+              ) : !selectedProvider ? (
                 <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                  Нет доступных сервисов для настройки.
+                  Выберите сервис слева или создайте новый шаблон GigaChat.
                 </div>
-              ) : isGigachatProvider ? (
+              ) : isSelectedGigachatProvider ? (
                 <Tabs
                   value={activeTab}
                   onValueChange={(value) => setActiveTab(value as "settings" | "docs")}
