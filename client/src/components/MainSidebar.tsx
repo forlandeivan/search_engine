@@ -29,6 +29,7 @@ import {
   Users,
   LayoutDashboard,
   Bot,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -191,6 +192,11 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
           icon: Brain,
           badge: knowledgeBaseCount.toString(),
           badgeVariant: "secondary",
+        },
+        {
+          title: "Навыки",
+          url: "/skills",
+          icon: Sparkles,
         },
       ],
     },
