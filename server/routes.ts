@@ -2319,7 +2319,8 @@ async function fetchLlmCompletion(
   });
   const llmHeaders = new Headers();
   llmHeaders.set("Content-Type", "application/json");
-  llmHeaders.set("Accept", "application/json");
+  const wantsStream = (requestBody as { stream?: unknown }).stream === true;
+  llmHeaders.set("Accept", wantsStream ? "text/event-stream, application/json" : "application/json");
 
   if (!llmHeaders.has("RqUID")) {
     llmHeaders.set("RqUID", randomUUID());
@@ -2357,10 +2358,10 @@ async function fetchLlmCompletion(
     throw new Error(`Не удалось выполнить запрос к LLM: ${errorMessage}`);
   }
 
-  const rawBody = await completionResponse.text();
-  const parsedBody = parseJson(rawBody);
-
   if (!completionResponse.ok) {
+    const rawBody = await completionResponse.text();
+    const parsedBody = parseJson(rawBody);
+
     let message = `LLM вернул статус ${completionResponse.status}`;
 
     if (parsedBody && typeof parsedBody === "object") {
@@ -2376,6 +2377,101 @@ async function fetchLlmCompletion(
 
     throw new Error(`Ошибка на этапе генерации ответа: ${message}`);
   }
+
+  const contentType = completionResponse.headers.get("content-type")?.toLowerCase() ?? "";
+
+  if (contentType.includes("text/event-stream")) {
+    if (!completionResponse.body) {
+      throw new Error("LLM не вернул поток данных");
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const rawEvents: unknown[] = [];
+    let aggregatedAnswer = "";
+    let usageTokens: number | null = null;
+    let streamCompleted = false;
+
+    try {
+      for await (const chunk of completionResponse.body as unknown as AsyncIterable<Uint8Array>) {
+        buffer += decoder.decode(chunk, { stream: true });
+
+        let boundaryIndex = buffer.indexOf("\n\n");
+        while (boundaryIndex >= 0) {
+          const rawEvent = buffer.slice(0, boundaryIndex).replace(/\r/g, "");
+          buffer = buffer.slice(boundaryIndex + 2);
+          boundaryIndex = buffer.indexOf("\n\n");
+
+          if (!rawEvent.trim()) {
+            continue;
+          }
+
+          const lines = rawEvent.split("\n");
+          const dataLines: string[] = [];
+
+          for (const line of lines) {
+            if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5).trim());
+            }
+          }
+
+          const dataPayload = dataLines.join("\n");
+          if (!dataPayload) {
+            continue;
+          }
+
+          if (dataPayload === "[DONE]") {
+            streamCompleted = true;
+            break;
+          }
+
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(dataPayload);
+          } catch {
+            continue;
+          }
+
+          rawEvents.push(parsed);
+
+          const delta = extractTextDeltaFromChunk(parsed);
+          if (delta) {
+            aggregatedAnswer += delta;
+          }
+
+          const maybeUsage = extractUsageTokensFromChunk(parsed);
+          if (typeof maybeUsage === "number") {
+            usageTokens = maybeUsage;
+          }
+        }
+
+        if (streamCompleted) {
+          break;
+        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Ошибка при чтении SSE от LLM: ${errorMessage}`);
+    }
+
+    if (!aggregatedAnswer) {
+      throw new Error("LLM не вернул текст ответа");
+    }
+
+    return {
+      answer: aggregatedAnswer,
+      usageTokens,
+      rawResponse: rawEvents,
+      request: {
+        url: provider.completionUrl,
+        headers: sanitizeHeadersForLog(llmHeaders),
+        body: requestBody,
+      },
+    };
+  }
+
+  const rawBody = await completionResponse.text();
+  const parsedBody = parseJson(rawBody);
 
   const responseConfig = mergeLlmResponseConfig(provider);
   const messageValue = getValueByJsonPath(parsedBody, responseConfig.messagePath);
