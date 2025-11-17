@@ -8,7 +8,10 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useKnowledgeBaseAskAi } from "@/hooks/useKnowledgeBaseAskAi";
-import type { UseKnowledgeBaseAskAiOptions } from "@/hooks/useKnowledgeBaseAskAi";
+import type {
+  KnowledgeBaseAskAiState,
+  UseKnowledgeBaseAskAiOptions,
+} from "@/hooks/useKnowledgeBaseAskAi";
 import { cn } from "@/lib/utils";
 import type {
   RagChunk,
@@ -39,17 +42,7 @@ interface SearchQuickSwitcherProps {
   error: string | null;
   onQueryChange: (value: string) => void;
   onAskAi?: (query: string) => Promise<void> | void;
-  askState?: {
-    isActive: boolean;
-    question: string;
-    answerHtml: string;
-    statusMessage: string | null;
-    showIndicator: boolean;
-    error: string | null;
-    sources: RagChunk[];
-    isStreaming: boolean;
-    isDone: boolean;
-  };
+  askState?: KnowledgeBaseAskAiState;
   onAskAiStop?: () => void;
   onResultOpen?: (section: SuggestResponseItem, options?: { newTab?: boolean }) => void;
   onClose?: () => void;
@@ -443,7 +436,7 @@ export function SearchQuickSwitcher({
   onClose,
   onPrefetch,
   isAskAiEnabled,
-  closeOnAsk = true,
+  closeOnAsk = false,
   disabledReason,
   askOptions,
   renderTrigger,
@@ -690,6 +683,13 @@ export function SearchQuickSwitcher({
   };
 
   const handleBackToSearch = () => {
+    if (
+      resolvedOnAskAiStop &&
+      resolvedAskState &&
+      (resolvedAskState.phase === "connecting" || resolvedAskState.phase === "streaming")
+    ) {
+      resolvedOnAskAiStop();
+    }
     setActiveTab("search");
     requestAnimationFrame(() => {
       if (scrollParentRef.current) {
@@ -1221,7 +1221,7 @@ export function SearchQuickSwitcher({
                       {resolvedAskState?.question || normalizedQuery || "—"}
                     </div>
                   </div>
-                  {resolvedAskState?.showIndicator && (
+                  {resolvedAskState?.phase === "connecting" && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
                       <LoaderCircle className="h-4 w-4 animate-spin text-primary" />
                       <span>{resolvedAskState.statusMessage ?? "Готовим ответ…"}</span>
@@ -1245,8 +1245,8 @@ export function SearchQuickSwitcher({
                         className="prose prose-sm max-w-none text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5"
                         dangerouslySetInnerHTML={{ __html: resolvedAskState.answerHtml }}
                       />
-                    ) : resolvedAskState?.isStreaming ? (
-                      <span className="text-muted-foreground">Готовим ответ…</span>
+                    ) : resolvedAskState?.phase === "connecting" ? (
+                      <span className="text-muted-foreground">Ответ появится после генерации…</span>
                     ) : (
                       <span className="text-muted-foreground">
                         Введите вопрос, чтобы Ask AI подготовил ответ.

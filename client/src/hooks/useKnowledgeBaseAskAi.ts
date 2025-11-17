@@ -42,16 +42,18 @@ export interface UseKnowledgeBaseAskAiOptions {
   embeddingProviderId?: string | null;
 }
 
+type AskAiPhase = "idle" | "connecting" | "streaming" | "done" | "stopped" | "error";
+
 export interface KnowledgeBaseAskAiState {
   isActive: boolean;
   question: string;
   answerHtml: string;
   statusMessage: string | null;
-  showIndicator: boolean;
   error: string | null;
   sources: RagChunk[];
   isStreaming: boolean;
   isDone: boolean;
+  phase: AskAiPhase;
 }
 
 export interface UseKnowledgeBaseAskAiResult {
@@ -68,11 +70,11 @@ const INITIAL_STATE: KnowledgeBaseAskAiState = {
   question: "",
   answerHtml: "",
   statusMessage: null,
-  showIndicator: false,
   error: null,
   sources: [],
   isStreaming: false,
   isDone: false,
+  phase: "idle",
 };
 
 const clampNumber = (value: number | null, min: number, max: number): number | null => {
@@ -438,9 +440,9 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           ...prev,
           error: normalized.disabledReason,
           statusMessage: null,
-          showIndicator: false,
           isStreaming: false,
           isDone: true,
+          phase: "error",
         }));
         return;
       }
@@ -454,11 +456,11 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
         question,
         answerHtml: "",
         statusMessage: ASK_STATUS_PENDING,
-        showIndicator: true,
         error: null,
         sources: [],
         isStreaming: true,
         isDone: false,
+        phase: "connecting",
       });
 
       const isLegacyEndpoint = /\/public\/rag\/answer(?:\b|\/|\?|#)/.test(normalized.endpoint);
@@ -516,6 +518,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             vector: legacyVectorPayload,
           },
           llm: llmPayload,
+          stream: true,
         };
       } else {
         payload = {
@@ -524,6 +527,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             bm25: bm25Payload,
             vector: vectorPayload,
           },
+          stream: true,
         };
 
         if (normalized.embeddingProviderId) {
@@ -602,6 +606,12 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           let citations: RagChunk[] = [];
           let statusMessage: string | null = ASK_STATUS_PENDING;
           let completed = false;
+          let phase: AskAiPhase = "connecting";
+          const updatePhase = (next: AskAiPhase) => {
+            if (phase !== next) {
+              phase = next;
+            }
+          };
 
           const stopTypingTimer = () => {
             if (typingTimer !== null) {
@@ -623,10 +633,10 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
               ...prev,
               answerHtml: toHtml(typedAnswer, currentFormat),
               sources: citations,
-              statusMessage,
-              showIndicator: true,
-              isStreaming: true,
+              statusMessage: phase === "connecting" ? statusMessage : null,
+              isStreaming: phase === "connecting" || phase === "streaming",
               error: null,
+              phase,
             }));
           };
 
@@ -679,6 +689,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             if (delta) {
               aggregatedAnswer += delta;
               typingQueue += delta;
+              updatePhase("streaming");
               startTypingTimer();
             }
 
@@ -768,6 +779,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
                 if (typeof parsedPayload === "string") {
                   aggregatedAnswer += parsedPayload;
                   typingQueue += parsedPayload;
+                  updatePhase("streaming");
                   startTypingTimer();
                 } else {
                   applyRecord(parsedPayload);
@@ -792,15 +804,17 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             throw streamingError;
           }
 
+          updatePhase("done");
+
           setState((prev) => ({
             ...prev,
             answerHtml: toHtml(typedAnswer || aggregatedAnswer, currentFormat),
             sources: citations,
             statusMessage: null,
-            showIndicator: false,
             error: null,
             isStreaming: false,
             isDone: true,
+            phase,
           }));
         } else {
           const payloadBody = (await response.json()) as {
@@ -821,10 +835,10 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             answerHtml: toHtml(answer, finalFormat),
             sources: citations,
             statusMessage: null,
-            showIndicator: false,
             error: null,
             isStreaming: false,
             isDone: true,
+            phase: "done",
           }));
         }
       } catch (error) {
@@ -832,10 +846,10 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           setState((prev) => ({
             ...prev,
             statusMessage: "Запрос остановлен.",
-            showIndicator: false,
             isStreaming: false,
             error: null,
             isDone: true,
+            phase: "stopped",
           }));
           return;
         }
@@ -844,10 +858,10 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
         setState((prev) => ({
           ...prev,
           statusMessage: null,
-          showIndicator: false,
           isStreaming: false,
           error: message || "Не удалось получить ответ.",
           isDone: true,
+          phase: "error",
         }));
       } finally {
         abortRef.current = null;
@@ -865,10 +879,10 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
     setState((prev) => ({
       ...prev,
       statusMessage: "Запрос остановлен.",
-      showIndicator: false,
       isStreaming: false,
       error: null,
       isDone: true,
+      phase: "stopped",
     }));
   }, []);
 
