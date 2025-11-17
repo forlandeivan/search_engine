@@ -120,7 +120,13 @@ export function buildLlmRequestBody(
     body.frequency_penalty = requestConfig.frequencyPenalty;
   }
 
-  for (const [key, value] of Object.entries(requestConfig.additionalBodyFields ?? {})) {
+  const additionalFields = requestConfig.additionalBodyFields ?? {};
+  const { stream: configuredStream, ...otherAdditionalFields } = additionalFields as {
+    stream?: unknown;
+    [key: string]: unknown;
+  };
+
+  for (const [key, value] of Object.entries(otherAdditionalFields)) {
     if (body[key] === undefined) {
       body[key] = value;
     }
@@ -128,6 +134,10 @@ export function buildLlmRequestBody(
 
   if (options?.stream !== undefined) {
     body.stream = options.stream;
+  } else if (configuredStream !== undefined) {
+    body.stream = configuredStream;
+  } else if (provider.providerType === "gigachat") {
+    body.stream = true;
   }
 
   return body;
