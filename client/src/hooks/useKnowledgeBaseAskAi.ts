@@ -606,9 +606,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           const decoder = new TextDecoder("utf-8");
           let buffer = "";
           let aggregatedAnswer = "";
-          let typedAnswer = "";
-          let typingQueue = "";
-          let typingTimer: ReturnType<typeof setInterval> | null = null;
+          let displayedAnswer = "";
           let currentFormat = normalized.responseFormat ?? "text";
           let citations: RagChunk[] = [];
           let statusMessage: string | null = ASK_STATUS_PENDING;
@@ -620,47 +618,16 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             }
           };
 
-          const stopTypingTimer = () => {
-            if (typingTimer !== null) {
-              clearInterval(typingTimer);
-              typingTimer = null;
-            }
-          };
-
-          const flushTypingQueue = () => {
-            stopTypingTimer();
-            if (typingQueue) {
-              typedAnswer += typingQueue;
-              typingQueue = "";
-            }
-          };
-
           const pushUpdate = () => {
             setState((prev) => ({
               ...prev,
-              answerHtml: toHtml(typedAnswer, currentFormat),
+              answerHtml: toHtml(displayedAnswer, currentFormat),
               sources: citations,
               statusMessage: phase === "connecting" ? statusMessage : null,
               isStreaming: phase === "connecting" || phase === "streaming",
               error: null,
               phase,
             }));
-          };
-
-          const startTypingTimer = () => {
-            if (typingTimer !== null) {
-              return;
-            }
-            typingTimer = setInterval(() => {
-              if (!typingQueue) {
-                stopTypingTimer();
-                return;
-              }
-              const nextChar = typingQueue.slice(0, 1);
-              typingQueue = typingQueue.slice(1);
-              typedAnswer += nextChar;
-              pushUpdate();
-            }, 18);
           };
 
           const applyRecord = (recordValue: unknown) => {
@@ -695,9 +662,9 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
 
             if (delta) {
               aggregatedAnswer += delta;
-              typingQueue += delta;
+              displayedAnswer += delta;
               updatePhase("streaming");
-              startTypingTimer();
+              pushUpdate();
             }
 
             if (typeof record.completed === "boolean" && record.completed) {
@@ -785,9 +752,9 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
 
                 if (typeof parsedPayload === "string") {
                   aggregatedAnswer += parsedPayload;
-                  typingQueue += parsedPayload;
+                  displayedAnswer += parsedPayload;
                   updatePhase("streaming");
-                  startTypingTimer();
+                  pushUpdate();
                 } else {
                   applyRecord(parsedPayload);
                 }
@@ -798,8 +765,6 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           } catch (error) {
             streamingError = error;
           } finally {
-            flushTypingQueue();
-
             try {
               reader.releaseLock();
             } catch {
@@ -815,7 +780,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
 
           setState((prev) => ({
             ...prev,
-            answerHtml: toHtml(typedAnswer || aggregatedAnswer, currentFormat),
+            answerHtml: toHtml(displayedAnswer || aggregatedAnswer, currentFormat),
             sources: citations,
             statusMessage: null,
             error: null,
