@@ -3094,10 +3094,33 @@ function forwardLlmStreamEvents(
   emit: (eventName: string, payload?: unknown) => void,
 ) {
   return (async () => {
+    const startTime = Date.now();
+    let chunkCount = 0;
+    let lastChunkTime = startTime;
+    let firstChunkTime: number | null = null;
+
     for await (const entry of iterator) {
+      chunkCount++;
+      const currentTime = Date.now();
+      
+      if (firstChunkTime === null) {
+        firstChunkTime = currentTime;
+        const timeToFirstChunk = currentTime - startTime;
+        console.log(`[RAG STREAM] First chunk received after ${timeToFirstChunk}ms`);
+      }
+      
+      const timeSinceLastChunk = currentTime - lastChunkTime;
+      lastChunkTime = currentTime;
+      
+      console.log(`[RAG STREAM] Chunk #${chunkCount} (Δ${timeSinceLastChunk}ms):`, 
+        JSON.stringify(entry.data).slice(0, 100));
+      
       const eventName = entry.event || "delta";
       emit(eventName, entry.data);
     }
+    
+    const totalTime = Date.now() - startTime;
+    console.log(`[RAG STREAM] Stream completed: ${chunkCount} chunks in ${totalTime}ms`);
   })();
 }
 
