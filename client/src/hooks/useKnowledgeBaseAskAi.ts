@@ -6,6 +6,12 @@ import { marked } from "marked";
 import type { RagChunk } from "@/types/search";
 
 const ASK_STATUS_PENDING = "Готовим ответ…";
+const TYPING_SPEED_CHARS_PER_SECOND = 45;
+const TYPING_INTERVAL_MS = 50;
+const TYPING_CHARS_PER_TICK = Math.max(
+  1,
+  Math.round((TYPING_SPEED_CHARS_PER_SECOND / 1000) * TYPING_INTERVAL_MS),
+);
 
 interface HybridWeights {
   weight?: number | null;
@@ -48,11 +54,13 @@ export interface KnowledgeBaseAskAiState {
   isActive: boolean;
   question: string;
   answerHtml: string;
+  visibleAnswer: string;
   statusMessage: string | null;
   error: string | null;
   sources: RagChunk[];
   isStreaming: boolean;
   isDone: boolean;
+  isAnswerComplete: boolean;
   phase: AskAiPhase;
 }
 
@@ -69,11 +77,13 @@ const INITIAL_STATE: KnowledgeBaseAskAiState = {
   isActive: false,
   question: "",
   answerHtml: "",
+  visibleAnswer: "",
   statusMessage: null,
   error: null,
   sources: [],
   isStreaming: false,
   isDone: false,
+  isAnswerComplete: false,
   phase: "idle",
 };
 
@@ -343,6 +353,63 @@ const extractErrorMessage = async (response: Response): Promise<string> => {
 export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): UseKnowledgeBaseAskAiResult {
   const abortRef = useRef<AbortController | null>(null);
   const [state, setState] = useState<KnowledgeBaseAskAiState>(INITIAL_STATE);
+  const aggregatedAnswerRef = useRef("");
+  const visibleAnswerRef = useRef("");
+  const pendingCitationsRef = useRef<RagChunk[]>([]);
+  const typingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const currentFormatRef = useRef<"text" | "markdown" | "html">("text");
+  const isAnswerCompleteRef = useRef(false);
+
+  const stopTypingInterval = useCallback(() => {
+    if (typingIntervalRef.current) {
+      clearInterval(typingIntervalRef.current);
+      typingIntervalRef.current = null;
+    }
+  }, []);
+
+  const syncVisibleAnswer = useCallback(() => {
+    const html = toHtml(visibleAnswerRef.current, currentFormatRef.current);
+    setState((prev) => ({
+      ...prev,
+      visibleAnswer: html,
+    }));
+  }, []);
+
+  const ensureTypingInterval = useCallback(() => {
+    if (typingIntervalRef.current) {
+      return;
+    }
+    typingIntervalRef.current = setInterval(() => {
+      const aggregated = aggregatedAnswerRef.current;
+      const visibleLength = visibleAnswerRef.current.length;
+      if (visibleLength >= aggregated.length) {
+        if (isAnswerCompleteRef.current) {
+          stopTypingInterval();
+        }
+        return;
+      }
+      const nextLength = Math.min(aggregated.length, visibleLength + TYPING_CHARS_PER_TICK);
+      if (nextLength === visibleLength) {
+        return;
+      }
+      visibleAnswerRef.current = aggregated.slice(0, nextLength);
+      syncVisibleAnswer();
+    }, TYPING_INTERVAL_MS);
+  }, [stopTypingInterval, syncVisibleAnswer]);
+
+  const flushVisibleAnswer = useCallback(() => {
+    visibleAnswerRef.current = aggregatedAnswerRef.current;
+    syncVisibleAnswer();
+    stopTypingInterval();
+  }, [stopTypingInterval, syncVisibleAnswer]);
+
+  const resetStreamingRefs = useCallback(() => {
+    stopTypingInterval();
+    aggregatedAnswerRef.current = "";
+    visibleAnswerRef.current = "";
+    pendingCitationsRef.current = [];
+    isAnswerCompleteRef.current = false;
+  }, [stopTypingInterval]);
 
   const normalized = useMemo(() => {
     const baseId = typeof options.knowledgeBaseId === "string" ? options.knowledgeBaseId.trim() : "";
@@ -424,10 +491,18 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    resetStreamingRefs();
+    currentFormatRef.current = "text";
     setState(INITIAL_STATE);
-  }, []);
+  }, [resetStreamingRefs]);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      stopTypingInterval();
+    },
+    [stopTypingInterval],
+  );
 
   const ask = useCallback(
     async (rawQuestion: string) => {
@@ -450,16 +525,20 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
+      resetStreamingRefs();
+      currentFormatRef.current = normalized.responseFormat ?? "text";
 
       setState({
         isActive: true,
         question,
         answerHtml: "",
+        visibleAnswer: "",
         statusMessage: ASK_STATUS_PENDING,
         error: null,
         sources: [],
         isStreaming: true,
         isDone: false,
+        isAnswerComplete: false,
         phase: "connecting",
       });
 
@@ -605,29 +684,36 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
 
           const decoder = new TextDecoder("utf-8");
           let buffer = "";
-          let aggregatedAnswer = "";
-          let displayedAnswer = "";
-          let currentFormat = normalized.responseFormat ?? "text";
-          let citations: RagChunk[] = [];
           let statusMessage: string | null = ASK_STATUS_PENDING;
           let completed = false;
           let phase: AskAiPhase = "connecting";
+          currentFormatRef.current = normalized.responseFormat ?? "text";
+
           const updatePhase = (next: AskAiPhase) => {
             if (phase !== next) {
               phase = next;
             }
           };
 
-          const pushUpdate = () => {
+          const pushStreamingState = () => {
             setState((prev) => ({
               ...prev,
-              answerHtml: toHtml(displayedAnswer, currentFormat),
-              sources: citations,
               statusMessage: phase === "connecting" ? statusMessage : null,
               isStreaming: phase === "connecting" || phase === "streaming",
               error: null,
               phase,
+              isAnswerComplete: isAnswerCompleteRef.current,
             }));
+          };
+
+          const appendDelta = (delta: string) => {
+            if (!delta) {
+              return;
+            }
+            aggregatedAnswerRef.current += delta;
+            updatePhase("streaming");
+            ensureTypingInterval();
+            pushStreamingState();
           };
 
           const applyRecord = (recordValue: unknown) => {
@@ -643,12 +729,13 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             }
 
             if (Array.isArray(record.citations)) {
-              citations = mapCitations(record.citations);
+              pendingCitationsRef.current = mapCitations(record.citations);
             }
 
             const maybeFormat = normalizeResponseFormat(record.format ?? record.response_format ?? null);
             if (maybeFormat) {
-              currentFormat = maybeFormat;
+              currentFormatRef.current = maybeFormat;
+              syncVisibleAnswer();
             }
 
             const delta =
@@ -661,10 +748,9 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
                     : "";
 
             if (delta) {
-              aggregatedAnswer += delta;
-              displayedAnswer += delta;
-              updatePhase("streaming");
-              pushUpdate();
+              appendDelta(delta);
+            } else {
+              pushStreamingState();
             }
 
             if (typeof record.completed === "boolean" && record.completed) {
@@ -672,7 +758,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             }
           };
 
-          pushUpdate();
+          pushStreamingState();
 
           let streamingError: unknown = null;
           try {
@@ -740,7 +826,6 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
 
                 if (eventName === "metadata") {
                   applyRecord(parsedPayload);
-                  pushUpdate();
                   continue;
                 }
 
@@ -751,15 +836,10 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
                 }
 
                 if (typeof parsedPayload === "string") {
-                  aggregatedAnswer += parsedPayload;
-                  displayedAnswer += parsedPayload;
-                  updatePhase("streaming");
-                  pushUpdate();
+                  appendDelta(parsedPayload);
                 } else {
                   applyRecord(parsedPayload);
                 }
-
-                pushUpdate();
               }
             }
           } catch (error) {
@@ -777,15 +857,20 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           }
 
           updatePhase("done");
+          isAnswerCompleteRef.current = true;
+          flushVisibleAnswer();
 
+          const finalHtml = toHtml(aggregatedAnswerRef.current, currentFormatRef.current);
           setState((prev) => ({
             ...prev,
-            answerHtml: toHtml(displayedAnswer || aggregatedAnswer, currentFormat),
-            sources: citations,
+            answerHtml: finalHtml,
+            visibleAnswer: finalHtml,
+            sources: pendingCitationsRef.current,
             statusMessage: null,
             error: null,
             isStreaming: false,
             isDone: true,
+            isAnswerComplete: true,
             phase,
           }));
         } else {
@@ -801,45 +886,64 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             "text";
           const citations = mapCitations(payloadBody.citations ?? null);
           const answer = typeof payloadBody.answer === "string" ? payloadBody.answer : "";
+          currentFormatRef.current = finalFormat;
+          aggregatedAnswerRef.current = answer;
+          visibleAnswerRef.current = answer;
+          isAnswerCompleteRef.current = true;
+          stopTypingInterval();
+          const finalHtml = toHtml(answer, finalFormat);
 
           setState((prev) => ({
             ...prev,
-            answerHtml: toHtml(answer, finalFormat),
+            answerHtml: finalHtml,
+            visibleAnswer: finalHtml,
             sources: citations,
             statusMessage: null,
             error: null,
             isStreaming: false,
             isDone: true,
+            isAnswerComplete: true,
             phase: "done",
           }));
         }
       } catch (error) {
         if ((error as Error).name === "AbortError") {
+          stopTypingInterval();
           setState((prev) => ({
             ...prev,
             statusMessage: "Запрос остановлен.",
             isStreaming: false,
             error: null,
             isDone: true,
+            isAnswerComplete: false,
             phase: "stopped",
           }));
           return;
         }
 
         const message = error instanceof Error ? error.message : String(error);
+        stopTypingInterval();
         setState((prev) => ({
           ...prev,
           statusMessage: null,
           isStreaming: false,
           error: message || "Не удалось получить ответ.",
           isDone: true,
+          isAnswerComplete: false,
           phase: "error",
         }));
       } finally {
         abortRef.current = null;
+        stopTypingInterval();
       }
     },
-    [normalized],
+    [
+      ensureTypingInterval,
+      flushVisibleAnswer,
+      normalized,
+      resetStreamingRefs,
+      syncVisibleAnswer,
+    ],
   );
 
   const stop = useCallback(() => {
@@ -848,15 +952,17 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
     }
     abortRef.current.abort();
     abortRef.current = null;
+    stopTypingInterval();
     setState((prev) => ({
       ...prev,
       statusMessage: "Запрос остановлен.",
       isStreaming: false,
       error: null,
       isDone: true,
+      isAnswerComplete: false,
       phase: "stopped",
     }));
-  }, []);
+  }, [stopTypingInterval]);
 
   return useMemo(
     () => ({
