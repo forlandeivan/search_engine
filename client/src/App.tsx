@@ -21,6 +21,7 @@ import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import DashboardPage from "@/pages/DashboardPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import AdminWorkspacesPage from "@/pages/AdminWorkspacesPage";
+import SkillsPage from "@/pages/SkillsPage";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
 import ProfilePage from "@/pages/ProfilePage";
@@ -53,6 +54,7 @@ function MainRouter() {
       <Route path="/knowledge/:knowledgeBaseId/node/:nodeId" component={KnowledgeBasePage} />
       <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
       <Route path="/knowledge" component={KnowledgeBasePage} />
+      <Route path="/skills" component={SkillsPage} />
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
       <Route path="/integrations/widget" component={WidgetScriptPage} />
