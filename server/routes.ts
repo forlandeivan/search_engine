@@ -4946,6 +4946,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         };
 
+        const streamParam = payloadSource.stream;
+        const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
+        const wantsStream = Boolean(
+          streamParam === true || acceptHeader.toLowerCase().includes("text/event-stream"),
+        );
+
+        if (wantsStream) {
+          res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+          res.setHeader("Cache-Control", "no-cache, no-transform");
+          res.setHeader("Connection", "keep-alive");
+          res.setHeader("X-Accel-Buffering", "no");
+          const flusher = (res as Response & { flushHeaders?: () => void }).flushHeaders;
+          if (typeof flusher === "function") {
+            flusher.call(res);
+          }
+
+          try {
+            await runKnowledgeBaseRagPipeline({
+              req,
+              body: ragRequest,
+              stream: {
+                onEvent: (eventName, payload) => {
+                  sendSseEvent(res, eventName, payload);
+                },
+              },
+            });
+            res.end();
+          } catch (error) {
+            if (error instanceof HttpError) {
+              sendSseEvent(res, "error", { message: error.message, details: error.details ?? null });
+              res.end();
+              return;
+            }
+
+            if (error instanceof QdrantConfigurationError) {
+              sendSseEvent(res, "error", { message: "Qdrant не настроен", details: error.message });
+              res.end();
+              return;
+            }
+
+            console.error("Ошибка RAG-поиска (SSE):", error);
+            sendSseEvent(res, "error", { message: "Не удалось получить ответ от LLM" });
+            res.end();
+          }
+
+          return;
+        }
+
         const pipelineResult = await runKnowledgeBaseRagPipeline({
           req,
           body: ragRequest,
