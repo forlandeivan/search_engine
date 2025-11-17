@@ -6573,6 +6573,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (payload.requestHeaders !== undefined) updates.requestHeaders = payload.requestHeaders;
       if (payload.allowSelfSignedCertificate !== undefined)
         updates.allowSelfSignedCertificate = payload.allowSelfSignedCertificate;
+      if (payload.availableModels !== undefined) {
+        updates.availableModels = payload.availableModels;
+      }
       if (payload.requestConfig !== undefined)
         updates.requestConfig = {
           ...DEFAULT_LLM_REQUEST_CONFIG,
