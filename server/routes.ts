@@ -2148,6 +2148,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
 
   const flushHeaders = (res as Response & { flushHeaders?: () => void }).flushHeaders;
   if (typeof flushHeaders === "function") {
@@ -5310,6 +5311,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         configuredLlmProvider.providerType === "gigachat" && acceptHeader.toLowerCase().includes("text/event-stream");
 
       if (wantsStreamingResponse) {
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
         await streamGigachatCompletion({
           req,
           res,
@@ -8659,6 +8664,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
 
     res.flushHeaders?.();
 
