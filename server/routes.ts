@@ -3126,7 +3126,7 @@ async function runKnowledgeBaseRagPipeline(options: {
   };
   const query = body.q.trim();
   const knowledgeBaseId = body.kb_id.trim();
-  const wantsLlmStream = body.stream === true;
+  const wantsLlmStream = Boolean(stream);
 
   if (!query) {
     throw new HttpError(400, "Укажите поисковый запрос");
