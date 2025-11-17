@@ -4866,6 +4866,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      const streamParamBeforeParse = payloadSource.stream;
+
       const body = publicGenerativeSearchSchema.parse(payloadSource);
       collectionName = body.collection.trim();
 
@@ -4946,11 +4948,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         };
 
-        const streamParam = payloadSource.stream;
         const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
         const wantsStream = Boolean(
-          streamParam === true || acceptHeader.toLowerCase().includes("text/event-stream"),
+          streamParamBeforeParse === true || acceptHeader.toLowerCase().includes("text/event-stream"),
         );
+
+        console.log('[RAG STREAM DEBUG] streamParamBeforeParse:', streamParamBeforeParse);
+        console.log('[RAG STREAM DEBUG] acceptHeader:', acceptHeader);
+        console.log('[RAG STREAM DEBUG] wantsStream:', wantsStream);
 
         if (wantsStream) {
           res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
