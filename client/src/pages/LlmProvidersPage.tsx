@@ -246,6 +246,7 @@ export default function LlmProvidersPage() {
 
     form.reset(initialValues);
     modelsArray.replace(availableModels);
+    form.setValue("availableModels", availableModels, { shouldDirty: false, shouldTouch: false });
     setSelectedProviderId(null);
     setIsCreating(true);
     setIsAuthorizationVisible(false);
@@ -261,6 +262,7 @@ export default function LlmProvidersPage() {
 
     form.reset(emptyFormValues);
     modelsArray.replace([]);
+    form.setValue("availableModels", [], { shouldDirty: false, shouldTouch: false });
   };
 
   const handleCopyValue = async (value: string, label: string) => {
@@ -277,7 +279,8 @@ export default function LlmProvidersPage() {
     }
   };
 
-  const buildPayloadFromValues = (values: FormValues, mode: "create" | "update") => {
+  const buildPayloadFromValues = (mode: "create" | "update") => {
+    const values = form.getValues();
     const requestHeaders = parseJsonField(
       values.requestHeaders,
       requestHeadersSchema,
@@ -386,13 +389,20 @@ export default function LlmProvidersPage() {
     if (selectedProvider) {
       const values = mapProviderToFormValues(selectedProvider);
       form.reset(values);
+      modelsArray.replace(values.availableModels ?? []);
+      form.setValue("availableModels", values.availableModels ?? [], {
+        shouldDirty: false,
+        shouldTouch: false,
+      });
       setIsAuthorizationVisible(false);
       return;
     }
 
     form.reset(emptyFormValues);
+    modelsArray.replace([]);
+    form.setValue("availableModels", [], { shouldDirty: false, shouldTouch: false });
     setIsAuthorizationVisible(false);
-  }, [selectedProvider, form, isCreating]);
+  }, [selectedProvider, form, isCreating, modelsArray]);
 
   useEffect(() => {
     if (!isCreating) {
@@ -407,6 +417,10 @@ export default function LlmProvidersPage() {
     const templateValues = templateFactory();
     if (templateValues.availableModels) {
       modelsArray.replace(templateValues.availableModels);
+      form.setValue("availableModels", templateValues.availableModels, {
+        shouldDirty: false,
+        shouldTouch: false,
+      });
     }
 
     const templateFields: (keyof FormValues)[] = [
@@ -538,7 +552,7 @@ export default function LlmProvidersPage() {
     form.clearErrors();
 
     try {
-      const { payload, formattedRequestHeaders } = buildPayloadFromValues(values, "update");
+      const { payload, formattedRequestHeaders } = buildPayloadFromValues("update");
       updateProviderMutation.mutate({
         id: selectedProvider.id,
         payload,
@@ -557,7 +571,7 @@ export default function LlmProvidersPage() {
     form.clearErrors();
 
     try {
-      const { payload, formattedRequestHeaders } = buildPayloadFromValues(values, "create");
+      const { payload, formattedRequestHeaders } = buildPayloadFromValues("create");
       createProviderMutation.mutate({ payload, formattedRequestHeaders });
     } catch (error) {
       toast({
@@ -958,7 +972,11 @@ export default function LlmProvidersPage() {
                                   <FormItem>
                                     <FormLabel className="text-xs uppercase text-muted-foreground">Название</FormLabel>
                                     <FormControl>
-                                      <Input {...field} placeholder="Например, Lite" />
+                                      <Input
+                                        {...field}
+                                        value={field.value ?? modelField.label ?? ""}
+                                        placeholder="Например, Lite"
+                                      />
                                     </FormControl>
                                     <FormMessage />
                                   </FormItem>
@@ -971,7 +989,11 @@ export default function LlmProvidersPage() {
                                   <FormItem>
                                     <FormLabel className="text-xs uppercase text-muted-foreground">Идентификатор</FormLabel>
                                     <FormControl>
-                                      <Input {...field} placeholder="Например, GigaChat-Lite" />
+                                      <Input
+                                        {...field}
+                                        value={field.value ?? modelField.value ?? ""}
+                                        placeholder="Например, GigaChat-Lite"
+                                      />
                                     </FormControl>
                                     <FormMessage />
                                   </FormItem>
