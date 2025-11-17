@@ -402,7 +402,7 @@ export default function LlmProvidersPage() {
     modelsArray.replace([]);
     form.setValue("availableModels", [], { shouldDirty: false, shouldTouch: false });
     setIsAuthorizationVisible(false);
-  }, [selectedProvider, form, isCreating, modelsArray]);
+  }, [selectedProvider, isCreating]);
 
   useEffect(() => {
     if (!isCreating) {
@@ -445,7 +445,7 @@ export default function LlmProvidersPage() {
         form.setValue(field, templateValues[field] as never, { shouldDirty: false, shouldTouch: false });
       }
     });
-  }, [form, isCreating, providerTypeValue, modelsArray]);
+  }, [isCreating, providerTypeValue]);
 
   const updateProviderMutation = useMutation<
     { provider: PublicLlmProvider },
