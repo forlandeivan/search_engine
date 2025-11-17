@@ -211,4 +211,32 @@ describe("LLM providers API", () => {
       });
     }
   });
+
+  it("keeps the existing model list when the payload omits availableModels", async () => {
+    setupDbMock();
+    setupAuthMock();
+    const storageProxy = setupStorageMock();
+    setupOtherMocks();
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/llm/providers/llm-1`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "GigaChat-Pro" }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(storageProxy.updateLlmProvider).toHaveBeenCalledWith(
+        "llm-1",
+        expect.not.objectContaining({ availableModels: expect.anything() }),
+        "workspace-1",
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
 });

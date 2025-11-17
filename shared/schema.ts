@@ -908,12 +908,14 @@ export const insertLlmProviderSchema = createInsertSchema(llmProviders)
       .max(50, "Слишком много моделей")
       .optional()
       .transform((models) =>
-        (models ?? [])
-          .map((model) => ({
-            label: model.label.trim(),
-            value: model.value.trim(),
-          }))
-          .filter((model) => model.label.length > 0 && model.value.length > 0),
+        models
+          ? models
+              .map((model) => ({
+                label: model.label.trim(),
+                value: model.value.trim(),
+              }))
+              .filter((model) => model.label.length > 0 && model.value.length > 0)
+          : undefined,
       ),
     allowSelfSignedCertificate: z.boolean().default(false),
     requestHeaders: z.record(z.string()).default({}),
@@ -981,12 +983,14 @@ export const updateLlmProviderSchema = z
       .max(50, "Слишком много моделей")
       .optional()
       .transform((models) =>
-        (models ?? [])
-          .map((model) => ({
-            label: model.label.trim(),
-            value: model.value.trim(),
-          }))
-          .filter((model) => model.label.length > 0 && model.value.length > 0),
+        models
+          ? models
+              .map((model) => ({
+                label: model.label.trim(),
+                value: model.value.trim(),
+              }))
+              .filter((model) => model.label.length > 0 && model.value.length > 0)
+          : undefined,
       ),
     allowSelfSignedCertificate: z.boolean().optional(),
     requestHeaders: z.record(z.string()).optional(),
