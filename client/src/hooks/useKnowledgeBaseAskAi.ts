@@ -6,12 +6,6 @@ import { marked } from "marked";
 import type { RagChunk } from "@/types/search";
 
 const ASK_STATUS_PENDING = "Готовим ответ…";
-const TYPING_SPEED_CHARS_PER_SECOND = 45;
-const TYPING_INTERVAL_MS = 50;
-const TYPING_CHARS_PER_TICK = Math.max(
-  1,
-  Math.round((TYPING_SPEED_CHARS_PER_SECOND / 1000) * TYPING_INTERVAL_MS),
-);
 
 interface HybridWeights {
   weight?: number | null;
@@ -356,16 +350,8 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
   const aggregatedAnswerRef = useRef("");
   const visibleAnswerRef = useRef("");
   const pendingCitationsRef = useRef<RagChunk[]>([]);
-  const typingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentFormatRef = useRef<"text" | "markdown" | "html">("text");
   const isAnswerCompleteRef = useRef(false);
-
-  const stopTypingInterval = useCallback(() => {
-    if (typingIntervalRef.current) {
-      clearInterval(typingIntervalRef.current);
-      typingIntervalRef.current = null;
-    }
-  }, []);
 
   const syncVisibleAnswer = useCallback(() => {
     const html = toHtml(visibleAnswerRef.current, currentFormatRef.current);
@@ -375,41 +361,17 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
     }));
   }, []);
 
-  const ensureTypingInterval = useCallback(() => {
-    if (typingIntervalRef.current) {
-      return;
-    }
-    typingIntervalRef.current = setInterval(() => {
-      const aggregated = aggregatedAnswerRef.current;
-      const visibleLength = visibleAnswerRef.current.length;
-      if (visibleLength >= aggregated.length) {
-        if (isAnswerCompleteRef.current) {
-          stopTypingInterval();
-        }
-        return;
-      }
-      const nextLength = Math.min(aggregated.length, visibleLength + TYPING_CHARS_PER_TICK);
-      if (nextLength === visibleLength) {
-        return;
-      }
-      visibleAnswerRef.current = aggregated.slice(0, nextLength);
-      syncVisibleAnswer();
-    }, TYPING_INTERVAL_MS);
-  }, [stopTypingInterval, syncVisibleAnswer]);
-
   const flushVisibleAnswer = useCallback(() => {
     visibleAnswerRef.current = aggregatedAnswerRef.current;
     syncVisibleAnswer();
-    stopTypingInterval();
-  }, [stopTypingInterval, syncVisibleAnswer]);
+  }, [syncVisibleAnswer]);
 
   const resetStreamingRefs = useCallback(() => {
-    stopTypingInterval();
     aggregatedAnswerRef.current = "";
     visibleAnswerRef.current = "";
     pendingCitationsRef.current = [];
     isAnswerCompleteRef.current = false;
-  }, [stopTypingInterval]);
+  }, []);
 
   const normalized = useMemo(() => {
     const baseId = typeof options.knowledgeBaseId === "string" ? options.knowledgeBaseId.trim() : "";
@@ -499,9 +461,8 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
   useEffect(
     () => () => {
       abortRef.current?.abort();
-      stopTypingInterval();
     },
-    [stopTypingInterval],
+    [],
   );
 
   const ask = useCallback(
@@ -711,8 +672,9 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
               return;
             }
             aggregatedAnswerRef.current += delta;
+            visibleAnswerRef.current = aggregatedAnswerRef.current;
+            syncVisibleAnswer();
             updatePhase("streaming");
-            ensureTypingInterval();
             pushStreamingState();
           };
 
@@ -890,7 +852,6 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           aggregatedAnswerRef.current = answer;
           visibleAnswerRef.current = answer;
           isAnswerCompleteRef.current = true;
-          stopTypingInterval();
           const finalHtml = toHtml(answer, finalFormat);
 
           setState((prev) => ({
@@ -908,7 +869,6 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
         }
       } catch (error) {
         if ((error as Error).name === "AbortError") {
-          stopTypingInterval();
           setState((prev) => ({
             ...prev,
             statusMessage: "Запрос остановлен.",
@@ -922,7 +882,6 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
         }
 
         const message = error instanceof Error ? error.message : String(error);
-        stopTypingInterval();
         setState((prev) => ({
           ...prev,
           statusMessage: null,
@@ -934,11 +893,9 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
         }));
       } finally {
         abortRef.current = null;
-        stopTypingInterval();
       }
     },
     [
-      ensureTypingInterval,
       flushVisibleAnswer,
       normalized,
       resetStreamingRefs,
@@ -952,7 +909,6 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
     }
     abortRef.current.abort();
     abortRef.current = null;
-    stopTypingInterval();
     setState((prev) => ({
       ...prev,
       statusMessage: "Запрос остановлен.",
@@ -962,7 +918,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
       isAnswerComplete: false,
       phase: "stopped",
     }));
-  }, [stopTypingInterval]);
+  }, []);
 
   return useMemo(
     () => ({
