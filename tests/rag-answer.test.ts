@@ -138,6 +138,37 @@ function setupKnowledgeBaseMock(): void {
   });
 }
 
+function getHeader(container: unknown, name: string): string | null {
+  if (!container) {
+    return null;
+  }
+
+  const headers = (container as { headers?: unknown }).headers ?? container;
+
+  if (!headers) {
+    return null;
+  }
+
+  if (typeof (headers as { get?: unknown }).get === "function") {
+    const headersLike = headers as { get: (value: string) => string | null };
+    const headerValue = headersLike.get(name);
+    if (headerValue) {
+      return headerValue;
+    }
+    return headersLike.get(name.toLowerCase());
+  }
+
+  const entries = Object.entries(headers as Record<string, unknown>);
+  const target = name.toLowerCase();
+  for (const [key, value] of entries) {
+    if (key.toLowerCase() === target && typeof value === "string") {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 beforeEach(() => {
   vi.resetModules();
   executeMock.mockReset();
@@ -161,7 +192,7 @@ describe("POST /public/rag/answer", () => {
     setupKnowledgeBaseMock();
 
     const actualNodeFetch = await vi.importActual<typeof import("node-fetch")>("node-fetch");
-    const mockFetch = vi.fn(async (input: any) => {
+    const mockFetch = vi.fn(async (input: any, init?: any) => {
       const url = typeof input === "string" ? input : input.url;
 
       if (url === "https://llm.example/token") {
@@ -175,20 +206,28 @@ describe("POST /public/rag/answer", () => {
       }
 
       if (url === "https://llm.example/completions") {
-        return new actualNodeFetch.Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: { content: "Ответ" },
-              },
-            ],
-            usage: { total_tokens: 42 },
-          }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
+        const acceptHeader = getHeader(init, "Accept");
+        expect(acceptHeader?.toLowerCase()).toContain("text/event-stream");
+        const sseStream = Readable.from([
+          Buffer.from(
+            "event: message\ndata: {\"choices\":[{\"delta\":{\"content\":\"От\"}}]}\n\n",
+            "utf8",
+          ),
+          Buffer.from(
+            "event: message\ndata: {\"choices\":[{\"delta\":{\"content\":\"вет\"}}]}\n\n",
+            "utf8",
+          ),
+          Buffer.from(
+            "event: message\ndata: {\"usage\":{\"total_tokens\":42}}\n\n",
+            "utf8",
+          ),
+          Buffer.from("event: message\ndata: [DONE]\n\n", "utf8"),
+        ]);
+
+        return new actualNodeFetch.Response(sseStream as any, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
       }
 
       throw new Error(`Unexpected fetch call to ${url}`);
@@ -242,7 +281,7 @@ describe("POST /public/rag/answer", () => {
       availableModels: [],
       allowSelfSignedCertificate: true,
       requestHeaders: {},
-      requestConfig: {},
+      requestConfig: { additionalBodyFields: { stream: true } },
       responseConfig: {},
       workspaceId: "workspace-1",
       createdAt: new Date().toISOString(),
@@ -393,20 +432,24 @@ describe("POST /api/public/collections/search/rag", () => {
       }
 
       if (url === "https://llm.example/completions") {
-        return new actualNodeFetch.Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: { content: "Ответ" },
-              },
-            ],
-            usage: { total_tokens: 42 },
-          }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
+        const acceptHeader = getHeader(init, "Accept");
+        expect(acceptHeader?.toLowerCase()).toContain("text/event-stream");
+        const sseStream = Readable.from([
+          Buffer.from(
+            "event: message\ndata: {\"choices\":[{\"delta\":{\"content\":\"Ответ\"}}]}\n\n",
+            "utf8",
+          ),
+          Buffer.from(
+            "event: message\ndata: {\"usage\":{\"total_tokens\":42}}\n\n",
+            "utf8",
+          ),
+          Buffer.from("event: message\ndata: [DONE]\n\n", "utf8"),
+        ]);
+
+        return new actualNodeFetch.Response(sseStream as any, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
       }
 
       throw new Error(`Unexpected fetch call to ${url}`);
@@ -495,7 +538,7 @@ describe("POST /api/public/collections/search/rag", () => {
       model: "embedding-model",
       allowSelfSignedCertificate: true,
       requestHeaders: {},
-      requestConfig: {},
+      requestConfig: { additionalBodyFields: { stream: true } },
       responseConfig: {},
       qdrantConfig: { vectorFieldName: "content_vector" },
       workspaceId: "workspace-1",
@@ -525,7 +568,7 @@ describe("POST /api/public/collections/search/rag", () => {
       availableModels: [{ value: "test-model", label: "Test" }],
       allowSelfSignedCertificate: true,
       requestHeaders: {},
-      requestConfig: {},
+      requestConfig: { additionalBodyFields: { stream: true } },
       responseConfig: {},
       workspaceId: "workspace-1",
       createdAt: new Date().toISOString(),
@@ -606,7 +649,7 @@ describe("POST /api/public/collections/search/rag", () => {
     setupKnowledgeBaseMock();
 
     const actualNodeFetch = await vi.importActual<typeof import("node-fetch")>("node-fetch");
-    const mockFetch = vi.fn(async (input: any) => {
+    const mockFetch = vi.fn(async (input: any, init?: any) => {
       const url = typeof input === "string" ? input : input?.url ?? "";
 
       if (url === "https://embedding.example/token") {
@@ -648,20 +691,28 @@ describe("POST /api/public/collections/search/rag", () => {
       }
 
       if (url === "https://llm.example/completions") {
-        return new actualNodeFetch.Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: { content: "Ответ" },
-              },
-            ],
-            usage: { total_tokens: 21 },
-          }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
+        const acceptHeader = getHeader(init, "Accept");
+        expect(acceptHeader?.toLowerCase()).toContain("text/event-stream");
+        const sseStream = Readable.from([
+          Buffer.from(
+            "event: message\ndata: {\"choices\":[{\"delta\":{\"content\":\"От\"}}]}\n\n",
+            "utf8",
+          ),
+          Buffer.from(
+            "event: message\ndata: {\"choices\":[{\"delta\":{\"content\":\"вет\"}}]}\n\n",
+            "utf8",
+          ),
+          Buffer.from(
+            "event: message\ndata: {\"usage\":{\"total_tokens\":21}}\n\n",
+            "utf8",
+          ),
+          Buffer.from("event: message\ndata: [DONE]\n\n", "utf8"),
+        ]);
+
+        return new actualNodeFetch.Response(sseStream as any, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
       }
 
       throw new Error(`Unexpected fetch call to ${url}`);
@@ -724,7 +775,7 @@ describe("POST /api/public/collections/search/rag", () => {
       model: "embedding-model",
       allowSelfSignedCertificate: true,
       requestHeaders: {},
-      requestConfig: {},
+      requestConfig: { additionalBodyFields: { stream: true } },
       responseConfig: {},
       qdrantConfig: { vectorFieldName: "content_vector", vectorSize: 3 },
       workspaceId: "workspace-1",
@@ -745,7 +796,7 @@ describe("POST /api/public/collections/search/rag", () => {
       availableModels: [{ value: "test-model", label: "Test" }],
       allowSelfSignedCertificate: true,
       requestHeaders: {},
-      requestConfig: {},
+      requestConfig: { additionalBodyFields: { stream: true } },
       responseConfig: {},
       workspaceId: "workspace-1",
       createdAt: new Date().toISOString(),
@@ -864,6 +915,8 @@ describe("POST /api/public/collections/:publicId/search/rag", () => {
       }
 
       if (url === "https://llm.example/completions") {
+        const acceptHeader = getHeader(init, "Accept");
+        expect(acceptHeader?.toLowerCase()).toContain("text/event-stream");
         const sseStream = Readable.from([
           Buffer.from(
             "event: message\ndata: {\"choices\":[{\"delta\":{\"content\":\"Привет\"}}]}\n\n",
@@ -938,7 +991,7 @@ describe("POST /api/public/collections/:publicId/search/rag", () => {
       model: "embedding-model",
       allowSelfSignedCertificate: true,
       requestHeaders: {},
-      requestConfig: {},
+      requestConfig: { additionalBodyFields: { stream: true } },
       responseConfig: {},
       qdrantConfig: { vectorFieldName: "content_vector", vectorSize: 3 },
       workspaceId: "workspace-1",
@@ -959,7 +1012,7 @@ describe("POST /api/public/collections/:publicId/search/rag", () => {
       availableModels: [{ value: "test-model", label: "Test" }],
       allowSelfSignedCertificate: true,
       requestHeaders: {},
-      requestConfig: {},
+      requestConfig: { additionalBodyFields: { stream: true } },
       responseConfig: {},
       workspaceId: "workspace-1",
       createdAt: new Date().toISOString(),

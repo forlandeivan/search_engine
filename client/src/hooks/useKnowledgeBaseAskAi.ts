@@ -575,11 +575,18 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
       }
 
       try {
+        const expectsStream =
+          typeof payload === "object" && payload !== null && "stream" in payload
+            ? Boolean((payload as { stream?: unknown }).stream)
+            : false;
+        const acceptHeaderValue = expectsStream
+          ? "text/event-stream, application/json"
+          : "application/json";
         const response = await fetch(normalized.endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Accept: "text/event-stream, application/json",
+            Accept: acceptHeaderValue,
           },
           body: JSON.stringify(payload),
           signal: controller.signal,
