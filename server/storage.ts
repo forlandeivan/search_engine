@@ -3998,7 +3998,26 @@ export class DatabaseStorage implements IStorage {
       Object.entries(updates).filter(([, value]) => value !== undefined),
     ) as Partial<LlmProviderInsert>;
 
-    if (Object.keys(sanitizedUpdates).length === 0) {
+    const jsonFields = new Set<keyof LlmProviderInsert>([
+      "availableModels",
+      "requestHeaders",
+      "requestConfig",
+      "responseConfig",
+    ]);
+
+    const normalizedUpdates = Object.fromEntries(
+      Object.entries(sanitizedUpdates).map(([key, value]) => {
+        if (jsonFields.has(key as keyof LlmProviderInsert)) {
+          const fallback = key === "availableModels" ? [] : {};
+          const payload = value ?? fallback;
+          return [key, sql`${JSON.stringify(payload)}::jsonb`];
+        }
+
+        return [key, value];
+      }),
+    ) as Partial<LlmProviderInsert>;
+
+    if (Object.keys(normalizedUpdates).length === 0) {
       return await this.getLlmProvider(id, workspaceId);
     }
 
@@ -4008,7 +4027,7 @@ export class DatabaseStorage implements IStorage {
 
     const [updated] = await this.db
       .update(llmProviders)
-      .set({ ...sanitizedUpdates, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .set({ ...normalizedUpdates, updatedAt: sql`CURRENT_TIMESTAMP` })
       .where(condition)
       .returning();
 

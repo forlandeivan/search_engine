@@ -44,6 +44,7 @@ import {
   DEFAULT_LLM_RESPONSE_CONFIG,
   type PublicLlmProvider,
   type UpdateLlmProvider,
+  type LlmProviderInsert,
 } from "@shared/schema";
 
 const requestHeadersSchema = z.record(z.string());
@@ -104,11 +105,45 @@ const emptyFormValues: FormValues = {
   frequencyPenalty: "",
 };
 
+const gigachatModelOptions: FormValues["availableModels"] = [
+  { label: "GigaChat Pro", value: "GigaChat-Pro" },
+  { label: "GigaChat", value: "GigaChat" },
+  { label: "GigaChat Lite", value: "GigaChat-Lite" },
+];
+
+type LlmTemplateFactory = () => Partial<FormValues>;
+
+const llmTemplates: Partial<Record<FormValues["providerType"], LlmTemplateFactory>> = {
+  gigachat: () => ({
+    providerType: "gigachat",
+    name: "GigaChat",
+    description: "Продовый доступ GigaChat от Сбера",
+    isActive: true,
+    tokenUrl: "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+    completionUrl: "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+    scope: "GIGACHAT_API_PERS",
+    model: gigachatModelOptions[0]?.value ?? "GigaChat",
+    availableModels: gigachatModelOptions.map((model) => ({ ...model })),
+    requestHeaders: formatJson(defaultRequestHeaders),
+    systemPrompt: DEFAULT_LLM_REQUEST_CONFIG.systemPrompt ?? "",
+    temperature: String(DEFAULT_LLM_REQUEST_CONFIG.temperature ?? 0.2),
+    maxTokens: DEFAULT_LLM_REQUEST_CONFIG.maxTokens
+      ? String(DEFAULT_LLM_REQUEST_CONFIG.maxTokens)
+      : "1024",
+    allowSelfSignedCertificate: false,
+  }),
+};
+
 type ProvidersResponse = { providers: PublicLlmProvider[] };
 
 type UpdateLlmProviderVariables = {
   id: string;
   payload: UpdateLlmProvider;
+  formattedRequestHeaders: string;
+};
+
+type CreateLlmProviderVariables = {
+  payload: LlmProviderInsert;
   formattedRequestHeaders: string;
 };
 
@@ -170,12 +205,14 @@ const mapProviderToFormValues = (provider: PublicLlmProvider): FormValues => {
 export default function LlmProvidersPage() {
   const { toast } = useToast();
   const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
   const form = useForm<FormValues>({
     defaultValues: emptyFormValues,
   });
 
   const modelsArray = useFieldArray({ control: form.control, name: "availableModels" });
+  const providerTypeValue = form.watch("providerType");
 
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/llm/providers"],
@@ -189,6 +226,42 @@ export default function LlmProvidersPage() {
     () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
     [providers, selectedProviderId],
   );
+
+  const handleSelectProvider = (providerId: string) => {
+    setIsCreating(false);
+    setSelectedProviderId(providerId);
+  };
+
+  const handleStartCreate = () => {
+    const templateFactory = llmTemplates.gigachat;
+    const templateValues = templateFactory ? templateFactory() : undefined;
+    const availableModels = templateValues?.availableModels
+      ? templateValues.availableModels.map((model) => ({ ...model }))
+      : [];
+    const initialValues: FormValues = {
+      ...emptyFormValues,
+      ...(templateValues ?? {}),
+      availableModels,
+    };
+
+    form.reset(initialValues);
+    modelsArray.replace(availableModels);
+    setSelectedProviderId(null);
+    setIsCreating(true);
+    setIsAuthorizationVisible(false);
+  };
+
+  const handleCancelCreate = () => {
+    setIsCreating(false);
+    setIsAuthorizationVisible(false);
+    if (providers.length > 0) {
+      setSelectedProviderId(providers[0].id);
+      return;
+    }
+
+    form.reset(emptyFormValues);
+    modelsArray.replace([]);
+  };
 
   const handleCopyValue = async (value: string, label: string) => {
     try {
@@ -204,7 +277,95 @@ export default function LlmProvidersPage() {
     }
   };
 
+  const buildPayloadFromValues = (values: FormValues, mode: "create" | "update") => {
+    const requestHeaders = parseJsonField(
+      values.requestHeaders,
+      requestHeadersSchema,
+      "requestHeaders",
+      "Укажите заголовки запроса в формате JSON",
+    );
+
+    const temperature = Number.parseFloat(values.temperature.trim());
+    const maxTokens = Number.parseInt(values.maxTokens.trim(), 10);
+    const topP = values.topP.trim() ? Number.parseFloat(values.topP.trim()) : undefined;
+    const presencePenalty = values.presencePenalty.trim()
+      ? Number.parseFloat(values.presencePenalty.trim())
+      : undefined;
+    const frequencyPenalty = values.frequencyPenalty.trim()
+      ? Number.parseFloat(values.frequencyPenalty.trim())
+      : undefined;
+
+    const sanitizedAvailableModels = (values.availableModels ?? [])
+      .map((model) => ({ label: model.label.trim(), value: model.value.trim() }))
+      .filter((model) => model.label.length > 0 && model.value.length > 0);
+
+    const modelName = values.model.trim().length > 0
+      ? values.model.trim()
+      : sanitizedAvailableModels[0]?.value ?? "";
+    if (!modelName) {
+      throw new Error("Укажите модель по умолчанию или добавьте варианты в список моделей.");
+    }
+
+    const trimmedAuthorizationKey = values.authorizationKey.trim();
+
+    const sharedFields = {
+      providerType: values.providerType,
+      name: values.name.trim(),
+      description: values.description.trim() ? values.description.trim() : undefined,
+      isActive: values.isActive,
+      tokenUrl: values.tokenUrl.trim(),
+      completionUrl: values.completionUrl.trim(),
+      scope: values.scope.trim(),
+      model: modelName,
+      allowSelfSignedCertificate: values.allowSelfSignedCertificate,
+      requestHeaders,
+      requestConfig: {
+        modelField: "model",
+        messagesField: "messages",
+        systemPrompt: values.systemPrompt.trim(),
+        temperature: Number.isNaN(temperature) ? DEFAULT_LLM_REQUEST_CONFIG.temperature : temperature,
+        maxTokens: Number.isNaN(maxTokens) ? DEFAULT_LLM_REQUEST_CONFIG.maxTokens : maxTokens,
+        topP: topP && !Number.isNaN(topP) ? topP : undefined,
+        presencePenalty: presencePenalty && !Number.isNaN(presencePenalty) ? presencePenalty : undefined,
+        frequencyPenalty: frequencyPenalty && !Number.isNaN(frequencyPenalty) ? frequencyPenalty : undefined,
+        additionalBodyFields: {},
+      },
+      responseConfig: { ...DEFAULT_LLM_RESPONSE_CONFIG },
+      availableModels: sanitizedAvailableModels,
+    } satisfies Omit<LlmProviderInsert, "authorizationKey">;
+
+    const formattedRequestHeaders = formatJson(requestHeaders);
+
+    if (mode === "create") {
+      if (trimmedAuthorizationKey.length === 0) {
+        throw new Error("Укажите Authorization key для нового провайдера.");
+      }
+
+      return {
+        payload: {
+          ...sharedFields,
+          authorizationKey: trimmedAuthorizationKey,
+        },
+        formattedRequestHeaders,
+      } satisfies {
+        payload: LlmProviderInsert;
+        formattedRequestHeaders: string;
+      };
+    }
+
+    const updatePayload: UpdateLlmProvider = {
+      ...sharedFields,
+      ...(trimmedAuthorizationKey.length > 0 ? { authorizationKey: trimmedAuthorizationKey } : {}),
+    };
+
+    return { payload: updatePayload, formattedRequestHeaders };
+  };
+
   useEffect(() => {
+    if (isCreating) {
+      return;
+    }
+
     if (providers.length === 0) {
       setSelectedProviderId(null);
       return;
@@ -215,9 +376,13 @@ export default function LlmProvidersPage() {
     }
 
     setSelectedProviderId(providers[0].id);
-  }, [providers, selectedProviderId]);
+  }, [providers, selectedProviderId, isCreating]);
 
   useEffect(() => {
+    if (isCreating) {
+      return;
+    }
+
     if (selectedProvider) {
       const values = mapProviderToFormValues(selectedProvider);
       form.reset(values);
@@ -227,7 +392,46 @@ export default function LlmProvidersPage() {
 
     form.reset(emptyFormValues);
     setIsAuthorizationVisible(false);
-  }, [selectedProvider, form]);
+  }, [selectedProvider, form, isCreating]);
+
+  useEffect(() => {
+    if (!isCreating) {
+      return;
+    }
+
+    const templateFactory = llmTemplates[providerTypeValue];
+    if (!templateFactory) {
+      return;
+    }
+
+    const templateValues = templateFactory();
+    if (templateValues.availableModels) {
+      modelsArray.replace(templateValues.availableModels);
+    }
+
+    const templateFields: (keyof FormValues)[] = [
+      "tokenUrl",
+      "completionUrl",
+      "scope",
+      "model",
+      "systemPrompt",
+      "temperature",
+      "maxTokens",
+      "topP",
+      "presencePenalty",
+      "frequencyPenalty",
+      "name",
+      "description",
+      "isActive",
+      "allowSelfSignedCertificate",
+    ];
+
+    templateFields.forEach((field) => {
+      if (templateValues[field] !== undefined) {
+        form.setValue(field, templateValues[field] as never, { shouldDirty: false, shouldTouch: false });
+      }
+    });
+  }, [form, isCreating, providerTypeValue, modelsArray]);
 
   const updateProviderMutation = useMutation<
     { provider: PublicLlmProvider },
@@ -265,6 +469,62 @@ export default function LlmProvidersPage() {
     },
   });
 
+  const createProviderMutation = useMutation<
+    { provider: PublicLlmProvider },
+    Error,
+    CreateLlmProviderVariables
+  >({
+    mutationFn: async ({ payload }) => {
+      const response = await apiRequest("POST", "/api/llm/providers", payload);
+      const body = (await response.json()) as { provider?: PublicLlmProvider; message?: string };
+      if (!response.ok) {
+        throw new Error(body.message ?? "Не удалось создать провайдера LLM");
+      }
+
+      if (!body.provider) {
+        throw new Error("Некорректный ответ сервера");
+      }
+
+      return { provider: body.provider };
+    },
+    onSuccess: ({ provider }, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/llm/providers"] });
+      queryClient.setQueryData<ProvidersResponse>(["/api/llm/providers"], (previous) => {
+        if (!previous) {
+          return { providers: [provider] } satisfies ProvidersResponse;
+        }
+
+        const exists = previous.providers.some((item) => item.id === provider.id);
+        if (exists) {
+          return previous;
+        }
+
+        return { providers: [...previous.providers, provider] } satisfies ProvidersResponse;
+      });
+      toast({
+        title: "Провайдер создан",
+        description: "GigaChat сразу готов к работе на dev-стенде.",
+      });
+
+      const updatedValues = {
+        ...mapProviderToFormValues(provider),
+        requestHeaders: variables.formattedRequestHeaders,
+      } satisfies FormValues;
+
+      setIsCreating(false);
+      setSelectedProviderId(provider.id);
+      form.reset(updatedValues);
+      setIsAuthorizationVisible(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось создать провайдера",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleUpdate = form.handleSubmit((values) => {
     if (!selectedProvider) {
       toast({
@@ -278,70 +538,7 @@ export default function LlmProvidersPage() {
     form.clearErrors();
 
     try {
-      const requestHeaders = parseJsonField(
-        values.requestHeaders,
-        requestHeadersSchema,
-        "requestHeaders",
-        "Укажите заголовки запроса в формате JSON",
-      );
-
-      const temperature = Number.parseFloat(values.temperature.trim());
-      const maxTokens = Number.parseInt(values.maxTokens.trim(), 10);
-      const topP = values.topP.trim() ? Number.parseFloat(values.topP.trim()) : undefined;
-      const presencePenalty = values.presencePenalty.trim()
-        ? Number.parseFloat(values.presencePenalty.trim())
-        : undefined;
-      const frequencyPenalty = values.frequencyPenalty.trim()
-        ? Number.parseFloat(values.frequencyPenalty.trim())
-        : undefined;
-
-      const sanitizedAvailableModels = (values.availableModels ?? [])
-        .map((model) => ({ label: model.label.trim(), value: model.value.trim() }))
-        .filter((model) => model.label.length > 0 && model.value.length > 0);
-
-      const modelName = values.model.trim().length > 0
-        ? values.model.trim()
-        : sanitizedAvailableModels[0]?.value ?? "";
-      if (!modelName) {
-        throw new Error("Укажите модель по умолчанию или добавьте варианты в список моделей.");
-      }
-
-      const trimmedAuthorizationKey = values.authorizationKey.trim();
-
-      const payload: UpdateLlmProvider = {
-        providerType: values.providerType,
-        name: values.name.trim(),
-        description: values.description.trim() ? values.description.trim() : undefined,
-        isActive: values.isActive,
-        tokenUrl: values.tokenUrl.trim(),
-        completionUrl: values.completionUrl.trim(),
-        scope: values.scope.trim(),
-        model: modelName,
-        allowSelfSignedCertificate: values.allowSelfSignedCertificate,
-        requestHeaders,
-        requestConfig: {
-          modelField: "model",
-          messagesField: "messages",
-          systemPrompt: values.systemPrompt.trim(),
-          temperature: Number.isNaN(temperature) ? DEFAULT_LLM_REQUEST_CONFIG.temperature : temperature,
-          maxTokens: Number.isNaN(maxTokens) ? DEFAULT_LLM_REQUEST_CONFIG.maxTokens : maxTokens,
-          topP: topP && !Number.isNaN(topP) ? topP : undefined,
-          presencePenalty:
-            presencePenalty && !Number.isNaN(presencePenalty) ? presencePenalty : undefined,
-          frequencyPenalty:
-            frequencyPenalty && !Number.isNaN(frequencyPenalty) ? frequencyPenalty : undefined,
-          additionalBodyFields: {},
-        },
-        responseConfig: { ...DEFAULT_LLM_RESPONSE_CONFIG },
-        availableModels: sanitizedAvailableModels,
-      } satisfies UpdateLlmProvider;
-
-      if (trimmedAuthorizationKey.length > 0) {
-        payload.authorizationKey = trimmedAuthorizationKey;
-      }
-
-      const formattedRequestHeaders = formatJson(requestHeaders);
-
+      const { payload, formattedRequestHeaders } = buildPayloadFromValues(values, "update");
       updateProviderMutation.mutate({
         id: selectedProvider.id,
         payload,
@@ -356,6 +553,25 @@ export default function LlmProvidersPage() {
     }
   });
 
+  const handleCreate = form.handleSubmit((values) => {
+    form.clearErrors();
+
+    try {
+      const { payload, formattedRequestHeaders } = buildPayloadFromValues(values, "create");
+      createProviderMutation.mutate({ payload, formattedRequestHeaders });
+    } catch (error) {
+      toast({
+        title: "Не удалось подготовить данные",
+        description: error instanceof Error ? error.message : "Исправьте ошибки и попробуйте снова.",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const isSubmitPending = isCreating
+    ? createProviderMutation.isPending
+    : updateProviderMutation.isPending;
+
   return (
     <div className="space-y-6 p-6">
       <div className="space-y-1">
@@ -369,9 +585,19 @@ export default function LlmProvidersPage() {
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.9fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <Card className="h-fit">
-          <CardHeader className="pb-4">
-            <CardTitle>Провайдеры LLM</CardTitle>
-            <CardDescription>Выберите сервис, чтобы изменить его параметры.</CardDescription>
+          <CardHeader className="space-y-3 pb-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle>Провайдеры LLM</CardTitle>
+                <CardDescription>Выберите сервис или создайте новый шаблон.</CardDescription>
+              </div>
+              <Button size="sm" onClick={handleStartCreate} disabled={isCreating} className="gap-2">
+                Добавить провайдера
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Рекомендуем выбрать тип GigaChat — мы автоматически подставим рабочие URL, scope и модели для dev-стенда.
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
             {providersQuery.isLoading ? (
@@ -384,8 +610,12 @@ export default function LlmProvidersPage() {
                 {(providersQuery.error as Error).message ?? "Не удалось загрузить провайдеров"}
               </div>
             ) : providers.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                Провайдеры ещё не настроены. Обратитесь к администратору.
+              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                <p className="mb-3">Провайдеры ещё не настроены. Создайте GigaChat, чтобы быстро повторить продовые настройки.</p>
+                <Button size="sm" onClick={handleStartCreate} className="mb-2" disabled={isCreating}>
+                  Добавить провайдера
+                </Button>
+                <p className="text-xs">Шаблон автозаполнит URL, scope и список моделей.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -400,7 +630,7 @@ export default function LlmProvidersPage() {
                     <button
                       key={provider.id}
                       type="button"
-                      onClick={() => setSelectedProviderId(provider.id)}
+                      onClick={() => handleSelectProvider(provider.id)}
                       className={cn(
                         "w-full rounded-lg border px-4 py-3 text-left transition",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
@@ -487,13 +717,21 @@ export default function LlmProvidersPage() {
 
         <Card>
           <CardHeader className="pb-4">
-            <CardTitle>{selectedProvider ? selectedProvider.name : "Настройки провайдера"}</CardTitle>
+            <CardTitle>
+              {isCreating
+                ? "Новый провайдер LLM"
+                : selectedProvider
+                  ? selectedProvider.name
+                  : "Настройки провайдера"}
+            </CardTitle>
             <CardDescription>
-              {selectedProvider
-                ? "Отредактируйте авторизацию, список моделей и параметры генерации."
-                : "Выберите провайдера слева, чтобы изменить его настройки."}
+              {isCreating
+                ? "Автозаполнили шаблон GigaChat: проверьте ключ и сохраните."
+                : selectedProvider
+                  ? "Отредактируйте авторизацию, список моделей и параметры генерации."
+                  : "Выберите провайдера слева, чтобы изменить его настройки."}
             </CardDescription>
-            {selectedProvider ? (
+            {selectedProvider && !isCreating ? (
               <div className="mt-3 flex flex-wrap gap-1.5">
                 <Badge
                   variant="outline"
@@ -516,8 +754,8 @@ export default function LlmProvidersPage() {
           </CardHeader>
           <CardContent>
             <Form {...form}>
-              <form onSubmit={handleUpdate} className="space-y-6">
-                {!selectedProvider ? (
+              <form onSubmit={isCreating ? handleCreate : handleUpdate} className="space-y-6">
+                {!selectedProvider && !isCreating ? (
                   <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
                     Нет доступных провайдеров для настройки.
                   </div>
@@ -544,7 +782,9 @@ export default function LlmProvidersPage() {
                                 </SelectContent>
                               </Select>
                             </FormControl>
-                            <FormDescription>Определяет преднастроенные значения формы.</FormDescription>
+                            <FormDescription>
+                              Выберите «GigaChat», чтобы мы автоматически заполнили рабочие URL, scope и список моделей.
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -638,6 +878,7 @@ export default function LlmProvidersPage() {
                                   placeholder="Base64(client_id:client_secret)"
                                   autoComplete="new-password"
                                   className="pr-10"
+                                  required={isCreating}
                                 />
                                 <Button
                                   type="button"
@@ -660,7 +901,7 @@ export default function LlmProvidersPage() {
                               </div>
                             </FormControl>
                             <FormDescription>
-                              {selectedProvider.hasAuthorizationKey
+                              {selectedProvider?.hasAuthorizationKey && !isCreating
                                 ? "Секрет сохранён. Оставьте поле пустым, если не требуется обновление."
                                 : "Укажите ключ, который будет использоваться для запроса access_token."}
                             </FormDescription>
@@ -894,23 +1135,21 @@ export default function LlmProvidersPage() {
                     />
 
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        type="submit"
-                        className="min-w-[180px]"
-                        disabled={updateProviderMutation.isPending}
-                      >
-                        {updateProviderMutation.isPending && (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        )}
-                        Сохранить изменения
+                      <Button type="submit" className="min-w-[200px]" disabled={isSubmitPending}>
+                        {isSubmitPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {isCreating ? "Создать провайдера" : "Сохранить изменения"}
                       </Button>
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() => form.reset(mapProviderToFormValues(selectedProvider))}
-                        disabled={updateProviderMutation.isPending}
+                        onClick={
+                          isCreating
+                            ? handleCancelCreate
+                            : () => selectedProvider && form.reset(mapProviderToFormValues(selectedProvider))
+                        }
+                        disabled={isSubmitPending || (!isCreating && !selectedProvider)}
                       >
-                        Сбросить изменения
+                        {isCreating ? "Отменить" : "Сбросить изменения"}
                       </Button>
                     </div>
                   </>
