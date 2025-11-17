@@ -2851,6 +2851,7 @@ const knowledgeRagRequestSchema = z.object({
     system_prompt: z.string().optional(),
     response_format: z.string().optional(),
   }),
+  stream: z.boolean().optional(),
 });
 
 type KnowledgeRagRequest = z.infer<typeof knowledgeRagRequestSchema>;
@@ -2949,12 +2950,33 @@ interface KnowledgeBaseRagPipelineSuccess {
   };
 }
 
+type KnowledgeBaseRagPipelineStream = {
+  onEvent: (eventName: string, payload?: unknown) => void;
+};
+
 async function runKnowledgeBaseRagPipeline(options: {
   req: Request;
   body: KnowledgeRagRequest;
+  stream?: KnowledgeBaseRagPipelineStream | null;
 }): Promise<KnowledgeBaseRagPipelineSuccess> {
-  const { req, body } = options;
+  const { req, body, stream } = options;
 
+  const pipelineLog: KnowledgeBaseAskAiPipelineStepLog[] = [];
+  const emitStreamEvent = (eventName: string, payload?: unknown) => {
+    if (!stream?.onEvent) {
+      return;
+    }
+    try {
+      stream.onEvent(eventName, payload);
+    } catch (eventError) {
+      console.error(
+        `[public/rag/answer] Не удалось отправить событие ${eventName}: ${getErrorDetails(eventError)}`,
+      );
+    }
+  };
+  const emitStreamStatus = (stage: string, message: string) => {
+    emitStreamEvent("status", { stage, message });
+  };
   const query = body.q.trim();
   const knowledgeBaseId = body.kb_id.trim();
 
@@ -2962,7 +2984,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     throw new HttpError(400, "Укажите поисковый запрос");
   }
 
-  const pipelineLog: KnowledgeBaseAskAiPipelineStepLog[] = [];
+  emitStreamStatus("thinking", "Анализирую запрос…");
   const runStartedAt = new Date();
   let runStatus: "success" | "error" = "success";
   let runErrorMessage: string | null = null;
@@ -3152,6 +3174,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     }
 
     const totalStart = performance.now();
+    emitStreamStatus("retrieving", "Ищу источники…");
     const retrievalStart = performance.now();
     const suggestionLimit = Math.max(bm25Limit, vectorLimit, body.top_k);
 
@@ -3563,6 +3586,28 @@ async function runKnowledgeBaseRagPipeline(options: {
       .sort((a, b) => b.combinedScore - a.combinedScore)
       .slice(0, body.top_k);
 
+    combinedResults.forEach((item, index) => {
+      emitStreamEvent("source", {
+        index: index + 1,
+        context: {
+          chunk_id: item.chunkId,
+          doc_id: item.documentId,
+          doc_title: item.docTitle,
+          section_title: item.sectionTitle,
+          snippet: item.snippet,
+          score: item.combinedScore,
+          scores: {
+            bm25: item.bm25Score,
+            vector: item.vectorScore,
+            bm25_normalized: item.bm25Normalized,
+            vector_normalized: item.vectorNormalized,
+          },
+          node_id: item.nodeId ?? null,
+          node_slug: item.nodeSlug ?? null,
+        },
+      });
+    });
+
     combinedResultCount = combinedResults.length;
     vectorDocumentCount = vectorResultCount !== null ? vectorDocumentIds.size : null;
     combinedStep.finish({ combined: combinedResultCount, vectorDocuments: vectorDocumentCount });
@@ -3657,6 +3702,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     llmModel = selectedModelValue ?? null;
     llmModelLabel = selectedModelMeta?.label ?? selectedModelValue ?? null;
 
+    emitStreamStatus("answering", "Формулирую ответ…");
     const llmAccessToken = await fetchAccessToken(configuredProvider);
     const llmStep = startPipelineStep(
       "llm_completion",
@@ -3764,6 +3810,21 @@ async function runKnowledgeBaseRagPipeline(options: {
       },
       responseFormat,
     } as const;
+
+    emitStreamEvent("delta", { text: response.answer });
+    emitStreamStatus("done", "Готово");
+    emitStreamEvent("done", {
+      answer: response.answer,
+      query: response.query,
+      kb_id: response.knowledgeBaseId,
+      normalized_query: response.normalizedQuery,
+      citations: response.citations,
+      chunks: response.chunks,
+      usage: response.usage,
+      timings: response.timings,
+      debug: response.debug,
+      format: response.responseFormat,
+    });
 
     await finalizeRunLog();
 
@@ -4092,10 +4153,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const body = parsed.data;
+    const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
+    const wantsStream = Boolean(
+      body.stream === true || acceptHeader.toLowerCase().includes("text/event-stream"),
+    );
 
     try {
-      const result = await runKnowledgeBaseRagPipeline({ req, body });
+      if (wantsStream) {
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+        const flusher = (res as Response & { flushHeaders?: () => void }).flushHeaders;
+        if (typeof flusher === "function") {
+          flusher.call(res);
+        }
 
+        try {
+          await runKnowledgeBaseRagPipeline({
+            req,
+            body,
+            stream: {
+              onEvent: (eventName, payload) => {
+                sendSseEvent(res, eventName, payload);
+              },
+            },
+          });
+          res.end();
+        } catch (error) {
+          if (error instanceof HttpError) {
+            sendSseEvent(res, "error", { message: error.message, details: error.details ?? null });
+            res.end();
+            return;
+          }
+
+          if (error instanceof QdrantConfigurationError) {
+            sendSseEvent(res, "error", { message: "Qdrant не настроен", details: error.message });
+            res.end();
+            return;
+          }
+
+          console.error("Ошибка RAG-поиска по базе знаний (SSE):", error);
+          sendSseEvent(res, "error", { message: "Не удалось получить ответ от LLM" });
+          res.end();
+        }
+
+        return;
+      }
+
+      const result = await runKnowledgeBaseRagPipeline({ req, body });
       res.json({
         query: result.response.query,
         kb_id: result.response.knowledgeBaseId,
