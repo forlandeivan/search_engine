@@ -197,6 +197,13 @@
       "when": 0,
       "tag": "0033_knowledge_base_search_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 0,
+      "tag": "0034_skills",
+      "breakpoints": true
     }
   ]
 }

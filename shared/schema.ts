@@ -697,6 +697,52 @@ export const llmProviders = pgTable("llm_providers", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+export const skills = pgTable(
+  "skills",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name"),
+    description: text("description"),
+    systemPrompt: text("system_prompt"),
+    modelId: varchar("model_id"),
+    llmProviderConfigId: varchar("llm_provider_config_id")
+      .references(() => llmProviders.id, { onDelete: "set null" }),
+    collectionName: text("collection_name")
+      .references(() => workspaceVectorCollections.collectionName, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("skills_workspace_idx").on(table.workspaceId),
+    llmProviderConfigIdx: index("skills_llm_provider_config_idx").on(table.llmProviderConfigId),
+    collectionIdx: index("skills_collection_name_idx").on(table.collectionName),
+  }),
+);
+
+export const skillKnowledgeBases = pgTable(
+  "skill_knowledge_bases",
+  {
+    skillId: varchar("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    knowledgeBaseId: varchar("knowledge_base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.skillId, table.knowledgeBaseId] }),
+    workspaceIdx: index("skill_knowledge_bases_workspace_idx").on(table.workspaceId),
+    knowledgeBaseIdx: index("skill_knowledge_bases_knowledge_base_idx").on(table.knowledgeBaseId),
+  }),
+);
+
 export const knowledgeBaseAskAiRuns = pgTable("knowledge_base_ask_ai_runs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
   workspaceId: varchar("workspace_id")
