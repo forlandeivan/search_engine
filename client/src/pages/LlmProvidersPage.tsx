@@ -974,8 +974,8 @@ export default function LlmProvidersPage() {
                                     <FormControl>
                                       <Input
                                         {...field}
-                                        value={field.value ?? modelField.label ?? ""}
                                         placeholder="Например, Lite"
+                                        data-testid={`input-model-label-${index}`}
                                       />
                                     </FormControl>
                                     <FormMessage />
@@ -991,8 +991,8 @@ export default function LlmProvidersPage() {
                                     <FormControl>
                                       <Input
                                         {...field}
-                                        value={field.value ?? modelField.value ?? ""}
                                         placeholder="Например, GigaChat-Lite"
+                                        data-testid={`input-model-value-${index}`}
                                       />
                                     </FormControl>
                                     <FormMessage />
