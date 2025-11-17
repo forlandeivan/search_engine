@@ -3150,6 +3150,9 @@ async function runKnowledgeBaseRagPipeline(options: {
   const query = body.q.trim();
   const knowledgeBaseId = body.kb_id.trim();
   const wantsLlmStream = Boolean(stream);
+  
+  console.log(`[RAG PIPELINE] stream param:`, stream ? 'PROVIDED' : 'NULL');
+  console.log(`[RAG PIPELINE] wantsLlmStream:`, wantsLlmStream);
 
   if (!query) {
     throw new HttpError(400, "Укажите поисковый запрос");
