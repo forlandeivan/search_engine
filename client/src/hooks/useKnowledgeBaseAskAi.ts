@@ -350,8 +350,74 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
   const aggregatedAnswerRef = useRef("");
   const visibleAnswerRef = useRef("");
   const pendingCitationsRef = useRef<RagChunk[]>([]);
+  const sourcesTransferHandleRef = useRef<number | ReturnType<typeof setTimeout> | null>(null);
+  const sourcesTransferModeRef = useRef<"raf" | "timeout" | null>(null);
   const currentFormatRef = useRef<"text" | "markdown" | "html">("text");
   const isAnswerCompleteRef = useRef(false);
+
+  const cancelScheduledSourcesTransfer = useCallback(() => {
+    if (sourcesTransferHandleRef.current === null) {
+      return;
+    }
+
+    if (
+      sourcesTransferModeRef.current === "raf" &&
+      typeof window !== "undefined" &&
+      typeof window.cancelAnimationFrame === "function"
+    ) {
+      window.cancelAnimationFrame(sourcesTransferHandleRef.current as number);
+    } else if (sourcesTransferModeRef.current === "timeout") {
+      clearTimeout(sourcesTransferHandleRef.current as ReturnType<typeof setTimeout>);
+    }
+
+    sourcesTransferHandleRef.current = null;
+    sourcesTransferModeRef.current = null;
+  }, []);
+
+  const transferPendingCitationsToSources = useCallback(() => {
+    const pendingCitations = pendingCitationsRef.current;
+    if (pendingCitations.length === 0) {
+      return;
+    }
+
+    setState((prev) => {
+      if (prev.sources === pendingCitations) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        sources: pendingCitations,
+      };
+    });
+  }, []);
+
+  const scheduleSourcesTransfer = useCallback(() => {
+    if (pendingCitationsRef.current.length === 0) {
+      return;
+    }
+
+    cancelScheduledSourcesTransfer();
+
+    const runTransfer = () => {
+      sourcesTransferHandleRef.current = null;
+      sourcesTransferModeRef.current = null;
+      transferPendingCitationsToSources();
+    };
+
+    if (
+      typeof window !== "undefined" &&
+      typeof window.requestAnimationFrame === "function" &&
+      typeof window.cancelAnimationFrame === "function"
+    ) {
+      sourcesTransferHandleRef.current = window.requestAnimationFrame(runTransfer);
+      sourcesTransferModeRef.current = "raf";
+      return;
+    }
+
+    sourcesTransferHandleRef.current = setTimeout(runTransfer, 0);
+    sourcesTransferModeRef.current = "timeout";
+  }, [cancelScheduledSourcesTransfer, transferPendingCitationsToSources]);
 
   const syncVisibleAnswer = useCallback(() => {
     const html = toHtml(visibleAnswerRef.current, currentFormatRef.current);
@@ -367,11 +433,12 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
   }, [syncVisibleAnswer]);
 
   const resetStreamingRefs = useCallback(() => {
+    cancelScheduledSourcesTransfer();
     aggregatedAnswerRef.current = "";
     visibleAnswerRef.current = "";
     pendingCitationsRef.current = [];
     isAnswerCompleteRef.current = false;
-  }, []);
+  }, [cancelScheduledSourcesTransfer]);
 
   const normalized = useMemo(() => {
     const baseId = typeof options.knowledgeBaseId === "string" ? options.knowledgeBaseId.trim() : "";
@@ -461,8 +528,9 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
   useEffect(
     () => () => {
       abortRef.current?.abort();
+      cancelScheduledSourcesTransfer();
     },
-    [],
+    [cancelScheduledSourcesTransfer],
   );
 
   const ask = useCallback(
@@ -827,7 +895,6 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             ...prev,
             answerHtml: finalHtml,
             visibleAnswer: finalHtml,
-            sources: pendingCitationsRef.current,
             statusMessage: null,
             error: null,
             isStreaming: false,
@@ -835,6 +902,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             isAnswerComplete: true,
             phase,
           }));
+          scheduleSourcesTransfer();
         } else {
           const payloadBody = (await response.json()) as {
             answer?: string;
@@ -852,13 +920,13 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           aggregatedAnswerRef.current = answer;
           visibleAnswerRef.current = answer;
           isAnswerCompleteRef.current = true;
+          pendingCitationsRef.current = citations;
           const finalHtml = toHtml(answer, finalFormat);
 
           setState((prev) => ({
             ...prev,
             answerHtml: finalHtml,
             visibleAnswer: finalHtml,
-            sources: citations,
             statusMessage: null,
             error: null,
             isStreaming: false,
@@ -866,6 +934,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
             isAnswerComplete: true,
             phase: "done",
           }));
+          scheduleSourcesTransfer();
         }
       } catch (error) {
         if ((error as Error).name === "AbortError") {
@@ -899,6 +968,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
       flushVisibleAnswer,
       normalized,
       resetStreamingRefs,
+      scheduleSourcesTransfer,
       syncVisibleAnswer,
     ],
   );
