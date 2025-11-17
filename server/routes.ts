@@ -1902,6 +1902,18 @@ interface LlmCompletionResult {
   request: ApiRequestLog;
 }
 
+type LlmStreamEvent = {
+  event: string;
+  data: {
+    text?: string;
+    chunk?: unknown;
+  };
+};
+
+type LlmCompletionPromise = Promise<LlmCompletionResult> & {
+  streamIterator?: AsyncIterable<LlmStreamEvent>;
+};
+
 type GenerativeContextEntry = {
   id: string | number;
   payload: Record<string, unknown> | null;
@@ -1940,6 +1952,93 @@ function sendSseEvent(res: Response, eventName: string, data?: unknown) {
   if (typeof flusher === "function") {
     flusher.call(res);
   }
+}
+
+type AsyncStreamController<T> = {
+  iterator: AsyncIterableIterator<T>;
+  push: (value: T) => void;
+  finish: () => void;
+  fail: (error: unknown) => void;
+};
+
+function createAsyncStreamController<T>(): AsyncStreamController<T> {
+  const queue: T[] = [];
+  const pending: Array<{
+    resolve: (value: IteratorResult<T>) => void;
+    reject: (reason?: unknown) => void;
+  }> = [];
+  let done = false;
+  let failed: unknown = null;
+
+  const iterator: AsyncIterableIterator<T> = {
+    [Symbol.asyncIterator]() {
+      return iterator;
+    },
+    next() {
+      if (failed) {
+        const error = failed;
+        failed = null;
+        return Promise.reject(error);
+      }
+
+      if (queue.length > 0) {
+        const value = queue.shift()!;
+        return Promise.resolve({ value, done: false });
+      }
+
+      if (done) {
+        return Promise.resolve({ value: undefined as never, done: true });
+      }
+
+      return new Promise<IteratorResult<T>>((resolve, reject) => {
+        pending.push({ resolve, reject });
+      });
+    },
+  };
+
+  const flushQueue = () => {
+    while (queue.length > 0 && pending.length > 0) {
+      const waiter = pending.shift()!;
+      const value = queue.shift()!;
+      waiter.resolve({ value, done: false });
+    }
+  };
+
+  return {
+    iterator,
+    push(value: T) {
+      if (done || failed) {
+        return;
+      }
+      if (pending.length > 0) {
+        const waiter = pending.shift()!;
+        waiter.resolve({ value, done: false });
+        return;
+      }
+      queue.push(value);
+    },
+    finish() {
+      if (done || failed) {
+        return;
+      }
+      done = true;
+      flushQueue();
+      while (pending.length > 0) {
+        const waiter = pending.shift()!;
+        waiter.resolve({ value: undefined as never, done: true });
+      }
+    },
+    fail(error: unknown) {
+      if (failed || done) {
+        return;
+      }
+      failed = error ?? new Error("Stream interrupted");
+      while (pending.length > 0) {
+        const waiter = pending.shift()!;
+        waiter.reject(failed);
+      }
+    },
+  };
 }
 
 function extractTextDeltaFromChunk(chunk: unknown): string {
@@ -2306,15 +2405,21 @@ function getValueByJsonPath(source: unknown, path: string): unknown {
   return current;
 }
 
-async function fetchLlmCompletion(
+function fetchLlmCompletion(
   provider: LlmProvider,
   accessToken: string,
   query: string,
   context: LlmContextRecord[],
   modelOverride?: string,
-  options?: { responseFormat?: RagResponseFormat; onBeforeRequest?: (details: ApiRequestLog) => void },
-): Promise<LlmCompletionResult> {
+  options?: {
+    stream?: boolean;
+    responseFormat?: RagResponseFormat;
+    onBeforeRequest?: (details: ApiRequestLog) => void;
+  },
+): LlmCompletionPromise {
+  const shouldForceStream = options?.stream === true;
   const requestBody = buildLlmRequestBody(provider, query, context, modelOverride, {
+    stream: shouldForceStream ? true : undefined,
     responseFormat: options?.responseFormat,
   });
   const llmHeaders = new Headers();
@@ -2334,202 +2439,231 @@ async function fetchLlmCompletion(
     llmHeaders.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  let completionResponse: FetchResponse;
+  const streamController = wantsStream ? createAsyncStreamController<LlmStreamEvent>() : null;
 
-  try {
-    const requestOptions = applyTlsPreferences<NodeFetchOptions>(
-      {
-        method: "POST",
-        headers: llmHeaders,
-        body: JSON.stringify(requestBody),
-      },
-      provider.allowSelfSignedCertificate,
-    );
-
-    options?.onBeforeRequest?.({
-      url: provider.completionUrl,
-      headers: sanitizeHeadersForLog(llmHeaders),
-      body: requestBody,
-    });
-
-    completionResponse = await fetch(provider.completionUrl, requestOptions);
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Не удалось выполнить запрос к LLM: ${errorMessage}`);
-  }
-
-  if (!completionResponse.ok) {
-    const rawBody = await completionResponse.text();
-    const parsedBody = parseJson(rawBody);
-
-    let message = `LLM вернул статус ${completionResponse.status}`;
-
-    if (parsedBody && typeof parsedBody === "object") {
-      const body = parsedBody as Record<string, unknown>;
-      if (typeof body.error_description === "string") {
-        message = body.error_description;
-      } else if (typeof body.message === "string") {
-        message = body.message;
-      }
-    } else if (typeof parsedBody === "string" && parsedBody.trim()) {
-      message = parsedBody.trim();
-    }
-
-    throw new Error(`Ошибка на этапе генерации ответа: ${message}`);
-  }
-
-  const contentType = completionResponse.headers.get("content-type")?.toLowerCase() ?? "";
-
-  if (contentType.includes("text/event-stream")) {
-    if (!completionResponse.body) {
-      throw new Error("LLM не вернул поток данных");
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-    const rawEvents: unknown[] = [];
-    let aggregatedAnswer = "";
-    let usageTokens: number | null = null;
-    let streamCompleted = false;
+  const completionPromise = (async () => {
+    let completionResponse: FetchResponse;
 
     try {
-      for await (const chunk of completionResponse.body as unknown as AsyncIterable<Uint8Array>) {
-        buffer += decoder.decode(chunk, { stream: true });
+      const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+        {
+          method: "POST",
+          headers: llmHeaders,
+          body: JSON.stringify(requestBody),
+        },
+        provider.allowSelfSignedCertificate,
+      );
 
-        let boundaryIndex = buffer.indexOf("\n\n");
-        while (boundaryIndex >= 0) {
-          const rawEvent = buffer.slice(0, boundaryIndex).replace(/\r/g, "");
-          buffer = buffer.slice(boundaryIndex + 2);
-          boundaryIndex = buffer.indexOf("\n\n");
+      options?.onBeforeRequest?.({
+        url: provider.completionUrl,
+        headers: sanitizeHeadersForLog(llmHeaders),
+        body: requestBody,
+      });
 
-          if (!rawEvent.trim()) {
-            continue;
-          }
+      completionResponse = await fetch(provider.completionUrl, requestOptions);
+    } catch (error) {
+      streamController?.fail(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Не удалось выполнить запрос к LLM: ${errorMessage}`);
+    }
 
-          const lines = rawEvent.split("\n");
-          const dataLines: string[] = [];
+    if (!completionResponse.ok) {
+      const rawBody = await completionResponse.text();
+      const parsedBody = parseJson(rawBody);
 
-          for (const line of lines) {
-            if (line.startsWith("data:")) {
-              dataLines.push(line.slice(5).trim());
+      let message = `LLM вернул статус ${completionResponse.status}`;
+
+      if (parsedBody && typeof parsedBody === "object") {
+        const body = parsedBody as Record<string, unknown>;
+        if (typeof body.error_description === "string") {
+          message = body.error_description;
+        } else if (typeof body.message === "string") {
+          message = body.message;
+        }
+      } else if (typeof parsedBody === "string" && parsedBody.trim()) {
+        message = parsedBody.trim();
+      }
+
+      streamController?.fail(new Error(message));
+      throw new Error(`Ошибка на этапе генерации ответа: ${message}`);
+    }
+
+    const contentType = completionResponse.headers.get("content-type")?.toLowerCase() ?? "";
+
+    if (contentType.includes("text/event-stream")) {
+      if (!completionResponse.body) {
+        streamController?.fail(new Error("LLM не вернул поток данных"));
+        throw new Error("LLM не вернул поток данных");
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const rawEvents: unknown[] = [];
+      let aggregatedAnswer = "";
+      let usageTokens: number | null = null;
+      let streamCompleted = false;
+
+      try {
+        for await (const chunk of completionResponse.body as unknown as AsyncIterable<Uint8Array>) {
+          buffer += decoder.decode(chunk, { stream: true });
+
+          let boundaryIndex = buffer.indexOf("\n\n");
+          while (boundaryIndex >= 0) {
+            const rawEvent = buffer.slice(0, boundaryIndex).replace(/\r/g, "");
+            buffer = buffer.slice(boundaryIndex + 2);
+            boundaryIndex = buffer.indexOf("\n\n");
+
+            if (!rawEvent.trim()) {
+              continue;
+            }
+
+            const lines = rawEvent.split("\n");
+            let eventName = "message";
+            const dataLines: string[] = [];
+
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                eventName = line.slice(6).trim() || "message";
+              } else if (line.startsWith("data:")) {
+                dataLines.push(line.slice(5).trim());
+              }
+            }
+
+            const dataPayload = dataLines.join("\n");
+            if (!dataPayload) {
+              continue;
+            }
+
+            if (dataPayload === "[DONE]") {
+              streamCompleted = true;
+              break;
+            }
+
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(dataPayload);
+            } catch {
+              continue;
+            }
+
+            rawEvents.push(parsed);
+
+            const delta = extractTextDeltaFromChunk(parsed);
+            if (delta) {
+              aggregatedAnswer += delta;
+            }
+
+            const normalizedEventName = eventName === "message" ? "delta" : eventName;
+            if (streamController && (delta || parsed)) {
+              streamController.push({
+                event: normalizedEventName,
+                data: {
+                  text: delta || undefined,
+                  chunk: parsed,
+                },
+              });
+            }
+
+            const maybeUsage = extractUsageTokensFromChunk(parsed);
+            if (typeof maybeUsage === "number") {
+              usageTokens = maybeUsage;
             }
           }
 
-          const dataPayload = dataLines.join("\n");
-          if (!dataPayload) {
-            continue;
-          }
-
-          if (dataPayload === "[DONE]") {
-            streamCompleted = true;
+          if (streamCompleted) {
             break;
           }
-
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(dataPayload);
-          } catch {
-            continue;
-          }
-
-          rawEvents.push(parsed);
-
-          const delta = extractTextDeltaFromChunk(parsed);
-          if (delta) {
-            aggregatedAnswer += delta;
-          }
-
-          const maybeUsage = extractUsageTokensFromChunk(parsed);
-          if (typeof maybeUsage === "number") {
-            usageTokens = maybeUsage;
-          }
         }
-
-        if (streamCompleted) {
-          break;
-        }
+      } catch (error) {
+        streamController?.fail(error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`Ошибка при чтении SSE от LLM: ${errorMessage}`);
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Ошибка при чтении SSE от LLM: ${errorMessage}`);
+
+      if (!aggregatedAnswer) {
+        streamController?.finish();
+        throw new Error("LLM не вернул текст ответа");
+      }
+
+      streamController?.finish();
+      return {
+        answer: aggregatedAnswer,
+        usageTokens,
+        rawResponse: rawEvents,
+        request: {
+          url: provider.completionUrl,
+          headers: sanitizeHeadersForLog(llmHeaders),
+          body: requestBody,
+        },
+      };
     }
 
-    if (!aggregatedAnswer) {
+    const rawBody = await completionResponse.text();
+    const parsedBody = parseJson(rawBody);
+
+    const responseConfig = mergeLlmResponseConfig(provider);
+    const messageValue = getValueByJsonPath(parsedBody, responseConfig.messagePath);
+
+    let answer: string | null = null;
+    if (typeof messageValue === "string") {
+      answer = messageValue.trim();
+    } else if (Array.isArray(messageValue)) {
+      answer = messageValue
+        .map((item) => {
+          if (typeof item === "string") {
+            return item;
+          }
+          if (item && typeof item === "object" && typeof (item as Record<string, unknown>).text === "string") {
+            return (item as Record<string, unknown>).text as string;
+          }
+          return "";
+        })
+        .filter((part) => part.trim().length > 0)
+        .join("\n");
+      if (answer) {
+        answer = answer.trim();
+      }
+    } else if (
+      messageValue &&
+      typeof messageValue === "object" &&
+      typeof (messageValue as Record<string, unknown>).content === "string"
+    ) {
+      answer = ((messageValue as Record<string, unknown>).content as string).trim();
+    }
+
+    if (!answer) {
       throw new Error("LLM не вернул текст ответа");
     }
 
+    let usageTokens: number | null = null;
+    if (responseConfig.usageTokensPath) {
+      const usageValue = getValueByJsonPath(parsedBody, responseConfig.usageTokensPath);
+      if (typeof usageValue === "number" && Number.isFinite(usageValue)) {
+        usageTokens = usageValue;
+      } else if (typeof usageValue === "string" && usageValue.trim()) {
+        const parsedNumber = Number.parseFloat(usageValue);
+        if (!Number.isNaN(parsedNumber)) {
+          usageTokens = parsedNumber;
+        }
+      }
+    }
+
+    streamController?.finish();
     return {
-      answer: aggregatedAnswer,
+      answer,
       usageTokens,
-      rawResponse: rawEvents,
+      rawResponse: parsedBody,
       request: {
         url: provider.completionUrl,
         headers: sanitizeHeadersForLog(llmHeaders),
         body: requestBody,
       },
     };
-  }
+  })();
 
-  const rawBody = await completionResponse.text();
-  const parsedBody = parseJson(rawBody);
-
-  const responseConfig = mergeLlmResponseConfig(provider);
-  const messageValue = getValueByJsonPath(parsedBody, responseConfig.messagePath);
-
-  let answer: string | null = null;
-  if (typeof messageValue === "string") {
-    answer = messageValue.trim();
-  } else if (Array.isArray(messageValue)) {
-    answer = messageValue
-      .map((item) => {
-        if (typeof item === "string") {
-          return item;
-        }
-        if (item && typeof item === "object" && typeof (item as Record<string, unknown>).text === "string") {
-          return (item as Record<string, unknown>).text as string;
-        }
-        return "";
-      })
-      .filter((part) => part.trim().length > 0)
-      .join("\n");
-    if (answer) {
-      answer = answer.trim();
-    }
-  } else if (
-    messageValue &&
-    typeof messageValue === "object" &&
-    typeof (messageValue as Record<string, unknown>).content === "string"
-  ) {
-    answer = ((messageValue as Record<string, unknown>).content as string).trim();
-  }
-
-  if (!answer) {
-    throw new Error("LLM не вернул текст ответа");
-  }
-
-  let usageTokens: number | null = null;
-  if (responseConfig.usageTokensPath) {
-    const usageValue = getValueByJsonPath(parsedBody, responseConfig.usageTokensPath);
-    if (typeof usageValue === "number" && Number.isFinite(usageValue)) {
-      usageTokens = usageValue;
-    } else if (typeof usageValue === "string" && usageValue.trim()) {
-      const parsedNumber = Number.parseFloat(usageValue);
-      if (!Number.isNaN(parsedNumber)) {
-        usageTokens = parsedNumber;
-      }
-    }
-  }
-
-  return {
-    answer,
-    usageTokens,
-    rawResponse: parsedBody,
-    request: {
-      url: provider.completionUrl,
-      headers: sanitizeHeadersForLog(llmHeaders),
-      body: requestBody,
-    },
-  };
+  return Object.assign(completionPromise, {
+    streamIterator: streamController?.iterator,
+  });
 }
 
 
@@ -2954,6 +3088,18 @@ type KnowledgeBaseRagPipelineStream = {
   onEvent: (eventName: string, payload?: unknown) => void;
 };
 
+function forwardLlmStreamEvents(
+  iterator: AsyncIterable<LlmStreamEvent>,
+  emit: (eventName: string, payload?: unknown) => void,
+) {
+  return (async () => {
+    for await (const entry of iterator) {
+      const eventName = entry.event || "delta";
+      emit(eventName, entry.data);
+    }
+  })();
+}
+
 async function runKnowledgeBaseRagPipeline(options: {
   req: Request;
   body: KnowledgeRagRequest;
@@ -2979,6 +3125,7 @@ async function runKnowledgeBaseRagPipeline(options: {
   };
   const query = body.q.trim();
   const knowledgeBaseId = body.kb_id.trim();
+  const wantsLlmStream = body.stream === true;
 
   if (!query) {
     throw new HttpError(400, "Укажите поисковый запрос");
@@ -3710,25 +3857,35 @@ async function runKnowledgeBaseRagPipeline(options: {
       "Генерация ответа LLM",
     );
     const llmStart = performance.now();
-    let completion;
-    try {
-      completion = await fetchLlmCompletion(
-        configuredProvider,
-        llmAccessToken,
-        normalizedQuery,
-        contextRecords,
-        selectedModelValue,
-        {
-          responseFormat,
-          onBeforeRequest(details) {
-            llmStep.setInput({
-              providerId: llmProviderId,
-              model: llmModel,
-              request: details,
-            });
-          },
+    let completion: LlmCompletionResult;
+    const completionPromise = fetchLlmCompletion(
+      configuredProvider,
+      llmAccessToken,
+      normalizedQuery,
+      contextRecords,
+      selectedModelValue,
+      {
+        stream: wantsLlmStream,
+        responseFormat,
+        onBeforeRequest(details) {
+          llmStep.setInput({
+            providerId: llmProviderId,
+            model: llmModel,
+            request: details,
+          });
         },
-      );
+      },
+    );
+    const llmStreamIterator = wantsLlmStream ? completionPromise.streamIterator : null;
+    const llmStreamForwarder =
+      wantsLlmStream && llmStreamIterator
+        ? forwardLlmStreamEvents(llmStreamIterator, emitStreamEvent)
+        : null;
+    try {
+      completion = await completionPromise;
+      if (llmStreamForwarder) {
+        await llmStreamForwarder;
+      }
       llmDuration = performance.now() - llmStart;
       llmUsageTokens = completion.usageTokens ?? null;
       llmStep.finish({
@@ -3737,6 +3894,13 @@ async function runKnowledgeBaseRagPipeline(options: {
         answerPreview: completion.answer.slice(0, 160),
       });
     } catch (error) {
+      if (llmStreamForwarder) {
+        try {
+          await llmStreamForwarder;
+        } catch (streamError) {
+          console.error("Ошибка пересылки потока LLM:", getErrorDetails(streamError));
+        }
+      }
       llmDuration = performance.now() - llmStart;
       llmStep.fail(error);
       throw error;
@@ -3811,7 +3975,9 @@ async function runKnowledgeBaseRagPipeline(options: {
       responseFormat,
     } as const;
 
-    emitStreamEvent("delta", { text: response.answer });
+    if (!wantsLlmStream) {
+      emitStreamEvent("delta", { text: response.answer });
+    }
     emitStreamStatus("done", "Готово");
     emitStreamEvent("done", {
       answer: response.answer,
