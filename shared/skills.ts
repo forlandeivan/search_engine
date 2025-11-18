@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { skillRagModes } from "./schema";
 import type { SkillRagMode } from "./schema";
 
 const optionalString = (limit: number) =>
@@ -25,6 +26,15 @@ const optionalText = (limit: number) =>
 
 const knowledgeBaseIdSchema = z.string().min(1);
 
+const ragConfigInputSchema = z.object({
+  mode: z.enum(skillRagModes).optional(),
+  collectionIds: z.array(z.string().min(1)).optional(),
+  topK: z.number().int().min(1).max(50).optional(),
+  minScore: z.number().min(0).max(1).optional(),
+  maxContextTokens: z.number().int().min(500).max(20000).optional(),
+  showSources: z.boolean().optional(),
+});
+
 const skillEditableFieldsSchema = z.object({
   name: optionalString(200),
   description: optionalText(4000),
@@ -33,6 +43,7 @@ const skillEditableFieldsSchema = z.object({
   llmProviderConfigId: optionalString(200),
   collectionName: optionalString(200),
   knowledgeBaseIds: z.array(knowledgeBaseIdSchema).optional(),
+  ragConfig: ragConfigInputSchema.optional(),
 });
 
 export const createSkillSchema = skillEditableFieldsSchema;
@@ -51,14 +62,18 @@ export type SkillDto = {
   llmProviderConfigId?: string | null;
   collectionName?: string | null;
   knowledgeBaseIds?: string[];
-  ragMode: SkillRagMode;
-  ragCollectionIds: string[];
-  ragTopK: number;
-  ragMinScore: number;
-  ragMaxContextTokens: number | null;
-  ragShowSources: boolean;
+  ragConfig: SkillRagConfig;
   createdAt: string;
   updatedAt: string;
+};
+
+export type SkillRagConfig = {
+  mode: SkillRagMode;
+  collectionIds: string[];
+  topK: number;
+  minScore: number;
+  maxContextTokens: number | null;
+  showSources: boolean;
 };
 
 export type SkillResponse = {

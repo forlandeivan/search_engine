@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
 import { skills, skillKnowledgeBases, knowledgeBases } from "@shared/schema";
-import type { SkillDto } from "@shared/skills";
+import type { SkillDto, SkillRagConfig, CreateSkillPayload } from "@shared/skills";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -22,8 +22,20 @@ type EditableSkillColumns = Pick<
   "name" | "description" | "systemPrompt" | "modelId" | "llmProviderConfigId" | "collectionName"
 >;
 
+type RagConfigInput = CreateSkillPayload["ragConfig"];
+
 type SkillEditableInput = Partial<EditableSkillColumns> & {
   knowledgeBaseIds?: string[];
+  ragConfig?: RagConfigInput;
+};
+
+const DEFAULT_RAG_CONFIG: SkillRagConfig = {
+  mode: "all_collections",
+  collectionIds: [],
+  topK: 5,
+  minScore: 0.7,
+  maxContextTokens: 3000,
+  showSources: true,
 };
 
 function normalizeNullableString(value: string | null | undefined): string | null {
@@ -32,6 +44,56 @@ function normalizeNullableString(value: string | null | undefined): string | nul
   }
   const trimmed = value.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+function normalizeCollectionIds(ids: readonly string[] | undefined): string[] {
+  if (!ids || ids.length === 0) {
+    return [];
+  }
+
+  const unique = new Set<string>();
+  for (const entry of ids) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const trimmed = entry.trim();
+    if (trimmed.length > 0) {
+      unique.add(trimmed);
+    }
+  }
+
+  // TODO(forlandeivan): validate that each collection belongs to the workspace before saving.
+  return Array.from(unique);
+}
+
+function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig {
+  if (!input) {
+    return { ...DEFAULT_RAG_CONFIG };
+  }
+
+  const sanitizedTopK =
+    typeof input.topK === "number" && Number.isInteger(input.topK) && input.topK >= 1 && input.topK <= 50
+      ? input.topK
+      : DEFAULT_RAG_CONFIG.topK;
+
+  const sanitizedMinScore =
+    typeof input.minScore === "number" && input.minScore >= 0 && input.minScore <= 1
+      ? Number(input.minScore.toFixed(3))
+      : DEFAULT_RAG_CONFIG.minScore;
+
+  const sanitizedMaxContextTokens =
+    typeof input.maxContextTokens === "number" && Number.isInteger(input.maxContextTokens) && input.maxContextTokens >= 500
+      ? input.maxContextTokens
+      : DEFAULT_RAG_CONFIG.maxContextTokens;
+
+  return {
+    mode: input.mode ?? DEFAULT_RAG_CONFIG.mode,
+    collectionIds: normalizeCollectionIds(input.collectionIds),
+    topK: sanitizedTopK,
+    minScore: sanitizedMinScore,
+    maxContextTokens: sanitizedMaxContextTokens,
+    showSources: input.showSources ?? DEFAULT_RAG_CONFIG.showSources,
+  };
 }
 
 function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
@@ -48,12 +110,14 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     llmProviderConfigId: row.llmProviderConfigId ?? null,
     collectionName: row.collectionName ?? null,
     knowledgeBaseIds,
-    ragMode: row.ragMode ?? "all_collections",
-    ragCollectionIds: (row.ragCollectionIds ?? []) as string[],
-    ragTopK: row.ragTopK ?? 5,
-    ragMinScore: row.ragMinScore ?? 0.7,
-    ragMaxContextTokens: row.ragMaxContextTokens ?? null,
-    ragShowSources: row.ragShowSources ?? true,
+    ragConfig: {
+      mode: row.ragMode ?? DEFAULT_RAG_CONFIG.mode,
+      collectionIds: (row.ragCollectionIds ?? []) as string[],
+      topK: row.ragTopK ?? DEFAULT_RAG_CONFIG.topK,
+      minScore: row.ragMinScore ?? DEFAULT_RAG_CONFIG.minScore,
+      maxContextTokens: row.ragMaxContextTokens ?? DEFAULT_RAG_CONFIG.maxContextTokens,
+      showSources: row.ragShowSources ?? DEFAULT_RAG_CONFIG.showSources,
+    },
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };
@@ -145,6 +209,9 @@ function buildEditableColumns(input: SkillEditableInput): SkillEditableInput {
     );
     next.knowledgeBaseIds = Array.from(new Set(filtered));
   }
+  if (input.ragConfig !== undefined) {
+    next.ragConfig = normalizeRagConfigInput(input.ragConfig);
+  }
 
   return next;
 }
@@ -190,6 +257,8 @@ export async function createSkill(
     throw new SkillServiceError("Некоторые базы знаний не найдены в рабочем пространстве", 400);
   }
 
+  const ragConfig = normalized.ragConfig ?? { ...DEFAULT_RAG_CONFIG };
+
   const [inserted] = await db
     .insert(skills)
     .values({
@@ -200,6 +269,12 @@ export async function createSkill(
       modelId: normalized.modelId,
       llmProviderConfigId: normalized.llmProviderConfigId,
       collectionName: normalized.collectionName,
+      ragMode: ragConfig.mode,
+      ragCollectionIds: ragConfig.collectionIds,
+      ragTopK: ragConfig.topK,
+      ragMinScore: ragConfig.minScore,
+      ragMaxContextTokens: ragConfig.maxContextTokens,
+      ragShowSources: ragConfig.showSources,
     })
     .returning();
 
@@ -231,17 +306,31 @@ export async function updateSkill(
     if (key === "knowledgeBaseIds") {
       return;
     }
+    if (key === "ragConfig") {
+      return;
+    }
     if (normalized[key] !== undefined) {
       (updates as Record<string, unknown>)[key] = normalized[key];
     }
   });
 
   let updatedRow = row;
-  if (Object.keys(updates).length > 0) {
+  const hasRagUpdates = normalized.ragConfig !== undefined;
+  if (Object.keys(updates).length > 0 || hasRagUpdates) {
     const [updated] = await db
       .update(skills)
       .set({
         ...updates,
+        ...(hasRagUpdates
+          ? {
+              ragMode: normalized.ragConfig.mode,
+              ragCollectionIds: normalized.ragConfig.collectionIds,
+              ragTopK: normalized.ragConfig.topK,
+              ragMinScore: normalized.ragConfig.minScore,
+              ragMaxContextTokens: normalized.ragConfig.maxContextTokens,
+              ragShowSources: normalized.ragConfig.showSources,
+            }
+          : {}),
         updatedAt: sql`CURRENT_TIMESTAMP`,
       })
       .where(and(eq(skills.id, skillId), eq(skills.workspaceId, workspaceId)))
@@ -279,3 +368,4 @@ export async function deleteSkill(workspaceId: string, skillId: string): Promise
 
   return result.length > 0;
 }
+
