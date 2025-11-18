@@ -411,12 +411,14 @@ export default function SkillsPage() {
     queryFn: fetchKnowledgeBases,
   });
   const {
-    data: llmProviders = [],
+    data: llmProvidersResponse,
     isLoading: isLlmLoading,
     error: llmError,
-  } = useQuery<PublicLlmProvider[]>({
+  } = useQuery<{ providers: PublicLlmProvider[] }>({
     queryKey: ["/api/llm/providers"],
   });
+
+  const llmProviders = llmProvidersResponse?.providers ?? [];
 
   const knowledgeBases = knowledgeBaseQuery.data ?? [];
   const { toast } = useToast();
