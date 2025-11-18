@@ -143,7 +143,7 @@ type UpdateLlmProviderVariables = {
 };
 
 type CreateLlmProviderVariables = {
-  payload: LlmProviderInsert;
+  payload: Omit<LlmProviderInsert, "workspaceId">;
   formattedRequestHeaders: string;
 };
 
@@ -279,7 +279,17 @@ export default function LlmProvidersPage() {
     }
   };
 
-  const buildPayloadFromValues = (mode: "create" | "update") => {
+  function buildPayloadFromValues(mode: "create"): CreateLlmProviderVariables;
+  function buildPayloadFromValues(mode: "update"): {
+    payload: UpdateLlmProvider;
+    formattedRequestHeaders: string;
+  };
+  function buildPayloadFromValues(
+    mode: "create" | "update",
+  ): CreateLlmProviderVariables | {
+    payload: UpdateLlmProvider;
+    formattedRequestHeaders: string;
+  } {
     const values = form.getValues();
     const requestHeaders = parseJsonField(
       values.requestHeaders,
@@ -335,7 +345,7 @@ export default function LlmProvidersPage() {
       },
       responseConfig: { ...DEFAULT_LLM_RESPONSE_CONFIG },
       availableModels: sanitizedAvailableModels,
-    } satisfies Omit<LlmProviderInsert, "authorizationKey">;
+    } satisfies Omit<LlmProviderInsert, "authorizationKey" | "workspaceId">;
 
     const formattedRequestHeaders = formatJson(requestHeaders);
 
@@ -350,10 +360,7 @@ export default function LlmProvidersPage() {
           authorizationKey: trimmedAuthorizationKey,
         },
         formattedRequestHeaders,
-      } satisfies {
-        payload: LlmProviderInsert;
-        formattedRequestHeaders: string;
-      };
+      } satisfies CreateLlmProviderVariables;
     }
 
     const updatePayload: UpdateLlmProvider = {
@@ -362,7 +369,7 @@ export default function LlmProvidersPage() {
     };
 
     return { payload: updatePayload, formattedRequestHeaders };
-  };
+  }
 
   useEffect(() => {
     if (isCreating) {

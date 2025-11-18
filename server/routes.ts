@@ -1,4 +1,4 @@
-import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
+﻿import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import fetch, {
   Headers,
@@ -49,7 +49,7 @@ import {
   createKnowledgeDocumentChunkSet,
   updateKnowledgeDocumentChunkVectorRecords,
 } from "./knowledge-chunks";
-import { listSkills, createSkill, updateSkill, deleteSkill, SkillServiceError } from "./skills";
+import { listSkills, createSkill, updateSkill, deleteSkill, SkillServiceError, getSkillById } from "./skills";
 import passport from "passport";
 import bcrypt from "bcryptjs";
 import {
@@ -193,7 +193,7 @@ function createQueryPreview(value: string, maxLength = 120): string {
     return normalized;
   }
 
-  return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}вЂ¦`;
 }
 
 function maskSensitiveInfoInUrl(rawUrl: string): string {
@@ -462,7 +462,7 @@ function buildSourceSnippet(...candidates: Array<unknown>): string | null {
     }
 
     if (normalized.length > 240) {
-      return `${normalized.slice(0, 240)}…`;
+      return `${normalized.slice(0, 240)}вЂ¦`;
     }
 
     return normalized;
@@ -548,7 +548,7 @@ async function resolvePublicCollectionRequest(
     if (workspaceMemberships.length > 0) {
       const hasAccess = workspaceMemberships.some((entry) => entry.id === targetWorkspaceId);
       if (!hasAccess) {
-        res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+        res.status(403).json({ error: "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ" });
         return false;
       }
     } else {
@@ -556,7 +556,7 @@ async function resolvePublicCollectionRequest(
       if (user) {
         const isMember = await storage.isWorkspaceMember(targetWorkspaceId, user.id);
         if (!isMember) {
-          res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+          res.status(403).json({ error: "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ" });
           return false;
         }
       }
@@ -571,7 +571,7 @@ async function resolvePublicCollectionRequest(
     if (!resolvedWorkspaceId) {
       const user = await resolveOptionalUser(req);
       if (!user) {
-        res.status(401).json({ error: "Укажите X-API-Key в заголовке или apiKey в запросе" });
+        res.status(401).json({ error: "РЈРєР°Р¶РёС‚Рµ X-API-Key РІ Р·Р°РіРѕР»РѕРІРєРµ РёР»Рё apiKey РІ Р·Р°РїСЂРѕСЃРµ" });
         return null;
       }
 
@@ -588,7 +588,7 @@ async function resolvePublicCollectionRequest(
     }
 
     if (!resolvedWorkspaceId) {
-      res.status(400).json({ error: "Передайте workspace_id или X-Workspace-Id" });
+      res.status(400).json({ error: "РџРµСЂРµРґР°Р№С‚Рµ workspace_id РёР»Рё X-Workspace-Id" });
       return null;
     }
 
@@ -599,12 +599,12 @@ async function resolvePublicCollectionRequest(
     if (knowledgeBaseIdCandidate) {
       const base = await storage.getKnowledgeBase(knowledgeBaseIdCandidate);
       if (!base) {
-        res.status(404).json({ error: "База знаний не найдена" });
+        res.status(404).json({ error: "Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР°" });
         return null;
       }
 
       if (base.workspaceId !== resolvedWorkspaceId) {
-        res.status(403).json({ error: "Нет доступа к базе знаний" });
+        res.status(403).json({ error: "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє Р±Р°Р·Рµ Р·РЅР°РЅРёР№" });
         return null;
       }
 
@@ -616,7 +616,7 @@ async function resolvePublicCollectionRequest(
 
   if (publicId) {
     if (!workspaceIdCandidate) {
-      res.status(400).json({ error: "Передайте workspace_id в теле запроса" });
+      res.status(400).json({ error: "РџРµСЂРµРґР°Р№С‚Рµ workspace_id РІ С‚РµР»Рµ Р·Р°РїСЂРѕСЃР°" });
       return null;
     }
 
@@ -631,17 +631,17 @@ async function resolvePublicCollectionRequest(
     const site = await storage.getSiteByPublicId(publicId);
 
     if (!site) {
-      res.status(404).json({ error: "Коллекция не найдена" });
+      res.status(404).json({ error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°" });
       return null;
     }
 
     if (site.workspaceId !== workspaceIdCandidate) {
-      res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+      res.status(403).json({ error: "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ" });
       return null;
     }
 
     if (site.publicApiKey !== apiKey) {
-      res.status(401).json({ error: "Некорректный API-ключ" });
+      res.status(401).json({ error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ API-РєР»СЋС‡" });
       return null;
     }
 
@@ -655,7 +655,7 @@ async function resolvePublicCollectionRequest(
     console.log(`[RAG DEBUG] getSiteByPublicApiKey result: found site ${site.id}, workspace ${site.workspaceId}`);
 
     if (workspaceIdCandidate && site.workspaceId !== workspaceIdCandidate) {
-      res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+      res.status(403).json({ error: "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ" });
       return null;
     }
 
@@ -664,7 +664,7 @@ async function resolvePublicCollectionRequest(
     }
 
     if (site.publicApiKey !== apiKey) {
-      res.status(401).json({ error: "Некорректный API-ключ" });
+      res.status(401).json({ error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ API-РєР»СЋС‡" });
       return null;
     }
 
@@ -675,12 +675,12 @@ async function resolvePublicCollectionRequest(
   const embedKey = await storage.getWorkspaceEmbedKeyByPublicKey(apiKey);
 
   if (!embedKey) {
-    res.status(404).json({ error: "Коллекция не найдена" });
+    res.status(404).json({ error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°" });
     return null;
   }
 
   if (workspaceIdCandidate && workspaceIdCandidate !== embedKey.workspaceId) {
-    res.status(403).json({ error: "Нет доступа к рабочему пространству" });
+    res.status(403).json({ error: "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ" });
     return null;
   }
 
@@ -697,12 +697,12 @@ async function resolvePublicCollectionRequest(
 
   if (allowedDomainSet.size > 0) {
     if (!requestDomain) {
-      res.status(403).json({ error: "Домен запроса не определён. Передайте заголовок Origin или X-Embed-Origin." });
+      res.status(403).json({ error: "Р”РѕРјРµРЅ Р·Р°РїСЂРѕСЃР° РЅРµ РѕРїСЂРµРґРµР»С‘РЅ. РџРµСЂРµРґР°Р№С‚Рµ Р·Р°РіРѕР»РѕРІРѕРє Origin РёР»Рё X-Embed-Origin." });
       return null;
     }
 
     if (!allowedDomainSet.has(requestDomain)) {
-      res.status(403).json({ error: `Домен ${requestDomain} не добавлен в allowlist для данного ключа` });
+      res.status(403).json({ error: `Р”РѕРјРµРЅ ${requestDomain} РЅРµ РґРѕР±Р°РІР»РµРЅ РІ allowlist РґР»СЏ РґР°РЅРЅРѕРіРѕ РєР»СЋС‡Р°` });
       return null;
     }
   }
@@ -736,7 +736,7 @@ async function resolveGenerativeWorkspace(
       return { workspaceId, site: null, isPublic: false };
     } catch (error) {
       if (error instanceof WorkspaceContextError) {
-        res.status(401).json({ error: "Требуется авторизация" });
+        res.status(401).json({ error: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
         return null;
       }
       throw error;
@@ -774,7 +774,7 @@ function handleKnowledgeBaseRouteError(error: unknown, res: Response) {
   console.error("Knowledge base request failed", error);
   return res
     .status(500)
-    .json({ error: "Не удалось обработать запрос к базе знаний" });
+    .json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ Р·Р°РїСЂРѕСЃ Рє Р±Р°Р·Рµ Р·РЅР°РЅРёР№" });
 }
 
 function parseKnowledgeNodeParentId(raw: unknown): string | null {
@@ -783,7 +783,7 @@ function parseKnowledgeNodeParentId(raw: unknown): string | null {
   }
 
   if (typeof raw !== "string") {
-    throw new KnowledgeBaseError("Некорректный идентификатор родителя", 400);
+    throw new KnowledgeBaseError("РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ СЂРѕРґРёС‚РµР»СЏ", 400);
   }
 
   const trimmed = raw.trim();
@@ -871,7 +871,7 @@ function resolveVectorSizeForCollection(
   }
 
   throw new Error(
-    "Не удалось определить размер вектора для новой коллекции. Укажите vectorSize в настройках сервиса эмбеддингов",
+    "РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ СЂР°Р·РјРµСЂ РІРµРєС‚РѕСЂР° РґР»СЏ РЅРѕРІРѕР№ РєРѕР»Р»РµРєС†РёРё. РЈРєР°Р¶РёС‚Рµ vectorSize РІ РЅР°СЃС‚СЂРѕР№РєР°С… СЃРµСЂРІРёСЃР° СЌРјР±РµРґРґРёРЅРіРѕРІ",
   );
 }
 
@@ -964,7 +964,7 @@ function extractQdrantApiError(error: unknown):
     ) {
       message = candidate.statusText;
     } else {
-      message = "Ошибка Qdrant";
+      message = "РћС€РёР±РєР° Qdrant";
     }
   }
 
@@ -978,7 +978,7 @@ function extractQdrantApiError(error: unknown):
 function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined {
   const user = getSessionUser(req);
   if (!user) {
-    res.status(401).json({ message: "Требуется авторизация" });
+    res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
     return undefined;
   }
 
@@ -988,7 +988,7 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined 
 function splitFullName(fullName: string): { firstName: string; lastName: string } {
   const normalized = fullName.trim().replace(/\s+/g, " ");
   if (normalized.length === 0) {
-    return { firstName: "Пользователь", lastName: "" };
+    return { firstName: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ", lastName: "" };
   }
 
   const [first, ...rest] = normalized.split(" ");
@@ -1171,8 +1171,8 @@ function applyTlsPreferences<T extends NodeFetchOptions>(
 
 
 const sendJsonToWebhookSchema = z.object({
-  webhookUrl: z.string().trim().url("Некорректный URL"),
-  payload: z.string().min(1, "JSON не может быть пустым")
+  webhookUrl: z.string().trim().url("РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ URL"),
+  payload: z.string().min(1, "JSON РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј")
 });
 
 
@@ -1214,16 +1214,16 @@ const createVectorCollectionSchema = z.object({
 });
 
 const testEmbeddingCredentialsSchema = z.object({
-  tokenUrl: z.string().trim().url("Некорректный URL для получения токена"),
-  embeddingsUrl: z.string().trim().url("Некорректный URL сервиса эмбеддингов"),
-  authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
-  scope: z.string().trim().min(1, "Укажите OAuth scope"),
-  model: z.string().trim().min(1, "Укажите модель эмбеддингов"),
+  tokenUrl: z.string().trim().url("РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ URL РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ С‚РѕРєРµРЅР°"),
+  embeddingsUrl: z.string().trim().url("РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ URL СЃРµСЂРІРёСЃР° СЌРјР±РµРґРґРёРЅРіРѕРІ"),
+  authorizationKey: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ Authorization key"),
+  scope: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ OAuth scope"),
+  model: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РјРѕРґРµР»СЊ СЌРјР±РµРґРґРёРЅРіРѕРІ"),
   allowSelfSignedCertificate: z.boolean().default(false),
   requestHeaders: z.record(z.string()).default({}),
 });
 
-const TEST_EMBEDDING_TEXT = "привет!";
+const TEST_EMBEDDING_TEXT = "РїСЂРёРІРµС‚!";
 const KNOWLEDGE_DOCUMENT_PAYLOAD_TEXT_LIMIT = 4000;
 const KNOWLEDGE_DOCUMENT_PAYLOAD_HTML_LIMIT = 6000;
 
@@ -1397,7 +1397,7 @@ function buildDocumentExcerpt(text: string, maxLength = 200): string {
     return normalized;
   }
 
-  return `${normalized.slice(0, maxLength).trim()}…`;
+  return `${normalized.slice(0, maxLength).trim()}вЂ¦`;
 }
 
 function truncatePayloadValue(value: unknown, limit: number): string | null {
@@ -1414,7 +1414,7 @@ function truncatePayloadValue(value: unknown, limit: number): string | null {
     return trimmed;
   }
 
-  return `${trimmed.slice(0, Math.max(0, limit - 1)).trim()}…`;
+  return `${trimmed.slice(0, Math.max(0, limit - 1)).trim()}вЂ¦`;
 }
 
 interface KnowledgeDocumentChunk {
@@ -1485,19 +1485,19 @@ function createKnowledgeDocumentChunks(
 
 function extractEmbeddingResponse(parsedBody: unknown) {
   if (!parsedBody || typeof parsedBody !== "object") {
-    throw new Error("Не удалось разобрать ответ сервиса эмбеддингов");
+    throw new Error("РќРµ СѓРґР°Р»РѕСЃСЊ СЂР°Р·РѕР±СЂР°С‚СЊ РѕС‚РІРµС‚ СЃРµСЂРІРёСЃР° СЌРјР±РµРґРґРёРЅРіРѕРІ");
   }
 
   const body = parsedBody as Record<string, unknown>;
   const data = body.data;
 
   if (!Array.isArray(data) || data.length === 0) {
-    throw new Error("Сервис эмбеддингов не вернул данные");
+    throw new Error("РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РЅРµ РІРµСЂРЅСѓР» РґР°РЅРЅС‹Рµ");
   }
 
   const firstEntry = data[0];
   if (!firstEntry || typeof firstEntry !== "object") {
-    throw new Error("Сервис эмбеддингов вернул некорректный ответ");
+    throw new Error("РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РІРµСЂРЅСѓР» РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РѕС‚РІРµС‚");
   }
 
   const entryRecord = firstEntry as Record<string, unknown>;
@@ -1505,7 +1505,7 @@ function extractEmbeddingResponse(parsedBody: unknown) {
   const vector = ensureNumberArray(vectorCandidate);
 
   if (!vector || vector.length === 0) {
-    throw new Error("Сервис эмбеддингов не вернул числовой вектор");
+    throw new Error("РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РЅРµ РІРµСЂРЅСѓР» С‡РёСЃР»РѕРІРѕР№ РІРµРєС‚РѕСЂ");
   }
 
   let usageTokens: number | undefined;
@@ -1586,7 +1586,7 @@ function sanitizeHeadersForLog(headers: Headers): Record<string, string> {
 
 function buildVectorPayload(
   vector: number[],
-  _vectorFieldName: string | null | undefined,
+  vectorFieldName: string | null | undefined,
 ): Schemas["NamedVectorStruct"] | number[] {
   if (!Array.isArray(vector) || vector.length === 0) {
     return vector;
@@ -1594,15 +1594,22 @@ function buildVectorPayload(
 
   const sanitizedVector = vector.map((entry, index) => {
     if (typeof entry !== "number" || Number.isNaN(entry)) {
-      throw new Error(`Некорректное значение компоненты вектора (index=${index})`);
+      throw new Error(`РќРµРєРѕСЂСЂРµРєС‚РЅРѕРµ Р·РЅР°С‡РµРЅРёРµ РєРѕРјРїРѕРЅРµРЅС‚С‹ РІРµРєС‚РѕСЂР° (index=${index})`);
     }
 
     if (!Number.isFinite(entry)) {
-      throw new Error(`Компонента вектора содержит бесконечность (index=${index})`);
+      throw new Error(`РљРѕРјРїРѕРЅРµРЅС‚Р° РІРµРєС‚РѕСЂР° СЃРѕРґРµСЂР¶РёС‚ Р±РµСЃРєРѕРЅРµС‡РЅРѕСЃС‚СЊ (index=${index})`);
     }
 
     return entry;
   });
+
+  if (vectorFieldName && typeof vectorFieldName === "string") {
+    const trimmed = vectorFieldName.trim();
+    if (trimmed.length > 0) {
+      return { name: trimmed, vector: sanitizedVector };
+    }
+  }
 
   return sanitizedVector;
 }
@@ -1614,10 +1621,14 @@ function cloneVectorPayload(vector: unknown): unknown {
 
   if (vector && typeof vector === "object") {
     const record = vector as Record<string, unknown>;
-    if (Array.isArray(record.vector)) {
+    const vectorCopy = Array.isArray(record.vector) ? record.vector.slice() : null;
+    const vectorName =
+      typeof record.name === "string" && record.name.trim().length > 0 ? record.name.trim() : null;
+    if (vectorCopy && vectorName) {
       return {
         ...record,
-        vector: record.vector.slice(),
+        name: vectorName,
+        vector: vectorCopy,
       } satisfies Schemas["NamedVectorStruct"];
     }
   }
@@ -1643,7 +1654,7 @@ function normalizeBaseUrl(value: string | undefined | null): string | null {
     return parsed.toString().replace(/\/$/, "");
   } catch (error) {
     console.warn(
-      `[public-api] Некорректный базовый URL публичного API: ${trimmed}. ${getErrorDetails(error)}`,
+      `[public-api] РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ Р±Р°Р·РѕРІС‹Р№ URL РїСѓР±Р»РёС‡РЅРѕРіРѕ API: ${trimmed}. ${getErrorDetails(error)}`,
     );
     return null;
   }
@@ -1672,7 +1683,7 @@ function resolvePublicApiBaseUrl(req: Request): string {
 
   if (!host) {
     throw new Error(
-      "Не удалось определить базовый URL публичного API. Укажите PUBLIC_API_BASE_URL в переменных окружения.",
+      "РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ Р±Р°Р·РѕРІС‹Р№ URL РїСѓР±Р»РёС‡РЅРѕРіРѕ API. РЈРєР°Р¶РёС‚Рµ PUBLIC_API_BASE_URL РІ РїРµСЂРµРјРµРЅРЅС‹С… РѕРєСЂСѓР¶РµРЅРёСЏ.",
     );
   }
 
@@ -1705,7 +1716,7 @@ function buildCustomPayloadFromSchema(
       const typedValue = castValueToType(rendered, field.type);
       acc[field.name] = normalizeArrayValue(typedValue, field.isArray);
     } catch (error) {
-      console.error(`Не удалось обработать поле схемы "${field.name}"`, error);
+      console.error(`РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ РїРѕР»Рµ СЃС…РµРјС‹ "${field.name}"`, error);
       acc[field.name] = null;
     }
 
@@ -1778,18 +1789,18 @@ async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> 
       errorMessage.toLowerCase().includes("self-signed certificate")
     ) {
       throw new Error(
-        "Не удалось подключиться к сервису: сертификат не прошёл проверку. Включите доверие самоподписанным сертификатам и повторите попытку.",
+        "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ Рє СЃРµСЂРІРёСЃСѓ: СЃРµСЂС‚РёС„РёРєР°С‚ РЅРµ РїСЂРѕС€С‘Р» РїСЂРѕРІРµСЂРєСѓ. Р’РєР»СЋС‡РёС‚Рµ РґРѕРІРµСЂРёРµ СЃР°РјРѕРїРѕРґРїРёСЃР°РЅРЅС‹Рј СЃРµСЂС‚РёС„РёРєР°С‚Р°Рј Рё РїРѕРІС‚РѕСЂРёС‚Рµ РїРѕРїС‹С‚РєСѓ.",
       );
     }
 
-    throw new Error(`Не удалось выполнить запрос для получения токена: ${errorMessage}`);
+    throw new Error(`РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ Р·Р°РїСЂРѕСЃ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ С‚РѕРєРµРЅР°: ${errorMessage}`);
   }
 
   const rawBody = await tokenResponse.text();
   const parsedBody = parseJson(rawBody);
 
   if (!tokenResponse.ok) {
-    let message = `Сервис вернул статус ${tokenResponse.status}`;
+    let message = `РЎРµСЂРІРёСЃ РІРµСЂРЅСѓР» СЃС‚Р°С‚СѓСЃ ${tokenResponse.status}`;
 
     if (parsedBody && typeof parsedBody === "object") {
       const body = parsedBody as Record<string, unknown>;
@@ -1802,7 +1813,7 @@ async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> 
       message = parsedBody.trim();
     }
 
-    throw new Error(`Ошибка на этапе получения токена: ${message}`);
+    throw new Error(`РћС€РёР±РєР° РЅР° СЌС‚Р°РїРµ РїРѕР»СѓС‡РµРЅРёСЏ С‚РѕРєРµРЅР°: ${message}`);
   }
 
   if (parsedBody && typeof parsedBody === "object") {
@@ -1814,7 +1825,7 @@ async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> 
     }
   }
 
-  throw new Error("Сервис не вернул access_token");
+  throw new Error("РЎРµСЂРІРёСЃ РЅРµ РІРµСЂРЅСѓР» access_token");
 }
 
 async function fetchEmbeddingVector(
@@ -1859,14 +1870,14 @@ async function fetchEmbeddingVector(
     embeddingResponse = await fetch(provider.embeddingsUrl, requestOptions);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Не удалось выполнить запрос к сервису эмбеддингов: ${errorMessage}`);
+    throw new Error(`РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ Р·Р°РїСЂРѕСЃ Рє СЃРµСЂРІРёСЃСѓ СЌРјР±РµРґРґРёРЅРіРѕРІ: ${errorMessage}`);
   }
 
   const rawBody = await embeddingResponse.text();
   const parsedBody = parseJson(rawBody);
 
   if (!embeddingResponse.ok) {
-    let message = `Сервис эмбеддингов вернул статус ${embeddingResponse.status}`;
+    let message = `РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РІРµСЂРЅСѓР» СЃС‚Р°С‚СѓСЃ ${embeddingResponse.status}`;
 
     if (parsedBody && typeof parsedBody === "object") {
       const body = parsedBody as Record<string, unknown>;
@@ -1879,7 +1890,7 @@ async function fetchEmbeddingVector(
       message = parsedBody.trim();
     }
 
-    throw new Error(`Ошибка на этапе получения вектора: ${message}`);
+    throw new Error(`РћС€РёР±РєР° РЅР° СЌС‚Р°РїРµ РїРѕР»СѓС‡РµРЅРёСЏ РІРµРєС‚РѕСЂР°: ${message}`);
   }
 
   const { vector, usageTokens, embeddingId } = extractEmbeddingResponse(parsedBody);
@@ -2189,8 +2200,8 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
     metadataPayload.vectorLength = embeddingResult.vector.length;
   }
 
-  sendSseEvent(res, "status", { stage: "thinking", message: "Думаю…" });
-  sendSseEvent(res, "status", { stage: "retrieving", message: "Ищу источники…" });
+  sendSseEvent(res, "status", { stage: "thinking", message: "Р”СѓРјР°СЋвЂ¦" });
+  sendSseEvent(res, "status", { stage: "retrieving", message: "РС‰Сѓ РёСЃС‚РѕС‡РЅРёРєРёвЂ¦" });
 
   const streamedContextEntries = sanitizedResults.map((entry) => ({
     id: entry.id ?? null,
@@ -2225,7 +2236,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
 
     const errorMessage = error instanceof Error ? error.message : String(error);
     sendSseEvent(res, "error", {
-      message: `Не удалось выполнить запрос к LLM: ${errorMessage}`,
+      message: `РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ Р·Р°РїСЂРѕСЃ Рє LLM: ${errorMessage}`,
     });
     res.end();
     return;
@@ -2233,7 +2244,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
 
   if (!completionResponse.ok) {
     const rawBody = await completionResponse.text();
-    let message = `LLM вернул статус ${completionResponse.status}`;
+    let message = `LLM РІРµСЂРЅСѓР» СЃС‚Р°С‚СѓСЃ ${completionResponse.status}`;
 
     const parsedBody = parseJson(rawBody);
     if (parsedBody && typeof parsedBody === "object") {
@@ -2247,20 +2258,20 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
       message = parsedBody.trim();
     }
 
-    sendSseEvent(res, "error", { message: `Ошибка на этапе генерации ответа: ${message}` });
+    sendSseEvent(res, "error", { message: `РћС€РёР±РєР° РЅР° СЌС‚Р°РїРµ РіРµРЅРµСЂР°С†РёРё РѕС‚РІРµС‚Р°: ${message}` });
     res.end();
     return;
   }
 
   if (!completionResponse.body) {
     sendSseEvent(res, "error", {
-      message: "LLM не вернул поток данных",
+      message: "LLM РЅРµ РІРµСЂРЅСѓР» РїРѕС‚РѕРє РґР°РЅРЅС‹С…",
     });
     res.end();
     return;
   }
 
-  sendSseEvent(res, "status", { stage: "answering", message: "Формулирую ответ…" });
+  sendSseEvent(res, "status", { stage: "answering", message: "Р¤РѕСЂРјСѓР»РёСЂСѓСЋ РѕС‚РІРµС‚вЂ¦" });
 
   const decoder = new TextDecoder();
   let buffer = "";
@@ -2303,7 +2314,7 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
         }
 
         if (dataPayload === "[DONE]") {
-          sendSseEvent(res, "status", { stage: "done", message: "Готово" });
+          sendSseEvent(res, "status", { stage: "done", message: "Р“РѕС‚РѕРІРѕ" });
           sendSseEvent(res, "done", {
             answer: aggregatedAnswer,
             usage: {
@@ -2348,13 +2359,13 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
 
     const errorMessage = error instanceof Error ? error.message : String(error);
     sendSseEvent(res, "error", {
-      message: `Ошибка при чтении потока LLM: ${errorMessage}`,
+      message: `РћС€РёР±РєР° РїСЂРё С‡С‚РµРЅРёРё РїРѕС‚РѕРєР° LLM: ${errorMessage}`,
     });
     res.end();
     return;
   }
 
-  sendSseEvent(res, "status", { stage: "done", message: "Готово" });
+  sendSseEvent(res, "status", { stage: "done", message: "Р“РѕС‚РѕРІРѕ" });
   sendSseEvent(res, "done", {
     answer: aggregatedAnswer,
     usage: {
@@ -2467,14 +2478,14 @@ function fetchLlmCompletion(
     } catch (error) {
       streamController?.fail(error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Не удалось выполнить запрос к LLM: ${errorMessage}`);
+      throw new Error(`РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ Р·Р°РїСЂРѕСЃ Рє LLM: ${errorMessage}`);
     }
 
     if (!completionResponse.ok) {
       const rawBody = await completionResponse.text();
       const parsedBody = parseJson(rawBody);
 
-      let message = `LLM вернул статус ${completionResponse.status}`;
+      let message = `LLM РІРµСЂРЅСѓР» СЃС‚Р°С‚СѓСЃ ${completionResponse.status}`;
 
       if (parsedBody && typeof parsedBody === "object") {
         const body = parsedBody as Record<string, unknown>;
@@ -2488,15 +2499,15 @@ function fetchLlmCompletion(
       }
 
       streamController?.fail(new Error(message));
-      throw new Error(`Ошибка на этапе генерации ответа: ${message}`);
+      throw new Error(`РћС€РёР±РєР° РЅР° СЌС‚Р°РїРµ РіРµРЅРµСЂР°С†РёРё РѕС‚РІРµС‚Р°: ${message}`);
     }
 
     const contentType = completionResponse.headers.get("content-type")?.toLowerCase() ?? "";
 
     if (contentType.includes("text/event-stream")) {
       if (!completionResponse.body) {
-        streamController?.fail(new Error("LLM не вернул поток данных"));
-        throw new Error("LLM не вернул поток данных");
+        streamController?.fail(new Error("LLM РЅРµ РІРµСЂРЅСѓР» РїРѕС‚РѕРє РґР°РЅРЅС‹С…"));
+        throw new Error("LLM РЅРµ РІРµСЂРЅСѓР» РїРѕС‚РѕРє РґР°РЅРЅС‹С…");
       }
 
       const decoder = new TextDecoder();
@@ -2580,12 +2591,12 @@ function fetchLlmCompletion(
       } catch (error) {
         streamController?.fail(error);
         const errorMessage = error instanceof Error ? error.message : String(error);
-        throw new Error(`Ошибка при чтении SSE от LLM: ${errorMessage}`);
+        throw new Error(`РћС€РёР±РєР° РїСЂРё С‡С‚РµРЅРёРё SSE РѕС‚ LLM: ${errorMessage}`);
       }
 
       if (!aggregatedAnswer) {
         streamController?.finish();
-        throw new Error("LLM не вернул текст ответа");
+        throw new Error("LLM РЅРµ РІРµСЂРЅСѓР» С‚РµРєСЃС‚ РѕС‚РІРµС‚Р°");
       }
 
       streamController?.finish();
@@ -2635,7 +2646,7 @@ function fetchLlmCompletion(
     }
 
     if (!answer) {
-      throw new Error("LLM не вернул текст ответа");
+      throw new Error("LLM РЅРµ РІРµСЂРЅСѓР» С‚РµРєСЃС‚ РѕС‚РІРµС‚Р°");
     }
 
     let usageTokens: number | null = null;
@@ -2700,8 +2711,8 @@ const searchPointsSchema = z.object({
 });
 
 const textSearchPointsSchema = z.object({
-  query: z.string().trim().min(1, "Введите поисковый запрос"),
-  embeddingProviderId: z.string().trim().min(1, "Укажите сервис эмбеддингов"),
+  query: z.string().trim().min(1, "Р’РІРµРґРёС‚Рµ РїРѕРёСЃРєРѕРІС‹Р№ Р·Р°РїСЂРѕСЃ"),
+  embeddingProviderId: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ СЃРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ"),
   limit: z.number().int().positive().max(100).default(10),
   offset: z.number().int().min(0).optional(),
   filter: z.unknown().optional(),
@@ -2720,22 +2731,26 @@ const textSearchPointsSchema = z.object({
 });
 
 const generativeSearchPointsSchema = textSearchPointsSchema.extend({
-  llmProviderId: z.string().trim().min(1, "Укажите провайдера LLM"),
-  llmModel: z.string().trim().min(1, "Укажите модель LLM").optional(),
+  llmProviderId: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РїСЂРѕРІР°Р№РґРµСЂР° LLM"),
+  llmModel: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РјРѕРґРµР»СЊ LLM").optional(),
   contextLimit: z.number().int().positive().max(50).optional(),
   responseFormat: z.string().optional(),
   includeContext: z.boolean().optional(),
   includeQueryVector: z.boolean().optional(),
+  llmTemperature: z.coerce.number().min(0).max(2).optional(),
+  llmMaxTokens: z.coerce.number().int().min(16).max(4_096).optional(),
+  llmSystemPrompt: z.string().optional(),
+  llmResponseFormat: z.string().optional(),
 });
 
 const publicVectorSearchSchema = searchPointsSchema.extend({
-  collection: z.string().trim().min(1, "Укажите коллекцию Qdrant"),
+  collection: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РєРѕР»Р»РµРєС†РёСЋ Qdrant"),
 });
 
 const publicVectorizeSchema = z.object({
-  text: z.string().trim().min(1, "Текст для векторизации не может быть пустым"),
-  embeddingProviderId: z.string().trim().min(1, "Укажите сервис эмбеддингов"),
-  collection: z.string().trim().min(1, "Укажите коллекцию Qdrant").optional(),
+  text: z.string().trim().min(1, "РўРµРєСЃС‚ РґР»СЏ РІРµРєС‚РѕСЂРёР·Р°С†РёРё РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј"),
+  embeddingProviderId: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ СЃРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ"),
+  collection: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РєРѕР»Р»РµРєС†РёСЋ Qdrant").optional(),
 });
 
 const publicHybridBm25Schema = z
@@ -2764,8 +2779,8 @@ const publicHybridConfigSchema = z
   .default({ bm25: {}, vector: {} });
 
 const publicGenerativeSearchSchema = generativeSearchPointsSchema.extend({
-  collection: z.string().trim().min(1, "Укажите коллекцию Qdrant"),
-  kbId: z.string().trim().min(1, "Укажите базу знаний").optional(),
+  collection: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РєРѕР»Р»РµРєС†РёСЋ Qdrant"),
+  kbId: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ Р±Р°Р·Сѓ Р·РЅР°РЅРёР№").optional(),
   topK: z.coerce.number().int().min(1).max(20).optional(),
   hybrid: publicHybridConfigSchema,
   llmTemperature: z.coerce.number().min(0).max(2).optional(),
@@ -2784,7 +2799,7 @@ const scrollCollectionSchema = z.object({
 });
 
 const vectorizeCollectionSchemaFieldSchema = z.object({
-  name: z.string().trim().min(1, "Укажите название поля").max(120),
+  name: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ РїРѕР»СЏ").max(120),
   type: z.enum(collectionFieldTypes),
   isArray: z.boolean().optional().default(false),
   template: z.string().default(""),
@@ -2793,7 +2808,7 @@ const vectorizeCollectionSchemaFieldSchema = z.object({
 const vectorizeCollectionSchemaSchema = z.object({
   fields: z
     .array(vectorizeCollectionSchemaFieldSchema)
-    .max(50, "Слишком много полей в схеме"),
+    .max(50, "РЎР»РёС€РєРѕРј РјРЅРѕРіРѕ РїРѕР»РµР№ РІ СЃС…РµРјРµ"),
   embeddingFieldName: z.string().trim().min(1).max(120).optional().nullable(),
 });
 
@@ -2811,7 +2826,7 @@ const knowledgeDocumentChunkConfigSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["maxTokens"],
-        message: "Укажите ограничение по токенам или символам",
+        message: "РЈРєР°Р¶РёС‚Рµ РѕРіСЂР°РЅРёС‡РµРЅРёРµ РїРѕ С‚РѕРєРµРЅР°Рј РёР»Рё СЃРёРјРІРѕР»Р°Рј",
       });
     }
 
@@ -2819,7 +2834,7 @@ const knowledgeDocumentChunkConfigSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["overlapTokens"],
-        message: "Перехлёст по токенам должен быть меньше лимита",
+        message: "РџРµСЂРµС…Р»С‘СЃС‚ РїРѕ С‚РѕРєРµРЅР°Рј РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РјРµРЅСЊС€Рµ Р»РёРјРёС‚Р°",
       });
     }
 
@@ -2827,7 +2842,7 @@ const knowledgeDocumentChunkConfigSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["overlapChars"],
-        message: "Перехлёст по символам должен быть меньше лимита",
+        message: "РџРµСЂРµС…Р»С‘СЃС‚ РїРѕ СЃРёРјРІРѕР»Р°Рј РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РјРµРЅСЊС€Рµ Р»РёРјРёС‚Р°",
       });
     }
   });
@@ -2835,7 +2850,7 @@ const knowledgeDocumentChunkConfigSchema = z
 const knowledgeDocumentChunkItemSchema = z.object({
   id: z.string().trim().min(1).optional(),
   index: z.coerce.number().int().min(0),
-  text: z.string().trim().min(1, "Чанк не может быть пустым"),
+  text: z.string().trim().min(1, "Р§Р°РЅРє РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј"),
   charStart: z.coerce.number().int().min(0).optional(),
   charEnd: z.coerce.number().int().min(0).optional(),
   tokenCount: z.coerce.number().int().min(0).optional(),
@@ -2856,11 +2871,11 @@ const knowledgeDocumentChunksSchema = z.object({
 });
 
 const vectorizePageSchema = z.object({
-  embeddingProviderId: z.string().uuid("Некорректный идентификатор сервиса эмбеддингов"),
+  embeddingProviderId: z.string().uuid("РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ СЃРµСЂРІРёСЃР° СЌРјР±РµРґРґРёРЅРіРѕРІ"),
   collectionName: z
     .string()
     .trim()
-    .min(1, "Укажите название коллекции")
+    .min(1, "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ РєРѕР»Р»РµРєС†РёРё")
     .optional(),
   createCollection: z.boolean().optional(),
   schema: vectorizeCollectionSchemaSchema.optional(),
@@ -2868,9 +2883,9 @@ const vectorizePageSchema = z.object({
 
 const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
   document: z.object({
-    id: z.string().trim().min(1, "Укажите идентификатор документа"),
+    id: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РґРѕРєСѓРјРµРЅС‚Р°"),
     title: z.string().optional().nullable(),
-    text: z.string().trim().min(1, "Документ не может быть пустым"),
+    text: z.string().trim().min(1, "Р”РѕРєСѓРјРµРЅС‚ РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј"),
     html: z.string().optional().nullable(),
     path: z.string().optional().nullable(),
     updatedAt: z.string().optional().nullable(),
@@ -2881,7 +2896,7 @@ const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
   }),
   base: z
     .object({
-      id: z.string().trim().min(1, "Укажите идентификатор библиотеки"),
+      id: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ Р±РёР±Р»РёРѕС‚РµРєРё"),
       name: z.string().optional().nullable(),
       description: z.string().optional().nullable(),
     })
@@ -2930,17 +2945,17 @@ function scheduleKnowledgeDocumentVectorizationJobCleanup(jobId: string, delayMs
 }
 
 const fetchKnowledgeVectorRecordsSchema = z.object({
-  collectionName: z.string().trim().min(1, "Укажите коллекцию"),
+  collectionName: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РєРѕР»Р»РµРєС†РёСЋ"),
   recordIds: z
     .array(z.union([z.string().trim().min(1), z.number()]))
-    .min(1, "Передайте хотя бы один идентификатор")
-    .max(256, "За один запрос можно получить не более 256 записей"),
+    .min(1, "РџРµСЂРµРґР°Р№С‚Рµ С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ")
+    .max(256, "Р—Р° РѕРґРёРЅ Р·Р°РїСЂРѕСЃ РјРѕР¶РЅРѕ РїРѕР»СѓС‡РёС‚СЊ РЅРµ Р±РѕР»РµРµ 256 Р·Р°РїРёСЃРµР№"),
   includeVector: z.boolean().optional(),
 });
 
 const knowledgeSuggestQuerySchema = z.object({
-  q: z.string().trim().min(1, "Укажите запрос"),
-  kb_id: z.string().trim().min(1, "Укажите базу знаний"),
+  q: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ Р·Р°РїСЂРѕСЃ"),
+  kb_id: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ Р±Р°Р·Сѓ Р·РЅР°РЅРёР№"),
   limit: z
     .union([z.string(), z.number()])
     .optional()
@@ -2959,9 +2974,10 @@ const knowledgeSuggestQuerySchema = z.object({
 });
 
 const knowledgeRagRequestSchema = z.object({
-  q: z.string().trim().min(1, "Укажите запрос"),
-  kb_id: z.string().trim().min(1, "Укажите базу знаний"),
+  q: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ Р·Р°РїСЂРѕСЃ"),
+  kb_id: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ Р±Р°Р·Сѓ Р·РЅР°РЅРёР№"),
   top_k: z.coerce.number().int().min(1).max(20).default(6),
+  skill_id: z.string().trim().optional(),
   hybrid: z
     .object({
       bm25: z
@@ -2981,7 +2997,7 @@ const knowledgeRagRequestSchema = z.object({
     })
     .default({ bm25: {}, vector: {} }),
   llm: z.object({
-    provider: z.string().trim().min(1, "Укажите провайдера LLM"),
+    provider: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ РїСЂРѕРІР°Р№РґРµСЂР° LLM"),
     model: z.string().trim().optional(),
     temperature: z.coerce.number().min(0).max(2).optional(),
     max_tokens: z.coerce.number().int().min(16).max(4096).optional(),
@@ -3114,7 +3130,7 @@ function forwardLlmStreamEvents(
       const timeSinceLastChunk = currentTime - lastChunkTime;
       lastChunkTime = currentTime;
       
-      console.log(`[RAG STREAM] Chunk #${chunkCount} (Δ${timeSinceLastChunk}ms):`, 
+      console.log(`[RAG STREAM] Chunk #${chunkCount} (О”${timeSinceLastChunk}ms):`, 
         JSON.stringify(entry.data).slice(0, 100));
       
       const eventName = entry.event || "delta";
@@ -3132,6 +3148,32 @@ async function runKnowledgeBaseRagPipeline(options: {
   stream?: KnowledgeBaseRagPipelineStream | null;
 }): Promise<KnowledgeBaseRagPipelineSuccess> {
   const { req, body, stream } = options;
+  const skillIdCandidate = typeof body.skill_id === "string" ? body.skill_id.trim() : "";
+  const normalizedSkillId = skillIdCandidate.length > 0 ? skillIdCandidate : null;
+
+  const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+  const normalizeCollectionList = (list?: readonly string[] | null): string[] => {
+    if (!list) {
+      return [];
+    }
+    const unique = new Set<string>();
+    for (const entry of list) {
+      if (typeof entry !== "string") {
+        continue;
+      }
+      const trimmed = entry.trim();
+      if (trimmed.length > 0) {
+        unique.add(trimmed);
+      }
+    }
+    return Array.from(unique);
+  };
+
+  let effectiveTopK = body.top_k;
+  let effectiveMinScore = 0;
+  let effectiveMaxContextTokens: number | null = null;
+  let allowSources = true;
+  let skillCollectionFilter: string[] = [];
 
   const pipelineLog: KnowledgeBaseAskAiPipelineStepLog[] = [];
   const emitStreamEvent = (eventName: string, payload?: unknown) => {
@@ -3142,7 +3184,7 @@ async function runKnowledgeBaseRagPipeline(options: {
       stream.onEvent(eventName, payload);
     } catch (eventError) {
       console.error(
-        `[public/rag/answer] Не удалось отправить событие ${eventName}: ${getErrorDetails(eventError)}`,
+        `[public/rag/answer] РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ СЃРѕР±С‹С‚РёРµ ${eventName}: ${getErrorDetails(eventError)}`,
       );
     }
   };
@@ -3157,24 +3199,50 @@ async function runKnowledgeBaseRagPipeline(options: {
   console.log(`[RAG PIPELINE] wantsLlmStream:`, wantsLlmStream);
 
   if (!query) {
-    throw new HttpError(400, "Укажите поисковый запрос");
+    throw new HttpError(400, "РЈРєР°Р¶РёС‚Рµ РїРѕРёСЃРєРѕРІС‹Р№ Р·Р°РїСЂРѕСЃ");
   }
 
-  emitStreamStatus("thinking", "Анализирую запрос…");
+  emitStreamStatus("thinking", "РђРЅР°Р»РёР·РёСЂСѓСЋ Р·Р°РїСЂРѕСЃвЂ¦");
   const runStartedAt = new Date();
   let runStatus: "success" | "error" = "success";
   let runErrorMessage: string | null = null;
   let workspaceId: string | null = null;
   let normalizedQuery = query;
 
-  let bm25Limit = body.hybrid.bm25.limit ?? body.top_k;
-  let vectorLimit = body.hybrid.vector.limit ?? body.top_k;
-  let vectorConfigured = Boolean(
-    body.hybrid.vector.collection && body.hybrid.vector.embedding_provider_id,
-  );
+  let bm25Limit = body.hybrid.bm25.limit ?? effectiveTopK;
+  let vectorLimit = body.hybrid.vector.limit ?? effectiveTopK;
+  const recomputeLimits = () => {
+    bm25Limit = body.hybrid.bm25.limit ?? effectiveTopK;
+    vectorLimit = body.hybrid.vector.limit ?? effectiveTopK;
+  };
 
-  let bm25Weight = body.hybrid.bm25.weight ?? (vectorConfigured ? 0.5 : 1);
-  let vectorWeight = vectorConfigured ? body.hybrid.vector.weight ?? 0.5 : 0;
+  const requestedEmbeddingProviderId =
+    typeof body.hybrid.vector.embedding_provider_id === "string"
+      ? body.hybrid.vector.embedding_provider_id.trim()
+      : "";
+  const requestedVectorCollection =
+    typeof body.hybrid.vector.collection === "string"
+      ? body.hybrid.vector.collection.trim()
+      : "";
+  const bm25WeightOverride = body.hybrid.bm25.weight;
+  const vectorWeightOverride = body.hybrid.vector.weight;
+  const hasBm25WeightOverride = bm25WeightOverride !== undefined;
+  const hasVectorWeightOverride = vectorWeightOverride !== undefined;
+
+  let embeddingProviderId = requestedEmbeddingProviderId || null;
+  let vectorCollection = requestedVectorCollection || null;
+  let vectorConfigured = Boolean(embeddingProviderId && vectorCollection);
+
+  let bm25Weight = hasBm25WeightOverride
+    ? bm25WeightOverride!
+    : vectorConfigured
+      ? 0.5
+      : 1;
+  let vectorWeight = hasVectorWeightOverride
+    ? vectorWeightOverride!
+    : vectorConfigured
+      ? 0.5
+      : 0;
 
   let bm25Duration: number | null = null;
   let vectorDuration: number | null = null;
@@ -3200,13 +3268,8 @@ async function runKnowledgeBaseRagPipeline(options: {
     payload: Record<string, unknown> | null;
   }> = [];
   const sanitizedVectorResults: SanitizedVectorSearchResult[] = [];
+  let vectorCollectionsToSearch: string[] = [];
 
-  let embeddingProviderId = vectorConfigured
-    ? body.hybrid.vector.embedding_provider_id?.trim() || null
-    : null;
-  let vectorCollection = vectorConfigured
-    ? body.hybrid.vector.collection?.trim() || null
-    : null;
   let llmProviderId = body.llm.provider?.trim() || null;
   let llmModel = body.llm.model?.trim() || null;
   let llmModelLabel: string | null = null;
@@ -3284,7 +3347,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         normalizedQuery,
         status: runStatus,
         errorMessage: runErrorMessage,
-        topK: body.top_k ?? null,
+        topK: effectiveTopK ?? null,
         bm25Weight,
         bm25Limit,
         vectorWeight,
@@ -3313,7 +3376,7 @@ async function runKnowledgeBaseRagPipeline(options: {
       });
     } catch (logError) {
       console.error(
-        `[public/rag/answer] Не удалось сохранить журнал выполнения Ask AI: ${getErrorDetails(
+        `[public/rag/answer] РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ Р¶СѓСЂРЅР°Р» РІС‹РїРѕР»РЅРµРЅРёСЏ Ask AI: ${getErrorDetails(
           logError,
         )}`,
         { workspaceId, knowledgeBaseId },
@@ -3325,19 +3388,73 @@ async function runKnowledgeBaseRagPipeline(options: {
     const base = await storage.getKnowledgeBase(knowledgeBaseId);
     if (!base) {
       runStatus = "error";
-      runErrorMessage = "База знаний не найдена";
+      runErrorMessage = "Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР°";
       await finalizeRunLog();
-      throw new HttpError(404, "База знаний не найдена");
+      throw new HttpError(404, "Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР°");
     }
 
     workspaceId = base.workspaceId;
 
-    vectorConfigured = Boolean(vectorCollection && embeddingProviderId);
-    if (!vectorConfigured) {
+    if (normalizedSkillId) {
+      const skill = await getSkillById(base.workspaceId, normalizedSkillId);
+      if (!skill) {
+        runStatus = "error";
+        runErrorMessage = "пїЅ?пїЅпїЅпїЅ?пїЅ<пїЅпїЅ пїЅ?пїЅпїЅ пїЅ?пїЅпїЅпїЅпїЅпїЅ?пїЅпїЅ?";
+        await finalizeRunLog();
+        throw new HttpError(404, "пїЅ?пїЅпїЅпїЅ?пїЅ<пїЅпїЅ пїЅ?пїЅпїЅ пїЅ?пїЅпїЅпїЅпїЅпїЅ?пїЅпїЅ?");
+      }
+
+      effectiveTopK = skill.ragConfig.topK;
+      effectiveMinScore = skill.ragConfig.minScore ?? 0;
+      effectiveMaxContextTokens = skill.ragConfig.maxContextTokens ?? null;
+      allowSources = skill.ragConfig.showSources;
+      if (skill.ragConfig.mode === "selected_collections") {
+        skillCollectionFilter = normalizeCollectionList(skill.ragConfig.collectionIds);
+      } else {
+        const workspaceCollections = await storage.listWorkspaceCollections(base.workspaceId);
+        skillCollectionFilter = normalizeCollectionList(workspaceCollections);
+      }
+      recomputeLimits();
+
+      console.log("[RAG PIPELINE] Skill config applied", {
+        skillId: skill.id,
+        topK: effectiveTopK,
+        minScore: effectiveMinScore,
+        maxContextTokens: effectiveMaxContextTokens,
+        showSources: allowSources,
+        mode: skill.ragConfig.mode,
+        collections: skillCollectionFilter,
+      });
+    }
+
+    vectorCollectionsToSearch =
+      skillCollectionFilter.length > 0
+        ? skillCollectionFilter
+        : requestedVectorCollection
+          ? [requestedVectorCollection]
+          : [];
+    // TODO: validate that selected collections belong to the current workspace/knowledge base.
+
+    vectorCollection =
+      vectorCollectionsToSearch.length > 0 ? vectorCollectionsToSearch.join(", ") : null;
+
+    vectorConfigured = Boolean(vectorCollectionsToSearch.length > 0 && embeddingProviderId);
+    if (vectorConfigured) {
+      if (!hasVectorWeightOverride) {
+        vectorWeight = 0.5;
+      }
+      if (!hasBm25WeightOverride) {
+        bm25Weight = 0.5;
+      }
+    } else {
       vectorWeight = 0;
       if (bm25Weight <= 0) {
         bm25Weight = 1;
       }
+    }
+
+    if (vectorCollectionsToSearch.length > 0) {
+      console.log("[RAG PIPELINE] Vector collections selected:", vectorCollectionsToSearch);
     }
 
     const weightSum = bm25Weight + vectorWeight;
@@ -3350,9 +3467,9 @@ async function runKnowledgeBaseRagPipeline(options: {
     }
 
     const totalStart = performance.now();
-    emitStreamStatus("retrieving", "Ищу источники…");
+    emitStreamStatus("retrieving", "РС‰Сѓ РёСЃС‚РѕС‡РЅРёРєРёвЂ¦");
     const retrievalStart = performance.now();
-    const suggestionLimit = Math.max(bm25Limit, vectorLimit, body.top_k);
+    const suggestionLimit = Math.max(bm25Limit, vectorLimit, effectiveTopK);
 
     type SuggestSections = Awaited<
       ReturnType<typeof storage.searchKnowledgeBaseSuggestions>
@@ -3362,7 +3479,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     const bm25Step = startPipelineStep(
       "bm25_search",
       { limit: suggestionLimit, weight: bm25Weight },
-      "BM25 поиск",
+      "BM25 РїРѕРёСЃРє",
     );
     const bm25Start = performance.now();
     try {
@@ -3395,21 +3512,21 @@ async function runKnowledgeBaseRagPipeline(options: {
           collection: vectorCollection,
           embeddingProviderId,
         },
-        "Векторный поиск",
+        "Р’РµРєС‚РѕСЂРЅС‹Р№ РїРѕРёСЃРє",
       );
       const vectorStart = performance.now();
       try {
         const embeddingProvider = await storage.getEmbeddingProvider(
-          body.hybrid.vector.embedding_provider_id!,
+          embeddingProviderId!,
           workspaceId,
         );
 
         if (!embeddingProvider) {
-          throw new HttpError(404, "Сервис эмбеддингов не найден");
+          throw new HttpError(404, "РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РЅРµ РЅР°Р№РґРµРЅ");
         }
 
         if (!embeddingProvider.isActive) {
-          throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+          throw new HttpError(400, "Р’С‹Р±СЂР°РЅРЅС‹Р№ СЃРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РѕС‚РєР»СЋС‡С‘РЅ");
         }
 
         embeddingProviderId = embeddingProvider.id;
@@ -3422,7 +3539,7 @@ async function runKnowledgeBaseRagPipeline(options: {
             model: embeddingProvider.model,
             text: normalizedQuery,
           },
-          "Векторизация запроса",
+          "Р’РµРєС‚РѕСЂРёР·Р°С†РёСЏ Р·Р°РїСЂРѕСЃР°",
         );
 
         let embeddingResult: EmbeddingVectorResult;
@@ -3458,18 +3575,10 @@ async function runKnowledgeBaseRagPipeline(options: {
           throw error;
         }
 
-        const collectionName = body.hybrid.vector.collection!.trim();
-        vectorCollection = collectionName;
-
         if (!workspaceId) {
-          throw new Error("Не удалось определить рабочее пространство для публичного API поиска");
+          throw new Error("???? ???????>?????? ???????????>??'?? ?????+?????? ?????????'?????????'???? ???>?? ?????+?>?????????? API ??????????");
         }
 
-        const embedKey = await storage.getOrCreateWorkspaceEmbedKey(
-          workspaceId,
-          collectionName,
-          knowledgeBaseId,
-        );
         const apiBaseUrl = resolvePublicApiBaseUrl(req);
         const requestUrl = new URL(
           "/api/public/collections/search/vector",
@@ -3481,95 +3590,115 @@ async function runKnowledgeBaseRagPipeline(options: {
           embeddingProvider.qdrantConfig?.vectorFieldName,
         );
 
-        const vectorRequestPayload = removeUndefinedDeep({
-          collection: collectionName,
-          workspace_id: workspaceId,
-          vector: cloneVectorPayload(vectorPayload),
-          limit: vectorLimit,
-          withPayload: true,
-          withVector: false,
-        });
+        let lastVectorResponseStatus = 200;
 
-        vectorStep.setInput({
-          limit: vectorLimit,
-          collection: vectorCollection,
-          embeddingProviderId,
-          request: {
-            url: requestUrl,
-            headers: {
-              "Content-Type": "application/json",
-              "X-API-Key": "***",
-            },
-            payload: vectorRequestPayload,
-          },
-        });
-
-        let vectorResponse: FetchResponse;
-        try {
-          vectorResponse = await fetch(requestUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-API-Key": embedKey.publicKey,
-            },
-            body: JSON.stringify(vectorRequestPayload),
-          });
-        } catch (networkError) {
-          throw new Error(
-            `Не удалось выполнить запрос к публичному API векторного поиска: ${getErrorDetails(networkError)}`,
+        for (const collectionName of vectorCollectionsToSearch) {
+          const embedKey = await storage.getOrCreateWorkspaceEmbedKey(
+            workspaceId,
+            collectionName,
+            knowledgeBaseId,
           );
-        }
 
-        const rawVectorResponse = await vectorResponse.text();
-        vectorDuration = performance.now() - vectorStart;
-        const parsedVectorResponse = parseJson(rawVectorResponse);
-
-        if (!vectorResponse.ok) {
-          const errorMessage =
-            parsedVectorResponse && typeof parsedVectorResponse === "object" &&
-            typeof (parsedVectorResponse as Record<string, unknown>).error === "string"
-              ? ((parsedVectorResponse as Record<string, unknown>).error as string)
-              : `Публичное API векторного поиска вернуло статус ${vectorResponse.status}`;
-          throw new HttpError(vectorResponse.status, errorMessage, parsedVectorResponse);
-        }
-
-        if (
-          !parsedVectorResponse ||
-          typeof parsedVectorResponse !== "object" ||
-          !Array.isArray((parsedVectorResponse as Record<string, unknown>).results)
-        ) {
-          throw new Error("Публичное API векторного поиска вернуло некорректный ответ");
-        }
-
-        const vectorResults = (parsedVectorResponse as {
-          results: Array<Record<string, unknown>>;
-        }).results;
-        vectorSearchDetails = vectorResults.map((item) => ({
-          id: item.id ?? null,
-          score: normalizeVectorScore(item.score),
-          payload: (item.payload as Record<string, unknown> | undefined) ?? null,
-        }));
-
-        sanitizedVectorResults.push(
-          ...vectorResults.map((item) => ({
-            id: item.id ?? null,
-            payload: (item.payload as Record<string, unknown> | undefined) ?? null,
-            score: normalizeVectorScore(item.score),
-            shard_key: (item as Record<string, unknown>).shard_key ?? null,
-            order_value: (item as Record<string, unknown>).order_value ?? null,
-          })),
-        );
-
-        for (const item of vectorResults) {
-          const payload = (item.payload as Record<string, unknown> | undefined) ?? null;
-          const rawScore = normalizeVectorScore(item.score);
-
-          vectorChunks.push({
-            chunkId: typeof payload?.chunk_id === "string" ? payload.chunk_id : "",
-            score: rawScore ?? 0,
-            recordId: typeof item.id === "string" ? item.id : null,
-            payload,
+          const vectorRequestPayload = removeUndefinedDeep({
+            collection: collectionName,
+            workspace_id: workspaceId,
+            vector: cloneVectorPayload(vectorPayload),
+            limit: vectorLimit,
+            withPayload: true,
+            withVector: false,
           });
+
+          vectorStep.setInput({
+            limit: vectorLimit,
+            collections: vectorCollectionsToSearch,
+            collection: collectionName,
+            embeddingProviderId,
+            request: {
+              url: requestUrl,
+              headers: {
+                "Content-Type": "application/json",
+                "X-API-Key": "***",
+              },
+              payload: vectorRequestPayload,
+            },
+          });
+
+          let vectorResponse: FetchResponse;
+          try {
+            vectorResponse = await fetch(requestUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-API-Key": embedKey.publicKey,
+              },
+              body: JSON.stringify(vectorRequestPayload),
+            });
+          } catch (networkError) {
+            throw new Error(
+              "Vector search API request failed before reaching the workspace endpoint",
+            );
+          }
+
+          lastVectorResponseStatus = vectorResponse.status;
+
+          const rawVectorResponse = await vectorResponse.text();
+          vectorDuration = performance.now() - vectorStart;
+          const parsedVectorResponse = parseJson(rawVectorResponse);
+
+          if (!vectorResponse.ok) {
+            const errorMessage =
+              parsedVectorResponse && typeof parsedVectorResponse === "object" &&
+              typeof (parsedVectorResponse as Record<string, unknown>).error === "string"
+                ? ((parsedVectorResponse as Record<string, unknown>).error as string)
+                : "Workspace vector search API returned an error";
+            throw new HttpError(vectorResponse.status, errorMessage, parsedVectorResponse);
+          }
+
+          if (
+            !parsedVectorResponse ||
+            typeof parsedVectorResponse !== "object" ||
+            !Array.isArray((parsedVectorResponse as Record<string, unknown>).results)
+          ) {
+            throw new Error("Workspace vector search API returned a malformed response");
+          }
+
+          const vectorResults = (parsedVectorResponse as {
+            results: Array<Record<string, unknown>>;
+          }).results;
+
+          const formattedResults = vectorResults.map((item) => ({
+            collection: collectionName,
+            id: item.id ?? null,
+            score: normalizeVectorScore(item.score),
+            payload: (item.payload as Record<string, unknown> | undefined) ?? null,
+          }));
+
+          vectorSearchDetails = [
+            ...(vectorSearchDetails ?? []),
+            ...formattedResults,
+          ];
+
+          sanitizedVectorResults.push(
+            ...vectorResults.map((item) => ({
+              id: item.id ?? null,
+              payload: (item.payload as Record<string, unknown> | undefined) ?? null,
+              score: normalizeVectorScore(item.score),
+              shard_key: (item as Record<string, unknown>).shard_key ?? null,
+              order_value: (item as Record<string, unknown>).order_value ?? null,
+            })),
+          );
+
+          for (const item of vectorResults) {
+            const payload = (item.payload as Record<string, unknown> | undefined) ?? null;
+            const rawScore = normalizeVectorScore(item.score);
+
+            vectorChunks.push({
+              chunkId: typeof payload?.chunk_id === "string" ? payload.chunk_id : "",
+              score: rawScore ?? 0,
+              recordId: typeof item.id === "string" ? item.id : null,
+              payload,
+            });
+          }
         }
 
         vectorResultCount = vectorChunks.length;
@@ -3577,11 +3706,9 @@ async function runKnowledgeBaseRagPipeline(options: {
           hits: vectorResultCount,
           usageTokens: embeddingUsageTokens,
           response: {
-            status: vectorResponse.status,
-            collection:
-              typeof (parsedVectorResponse as Record<string, unknown>).collection === "string"
-                ? ((parsedVectorResponse as Record<string, unknown>).collection as string)
-                : collectionName,
+            status: lastVectorResponseStatus,
+            collection: vectorCollection,
+            collections: vectorCollectionsToSearch,
             results: vectorSearchDetails,
           },
         });
@@ -3593,10 +3720,10 @@ async function runKnowledgeBaseRagPipeline(options: {
     } else {
       skipPipelineStep(
         "vector_embedding",
-        "Векторизация запроса",
-        "Векторный поиск отключён",
+        "Р’РµРєС‚РѕСЂРёР·Р°С†РёСЏ Р·Р°РїСЂРѕСЃР°",
+        "Р’РµРєС‚РѕСЂРЅС‹Р№ РїРѕРёСЃРє РѕС‚РєР»СЋС‡С‘РЅ",
       );
-      skipPipelineStep("vector_search", "Векторный поиск", "Векторный поиск отключён");
+      skipPipelineStep("vector_search", "Р’РµРєС‚РѕСЂРЅС‹Р№ РїРѕРёСЃРє", "Р’РµРєС‚РѕСЂРЅС‹Р№ РїРѕРёСЃРє РѕС‚РєР»СЋС‡С‘РЅ");
     }
 
     const chunkDetailsFromVector = await storage.getKnowledgeChunksByIds(
@@ -3671,7 +3798,7 @@ async function runKnowledgeBaseRagPipeline(options: {
       if (trimmed.length <= 320) {
         return trimmed;
       }
-      return `${trimmed.slice(0, 320)}…`;
+      return `${trimmed.slice(0, 320)}вЂ¦`;
     };
 
     for (const entry of bm25Sections) {
@@ -3742,11 +3869,11 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     const combinedStep = startPipelineStep(
       "combine_results",
-      { topK: body.top_k, bm25Weight, vectorWeight },
-      "Агрегация результатов",
+      { topK: effectiveTopK, bm25Weight, vectorWeight },
+      "Combining retrieval results",
     );
 
-    const combinedResults = Array.from(aggregated.values())
+    let combinedResults = Array.from(aggregated.values())
       .map((item) => {
         const bm25Normalized = bm25Max > 0 ? item.bm25Score / bm25Max : 0;
         const vectorNormalized = vectorMax > 0 ? item.vectorScore / vectorMax : 0;
@@ -3759,30 +3886,69 @@ async function runKnowledgeBaseRagPipeline(options: {
           vectorNormalized,
         } satisfies KnowledgeBaseRagCombinedChunk;
       })
-      .sort((a, b) => b.combinedScore - a.combinedScore)
-      .slice(0, body.top_k);
+      .sort((a, b) => b.combinedScore - a.combinedScore);
 
-    combinedResults.forEach((item, index) => {
-      emitStreamEvent("source", {
-        index: index + 1,
-        context: {
-          chunk_id: item.chunkId,
-          doc_id: item.documentId,
-          doc_title: item.docTitle,
-          section_title: item.sectionTitle,
-          snippet: item.snippet,
-          score: item.combinedScore,
-          scores: {
-            bm25: item.bm25Score,
-            vector: item.vectorScore,
-            bm25_normalized: item.bm25Normalized,
-            vector_normalized: item.vectorNormalized,
-          },
-          node_id: item.nodeId ?? null,
-          node_slug: item.nodeSlug ?? null,
-        },
+    const rawCombinedResults = combinedResults;
+
+    if (effectiveMinScore > 0) {
+      const filtered = combinedResults.filter((item) => item.combinedScore >= effectiveMinScore);
+      if (filtered.length > 0) {
+        combinedResults = filtered;
+      }
+    }
+
+    combinedResults = combinedResults.slice(0, effectiveTopK);
+
+    if (combinedResults.length === 0 && rawCombinedResults.length > 0) {
+      combinedResults = rawCombinedResults.slice(0, Math.max(1, effectiveTopK));
+    }
+
+    if (effectiveMaxContextTokens && effectiveMaxContextTokens > 0 && combinedResults.length > 0) {
+      const limited: typeof combinedResults = [];
+      let usedTokens = 0;
+      for (const item of combinedResults) {
+        const tokens = estimateTokens(item.text);
+        if (limited.length > 0 && usedTokens + tokens > effectiveMaxContextTokens) {
+          break;
+        }
+        limited.push(item);
+        usedTokens += tokens;
+        if (usedTokens >= effectiveMaxContextTokens) {
+          break;
+        }
+      }
+      if (limited.length > 0) {
+        combinedResults = limited;
+      }
+      console.log('[RAG PIPELINE] Applied maxContextTokens limit', {
+        limit: effectiveMaxContextTokens,
+        chunks: combinedResults.length,
       });
-    });
+    }
+
+    if (allowSources) {
+      combinedResults.forEach((item, index) => {
+        emitStreamEvent("source", {
+          index: index + 1,
+          context: {
+            chunk_id: item.chunkId,
+            doc_id: item.documentId,
+            doc_title: item.docTitle,
+            section_title: item.sectionTitle,
+            snippet: item.snippet,
+            score: item.combinedScore,
+            scores: {
+              bm25: item.bm25Score,
+              vector: item.vectorScore,
+              bm25_normalized: item.bm25Normalized,
+              vector_normalized: item.vectorNormalized,
+            },
+            node_id: item.nodeId ?? null,
+            node_slug: item.nodeSlug ?? null,
+          },
+        });
+      });
+    }
 
     combinedResultCount = combinedResults.length;
     vectorDocumentCount = vectorResultCount !== null ? vectorDocumentIds.size : null;
@@ -3820,10 +3986,10 @@ async function runKnowledgeBaseRagPipeline(options: {
     const ragResponseFormat = normalizeResponseFormat(body.llm.response_format);
     if (ragResponseFormat === null) {
       runStatus = "error";
-      runErrorMessage = "Некорректный формат ответа";
+      runErrorMessage = "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ С„РѕСЂРјР°С‚ РѕС‚РІРµС‚Р°";
       await finalizeRunLog();
-      throw new HttpError(400, "Некорректный формат ответа", {
-        details: "Поддерживаются значения text, md/markdown или html",
+      throw new HttpError(400, "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ С„РѕСЂРјР°С‚ РѕС‚РІРµС‚Р°", {
+        details: "РџРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ Р·РЅР°С‡РµРЅРёСЏ text, md/markdown РёР»Рё html",
       });
     }
     const responseFormat: RagResponseFormat = ragResponseFormat ?? "text";
@@ -3831,13 +3997,13 @@ async function runKnowledgeBaseRagPipeline(options: {
     const llmProvider = await storage.getLlmProvider(body.llm.provider, workspaceId);
     if (!llmProvider) {
       runStatus = "error";
-      runErrorMessage = "Провайдер LLM не найден";
+      runErrorMessage = "РџСЂРѕРІР°Р№РґРµСЂ LLM РЅРµ РЅР°Р№РґРµРЅ";
       await finalizeRunLog();
-      throw new HttpError(404, "Провайдер LLM не найден");
+      throw new HttpError(404, "РџСЂРѕРІР°Р№РґРµСЂ LLM РЅРµ РЅР°Р№РґРµРЅ");
     }
 
     if (!llmProvider.isActive) {
-      throw new HttpError(400, "Выбранный провайдер LLM отключён");
+      throw new HttpError(400, "Р’С‹Р±СЂР°РЅРЅС‹Р№ РїСЂРѕРІР°Р№РґРµСЂ LLM РѕС‚РєР»СЋС‡С‘РЅ");
     }
 
     const requestConfig = mergeLlmRequestConfig(llmProvider);
@@ -3878,12 +4044,12 @@ async function runKnowledgeBaseRagPipeline(options: {
     llmModel = selectedModelValue ?? null;
     llmModelLabel = selectedModelMeta?.label ?? selectedModelValue ?? null;
 
-    emitStreamStatus("answering", "Формулирую ответ…");
+    emitStreamStatus("answering", "Р¤РѕСЂРјСѓР»РёСЂСѓСЋ РѕС‚РІРµС‚вЂ¦");
     const llmAccessToken = await fetchAccessToken(configuredProvider);
     const llmStep = startPipelineStep(
       "llm_completion",
       { providerId: llmProviderId, model: llmModel },
-      "Генерация ответа LLM",
+      "Р“РµРЅРµСЂР°С†РёСЏ РѕС‚РІРµС‚Р° LLM",
     );
     const llmStart = performance.now();
     let completion: LlmCompletionResult;
@@ -3927,7 +4093,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         try {
           await llmStreamForwarder;
         } catch (streamError) {
-          console.error("Ошибка пересылки потока LLM:", getErrorDetails(streamError));
+          console.error("РћС€РёР±РєР° РїРµСЂРµСЃС‹Р»РєРё РїРѕС‚РѕРєР° LLM:", getErrorDetails(streamError));
         }
       }
       llmDuration = performance.now() - llmStart;
@@ -3940,7 +4106,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     await storage.recordKnowledgeBaseRagRequest({
       workspaceId,
       knowledgeBaseId,
-      topK: body.top_k ?? null,
+      topK: effectiveTopK ?? null,
       bm25Weight,
       bm25Limit,
       vectorWeight,
@@ -3949,36 +4115,40 @@ async function runKnowledgeBaseRagPipeline(options: {
       collection: vectorConfigured ? vectorCollection : null,
     });
 
-    const citations = combinedResults.map((item) => ({
-      chunk_id: item.chunkId,
-      doc_id: item.documentId,
-      doc_title: item.docTitle,
-      section_title: item.sectionTitle,
-      snippet: item.snippet,
-      score: item.combinedScore,
-      scores: {
-        bm25: item.bm25Score,
-        vector: item.vectorScore,
-      },
-      node_id: item.nodeId ?? null,
-      node_slug: item.nodeSlug ?? null,
-    }));
+    const citations = allowSources
+      ? combinedResults.map((item) => ({
+          chunk_id: item.chunkId,
+          doc_id: item.documentId,
+          doc_title: item.docTitle,
+          section_title: item.sectionTitle,
+          snippet: item.snippet,
+          score: item.combinedScore,
+          scores: {
+            bm25: item.bm25Score,
+            vector: item.vectorScore,
+          },
+          node_id: item.nodeId ?? null,
+          node_slug: item.nodeSlug ?? null,
+        }))
+      : [];
 
-    const responseChunks = combinedResults.map((item) => ({
-      chunk_id: item.chunkId,
-      doc_id: item.documentId,
-      doc_title: item.docTitle,
-      section_title: item.sectionTitle,
-      snippet: item.snippet,
-      text: item.text,
-      score: item.combinedScore,
-      scores: {
-        bm25: item.bm25Score,
-        vector: item.vectorScore,
-      },
-      node_id: item.nodeId ?? null,
-      node_slug: item.nodeSlug ?? null,
-    }));
+    const responseChunks = allowSources
+      ? combinedResults.map((item) => ({
+          chunk_id: item.chunkId,
+          doc_id: item.documentId,
+          doc_title: item.docTitle,
+          section_title: item.sectionTitle,
+          snippet: item.snippet,
+          text: item.text,
+          score: item.combinedScore,
+          scores: {
+            bm25: item.bm25Score,
+            vector: item.vectorScore,
+          },
+          node_id: item.nodeId ?? null,
+          node_slug: item.nodeSlug ?? null,
+        }))
+      : [];
 
     const response = {
       query,
@@ -4007,7 +4177,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     if (!wantsLlmStream) {
       emitStreamEvent("delta", { text: response.answer });
     }
-    emitStreamStatus("done", "Готово");
+    emitStreamStatus("done", "Р“РѕС‚РѕРІРѕ");
     emitStreamEvent("done", {
       answer: response.answer,
       query: response.query,
@@ -4128,14 +4298,14 @@ function buildExcerpt(content: string | null | undefined, query: string, maxLeng
   const matchIndex = lowerContent.indexOf(lowerQuery);
 
   if (matchIndex === -1) {
-    return normalized.slice(0, maxLength) + (normalized.length > maxLength ? "…" : "");
+    return normalized.slice(0, maxLength) + (normalized.length > maxLength ? "вЂ¦" : "");
   }
 
   const start = Math.max(0, matchIndex - Math.floor(maxLength / 2));
   const end = Math.min(normalized.length, start + maxLength);
   const excerpt = normalized.slice(start, end);
-  const prefix = start > 0 ? "…" : "";
-  const suffix = end < normalized.length ? "…" : "";
+  const prefix = start > 0 ? "вЂ¦" : "";
+  const suffix = end < normalized.length ? "вЂ¦" : "";
   return `${prefix}${excerpt}${suffix}`;
 }
 
@@ -4162,7 +4332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     if (!parsed.success) {
       return res.status(400).json({
-        error: "Некорректные параметры запроса",
+        error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ Р·Р°РїСЂРѕСЃР°",
         details: parsed.error.format(),
       });
     }
@@ -4180,18 +4350,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       limit: limitValue,
     };
 
-    console.info("[public/search/suggest] Получен запрос", logContext);
+    console.info("[public/search/suggest] РџРѕР»СѓС‡РµРЅ Р·Р°РїСЂРѕСЃ", logContext);
 
     if (!query) {
-      console.warn("[public/search/suggest] Пустой запрос", logContext);
-      return res.status(400).json({ error: "Укажите поисковый запрос" });
+      console.warn("[public/search/suggest] РџСѓСЃС‚РѕР№ Р·Р°РїСЂРѕСЃ", logContext);
+      return res.status(400).json({ error: "РЈРєР°Р¶РёС‚Рµ РїРѕРёСЃРєРѕРІС‹Р№ Р·Р°РїСЂРѕСЃ" });
     }
 
     try {
       const base = await storage.getKnowledgeBase(knowledgeBaseId);
       if (!base) {
-        console.warn("[public/search/suggest] База знаний не найдена", logContext);
-        return res.status(404).json({ error: "База знаний не найдена" });
+        console.warn("[public/search/suggest] Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР°", logContext);
+        return res.status(404).json({ error: "Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР°" });
       }
 
       const suggestions = await storage.searchKnowledgeBaseSuggestions(
@@ -4218,7 +4388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         kb_id: knowledgeBaseId,
         normalized_query: suggestions.normalizedQuery || query,
         ask_ai: {
-          label: "Спросить AI",
+          label: "РЎРїСЂРѕСЃРёС‚СЊ AI",
           query: suggestions.normalizedQuery || query,
         },
         sections,
@@ -4227,7 +4397,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
 
-      console.info("[public/search/suggest] Ответ сформирован", {
+      console.info("[public/search/suggest] РћС‚РІРµС‚ СЃС„РѕСЂРјРёСЂРѕРІР°РЅ", {
         ...logContext,
         workspace_id: base.workspaceId,
         normalized_query: suggestions.normalizedQuery || query,
@@ -4239,7 +4409,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const errorDetails = getErrorDetails(error);
 
       console.error(
-        `[public/search/suggest] Ошибка выдачи подсказок: ${errorDetails}`,
+        `[public/search/suggest] РћС€РёР±РєР° РІС‹РґР°С‡Рё РїРѕРґСЃРєР°Р·РѕРє: ${errorDetails}`,
         {
           ...logContext,
           duration_ms: durationMs,
@@ -4251,7 +4421,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         console.error(error);
       }
-      res.status(500).json({ error: "Не удалось получить подсказки" });
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РїРѕРґСЃРєР°Р·РєРё" });
     }
   });
 
@@ -4263,7 +4433,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (!publicContext.embedKey || !publicContext.knowledgeBaseId) {
-        res.status(403).json({ error: "Публичный ключ не поддерживает подсказки по базе знаний" });
+        res.status(403).json({ error: "РџСѓР±Р»РёС‡РЅС‹Р№ РєР»СЋС‡ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚ РїРѕРґСЃРєР°Р·РєРё РїРѕ Р±Р°Р·Рµ Р·РЅР°РЅРёР№" });
         return;
       }
 
@@ -4276,7 +4446,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const query = queryParam.trim();
 
       if (!query) {
-        res.status(400).json({ error: "Укажите поисковый запрос" });
+        res.status(400).json({ error: "РЈРєР°Р¶РёС‚Рµ РїРѕРёСЃРєРѕРІС‹Р№ Р·Р°РїСЂРѕСЃ" });
         return;
       }
 
@@ -4288,7 +4458,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : "";
 
       if (requestedKbId && requestedKbId !== publicContext.knowledgeBaseId) {
-        res.status(403).json({ error: "Доступ к указанной базе знаний запрещён" });
+        res.status(403).json({ error: "Р”РѕСЃС‚СѓРї Рє СѓРєР°Р·Р°РЅРЅРѕР№ Р±Р°Р·Рµ Р·РЅР°РЅРёР№ Р·Р°РїСЂРµС‰С‘РЅ" });
         return;
       }
 
@@ -4299,7 +4469,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const base = await storage.getKnowledgeBase(knowledgeBaseId);
 
       if (!base) {
-        res.status(404).json({ error: "База знаний не найдена" });
+        res.status(404).json({ error: "Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР°" });
         return;
       }
 
@@ -4324,7 +4494,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         kb_id: knowledgeBaseId,
         normalized_query: suggestions.normalizedQuery || query,
         ask_ai: {
-          label: "Спросить AI",
+          label: "РЎРїСЂРѕСЃРёС‚СЊ AI",
           query: suggestions.normalizedQuery || query,
         },
         sections,
@@ -4333,8 +4503,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
     } catch (error) {
-      console.error("Ошибка подсказок для встраиваемого поиска:", error);
-      res.status(500).json({ error: "Не удалось получить подсказки" });
+      console.error("РћС€РёР±РєР° РїРѕРґСЃРєР°Р·РѕРє РґР»СЏ РІСЃС‚СЂР°РёРІР°РµРјРѕРіРѕ РїРѕРёСЃРєР°:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РїРѕРґСЃРєР°Р·РєРё" });
     }
   });
 
@@ -4342,7 +4512,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const parsed = knowledgeRagRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
-        error: "Некорректные параметры RAG-запроса",
+        error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ RAG-Р·Р°РїСЂРѕСЃР°",
         details: parsed.error.format(),
       });
     }
@@ -4383,13 +4553,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           if (error instanceof QdrantConfigurationError) {
-            sendSseEvent(res, "error", { message: "Qdrant не настроен", details: error.message });
+            sendSseEvent(res, "error", { message: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ", details: error.message });
             res.end();
             return;
           }
 
-          console.error("Ошибка RAG-поиска по базе знаний (SSE):", error);
-          sendSseEvent(res, "error", { message: "Не удалось получить ответ от LLM" });
+          console.error("РћС€РёР±РєР° RAG-РїРѕРёСЃРєР° РїРѕ Р±Р°Р·Рµ Р·РЅР°РЅРёР№ (SSE):", error);
+          sendSseEvent(res, "error", { message: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РѕС‚РІРµС‚ РѕС‚ LLM" });
           res.end();
         }
 
@@ -4417,15 +4587,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (error instanceof QdrantConfigurationError) {
-        return res.status(503).json({ error: "Qdrant не настроен", details: error.message });
+        return res.status(503).json({ error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ", details: error.message });
       }
 
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Некорректные параметры RAG-запроса", details: error.errors });
+        return res.status(400).json({ error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ RAG-Р·Р°РїСЂРѕСЃР°", details: error.errors });
       }
 
-      console.error("Ошибка RAG-поиска по базе знаний:", error);
-      res.status(500).json({ error: "Не удалось получить ответ от LLM" });
+      console.error("РћС€РёР±РєР° RAG-РїРѕРёСЃРєР° РїРѕ Р±Р°Р·Рµ Р·РЅР°РЅРёР№:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РѕС‚РІРµС‚ РѕС‚ LLM" });
     }
   });
 
@@ -4440,8 +4610,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     res.status(410).json({
-      error: "Эндпоинт удалён",
-      message: "Публичный поиск по старым страницам больше не поддерживается. Используйте базы знаний.",
+      error: "Р­РЅРґРїРѕРёРЅС‚ СѓРґР°Р»С‘РЅ",
+      message: "РџСѓР±Р»РёС‡РЅС‹Р№ РїРѕРёСЃРє РїРѕ СЃС‚Р°СЂС‹Рј СЃС‚СЂР°РЅРёС†Р°Рј Р±РѕР»СЊС€Рµ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ Р±Р°Р·С‹ Р·РЅР°РЅРёР№.",
     });
   };
 
@@ -4471,7 +4641,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
-        return res.status(404).json({ error: "Коллекция не найдена" });
+        return res.status(404).json({ error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°" });
       }
 
       const client = getQdrantClient();
@@ -4526,14 +4696,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные параметры поиска",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ РїРѕРёСЃРєР°",
           details: error.errors,
         });
       }
@@ -4541,7 +4711,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
         console.error(
-          `Ошибка Qdrant при публичном векторном поиске в коллекции ${req.body?.collection ?? "<unknown>"}:`,
+          `РћС€РёР±РєР° Qdrant РїСЂРё РїСѓР±Р»РёС‡РЅРѕРј РІРµРєС‚РѕСЂРЅРѕРј РїРѕРёСЃРєРµ РІ РєРѕР»Р»РµРєС†РёРё ${req.body?.collection ?? "<unknown>"}:`,
           error,
         );
         return res.status(qdrantError.status).json({
@@ -4550,8 +4720,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.error("Ошибка публичного векторного поиска:", error);
-      res.status(500).json({ error: "Не удалось выполнить векторный поиск" });
+      console.error("РћС€РёР±РєР° РїСѓР±Р»РёС‡РЅРѕРіРѕ РІРµРєС‚РѕСЂРЅРѕРіРѕ РїРѕРёСЃРєР°:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ РІРµРєС‚РѕСЂРЅС‹Р№ РїРѕРёСЃРє" });
     }
   };
 
@@ -4579,11 +4749,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const provider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
 
       if (!provider) {
-        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+        return res.status(404).json({ error: "РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       if (!provider.isActive) {
-        throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+        throw new HttpError(400, "Р’С‹Р±СЂР°РЅРЅС‹Р№ СЃРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РѕС‚РєР»СЋС‡С‘РЅ");
       }
 
       let collectionVectorSize: number | null = null;
@@ -4599,7 +4769,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (collectionName) {
         const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
         if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
-          return res.status(404).json({ error: "Коллекция не найдена" });
+          return res.status(404).json({ error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°" });
         }
 
         try {
@@ -4628,7 +4798,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
         throw new HttpError(
           400,
-          `Полученный вектор имеет длину ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+          `РџРѕР»СѓС‡РµРЅРЅС‹Р№ РІРµРєС‚РѕСЂ РёРјРµРµС‚ РґР»РёРЅСѓ ${embeddingResult.vector.length}, РѕР¶РёРґР°Р»РѕСЃСЊ ${collectionVectorSize}.`,
         );
       }
 
@@ -4659,13 +4829,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные параметры векторизации",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ РІРµРєС‚РѕСЂРёР·Р°С†РёРё",
           details: error.errors,
         });
       }
 
-      console.error("Ошибка публичной векторизации текста:", error);
-      res.status(500).json({ error: "Не удалось выполнить векторизацию" });
+      console.error("РћС€РёР±РєР° РїСѓР±Р»РёС‡РЅРѕР№ РІРµРєС‚РѕСЂРёР·Р°С†РёРё С‚РµРєСЃС‚Р°:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ РІРµРєС‚РѕСЂРёР·Р°С†РёСЋ" });
     }
   };
 
@@ -4900,14 +5070,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       collectionName = body.collection.trim();
 
       if (embedKey && collectionName !== embedKey.collection) {
-        return res.status(403).json({ error: "Коллекция недоступна для данного ключа" });
+        return res.status(403).json({ error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµРґРѕСЃС‚СѓРїРЅР° РґР»СЏ РґР°РЅРЅРѕРіРѕ РєР»СЋС‡Р°" });
       }
 
       const responseFormatCandidate = normalizeResponseFormat(body.responseFormat);
       if (responseFormatCandidate === null) {
         return res.status(400).json({
-          error: "Некорректный формат ответа",
-          details: "Поддерживаются значения text, md/markdown или html",
+          error: "Неверный формат ответа",
+          details: "Допустимые варианты формата: text, md/markdown или html",
         });
       }
 
@@ -4918,8 +5088,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const llmResponseFormatCandidate = normalizeResponseFormat(body.llmResponseFormat);
       if (llmResponseFormatCandidate === null) {
         return res.status(400).json({
-          error: "Некорректный формат ответа LLM",
-          details: "Поддерживаются значения text, md/markdown или html",
+          error: "Неверный формат ответа LLM",
+          details: "Допустимые варианты формата: text, md/markdown или html",
         });
       }
 
@@ -4928,7 +5098,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         (typeof body.responseFormat === "string" ? body.responseFormat : responseFormat);
       const llmResponseFormatNormalized =
         llmResponseFormatCandidate ?? responseFormat;
-
+      
       console.log(`[RAG DEBUG] Looking up collection "${collectionName}" workspace...`);
       const ownerWorkspaceId = await storage.getCollectionWorkspace(collectionName);
       console.log(
@@ -4936,7 +5106,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
-        return res.status(404).json({ error: "Коллекция не найдена" });
+        return res.status(404).json({ error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°" });
       }
 
       const knowledgeBaseId =
@@ -5014,13 +5184,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
 
             if (error instanceof QdrantConfigurationError) {
-              sendSseEvent(res, "error", { message: "Qdrant не настроен", details: error.message });
+              sendSseEvent(res, "error", { message: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ", details: error.message });
               res.end();
               return;
             }
 
-            console.error("Ошибка RAG-поиска (SSE):", error);
-            sendSseEvent(res, "error", { message: "Не удалось получить ответ от LLM" });
+            console.error("РћС€РёР±РєР° RAG-РїРѕРёСЃРєР° (SSE):", error);
+            sendSseEvent(res, "error", { message: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РѕС‚РІРµС‚ РѕС‚ LLM" });
             res.end();
           }
 
@@ -5168,20 +5338,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
       if (!embeddingProvider) {
-        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+        return res.status(404).json({ error: "РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       if (!embeddingProvider.isActive) {
-        throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+        throw new HttpError(400, "Р’С‹Р±СЂР°РЅРЅС‹Р№ СЃРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РѕС‚РєР»СЋС‡С‘РЅ");
       }
 
       const llmProvider = await storage.getLlmProvider(body.llmProviderId, workspaceId);
       if (!llmProvider) {
-        return res.status(404).json({ error: "Провайдер LLM не найден" });
+        return res.status(404).json({ error: "РџСЂРѕРІР°Р№РґРµСЂ LLM РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       if (!llmProvider.isActive) {
-        throw new HttpError(400, "Выбранный провайдер LLM отключён");
+        throw new HttpError(400, "Р’С‹Р±СЂР°РЅРЅС‹Р№ РїСЂРѕРІР°Р№РґРµСЂ LLM РѕС‚РєР»СЋС‡С‘РЅ");
       }
 
       const llmRequestConfig = mergeLlmRequestConfig(llmProvider);
@@ -5233,7 +5403,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ) {
         throw new HttpError(
           400,
-          `Размер вектора коллекции (${collectionVectorSize}) не совпадает с настройкой сервиса (${providerVectorSize}).`,
+          `Р Р°Р·РјРµСЂ РІРµРєС‚РѕСЂР° РєРѕР»Р»РµРєС†РёРё (${collectionVectorSize}) РЅРµ СЃРѕРІРїР°РґР°РµС‚ СЃ РЅР°СЃС‚СЂРѕР№РєРѕР№ СЃРµСЂРІРёСЃР° (${providerVectorSize}).`,
         );
       }
 
@@ -5243,7 +5413,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
         throw new HttpError(
           400,
-          `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+          `РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РІРµСЂРЅСѓР» РІРµРєС‚РѕСЂ РґР»РёРЅРѕР№ ${embeddingResult.vector.length}, РѕР¶РёРґР°Р»РѕСЃСЊ ${collectionVectorSize}.`,
         );
       }
 
@@ -5488,14 +5658,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные параметры генеративного поиска",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ РіРµРЅРµСЂР°С‚РёРІРЅРѕРіРѕ РїРѕРёСЃРєР°",
           details: error.errors,
         });
       }
@@ -5503,7 +5673,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
         console.error(
-          `Ошибка Qdrant при публичном генеративном поиске в коллекции ${collectionName}:`,
+          `РћС€РёР±РєР° Qdrant РїСЂРё РїСѓР±Р»РёС‡РЅРѕРј РіРµРЅРµСЂР°С‚РёРІРЅРѕРј РїРѕРёСЃРєРµ РІ РєРѕР»Р»РµРєС†РёРё ${collectionName}:`,
           error,
         );
         return res.status(qdrantError.status).json({
@@ -5512,8 +5682,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.error("Ошибка публичного RAG-поиска:", error);
-      res.status(500).json({ error: "Не удалось получить ответ от LLM" });
+      console.error("РћС€РёР±РєР° РїСѓР±Р»РёС‡РЅРѕРіРѕ RAG-РїРѕРёСЃРєР°:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РѕС‚РІРµС‚ РѕС‚ LLM" });
     }
   };
 
@@ -5540,16 +5710,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : "";
 
       if (!collection) {
-        return res.status(400).json({ error: "Укажите идентификатор коллекции" });
+        return res.status(400).json({ error: "РЈРєР°Р¶РёС‚Рµ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РєРѕР»Р»РµРєС†РёРё" });
       }
 
       if (!knowledgeBaseId) {
-        return res.status(400).json({ error: "Укажите идентификатор базы знаний" });
+        return res.status(400).json({ error: "РЈРєР°Р¶РёС‚Рµ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ Р±Р°Р·С‹ Р·РЅР°РЅРёР№" });
       }
 
       const base = await storage.getKnowledgeBase(knowledgeBaseId);
       if (!base || base.workspaceId !== workspaceId) {
-        return res.status(404).json({ error: "База знаний не найдена в текущем workspace" });
+        return res.status(404).json({ error: "Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР° РІ С‚РµРєСѓС‰РµРј workspace" });
       }
 
       const embedKey = await storage.getOrCreateWorkspaceEmbedKey(workspaceId, collection, knowledgeBaseId);
@@ -5557,8 +5727,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ key: embedKey, domains });
     } catch (error) {
-      console.error("Не удалось получить публичный ключ встраивания:", error);
-      res.status(500).json({ error: "Не удалось подготовить публичный ключ" });
+      console.error("РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РїСѓР±Р»РёС‡РЅС‹Р№ РєР»СЋС‡ РІСЃС‚СЂР°РёРІР°РЅРёСЏ:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРіРѕС‚РѕРІРёС‚СЊ РїСѓР±Р»РёС‡РЅС‹Р№ РєР»СЋС‡" });
     }
   });
 
@@ -5573,14 +5743,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const embedKey = await storage.getWorkspaceEmbedKey(req.params.id, workspaceId);
 
       if (!embedKey) {
-        return res.status(404).json({ error: "Публичный ключ не найден" });
+        return res.status(404).json({ error: "РџСѓР±Р»РёС‡РЅС‹Р№ РєР»СЋС‡ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       const domains = await storage.listWorkspaceEmbedKeyDomains(embedKey.id, workspaceId);
       res.json({ key: embedKey, domains });
     } catch (error) {
-      console.error("Не удалось получить список доменов для ключа:", error);
-      res.status(500).json({ error: "Не удалось получить список доменов" });
+      console.error("РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє РґРѕРјРµРЅРѕРІ РґР»СЏ РєР»СЋС‡Р°:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє РґРѕРјРµРЅРѕРІ" });
     }
   });
 
@@ -5595,7 +5765,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const embedKey = await storage.getWorkspaceEmbedKey(req.params.id, workspaceId);
 
       if (!embedKey) {
-        return res.status(404).json({ error: "Публичный ключ не найден" });
+        return res.status(404).json({ error: "РџСѓР±Р»РёС‡РЅС‹Р№ РєР»СЋС‡ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       const domainCandidate =
@@ -5607,19 +5777,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const normalized = normalizeDomainCandidate(domainCandidate);
       if (!normalized) {
-        return res.status(400).json({ error: "Укажите корректное доменное имя" });
+        return res.status(400).json({ error: "РЈРєР°Р¶РёС‚Рµ РєРѕСЂСЂРµРєС‚РЅРѕРµ РґРѕРјРµРЅРЅРѕРµ РёРјСЏ" });
       }
 
       const domainEntry = await storage.addWorkspaceEmbedKeyDomain(embedKey.id, workspaceId, normalized);
       if (!domainEntry) {
-        return res.status(500).json({ error: "Не удалось добавить домен" });
+        return res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ РґРѕРјРµРЅ" });
       }
 
       invalidateCorsCache();
       res.status(201).json(domainEntry);
     } catch (error) {
-      console.error("Не удалось добавить домен для публичного ключа:", error);
-      res.status(500).json({ error: "Не удалось добавить домен" });
+      console.error("РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ РґРѕРјРµРЅ РґР»СЏ РїСѓР±Р»РёС‡РЅРѕРіРѕ РєР»СЋС‡Р°:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ РґРѕРјРµРЅ" });
     }
   });
 
@@ -5634,19 +5804,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const embedKey = await storage.getWorkspaceEmbedKey(req.params.id, workspaceId);
 
       if (!embedKey) {
-        return res.status(404).json({ error: "Публичный ключ не найден" });
+        return res.status(404).json({ error: "РџСѓР±Р»РёС‡РЅС‹Р№ РєР»СЋС‡ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       const removed = await storage.removeWorkspaceEmbedKeyDomain(embedKey.id, req.params.domainId, workspaceId);
       if (!removed) {
-        return res.status(404).json({ error: "Домен не найден" });
+        return res.status(404).json({ error: "Р”РѕРјРµРЅ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       invalidateCorsCache();
       res.status(204).send();
     } catch (error) {
-      console.error("Не удалось удалить домен из allowlist:", error);
-      res.status(500).json({ error: "Не удалось удалить домен" });
+      console.error("РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ РґРѕРјРµРЅ РёР· allowlist:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ РґРѕРјРµРЅ" });
     }
   });
 
@@ -5666,7 +5836,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = getSessionUser(req);
       if (!user) {
-        return res.status(401).json({ message: "Нет активной сессии" });
+        return res.status(401).json({ message: "РќРµС‚ Р°РєС‚РёРІРЅРѕР№ СЃРµСЃСЃРёРё" });
       }
 
       const updatedUser = await storage.recordUserActivity(user.id);
@@ -5684,7 +5854,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/google", (req, res, next) => {
     const googleAuthEnabled = isGoogleAuthEnabled();
     if (!googleAuthEnabled) {
-      res.status(404).json({ message: "Авторизация через Google недоступна" });
+      res.status(404).json({ message: "РђРІС‚РѕСЂРёР·Р°С†РёСЏ С‡РµСЂРµР· Google РЅРµРґРѕСЃС‚СѓРїРЅР°" });
       return;
     }
 
@@ -5704,7 +5874,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/google/callback", (req, res, next) => {
     const googleAuthEnabled = isGoogleAuthEnabled();
     if (!googleAuthEnabled) {
-      res.status(404).json({ message: "Авторизация через Google недоступна" });
+      res.status(404).json({ message: "РђРІС‚РѕСЂРёР·Р°С†РёСЏ С‡РµСЂРµР· Google РЅРµРґРѕСЃС‚СѓРїРЅР°" });
       return;
     }
 
@@ -5715,7 +5885,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (err) {
-        console.error("Ошибка Google OAuth:", err);
+        console.error("РћС€РёР±РєР° Google OAuth:", err);
         return res.redirect(appendAuthErrorParam(redirectTo, "google"));
       }
 
@@ -5736,7 +5906,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/yandex", (req, res, next) => {
     const yandexAuthEnabled = isYandexAuthEnabled();
     if (!yandexAuthEnabled) {
-      res.status(404).json({ message: "Авторизация через Yandex недоступна" });
+      res.status(404).json({ message: "РђРІС‚РѕСЂРёР·Р°С†РёСЏ С‡РµСЂРµР· Yandex РЅРµРґРѕСЃС‚СѓРїРЅР°" });
       return;
     }
 
@@ -5755,7 +5925,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/yandex/callback", (req, res, next) => {
     const yandexAuthEnabled = isYandexAuthEnabled();
     if (!yandexAuthEnabled) {
-      res.status(404).json({ message: "Авторизация через Yandex недоступна" });
+      res.status(404).json({ message: "РђРІС‚РѕСЂРёР·Р°С†РёСЏ С‡РµСЂРµР· Yandex РЅРµРґРѕСЃС‚СѓРїРЅР°" });
       return;
     }
 
@@ -5766,7 +5936,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (err) {
-        console.error("Ошибка Yandex OAuth:", err);
+        console.error("РћС€РёР±РєР° Yandex OAuth:", err);
         return res.redirect(appendAuthErrorParam(redirectTo, "yandex"));
       }
 
@@ -5792,7 +5962,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const existingUser = await storage.getUserByEmail(email);
       if (existingUser) {
-        return res.status(409).json({ message: "Пользователь с таким email уже зарегистрирован" });
+        return res.status(409).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃ С‚Р°РєРёРј email СѓР¶Рµ Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅ" });
       }
 
       const passwordHash = await bcrypt.hash(payload.password, 12);
@@ -5823,7 +5993,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       next(error);
@@ -5837,7 +6007,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (!user) {
-        return res.status(401).json({ message: info?.message ?? "Неверный email или пароль" });
+        return res.status(401).json({ message: info?.message ?? "РќРµРІРµСЂРЅС‹Р№ email РёР»Рё РїР°СЂРѕР»СЊ" });
       }
 
       req.logIn(user, (loginError) => {
@@ -5880,27 +6050,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     firstName: z
       .string()
       .trim()
-      .min(1, "Введите имя")
-      .max(100, "Слишком длинное имя"),
+      .min(1, "Р’РІРµРґРёС‚Рµ РёРјСЏ")
+      .max(100, "РЎР»РёС€РєРѕРј РґР»РёРЅРЅРѕРµ РёРјСЏ"),
     lastName: z
       .string()
       .trim()
-      .max(120, "Слишком длинная фамилия")
+      .max(120, "РЎР»РёС€РєРѕРј РґР»РёРЅРЅР°СЏ С„Р°РјРёР»РёСЏ")
       .optional(),
     phone: z
       .string()
       .trim()
-      .max(30, "Слишком длинный номер")
+      .max(30, "РЎР»РёС€РєРѕРј РґР»РёРЅРЅС‹Р№ РЅРѕРјРµСЂ")
       .optional()
-      .refine((value) => !value || /^[0-9+()\s-]*$/.test(value), "Некорректный номер телефона"),
+      .refine((value) => !value || /^[0-9+()\s-]*$/.test(value), "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РЅРѕРјРµСЂ С‚РµР»РµС„РѕРЅР°"),
   });
 
   const switchWorkspaceSchema = z.object({
-    workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
+    workspaceId: z.string().trim().min(1, "РЈРєР°Р¶РёС‚Рµ СЂР°Р±РѕС‡РµРµ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІРѕ"),
   });
 
   const inviteWorkspaceMemberSchema = z.object({
-    email: z.string().trim().email("Введите корректный email"),
+    email: z.string().trim().email("Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅС‹Р№ email"),
     role: z.enum(workspaceMemberRoles).default("user"),
   });
 
@@ -5933,7 +6103,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const memberships = getRequestWorkspaceMemberships(req);
       const target = memberships.find((workspace) => workspace.id === payload.workspaceId);
       if (!target) {
-        return res.status(404).json({ message: "Рабочее пространство не найдено" });
+        return res.status(404).json({ message: "Р Р°Р±РѕС‡РµРµ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІРѕ РЅРµ РЅР°Р№РґРµРЅРѕ" });
       }
 
       if (req.session) {
@@ -5947,7 +6117,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(buildSessionResponse(user, context));
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
       next(error);
     }
@@ -5979,13 +6149,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const normalizedEmail = payload.email.trim().toLowerCase();
       const targetUser = await storage.getUserByEmail(normalizedEmail);
       if (!targetUser) {
-        return res.status(404).json({ message: "Пользователь с таким email не найден" });
+        return res.status(404).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃ С‚Р°РєРёРј email РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       const { id: workspaceId } = getRequestWorkspace(req);
       const existingMembers = await storage.listWorkspaceMembers(workspaceId);
       if (existingMembers.some((entry) => entry.user.id === targetUser.id)) {
-        return res.status(409).json({ message: "Пользователь уже состоит в рабочем пространстве" });
+        return res.status(409).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СѓР¶Рµ СЃРѕСЃС‚РѕРёС‚ РІ СЂР°Р±РѕС‡РµРј РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІРµ" });
       }
 
       await storage.addWorkspaceMember(workspaceId, targetUser.id, payload.role);
@@ -5995,7 +6165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
       next(error);
     }
@@ -6013,12 +6183,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const members = await storage.listWorkspaceMembers(workspaceId);
       const target = members.find((entry) => entry.user.id === req.params.memberId);
       if (!target) {
-        return res.status(404).json({ message: "Участник не найден" });
+        return res.status(404).json({ message: "РЈС‡Р°СЃС‚РЅРёРє РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       const ownerCount = members.filter((entry) => entry.member.role === "owner").length;
       if (target.member.role === "owner" && payload.role !== "owner" && ownerCount <= 1) {
-        return res.status(400).json({ message: "Нельзя изменить роль единственного владельца" });
+        return res.status(400).json({ message: "РќРµР»СЊР·СЏ РёР·РјРµРЅРёС‚СЊ СЂРѕР»СЊ РµРґРёРЅСЃС‚РІРµРЅРЅРѕРіРѕ РІР»Р°РґРµР»СЊС†Р°" });
       }
 
       await storage.updateWorkspaceMemberRole(workspaceId, target.user.id, payload.role);
@@ -6026,7 +6196,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ members: updatedMembers.map((entry) => toWorkspaceMemberResponse(entry, user.id)) });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
       next(error);
     }
@@ -6041,24 +6211,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const memberId = req.params.memberId;
       if (memberId === user.id) {
-        return res.status(400).json({ message: "Нельзя удалить самого себя из рабочего пространства" });
+        return res.status(400).json({ message: "РќРµР»СЊР·СЏ СѓРґР°Р»РёС‚СЊ СЃР°РјРѕРіРѕ СЃРµР±СЏ РёР· СЂР°Р±РѕС‡РµРіРѕ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІР°" });
       }
 
       const { id: workspaceId } = getRequestWorkspace(req);
       const members = await storage.listWorkspaceMembers(workspaceId);
       const target = members.find((entry) => entry.user.id === memberId);
       if (!target) {
-        return res.status(404).json({ message: "Участник не найден" });
+        return res.status(404).json({ message: "РЈС‡Р°СЃС‚РЅРёРє РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       const ownerCount = members.filter((entry) => entry.member.role === "owner").length;
       if (target.member.role === "owner" && ownerCount <= 1) {
-        return res.status(400).json({ message: "Нельзя удалить единственного владельца" });
+        return res.status(400).json({ message: "РќРµР»СЊР·СЏ СѓРґР°Р»РёС‚СЊ РµРґРёРЅСЃС‚РІРµРЅРЅРѕРіРѕ РІР»Р°РґРµР»СЊС†Р°" });
       }
 
       const removed = await storage.removeWorkspaceMember(workspaceId, memberId);
       if (!removed) {
-        return res.status(404).json({ message: "Участник не найден" });
+        return res.status(404).json({ message: "РЈС‡Р°СЃС‚РЅРёРє РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       const updatedMembers = await storage.listWorkspaceMembers(workspaceId);
@@ -6119,7 +6289,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       next(error);
@@ -6130,15 +6300,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     .object({
       currentPassword: z
         .string()
-        .min(8, "Минимальная длина пароля 8 символов")
-        .max(100, "Слишком длинный пароль"),
+        .min(8, "РњРёРЅРёРјР°Р»СЊРЅР°СЏ РґР»РёРЅР° РїР°СЂРѕР»СЏ 8 СЃРёРјРІРѕР»РѕРІ")
+        .max(100, "РЎР»РёС€РєРѕРј РґР»РёРЅРЅС‹Р№ РїР°СЂРѕР»СЊ"),
       newPassword: z
         .string()
-        .min(8, "Минимальная длина пароля 8 символов")
-        .max(100, "Слишком длинный пароль"),
+        .min(8, "РњРёРЅРёРјР°Р»СЊРЅР°СЏ РґР»РёРЅР° РїР°СЂРѕР»СЏ 8 СЃРёРјРІРѕР»РѕРІ")
+        .max(100, "РЎР»РёС€РєРѕРј РґР»РёРЅРЅС‹Р№ РїР°СЂРѕР»СЊ"),
     })
     .refine((data) => data.currentPassword !== data.newPassword, {
-      message: "Новый пароль должен отличаться от текущего",
+      message: "РќРѕРІС‹Р№ РїР°СЂРѕР»СЊ РґРѕР»Р¶РµРЅ РѕС‚Р»РёС‡Р°С‚СЊСЃСЏ РѕС‚ С‚РµРєСѓС‰РµРіРѕ",
       path: ["newPassword"],
     });
 
@@ -6153,18 +6323,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const fullUser = await storage.getUser(sessionUser.id);
 
       if (!fullUser) {
-        return res.status(404).json({ message: "Пользователь не найден" });
+        return res.status(404).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       if (!fullUser.passwordHash) {
         return res.status(400).json({
-          message: "Смена пароля недоступна для аккаунта с входом через Google",
+          message: "РЎРјРµРЅР° РїР°СЂРѕР»СЏ РЅРµРґРѕСЃС‚СѓРїРЅР° РґР»СЏ Р°РєРєР°СѓРЅС‚Р° СЃ РІС…РѕРґРѕРј С‡РµСЂРµР· Google",
         });
       }
 
       const isValid = await bcrypt.compare(currentPassword, fullUser.passwordHash);
       if (!isValid) {
-        return res.status(400).json({ message: "Текущий пароль указан неверно" });
+        return res.status(400).json({ message: "РўРµРєСѓС‰РёР№ РїР°СЂРѕР»СЊ СѓРєР°Р·Р°РЅ РЅРµРІРµСЂРЅРѕ" });
       }
 
       const newPasswordHash = await bcrypt.hash(newPassword, 12);
@@ -6180,7 +6350,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       next(error);
@@ -6253,12 +6423,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { tokenId } = req.params;
       if (!tokenId) {
-        return res.status(400).json({ message: "Не указан токен" });
+        return res.status(400).json({ message: "РќРµ СѓРєР°Р·Р°РЅ С‚РѕРєРµРЅ" });
       }
 
       const revokedToken = await storage.revokeUserPersonalApiToken(sessionUser.id, tokenId);
       if (!revokedToken) {
-        return res.status(404).json({ message: "Токен не найден или уже отозван" });
+        return res.status(404).json({ message: "РўРѕРєРµРЅ РЅРµ РЅР°Р№РґРµРЅ РёР»Рё СѓР¶Рµ РѕС‚РѕР·РІР°РЅ" });
       }
 
       const { tokens, activeTokens, latestActive } = await loadTokensAndSyncUser(sessionUser.id);
@@ -6322,18 +6492,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { userId } = req.params;
 
       if (!userId) {
-        return res.status(400).json({ message: "Не указан пользователь" });
+        return res.status(400).json({ message: "РќРµ СѓРєР°Р·Р°РЅ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ" });
       }
 
       const updatedUser = await storage.updateUserRole(userId, role);
       if (!updatedUser) {
-        return res.status(404).json({ message: "Пользователь не найден" });
+        return res.status(404).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       res.json({ user: toPublicUser(updatedUser) });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       next(error);
@@ -6381,7 +6551,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const payload = upsertAuthProviderSchema.parse(req.body);
       if (payload.provider !== "google") {
-        return res.status(400).json({ error: "Поддерживается только провайдер Google" });
+        return res.status(400).json({ error: "РџРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ РїСЂРѕРІР°Р№РґРµСЂ Google" });
       }
 
       const trimmedClientId = payload.clientId.trim();
@@ -6394,12 +6564,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (payload.isEnabled) {
         if (trimmedClientId.length === 0) {
-          return res.status(400).json({ error: "Укажите Client ID" });
+          return res.status(400).json({ error: "РЈРєР°Р¶РёС‚Рµ Client ID" });
         }
 
         const secretCandidate = trimmedClientSecret ?? "";
         if (secretCandidate.length === 0 && !hasStoredSecret) {
-          return res.status(400).json({ error: "Укажите Client Secret" });
+          return res.status(400).json({ error: "РЈРєР°Р¶РёС‚Рµ Client Secret" });
         }
       }
 
@@ -6416,7 +6586,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         await reloadGoogleAuth(app);
       } catch (error) {
-        console.error("Не удалось применить обновлённые настройки Google OAuth:", error);
+        console.error("РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРјРµРЅРёС‚СЊ РѕР±РЅРѕРІР»С‘РЅРЅС‹Рµ РЅР°СЃС‚СЂРѕР№РєРё Google OAuth:", error);
       }
 
       const clientId = updated.clientId?.trim() ?? "";
@@ -6478,7 +6648,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const payload = upsertAuthProviderSchema.parse(req.body);
       if (payload.provider !== "yandex") {
-        return res.status(400).json({ error: "Поддерживается только провайдер Yandex" });
+        return res.status(400).json({ error: "РџРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ РїСЂРѕРІР°Р№РґРµСЂ Yandex" });
       }
 
       const trimmedClientId = payload.clientId.trim();
@@ -6491,12 +6661,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (payload.isEnabled) {
         if (trimmedClientId.length === 0) {
-          return res.status(400).json({ error: "Укажите Client ID" });
+          return res.status(400).json({ error: "РЈРєР°Р¶РёС‚Рµ Client ID" });
         }
 
         const secretCandidate = trimmedClientSecret ?? "";
         if (secretCandidate.length === 0 && !hasStoredSecret) {
-          return res.status(400).json({ error: "Укажите Client Secret" });
+          return res.status(400).json({ error: "РЈРєР°Р¶РёС‚Рµ Client Secret" });
         }
       }
 
@@ -6513,7 +6683,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         await reloadYandexAuth(app);
       } catch (error) {
-        console.error("Не удалось применить обновлённые настройки Yandex OAuth:", error);
+        console.error("РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРјРµРЅРёС‚СЊ РѕР±РЅРѕРІР»С‘РЅРЅС‹Рµ РЅР°СЃС‚СЂРѕР№РєРё Yandex OAuth:", error);
       }
 
       const clientId = updated.clientId?.trim() ?? "";
@@ -6580,11 +6750,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.upsertCollectionWorkspace(rawCollectionName, workspaceId);
         } catch (mappingError) {
           console.error(
-            `Не удалось привязать коллекцию ${rawCollectionName} к рабочему пространству ${workspaceId} при создании сервиса эмбеддингов`,
+            `РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРІСЏР·Р°С‚СЊ РєРѕР»Р»РµРєС†РёСЋ ${rawCollectionName} Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ ${workspaceId} РїСЂРё СЃРѕР·РґР°РЅРёРё СЃРµСЂРІРёСЃР° СЌРјР±РµРґРґРёРЅРіРѕРІ`,
             mappingError,
           );
           return res.status(500).json({
-            message: "Не удалось привязать коллекцию к рабочему пространству",
+            message: "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРІСЏР·Р°С‚СЊ РєРѕР»Р»РµРєС†РёСЋ Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ",
           });
         }
       }
@@ -6592,17 +6762,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json({ provider: toPublicEmbeddingProvider(provider) });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       const errorDetails = getErrorDetails(error);
       console.error(
-        `[Embedding Services] Ошибка при создании сервиса эмбеддингов: ${errorDetails}`,
+        `[Embedding Services] РћС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё СЃРµСЂРІРёСЃР° СЌРјР±РµРґРґРёРЅРіРѕРІ: ${errorDetails}`,
         error,
       );
 
       return res.status(500).json({
-        message: "Не удалось создать сервис эмбеддингов",
+        message: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ СЃРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ",
         details: errorDetails,
       });
     }
@@ -6677,7 +6847,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           details.includes("self-signed certificate")
         ) {
           const message =
-            "Не удалось подключиться к сервису эмбеддингов: сертификат не прошёл проверку. Включите опцию доверия самоподписанным сертификатам и повторите попытку.";
+            "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ Рє СЃРµСЂРІРёСЃСѓ СЌРјР±РµРґРґРёРЅРіРѕРІ: СЃРµСЂС‚РёС„РёРєР°С‚ РЅРµ РїСЂРѕС€С‘Р» РїСЂРѕРІРµСЂРєСѓ. Р’РєР»СЋС‡РёС‚Рµ РѕРїС†РёСЋ РґРѕРІРµСЂРёСЏ СЃР°РјРѕРїРѕРґРїРёСЃР°РЅРЅС‹Рј СЃРµСЂС‚РёС„РёРєР°С‚Р°Рј Рё РїРѕРІС‚РѕСЂРёС‚Рµ РїРѕРїС‹С‚РєСѓ.";
           debugSteps.push({
             stage: "token-request",
             status: "error",
@@ -6685,7 +6855,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
           return respondWithError(502, message);
         }
-        const message = `Не удалось подключиться к сервису эмбеддингов${details}`;
+        const message = `РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ Рє СЃРµСЂРІРёСЃСѓ СЌРјР±РµРґРґРёРЅРіРѕРІ${details}`;
         debugSteps.push({
           stage: "token-request",
           status: "error",
@@ -6698,7 +6868,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const parsedBody = parseJson(rawBody);
 
       if (!tokenResponse.ok) {
-        let message = `Сервис вернул статус ${tokenResponse.status}`;
+        let message = `РЎРµСЂРІРёСЃ РІРµСЂРЅСѓР» СЃС‚Р°С‚СѓСЃ ${tokenResponse.status}`;
 
         if (parsedBody && typeof parsedBody === "object") {
           const body = parsedBody as Record<string, unknown>;
@@ -6716,13 +6886,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: "error",
           detail: message,
         });
-        return respondWithError(400, `Ошибка на этапе получения токена: ${message}`);
+        return respondWithError(400, `РћС€РёР±РєР° РЅР° СЌС‚Р°РїРµ РїРѕР»СѓС‡РµРЅРёСЏ С‚РѕРєРµРЅР°: ${message}`);
       }
 
-      const messageParts = ["Соединение установлено."];
+      const messageParts = ["РЎРѕРµРґРёРЅРµРЅРёРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ."];
 
       if (payload.allowSelfSignedCertificate) {
-        messageParts.push("Проверка сертификата отключена.");
+        messageParts.push("РџСЂРѕРІРµСЂРєР° СЃРµСЂС‚РёС„РёРєР°С‚Р° РѕС‚РєР»СЋС‡РµРЅР°.");
       }
 
       let accessToken: string | undefined;
@@ -6731,33 +6901,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (typeof body.access_token === "string" && body.access_token.trim()) {
           accessToken = body.access_token;
-          messageParts.push("Получен access_token.");
+          messageParts.push("РџРѕР»СѓС‡РµРЅ access_token.");
           debugSteps.push({
             stage: "token-response",
             status: "success",
-            detail: `Статус ${tokenResponse.status}. Получен access_token.`,
+            detail: `РЎС‚Р°С‚СѓСЃ ${tokenResponse.status}. РџРѕР»СѓС‡РµРЅ access_token.`,
           });
         }
 
         if (typeof body.expires_in === "number") {
-          messageParts.push(`Действует ${body.expires_in} с.`);
+          messageParts.push(`Р”РµР№СЃС‚РІСѓРµС‚ ${body.expires_in} СЃ.`);
         }
 
         if (typeof body.expires_at === "string") {
-          messageParts.push(`Истекает ${body.expires_at}.`);
+          messageParts.push(`РСЃС‚РµРєР°РµС‚ ${body.expires_at}.`);
         }
       } else if (typeof parsedBody === "string" && parsedBody.trim()) {
         messageParts.push(parsedBody.trim());
       }
 
       if (!accessToken) {
-        const message = "Сервис не вернул access_token";
+        const message = "РЎРµСЂРІРёСЃ РЅРµ РІРµСЂРЅСѓР» access_token";
         debugSteps.push({
           stage: "token-response",
           status: "error",
           detail: message,
         });
-        return respondWithError(400, `Ошибка на этапе получения токена: ${message}`);
+        return respondWithError(400, `РћС€РёР±РєР° РЅР° СЌС‚Р°РїРµ РїРѕР»СѓС‡РµРЅРёСЏ С‚РѕРєРµРЅР°: ${message}`);
       }
 
       const embeddingHeaders = new Headers();
@@ -6793,7 +6963,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const details = errorMessage ? `: ${errorMessage}` : "";
-        const message = `Не удалось выполнить запрос к сервису эмбеддингов${details}`;
+        const message = `РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ Р·Р°РїСЂРѕСЃ Рє СЃРµСЂРІРёСЃСѓ СЌРјР±РµРґРґРёРЅРіРѕРІ${details}`;
         debugSteps.push({
           stage: "embedding-request",
           status: "error",
@@ -6806,7 +6976,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const embeddingsParsedBody = parseJson(embeddingsRawBody);
 
       if (!embeddingResponse.ok) {
-        let message = `Сервис эмбеддингов вернул статус ${embeddingResponse.status}`;
+        let message = `РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РІРµСЂРЅСѓР» СЃС‚Р°С‚СѓСЃ ${embeddingResponse.status}`;
 
         if (embeddingsParsedBody && typeof embeddingsParsedBody === "object") {
           const body = embeddingsParsedBody as Record<string, unknown>;
@@ -6824,7 +6994,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: "error",
           detail: message,
         });
-        return respondWithError(400, `Ошибка на этапе получения вектора: ${message}`);
+        return respondWithError(400, `РћС€РёР±РєР° РЅР° СЌС‚Р°РїРµ РїРѕР»СѓС‡РµРЅРёСЏ РІРµРєС‚РѕСЂР°: ${message}`);
       }
 
       let vectorLength = 0;
@@ -6838,30 +7008,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const message =
           error instanceof Error
             ? error.message
-            : "Не удалось обработать ответ сервиса эмбеддингов";
+            : "РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ РѕС‚РІРµС‚ СЃРµСЂРІРёСЃР° СЌРјР±РµРґРґРёРЅРіРѕРІ";
         debugSteps.push({
           stage: "embedding-response",
           status: "error",
           detail: message,
         });
-        return respondWithError(400, `Ошибка на этапе получения вектора: ${message}`);
+        return respondWithError(400, `РћС€РёР±РєР° РЅР° СЌС‚Р°РїРµ РїРѕР»СѓС‡РµРЅРёСЏ РІРµРєС‚РѕСЂР°: ${message}`);
       }
 
-      messageParts.push(`Получен вектор длиной ${vectorLength}.`);
+      messageParts.push(`РџРѕР»СѓС‡РµРЅ РІРµРєС‚РѕСЂ РґР»РёРЅРѕР№ ${vectorLength}.`);
       debugSteps.push({
         stage: "embedding-response",
         status: "success",
-        detail: `Статус ${embeddingResponse.status}. Вектор длиной ${vectorLength}.`,
+        detail: `РЎС‚Р°С‚СѓСЃ ${embeddingResponse.status}. Р’РµРєС‚РѕСЂ РґР»РёРЅРѕР№ ${vectorLength}.`,
       });
 
       if (usageTokens !== undefined) {
-        messageParts.push(`Израсходовано ${usageTokens} токенов.`);
+        messageParts.push(`РР·СЂР°СЃС…РѕРґРѕРІР°РЅРѕ ${usageTokens} С‚РѕРєРµРЅРѕРІ.`);
       }
 
       res.json({ message: messageParts.join(" "), steps: debugSteps });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       next(error);
@@ -6876,7 +7046,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id: workspaceId } = getRequestWorkspace(req);
       const existingProvider = await storage.getEmbeddingProvider(providerId, workspaceId);
       if (!existingProvider) {
-        return res.status(404).json({ message: "Сервис не найден" });
+        return res.status(404).json({ message: "РЎРµСЂРІРёСЃ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       const updates: Partial<EmbeddingProvider> = {};
@@ -6924,7 +7094,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updated = await storage.updateEmbeddingProvider(providerId, updates, workspaceId);
       if (!updated) {
-        return res.status(404).json({ message: "Сервис не найден" });
+        return res.status(404).json({ message: "РЎРµСЂРІРёСЃ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       const rawCollectionName =
@@ -6937,11 +7107,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.upsertCollectionWorkspace(rawCollectionName, workspaceId);
         } catch (mappingError) {
           console.error(
-            `Не удалось привязать коллекцию ${rawCollectionName} к рабочему пространству ${workspaceId} при обновлении сервиса эмбеддингов`,
+            `РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРІСЏР·Р°С‚СЊ РєРѕР»Р»РµРєС†РёСЋ ${rawCollectionName} Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ ${workspaceId} РїСЂРё РѕР±РЅРѕРІР»РµРЅРёРё СЃРµСЂРІРёСЃР° СЌРјР±РµРґРґРёРЅРіРѕРІ`,
             mappingError,
           );
           return res.status(500).json({
-            message: "Не удалось привязать коллекцию к рабочему пространству",
+            message: "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРІСЏР·Р°С‚СЊ РєРѕР»Р»РµРєС†РёСЋ Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ",
           });
         }
       }
@@ -6949,7 +7119,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ provider: toPublicEmbeddingProvider(updated) });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       next(error);
@@ -6961,7 +7131,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id: workspaceId } = getRequestWorkspace(req);
       const deleted = await storage.deleteEmbeddingProvider(req.params.id, workspaceId);
       if (!deleted) {
-        return res.status(404).json({ message: "Сервис не найден" });
+        return res.status(404).json({ message: "РЎРµСЂРІРёСЃ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       res.status(204).send();
@@ -6996,13 +7166,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json({ provider: toPublicLlmProvider(provider) });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       const errorDetails = getErrorDetails(error);
-      console.error(`[LLM Providers] Ошибка при создании провайдера: ${errorDetails}`, error);
+      console.error(`[LLM Providers] РћС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё РїСЂРѕРІР°Р№РґРµСЂР°: ${errorDetails}`, error);
       return res.status(500).json({
-        message: "Не удалось создать провайдера LLM",
+        message: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РїСЂРѕРІР°Р№РґРµСЂР° LLM",
         details: errorDetails,
       });
     }
@@ -7044,13 +7214,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id: workspaceId } = getRequestWorkspace(req);
       const updated = await storage.updateLlmProvider(providerId, updates, workspaceId);
       if (!updated) {
-        return res.status(404).json({ message: "Провайдер не найден" });
+        return res.status(404).json({ message: "РџСЂРѕРІР°Р№РґРµСЂ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       res.json({ provider: toPublicLlmProvider(updated) });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       next(error);
@@ -7062,7 +7232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id: workspaceId } = getRequestWorkspace(req);
       const deleted = await storage.deleteLlmProvider(req.params.id, workspaceId);
       if (!deleted) {
-        return res.status(404).json({ message: "Провайдер не найден" });
+        return res.status(404).json({ message: "РџСЂРѕРІР°Р№РґРµСЂ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       res.status(204).send();
@@ -7100,7 +7270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!parsedCollections.success) {
         console.warn(
-          "Неожиданный формат ответа Qdrant при запросе списка коллекций:",
+          "РќРµРѕР¶РёРґР°РЅРЅС‹Р№ С„РѕСЂРјР°С‚ РѕС‚РІРµС‚Р° Qdrant РїСЂРё Р·Р°РїСЂРѕСЃРµ СЃРїРёСЃРєР° РєРѕР»Р»РµРєС†РёР№:",
           parsedCollections.error.flatten(),
         );
       }
@@ -7135,7 +7305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return {
               name,
               status: "unknown" as const,
-              error: error instanceof Error ? error.message : "Не удалось получить сведения о коллекции",
+              error: error instanceof Error ? error.message : "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ СЃРІРµРґРµРЅРёСЏ Рѕ РєРѕР»Р»РµРєС†РёРё",
             };
           }
         })
@@ -7156,24 +7326,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           vectorSize: null,
           distance: null,
           segmentsCount: null,
-          error: "Коллекция не найдена в Qdrant",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР° РІ Qdrant",
         }));
 
       res.json({ collections: [...existingCollections, ...missingCollections] });
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
-        console.error("Ошибка Qdrant при получении списка коллекций:", error);
+        console.error("РћС€РёР±РєР° Qdrant РїСЂРё РїРѕР»СѓС‡РµРЅРёРё СЃРїРёСЃРєР° РєРѕР»Р»РµРєС†РёР№:", error);
 
         const responseBody: Record<string, unknown> = {
-          error: "Не удалось загрузить список коллекций",
+          error: "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє РєРѕР»Р»РµРєС†РёР№",
           details: qdrantError.message,
         };
 
@@ -7186,7 +7356,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             try {
               responseBody.qdrantDetails = JSON.parse(trimmed);
             } catch {
-              // Если строка похожа на JSON, но парсинг не удался, просто игнорируем её
+              // Р•СЃР»Рё СЃС‚СЂРѕРєР° РїРѕС…РѕР¶Р° РЅР° JSON, РЅРѕ РїР°СЂСЃРёРЅРі РЅРµ СѓРґР°Р»СЃСЏ, РїСЂРѕСЃС‚Рѕ РёРіРЅРѕСЂРёСЂСѓРµРј РµС‘
             }
           }
         }
@@ -7195,9 +7365,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const details = getErrorDetails(error);
-      console.error("Ошибка при получении коллекций Qdrant:", error);
+      console.error("РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РєРѕР»Р»РµРєС†РёР№ Qdrant:", error);
       res.status(500).json({
-        error: "Не удалось загрузить список коллекций",
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє РєРѕР»Р»РµРєС†РёР№",
         details,
       });
     }
@@ -7210,7 +7380,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({
-          error: "Коллекция не найдена",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°",
         });
       }
 
@@ -7234,15 +7404,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       const details = getErrorDetails(error);
-      console.error(`Ошибка при получении коллекции ${req.params.name}:`, error);
+      console.error(`РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
       res.status(500).json({
-        error: "Не удалось получить информацию о коллекции",
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РєРѕР»Р»РµРєС†РёРё",
         details,
       });
     }
@@ -7255,7 +7425,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({
-          error: "Коллекция не найдена",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°",
         });
       }
 
@@ -7294,15 +7464,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       const details = getErrorDetails(error);
-      console.error(`Ошибка при получении записей коллекции ${req.params.name}:`, error);
+      console.error(`РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё Р·Р°РїРёСЃРµР№ РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
       res.status(500).json({
-        error: "Не удалось получить записи коллекции",
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ Р·Р°РїРёСЃРё РєРѕР»Р»РµРєС†РёРё",
         details,
       });
     }
@@ -7315,7 +7485,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({
-          error: "Коллекция не найдена",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°",
         });
       }
 
@@ -7364,22 +7534,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные параметры фильтрации",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ С„РёР»СЊС‚СЂР°С†РёРё",
           details: error.errors,
         });
       }
 
       const details = getErrorDetails(error);
-      console.error(`Ошибка при фильтрации коллекции ${req.params.name}:`, error);
+      console.error(`РћС€РёР±РєР° РїСЂРё С„РёР»СЊС‚СЂР°С†РёРё РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
       res.status(500).json({
-        error: "Не удалось выполнить фильтрацию",
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ С„РёР»СЊС‚СЂР°С†РёСЋ",
         details,
       });
     }
@@ -7393,7 +7563,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingWorkspaceId = await storage.getCollectionWorkspace(body.name);
       if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
         return res.status(409).json({
-          error: "Коллекция уже принадлежит другому рабочему пространству",
+          error: "РљРѕР»Р»РµРєС†РёСЏ СѓР¶Рµ РїСЂРёРЅР°РґР»РµР¶РёС‚ РґСЂСѓРіРѕРјСѓ СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ",
         });
       }
 
@@ -7427,30 +7597,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные параметры коллекции",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ РєРѕР»Р»РµРєС†РёРё",
           details: error.errors,
         });
       }
 
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
-        console.error("Ошибка Qdrant при создании коллекции:", error);
+        console.error("РћС€РёР±РєР° Qdrant РїСЂРё СЃРѕР·РґР°РЅРёРё РєРѕР»Р»РµРєС†РёРё:", error);
         return res.status(qdrantError.status).json({
           error: qdrantError.message,
           details: qdrantError.details,
         });
       }
 
-      console.error("Ошибка при создании коллекции Qdrant:", error);
+      console.error("РћС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё РєРѕР»Р»РµРєС†РёРё Qdrant:", error);
       res.status(500).json({
-        error: "Не удалось создать коллекцию",
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РєРѕР»Р»РµРєС†РёСЋ",
         details: error instanceof Error ? error.message : String(error),
       });
     }
@@ -7463,7 +7633,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({
-          error: "Коллекция не найдена",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°",
         });
       }
 
@@ -7472,21 +7642,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.removeCollectionWorkspace(req.params.name);
 
       res.json({
-        message: "Коллекция удалена",
+        message: "РљРѕР»Р»РµРєС†РёСЏ СѓРґР°Р»РµРЅР°",
         name: req.params.name,
       });
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       const details = getErrorDetails(error);
-      console.error(`Ошибка при удалении коллекции ${req.params.name}:`, error);
+      console.error(`РћС€РёР±РєР° РїСЂРё СѓРґР°Р»РµРЅРёРё РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
       res.status(500).json({
-        error: "Не удалось удалить коллекцию", 
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ РєРѕР»Р»РµРєС†РёСЋ", 
         details,
       });
     }
@@ -7510,7 +7680,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json({ skill });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       if (error instanceof SkillServiceError) {
@@ -7527,14 +7697,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id: workspaceId } = getRequestWorkspace(req);
       const skillId = req.params.skillId;
       if (!skillId) {
-        return res.status(400).json({ message: "Не указан идентификатор навыка" });
+        return res.status(400).json({ message: "РќРµ СѓРєР°Р·Р°РЅ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РЅР°РІС‹РєР°" });
       }
 
       const skill = await updateSkill(workspaceId, skillId, payload);
       res.json({ skill });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.issues });
       }
 
       if (error instanceof SkillServiceError) {
@@ -7550,12 +7720,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id: workspaceId } = getRequestWorkspace(req);
       const skillId = req.params.skillId;
       if (!skillId) {
-        return res.status(400).json({ message: "Не указан идентификатор навыка" });
+        return res.status(400).json({ message: "РќРµ СѓРєР°Р·Р°РЅ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РЅР°РІС‹РєР°" });
       }
 
       const deleted = await deleteSkill(workspaceId, skillId);
       if (!deleted) {
-        return res.status(404).json({ message: "Навык не найден" });
+        return res.status(404).json({ message: "РќР°РІС‹Рє РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       res.status(204).send();
@@ -7575,7 +7745,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({
-          error: "Коллекция не найдена",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°",
         });
       }
 
@@ -7594,14 +7764,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные данные точек",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ С‚РѕС‡РµРє",
           details: error.errors,
         });
       }
@@ -7609,7 +7779,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
         console.error(
-          `Ошибка Qdrant при загрузке точек в коллекцию ${req.params.name}:`,
+          `РћС€РёР±РєР° Qdrant РїСЂРё Р·Р°РіСЂСѓР·РєРµ С‚РѕС‡РµРє РІ РєРѕР»Р»РµРєС†РёСЋ ${req.params.name}:`,
           error,
         );
         return res.status(qdrantError.status).json({
@@ -7618,9 +7788,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.error(`Ошибка при загрузке точек в коллекцию ${req.params.name}:`, error);
+      console.error(`РћС€РёР±РєР° РїСЂРё Р·Р°РіСЂСѓР·РєРµ С‚РѕС‡РµРє РІ РєРѕР»Р»РµРєС†РёСЋ ${req.params.name}:`, error);
       res.status(500).json({
-        error: "Не удалось загрузить данные в коллекцию",
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РґР°РЅРЅС‹Рµ РІ РєРѕР»Р»РµРєС†РёСЋ",
         details: error instanceof Error ? error.message : String(error),
       });
     }
@@ -7633,7 +7803,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({
-          error: "Коллекция не найдена",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°",
         });
       }
 
@@ -7641,11 +7811,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const provider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
 
       if (!provider) {
-        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+        return res.status(404).json({ error: "РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       if (!provider.isActive) {
-        throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+        throw new HttpError(400, "Р’С‹Р±СЂР°РЅРЅС‹Р№ СЃРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РѕС‚РєР»СЋС‡С‘РЅ");
       }
 
       const client = getQdrantClient();
@@ -7664,7 +7834,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ) {
         throw new HttpError(
           400,
-          `Размер вектора коллекции (${collectionVectorSize}) не совпадает с настройкой сервиса (${providerVectorSize}).`,
+          `Р Р°Р·РјРµСЂ РІРµРєС‚РѕСЂР° РєРѕР»Р»РµРєС†РёРё (${collectionVectorSize}) РЅРµ СЃРѕРІРїР°РґР°РµС‚ СЃ РЅР°СЃС‚СЂРѕР№РєРѕР№ СЃРµСЂРІРёСЃР° (${providerVectorSize}).`,
         );
       }
 
@@ -7674,7 +7844,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
         throw new HttpError(
           400,
-          `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+          `РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РІРµСЂРЅСѓР» РІРµРєС‚РѕСЂ РґР»РёРЅРѕР№ ${embeddingResult.vector.length}, РѕР¶РёРґР°Р»РѕСЃСЊ ${collectionVectorSize}.`,
         );
       }
 
@@ -7744,30 +7914,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные параметры поиска",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ РїРѕРёСЃРєР°",
           details: error.errors,
         });
       }
 
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
-        console.error(`Ошибка Qdrant при текстовом поиске в коллекции ${req.params.name}:`, error);
+        console.error(`РћС€РёР±РєР° Qdrant РїСЂРё С‚РµРєСЃС‚РѕРІРѕРј РїРѕРёСЃРєРµ РІ РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
         return res.status(qdrantError.status).json({
           error: qdrantError.message,
           details: qdrantError.details,
         });
       }
 
-      console.error(`Ошибка при текстовом поиске в коллекции ${req.params.name}:`, error);
+      console.error(`РћС€РёР±РєР° РїСЂРё С‚РµРєСЃС‚РѕРІРѕРј РїРѕРёСЃРєРµ РІ РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
       res.status(500).json({
-        error: "Не удалось выполнить текстовый поиск",
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ С‚РµРєСЃС‚РѕРІС‹Р№ РїРѕРёСЃРє",
         details: error instanceof Error ? error.message : String(error),
       });
     }
@@ -7785,7 +7955,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({
-          error: "Коллекция не найдена",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°",
         });
       }
 
@@ -7804,32 +7974,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const responseFormatCandidate = normalizeResponseFormat(body.responseFormat);
       if (responseFormatCandidate === null) {
         return res.status(400).json({
-          error: "Некорректный формат ответа",
-          details: "Поддерживаются значения text, md/markdown или html",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ С„РѕСЂРјР°С‚ РѕС‚РІРµС‚Р°",
+          details: "РџРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ Р·РЅР°С‡РµРЅРёСЏ text, md/markdown РёР»Рё html",
         });
       }
 
       const responseFormat: RagResponseFormat = responseFormatCandidate ?? "text";
       const includeContextInResponse = body.includeContext ?? true;
       const includeQueryVectorInResponse = body.includeQueryVector ?? true;
+      const llmResponseFormatCandidate = normalizeResponseFormat(body.llmResponseFormat);
+      if (llmResponseFormatCandidate === null) {
+        return res.status(400).json({
+          error: "Неверный формат ответа LLM",
+          details: "Допустимые варианты формата: text, md/markdown или html",
+        });
+      }
+      const llmResponseFormatNormalized =
+        llmResponseFormatCandidate ?? responseFormat;
       const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
 
       if (!embeddingProvider) {
-        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+        return res.status(404).json({ error: "РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       if (!embeddingProvider.isActive) {
-        throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
+        throw new HttpError(400, "Р’С‹Р±СЂР°РЅРЅС‹Р№ СЃРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РѕС‚РєР»СЋС‡С‘РЅ");
       }
 
       const llmProvider = await storage.getLlmProvider(body.llmProviderId, workspaceId);
 
       if (!llmProvider) {
-        return res.status(404).json({ error: "Провайдер LLM не найден" });
+        return res.status(404).json({ error: "РџСЂРѕРІР°Р№РґРµСЂ LLM РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       if (!llmProvider.isActive) {
-        throw new HttpError(400, "Выбранный провайдер LLM отключён");
+        throw new HttpError(400, "Р’С‹Р±СЂР°РЅРЅС‹Р№ РїСЂРѕРІР°Р№РґРµСЂ LLM РѕС‚РєР»СЋС‡С‘РЅ");
       }
 
       const llmRequestConfig = mergeLlmRequestConfig(llmProvider);
@@ -7882,7 +8061,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ) {
         throw new HttpError(
           400,
-          `Размер вектора коллекции (${collectionVectorSize}) не совпадает с настройкой сервиса (${providerVectorSize}).`,
+          `Р Р°Р·РјРµСЂ РІРµРєС‚РѕСЂР° РєРѕР»Р»РµРєС†РёРё (${collectionVectorSize}) РЅРµ СЃРѕРІРїР°РґР°РµС‚ СЃ РЅР°СЃС‚СЂРѕР№РєРѕР№ СЃРµСЂРІРёСЃР° (${providerVectorSize}).`,
         );
       }
 
@@ -7892,7 +8071,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
         throw new HttpError(
           400,
-          `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+          `РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РІРµСЂРЅСѓР» РІРµРєС‚РѕСЂ РґР»РёРЅРѕР№ ${embeddingResult.vector.length}, РѕР¶РёРґР°Р»РѕСЃСЊ ${collectionVectorSize}.`,
         );
       }
 
@@ -8048,30 +8227,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные параметры поиска",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ РїРѕРёСЃРєР°",
           details: error.errors,
         });
       }
 
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
-        console.error(`Ошибка Qdrant при генеративном поиске в коллекции ${req.params.name}:`, error);
+        console.error(`РћС€РёР±РєР° Qdrant РїСЂРё РіРµРЅРµСЂР°С‚РёРІРЅРѕРј РїРѕРёСЃРєРµ РІ РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
         return res.status(qdrantError.status).json({
           error: qdrantError.message,
           details: qdrantError.details,
         });
       }
 
-      console.error(`Ошибка при генеративном поиске в коллекции ${req.params.name}:`, error);
+      console.error(`РћС€РёР±РєР° РїСЂРё РіРµРЅРµСЂР°С‚РёРІРЅРѕРј РїРѕРёСЃРєРµ РІ РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
       res.status(500).json({
-        error: "Не удалось выполнить генеративный поиск",
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ РіРµРЅРµСЂР°С‚РёРІРЅС‹Р№ РїРѕРёСЃРє",
         details: error instanceof Error ? error.message : String(error),
       });
     }
@@ -8084,7 +8263,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({
-          error: "Коллекция не найдена",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°",
         });
       }
 
@@ -8138,30 +8317,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные параметры поиска",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ РїРѕРёСЃРєР°",
           details: error.errors,
         });
       }
 
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
-        console.error(`Ошибка Qdrant при поиске в коллекции ${req.params.name}:`, error);
+        console.error(`РћС€РёР±РєР° Qdrant РїСЂРё РїРѕРёСЃРєРµ РІ РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
         return res.status(qdrantError.status).json({
           error: qdrantError.message,
           details: qdrantError.details,
         });
       }
 
-      console.error(`Ошибка при поиске в коллекции ${req.params.name}:`, error);
+      console.error(`РћС€РёР±РєР° РїСЂРё РїРѕРёСЃРєРµ РІ РєРѕР»Р»РµРєС†РёРё ${req.params.name}:`, error);
       res.status(500).json({
-        error: "Не удалось выполнить поиск",
+        error: "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РїРѕР»РЅРёС‚СЊ РїРѕРёСЃРє",
         details: error instanceof Error ? error.message : String(error),
       });
     }
@@ -8198,14 +8377,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         parsedJson = JSON.parse(payload);
       } catch (error) {
         return res.status(400).json({
-          error: "Некорректный JSON",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ JSON",
           details: error instanceof Error ? error.message : String(error)
         });
       }
 
       if (!Array.isArray(parsedJson)) {
         return res.status(400).json({
-          error: "JSON должен быть массивом чанков"
+          error: "JSON РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РјР°СЃСЃРёРІРѕРј С‡Р°РЅРєРѕРІ"
         });
       }
 
@@ -8219,27 +8398,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!webhookResponse.ok) {
         return res.status(webhookResponse.status).json({
-          error: "Удалённый вебхук вернул ошибку",
+          error: "РЈРґР°Р»С‘РЅРЅС‹Р№ РІРµР±С…СѓРє РІРµСЂРЅСѓР» РѕС€РёР±РєСѓ",
           status: webhookResponse.status,
           details: responseText
         });
       }
 
       res.json({
-        message: "JSON успешно отправлен на вебхук",
+        message: "JSON СѓСЃРїРµС€РЅРѕ РѕС‚РїСЂР°РІР»РµРЅ РЅР° РІРµР±С…СѓРє",
         status: webhookResponse.status,
         response: responseText
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректные данные запроса",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ Р·Р°РїСЂРѕСЃР°",
           details: error.errors
         });
       }
 
-      console.error("Ошибка пересылки JSON на вебхук:", error);
-      res.status(500).json({ error: "Не удалось отправить JSON на вебхук" });
+      console.error("РћС€РёР±РєР° РїРµСЂРµСЃС‹Р»РєРё JSON РЅР° РІРµР±С…СѓРє:", error);
+      res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ JSON РЅР° РІРµР±С…СѓРє" });
     }
   });
 
@@ -8285,18 +8464,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     id: z
       .string()
       .trim()
-      .min(1, "Некорректный идентификатор базы знаний")
-      .max(191, "Слишком длинный идентификатор базы знаний")
+      .min(1, "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ Р±Р°Р·С‹ Р·РЅР°РЅРёР№")
+      .max(191, "РЎР»РёС€РєРѕРј РґР»РёРЅРЅС‹Р№ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ Р±Р°Р·С‹ Р·РЅР°РЅРёР№")
       .optional(),
     name: z
       .string()
       .trim()
-      .min(1, "Укажите название базы знаний")
-      .max(200, "Название не должно превышать 200 символов"),
+      .min(1, "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ Р±Р°Р·С‹ Р·РЅР°РЅРёР№")
+      .max(200, "РќР°Р·РІР°РЅРёРµ РЅРµ РґРѕР»Р¶РЅРѕ РїСЂРµРІС‹С€Р°С‚СЊ 200 СЃРёРјРІРѕР»РѕРІ"),
     description: z
       .string()
       .trim()
-      .max(2000, "Описание не должно превышать 2000 символов")
+      .max(2000, "РћРїРёСЃР°РЅРёРµ РЅРµ РґРѕР»Р¶РЅРѕ РїСЂРµРІС‹С€Р°С‚СЊ 2000 СЃРёРјРІРѕР»РѕРІ")
       .optional(),
   });
 
@@ -8304,8 +8483,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     name: z
       .string()
       .trim()
-      .min(1, "Укажите название базы знаний")
-      .max(200, "Название не должно превышать 200 символов"),
+      .min(1, "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ Р±Р°Р·С‹ Р·РЅР°РЅРёР№")
+      .max(200, "РќР°Р·РІР°РЅРёРµ РЅРµ РґРѕР»Р¶РЅРѕ РїСЂРµРІС‹С€Р°С‚СЊ 200 СЃРёРјРІРѕР»РѕРІ"),
     description: z.string().trim().max(2000).optional(),
     source: z.literal("crawl"),
     crawl_config: crawlConfigSchema,
@@ -8366,33 +8545,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     confirmation: z
       .string()
       .trim()
-      .min(1, "Введите название базы знаний для подтверждения удаления"),
+      .min(1, "Р’РІРµРґРёС‚Рµ РЅР°Р·РІР°РЅРёРµ Р±Р°Р·С‹ Р·РЅР°РЅРёР№ РґР»СЏ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ СѓРґР°Р»РµРЅРёСЏ"),
   });
 
   const createKnowledgeFolderSchema = z.object({
     title: z
       .string()
       .trim()
-      .min(1, "Укажите название подраздела")
-      .max(200, "Название не должно превышать 200 символов"),
+      .min(1, "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ РїРѕРґСЂР°Р·РґРµР»Р°")
+      .max(200, "РќР°Р·РІР°РЅРёРµ РЅРµ РґРѕР»Р¶РЅРѕ РїСЂРµРІС‹С€Р°С‚СЊ 200 СЃРёРјРІРѕР»РѕРІ"),
   });
 
   const createKnowledgeDocumentSchema = z.object({
     title: z
       .string()
       .trim()
-      .min(1, "Укажите название документа")
-      .max(500, "Название не должно превышать 500 символов"),
+      .min(1, "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ РґРѕРєСѓРјРµРЅС‚Р°")
+      .max(500, "РќР°Р·РІР°РЅРёРµ РЅРµ РґРѕР»Р¶РЅРѕ РїСЂРµРІС‹С€Р°С‚СЊ 500 СЃРёРјРІРѕР»РѕРІ"),
     content: z
       .string()
-      .max(20_000_000, "Документ слишком большой. Ограничение — 20 МБ текста")
+      .max(20_000_000, "Р”РѕРєСѓРјРµРЅС‚ СЃР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№. РћРіСЂР°РЅРёС‡РµРЅРёРµ вЂ” 20 РњР‘ С‚РµРєСЃС‚Р°")
       .optional()
       .default(""),
     sourceType: z.enum(["manual", "import"]).optional(),
     importFileName: z
       .string()
       .trim()
-      .max(500, "Имя файла не должно превышать 500 символов")
+      .max(500, "РРјСЏ С„Р°Р№Р»Р° РЅРµ РґРѕР»Р¶РЅРѕ РїСЂРµРІС‹С€Р°С‚СЊ 500 СЃРёРјРІРѕР»РѕРІ")
       .optional()
       .nullable(),
   });
@@ -8401,7 +8580,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     url: z
       .string()
       .trim()
-      .min(1, "Укажите ссылку на страницу")
+      .min(1, "РЈРєР°Р¶РёС‚Рµ СЃСЃС‹Р»РєСѓ РЅР° СЃС‚СЂР°РЅРёС†Сѓ")
       .refine((value) => {
         try {
           const parsed = new URL(value);
@@ -8409,7 +8588,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch {
           return false;
         }
-      }, "Укажите корректный URL страницы"),
+      }, "РЈРєР°Р¶РёС‚Рµ РєРѕСЂСЂРµРєС‚РЅС‹Р№ URL СЃС‚СЂР°РЅРёС†С‹"),
     selectors: crawlSelectorsSchema.optional(),
     language: z.string().trim().min(1).optional(),
     version: z.string().trim().min(1).optional(),
@@ -8420,11 +8599,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     title: z
       .string()
       .trim()
-      .min(1, "Укажите название документа")
-      .max(500, "Название не должно превышать 500 символов"),
+      .min(1, "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ РґРѕРєСѓРјРµРЅС‚Р°")
+      .max(500, "РќР°Р·РІР°РЅРёРµ РЅРµ РґРѕР»Р¶РЅРѕ РїСЂРµРІС‹С€Р°С‚СЊ 500 СЃРёРјРІРѕР»РѕРІ"),
     content: z
       .string()
-      .max(20_000_000, "Документ слишком большой. Ограничение — 20 МБ текста")
+      .max(20_000_000, "Р”РѕРєСѓРјРµРЅС‚ СЃР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№. РћРіСЂР°РЅРёС‡РµРЅРёРµ вЂ” 20 РњР‘ С‚РµРєСЃС‚Р°")
       .optional(),
   });
 
@@ -8449,7 +8628,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issue = error.issues.at(0);
-        const message = issue?.message ?? "Некорректные данные";
+        const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
         return res.status(400).json({ error: message });
       }
 
@@ -8466,7 +8645,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const bases = await listKnowledgeBases(workspaceId);
       const summary = bases.find((base) => base.id === baseId);
       if (!summary) {
-        return res.status(404).json({ error: "База знаний не найдена" });
+        return res.status(404).json({ error: "Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР°" });
       }
 
       const config = mapCrawlConfig(payload.crawl_config);
@@ -8480,7 +8659,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issue = error.issues.at(0);
-        const message = issue?.message ?? "Некорректные данные";
+        const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
         return res.status(400).json({ error: message });
       }
 
@@ -8497,7 +8676,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issue = error.issues.at(0);
-        const message = issue?.message ?? "Некорректные данные";
+        const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
         return res.status(400).json({ error: message });
       }
 
@@ -8561,7 +8740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issue = error.issues.at(0);
-        const message = issue?.message ?? "Некорректные данные";
+        const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
         return res.status(400).json({ error: message });
       }
 
@@ -8584,7 +8763,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function ensureKnowledgeBaseAccessible(baseId: string, workspaceId: string) {
     const base = await storage.getKnowledgeBase(baseId);
     if (!base || base.workspaceId !== workspaceId) {
-      throw new KnowledgeBaseError("База знаний не найдена", 404);
+      throw new KnowledgeBaseError("Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР°", 404);
     }
   }
 
@@ -8604,8 +8783,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(error.status).json({ error: error.message });
         }
 
-        console.error("Не удалось получить настройки поиска базы знаний:", error);
-        return res.status(500).json({ error: "Не удалось получить настройки поиска" });
+        console.error("РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РїРѕРёСЃРєР° Р±Р°Р·С‹ Р·РЅР°РЅРёР№:", error);
+        return res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РїРѕРёСЃРєР°" });
       }
     })
     .put(requireAuth, async (req, res) => {
@@ -8655,11 +8834,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         if (error instanceof z.ZodError) {
-          return res.status(400).json({ error: "Некорректные данные", details: error.errors });
+          return res.status(400).json({ error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ", details: error.errors });
         }
 
-        console.error("Не удалось сохранить настройки поиска базы знаний:", error);
-        return res.status(500).json({ error: "Не удалось сохранить настройки поиска" });
+        console.error("РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РїРѕРёСЃРєР° Р±Р°Р·С‹ Р·РЅР°РЅРёР№:", error);
+        return res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РїРѕРёСЃРєР°" });
       }
     });
 
@@ -8671,7 +8850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const base = await storage.getKnowledgeBase(baseId);
 
       if (!base || base.workspaceId !== workspaceId) {
-        return res.status(404).json({ error: "База знаний не найдена" });
+        return res.status(404).json({ error: "Р‘Р°Р·Р° Р·РЅР°РЅРёР№ РЅРµ РЅР°Р№РґРµРЅР°" });
       }
 
       const config = await storage.getLatestKnowledgeBaseRagConfig(workspaceId, baseId);
@@ -8689,8 +8868,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       return res.json(response);
     } catch (error) {
-      console.error("Не удалось получить конфигурацию RAG для базы знаний:", error);
-      return res.status(500).json({ error: "Не удалось получить конфигурацию RAG" });
+      console.error("РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ RAG РґР»СЏ Р±Р°Р·С‹ Р·РЅР°РЅРёР№:", error);
+      return res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ RAG" });
     }
   });
 
@@ -8721,8 +8900,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(error.status).json({ error: error.message });
       }
 
-      console.error("Не удалось получить журнал Ask AI:", error);
-      return res.status(500).json({ error: "Не удалось получить журнал Ask AI" });
+      console.error("РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ Р¶СѓСЂРЅР°Р» Ask AI:", error);
+      return res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ Р¶СѓСЂРЅР°Р» Ask AI" });
     }
   });
 
@@ -8738,7 +8917,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const run = await storage.getKnowledgeBaseAskAiRun(runId, workspaceId, baseId);
         if (!run) {
-          return res.status(404).json({ error: "Запуск не найден" });
+          return res.status(404).json({ error: "Р—Р°РїСѓСЃРє РЅРµ РЅР°Р№РґРµРЅ" });
         }
 
         const response: KnowledgeBaseAskAiRunDetail = run;
@@ -8748,8 +8927,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(error.status).json({ error: error.message });
         }
 
-        console.error("Не удалось получить подробности запуска Ask AI:", error);
-        return res.status(500).json({ error: "Не удалось получить детали запуска" });
+        console.error("РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РїРѕРґСЂРѕР±РЅРѕСЃС‚Рё Р·Р°РїСѓСЃРєР° Ask AI:", error);
+        return res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РґРµС‚Р°Р»Рё Р·Р°РїСѓСЃРєР°" });
       }
     },
   );
@@ -8758,7 +8937,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { jobId } = req.params;
     const job = getKnowledgeBaseCrawlJob(jobId);
     if (!job) {
-      return res.status(404).json({ error: "Задача не найдена" });
+      return res.status(404).json({ error: "Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°" });
     }
 
     return res.json({ job });
@@ -8768,7 +8947,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { jobId } = req.params;
     const job = pauseKnowledgeBaseCrawl(jobId);
     if (!job) {
-      return res.status(404).json({ error: "Задача не найдена" });
+      return res.status(404).json({ error: "Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°" });
     }
 
     return res.json({ job });
@@ -8778,7 +8957,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { jobId } = req.params;
     const job = resumeKnowledgeBaseCrawl(jobId);
     if (!job) {
-      return res.status(404).json({ error: "Задача не найдена" });
+      return res.status(404).json({ error: "Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°" });
     }
 
     return res.json({ job });
@@ -8788,7 +8967,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { jobId } = req.params;
     const job = cancelKnowledgeBaseCrawl(jobId);
     if (!job) {
-      return res.status(404).json({ error: "Задача не найдена" });
+      return res.status(404).json({ error: "Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°" });
     }
 
     return res.json({ job });
@@ -8801,12 +8980,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const job = retryKnowledgeBaseCrawl(jobId, workspaceId);
       if (!job) {
-        return res.status(404).json({ error: "Задача не найдена" });
+        return res.status(404).json({ error: "Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°" });
       }
 
       return res.status(201).json({ job });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось перезапустить краулинг";
+      const message = error instanceof Error ? error.message : "РќРµ СѓРґР°Р»РѕСЃСЊ РїРµСЂРµР·Р°РїСѓСЃС‚РёС‚СЊ РєСЂР°СѓР»РёРЅРі";
       return res.status(409).json({ error: message });
     }
   });
@@ -8815,7 +8994,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { jobId } = req.params;
     const job = getKnowledgeBaseCrawlJob(jobId);
     if (!job) {
-      return res.status(404).json({ error: "Задача не найдена" });
+      return res.status(404).json({ error: "Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°" });
     }
 
     res.setHeader("Content-Type", "text/event-stream");
@@ -8870,7 +9049,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issue = error.issues.at(0);
-        const message = issue?.message ?? "Некорректные данные";
+        const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
         return res.status(400).json({ error: message });
       }
 
@@ -8913,7 +9092,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issue = error.issues.at(0);
-        const message = issue?.message ?? "Некорректные данные";
+        const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
         return res.status(400).json({ error: message });
       }
 
@@ -8939,7 +9118,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof z.ZodError) {
         const issue = error.issues.at(0);
-        const message = issue?.message ?? "Некорректные данные";
+        const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
         return res.status(400).json({ error: message });
       }
 
@@ -8971,7 +9150,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (error) {
         if (error instanceof z.ZodError) {
           const issue = error.issues.at(0);
-          const message = issue?.message ?? "Некорректные данные";
+          const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ";
           return res.status(400).json({ error: message });
         }
 
@@ -8999,7 +9178,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (error) {
         if (error instanceof z.ZodError) {
           const issue = error.issues.at(0);
-          const message = issue?.message ?? "Некорректные параметры чанкования";
+          const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ С‡Р°РЅРєРѕРІР°РЅРёСЏ";
           return res.status(400).json({ error: message });
         }
 
@@ -9031,7 +9210,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (error) {
         if (error instanceof z.ZodError) {
           const issue = error.issues.at(0);
-          const message = issue?.message ?? "Некорректные параметры чанкования";
+          const message = issue?.message ?? "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ С‡Р°РЅРєРѕРІР°РЅРёСЏ";
           return res.status(400).json({ error: message });
         }
 
@@ -9054,7 +9233,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } else if (typeof rawParentId === "string") {
       parentId = rawParentId;
     } else {
-      return res.status(400).json({ error: "Некорректный идентификатор родителя" });
+      return res.status(400).json({ error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ СЂРѕРґРёС‚РµР»СЏ" });
     }
 
     try {
@@ -9111,11 +9290,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const provider = await storage.getEmbeddingProvider(embeddingProviderId, workspaceId);
       if (!provider) {
-        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+        return res.status(404).json({ error: "РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РЅРµ РЅР°Р№РґРµРЅ" });
       }
 
       if (!provider.isActive) {
-        return res.status(400).json({ error: "Выбранный сервис эмбеддингов отключён" });
+        return res.status(400).json({ error: "Р’С‹Р±СЂР°РЅРЅС‹Р№ СЃРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РѕС‚РєР»СЋС‡С‘РЅ" });
       }
 
       const embeddingChunkTokenLimit = extractEmbeddingTokenLimit(provider);
@@ -9123,7 +9302,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const documentTextRaw = vectorDocument.text;
       const documentText = documentTextRaw.trim();
       if (documentText.length === 0) {
-        return res.status(400).json({ error: "Документ не содержит текста для векторизации" });
+        return res.status(400).json({ error: "Р”РѕРєСѓРјРµРЅС‚ РЅРµ СЃРѕРґРµСЂР¶РёС‚ С‚РµРєСЃС‚Р° РґР»СЏ РІРµРєС‚РѕСЂРёР·Р°С†РёРё" });
       }
 
       const normalizedDocumentText = normalizeDocumentText(documentText);
@@ -9230,7 +9409,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
 
         if (normalizedItems.length === 0) {
-          return res.status(400).json({ error: "Переданные чанки пустые или некорректные" });
+          return res.status(400).json({ error: "РџРµСЂРµРґР°РЅРЅС‹Рµ С‡Р°РЅРєРё РїСѓСЃС‚С‹Рµ РёР»Рё РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ" });
         }
 
         normalizedItems.sort((a, b) => a.index - b.index);
@@ -9286,7 +9465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (documentChunks.length === 0) {
-        return res.status(400).json({ error: "Не удалось разбить документ на чанки" });
+        return res.status(400).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ СЂР°Р·Р±РёС‚СЊ РґРѕРєСѓРјРµРЅС‚ РЅР° С‡Р°РЅРєРё" });
       }
 
       if (embeddingChunkTokenLimit !== null) {
@@ -9306,8 +9485,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (oversizedChunk) {
           const chunkNumber = oversizedChunk.index + 1;
           const limitMessage =
-            `Чанк #${chunkNumber} превышает допустимый лимит ${embeddingChunkTokenLimit.toLocaleString("ru-RU")} токенов ` +
-            `(получилось ${oversizedChunk.tokenCount.toLocaleString("ru-RU")}).`;
+            `Р§Р°РЅРє #${chunkNumber} РїСЂРµРІС‹С€Р°РµС‚ РґРѕРїСѓСЃС‚РёРјС‹Р№ Р»РёРјРёС‚ ${embeddingChunkTokenLimit.toLocaleString("ru-RU")} С‚РѕРєРµРЅРѕРІ ` +
+            `(РїРѕР»СѓС‡РёР»РѕСЃСЊ ${oversizedChunk.tokenCount.toLocaleString("ru-RU")}).`;
 
           return res.status(400).json({
             error: limitMessage,
@@ -9344,7 +9523,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (preferAsync) {
           responseSent = true;
           res.status(202).json({
-            message: "Документ отправлен на векторизацию", 
+            message: "Р”РѕРєСѓРјРµРЅС‚ РѕС‚РїСЂР°РІР»РµРЅ РЅР° РІРµРєС‚РѕСЂРёР·Р°С†РёСЋ", 
             jobId: newJob.id,
             totalChunks,
             status: "accepted",
@@ -9383,9 +9562,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let existingWorkspaceId = await storage.getCollectionWorkspace(collectionName);
       if (existingWorkspaceId && existingWorkspaceId !== workspaceId) {
-        markImmediateFailure("Коллекция принадлежит другому рабочему пространству", 403);
+        markImmediateFailure("РљРѕР»Р»РµРєС†РёСЏ РїСЂРёРЅР°РґР»РµР¶РёС‚ РґСЂСѓРіРѕРјСѓ СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ", 403);
         return res.status(403).json({
-          error: "Коллекция принадлежит другому рабочему пространству",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РїСЂРёРЅР°РґР»РµР¶РёС‚ РґСЂСѓРіРѕРјСѓ СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ",
         });
       }
 
@@ -9401,9 +9580,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (qdrantError) {
           if (qdrantError.status === 404) {
             if (!shouldCreateCollection) {
-              markImmediateFailure(`Коллекция ${collectionName} не найдена`, 404, qdrantError.details);
+              markImmediateFailure(`РљРѕР»Р»РµРєС†РёСЏ ${collectionName} РЅРµ РЅР°Р№РґРµРЅР°`, 404, qdrantError.details);
               return res.status(404).json({
-                error: `Коллекция ${collectionName} не найдена`,
+                error: `РљРѕР»Р»РµРєС†РёСЏ ${collectionName} РЅРµ РЅР°Р№РґРµРЅР°`,
                 details: qdrantError.details,
               });
             }
@@ -9426,9 +9605,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const message =
             mappingError instanceof Error
               ? mappingError.message
-              : "Не удалось привязать коллекцию к рабочему пространству";
+              : "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРІСЏР·Р°С‚СЊ РєРѕР»Р»РµРєС†РёСЋ Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ";
           console.error(
-            `Не удалось привязать существующую коллекцию ${collectionName} к рабочему пространству ${workspaceId}:`,
+            `РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРІСЏР·Р°С‚СЊ СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ РєРѕР»Р»РµРєС†РёСЋ ${collectionName} Рє СЂР°Р±РѕС‡РµРјСѓ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІСѓ ${workspaceId}:`,
             mappingError,
           );
           markImmediateFailure(message, 500);
@@ -9459,22 +9638,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
           }
         } catch (embeddingError) {
-          console.error("Ошибка эмбеддинга чанка документа базы знаний", embeddingError);
+          console.error("РћС€РёР±РєР° СЌРјР±РµРґРґРёРЅРіР° С‡Р°РЅРєР° РґРѕРєСѓРјРµРЅС‚Р° Р±Р°Р·С‹ Р·РЅР°РЅРёР№", embeddingError);
           const errorMessage =
             embeddingError instanceof Error ? embeddingError.message : String(embeddingError);
-          throw new Error(`Ошибка эмбеддинга чанка #${index + 1}: ${errorMessage}`);
+          throw new Error(`РћС€РёР±РєР° СЌРјР±РµРґРґРёРЅРіР° С‡Р°РЅРєР° #${index + 1}: ${errorMessage}`);
         }
       }
 
       if (embeddingResults.length === 0) {
-        markImmediateFailure("Не удалось получить эмбеддинги для документа");
-        return res.status(500).json({ error: "Не удалось получить эмбеддинги для документа" });
+        markImmediateFailure("РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ СЌРјР±РµРґРґРёРЅРіРё РґР»СЏ РґРѕРєСѓРјРµРЅС‚Р°");
+        return res.status(500).json({ error: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ СЌРјР±РµРґРґРёРЅРіРё РґР»СЏ РґРѕРєСѓРјРµРЅС‚Р°" });
       }
 
       const firstVector = embeddingResults[0]?.vector;
       if (!Array.isArray(firstVector) || firstVector.length === 0) {
-        markImmediateFailure("Сервис эмбеддингов вернул пустой вектор");
-        return res.status(500).json({ error: "Сервис эмбеддингов вернул пустой вектор" });
+        markImmediateFailure("РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РІРµСЂРЅСѓР» РїСѓСЃС‚РѕР№ РІРµРєС‚РѕСЂ");
+        return res.status(500).json({ error: "РЎРµСЂРІРёСЃ СЌРјР±РµРґРґРёРЅРіРѕРІ РІРµСЂРЅСѓР» РїСѓСЃС‚РѕР№ РІРµРєС‚РѕСЂ" });
       }
 
       let collectionCreated = false;
@@ -9678,14 +9857,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         } catch (updateError) {
           console.error(
-            "Не удалось обновить связи чанков документа с записями векторной базы",
+            "РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ СЃРІСЏР·Рё С‡Р°РЅРєРѕРІ РґРѕРєСѓРјРµРЅС‚Р° СЃ Р·Р°РїРёСЃСЏРјРё РІРµРєС‚РѕСЂРЅРѕР№ Р±Р°Р·С‹",
             updateError,
           );
         }
       }
 
       const jobResult: KnowledgeDocumentVectorizationJobResult = {
-        message: `В коллекцию ${collectionName} отправлено ${points.length} чанков документа`,
+        message: `Р’ РєРѕР»Р»РµРєС†РёСЋ ${collectionName} РѕС‚РїСЂР°РІР»РµРЅРѕ ${points.length} С‡Р°РЅРєРѕРІ РґРѕРєСѓРјРµРЅС‚Р°`,
         pointsCount: points.length,
         collectionName,
         vectorSize: detectedVectorLength || null,
@@ -9739,7 +9918,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof HttpError) {
         markJobFailed(error.message);
         if (responseSent) {
-          console.warn("Фоновая векторизация документа завершилась с ошибкой:", error.message);
+          console.warn("Р¤РѕРЅРѕРІР°СЏ РІРµРєС‚РѕСЂРёР·Р°С†РёСЏ РґРѕРєСѓРјРµРЅС‚Р° Р·Р°РІРµСЂС€РёР»Р°СЃСЊ СЃ РѕС€РёР±РєРѕР№:", error.message);
           return;
         }
 
@@ -9752,13 +9931,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (error instanceof z.ZodError) {
-        markJobFailed("Некорректные данные запроса");
+        markJobFailed("РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ Р·Р°РїСЂРѕСЃР°");
         if (responseSent) {
-          console.warn("Некорректные данные запроса для фоновой векторизации", error.errors);
+          console.warn("РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ Р·Р°РїСЂРѕСЃР° РґР»СЏ С„РѕРЅРѕРІРѕР№ РІРµРєС‚РѕСЂРёР·Р°С†РёРё", error.errors);
           return;
         }
         return res.status(400).json({
-          error: "Некорректные данные запроса",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ Р·Р°РїСЂРѕСЃР°",
           details: error.errors,
         });
       }
@@ -9766,18 +9945,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof QdrantConfigurationError) {
         markJobFailed(error.message);
         if (responseSent) {
-          console.warn("Qdrant не настроен для фоновой векторизации:", error.message);
+          console.warn("Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ РґР»СЏ С„РѕРЅРѕРІРѕР№ РІРµРєС‚РѕСЂРёР·Р°С†РёРё:", error.message);
           return;
         }
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
-        console.error("Ошибка Qdrant при отправке документа базы знаний в коллекцию", error);
+        console.error("РћС€РёР±РєР° Qdrant РїСЂРё РѕС‚РїСЂР°РІРєРµ РґРѕРєСѓРјРµРЅС‚Р° Р±Р°Р·С‹ Р·РЅР°РЅРёР№ РІ РєРѕР»Р»РµРєС†РёСЋ", error);
         markJobFailed(qdrantError.message);
         if (responseSent) {
           return;
@@ -9789,7 +9968,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      console.error("Ошибка при отправке документа базы знаний в Qdrant:", error);
+      console.error("РћС€РёР±РєР° РїСЂРё РѕС‚РїСЂР°РІРєРµ РґРѕРєСѓРјРµРЅС‚Р° Р±Р°Р·С‹ Р·РЅР°РЅРёР№ РІ Qdrant:", error);
       markJobFailed(message);
       if (responseSent) {
         return;
@@ -9806,7 +9985,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const { jobId } = req.params;
     if (!jobId || !jobId.trim()) {
-      res.status(400).json({ error: "Некорректный идентификатор задачи" });
+      res.status(400).json({ error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ Р·Р°РґР°С‡Рё" });
       return;
     }
 
@@ -9815,7 +9994,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const job = knowledgeDocumentVectorizationJobs.get(jobId);
 
       if (!job || job.workspaceId !== workspaceId) {
-        res.status(404).json({ error: "Задача не найдена" });
+        res.status(404).json({ error: "Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°" });
         return;
       }
 
@@ -9840,7 +10019,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const ownerWorkspaceId = await storage.getCollectionWorkspace(body.collectionName);
       if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
         return res.status(404).json({
-          error: "Коллекция не найдена",
+          error: "РљРѕР»Р»РµРєС†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°",
         });
       }
 
@@ -9881,21 +10060,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
         return res.status(503).json({
-          error: "Qdrant не настроен",
+          error: "Qdrant РЅРµ РЅР°СЃС‚СЂРѕРµРЅ",
           details: error.message,
         });
       }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({
-          error: "Некорректный запрос",
+          error: "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ Р·Р°РїСЂРѕСЃ",
           details: error.errors,
         });
       }
 
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
-        console.error("Ошибка Qdrant при загрузке записей документа базы знаний:", error);
+        console.error("РћС€РёР±РєР° Qdrant РїСЂРё Р·Р°РіСЂСѓР·РєРµ Р·Р°РїРёСЃРµР№ РґРѕРєСѓРјРµРЅС‚Р° Р±Р°Р·С‹ Р·РЅР°РЅРёР№:", error);
         return res.status(qdrantError.status).json({
           error: qdrantError.message,
           details: qdrantError.details,
@@ -9903,7 +10082,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      console.error("Ошибка при получении записей документа базы знаний:", error);
+      console.error("РћС€РёР±РєР° РїСЂРё РїРѕР»СѓС‡РµРЅРёРё Р·Р°РїРёСЃРµР№ РґРѕРєСѓРјРµРЅС‚Р° Р±Р°Р·С‹ Р·РЅР°РЅРёР№:", error);
       res.status(500).json({ error: message });
     }
   });
@@ -9933,11 +10112,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     };
 
     if (!qdrantUrl) {
-      console.warn("[vector-health] QDRANT_URL не задан — Qdrant считается не настроенным");
+      console.warn("[vector-health] QDRANT_URL РЅРµ Р·Р°РґР°РЅ вЂ” Qdrant СЃС‡РёС‚Р°РµС‚СЃСЏ РЅРµ РЅР°СЃС‚СЂРѕРµРЅРЅС‹Рј");
       return res.json({
         ...basePayload,
         status: "not_configured" as const,
-        error: "Переменная окружения QDRANT_URL не задана",
+        error: "РџРµСЂРµРјРµРЅРЅР°СЏ РѕРєСЂСѓР¶РµРЅРёСЏ QDRANT_URL РЅРµ Р·Р°РґР°РЅР°",
       });
     }
 
@@ -9966,7 +10145,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const errorName = error instanceof Error ? error.name : undefined;
       const errorCode = getNodeErrorCode(error);
 
-      console.error("[vector-health] Ошибка проверки подключения к Qdrant:", error, {
+      console.error("[vector-health] РћС€РёР±РєР° РїСЂРѕРІРµСЂРєРё РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Qdrant:", error, {
         url: maskedUrl,
         errorName,
         errorCode,
@@ -9986,7 +10165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Health check endpoint for database diagnostics
   app.get("/api/health/db", async (req, res) => {
     try {
-      console.log("🔍 Database health check requested");
+      console.log("рџ”Ќ Database health check requested");
       
       // Get database connection info (masked for security)
       const dbUrl = process.env.DATABASE_URL || 'not_set';
@@ -10005,10 +10184,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         environment: process.env.NODE_ENV || 'unknown'
       };
       
-      console.log("✅ Database health check:", JSON.stringify(healthInfo, null, 2));
+      console.log("вњ… Database health check:", JSON.stringify(healthInfo, null, 2));
       res.json(healthInfo);
     } catch (error) {
-      console.error("❌ Database health check failed:", error);
+      console.error("вќЊ Database health check failed:", error);
       res.status(500).json({ 
         error: "Database health check failed",
         message: error instanceof Error ? error.message : String(error),
@@ -10021,3 +10200,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
+
+
+
+
+

@@ -48,6 +48,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
   embeddingProviderTypes,
+  DEFAULT_EMBEDDING_REQUEST_CONFIG,
+  DEFAULT_EMBEDDING_RESPONSE_CONFIG,
+  DEFAULT_QDRANT_CONFIG,
   type EmbeddingProviderType,
   type InsertEmbeddingProvider,
   type PublicEmbeddingProvider,
@@ -476,7 +479,11 @@ export default function EmbeddingServicesPage() {
       maxTokensPerVectorization: parsedMaxTokens,
       allowSelfSignedCertificate: values.allowSelfSignedCertificate,
       requestHeaders,
-    } satisfies InsertEmbeddingProvider & UpdateEmbeddingProvider;
+    } satisfies Omit<
+      InsertEmbeddingProvider,
+      "authorizationKey" | "workspaceId" | "requestConfig" | "responseConfig" | "qdrantConfig"
+    > &
+      UpdateEmbeddingProvider;
 
     const formattedRequestHeaders = formatJson(requestHeaders);
 
@@ -490,7 +497,10 @@ export default function EmbeddingServicesPage() {
       const payload: InsertEmbeddingProvider = {
         ...payloadBase,
         authorizationKey: trimmedAuthorizationKey,
-      } satisfies InsertEmbeddingProvider;
+        requestConfig: { ...DEFAULT_EMBEDDING_REQUEST_CONFIG },
+        responseConfig: { ...DEFAULT_EMBEDDING_RESPONSE_CONFIG },
+        qdrantConfig: { ...DEFAULT_QDRANT_CONFIG },
+      } satisfies Omit<InsertEmbeddingProvider, "workspaceId">;
 
       return { payload, formattedRequestHeaders };
     }

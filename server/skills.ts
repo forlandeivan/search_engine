@@ -1,7 +1,8 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
-import { skills, skillKnowledgeBases, knowledgeBases } from "@shared/schema";
+import { skills, skillKnowledgeBases, knowledgeBases, skillRagModes } from "@shared/schema";
 import type { SkillDto, SkillRagConfig, CreateSkillPayload } from "@shared/skills";
+import type { SkillRagMode } from "@shared/schema";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -27,6 +28,10 @@ type RagConfigInput = CreateSkillPayload["ragConfig"];
 type SkillEditableInput = Partial<EditableSkillColumns> & {
   knowledgeBaseIds?: string[];
   ragConfig?: RagConfigInput;
+};
+
+type NormalizedSkillEditableInput = Omit<SkillEditableInput, "ragConfig"> & {
+  ragConfig?: SkillRagConfig;
 };
 
 const DEFAULT_RAG_CONFIG: SkillRagConfig = {
@@ -66,6 +71,13 @@ function normalizeCollectionIds(ids: readonly string[] | undefined): string[] {
   return Array.from(unique);
 }
 
+const isSkillRagMode = (value: unknown): value is SkillRagMode =>
+  typeof value === "string" &&
+  skillRagModes.includes(value as SkillRagMode);
+
+const normalizeRagModeFromValue = (value: unknown): SkillRagMode =>
+  isSkillRagMode(value) ? value : DEFAULT_RAG_CONFIG.mode;
+
 function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig {
   if (!input) {
     return { ...DEFAULT_RAG_CONFIG };
@@ -82,12 +94,16 @@ function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig 
       : DEFAULT_RAG_CONFIG.minScore;
 
   const sanitizedMaxContextTokens =
-    typeof input.maxContextTokens === "number" && Number.isInteger(input.maxContextTokens) && input.maxContextTokens >= 500
-      ? input.maxContextTokens
-      : DEFAULT_RAG_CONFIG.maxContextTokens;
+    input.maxContextTokens === null
+      ? null
+      : typeof input.maxContextTokens === "number" &&
+          Number.isInteger(input.maxContextTokens) &&
+          input.maxContextTokens >= 500
+        ? input.maxContextTokens
+        : DEFAULT_RAG_CONFIG.maxContextTokens;
 
   return {
-    mode: input.mode ?? DEFAULT_RAG_CONFIG.mode,
+    mode: normalizeRagModeFromValue(input.mode),
     collectionIds: normalizeCollectionIds(input.collectionIds),
     topK: sanitizedTopK,
     minScore: sanitizedMinScore,
@@ -111,7 +127,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     collectionName: row.collectionName ?? null,
     knowledgeBaseIds,
     ragConfig: {
-      mode: row.ragMode ?? DEFAULT_RAG_CONFIG.mode,
+      mode: normalizeRagModeFromValue(row.ragMode),
       collectionIds: (row.ragCollectionIds ?? []) as string[],
       topK: row.ragTopK ?? DEFAULT_RAG_CONFIG.topK,
       minScore: row.ragMinScore ?? DEFAULT_RAG_CONFIG.minScore,
@@ -182,8 +198,8 @@ async function replaceSkillKnowledgeBases(
   return knowledgeBaseIds;
 }
 
-function buildEditableColumns(input: SkillEditableInput): SkillEditableInput {
-  const next: SkillEditableInput = {};
+function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditableInput {
+  const next: NormalizedSkillEditableInput = {};
 
   if (input.name !== undefined) {
     next.name = normalizeNullableString(input.name);
@@ -315,20 +331,21 @@ export async function updateSkill(
   });
 
   let updatedRow = row;
-  const hasRagUpdates = normalized.ragConfig !== undefined;
+  const ragUpdates = normalized.ragConfig;
+  const hasRagUpdates = ragUpdates !== undefined;
   if (Object.keys(updates).length > 0 || hasRagUpdates) {
     const [updated] = await db
       .update(skills)
       .set({
         ...updates,
-        ...(hasRagUpdates
+        ...(ragUpdates
           ? {
-              ragMode: normalized.ragConfig.mode,
-              ragCollectionIds: normalized.ragConfig.collectionIds,
-              ragTopK: normalized.ragConfig.topK,
-              ragMinScore: normalized.ragConfig.minScore,
-              ragMaxContextTokens: normalized.ragConfig.maxContextTokens,
-              ragShowSources: normalized.ragConfig.showSources,
+              ragMode: ragUpdates.mode,
+              ragCollectionIds: ragUpdates.collectionIds,
+              ragTopK: ragUpdates.topK,
+              ragMinScore: ragUpdates.minScore,
+              ragMaxContextTokens: ragUpdates.maxContextTokens,
+              ragShowSources: ragUpdates.showSources,
             }
           : {}),
         updatedAt: sql`CURRENT_TIMESTAMP`,
@@ -367,5 +384,24 @@ export async function deleteSkill(workspaceId: string, skillId: string): Promise
     .returning({ id: skills.id });
 
   return result.length > 0;
+}
+
+export async function getSkillById(
+  workspaceId: string,
+  skillId: string,
+): Promise<SkillDto | null> {
+  const rows: SkillRow[] = await db
+    .select()
+    .from(skills)
+    .where(and(eq(skills.id, skillId), eq(skills.workspaceId, workspaceId)))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
+  return mapSkillRow(row, knowledgeBaseIds);
 }
 
