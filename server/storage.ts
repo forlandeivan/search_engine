@@ -75,6 +75,74 @@ function getRowString(row: Record<string, unknown>, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+function sanitizedChunkTextExpression(source: SQL): SQL {
+  return sql`sanitized_chunk_text(${source})`;
+}
+
+function buildChunkSearchVectorColumnStatement(ifNotExists: boolean): SQL {
+  const headingExpression = sanitizedChunkTextExpression(sql`COALESCE("metadata"->>'heading', '')`);
+  const firstSentenceExpression = sanitizedChunkTextExpression(sql`COALESCE("metadata"->>'firstSentence', '')`);
+  const chunkTextExpression = sanitizedChunkTextExpression(sql`COALESCE("text", '')`);
+
+  if (ifNotExists) {
+    return sql`
+      ALTER TABLE "knowledge_document_chunks"
+      ADD COLUMN IF NOT EXISTS "text_tsv" tsvector
+        GENERATED ALWAYS AS (
+          setweight(to_tsvector('simple', ${headingExpression}), 'A') ||
+          setweight(to_tsvector('russian', ${firstSentenceExpression}), 'B') ||
+          setweight(to_tsvector('russian', ${chunkTextExpression}), 'C')
+        ) STORED
+    `;
+  }
+
+  return sql`
+    ALTER TABLE "knowledge_document_chunks"
+    ADD COLUMN "text_tsv" tsvector
+      GENERATED ALWAYS AS (
+        setweight(to_tsvector('simple', ${headingExpression}), 'A') ||
+        setweight(to_tsvector('russian', ${firstSentenceExpression}), 'B') ||
+        setweight(to_tsvector('russian', ${chunkTextExpression}), 'C')
+      ) STORED
+  `;
+}
+
+async function hasSanitizedChunkSearchVector(dbInstance: any): Promise<boolean> {
+  const result = await dbInstance.execute(sql`
+    SELECT pg_get_expr(d.adbin, d.adrelid) AS expression
+    FROM pg_attribute a
+    JOIN pg_class c ON a.attrelid = c.oid
+    JOIN pg_namespace n ON c.relnamespace = n.oid
+    JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE n.nspname = 'public'
+      AND c.relname = 'knowledge_document_chunks'
+      AND a.attname = 'text_tsv'
+  `);
+
+  const expression = (result.rows?.[0] as Record<string, unknown> | undefined)?.expression;
+  return typeof expression === "string" && expression.includes("regexp_replace(unaccent");
+}
+
+async function ensureSanitizedChunkSearchVector(dbInstance: any): Promise<void> {
+  const hasSanitizedColumn = await hasSanitizedChunkSearchVector(dbInstance);
+  if (!hasSanitizedColumn) {
+    await dbInstance.execute(sql`
+      ALTER TABLE "knowledge_document_chunks"
+      DROP COLUMN IF EXISTS "text_tsv"
+    `);
+    await dbInstance.execute(buildChunkSearchVectorColumnStatement(false));
+    await dbInstance.execute(sql`ANALYZE "knowledge_document_chunks"`);
+  } else {
+    await dbInstance.execute(buildChunkSearchVectorColumnStatement(true));
+  }
+
+  await dbInstance.execute(sql`
+    CREATE INDEX IF NOT EXISTS knowledge_document_chunks_text_tsv_idx
+    ON "knowledge_document_chunks"
+    USING GIN ("text_tsv")
+  `);
+}
+
 function toIsoTimestamp(value: unknown): string | null {
   if (!value) {
     return null;
@@ -1721,21 +1789,7 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       swallowPgError(error, ["42710", "0A000"]);
     }
 
-    await db.execute(sql`
-      ALTER TABLE "knowledge_document_chunks"
-      ADD COLUMN IF NOT EXISTS "text_tsv" tsvector
-        GENERATED ALWAYS AS (
-          setweight(to_tsvector('simple', COALESCE("metadata"->>'heading', '')), 'A') ||
-          setweight(to_tsvector('russian', COALESCE("metadata"->>'firstSentence', '')), 'B') ||
-          setweight(to_tsvector('russian', COALESCE("text", '')), 'C')
-        ) STORED
-    `);
-
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS knowledge_document_chunks_text_tsv_idx
-      ON "knowledge_document_chunks"
-      USING GIN ("text_tsv")
-    `);
+    await ensureSanitizedChunkSearchVector(db);
 
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS knowledge_document_chunks_heading_trgm_idx
@@ -3219,7 +3273,7 @@ export class DatabaseStorage implements IStorage {
 
     let normalizedQuery = cleanQuery;
     try {
-      const normalized = await this.db.execute(sql`SELECT unaccent(${cleanQuery}) AS value`);
+      const normalized = await this.db.execute(sql`SELECT sanitized_chunk_text(${cleanQuery}) AS value`);
       const candidate = normalized.rows?.[0]?.value;
       if (typeof candidate === "string" && candidate.trim().length > 0) {
         normalizedQuery = candidate.trim();
@@ -3234,7 +3288,7 @@ export class DatabaseStorage implements IStorage {
       WITH search_input AS (
         SELECT
           ${cleanQuery}::text AS raw_query,
-          unaccent(${cleanQuery})::text AS normalized_query
+          sanitized_chunk_text(${cleanQuery})::text AS normalized_query
       )
       SELECT
         chunk.id AS chunk_id,
@@ -3271,7 +3325,7 @@ export class DatabaseStorage implements IStorage {
         WITH search_input AS (
           SELECT
             ${cleanQuery}::text AS raw_query,
-            websearch_to_tsquery('russian', unaccent(${cleanQuery})) AS ts_query
+            websearch_to_tsquery('russian', sanitized_chunk_text(${cleanQuery})) AS ts_query
         ), ranked AS (
           SELECT
             chunk.id AS chunk_id,

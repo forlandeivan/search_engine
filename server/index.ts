@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { registerRoutes } from "./routes";
@@ -311,13 +312,14 @@ function validateProductionSecrets(): void {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  
-  // START SERVER IMMEDIATELY - don't wait for database
-  server.listen({
+  const listenOptions = {
     port,
     host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+    ...(process.platform !== "win32" ? { reusePort: true } : {}),
+  };
+  
+  // START SERVER IMMEDIATELY - don't wait for database
+  server.listen(listenOptions, () => {
     log(`serving on port ${port}`);
   });
 

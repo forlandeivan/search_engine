@@ -5,4 +5,12 @@ server/public
 vite.config.ts.*
 *.tar.gz
 .env
+chunk_debug.sql
+chunk_text.sql
+chunk_tsv.sql
+kb_search.sql
+kb_search_ts.sql
+text_tsv_output.txt
+suggest.json
+dev-server.log
 
