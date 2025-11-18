@@ -712,6 +712,12 @@ export const skills = pgTable(
       .references(() => llmProviders.id, { onDelete: "set null" }),
     collectionName: text("collection_name")
       .references(() => workspaceVectorCollections.collectionName, { onDelete: "set null" }),
+    ragMode: text("rag_mode").notNull().default("all_collections"),
+    ragCollectionIds: jsonb("rag_collection_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    ragTopK: integer("rag_top_k").notNull().default(5),
+    ragMinScore: doublePrecision("rag_min_score").notNull().default(0.7),
+    ragMaxContextTokens: integer("rag_max_context_tokens").default(3000),
+    ragShowSources: boolean("rag_show_sources").notNull().default(true),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
@@ -721,6 +727,9 @@ export const skills = pgTable(
     collectionIdx: index("skills_collection_name_idx").on(table.collectionName),
   }),
 );
+
+export const skillRagModes = ["all_collections", "selected_collections"] as const;
+export type SkillRagMode = (typeof skillRagModes)[number];
 
 export const skillKnowledgeBases = pgTable(
   "skill_knowledge_bases",

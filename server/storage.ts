@@ -5281,6 +5281,12 @@ export async function ensureDatabaseSchema(): Promise<void> {
         "model_id" varchar,
         "llm_provider_config_id" varchar REFERENCES "llm_providers"("id") ON DELETE SET NULL,
         "collection_name" text REFERENCES "workspace_vector_collections"("collection_name") ON DELETE SET NULL,
+        "rag_mode" text NOT NULL DEFAULT 'all_collections',
+        "rag_collection_ids" jsonb NOT NULL DEFAULT '[]'::jsonb,
+        "rag_top_k" integer NOT NULL DEFAULT 5,
+        "rag_min_score" double precision NOT NULL DEFAULT 0.7,
+        "rag_max_context_tokens" integer DEFAULT 3000,
+        "rag_show_sources" boolean NOT NULL DEFAULT true,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
@@ -5309,6 +5315,36 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await db.execute(sql`
       CREATE INDEX CONCURRENTLY IF NOT EXISTS skills_collection_name_idx
         ON "skills" ("collection_name")
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_mode" text NOT NULL DEFAULT 'all_collections'
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_collection_ids" jsonb NOT NULL DEFAULT '[]'::jsonb
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_top_k" integer NOT NULL DEFAULT 5
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_min_score" double precision NOT NULL DEFAULT 0.7
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_max_context_tokens" integer DEFAULT 3000
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_show_sources" boolean NOT NULL DEFAULT true
     `);
 
     await db.execute(sql`

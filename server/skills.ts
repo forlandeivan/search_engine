@@ -48,6 +48,12 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     llmProviderConfigId: row.llmProviderConfigId ?? null,
     collectionName: row.collectionName ?? null,
     knowledgeBaseIds,
+    ragMode: row.ragMode ?? "all_collections",
+    ragCollectionIds: (row.ragCollectionIds ?? []) as string[],
+    ragTopK: row.ragTopK ?? 5,
+    ragMinScore: row.ragMinScore ?? 0.7,
+    ragMaxContextTokens: row.ragMaxContextTokens ?? null,
+    ragShowSources: row.ragShowSources ?? true,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };

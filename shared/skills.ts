@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SkillRagMode } from "./schema";
 
 const optionalString = (limit: number) =>
   z
@@ -50,6 +51,12 @@ export type SkillDto = {
   llmProviderConfigId?: string | null;
   collectionName?: string | null;
   knowledgeBaseIds?: string[];
+  ragMode: SkillRagMode;
+  ragCollectionIds: string[];
+  ragTopK: number;
+  ragMinScore: number;
+  ragMaxContextTokens: number | null;
+  ragShowSources: boolean;
   createdAt: string;
   updatedAt: string;
 };
