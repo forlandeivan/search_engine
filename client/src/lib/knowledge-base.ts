@@ -34,6 +34,7 @@ export type KnowledgeDocument = {
   id: string;
   title: string;
   content: string;
+  sourceUrl?: string | null;
   updatedAt: string;
   vectorization: KnowledgeDocumentVectorization | null;
   chunkSet?: KnowledgeDocumentChunkSet | null;
@@ -601,11 +602,14 @@ const normalizeDocuments = (rawDocuments: unknown): Record<string, KnowledgeDocu
       typeof value.updatedAt === "string" && !Number.isNaN(Date.parse(value.updatedAt))
         ? value.updatedAt
         : new Date().toISOString();
+    const sourceUrlRaw = typeof value.sourceUrl === "string" ? value.sourceUrl.trim() : "";
+    const sourceUrl = sourceUrlRaw.length > 0 ? sourceUrlRaw : null;
 
     result[key] = {
       id,
       title,
       content,
+      sourceUrl,
       updatedAt,
       vectorization: normalizeVectorization(value.vectorization),
       chunkSet: normalizeDocumentChunkSet((value as Record<string, unknown>).chunkSet ?? value.chunks),
