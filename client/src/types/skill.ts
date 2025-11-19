@@ -9,6 +9,8 @@ export interface Skill {
   modelId?: string | null;
   llmProviderConfigId?: string | null;
   collectionName?: string | null;
+  isSystem: boolean;
+  systemKey?: string | null;
   knowledgeBaseIds?: string[];
   ragConfig: SkillRagConfig;
   createdAt: string;

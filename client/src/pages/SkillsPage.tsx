@@ -347,10 +347,17 @@ function SkillFormDialog({
     resolver: zodResolver(skillFormSchema),
     defaultValues: defaultFormValues,
   });
+  const isSystemSkill = Boolean(skill?.isSystem);
   const ragMode = form.watch("ragMode");
   const isManualRagMode = ragMode === "selected_collections";
   const vectorCollectionsEmpty = vectorCollections.length === 0;
-  const vectorCollectionsDisabled = isVectorCollectionsLoading || vectorCollectionsEmpty;
+  const vectorCollectionsUnavailable = isVectorCollectionsLoading || vectorCollectionsEmpty;
+  const controlsDisabled = isSubmitting || isSystemSkill;
+  const vectorCollectionsDisabled = vectorCollectionsUnavailable || controlsDisabled;
+  const systemSkillDescription =
+    skill?.systemKey === "UNICA_CHAT"
+      ? "Настройки Unica Chat управляются администратором инстанса. Изменить их из рабочего пространства нельзя."
+      : "Системные навыки управляются администратором и недоступны для редактирования.";
 
   const sortedKnowledgeBases = useMemo(() => {
     return [...knowledgeBases].sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" }));
@@ -422,6 +429,9 @@ function SkillFormDialog({
   }, [open, skill, form, effectiveLlmOptions]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
+    if (isSystemSkill) {
+      return;
+    }
     await onSubmit(values);
   });
 
@@ -436,9 +446,23 @@ function SkillFormDialog({
           <DialogDescription>
             Настройте параметры навыка: выберите связанные базы знаний, модель LLM и при необходимости системный промпт.
           </DialogDescription>
+
+          {isSystemSkill && (
+
+            <Alert variant="default">
+
+              <AlertTitle>????????? ?????</AlertTitle>
+
+              <AlertDescription>{systemSkillDescription}</AlertDescription>
+
+            </Alert>
+
+          )}
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={handleSubmit} className="space-y-5">
+
+            <fieldset disabled={controlsDisabled} className="space-y-5">
             <FormField
               control={form.control}
               name="name"
@@ -482,7 +506,7 @@ function SkillFormDialog({
                       value={field.value}
                       onChange={field.onChange}
                       knowledgeBases={sortedKnowledgeBases}
-                      disabled={selectedKnowledgeBasesDisabled}
+                      disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
                     />
                   </FormControl>
                   <FormDescription>
@@ -499,7 +523,7 @@ function SkillFormDialog({
                 <FormItem>
                   <FormLabel>LLM провайдер и модель</FormLabel>
                   <FormControl>
-                    <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled}>
+                    <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
                       <SelectTrigger>
                         <SelectValue placeholder="Выберите модель" />
                       </SelectTrigger>
@@ -538,12 +562,12 @@ function SkillFormDialog({
                     <FormControl>
                       <RadioGroup
                         value={field.value}
-                        onValueChange={field.onChange}
+                        onValueChange={controlsDisabled ? undefined : field.onChange}
                         className="grid gap-3 md:grid-cols-2"
                       >
                         <div className="rounded-lg border p-3">
                           <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                            <RadioGroupItem value="all_collections" id="rag-mode-all" className="mt-1" />
+                            <RadioGroupItem value="all_collections" id="rag-mode-all" className="mt-1" disabled={controlsDisabled} />
                             <span>
                               Все коллекции
                               <span className="block text-xs font-normal text-muted-foreground">
@@ -554,7 +578,7 @@ function SkillFormDialog({
                         </div>
                         <div className="rounded-lg border p-3">
                           <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                            <RadioGroupItem value="selected_collections" id="rag-mode-selected" className="mt-1" />
+                            <RadioGroupItem value="selected_collections" id="rag-mode-selected" className="mt-1" disabled={controlsDisabled} />
                             <span>
                               Выбрать вручную
                               <span className="block text-xs font-normal text-muted-foreground">
@@ -678,7 +702,7 @@ function SkillFormDialog({
                     <FormDescription>Показывает пользователю документы и ссылки, из которых взяты чанки.</FormDescription>
                     </div>
                     <FormControl>
-                      <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
                     </FormControl>
                   </FormItem>
                 )}
@@ -702,12 +726,16 @@ function SkillFormDialog({
                 </FormItem>
               )}
             />
+            </fieldset>
+
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
                 Отменить
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "Сохраняем..." : "Сохранить"}
+              <Button type="submit" disabled={isSubmitting || isSystemSkill}>
+
+                {isSystemSkill ? "??????????" : isSubmitting ? "?????..." : "???????"}
+
               </Button>
             </DialogFooter>
           </form>
@@ -834,6 +862,18 @@ export default function SkillsPage() {
   };
 
   const handleEditClick = (skill: Skill) => {
+    if (skill.isSystem) {
+      toast({
+        title: "Системный навык",
+        description:
+          skill.systemKey === "UNICA_CHAT"
+            ? "Настройки Unica Chat управляются администратором инстанса."
+            : "Системные навыки нельзя изменять в рабочем пространстве.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setEditingSkill(skill);
     setIsDialogOpen(true);
   };
@@ -1007,11 +1047,30 @@ export default function SkillsPage() {
               <TableBody>
                 {sortedSkills.map((skill) => (
                   <TableRow key={skill.id}>
-                    <TableCell>
+                                        <TableCell>
+
                       <div className="space-y-1">
-                        <p className="font-semibold leading-tight">{skill.name ?? "Без названия"}</p>
+
+                        <div className="flex items-center gap-2">
+
+                          <p className="font-semibold leading-tight">{skill.name ?? "??? ????????"}</p>
+
+                          {skill.isSystem && (
+
+                            <Badge variant="outline" className="text-[10px] uppercase">
+
+                              ?????????
+
+                            </Badge>
+
+                          )}
+
+                        </div>
+
                         <p className="text-xs text-muted-foreground">ID: {skill.id}</p>
+
                       </div>
+
                     </TableCell>
                     <TableCell>
                       {skill.description ? (
@@ -1028,8 +1087,18 @@ export default function SkillsPage() {
                       </p>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => handleEditClick(skill)}>
-                        <Pencil className="mr-2 h-4 w-4" /> Редактировать
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleEditClick(skill)}
+                        disabled={skill.isSystem}
+                        title={
+                          skill.isSystem
+                            ? "????????? ????? ????????????? ??????????????? ????????"
+                            : undefined
+                        }
+                      >
+                        <Pencil className="mr-2 h-4 w-4" /> ??????????
                       </Button>
                     </TableCell>
                   </TableRow>

@@ -2,7 +2,7 @@ import { MouseEvent, useEffect, useMemo, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Sparkles, Loader2, Trash2, Eye, EyeOff, Copy } from "lucide-react";
+import { Sparkles, Loader2, Trash2, Eye, EyeOff, Copy, SlidersHorizontal } from "lucide-react";
 
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -45,6 +45,7 @@ import {
   type PublicLlmProvider,
   type UpdateLlmProvider,
   type LlmProviderInsert,
+  type UnicaChatConfig,
 } from "@shared/schema";
 
 const requestHeadersSchema = z.record(z.string());
@@ -147,6 +148,19 @@ type CreateLlmProviderVariables = {
   formattedRequestHeaders: string;
 };
 
+type UnicaChatConfigResponse = { config: UnicaChatConfig };
+
+type UnicaChatFormValues = {
+  llmProviderConfigId: string;
+  modelId: string;
+  systemPrompt: string;
+  temperature: string;
+  maxTokens: string;
+};
+
+const DEFAULT_UNICA_TEMPERATURE = DEFAULT_LLM_REQUEST_CONFIG.temperature ?? 0.7;
+const DEFAULT_UNICA_MAX_TOKENS = DEFAULT_LLM_REQUEST_CONFIG.maxTokens ?? 2048;
+
 const parseJsonField = <T,>(
   value: string,
   schema: z.ZodType<T>,
@@ -202,6 +216,30 @@ const mapProviderToFormValues = (provider: PublicLlmProvider): FormValues => {
   } satisfies FormValues;
 };
 
+const getProviderModelOptions = (provider: PublicLlmProvider | null) => {
+  if (!provider) {
+    return [] as { label: string; value: string }[];
+  }
+
+  const rawOptions =
+    provider.availableModels?.map((option) => ({
+      label: option.label?.trim() || option.value?.trim() || "",
+      value: option.value?.trim() || option.label?.trim() || "",
+    })) ?? [];
+
+  const filtered = rawOptions.filter((option) => option.value.length > 0);
+  if (filtered.length > 0) {
+    return filtered;
+  }
+
+  if (typeof provider.model === "string" && provider.model.trim().length > 0) {
+    const trimmed = provider.model.trim();
+    return [{ label: trimmed, value: trimmed }];
+  }
+
+  return [];
+};
+
 export default function LlmProvidersPage() {
   const { toast } = useToast();
   const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
@@ -214,6 +252,16 @@ export default function LlmProvidersPage() {
   const modelsArray = useFieldArray({ control: form.control, name: "availableModels" });
   const providerTypeValue = form.watch("providerType");
 
+  const unicaForm = useForm<UnicaChatFormValues>({
+    defaultValues: {
+      llmProviderConfigId: "",
+      modelId: "",
+      systemPrompt: "",
+      temperature: String(DEFAULT_UNICA_TEMPERATURE),
+      maxTokens: DEFAULT_UNICA_MAX_TOKENS ? String(DEFAULT_UNICA_MAX_TOKENS) : "",
+    },
+  });
+
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/llm/providers"],
   });
@@ -225,6 +273,22 @@ export default function LlmProvidersPage() {
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
     [providers, selectedProviderId],
+  );
+
+  const unicaChatQuery = useQuery<UnicaChatConfigResponse>({
+    queryKey: ["/api/admin/unica-chat"],
+  });
+
+  const selectedUnicaProviderId = unicaForm.watch("llmProviderConfigId");
+
+  const selectedUnicaProvider = useMemo(
+    () => providers.find((provider) => provider.id === selectedUnicaProviderId) ?? null,
+    [providers, selectedUnicaProviderId],
+  );
+
+  const unicaProviderModelOptions = useMemo(
+    () => getProviderModelOptions(selectedUnicaProvider),
+    [selectedUnicaProvider],
   );
 
   const handleSelectProvider = (providerId: string) => {
@@ -454,6 +518,81 @@ export default function LlmProvidersPage() {
     });
   }, [isCreating, providerTypeValue]);
 
+  useEffect(() => {
+    const config = unicaChatQuery.data?.config;
+    if (!config) {
+      return;
+    }
+
+    const providerId = config.llmProviderConfigId ?? "";
+    const provider = providers.find((entry) => entry.id === providerId) ?? null;
+    const providerModels = getProviderModelOptions(provider);
+
+    const fallbackModel =
+      (config.modelId && config.modelId.trim().length > 0 ? config.modelId.trim() : "") ||
+      providerModels[0]?.value ||
+      provider?.model ||
+      "";
+
+    const fallbackPrompt =
+      config.systemPrompt && config.systemPrompt.length > 0
+        ? config.systemPrompt
+        : typeof provider?.requestConfig?.systemPrompt === "string"
+          ? provider.requestConfig.systemPrompt
+          : "";
+
+    const fallbackTemperature =
+      (typeof config.temperature === "number" && !Number.isNaN(config.temperature)
+        ? config.temperature
+        : undefined) ??
+      (typeof provider?.requestConfig?.temperature === "number"
+        ? provider.requestConfig.temperature
+        : undefined) ??
+      DEFAULT_UNICA_TEMPERATURE;
+
+    const fallbackMaxTokens =
+      (typeof config.maxTokens === "number" && !Number.isNaN(config.maxTokens)
+        ? config.maxTokens
+        : undefined) ??
+      (typeof provider?.requestConfig?.maxTokens === "number"
+        ? provider.requestConfig.maxTokens
+        : undefined) ??
+      DEFAULT_UNICA_MAX_TOKENS;
+
+    unicaForm.reset({
+      llmProviderConfigId: providerId,
+      modelId: fallbackModel,
+      systemPrompt: fallbackPrompt ?? "",
+      temperature:
+        typeof fallbackTemperature === "number" && !Number.isNaN(fallbackTemperature)
+          ? String(fallbackTemperature)
+          : "",
+      maxTokens:
+        typeof fallbackMaxTokens === "number" && !Number.isNaN(fallbackMaxTokens)
+          ? String(fallbackMaxTokens)
+          : "",
+    });
+  }, [unicaChatQuery.data, providers, unicaForm]);
+
+  useEffect(() => {
+    if (!selectedUnicaProvider) {
+      return;
+    }
+
+    const options = getProviderModelOptions(selectedUnicaProvider);
+    const currentModel = unicaForm.getValues("modelId");
+
+    if (currentModel && options.some((option) => option.value === currentModel)) {
+      return;
+    }
+
+    if (options.length > 0) {
+      unicaForm.setValue("modelId", options[0].value, { shouldDirty: true });
+    } else if (!currentModel && selectedUnicaProvider.model) {
+      unicaForm.setValue("modelId", selectedUnicaProvider.model, { shouldDirty: true });
+    }
+  }, [selectedUnicaProvider, unicaForm]);
+
   const updateProviderMutation = useMutation<
     { provider: PublicLlmProvider },
     Error,
@@ -546,6 +685,64 @@ export default function LlmProvidersPage() {
     },
   });
 
+  const updateUnicaChatMutation = useMutation<UnicaChatConfigResponse, Error, UnicaChatFormValues>({
+    mutationFn: async (values) => {
+      if (!values.llmProviderConfigId) {
+        throw new Error("Выберите провайдера LLM");
+      }
+
+      const trimmedPrompt = values.systemPrompt.trim();
+      const temperatureValue = values.temperature.trim();
+      const maxTokensValue = values.maxTokens.trim();
+
+      const parsedTemperature =
+        temperatureValue.length > 0 ? Number.parseFloat(temperatureValue) : undefined;
+      if (temperatureValue.length > 0 && Number.isNaN(parsedTemperature)) {
+        throw new Error("Некорректное значение температуры");
+      }
+
+      const parsedMaxTokens =
+        maxTokensValue.length > 0 ? Number.parseInt(maxTokensValue, 10) : undefined;
+      if (maxTokensValue.length > 0 && Number.isNaN(parsedMaxTokens)) {
+        throw new Error("Некорректное значение максимального числа токенов");
+      }
+
+      const payload = {
+        llmProviderConfigId: values.llmProviderConfigId,
+        modelId: values.modelId.trim() || undefined,
+        systemPrompt: trimmedPrompt,
+        temperature: parsedTemperature,
+        maxTokens: parsedMaxTokens,
+      };
+
+      const response = await apiRequest("PUT", "/api/admin/unica-chat", payload);
+      const body = (await response.json().catch(() => null)) as
+        | (UnicaChatConfigResponse & { message?: string })
+        | { message?: string }
+        | null;
+
+      if (!response.ok || !body || !("config" in body) || !body.config) {
+        throw new Error(body?.message ?? "Не удалось обновить настройки Unica Chat");
+      }
+
+      return { config: body.config };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/unica-chat"] });
+      toast({
+        title: "Настройки Unica Chat сохранены",
+        description: "Глобальные параметры системного навыка обновлены.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось сохранить настройки",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleUpdate = form.handleSubmit((values) => {
     if (!selectedProvider) {
       toast({
@@ -586,6 +783,14 @@ export default function LlmProvidersPage() {
         description: error instanceof Error ? error.message : "Исправьте ошибки и попробуйте снова.",
         variant: "destructive",
       });
+    }
+  });
+
+  const handleUnicaSubmit = unicaForm.handleSubmit(async (values) => {
+    try {
+      await updateUnicaChatMutation.mutateAsync(values);
+    } catch {
+      // уведомление показано в onError
     }
   });
 
@@ -1188,6 +1393,187 @@ export default function LlmProvidersPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader className="space-y-2">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="h-5 w-5 text-primary" />
+            <CardTitle>Настройки Unica Chat</CardTitle>
+          </div>
+          <CardDescription>
+            Глобальные параметры системного навыка Unica Chat. Эти настройки применяются для всех
+            рабочих пространств и переопределяют модель, температуру и системный промпт навыка.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {unicaChatQuery.isLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Загружаем текущие настройки...
+            </div>
+          ) : unicaChatQuery.isError ? (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+              {(unicaChatQuery.error as Error).message ?? "Не удалось получить настройки Unica Chat"}
+            </div>
+          ) : providers.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+              Сначала добавьте хотя бы один провайдер LLM, чтобы выбрать его для Unica Chat.
+            </div>
+          ) : (
+            <Form {...unicaForm}>
+              <form onSubmit={handleUnicaSubmit} className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FormField
+                    control={unicaForm.control}
+                    name="llmProviderConfigId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Провайдер LLM</FormLabel>
+                        <FormControl>
+                          <Select
+                            value={field.value}
+                            onValueChange={field.onChange}
+                            disabled={updateUnicaChatMutation.isPending}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Выберите провайдера" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {providers.map((provider) => (
+                                <SelectItem key={provider.id} value={provider.id}>
+                                  {provider.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        <FormDescription>
+                          Используемый провайдер LLM для Unica Chat. Настройки доступны только
+                          администраторам.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={unicaForm.control}
+                    name="modelId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Модель LLM</FormLabel>
+                        {unicaProviderModelOptions.length > 0 ? (
+                          <FormControl>
+                            <Select
+                              value={field.value}
+                              onValueChange={field.onChange}
+                              disabled={updateUnicaChatMutation.isPending}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Выберите модель" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {unicaProviderModelOptions.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </FormControl>
+                        ) : (
+                          <FormControl>
+                            <Input
+                              {...field}
+                              placeholder="Введите модель вручную"
+                              disabled={updateUnicaChatMutation.isPending}
+                            />
+                          </FormControl>
+                        )}
+                        <FormDescription>Модель, которая будет использоваться в Unica Chat.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={unicaForm.control}
+                  name="systemPrompt"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Системный промпт</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          rows={5}
+                          placeholder="Напишите инструкции для системного навыка"
+                          disabled={updateUnicaChatMutation.isPending}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Этот текст всегда отправляется в LLM перед пользовательским запросом.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FormField
+                    control={unicaForm.control}
+                    name="temperature"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Температура</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            type="number"
+                            step="0.05"
+                            min="0"
+                            max="2"
+                            placeholder={String(DEFAULT_UNICA_TEMPERATURE)}
+                            disabled={updateUnicaChatMutation.isPending}
+                          />
+                        </FormControl>
+                        <FormDescription>Определяет креативность и вариативность ответов.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={unicaForm.control}
+                    name="maxTokens"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Максимум токенов</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            type="number"
+                            min="16"
+                            placeholder={String(DEFAULT_UNICA_MAX_TOKENS)}
+                            disabled={updateUnicaChatMutation.isPending}
+                          />
+                        </FormControl>
+                        <FormDescription>Лимит на длину ответа LLM.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <Button type="submit" disabled={updateUnicaChatMutation.isPending}>
+                    {updateUnicaChatMutation.isPending ? "Сохраняем..." : "Сохранить настройки"}
+                  </Button>
+                </div>
+              </form>
+            </Form>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

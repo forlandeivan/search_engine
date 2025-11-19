@@ -49,7 +49,15 @@ import {
   createKnowledgeDocumentChunkSet,
   updateKnowledgeDocumentChunkVectorRecords,
 } from "./knowledge-chunks";
-import { listSkills, createSkill, updateSkill, deleteSkill, SkillServiceError, getSkillById } from "./skills";
+import {
+  listSkills,
+  createSkill,
+  updateSkill,
+  deleteSkill,
+  SkillServiceError,
+  getSkillById,
+  UNICA_CHAT_SYSTEM_KEY,
+} from "./skills";
 import passport from "passport";
 import bcrypt from "bcryptjs";
 import {
@@ -77,6 +85,7 @@ import {
   DEFAULT_LLM_RESPONSE_CONFIG,
   workspaceMemberRoles,
   type KnowledgeBaseAskAiPipelineStepLog,
+  type UnicaChatConfigInsert,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type { KnowledgeBaseSearchSettingsRow } from "@shared/schema";
@@ -3405,6 +3414,10 @@ async function runKnowledgeBaseRagPipeline(options: {
         throw new HttpError(404, "пїЅ?пїЅпїЅпїЅ?пїЅ<пїЅпїЅ пїЅ?пїЅпїЅ пїЅ?пїЅпїЅпїЅпїЅпїЅ?пїЅпїЅ?");
       }
 
+      if (skill.isSystem && skill.systemKey === UNICA_CHAT_SYSTEM_KEY) {
+        // TODO(forlandeivan): ????????? ?????????? ?????? Unica Chat ??? ?????? LLM/???????.
+      }
+
       effectiveTopK = skill.ragConfig.topK;
       effectiveMinScore = skill.ragConfig.minScore ?? 0;
       effectiveMaxContextTokens = skill.ragConfig.maxContextTokens ?? null;
@@ -6086,6 +6099,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     role: z.enum(workspaceMemberRoles),
   });
 
+  const updateUnicaChatConfigSchema = z.object({
+    llmProviderConfigId: z.string().trim().min(1, "�?������'�� ���?�?�?�����?��? LLM"),
+    modelId: z
+      .string()
+      .trim()
+      .max(200)
+      .optional()
+      .transform((value) => (value && value.length > 0 ? value : undefined)),
+    systemPrompt: z.string().max(20000).optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    topP: z.number().min(0).max(1).optional(),
+    maxTokens: z.number().int().min(16).max(65536).optional(),
+  });
+
   app.get("/api/workspaces", async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -6708,6 +6735,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
         source: "database" as const,
       });
     } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/unica-chat", requireAdmin, async (_req, res, next) => {
+    try {
+      const config = await storage.getUnicaChatConfig();
+      res.json({ config });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.put("/api/admin/unica-chat", requireAdmin, async (req, res, next) => {
+    try {
+      const payload = updateUnicaChatConfigSchema.parse(req.body ?? {});
+      const provider = await storage.getLlmProvider(payload.llmProviderConfigId);
+      if (!provider) {
+        return res.status(404).json({ message: "�?�?�?�?�����?��? LLM �?�� �?�����?��?" });
+      }
+
+      const updates: Partial<UnicaChatConfigInsert> = {
+        llmProviderConfigId: provider.id,
+      };
+
+      if (payload.modelId !== undefined) {
+        updates.modelId = payload.modelId;
+      }
+
+      if (payload.systemPrompt !== undefined) {
+        updates.systemPrompt = payload.systemPrompt;
+      }
+
+      if (payload.temperature !== undefined) {
+        updates.temperature = payload.temperature;
+      }
+
+      if (payload.topP !== undefined) {
+        updates.topP = payload.topP;
+      }
+
+      if (payload.maxTokens !== undefined) {
+        updates.maxTokens = payload.maxTokens;
+      }
+
+      const config = await storage.updateUnicaChatConfig(updates);
+
+      res.json({ config });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "�?���?�?�?���'�?�<�� �?���?�?�<��", details: error.issues });
+      }
       next(error);
     }
   });

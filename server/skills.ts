@@ -125,6 +125,8 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     modelId: row.modelId ?? null,
     llmProviderConfigId: row.llmProviderConfigId ?? null,
     collectionName: row.collectionName ?? null,
+    isSystem: Boolean(row.isSystem),
+    systemKey: row.systemKey ?? null,
     knowledgeBaseIds,
     ragConfig: {
       mode: normalizeRagModeFromValue(row.ragMode),
@@ -264,6 +266,10 @@ export async function createSkill(
   workspaceId: string,
   input: SkillEditableInput,
 ): Promise<SkillDto> {
+  
+
+
+
   const normalized = buildEditableColumns(input);
   const validKnowledgeBases = normalized.knowledgeBaseIds
     ? await filterWorkspaceKnowledgeBases(workspaceId, normalized.knowledgeBaseIds)
@@ -315,6 +321,10 @@ export async function updateSkill(
     throw new SkillServiceError("Навык не найден", 404);
   }
 
+  if (row.isSystem) {
+    throw new SkillServiceError("????????? ?????? ?????? ?????? ?? ?????? ???????? ????????????", 403);
+  }
+
   const normalized = buildEditableColumns(input);
   const updates: Partial<EditableSkillColumns> = {};
 
@@ -378,13 +388,44 @@ export async function updateSkill(
 }
 
 export async function deleteSkill(workspaceId: string, skillId: string): Promise<boolean> {
-  const result = await db
-    .delete(skills)
-    .where(and(eq(skills.workspaceId, workspaceId), eq(skills.id, skillId)))
-    .returning({ id: skills.id });
 
-  return result.length > 0;
+  const existing = await db
+
+    .select({ id: skills.id, isSystem: skills.isSystem })
+
+    .from(skills)
+
+    .where(and(eq(skills.workspaceId, workspaceId), eq(skills.id, skillId)))
+
+    .limit(1);
+
+
+
+  const row = existing[0];
+
+  if (!row) {
+
+    return false;
+
+  }
+
+
+
+  if (row.isSystem) {
+
+    throw new SkillServiceError("????????? ?????? ?????? ??????? ?? ???????? ????????????", 403);
+
+  }
+
+
+
+  await db.delete(skills).where(and(eq(skills.workspaceId, workspaceId), eq(skills.id, skillId)));
+
+  return true;
+
 }
+
+
 
 export async function getSkillById(
   workspaceId: string,
@@ -403,5 +444,44 @@ export async function getSkillById(
 
   const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
   return mapSkillRow(row, knowledgeBaseIds);
+}
+
+export const UNICA_CHAT_SYSTEM_KEY = "UNICA_CHAT";
+const UNICA_CHAT_DEFAULT_NAME = "Unica Chat";
+
+export async function createUnicaChatSkillForWorkspace(
+  workspaceId: string,
+): Promise<SkillDto | null> {
+  const existing = await db
+    .select()
+    .from(skills)
+    .where(and(eq(skills.workspaceId, workspaceId), eq(skills.systemKey, UNICA_CHAT_SYSTEM_KEY)))
+    .limit(1);
+
+  const existingRow = existing[0];
+  if (existingRow) {
+    const knowledgeBaseIds = await getSkillKnowledgeBaseIds(existingRow.id, workspaceId);
+    return mapSkillRow(existingRow, knowledgeBaseIds);
+  }
+
+  const ragConfig = { ...DEFAULT_RAG_CONFIG };
+
+  const [inserted] = await db
+    .insert(skills)
+    .values({
+      workspaceId,
+      name: UNICA_CHAT_DEFAULT_NAME,
+      isSystem: true,
+      systemKey: UNICA_CHAT_SYSTEM_KEY,
+      ragMode: ragConfig.mode,
+      ragCollectionIds: ragConfig.collectionIds,
+      ragTopK: ragConfig.topK,
+      ragMinScore: ragConfig.minScore,
+      ragMaxContextTokens: ragConfig.maxContextTokens,
+      ragShowSources: ragConfig.showSources,
+    })
+    .returning();
+
+  return mapSkillRow(inserted, []);
 }
 

@@ -696,6 +696,20 @@ export const llmProviders = pgTable("llm_providers", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+export const unicaChatConfig = pgTable("unica_chat_config", {
+  id: varchar("id").primaryKey().default("singleton"),
+  llmProviderConfigId: varchar("llm_provider_config_id").references(() => llmProviders.id, {
+    onDelete: "set null",
+  }),
+  modelId: text("model_id"),
+  systemPrompt: text("system_prompt").notNull().default(""),
+  temperature: doublePrecision("temperature").notNull().default(0.7),
+  topP: doublePrecision("top_p").notNull().default(1),
+  maxTokens: integer("max_tokens"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 export const skills = pgTable(
   "skills",
   {
@@ -711,6 +725,8 @@ export const skills = pgTable(
       .references(() => llmProviders.id, { onDelete: "set null" }),
     collectionName: text("collection_name")
       .references(() => workspaceVectorCollections.collectionName, { onDelete: "set null" }),
+    isSystem: boolean("is_system").notNull().default(false),
+    systemKey: text("system_key"),
     ragMode: text("rag_mode").notNull().default("all_collections"),
     ragCollectionIds: jsonb("rag_collection_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     ragTopK: integer("rag_top_k").notNull().default(5),
@@ -724,6 +740,10 @@ export const skills = pgTable(
     workspaceIdx: index("skills_workspace_idx").on(table.workspaceId),
     llmProviderConfigIdx: index("skills_llm_provider_config_idx").on(table.llmProviderConfigId),
     collectionIdx: index("skills_collection_name_idx").on(table.collectionName),
+    workspaceSystemKeyUnique: uniqueIndex("skills_workspace_system_key_unique_idx").on(
+      table.workspaceId,
+      table.systemKey,
+    ),
   }),
 );
 
@@ -1131,6 +1151,8 @@ export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "authorizationKey"
 };
 export type LlmProvider = typeof llmProviders.$inferSelect;
 export type LlmProviderInsert = typeof llmProviders.$inferInsert;
+export type UnicaChatConfig = typeof unicaChatConfig.$inferSelect;
+export type UnicaChatConfigInsert = typeof unicaChatConfig.$inferInsert;
 export type InsertLlmProvider = z.infer<typeof insertLlmProviderSchema>;
 export type UpdateLlmProvider = z.infer<typeof updateLlmProviderSchema>;
 export type PublicLlmProvider = Omit<LlmProvider, "authorizationKey" | "availableModels"> & {

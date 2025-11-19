@@ -19,6 +19,7 @@ import {
   knowledgeBaseRagRequests,
   knowledgeBaseSearchSettings,
   knowledgeBaseAskAiRuns,
+  unicaChatConfig,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
   type KnowledgeBaseRagSearchSettings,
@@ -32,6 +33,8 @@ import {
   type EmbeddingProviderInsert,
   type LlmProvider,
   type LlmProviderInsert,
+  type UnicaChatConfig,
+  type UnicaChatConfigInsert,
   type KnowledgeBaseAskAiRun,
   type KnowledgeBaseAskAiRunInsert,
   type Workspace,
@@ -44,6 +47,7 @@ import {
   type KnowledgeBaseRagRequest,
 } from "@shared/schema";
 import { db } from "./db";
+import { createUnicaChatSkillForWorkspace } from "./skills";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
@@ -778,6 +782,14 @@ export interface IStorage {
   ): Promise<LlmProvider | undefined>;
   deleteLlmProvider(id: string, workspaceId?: string): Promise<boolean>;
 
+  // Unica Chat configuration
+  getUnicaChatConfig(): Promise<UnicaChatConfig>;
+  updateUnicaChatConfig(
+    updates: Partial<
+      Pick<UnicaChatConfigInsert, "llmProviderConfigId" | "modelId" | "systemPrompt" | "temperature" | "topP" | "maxTokens">
+    >,
+  ): Promise<UnicaChatConfig>;
+
   // Knowledge base RAG telemetry
   recordKnowledgeBaseRagRequest(entry: {
     workspaceId: string;
@@ -837,6 +849,10 @@ let ensuringWorkspacesTable: Promise<void> | null = null;
 
 let workspaceMembersTableEnsured = false;
 let ensuringWorkspaceMembersTable: Promise<void> | null = null;
+
+let unicaChatConfigTableEnsured = false;
+let ensuringUnicaChatConfigTable: Promise<void> | null = null;
+const UNICA_CHAT_CONFIG_ID = "singleton";
 
 let workspaceCollectionsTableEnsured = false;
 let ensuringWorkspaceCollectionsTable: Promise<void> | null = null;
@@ -983,6 +999,45 @@ async function ensureWorkspaceMembersTable(): Promise<void> {
   })();
 
   await ensuringWorkspaceMembersTable;
+}
+
+async function ensureUnicaChatConfigTable(): Promise<void> {
+  if (unicaChatConfigTableEnsured) {
+    return;
+  }
+
+  if (ensuringUnicaChatConfigTable) {
+    await ensuringUnicaChatConfigTable;
+    return;
+  }
+
+  ensuringUnicaChatConfigTable = (async () => {
+    await ensureLlmProvidersTable();
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "unica_chat_config" (
+        "id" varchar PRIMARY KEY DEFAULT 'singleton',
+        "llm_provider_config_id" varchar REFERENCES "llm_providers"("id") ON DELETE SET NULL,
+        "model_id" text,
+        "system_prompt" text NOT NULL DEFAULT '',
+        "temperature" double precision NOT NULL DEFAULT 0.7,
+        "top_p" double precision NOT NULL DEFAULT 1,
+        "max_tokens" integer,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await db.execute(sql`
+      INSERT INTO "unica_chat_config" ("id", "system_prompt")
+      VALUES (${UNICA_CHAT_CONFIG_ID}, '')
+      ON CONFLICT ("id") DO NOTHING
+    `);
+
+    unicaChatConfigTableEnsured = true;
+  })();
+
+  await ensuringUnicaChatConfigTable;
+  ensuringUnicaChatConfigTable = null;
 }
 
 export async function ensureKnowledgeBaseTables(): Promise<void> {
@@ -4102,6 +4157,54 @@ export class DatabaseStorage implements IStorage {
     return deleted.length > 0;
   }
 
+  async getUnicaChatConfig(): Promise<UnicaChatConfig> {
+    await ensureUnicaChatConfigTable();
+    const [config] = await this.db.select().from(unicaChatConfig).limit(1);
+    if (config) {
+      return config;
+    }
+
+    const [inserted] = await this.db
+      .insert(unicaChatConfig)
+      .values({ id: UNICA_CHAT_CONFIG_ID, systemPrompt: "" })
+      .returning();
+
+    return inserted;
+  }
+
+  async updateUnicaChatConfig(
+    updates: Partial<
+      Pick<UnicaChatConfigInsert, "llmProviderConfigId" | "modelId" | "systemPrompt" | "temperature" | "topP" | "maxTokens">
+    >,
+  ): Promise<UnicaChatConfig> {
+    await ensureUnicaChatConfigTable();
+
+    const sanitized = Object.fromEntries(
+      Object.entries(updates).filter(([, value]) => value !== undefined),
+    ) as Partial<UnicaChatConfigInsert>;
+
+    if (Object.keys(sanitized).length === 0) {
+      return await this.getUnicaChatConfig();
+    }
+
+    const [updated] = await this.db
+      .update(unicaChatConfig)
+      .set({ ...sanitized, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(unicaChatConfig.id, UNICA_CHAT_CONFIG_ID))
+      .returning();
+
+    if (updated) {
+      return updated;
+    }
+
+    const [inserted] = await this.db
+      .insert(unicaChatConfig)
+      .values({ id: UNICA_CHAT_CONFIG_ID, ...sanitized })
+      .returning();
+
+    return inserted;
+  }
+
   async getUser(id: string): Promise<User | undefined> {
     await this.ensureUserAuthColumns();
     const [user] = await this.db.select().from(users).where(eq(users.id, id));
@@ -4467,6 +4570,12 @@ export class DatabaseStorage implements IStorage {
 
     if (!member) {
       throw new Error("Не удалось сохранить участника рабочего пространства");
+    }
+
+    try {
+      await createUnicaChatSkillForWorkspace(workspace.id);
+    } catch (error) {
+      console.error(`[WORKSPACES] Failed to create Unica Chat skill for workspace ${workspace.id}`, error);
     }
 
     return workspace;
