@@ -51,6 +51,7 @@ interface KnowledgeDocumentForVectorization {
   title: string;
   content: string;
   updatedAt?: string | null;
+  sourceUrl?: string | null;
   vectorization?: KnowledgeDocumentVectorization | null;
   chunkSet?: KnowledgeDocumentChunkSet | null;
 }
@@ -483,6 +484,7 @@ function buildDocumentContext(
       text,
       html: sanitizedHtml,
       path,
+      sourceUrl: document.sourceUrl ?? null,
       updatedAt: document.updatedAt ?? null,
       charCount,
       wordCount,
@@ -1043,6 +1045,7 @@ export function VectorizeKnowledgeDocumentDialog({
           text: documentText,
           html: sanitizedHtml,
           path: documentPath,
+          sourceUrl: document.sourceUrl ?? null,
           updatedAt: document.updatedAt ?? null,
           charCount: documentCharCount,
           wordCount: documentWordCount,

@@ -368,6 +368,7 @@ export type KnowledgeBaseDocumentDetail = {
   content: string;
   contentMarkdown?: string | null;
   contentPlainText?: string | null;
+  sourceUrl?: string | null;
   updatedAt: string;
   breadcrumbs: KnowledgeBaseBreadcrumb[];
   sourceType: KnowledgeNodeSourceType;

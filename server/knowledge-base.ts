@@ -689,6 +689,7 @@ export async function getKnowledgeNodeDetail(
     .select({
       documentId: knowledgeDocuments.id,
       status: knowledgeDocuments.status,
+      sourceUrl: knowledgeDocuments.sourceUrl,
       versionId: knowledgeDocumentVersions.id,
       versionNo: knowledgeDocumentVersions.versionNo,
       contentJson: knowledgeDocumentVersions.contentJson,
@@ -731,6 +732,7 @@ export async function getKnowledgeNodeDetail(
     content: contentHtml || contentPlainText,
     contentMarkdown,
     contentPlainText,
+    sourceUrl: documentRow?.sourceUrl ?? null,
     updatedAt: toIsoDate(versionCreatedAt),
     breadcrumbs: buildBreadcrumbs(base, node, nodesById),
     sourceType: resolveNodeSourceType(node),
