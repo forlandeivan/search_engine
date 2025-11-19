@@ -2905,7 +2905,7 @@ export class DatabaseStorage implements IStorage {
 
       if (typeof candidate === "string") {
         const normalized = candidate.trim();
-        if (normalized.length > 0) {
+        if (normalized.length > 0 && normalized.toLowerCase() !== "auto") {
           collectionNames.add(normalized);
         }
       }
