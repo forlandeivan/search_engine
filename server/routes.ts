@@ -10165,7 +10165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Health check endpoint for database diagnostics
   app.get("/api/health/db", async (req, res) => {
     try {
-      console.log("рџ"Ќ Database health check requested");
+      console.log("[health] Database health check requested");
       
       // Get database connection info (masked for security)
       const dbUrl = process.env.DATABASE_URL || 'not_set';
