@@ -1,3 +1,5 @@
+import type { SkillRagConfig } from "@shared/skills";
+
 export interface Skill {
   id: string;
   workspaceId: string;
@@ -8,6 +10,7 @@ export interface Skill {
   llmProviderConfigId?: string | null;
   collectionName?: string | null;
   knowledgeBaseIds?: string[];
+  ragConfig: SkillRagConfig;
   createdAt: string;
   updatedAt: string;
 }
@@ -20,4 +23,5 @@ export interface SkillPayload {
   llmProviderConfigId?: string | null;
   collectionName?: string | null;
   knowledgeBaseIds?: string[];
+  ragConfig?: SkillRagConfig;
 }
