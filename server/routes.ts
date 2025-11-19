@@ -3411,8 +3411,7 @@ async function runKnowledgeBaseRagPipeline(options: {
       if (skill.ragConfig.mode === "selected_collections") {
         skillCollectionFilter = normalizeCollectionList(skill.ragConfig.collectionIds);
       } else {
-        const workspaceCollections = await storage.listWorkspaceCollections(base.workspaceId);
-        skillCollectionFilter = normalizeCollectionList(workspaceCollections);
+        skillCollectionFilter = [];
       }
       recomputeLimits();
 
