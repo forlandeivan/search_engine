@@ -151,7 +151,7 @@ function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }:
 
   const buttonLabel = selectedBases.length
     ? `${selectedBases[0].name}${selectedBases.length > 1 ? ` +${selectedBases.length - 1}` : ""}`
-    : "Р’С‹Р±РµСЂРёС‚Рµ Р±Р°Р·С‹ Р·РЅР°РЅРёР№";
+    : "Выберите базы знаний";
 
   const toggle = (id: string) => {
     if (selectedSet.has(id)) {
@@ -173,16 +173,16 @@ function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }:
             aria-expanded={open}
             disabled={disabled || knowledgeBases.length === 0}
           >
-            <span className="truncate">{knowledgeBases.length === 0 ? "РќРµС‚ РґРѕСЃС‚СѓРїРЅС‹С… Р±Р°Р·" : buttonLabel}</span>
+            <span className="truncate">{knowledgeBases.length === 0 ? "Нет доступных баз" : buttonLabel}</span>
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-[360px] p-0">
           <Command>
-            <CommandInput placeholder="РџРѕРёСЃРє РїРѕ РЅР°Р·РІР°РЅРёСЋ..." />
+            <CommandInput placeholder="Поиск по названию..." />
             <CommandList>
-              <CommandEmpty>РќРёС‡РµРіРѕ РЅРµ РЅР°Р№РґРµРЅРѕ</CommandEmpty>
-              <CommandGroup heading="Р‘Р°Р·С‹ Р·РЅР°РЅРёР№">
+              <CommandEmpty>Ничего не найдено</CommandEmpty>
+              <CommandGroup heading="Базы знаний">
                 {knowledgeBases.map((kb) => {
                   const isSelected = selectedSet.has(kb.id);
                   return (
@@ -432,9 +432,9 @@ function SkillFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{skill ? "Р РµРґР°РєС‚РёСЂРѕРІР°РЅРёРµ РЅР°РІС‹РєР°" : "РЎРѕР·РґР°РЅРёРµ РЅР°РІС‹РєР°"}</DialogTitle>
+          <DialogTitle>{skill ? "Редактирование навыка" : "Создание навыка"}</DialogTitle>
           <DialogDescription>
-            РќР°СЃС‚СЂРѕР№С‚Рµ РїР°СЂР°РјРµС‚СЂС‹ РЅР°РІС‹РєР°: РІС‹Р±РµСЂРёС‚Рµ СЃРІСЏР·Р°РЅРЅС‹Рµ Р±Р°Р·С‹ Р·РЅР°РЅРёР№, РјРѕРґРµР»СЊ LLM Рё РѕРїС†РёРѕРЅР°Р»СЊРЅРѕ СЃРёСЃС‚РµРјРЅС‹Р№ РїСЂРѕРјРїС‚.
+            Настройте параметры навыка: выберите связанные базы знаний, модель LLM и при необходимости системный промпт.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -444,11 +444,11 @@ function SkillFormDialog({
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>РќР°Р·РІР°РЅРёРµ</FormLabel>
+                  <FormLabel>Название</FormLabel>
                   <FormControl>
-                    <Input {...field} placeholder="РќР°РїСЂРёРјРµСЂ, РџРѕРґРґРµСЂР¶РєР° РєР»РёРµРЅС‚РѕРІ" />
+                    <Input {...field} placeholder="Например, Поддержка клиентов" />
                   </FormControl>
-                  <FormDescription>Р­С‚Рѕ РёРјСЏ Р±СѓРґРµС‚ РѕС‚РѕР±СЂР°Р¶Р°С‚СЊСЃСЏ РІ СЃРїРёСЃРєРµ РЅР°РІС‹РєРѕРІ.</FormDescription>
+                  <FormDescription>Это имя будет отображаться в списке навыков.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -458,15 +458,15 @@ function SkillFormDialog({
               name="description"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>РћРїРёСЃР°РЅРёРµ</FormLabel>
+                  <FormLabel>Описание</FormLabel>
                   <FormControl>
                     <Textarea
                       {...field}
-                      placeholder="РљСЂР°С‚РєРѕ РѕРїРёС€РёС‚Рµ РЅР°Р·РЅР°С‡РµРЅРёРµ РЅР°РІС‹РєР°"
+                      placeholder="Кратко опишите назначение навыка"
                       rows={3}
                     />
                   </FormControl>
-                  <FormDescription>РџРѕРјРѕРіР°РµС‚ РєРѕР»Р»РµРіР°Рј РїРѕРЅРёРјР°С‚СЊ, РєРѕРіРґР° РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РЅР°РІС‹Рє.</FormDescription>
+                  <FormDescription>Помогает коллегам понимать, когда использовать навык.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -476,7 +476,7 @@ function SkillFormDialog({
               name="knowledgeBaseIds"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Р‘Р°Р·С‹ Р·РЅР°РЅРёР№</FormLabel>
+                  <FormLabel>Базы знаний</FormLabel>
                   <FormControl>
                     <KnowledgeBaseMultiSelect
                       value={field.value}
@@ -486,7 +486,7 @@ function SkillFormDialog({
                     />
                   </FormControl>
                   <FormDescription>
-                    РќР°РІС‹Рє Р±СѓРґРµС‚ РёСЃРєР°С‚СЊ РѕС‚РІРµС‚С‹ С‚РѕР»СЊРєРѕ РІ РІС‹Р±СЂР°РЅРЅС‹С… Р±Р°Р·Р°С… Р·РЅР°РЅРёР№.
+                    Навык будет искать ответы только в выбранных базах знаний.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -497,11 +497,11 @@ function SkillFormDialog({
               name="llmKey"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>LLM РїСЂРѕРІР°Р№РґРµСЂ Рё РјРѕРґРµР»СЊ</FormLabel>
+                  <FormLabel>LLM провайдер и модель</FormLabel>
                   <FormControl>
                     <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Р’С‹Р±РµСЂРёС‚Рµ РјРѕРґРµР»СЊ" />
+                        <SelectValue placeholder="Выберите модель" />
                       </SelectTrigger>
                       <SelectContent>
                         {effectiveLlmOptions.map((option) => (
@@ -509,7 +509,7 @@ function SkillFormDialog({
                             <div className="flex flex-col gap-0.5">
                               <span>{option.label}</span>
                               {!option.providerIsActive && (
-                                <span className="text-xs text-muted-foreground">РџСЂРѕРІР°Р№РґРµСЂ РѕС‚РєР»СЋС‡С‘РЅ</span>
+                                <span className="text-xs text-muted-foreground">Провайдер отключён</span>
                               )}
                             </div>
                           </SelectItem>
@@ -517,7 +517,7 @@ function SkillFormDialog({
                       </SelectContent>
                     </Select>
                   </FormControl>
-                  <FormDescription>РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ РіРµРЅРµСЂР°С‚РёРІРЅС‹С… РѕС‚РІРµС‚РѕРІ РЅР°РІС‹РєР°.</FormDescription>
+                  <FormDescription>Используется для генеративных ответов навыка.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -675,7 +675,7 @@ function SkillFormDialog({
                   <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
                     <div className="space-y-0.5">
                       <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
-                      <FormDescription>Показывает пользователю документы и ссылки, из которых взяты чанк�.</FormDescription>
+                    <FormDescription>Показывает пользователю документы и ссылки, из которых взяты чанки.</FormDescription>
                     </div>
                     <FormControl>
                       <Switch checked={field.value} onCheckedChange={field.onChange} />
@@ -689,25 +689,25 @@ function SkillFormDialog({
               name="systemPrompt"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>РЎРёСЃС‚РµРјРЅС‹Р№ РїСЂРѕРјРїС‚</FormLabel>
+                  <FormLabel>Системный промпт</FormLabel>
                   <FormControl>
                     <Textarea
                       {...field}
                       rows={4}
-                      placeholder="Р”РѕР±Р°РІСЊС‚Рµ РёРЅСЃС‚СЂСѓРєС†РёРё РґР»СЏ РјРѕРґРµР»Рё"
+                      placeholder="Добавьте инструкции для модели"
                     />
                   </FormControl>
-                  <FormDescription>РћРїС†РёРѕРЅР°Р»СЊРЅС‹Рµ РёРЅСЃС‚СЂСѓРєС†РёРё, РєРѕС‚РѕСЂС‹Рµ РІСЃРµРіРґР° Р±СѓРґСѓС‚ РѕС‚РїСЂР°РІР»СЏС‚СЊСЃСЏ РІ LLM.</FormDescription>
+                  <FormDescription>Опциональные инструкции, которые всегда будут отправляться в LLM.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
-                РћС‚РјРµРЅРёС‚СЊ
+                Отменить
               </Button>
               <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? "РЎРѕС…СЂР°РЅСЏРµРј..." : "РЎРѕС…СЂР°РЅРёС‚СЊ"}
+                {isSubmitting ? "Сохраняем..." : "Сохранить"}
               </Button>
             </DialogFooter>
           </form>
@@ -754,12 +754,12 @@ export default function SkillsPage() {
 
   const { createSkill, isCreating } = useCreateSkill({
     onSuccess: () => {
-      toast({ title: "РќР°РІС‹Рє СЃРѕС…СЂР°РЅС‘РЅ" });
+      toast({ title: "Навык сохранён" });
     },
   });
   const { updateSkill, isUpdating } = useUpdateSkill({
     onSuccess: () => {
-      toast({ title: "РќР°РІС‹Рє СЃРѕС…СЂР°РЅС‘РЅ" });
+      toast({ title: "Навык сохранён" });
     },
   });
 
@@ -813,10 +813,10 @@ export default function SkillsPage() {
 
   const creationDisabledReason = (() => {
     if (knowledgeBases.length === 0) {
-      return "РЎРЅР°С‡Р°Р»Р° СЃРѕР·РґР°Р№С‚Рµ С…РѕС‚СЏ Р±С‹ РѕРґРЅСѓ Р±Р°Р·Сѓ Р·РЅР°РЅРёР№.";
+      return "Сначала создайте хотя бы одну базу знаний.";
     }
     if (llmOptions.length === 0) {
-      return "РџРѕРґРєР»СЋС‡РёС‚Рµ Р°РєС‚РёРІРЅРѕРіРѕ LLM РїСЂРѕРІР°Р№РґРµСЂР° Рё РјРѕРґРµР»СЊ.";
+      return "Подключите активного провайдера LLM и модель.";
     }
     return null;
   })();
@@ -897,9 +897,9 @@ export default function SkillsPage() {
       }
       handleDialogChange(false);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "РќРµРёР·РІРµСЃС‚РЅР°СЏ РѕС€РёР±РєР°";
+      const message = err instanceof Error ? err.message : "Неизвестная ошибка";
       toast({
-        title: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°РІС‹Рє",
+        title: "Не удалось сохранить навык",
         description: message,
         variant: "destructive",
       });
@@ -909,7 +909,7 @@ export default function SkillsPage() {
   const renderKnowledgeBases = (skill: Skill) => {
     const ids = skill.knowledgeBaseIds ?? [];
     if (ids.length === 0) {
-      return <span className="text-sm text-muted-foreground">РќРµ РІС‹Р±СЂР°РЅРѕ</span>;
+      return <span className="text-sm text-muted-foreground">Не выбрано</span>;
     }
 
     return (
@@ -928,7 +928,7 @@ export default function SkillsPage() {
 
   const renderLlmInfo = (skill: Skill) => {
     if (!skill.llmProviderConfigId || !skill.modelId) {
-      return <span className="text-sm text-muted-foreground">РќРµ Р·Р°РґР°РЅРѕ</span>;
+      return <span className="text-sm text-muted-foreground">Не задано</span>;
     }
 
     const key = buildLlmKey(skill.llmProviderConfigId, skill.modelId);
@@ -939,7 +939,7 @@ export default function SkillsPage() {
     return (
       <div className="space-y-1">
         <p className="text-sm font-medium leading-tight">{label}</p>
-        {!isActive && <p className="text-xs text-muted-foreground">РџСЂРѕРІР°Р№РґРµСЂ РѕС‚РєР»СЋС‡С‘РЅ</p>}
+        {!isActive && <p className="text-xs text-muted-foreground">Провайдер отключён</p>}
       </div>
     );
   };
@@ -952,16 +952,16 @@ export default function SkillsPage() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="inline-flex items-center gap-2 text-sm font-medium text-primary">
-            <Sparkles className="h-4 w-4" /> РќР°РІС‹РєРё Р°СЃСЃРёСЃС‚РµРЅС‚Р°
+            <Sparkles className="h-4 w-4" /> Навыки ассистента
           </div>
-          <h1 className="text-2xl font-semibold">РќР°РІС‹РєРё</h1>
+          <h1 className="text-2xl font-semibold">Навыки</h1>
           <p className="text-sm text-muted-foreground">
-            РЈРїСЂР°РІР»СЏР№С‚Рµ СЃС†РµРЅР°СЂРёСЏРјРё СЂР°Р±РѕС‚С‹ РР-Р°СЃСЃРёСЃС‚РµРЅС‚Р°: РѕРїСЂРµРґРµР»СЏР№С‚Рµ, РєР°РєРёРµ Р±Р°Р·С‹ Р·РЅР°РЅРёР№ Рё РјРѕРґРµР»СЊ LLM РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РІ РєР°Р¶РґРѕРј РєРµР№СЃРµ.
+            Управляйте сценариями работы ИИ-ассистента: определяйте, какие базы знаний и модель LLM использовать в каждом кейсе.
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <Button onClick={openCreateDialog} disabled={Boolean(creationDisabledReason)}>
-            <Plus className="mr-2 h-4 w-4" /> РЎРѕР·РґР°С‚СЊ РЅР°РІС‹Рє
+            <Plus className="mr-2 h-4 w-4" /> Создать навык
           </Button>
           {creationDisabledReason && (
             <p className="text-xs text-muted-foreground text-right max-w-xs">{creationDisabledReason}</p>
@@ -980,27 +980,27 @@ export default function SkillsPage() {
 
       <Card>
         <CardHeader className="py-4">
-          <CardTitle className="text-base">РЎРїРёСЃРѕРє РЅР°РІС‹РєРѕРІ</CardTitle>
-          <CardDescription>РќР°Р·РІР°РЅРёРµ, РѕРїРёСЃР°РЅРёРµ, СЃРІСЏР·Р°РЅРЅС‹Рµ Р±Р°Р·С‹ Рё РІС‹Р±СЂР°РЅРЅР°СЏ LLM РјРѕРґРµР»СЊ.</CardDescription>
+          <CardTitle className="text-base">Список навыков</CardTitle>
+          <CardDescription>Название, описание, связанные базы и выбранная модель LLM.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {showLoadingState ? (
             <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Р—Р°РіСЂСѓР·РєР° РґР°РЅРЅС‹С…...
+              <Loader2 className="h-4 w-4 animate-spin" /> Загрузка данных...
             </div>
           ) : skills.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">
-              РџРѕРєР° РЅРµС‚ РЅРё РѕРґРЅРѕРіРѕ РЅР°РІС‹РєР° вЂ” СЃРѕР·РґР°Р№С‚Рµ РїРµСЂРІС‹Р№, С‡С‚РѕР±С‹ СѓСЃРєРѕСЂРёС‚СЊ РѕС‚РІРµС‚С‹ Р°СЃСЃРёСЃС‚РµРЅС‚Р°.
+              Пока нет ни одного навыка — создайте первый, чтобы ускорить ответы ассистента.
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[220px]">РќР°Р·РІР°РЅРёРµ</TableHead>
-                  <TableHead>РћРїРёСЃР°РЅРёРµ</TableHead>
-                  <TableHead className="w-[240px]">Р‘Р°Р·С‹ Р·РЅР°РЅРёР№</TableHead>
-                  <TableHead className="w-[240px]">LLM РјРѕРґРµР»СЊ</TableHead>
-                  <TableHead className="w-[140px]">РћР±РЅРѕРІР»РµРЅРѕ</TableHead>
+                  <TableHead className="w-[220px]">Название</TableHead>
+                  <TableHead>Описание</TableHead>
+                  <TableHead className="w-[240px]">Базы знаний</TableHead>
+                  <TableHead className="w-[240px]">LLM модель</TableHead>
+                  <TableHead className="w-[140px]">Обновлено</TableHead>
                   <TableHead className="w-[80px]" />
                 </TableRow>
               </TableHeader>
@@ -1009,7 +1009,7 @@ export default function SkillsPage() {
                   <TableRow key={skill.id}>
                     <TableCell>
                       <div className="space-y-1">
-                        <p className="font-semibold leading-tight">{skill.name ?? "Р‘РµР· РЅР°Р·РІР°РЅРёСЏ"}</p>
+                        <p className="font-semibold leading-tight">{skill.name ?? "Без названия"}</p>
                         <p className="text-xs text-muted-foreground">ID: {skill.id}</p>
                       </div>
                     </TableCell>
@@ -1017,7 +1017,7 @@ export default function SkillsPage() {
                       {skill.description ? (
                         <p className="text-sm text-muted-foreground line-clamp-3">{skill.description}</p>
                       ) : (
-                        <span className="text-sm text-muted-foreground">РќРµС‚ РѕРїРёСЃР°РЅРёСЏ</span>
+                        <span className="text-sm text-muted-foreground">Нет описания</span>
                       )}
                     </TableCell>
                     <TableCell>{renderKnowledgeBases(skill)}</TableCell>
@@ -1029,7 +1029,7 @@ export default function SkillsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" onClick={() => handleEditClick(skill)}>
-                        <Pencil className="mr-2 h-4 w-4" /> Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ
+                        <Pencil className="mr-2 h-4 w-4" /> Редактировать
                       </Button>
                     </TableCell>
                   </TableRow>
