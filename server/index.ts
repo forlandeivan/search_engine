@@ -300,9 +300,10 @@ function validateProductionSecrets(): void {
     }
     
     app.use(express.static(staticDir));
-    
+
     // Fallback to index.html for client-side routing (exclude API routes)
     app.get(/^(?!\/api).*/, (_req, res) => {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.sendFile(path.resolve(staticDir, "index.html"));
     });
   }
