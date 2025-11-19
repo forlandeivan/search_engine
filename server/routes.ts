@@ -3597,6 +3597,11 @@ async function runKnowledgeBaseRagPipeline(options: {
             collectionName,
             knowledgeBaseId,
           );
+          const embedDomains = await storage.listWorkspaceEmbedKeyDomains(embedKey.id, workspaceId);
+          const embedOriginDomain =
+            embedDomains.find((entry) => typeof entry.domain === "string" && entry.domain.trim().length > 0)
+              ?.domain?.trim() ?? null;
+          const embedOriginHeader = embedOriginDomain ? `https://${embedOriginDomain}` : null;
 
           const vectorRequestPayload = removeUndefinedDeep({
             collection: collectionName,
@@ -3629,6 +3634,9 @@ async function runKnowledgeBaseRagPipeline(options: {
               headers: {
                 "Content-Type": "application/json",
                 "X-API-Key": embedKey.publicKey,
+                ...(embedOriginHeader
+                  ? { "X-Embed-Origin": embedOriginHeader, Origin: embedOriginHeader }
+                  : {}),
               },
               body: JSON.stringify(vectorRequestPayload),
             });

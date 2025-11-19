@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, Loader2, RefreshCcw } from "lucide-react";
+import { AlertCircle, ArrowLeft, Clipboard, ClipboardCheck, Loader2, RefreshCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -123,6 +123,19 @@ function RunsTable({
   onRetry: () => void;
   onSelect: (run: KnowledgeBaseAskAiRunSummary) => void;
 }) {
+  const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
+
+  const handleCopyRunId = async (runId: string) => {
+    try {
+      await navigator.clipboard.writeText(runId);
+      setCopiedRunId(runId);
+      window.setTimeout(() => {
+        setCopiedRunId((current) => (current === runId ? null : current));
+      }, 2000);
+    } catch (copyError) {
+      console.error("Не удалось скопировать идентификатор запуска", copyError);
+    }
+  };
   if (error) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
@@ -163,6 +176,7 @@ function RunsTable({
           <TableRow>
             <TableHead className="w-[160px]">Дата</TableHead>
             <TableHead>Промпт</TableHead>
+            <TableHead className="w-[190px]">ID запуска</TableHead>
             <TableHead className="w-[90px] text-right">Статус</TableHead>
             <TableHead className="w-[110px] text-right">Статьи</TableHead>
             <TableHead className="w-[110px] text-right">Токены</TableHead>
@@ -180,6 +194,30 @@ function RunsTable({
             <TableCell>
               <div className="truncate text-sm" title={run.prompt}>
                 {run.prompt}
+              </div>
+            </TableCell>
+            <TableCell>
+              <div className="flex items-center gap-2">
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground" title={run.id}>
+                  {run.id.slice(0, 6)}…{run.id.slice(-4)}
+                </code>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleCopyRunId(run.id);
+                  }}
+                >
+                  {copiedRunId === run.id ? (
+                    <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" />
+                  ) : (
+                    <Clipboard className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  {copiedRunId === run.id ? "Скопировано" : "Копировать"}
+                </Button>
               </div>
             </TableCell>
             <TableCell className="text-right">

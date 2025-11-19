@@ -432,7 +432,7 @@ export const qdrantIntegrationConfigSchema = z.object({
     .trim()
     .min(1, "Укажите коллекцию Qdrant")
     .optional(),
-  vectorFieldName: z.string().trim().min(1).default("vector"),
+  vectorFieldName: z.string().trim().min(1).optional(),
   payloadFields: z.record(z.string()).default({}),
   vectorSize: z
     .union([z.number().int().positive(), z.string().trim().min(1)])
@@ -499,7 +499,6 @@ export const DEFAULT_EMBEDDING_RESPONSE_CONFIG: EmbeddingResponseConfig = {
 };
 
 export const DEFAULT_QDRANT_CONFIG: QdrantIntegrationConfig = {
-  vectorFieldName: "vector",
   payloadFields: {},
   upsertMode: "replace",
 };
