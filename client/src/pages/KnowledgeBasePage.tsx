@@ -3409,6 +3409,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             id: vectorizeDialogState.document.documentId ?? vectorizeDialogState.document.id,
             title: vectorizeDialogState.document.title,
             content: vectorizeDialogState.document.content,
+            sourceUrl: vectorizeDialogState.document.sourceUrl ?? null,
             updatedAt: vectorizeDialogState.document.updatedAt,
             chunkSet: vectorizeDialogState.document.chunkSet ?? undefined,
           }}
