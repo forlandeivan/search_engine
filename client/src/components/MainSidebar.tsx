@@ -106,8 +106,8 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
   const getTestId = (item: SidebarItem) =>
     `link-${item.title
       .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/С‘/g, 'Рµ')}`;
+      .replace(/\s+/g, "-")
+      .replace(/ё/g, "е")}`;
 
   const renderMenuButton = (item: SidebarItem) => {
     const collapsedTooltip = item.locked
@@ -115,7 +115,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
           children: (
             <div className="space-y-1">
               <p className="text-sm font-medium leading-none">{item.title}</p>
-              <p className="text-xs text-muted-foreground">Р”РѕСЃС‚СѓРїРЅРѕ РІ РїР»Р°С‚РЅРѕР№ РІРµСЂСЃРёРё</p>
+              <p className="text-xs text-muted-foreground">Доступно в платной версии</p>
             </div>
           ),
         }
@@ -148,7 +148,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
             isCollapsed && "justify-center"
           )}
           disabled
-          tooltip={isCollapsed ? collapsedTooltip : "Р”РѕСЃС‚СѓРїРЅРѕ РІ РїР»Р°С‚РЅРѕР№ РІРµСЂСЃРёРё"}
+          tooltip={isCollapsed ? collapsedTooltip : "Доступно в платной версии"}
           data-testid={getTestId(item)}
         >
           {content}
@@ -178,27 +178,27 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
 
   const sections: Array<{ label: string; items: SidebarItem[] }> = [
     {
-      label: "РќР°РІРёРіР°С†РёСЏ",
+      label: "Навигация",
       items: [
         {
-          title: "Р”Р°С€Р±РѕСЂРґ",
+          title: "Дашборд",
           url: "/",
           icon: LayoutDashboard,
         },
         {
-          title: "Р“Р»РѕР±Р°Р»СЊРЅС‹Р№ РїРѕРёСЃРє",
+          title: "Глобальный поиск",
           url: "/search",
           icon: Search,
         },
         {
-          title: "Р‘Р°Р·С‹ Р·РЅР°РЅРёР№",
+          title: "Базы знаний",
           url: "/knowledge",
           icon: Brain,
           badge: knowledgeBaseCount.toString(),
           badgeVariant: "secondary",
         },
         {
-          title: "РќР°РІС‹РєРё",
+          title: "Навыки",
           url: "/skills",
           icon: Sparkles,
         },
@@ -210,40 +210,40 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
       ],
     },
     {
-      label: "Р”Р°РЅРЅС‹Рµ",
+      label: "Данные",
       items: [
         {
-          title: "РљРѕР»Р»РµРєС†РёРё",
+          title: "Коллекции",
           url: "/vector/collections",
           icon: Boxes,
         },
         {
-          title: "Р”РѕРєСѓРјРµРЅС‚Р°С†РёСЏ API",
+          title: "Документация API",
           url: "/integrations/api",
           icon: BookOpen,
         },
       ],
     },
     {
-      label: "Р’РёРґР¶РµС‚С‹",
+      label: "Виджеты",
       items: [
         {
-          title: "Р§Р°С‚-РІРёРґР¶РµС‚",
+          title: "Чат-виджет",
           url: "/integrations/widget",
           icon: Bot,
         },
       ],
     },
     {
-      label: "Р Р°Р±РѕС‡РµРµ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІРѕ",
+      label: "Рабочее пространство",
       items: [
         {
-          title: "РЈС‡Р°СЃС‚РЅРёРєРё",
+          title: "Участники",
           url: "/workspaces/members",
           icon: Users,
         },
         {
-          title: "РќР°СЃС‚СЂРѕР№РєРё",
+          title: "Настройки",
           url: "/settings",
           icon: Settings,
           locked: true,
@@ -254,7 +254,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
 
   if (showAdminLink) {
     sections[sections.length - 1].items.push({
-      title: "РђРґРјРёРЅРёСЃС‚СЂРёСЂРѕРІР°РЅРёРµ",
+      title: "Администрирование",
       url: "/admin/workspaces",
       icon: Shield,
     });
@@ -273,12 +273,12 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
             <div className="flex items-center gap-3">
               <img
                 src="/branding/logo.svg"
-                alt="Р›РѕРіРѕС‚РёРї AI KMS"
+                alt="Логотип AI KMS"
                 className="h-9 w-9"
               />
               <div>
                 <h2 className="text-lg font-semibold">AI KMS</h2>
-                <p className="text-sm text-muted-foreground">Р Р°Р±РѕС‡РµРµ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІРѕ</p>
+                <p className="text-sm text-muted-foreground">Рабочее пространство</p>
               </div>
             </div>
             <Button
@@ -286,7 +286,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
               size="icon"
               className="h-8 w-8"
               onClick={toggleSidebar}
-              aria-label={state === "expanded" ? "РЎРІРµСЂРЅСѓС‚СЊ РјРµРЅСЋ" : "Р Р°Р·РІРµСЂРЅСѓС‚СЊ РјРµРЅСЋ"}
+              aria-label={state === "expanded" ? "Свернуть меню" : "Развернуть меню"}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -336,7 +336,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
                 />
                 {!isCollapsed && (
                   <div className="flex min-w-0 flex-col text-left leading-tight">
-                    <span className="text-sm font-medium">РџСЂРѕС„РёР»СЊ</span>
+                    <span className="text-sm font-medium">Профиль</span>
                     <span className="text-xs text-muted-foreground truncate">{user.fullName}</span>
                     <span className="text-[11px] text-muted-foreground/70 truncate">{user.email}</span>
                   </div>
@@ -347,7 +347,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
         </SidebarMenu>
         <SidebarTrigger
           className={isCollapsed ? "h-8 w-8 self-center p-0" : "w-full justify-center"}
-          aria-label="РџРµСЂРµРєР»СЋС‡РёС‚СЊ РјРµРЅСЋ"
+          aria-label="Переключить меню"
         />
       </SidebarFooter>
     </Sidebar>
