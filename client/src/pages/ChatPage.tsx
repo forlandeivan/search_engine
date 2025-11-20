@@ -1,7 +1,17 @@
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import ChatSidebar from "@/components/chat/ChatSidebar";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
+import ChatSidebar from "@/components/chat/ChatSidebar";
+import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
+import ChatInput from "@/components/chat/ChatInput";
+import {
+  useChats,
+  useChatMessages,
+  useCreateChat,
+  sendChatMessageLLM,
+} from "@/hooks/useChats";
+import { useSkills } from "@/hooks/useSkills";
+import type { ChatMessage } from "@/types/chat";
 
 type ChatPageParams = {
   workspaceId?: string;
@@ -14,75 +24,203 @@ type ChatPageProps = {
 
 export default function ChatPage({ params }: ChatPageProps) {
   const workspaceId = params?.workspaceId ?? "";
-  const chatId = params?.chatId ?? "";
+  const routeChatId = params?.chatId ?? "";
   const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
 
-  const hasActiveChat = Boolean(chatId);
+  const [overrideChatId, setOverrideChatId] = useState<string | null>(null);
+  const effectiveChatId = routeChatId || overrideChatId || null;
 
-  const handleSelectChat = (nextChatId: string | null) => {
-    if (!workspaceId) {
-      return;
+  const { chats } = useChats(workspaceId);
+  const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
+
+  const { skills } = useSkills({ enabled: Boolean(workspaceId) });
+  const defaultSkill = useMemo(
+    () => skills.find((skill) => skill.isSystem && skill.systemKey === "UNICA_CHAT") ?? null,
+    [skills],
+  );
+  const activeSkill =
+    (activeChat && skills.find((skill) => skill.id === activeChat.skillId)) ?? defaultSkill;
+
+  const {
+    messages: fetchedMessages,
+    isLoading: isMessagesLoading,
+  } = useChatMessages(
+    effectiveChatId ?? undefined,
+    workspaceId ? workspaceId : undefined,
+  );
+
+  const [localChatId, setLocalChatId] = useState<string | null>(null);
+  const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
+
+  const { createChat } = useCreateChat();
+
+  useEffect(() => {
+    setOverrideChatId(null);
+  }, [routeChatId]);
+
+  useEffect(() => {
+    if (localChatId !== effectiveChatId) {
+      setLocalChatId(effectiveChatId);
+      setLocalMessages([]);
+      setStreamError(null);
+      setIsStreaming(false);
     }
-    if (nextChatId) {
-      navigate(`/workspaces/${workspaceId}/chat/${nextChatId}`);
-    } else {
-      navigate(`/workspaces/${workspaceId}/chat`);
+  }, [effectiveChatId, localChatId]);
+
+  const visibleMessages =
+    effectiveChatId && localChatId === effectiveChatId
+      ? [...(fetchedMessages ?? []), ...localMessages]
+      : fetchedMessages ?? [];
+
+  const handleSelectChat = useCallback(
+    (nextChatId: string | null) => {
+      if (!workspaceId) {
+        return;
+      }
+      setStreamError(null);
+      if (nextChatId) {
+        navigate(`/workspaces/${workspaceId}/chat/${nextChatId}`);
+      } else {
+        navigate(`/workspaces/${workspaceId}/chat`);
+      }
+    },
+    [navigate, workspaceId],
+  );
+
+  const streamMessage = useCallback(
+    async (targetChatId: string, content: string) => {
+      if (!workspaceId) {
+        return;
+      }
+    const userMessage = buildLocalMessage("user", targetChatId, content);
+    const assistantMessage = buildLocalMessage("assistant", targetChatId, "");
+    setLocalChatId(targetChatId);
+    setLocalMessages([userMessage, assistantMessage]);
+    setIsStreaming(true);
+
+    try {
+      await sendChatMessageLLM({
+        chatId: targetChatId,
+        workspaceId,
+        content,
+        handlers: {
+          onDelta: (delta) => {
+            setLocalMessages((prev) =>
+              prev.map((message) =>
+                message.id === assistantMessage.id
+                  ? { ...message, content: `${message.content}${delta}` }
+                  : message,
+              ),
+            );
+          },
+          onDone: async () => {
+            setLocalMessages([]);
+            await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+          },
+          onError: (error) => {
+            setStreamError(error.message);
+          },
+        },
+      });
+    } catch (error) {
+      setStreamError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsStreaming(false);
     }
-  };
+  },
+    [queryClient, workspaceId],
+  );
+
+  const handleSend = useCallback(
+    async (content: string) => {
+      if (!workspaceId || isStreaming) {
+        return;
+      }
+      setStreamError(null);
+
+      const targetChatId = effectiveChatId;
+      if (targetChatId) {
+        await streamMessage(targetChatId, content);
+        return;
+      }
+
+      if (!defaultSkill) {
+        setStreamError("Не найден системный навык Unica Chat.");
+        return;
+      }
+
+      try {
+        const newChat = await createChat({
+          workspaceId,
+          skillId: defaultSkill.id,
+        });
+        setOverrideChatId(newChat.id);
+        handleSelectChat(newChat.id);
+        await streamMessage(newChat.id, content);
+      } catch (error) {
+        setStreamError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [
+      workspaceId,
+      isStreaming,
+      effectiveChatId,
+      defaultSkill,
+      createChat,
+      handleSelectChat,
+      streamMessage,
+    ],
+  );
+
+  const isNewChat = !effectiveChatId;
+  const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
+  const chatTitle = activeChat?.title ?? null;
 
   return (
     <div className="flex h-full flex-col bg-muted/20">
       <div className="flex h-full">
         <ChatSidebar
           workspaceId={workspaceId}
-          selectedChatId={chatId}
+          selectedChatId={effectiveChatId ?? undefined}
           onSelectChat={handleSelectChat}
           onCreateNewChat={() => handleSelectChat(null)}
         />
         <section className="flex flex-1 flex-col">
-          {hasActiveChat ? (
-            <ExistingChatPlaceholder chatId={chatId} />
-          ) : (
-            <NewChatPlaceholder workspaceId={workspaceId} />
-          )}
+          <ChatMessagesArea
+            chatTitle={chatTitle}
+            skillName={skillLabel}
+            messages={visibleMessages}
+            isLoading={isMessagesLoading && !isNewChat}
+            isNewChat={isNewChat}
+            isStreaming={isStreaming}
+            streamError={streamError}
+          />
+          <ChatInput
+            onSend={handleSend}
+            disabled={!workspaceId || isStreaming}
+            placeholder={
+              isNewChat ? "Начните с первого вопроса..." : "Введите сообщение и нажмите Enter"
+            }
+          />
         </section>
       </div>
     </div>
   );
 }
 
-function NewChatPlaceholder({ workspaceId }: { workspaceId?: string }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-6 px-8 text-center">
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">Workspace: {workspaceId || "не выбран"}</p>
-        <h1 className="text-2xl font-semibold">Начните новый диалог</h1>
-        <p className="text-muted-foreground">
-          По умолчанию будет использоваться системный навык Unica Chat. Вы сможете выбрать другой навык и увидеть историю, как только начнёте переписку.
-        </p>
-      </div>
-
-      <div className="w-full max-w-2xl space-y-3 rounded-xl border bg-white p-6 text-left shadow-sm dark:bg-slate-900/40">
-        <p className="text-sm font-medium">Навык: Unica Chat</p>
-        <Textarea rows={4} placeholder="Напишите первый вопрос..." />
-        <div className="flex justify-end">
-          <Button disabled>Отправить</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ExistingChatPlaceholder({ chatId }: { chatId: string }) {
-  return (
-    <div className="flex h-full flex-col">
-      <header className="border-b bg-white/80 px-6 py-4 dark:bg-slate-900/40">
-        <p className="text-sm text-muted-foreground">Чат</p>
-        <h1 className="text-xl font-semibold">История беседы #{chatId}</h1>
-      </header>
-      <div className="flex flex-1 items-center justify-center px-6 text-center text-muted-foreground">
-        Здесь будет история выбранного диалога и поток сообщений.
-      </div>
-    </div>
-  );
+function buildLocalMessage(
+  role: ChatMessage["role"],
+  chatId: string,
+  content: string,
+): ChatMessage {
+  return {
+    id: `local-${role}-${Date.now()}`,
+    chatId,
+    role,
+    content,
+    createdAt: new Date().toISOString(),
+  };
 }

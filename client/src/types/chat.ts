@@ -14,3 +14,11 @@ export type ChatPayload = {
   skillId: string;
   title?: string;
 };
+
+export type ChatMessage = {
+  id: string;
+  chatId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: string;
+};
