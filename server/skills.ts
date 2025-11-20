@@ -235,11 +235,29 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
 }
 
 export async function listSkills(workspaceId: string): Promise<SkillDto[]> {
-  const rows: SkillRow[] = await db
-    .select()
-    .from(skills)
-    .where(eq(skills.workspaceId, workspaceId))
-    .orderBy(asc(skills.createdAt));
+  const fetchSkillsForWorkspace = async (): Promise<SkillRow[]> =>
+    await db
+      .select()
+      .from(skills)
+      .where(eq(skills.workspaceId, workspaceId))
+      .orderBy(asc(skills.createdAt));
+
+  let rows: SkillRow[] = await fetchSkillsForWorkspace();
+
+  const hasUnicaChat = rows.some((row) => row.isSystem && row.systemKey === UNICA_CHAT_SYSTEM_KEY);
+  if (!hasUnicaChat) {
+    try {
+      const ensured = await createUnicaChatSkillForWorkspace(workspaceId);
+      if (ensured) {
+        rows = await fetchSkillsForWorkspace();
+      }
+    } catch (error) {
+      console.error(
+        `[skills] Не удалось создать системный навык Unica Chat для workspace ${workspaceId}`,
+        error,
+      );
+    }
+  }
 
   if (rows.length === 0) {
     return [];
