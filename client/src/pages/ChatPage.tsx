@@ -22,6 +22,13 @@ type ChatPageProps = {
   params?: ChatPageParams;
 };
 
+const isDev = import.meta.env.DEV;
+const debugLog = (...args: unknown[]) => {
+  if (isDev) {
+    console.info(...args);
+  }
+};
+
 export default function ChatPage({ params }: ChatPageProps) {
   const workspaceId = params?.workspaceId ?? "";
   const routeChatId = params?.chatId ?? "";
@@ -63,6 +70,13 @@ export default function ChatPage({ params }: ChatPageProps) {
   useEffect(() => {
     setOverrideChatId(null);
   }, [routeChatId]);
+
+  useEffect(() => {
+    if (isDev) {
+      (window as typeof window & { __chatWorkspaceId?: string | null }).__chatWorkspaceId =
+        workspaceId || null;
+    }
+  }, [workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) {
@@ -127,11 +141,12 @@ export default function ChatPage({ params }: ChatPageProps) {
       if (!workspaceId) {
         return;
       }
-    const userMessage = buildLocalMessage("user", targetChatId, content);
-    const assistantMessage = buildLocalMessage("assistant", targetChatId, "");
-    setLocalChatId(targetChatId);
-    setLocalMessages([userMessage, assistantMessage]);
-    setIsStreaming(true);
+      debugLog("[chat] streamMessage start", { chatId: targetChatId, workspaceId });
+      const userMessage = buildLocalMessage("user", targetChatId, content);
+      const assistantMessage = buildLocalMessage("assistant", targetChatId, "");
+      setLocalChatId(targetChatId);
+      setLocalMessages([userMessage, assistantMessage]);
+      setIsStreaming(true);
 
     try {
       await sendChatMessageLLM({
@@ -151,13 +166,16 @@ export default function ChatPage({ params }: ChatPageProps) {
           onDone: async () => {
             setLocalMessages([]);
             await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+            debugLog("[chat] streamMessage finished", { chatId: targetChatId });
           },
           onError: (error) => {
+            debugLog("[chat] streamMessage error", error);
             setStreamError(error.message);
           },
         },
       });
     } catch (error) {
+      debugLog("[chat] streamMessage failure", error);
       setStreamError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsStreaming(false);
@@ -169,30 +187,32 @@ export default function ChatPage({ params }: ChatPageProps) {
   const handleSend = useCallback(
     async (content: string) => {
       if (!workspaceId || isStreaming) {
+        debugLog("[chat] handleSend skipped", { workspaceId, isStreaming });
         return;
       }
       setStreamError(null);
 
       const targetChatId = effectiveChatId;
       if (targetChatId) {
+        debugLog("[chat] sending message to existing chat", { chatId: targetChatId });
         await streamMessage(targetChatId, content);
-        return;
-      }
-
-      if (!defaultSkill) {
-        setStreamError("Не найден системный навык Unica Chat.");
         return;
       }
 
       try {
         const newChat = await createChat({
           workspaceId,
-          skillId: defaultSkill.id,
+          skillId: defaultSkill?.id,
         });
+        debugLog("[chat] created new chat", { chatId: newChat.id });
         setOverrideChatId(newChat.id);
-        handleSelectChat(newChat.id);
-        await streamMessage(newChat.id, content);
+        try {
+          await streamMessage(newChat.id, content);
+        } finally {
+          handleSelectChat(newChat.id);
+        }
       } catch (error) {
+        debugLog("[chat] failed to create chat", error);
         setStreamError(error instanceof Error ? error.message : String(error));
       }
     },

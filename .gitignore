@@ -14,3 +14,9 @@ text_tsv_output.txt
 suggest.json
 dev-server.log
 
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

@@ -15,6 +15,12 @@ import {
   type NodeFetchOptions,
 } from "./http-utils";
 
+const USE_MOCK_LLM = process.env.MOCK_LLM_RESPONSES === "1";
+
+if (USE_MOCK_LLM) {
+  console.warn("[llm] MOCK_LLM_RESPONSES enabled: using mock completions");
+}
+
 export interface LlmCompletionResult {
   answer: string;
   usageTokens?: number | null;
@@ -160,6 +166,88 @@ function getValueByJsonPath(source: unknown, path: string): unknown {
   return current;
 }
 
+const MOCK_STREAM_DELAY_MS = 25;
+const MOCK_STREAM_CHUNK_SIZE = 32;
+
+function extractLastUserMessage(body: Record<string, unknown>): string | null {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const entry = messages[index];
+    if (
+      entry &&
+      typeof entry === "object" &&
+      (entry as { role?: unknown }).role === "user" &&
+      typeof (entry as { content?: unknown }).content === "string"
+    ) {
+      return (entry as { content: string }).content.trim();
+    }
+  }
+  return null;
+}
+
+async function delay(ms: number) {
+  if (ms <= 0) {
+    return;
+  }
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function chunkText(text: string, chunkSize: number): string[] {
+  if (chunkSize <= 0) {
+    return [text];
+  }
+  const chunks: string[] = [];
+  for (let index = 0; index < text.length; index += chunkSize) {
+    chunks.push(text.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function createMockLlmCompletion(
+  provider: LlmProvider,
+  body: Record<string, unknown>,
+  wantsStream: boolean,
+): LlmCompletionPromise {
+  const prompt = extractLastUserMessage(body);
+  const answer =
+    prompt && prompt.length > 0
+      ? `Это тестовый ответ на запрос "${prompt}".\n\n(Ответ сгенерирован в mock-режиме без обращения к внешнему LLM.)`
+      : "Тестовый ответ от mock-LLM. Уточните вопрос, и я сгенерирую заглушку.";
+
+  const requestLog: ApiRequestLog = {
+    url: provider.completionUrl,
+    headers: {},
+    body,
+  };
+
+  if (!wantsStream) {
+    const result: LlmCompletionResult = {
+      answer,
+      usageTokens: answer.length,
+      rawResponse: { mock: true },
+      request: requestLog,
+    };
+    return Promise.resolve(result);
+  }
+
+  const controller = createAsyncStreamController<LlmStreamEvent>();
+  const streamPromise = (async () => {
+    for (const chunk of chunkText(answer, MOCK_STREAM_CHUNK_SIZE)) {
+      controller.push({ event: "delta", data: { text: chunk } });
+      await delay(MOCK_STREAM_DELAY_MS);
+    }
+    controller.finish();
+    return {
+      answer,
+      usageTokens: answer.length,
+      rawResponse: { mock: true },
+      request: requestLog,
+    };
+  })();
+
+  return Object.assign(streamPromise, { streamIterator: controller.iterator });
+}
+
 type ExecuteOptions = {
   stream?: boolean;
   responseFormat?: RagResponseFormat;
@@ -178,6 +266,14 @@ export function executeLlmCompletion(
   }
 
   const wantsStream = body.stream === true;
+
+  if (USE_MOCK_LLM) {
+    console.info(
+      `[llm] provider=${provider.id} stream=${wantsStream ? "yes" : "no"} mock response`,
+    );
+    return createMockLlmCompletion(provider, body, wantsStream);
+  }
+
   const llmHeaders = new Headers();
   llmHeaders.set("Content-Type", "application/json");
   llmHeaders.set("Accept", wantsStream ? "text/event-stream, application/json" : "application/json");
@@ -195,6 +291,10 @@ export function executeLlmCompletion(
   }
 
   const streamController = wantsStream ? createAsyncStreamController<LlmStreamEvent>() : null;
+
+  console.info(
+    `[llm] provider=${provider.id} stream=${wantsStream ? "yes" : "no"} request started`,
+  );
 
   const completionPromise = (async () => {
     let completionResponse: FetchResponse;
@@ -216,6 +316,11 @@ export function executeLlmCompletion(
       });
 
       completionResponse = await fetch(provider.completionUrl, requestOptions);
+      console.info(
+        `[llm] provider=${provider.id} response status=${completionResponse.status} content-type=${completionResponse.headers.get(
+          "content-type",
+        ) ?? "unknown"}`,
+      );
     } catch (error) {
       streamController?.fail(error);
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -265,6 +370,7 @@ export function executeLlmCompletion(
       let streamCompleted = false;
 
       try {
+        console.info(`[llm] provider=${provider.id} SSE stream started`);
         while (true) {
           const chunk = await reader.read();
           if (chunk.done) {
@@ -325,6 +431,7 @@ export function executeLlmCompletion(
       }
 
       streamController?.finish();
+      console.info(`[llm] provider=${provider.id} SSE stream completed`);
       return {
         answer: aggregatedAnswer,
         usageTokens,
@@ -386,6 +493,8 @@ export function executeLlmCompletion(
     }
 
     streamController?.finish();
+    console.info(`[llm] provider=${provider.id} sync completion ready`);
+
     return {
       answer,
       usageTokens,

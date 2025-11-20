@@ -11,7 +11,7 @@ export type ChatSummary = {
 
 export type ChatPayload = {
   workspaceId: string;
-  skillId: string;
+  skillId?: string;
   title?: string;
 };
 

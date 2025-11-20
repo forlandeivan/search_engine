@@ -52,6 +52,7 @@ import {
   SkillServiceError,
   getSkillById,
   UNICA_CHAT_SYSTEM_KEY,
+  createUnicaChatSkillForWorkspace,
 } from "./skills";
 import {
   listUserChats,
@@ -1735,7 +1736,83 @@ type OAuthProviderConfig = Pick<
   "tokenUrl" | "authorizationKey" | "scope" | "requestHeaders" | "allowSelfSignedCertificate"
 >;
 
+type CachedAccessToken = {
+  token: string;
+  expiresAt: number;
+};
+
+const oauthTokenCache = new Map<string, CachedAccessToken>();
+const oauthTokenPromises = new Map<string, Promise<string>>();
+const OAUTH_TOKEN_EXPIRY_FALLBACK_MS = 55 * 60 * 1000;
+const OAUTH_TOKEN_EXPIRY_MIN_MS = 30_000;
+const OAUTH_TOKEN_EXPIRY_SAFETY_MS = 10_000;
+
+function buildOAuthCacheKey(provider: OAuthProviderConfig): string {
+  const sortedHeaders = Object.entries(provider.requestHeaders ?? {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  return JSON.stringify({
+    tokenUrl: provider.tokenUrl,
+    authorizationKey: provider.authorizationKey,
+    scope: provider.scope ?? "",
+    headers: sortedHeaders,
+  });
+}
+
 async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> {
+  const cacheKey = buildOAuthCacheKey(provider);
+  const now = Date.now();
+  const cachedToken = oauthTokenCache.get(cacheKey);
+
+  if (cachedToken && cachedToken.expiresAt > now) {
+    return cachedToken.token;
+  }
+
+  const pendingToken = oauthTokenPromises.get(cacheKey);
+  if (pendingToken) {
+    return pendingToken;
+  }
+
+  const fallbackSeconds = Math.floor(OAUTH_TOKEN_EXPIRY_FALLBACK_MS / 1000);
+  const fallbackBaseMs = fallbackSeconds * 1000 - OAUTH_TOKEN_EXPIRY_SAFETY_MS;
+  const fallbackTtlMs = Math.max(OAUTH_TOKEN_EXPIRY_MIN_MS, fallbackBaseMs);
+
+  const tokenPromise = requestAccessToken(provider)
+    .then(({ token, expiresInSeconds }) => {
+      let ttlMs = fallbackTtlMs;
+      if (typeof expiresInSeconds === "number" && Number.isFinite(expiresInSeconds)) {
+        if (expiresInSeconds <= 0) {
+          ttlMs = 0;
+        } else {
+          const baseMs = Math.max(0, expiresInSeconds * 1000 - OAUTH_TOKEN_EXPIRY_SAFETY_MS);
+          ttlMs = Math.max(1_000, baseMs);
+        }
+      }
+      if (ttlMs > 0) {
+        oauthTokenCache.set(cacheKey, { token, expiresAt: Date.now() + ttlMs });
+      } else {
+        oauthTokenCache.delete(cacheKey);
+      }
+      return token;
+    })
+    .catch((error) => {
+      oauthTokenCache.delete(cacheKey);
+      throw error;
+    });
+
+  oauthTokenPromises.set(cacheKey, tokenPromise);
+
+  try {
+    return await tokenPromise;
+  } finally {
+    oauthTokenPromises.delete(cacheKey);
+  }
+}
+
+
+async function requestAccessToken(
+  provider: OAuthProviderConfig,
+): Promise<{ token: string; expiresInSeconds?: number }> {
   const tokenHeaders = new Headers();
   const rawAuthorizationKey = provider.authorizationKey.trim();
   const hasAuthScheme = /^(?:[A-Za-z]+)\s+\S+/.test(rawAuthorizationKey);
@@ -1781,18 +1858,18 @@ async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> 
       errorMessage.toLowerCase().includes("self-signed certificate")
     ) {
       throw new Error(
-        "Не удалось подключиться к сервису: сертификат не прошёл проверку. Включите доверие самоподписанным сертификатам и повторите попытку.",
+        "?? ????? ??????????? ? ????: ?????? ?? ???? ?????. ?????? ????? ?????????? ?????? ? ?????? ??????.",
       );
     }
 
-    throw new Error(`Не удалось выполнить запрос для получения токена: ${errorMessage}`);
+    throw new Error(`?? ????? ??????? ????? ??? ??????? ????: ${errorMessage}`);
   }
 
   const rawBody = await tokenResponse.text();
   const parsedBody = parseJson(rawBody);
 
   if (!tokenResponse.ok) {
-    let message = `Сервис вернул статус ${tokenResponse.status}`;
+    let message = `???? ???? ????? ${tokenResponse.status}`;
 
     if (parsedBody && typeof parsedBody === "object") {
       const body = parsedBody as Record<string, unknown>;
@@ -1805,7 +1882,7 @@ async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> 
       message = parsedBody.trim();
     }
 
-    throw new Error(`Ошибка на этапе получения токена: ${message}`);
+    throw new Error(`???? ?? ??? ??????? ????: ${message}`);
   }
 
   if (parsedBody && typeof parsedBody === "object") {
@@ -1813,11 +1890,15 @@ async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> 
     const token = body.access_token;
 
     if (typeof token === "string" && token.trim()) {
-      return token;
+      const expiresIn =
+        typeof body.expires_in === "number" && Number.isFinite(body.expires_in)
+          ? Math.max(0, body.expires_in)
+          : undefined;
+      return { token, expiresInSeconds: expiresIn };
     }
   }
 
-  throw new Error("Сервис не вернул access_token");
+  throw new Error("???? ?? ???? access_token");
 }
 
 async function fetchEmbeddingVector(
@@ -3913,6 +3994,13 @@ function buildExcerpt(content: string | null | undefined, query: string, maxLeng
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  const httpDebug = process.env.DEBUG_HTTP === "1";
+  if (httpDebug) {
+    app.use((req, _res, next) => {
+      console.warn(`[http] ${req.method} ${req.url}`);
+      next();
+    });
+  }
   const isGoogleAuthEnabled = () => Boolean(app.get("googleAuthConfigured"));
   const isYandexAuthEnabled = () => Boolean(app.get("yandexAuthConfigured"));
 
@@ -5699,7 +5787,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const createChatSessionSchema = z.object({
     workspaceId: z.string().trim().min(1, "Укажите рабочее пространство").optional(),
-    skillId: z.string().trim().min(1, "Укажите навык"),
+    skillId: z
+      .string()
+      .trim()
+      .min(1, "?????? ????")
+      .optional(),
     title: z.string().trim().max(200).optional(),
   });
 
@@ -7464,10 +7556,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const payload = createChatSessionSchema.parse(req.body ?? {});
       const workspaceId = resolveWorkspaceIdForRequest(req, payload.workspaceId ?? null);
+      let resolvedSkillId = payload.skillId?.trim() ?? "";
+      if (!resolvedSkillId) {
+        const systemSkill = await createUnicaChatSkillForWorkspace(workspaceId);
+        if (!systemSkill) {
+          throw new HttpError(500, "�� 㤠���� ��������� ��⥬�� ���� Unica Chat");
+        }
+        resolvedSkillId = systemSkill.id;
+      }
+      console.info(
+        `[chat] create session user=${user.id} workspace=${workspaceId} skill=${resolvedSkillId}`,
+      );
       const chat = await createChat({
         workspaceId,
         userId: user.id,
-        skillId: payload.skillId,
+        skillId: resolvedSkillId,
         title: payload.title,
       });
       res.status(201).json({ chat });
@@ -7535,6 +7638,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     }
 
+    let resolvedWorkspaceId: string | null = null;
+
     try {
       const payload = createChatMessageSchema.parse(req.body ?? {});
       const workspaceCandidate = pickFirstString(
@@ -7567,6 +7672,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept.toLowerCase() : "";
     let streamingResponseStarted = false;
+    let resolvedWorkspaceId: string | null = null;
 
     try {
       const payload = createChatMessageSchema.parse(req.body ?? {});
@@ -7576,7 +7682,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         req.query.workspace_id,
       );
       const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      resolvedWorkspaceId = workspaceId;
       const wantsStream = payload.stream === true || acceptHeader.includes("text/event-stream");
+
+      console.info(
+        `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} incoming message`,
+      );
 
       const userMessage = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
       const context = await buildChatLlmContext(req.params.chatId, workspaceId, user.id);
@@ -7589,6 +7700,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.setHeader("Cache-Control", "no-cache, no-transform");
         res.setHeader("Connection", "keep-alive");
         res.setHeader("X-Accel-Buffering", "no");
+
+        console.info(
+          `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} streaming response`,
+        );
 
         const completionPromise = executeLlmCompletion(context.provider, accessToken, requestBody, { stream: true });
         const streamIterator = completionPromise.streamIterator;
@@ -7606,6 +7721,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             workspaceId,
             user.id,
             completion.answer,
+          );
+          console.info(
+            `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} streaming finished`,
           );
           sendSseEvent(res, "done", {
             assistantMessageId: assistantMessage.id,
@@ -7634,6 +7752,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         user.id,
         completion.answer,
       );
+      console.info(
+        `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} sync response finished`,
+      );
       res.json({
         message: assistantMessage,
         userMessage,
@@ -7645,6 +7766,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.end();
         return;
       }
+      console.error(
+        `[chat] user=${user?.id ?? "unknown"} workspace=${resolvedWorkspaceId ?? "unknown"} chat=${
+          req.params.chatId
+        } failed: ${getErrorDetails(error)}`,
+      );
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Некорректные параметры запроса", details: error.issues });
       }
