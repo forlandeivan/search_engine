@@ -448,15 +448,10 @@ function SkillFormDialog({
           </DialogDescription>
 
           {isSystemSkill && (
-
             <Alert variant="default">
-
-              <AlertTitle>????????? ?????</AlertTitle>
-
+              <AlertTitle>Системный навык</AlertTitle>
               <AlertDescription>{systemSkillDescription}</AlertDescription>
-
             </Alert>
-
           )}
         </DialogHeader>
         <Form {...form}>
@@ -734,7 +729,7 @@ function SkillFormDialog({
               </Button>
               <Button type="submit" disabled={isSubmitting || isSystemSkill}>
 
-                {isSystemSkill ? "??????????" : isSubmitting ? "?????..." : "???????"}
+                {isSystemSkill ? "Недоступно" : isSubmitting ? "Сохраняем..." : "Сохранить"}
 
               </Button>
             </DialogFooter>
@@ -1053,14 +1048,12 @@ export default function SkillsPage() {
 
                         <div className="flex items-center gap-2">
 
-                          <p className="font-semibold leading-tight">{skill.name ?? "??? ????????"}</p>
+                          <p className="font-semibold leading-tight">{skill.name ?? "Без названия"}</p>
 
                           {skill.isSystem && (
 
                             <Badge variant="outline" className="text-[10px] uppercase">
-
-                              ?????????
-
+                              Системный
                             </Badge>
 
                           )}
@@ -1087,18 +1080,24 @@ export default function SkillsPage() {
                       </p>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleEditClick(skill)}
-                        disabled={skill.isSystem}
-                        title={
-                          skill.isSystem
-                            ? "????????? ????? ????????????? ??????????????? ????????"
-                            : undefined
-                        }
-                      >
-                        <Pencil className="mr-2 h-4 w-4" /> ??????????
+                      <Button
+
+                        variant="ghost"
+
+                        size="sm"
+
+                        onClick={() => handleEditClick(skill)}
+
+                        disabled={skill.isSystem}
+
+                        title={
+                          skill.isSystem
+                            ? "Системные навыки редактируются администратором инстанса"
+                            : undefined
+                        }
+                      >
+                        <Pencil className="mr-2 h-4 w-4" /> Редактировать
+
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -1123,5 +1122,6 @@ export default function SkillsPage() {
     </div>
   );
 }
+
 
 
