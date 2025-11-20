@@ -120,7 +120,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
             : "rounded-bl-none bg-white text-foreground dark:bg-slate-900",
         )}
       >
-        <MarkdownRenderer content={message.content || ""} />
+        <MarkdownRenderer markdown={message.content || ""} />
         <p className="text-right text-xs text-muted-foreground">
           {message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : ""}
         </p>
