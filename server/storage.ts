@@ -9,6 +9,7 @@ import {
   workspaceMembers,
   workspaceVectorCollections,
   workspaceMemberRoles,
+  skills,
   knowledgeBases,
   knowledgeNodes,
   knowledgeDocuments,
@@ -20,6 +21,8 @@ import {
   knowledgeBaseSearchSettings,
   knowledgeBaseAskAiRuns,
   unicaChatConfig,
+  chatSessions,
+  chatMessages,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
   type KnowledgeBaseRagSearchSettings,
@@ -45,10 +48,14 @@ import {
   type WorkspaceEmbedKey,
   type WorkspaceEmbedKeyDomain,
   type KnowledgeBaseRagRequest,
+  type ChatSession,
+  type ChatSessionInsert,
+  type ChatMessage,
+  type ChatMessageInsert,
 } from "@shared/schema";
 import { db } from "./db";
 import { createUnicaChatSkillForWorkspace } from "./skills";
-import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
 import type {
@@ -833,6 +840,22 @@ export interface IStorage {
     workspaceId: string,
     knowledgeBaseId: string,
   ): Promise<KnowledgeBaseAskAiRunDetail | null>;
+
+  listChatSessions(
+    workspaceId: string,
+    userId: string,
+    searchQuery?: string,
+  ): Promise<Array<ChatSession & { skillName: string | null; skillIsSystem: boolean }>>;
+  getChatSessionById(chatId: string): Promise<(ChatSession & { skillName: string | null }) | null>;
+  createChatSession(values: ChatSessionInsert): Promise<ChatSession>;
+  updateChatSession(
+    chatId: string,
+    updates: Partial<Pick<ChatSessionInsert, "title">>,
+  ): Promise<ChatSession | null>;
+  touchChatSession(chatId: string): Promise<void>;
+  softDeleteChatSession(chatId: string): Promise<boolean>;
+  listChatMessages(chatId: string): Promise<ChatMessage[]>;
+  createChatMessage(values: ChatMessageInsert): Promise<ChatMessage>;
 }
 
 let embeddingProvidersTableEnsured = false;
@@ -853,6 +876,11 @@ let ensuringWorkspaceMembersTable: Promise<void> | null = null;
 let unicaChatConfigTableEnsured = false;
 let ensuringUnicaChatConfigTable: Promise<void> | null = null;
 const UNICA_CHAT_CONFIG_ID = "singleton";
+
+let chatSessionsTableEnsured = false;
+let ensuringChatSessionsTable: Promise<void> | null = null;
+let chatMessagesTableEnsured = false;
+let ensuringChatMessagesTable: Promise<void> | null = null;
 
 let workspaceCollectionsTableEnsured = false;
 let ensuringWorkspaceCollectionsTable: Promise<void> | null = null;
@@ -1038,6 +1066,114 @@ async function ensureUnicaChatConfigTable(): Promise<void> {
 
   await ensuringUnicaChatConfigTable;
   ensuringUnicaChatConfigTable = null;
+}
+
+async function ensureChatSessionsTable(): Promise<void> {
+  if (chatSessionsTableEnsured) {
+    return;
+  }
+
+  if (ensuringChatSessionsTable) {
+    await ensuringChatSessionsTable;
+    return;
+  }
+
+  ensuringChatSessionsTable = (async () => {
+    await ensureWorkspacesTable();
+    await ensureWorkspaceMembersTable();
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "chat_sessions" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "workspace_id" varchar NOT NULL,
+        "user_id" varchar NOT NULL,
+        "skill_id" varchar NOT NULL,
+        "title" text NOT NULL DEFAULT '',
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "deleted_at" timestamp
+      )
+    `);
+
+    await ensureConstraint(
+      "chat_sessions",
+      "chat_sessions_workspace_id_fkey",
+      sql`
+        ALTER TABLE "chat_sessions"
+        ADD CONSTRAINT "chat_sessions_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "chat_sessions",
+      "chat_sessions_user_id_fkey",
+      sql`
+        ALTER TABLE "chat_sessions"
+        ADD CONSTRAINT "chat_sessions_user_id_fkey"
+        FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "chat_sessions",
+      "chat_sessions_skill_id_fkey",
+      sql`
+        ALTER TABLE "chat_sessions"
+        ADD CONSTRAINT "chat_sessions_skill_id_fkey"
+        FOREIGN KEY ("skill_id") REFERENCES "skills"("id") ON DELETE CASCADE
+      `,
+    );
+
+    chatSessionsTableEnsured = true;
+  })();
+
+  await ensuringChatSessionsTable;
+  ensuringChatSessionsTable = null;
+}
+
+async function ensureChatMessagesTable(): Promise<void> {
+  if (chatMessagesTableEnsured) {
+    return;
+  }
+
+  if (ensuringChatMessagesTable) {
+    await ensuringChatMessagesTable;
+    return;
+  }
+
+  ensuringChatMessagesTable = (async () => {
+    await ensureChatSessionsTable();
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "chat_messages" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "chat_id" varchar NOT NULL,
+        "role" text NOT NULL,
+        "content" text NOT NULL,
+        "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "chat_messages",
+      "chat_messages_chat_id_fkey",
+      sql`
+        ALTER TABLE "chat_messages"
+        ADD CONSTRAINT "chat_messages_chat_id_fkey"
+        FOREIGN KEY ("chat_id") REFERENCES "chat_sessions"("id") ON DELETE CASCADE
+      `,
+    );
+
+    chatMessagesTableEnsured = true;
+  })();
+
+  await ensuringChatMessagesTable;
+  ensuringChatMessagesTable = null;
+}
+
+async function ensureChatTables(): Promise<void> {
+  await ensureChatSessionsTable();
+  await ensureChatMessagesTable();
 }
 
 export async function ensureKnowledgeBaseTables(): Promise<void> {
@@ -4155,6 +4291,125 @@ export class DatabaseStorage implements IStorage {
       .returning({ id: llmProviders.id });
 
     return deleted.length > 0;
+  }
+
+  async listChatSessions(
+    workspaceId: string,
+    userId: string,
+    searchQuery?: string,
+  ): Promise<Array<ChatSession & { skillName: string | null; skillIsSystem: boolean }>> {
+    await ensureChatTables();
+
+    let condition = and(
+      eq(chatSessions.workspaceId, workspaceId),
+      eq(chatSessions.userId, userId),
+      isNull(chatSessions.deletedAt),
+    );
+
+    const trimmedQuery = searchQuery?.trim();
+    if (trimmedQuery) {
+      condition = and(condition, ilike(chatSessions.title, `%${trimmedQuery}%`));
+    }
+
+    const rows = await this.db
+      .select({
+        chat: chatSessions,
+        skillName: skills.name,
+        skillIsSystem: skills.isSystem,
+      })
+      .from(chatSessions)
+      .innerJoin(skills, eq(chatSessions.skillId, skills.id))
+      .where(condition)
+      .orderBy(desc(chatSessions.updatedAt));
+
+    return rows.map(({ chat, skillName, skillIsSystem }) => ({
+      ...chat,
+      skillName: skillName ?? null,
+      skillIsSystem: Boolean(skillIsSystem),
+    }));
+  }
+
+  async getChatSessionById(
+    chatId: string,
+  ): Promise<(ChatSession & { skillName: string | null }) | null> {
+    await ensureChatTables();
+    const rows = await this.db
+      .select({
+        chat: chatSessions,
+        skillName: skills.name,
+      })
+      .from(chatSessions)
+      .innerJoin(skills, eq(chatSessions.skillId, skills.id))
+      .where(and(eq(chatSessions.id, chatId), isNull(chatSessions.deletedAt)));
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const { chat, skillName } = rows[0];
+    return { ...chat, skillName: skillName ?? null };
+  }
+
+  async createChatSession(values: ChatSessionInsert): Promise<ChatSession> {
+    await ensureChatTables();
+    const [created] = await this.db.insert(chatSessions).values(values).returning();
+    return created;
+  }
+
+  async updateChatSession(
+    chatId: string,
+    updates: Partial<Pick<ChatSessionInsert, "title">>,
+  ): Promise<ChatSession | null> {
+    if (!updates || Object.keys(updates).length === 0) {
+      const current = await this.getChatSessionById(chatId);
+      return current ?? null;
+    }
+
+    const [updated] = await this.db
+      .update(chatSessions)
+      .set({
+        ...updates,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(and(eq(chatSessions.id, chatId), isNull(chatSessions.deletedAt)))
+      .returning();
+
+    return updated ?? null;
+  }
+
+  async touchChatSession(chatId: string): Promise<void> {
+    await this.db
+      .update(chatSessions)
+      .set({ updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(chatSessions.id, chatId));
+  }
+
+  async softDeleteChatSession(chatId: string): Promise<boolean> {
+    const result = await this.db
+      .update(chatSessions)
+      .set({
+        deletedAt: sql`CURRENT_TIMESTAMP`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(and(eq(chatSessions.id, chatId), isNull(chatSessions.deletedAt)))
+      .returning({ id: chatSessions.id });
+
+    return result.length > 0;
+  }
+
+  async listChatMessages(chatId: string): Promise<ChatMessage[]> {
+    await ensureChatTables();
+    return await this.db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.chatId, chatId))
+      .orderBy(asc(chatMessages.createdAt));
+  }
+
+  async createChatMessage(values: ChatMessageInsert): Promise<ChatMessage> {
+    await ensureChatTables();
+    const [created] = await this.db.insert(chatMessages).values(values).returning();
+    return created;
   }
 
   async getUnicaChatConfig(): Promise<UnicaChatConfig> {

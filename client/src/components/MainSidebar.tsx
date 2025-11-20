@@ -30,6 +30,7 @@ import {
   LayoutDashboard,
   Bot,
   Sparkles,
+  MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -54,9 +55,10 @@ interface SidebarItem {
 interface MainSidebarProps {
   showAdminLink?: boolean;
   user: PublicUser;
+  workspaceId?: string;
 }
 
-export default function MainSidebar({ showAdminLink = false, user }: MainSidebarProps) {
+export default function MainSidebar({ showAdminLink = false, user, workspaceId }: MainSidebarProps) {
   const [location] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
@@ -105,7 +107,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
     `link-${item.title
       .toLowerCase()
       .replace(/\s+/g, '-')
-      .replace(/ё/g, 'е')}`;
+      .replace(/С‘/g, 'Рµ')}`;
 
   const renderMenuButton = (item: SidebarItem) => {
     const collapsedTooltip = item.locked
@@ -113,7 +115,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
           children: (
             <div className="space-y-1">
               <p className="text-sm font-medium leading-none">{item.title}</p>
-              <p className="text-xs text-muted-foreground">Доступно в платной версии</p>
+              <p className="text-xs text-muted-foreground">Р”РѕСЃС‚СѓРїРЅРѕ РІ РїР»Р°С‚РЅРѕР№ РІРµСЂСЃРёРё</p>
             </div>
           ),
         }
@@ -146,7 +148,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
             isCollapsed && "justify-center"
           )}
           disabled
-          tooltip={isCollapsed ? collapsedTooltip : "Доступно в платной версии"}
+          tooltip={isCollapsed ? collapsedTooltip : "Р”РѕСЃС‚СѓРїРЅРѕ РІ РїР»Р°С‚РЅРѕР№ РІРµСЂСЃРёРё"}
           data-testid={getTestId(item)}
         >
           {content}
@@ -172,69 +174,76 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
     );
   };
 
+  const chatUrl = workspaceId ? `/workspaces/${workspaceId}/chat` : "/chat";
+
   const sections: Array<{ label: string; items: SidebarItem[] }> = [
     {
-      label: "Навигация",
+      label: "РќР°РІРёРіР°С†РёСЏ",
       items: [
         {
-          title: "Дашборд",
+          title: "Р”Р°С€Р±РѕСЂРґ",
           url: "/",
           icon: LayoutDashboard,
         },
         {
-          title: "Глобальный поиск",
+          title: "Р“Р»РѕР±Р°Р»СЊРЅС‹Р№ РїРѕРёСЃРє",
           url: "/search",
           icon: Search,
         },
         {
-          title: "Базы знаний",
+          title: "Р‘Р°Р·С‹ Р·РЅР°РЅРёР№",
           url: "/knowledge",
           icon: Brain,
           badge: knowledgeBaseCount.toString(),
           badgeVariant: "secondary",
         },
         {
-          title: "Навыки",
+          title: "РќР°РІС‹РєРё",
           url: "/skills",
           icon: Sparkles,
+        },
+        {
+          title: "Чат",
+          url: chatUrl,
+          icon: MessageSquare,
         },
       ],
     },
     {
-      label: "Данные",
+      label: "Р”Р°РЅРЅС‹Рµ",
       items: [
         {
-          title: "Коллекции",
+          title: "РљРѕР»Р»РµРєС†РёРё",
           url: "/vector/collections",
           icon: Boxes,
         },
         {
-          title: "Документация API",
+          title: "Р”РѕРєСѓРјРµРЅС‚Р°С†РёСЏ API",
           url: "/integrations/api",
           icon: BookOpen,
         },
       ],
     },
     {
-      label: "Виджеты",
+      label: "Р’РёРґР¶РµС‚С‹",
       items: [
         {
-          title: "Чат-виджет",
+          title: "Р§Р°С‚-РІРёРґР¶РµС‚",
           url: "/integrations/widget",
           icon: Bot,
         },
       ],
     },
     {
-      label: "Рабочее пространство",
+      label: "Р Р°Р±РѕС‡РµРµ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІРѕ",
       items: [
         {
-          title: "Участники",
+          title: "РЈС‡Р°СЃС‚РЅРёРєРё",
           url: "/workspaces/members",
           icon: Users,
         },
         {
-          title: "Настройки",
+          title: "РќР°СЃС‚СЂРѕР№РєРё",
           url: "/settings",
           icon: Settings,
           locked: true,
@@ -245,7 +254,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
 
   if (showAdminLink) {
     sections[sections.length - 1].items.push({
-      title: "Администрирование",
+      title: "РђРґРјРёРЅРёСЃС‚СЂРёСЂРѕРІР°РЅРёРµ",
       url: "/admin/workspaces",
       icon: Shield,
     });
@@ -264,12 +273,12 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
             <div className="flex items-center gap-3">
               <img
                 src="/branding/logo.svg"
-                alt="Логотип AI KMS"
+                alt="Р›РѕРіРѕС‚РёРї AI KMS"
                 className="h-9 w-9"
               />
               <div>
                 <h2 className="text-lg font-semibold">AI KMS</h2>
-                <p className="text-sm text-muted-foreground">Рабочее пространство</p>
+                <p className="text-sm text-muted-foreground">Р Р°Р±РѕС‡РµРµ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІРѕ</p>
               </div>
             </div>
             <Button
@@ -277,7 +286,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
               size="icon"
               className="h-8 w-8"
               onClick={toggleSidebar}
-              aria-label={state === "expanded" ? "Свернуть меню" : "Развернуть меню"}
+              aria-label={state === "expanded" ? "РЎРІРµСЂРЅСѓС‚СЊ РјРµРЅСЋ" : "Р Р°Р·РІРµСЂРЅСѓС‚СЊ РјРµРЅСЋ"}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -327,7 +336,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
                 />
                 {!isCollapsed && (
                   <div className="flex min-w-0 flex-col text-left leading-tight">
-                    <span className="text-sm font-medium">Профиль</span>
+                    <span className="text-sm font-medium">РџСЂРѕС„РёР»СЊ</span>
                     <span className="text-xs text-muted-foreground truncate">{user.fullName}</span>
                     <span className="text-[11px] text-muted-foreground/70 truncate">{user.email}</span>
                   </div>
@@ -338,7 +347,7 @@ export default function MainSidebar({ showAdminLink = false, user }: MainSidebar
         </SidebarMenu>
         <SidebarTrigger
           className={isCollapsed ? "h-8 w-8 self-center p-0" : "w-full justify-center"}
-          aria-label="Переключить меню"
+          aria-label="РџРµСЂРµРєР»СЋС‡РёС‚СЊ РјРµРЅСЋ"
         />
       </SidebarFooter>
     </Sidebar>

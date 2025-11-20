@@ -22,6 +22,7 @@ import DashboardPage from "@/pages/DashboardPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import AdminWorkspacesPage from "@/pages/AdminWorkspacesPage";
 import SkillsPage from "@/pages/SkillsPage";
+import ChatPage from "@/pages/ChatPage";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
 import ProfilePage from "@/pages/ProfilePage";
@@ -51,6 +52,8 @@ function AdminRouter() {
 function MainRouter() {
   return (
     <Switch>
+      <Route path="/workspaces/:workspaceId/chat/:chatId" component={ChatPage} />
+      <Route path="/workspaces/:workspaceId/chat" component={ChatPage} />
       <Route path="/knowledge/:knowledgeBaseId/node/:nodeId" component={KnowledgeBasePage} />
       <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
       <Route path="/knowledge" component={KnowledgeBasePage} />
@@ -169,7 +172,11 @@ function MainAppShell({ user, workspace }: { user: PublicUser; workspace: Worksp
   return (
     <SidebarProvider style={style}>
       <div className="flex h-screen w-full">
-        <MainSidebar showAdminLink={user.role === "admin"} user={user} />
+        <MainSidebar
+          showAdminLink={user.role === "admin"}
+          user={user}
+          workspaceId={workspace.active?.id}
+        />
         <div className="flex flex-col flex-1">
           <header className="flex items-center justify-between p-2 border-b gap-2">
             <div className="flex items-center gap-2">

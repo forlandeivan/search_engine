@@ -747,6 +747,53 @@ export const skills = pgTable(
   }),
 );
 
+export const chatMessageRoles = ["user", "assistant", "system"] as const;
+export type ChatMessageRole = (typeof chatMessageRoles)[number];
+
+export const chatSessions = pgTable(
+  "chat_sessions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    skillId: varchar("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    title: text("title").notNull().default(""),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    deletedAt: timestamp("deleted_at"),
+  },
+  (table) => ({
+    workspaceUserIdx: index("chat_sessions_workspace_user_idx").on(
+      table.workspaceId,
+      table.userId,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    chatId: varchar("chat_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    role: text("role").$type<ChatMessageRole>().notNull(),
+    content: text("content").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    chatIdx: index("chat_messages_chat_idx").on(table.chatId, table.createdAt),
+  }),
+);
+
 export const skillRagModes = ["all_collections", "selected_collections"] as const;
 export type SkillRagMode = (typeof skillRagModes)[number];
 
@@ -1159,6 +1206,10 @@ export type PublicLlmProvider = Omit<LlmProvider, "authorizationKey" | "availabl
   hasAuthorizationKey: boolean;
   availableModels: LlmModelOption[];
 };
+export type ChatSession = typeof chatSessions.$inferSelect;
+export type ChatSessionInsert = typeof chatSessions.$inferInsert;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type ChatMessageInsert = typeof chatMessages.$inferInsert;
 export type KnowledgeBaseRagRequest = typeof knowledgeBaseRagRequests.$inferSelect;
 export type KnowledgeBaseRagRequestInsert = typeof knowledgeBaseRagRequests.$inferInsert;
 export type KnowledgeBaseSearchSettingsRow = typeof knowledgeBaseSearchSettings.$inferSelect;

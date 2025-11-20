@@ -1,13 +1,8 @@
 import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import { createServer, type Server } from "http";
-import fetch, {
-  Headers,
-  type Response as FetchResponse,
-  type RequestInit as FetchRequestInit,
-} from "node-fetch";
+import fetch, { Headers, type Response as FetchResponse, type RequestInit as FetchRequestInit } from "node-fetch";
 import { createHash, randomUUID, randomBytes } from "crypto";
 import { performance } from "perf_hooks";
-import { Agent as HttpsAgent } from "https";
 import { storage } from "./storage";
 import type { KnowledgeChunkSearchEntry, WorkspaceMemberWithUser } from "./storage";
 import {
@@ -58,6 +53,32 @@ import {
   getSkillById,
   UNICA_CHAT_SYSTEM_KEY,
 } from "./skills";
+import {
+  listUserChats,
+  createChat,
+  renameChat,
+  deleteChat,
+  getChatMessages,
+  addUserMessage,
+  buildChatLlmContext,
+  buildChatCompletionRequestBody,
+  addAssistantMessage,
+  ChatServiceError,
+} from "./chat-service";
+import {
+  fetchLlmCompletion,
+  executeLlmCompletion,
+  type LlmCompletionResult,
+  type LlmStreamEvent,
+} from "./llm-client";
+import {
+  applyTlsPreferences,
+  parseJson,
+  sanitizeHeadersForLog,
+  type ApiRequestLog,
+  type NodeFetchOptions,
+} from "./http-utils";
+import { sanitizeLlmModelOptions } from "./llm-utils";
 import passport from "passport";
 import bcrypt from "bcryptjs";
 import {
@@ -346,6 +367,23 @@ function pickFirstString(...candidates: Array<unknown>): string | null {
 
   return null;
 }
+
+const resolveWorkspaceIdForRequest = (req: Request, candidate?: string | null) => {
+  const currentWorkspace = getRequestWorkspace(req);
+  const normalized = candidate?.trim();
+  if (!normalized) {
+    return currentWorkspace.id;
+  }
+  if (normalized === currentWorkspace.id) {
+    return normalized;
+  }
+  const memberships = getRequestWorkspaceMemberships(req);
+  const hasAccess = memberships.some((entry) => entry.id === normalized);
+  if (!hasAccess) {
+    throw new HttpError(403, "Нет доступа к рабочему пространству");
+  }
+  return normalized;
+};
 
 function normalizeDomainCandidate(candidate: unknown): string | null {
   if (typeof candidate !== "string") {
@@ -1104,32 +1142,6 @@ function toPublicEmbeddingProvider(provider: EmbeddingProvider): PublicEmbedding
   };
 }
 
-function sanitizeLlmModelOptions(models: unknown): LlmModelOption[] {
-  if (!Array.isArray(models)) {
-    return [];
-  }
-
-  const sanitized: LlmModelOption[] = [];
-
-  for (const entry of models) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-
-    const raw = entry as Record<string, unknown>;
-    const label = typeof raw.label === "string" ? raw.label.trim() : "";
-    const value = typeof raw.value === "string" ? raw.value.trim() : "";
-
-    if (label.length === 0 || value.length === 0) {
-      continue;
-    }
-
-    sanitized.push({ label, value });
-  }
-
-  return sanitized;
-}
-
 function toPublicLlmProvider(provider: LlmProvider): PublicLlmProvider {
   const { authorizationKey, availableModels, ...rest } = provider;
   const rawRequestConfig =
@@ -1159,25 +1171,6 @@ function toPublicLlmProvider(provider: LlmProvider): PublicLlmProvider {
     availableModels: sanitizeLlmModelOptions(availableModels),
   };
 }
-
-type NodeFetchOptions = FetchRequestInit & { agent?: HttpsAgent };
-
-const insecureTlsAgent = new HttpsAgent({ rejectUnauthorized: false });
-
-function applyTlsPreferences<T extends NodeFetchOptions>(
-  options: T,
-  allowSelfSignedCertificate: boolean,
-): T {
-  if (!allowSelfSignedCertificate) {
-    return options;
-  }
-
-  return {
-    ...options,
-    agent: insecureTlsAgent,
-  };
-}
-
 
 const sendJsonToWebhookSchema = z.object({
   webhookUrl: z.string().trim().url("Некорректный URL"),
@@ -1235,16 +1228,6 @@ const testEmbeddingCredentialsSchema = z.object({
 const TEST_EMBEDDING_TEXT = "привет!";
 const KNOWLEDGE_DOCUMENT_PAYLOAD_TEXT_LIMIT = 4000;
 const KNOWLEDGE_DOCUMENT_PAYLOAD_HTML_LIMIT = 6000;
-
-function parseJson(text: string): unknown {
-  if (!text) return null;
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
 
 function createEmbeddingRequestBody(model: string, sampleText: string): Record<string, unknown> {
   return {
@@ -1917,25 +1900,6 @@ async function fetchEmbeddingVector(
   };
 }
 
-interface LlmCompletionResult {
-  answer: string;
-  usageTokens?: number | null;
-  rawResponse: unknown;
-  request: ApiRequestLog;
-}
-
-type LlmStreamEvent = {
-  event: string;
-  data: {
-    text?: string;
-    chunk?: unknown;
-  };
-};
-
-type LlmCompletionPromise = Promise<LlmCompletionResult> & {
-  streamIterator?: AsyncIterable<LlmStreamEvent>;
-};
-
 type GenerativeContextEntry = {
   id: string | number;
   payload: Record<string, unknown> | null;
@@ -1974,93 +1938,6 @@ function sendSseEvent(res: Response, eventName: string, data?: unknown) {
   if (typeof flusher === "function") {
     flusher.call(res);
   }
-}
-
-type AsyncStreamController<T> = {
-  iterator: AsyncIterableIterator<T>;
-  push: (value: T) => void;
-  finish: () => void;
-  fail: (error: unknown) => void;
-};
-
-function createAsyncStreamController<T>(): AsyncStreamController<T> {
-  const queue: T[] = [];
-  const pending: Array<{
-    resolve: (value: IteratorResult<T>) => void;
-    reject: (reason?: unknown) => void;
-  }> = [];
-  let done = false;
-  let failed: unknown = null;
-
-  const iterator: AsyncIterableIterator<T> = {
-    [Symbol.asyncIterator]() {
-      return iterator;
-    },
-    next() {
-      if (failed) {
-        const error = failed;
-        failed = null;
-        return Promise.reject(error);
-      }
-
-      if (queue.length > 0) {
-        const value = queue.shift()!;
-        return Promise.resolve({ value, done: false });
-      }
-
-      if (done) {
-        return Promise.resolve({ value: undefined as never, done: true });
-      }
-
-      return new Promise<IteratorResult<T>>((resolve, reject) => {
-        pending.push({ resolve, reject });
-      });
-    },
-  };
-
-  const flushQueue = () => {
-    while (queue.length > 0 && pending.length > 0) {
-      const waiter = pending.shift()!;
-      const value = queue.shift()!;
-      waiter.resolve({ value, done: false });
-    }
-  };
-
-  return {
-    iterator,
-    push(value: T) {
-      if (done || failed) {
-        return;
-      }
-      if (pending.length > 0) {
-        const waiter = pending.shift()!;
-        waiter.resolve({ value, done: false });
-        return;
-      }
-      queue.push(value);
-    },
-    finish() {
-      if (done || failed) {
-        return;
-      }
-      done = true;
-      flushQueue();
-      while (pending.length > 0) {
-        const waiter = pending.shift()!;
-        waiter.resolve({ value: undefined as never, done: true });
-      }
-    },
-    fail(error: unknown) {
-      if (failed || done) {
-        return;
-      }
-      failed = error ?? new Error("Stream interrupted");
-      while (pending.length > 0) {
-        const waiter = pending.shift()!;
-        waiter.reject(failed);
-      }
-    },
-  };
 }
 
 function extractTextDeltaFromChunk(chunk: unknown): string {
@@ -2390,305 +2267,6 @@ async function streamGigachatCompletion(options: GigachatStreamOptions): Promise
   });
   res.end();
 }
-
-function getValueByJsonPath(source: unknown, path: string): unknown {
-  if (!path || typeof path !== "string") {
-    return undefined;
-  }
-
-  const normalized = path
-    .replace(/\[(\d+)\]/g, ".$1")
-    .split(".")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
-
-  let current: unknown = source;
-
-  for (const segment of normalized) {
-    if (current === null || current === undefined) {
-      return undefined;
-    }
-
-    if (Array.isArray(current)) {
-      const index = Number(segment);
-      if (Number.isNaN(index) || index < 0 || index >= current.length) {
-        return undefined;
-      }
-      current = current[index];
-      continue;
-    }
-
-    if (typeof current !== "object") {
-      return undefined;
-    }
-
-    current = (current as Record<string, unknown>)[segment];
-  }
-
-  return current;
-}
-
-function fetchLlmCompletion(
-  provider: LlmProvider,
-  accessToken: string,
-  query: string,
-  context: LlmContextRecord[],
-  modelOverride?: string,
-  options?: {
-    stream?: boolean;
-    responseFormat?: RagResponseFormat;
-    onBeforeRequest?: (details: ApiRequestLog) => void;
-  },
-): LlmCompletionPromise {
-  const shouldForceStream = options?.stream === true;
-  const requestBody = buildLlmRequestBody(provider, query, context, modelOverride, {
-    stream: shouldForceStream ? true : undefined,
-    responseFormat: options?.responseFormat,
-  });
-  const llmHeaders = new Headers();
-  llmHeaders.set("Content-Type", "application/json");
-  const wantsStream = (requestBody as { stream?: unknown }).stream === true;
-  llmHeaders.set("Accept", wantsStream ? "text/event-stream, application/json" : "application/json");
-
-  if (!llmHeaders.has("RqUID")) {
-    llmHeaders.set("RqUID", randomUUID());
-  }
-
-  for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
-    llmHeaders.set(key, value);
-  }
-
-  if (!llmHeaders.has("Authorization")) {
-    llmHeaders.set("Authorization", `Bearer ${accessToken}`);
-  }
-
-  const streamController = wantsStream ? createAsyncStreamController<LlmStreamEvent>() : null;
-
-  const completionPromise = (async () => {
-    let completionResponse: FetchResponse;
-
-    try {
-      const requestOptions = applyTlsPreferences<NodeFetchOptions>(
-        {
-          method: "POST",
-          headers: llmHeaders,
-          body: JSON.stringify(requestBody),
-        },
-        provider.allowSelfSignedCertificate,
-      );
-
-      options?.onBeforeRequest?.({
-        url: provider.completionUrl,
-        headers: sanitizeHeadersForLog(llmHeaders),
-        body: requestBody,
-      });
-
-      completionResponse = await fetch(provider.completionUrl, requestOptions);
-    } catch (error) {
-      streamController?.fail(error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Не удалось выполнить запрос к LLM: ${errorMessage}`);
-    }
-
-    if (!completionResponse.ok) {
-      const rawBody = await completionResponse.text();
-      const parsedBody = parseJson(rawBody);
-
-      let message = `LLM вернул статус ${completionResponse.status}`;
-
-      if (parsedBody && typeof parsedBody === "object") {
-        const body = parsedBody as Record<string, unknown>;
-        if (typeof body.error_description === "string") {
-          message = body.error_description;
-        } else if (typeof body.message === "string") {
-          message = body.message;
-        }
-      } else if (typeof parsedBody === "string" && parsedBody.trim()) {
-        message = parsedBody.trim();
-      }
-
-      streamController?.fail(new Error(message));
-      throw new Error(`Ошибка на этапе генерации ответа: ${message}`);
-    }
-
-    const contentType = completionResponse.headers.get("content-type")?.toLowerCase() ?? "";
-
-    if (contentType.includes("text/event-stream")) {
-      if (!completionResponse.body) {
-        streamController?.fail(new Error("LLM не вернул поток данных"));
-        throw new Error("LLM не вернул поток данных");
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const rawEvents: unknown[] = [];
-      let aggregatedAnswer = "";
-      let usageTokens: number | null = null;
-      let streamCompleted = false;
-
-      try {
-        for await (const chunk of completionResponse.body as unknown as AsyncIterable<Uint8Array>) {
-          buffer += decoder.decode(chunk, { stream: true });
-
-          let boundaryIndex = buffer.indexOf("\n\n");
-          while (boundaryIndex >= 0) {
-            const rawEvent = buffer.slice(0, boundaryIndex).replace(/\r/g, "");
-            buffer = buffer.slice(boundaryIndex + 2);
-            boundaryIndex = buffer.indexOf("\n\n");
-
-            if (!rawEvent.trim()) {
-              continue;
-            }
-
-            const lines = rawEvent.split("\n");
-            let eventName = "message";
-            const dataLines: string[] = [];
-
-            for (const line of lines) {
-              if (line.startsWith("event:")) {
-                eventName = line.slice(6).trim() || "message";
-              } else if (line.startsWith("data:")) {
-                dataLines.push(line.slice(5).trim());
-              }
-            }
-
-            const dataPayload = dataLines.join("\n");
-            if (!dataPayload) {
-              continue;
-            }
-
-            if (dataPayload === "[DONE]") {
-              streamCompleted = true;
-              break;
-            }
-
-            let parsed: unknown;
-            try {
-              parsed = JSON.parse(dataPayload);
-            } catch {
-              continue;
-            }
-
-            rawEvents.push(parsed);
-
-            const delta = extractTextDeltaFromChunk(parsed);
-            if (delta) {
-              aggregatedAnswer += delta;
-            }
-
-            const normalizedEventName = eventName === "message" ? "delta" : eventName;
-            if (streamController && (delta || parsed)) {
-              streamController.push({
-                event: normalizedEventName,
-                data: {
-                  text: delta || undefined,
-                  chunk: parsed,
-                },
-              });
-            }
-
-            const maybeUsage = extractUsageTokensFromChunk(parsed);
-            if (typeof maybeUsage === "number") {
-              usageTokens = maybeUsage;
-            }
-          }
-
-          if (streamCompleted) {
-            break;
-          }
-        }
-      } catch (error) {
-        streamController?.fail(error);
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        throw new Error(`Ошибка при чтении SSE от LLM: ${errorMessage}`);
-      }
-
-      if (!aggregatedAnswer) {
-        streamController?.finish();
-        throw new Error("LLM не вернул текст ответа");
-      }
-
-      streamController?.finish();
-      return {
-        answer: aggregatedAnswer,
-        usageTokens,
-        rawResponse: rawEvents,
-        request: {
-          url: provider.completionUrl,
-          headers: sanitizeHeadersForLog(llmHeaders),
-          body: requestBody,
-        },
-      };
-    }
-
-    const rawBody = await completionResponse.text();
-    const parsedBody = parseJson(rawBody);
-
-    const responseConfig = mergeLlmResponseConfig(provider);
-    const messageValue = getValueByJsonPath(parsedBody, responseConfig.messagePath);
-
-    let answer: string | null = null;
-    if (typeof messageValue === "string") {
-      answer = messageValue.trim();
-    } else if (Array.isArray(messageValue)) {
-      answer = messageValue
-        .map((item) => {
-          if (typeof item === "string") {
-            return item;
-          }
-          if (item && typeof item === "object" && typeof (item as Record<string, unknown>).text === "string") {
-            return (item as Record<string, unknown>).text as string;
-          }
-          return "";
-        })
-        .filter((part) => part.trim().length > 0)
-        .join("\n");
-      if (answer) {
-        answer = answer.trim();
-      }
-    } else if (
-      messageValue &&
-      typeof messageValue === "object" &&
-      typeof (messageValue as Record<string, unknown>).content === "string"
-    ) {
-      answer = ((messageValue as Record<string, unknown>).content as string).trim();
-    }
-
-    if (!answer) {
-      throw new Error("LLM не вернул текст ответа");
-    }
-
-    let usageTokens: number | null = null;
-    if (responseConfig.usageTokensPath) {
-      const usageValue = getValueByJsonPath(parsedBody, responseConfig.usageTokensPath);
-      if (typeof usageValue === "number" && Number.isFinite(usageValue)) {
-        usageTokens = usageValue;
-      } else if (typeof usageValue === "string" && usageValue.trim()) {
-        const parsedNumber = Number.parseFloat(usageValue);
-        if (!Number.isNaN(parsedNumber)) {
-          usageTokens = parsedNumber;
-        }
-      }
-    }
-
-    streamController?.finish();
-    return {
-      answer,
-      usageTokens,
-      rawResponse: parsedBody,
-      request: {
-        url: provider.completionUrl,
-        headers: sanitizeHeadersForLog(llmHeaders),
-        body: requestBody,
-      },
-    };
-  })();
-
-  return Object.assign(completionPromise, {
-    streamIterator: streamController?.iterator,
-  });
-}
-
 
 const upsertPointsSchema = z.object({
   wait: z.boolean().optional(),
@@ -6117,6 +5695,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     maxTokens: z.number().int().min(16).max(65536).optional(),
   });
 
+
+
+  const createChatSessionSchema = z.object({
+    workspaceId: z.string().trim().min(1, "Укажите рабочее пространство").optional(),
+    skillId: z.string().trim().min(1, "Укажите навык"),
+    title: z.string().trim().max(200).optional(),
+  });
+
+  const updateChatSessionSchema = z.object({
+    title: z.string().trim().min(1, "Название не может быть пустым").max(200),
+  });
+
+  const createChatMessageSchema = z.object({
+    workspaceId: z.string().trim().min(1, "Укажите рабочее пространство").optional(),
+    content: z
+      .string()
+      .trim()
+      .min(1, "Сообщение не может быть пустым")
+      .max(20000, "Сообщение слишком длинное"),
+    stream: z.boolean().optional(),
+  });
+
+
+
   app.get("/api/workspaces", async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -7825,6 +7427,255 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(error.status).json({ message: error.message });
       }
 
+      next(error);
+    }
+  });
+
+
+  app.get("/api/chat/sessions", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      const search = typeof req.query.q === "string" && req.query.q.trim().length > 0 ? req.query.q.trim() : undefined;
+      const chats = await listUserChats(workspaceId, user.id, search);
+      res.json({ chats });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/chat/sessions", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const payload = createChatSessionSchema.parse(req.body ?? {});
+      const workspaceId = resolveWorkspaceIdForRequest(req, payload.workspaceId ?? null);
+      const chat = await createChat({
+        workspaceId,
+        userId: user.id,
+        skillId: payload.skillId,
+        title: payload.title,
+      });
+      res.status(201).json({ chat });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Неверные данные", details: error.issues });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
+  app.patch("/api/chat/sessions/:chatId", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const payload = updateChatSessionSchema.parse(req.body ?? {});
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const chat = await renameChat(req.params.chatId, workspaceId, user.id, payload.title);
+      res.json({ chat });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Неверные данные", details: error.issues });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
+  app.delete("/api/chat/sessions/:chatId", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      await deleteChat(req.params.chatId, workspaceId, user.id);
+      res.status(204).send();
+    } catch (error) {
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/chat/sessions/:chatId/messages", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const payload = createChatMessageSchema.parse(req.body ?? {});
+      const workspaceCandidate = pickFirstString(
+        payload.workspaceId,
+        req.query.workspaceId,
+        req.query.workspace_id,
+      );
+      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      const message = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
+      res.status(201).json({ message });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные параметры запроса", details: error.issues });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/chat/sessions/:chatId/messages/llm", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept.toLowerCase() : "";
+    let streamingResponseStarted = false;
+
+    try {
+      const payload = createChatMessageSchema.parse(req.body ?? {});
+      const workspaceCandidate = pickFirstString(
+        payload.workspaceId,
+        req.query.workspaceId,
+        req.query.workspace_id,
+      );
+      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      const wantsStream = payload.stream === true || acceptHeader.includes("text/event-stream");
+
+      const userMessage = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
+      const context = await buildChatLlmContext(req.params.chatId, workspaceId, user.id);
+      const requestBody = buildChatCompletionRequestBody(context, { stream: wantsStream });
+      const accessToken = await fetchAccessToken(context.provider);
+
+      if (wantsStream) {
+        streamingResponseStarted = true;
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
+
+        const completionPromise = executeLlmCompletion(context.provider, accessToken, requestBody, { stream: true });
+        const streamIterator = completionPromise.streamIterator;
+        const forwarder =
+          streamIterator &&
+          forwardLlmStreamEvents(streamIterator, (eventName, payload) => sendSseEvent(res, eventName, payload));
+
+        try {
+          const completion = await completionPromise;
+          if (forwarder) {
+            await forwarder;
+          }
+          const assistantMessage = await addAssistantMessage(
+            req.params.chatId,
+            workspaceId,
+            user.id,
+            completion.answer,
+          );
+          sendSseEvent(res, "done", {
+            assistantMessageId: assistantMessage.id,
+            userMessageId: userMessage.id,
+            usage: { llmTokens: completion.usageTokens ?? null },
+          });
+          res.end();
+        } catch (error) {
+          if (forwarder) {
+            try {
+              await forwarder;
+            } catch (streamError) {
+              console.error("Ошибка пересылки потока LLM:", getErrorDetails(streamError));
+            }
+          }
+          sendSseEvent(res, "error", { message: error instanceof Error ? error.message : "Ошибка генерации ответа" });
+          res.end();
+        }
+        return;
+      }
+
+      const completion = await executeLlmCompletion(context.provider, accessToken, requestBody);
+      const assistantMessage = await addAssistantMessage(
+        req.params.chatId,
+        workspaceId,
+        user.id,
+        completion.answer,
+      );
+      res.json({
+        message: assistantMessage,
+        userMessage,
+        usage: { llmTokens: completion.usageTokens ?? null },
+      });
+    } catch (error) {
+      if (streamingResponseStarted) {
+        sendSseEvent(res, "error", { message: error instanceof Error ? error.message : "Ошибка" });
+        res.end();
+        return;
+      }
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные параметры запроса", details: error.issues });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
+  app.get("/api/chat/sessions/:chatId/messages", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      const messages = await getChatMessages(req.params.chatId, workspaceId, user.id);
+      res.json({ messages });
+    } catch (error) {
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ message: error.message });
+      }
       next(error);
     }
   });
