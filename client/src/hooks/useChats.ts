@@ -175,6 +175,7 @@ export async function sendChatMessageLLM({
       Accept: "text/event-stream, application/json",
     },
     body: JSON.stringify({ workspaceId, content }),
+    credentials: "include",
     signal,
   });
 

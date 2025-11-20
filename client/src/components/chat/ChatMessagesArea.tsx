@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
+import { Button } from "@/components/ui/button";
 import { Loader2, Sparkles } from "lucide-react";
 
 type ChatMessagesAreaProps = {
@@ -12,6 +13,8 @@ type ChatMessagesAreaProps = {
   isNewChat?: boolean;
   isStreaming?: boolean;
   streamError?: string | null;
+  errorMessage?: string | null;
+  onReset?: () => void;
 };
 
 export default function ChatMessagesArea({
@@ -22,6 +25,8 @@ export default function ChatMessagesArea({
   isNewChat,
   isStreaming,
   streamError,
+  errorMessage,
+  onReset,
 }: ChatMessagesAreaProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -54,7 +59,19 @@ export default function ChatMessagesArea({
         <h1 className="text-xl font-semibold">{headerTitle}</h1>
       </header>
       <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto bg-muted/20 px-6 py-4">
-        {isNewChat && messages.length === 0 ? (
+        {errorMessage ? (
+          <div className="mx-auto mt-10 max-w-lg rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
+            <h2 className="text-lg font-semibold">Диалог недоступен</h2>
+            <p className="mt-2 text-sm text-muted-foreground">{errorMessage}</p>
+            {onReset ? (
+              <Button className="mt-4" variant="outline" onClick={onReset}>
+                Вернуться к списку
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!errorMessage && isNewChat && messages.length === 0 ? (
           <div className="mx-auto mt-10 max-w-xl rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
             <Sparkles className="mx-auto h-8 w-8 text-primary" />
             <h2 className="mt-4 text-lg font-semibold">Начните новый диалог</h2>
@@ -63,15 +80,21 @@ export default function ChatMessagesArea({
             </p>
           </div>
         ) : null}
-        {isLoading ? (
+
+        {isLoading && !errorMessage ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             Загружаем историю…
           </div>
-        ) : (
+        ) : !errorMessage ? (
           messages.map((message) => <ChatBubble key={message.id} message={message} />)
-        )}
+        ) : null}
+
+        {!isLoading && !errorMessage && messages.length === 0 && !isNewChat ? (
+          <div className="text-center text-sm text-muted-foreground">Сообщения отсутствуют.</div>
+        ) : null}
       </div>
+
       {streamError ? (
         <div className="border-t bg-destructive/10 px-6 py-3 text-sm text-destructive">{streamError}</div>
       ) : null}
@@ -93,8 +116,8 @@ function ChatBubble({ message }: { message: ChatMessage }) {
         className={cn(
           "max-w-[80%] space-y-2 rounded-2xl px-4 py-3 shadow-sm",
           isUser
-            ? "bg-primary text-primary-foreground rounded-br-none"
-            : "bg-white rounded-bl-none text-foreground dark:bg-slate-900",
+            ? "rounded-br-none bg-primary text-primary-foreground"
+            : "rounded-bl-none bg-white text-foreground dark:bg-slate-900",
         )}
       >
         <MarkdownRenderer content={message.content || ""} />

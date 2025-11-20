@@ -92,6 +92,17 @@ describe("chat service", () => {
     );
   });
 
+  it("prevents access to chats of another user", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce({
+      ...baseChat,
+      userId: "other-user",
+    } as any);
+
+    await expect(() => getChatMessages("chat-1", "workspace-1", "user-1")).rejects.toThrow(
+      ChatServiceError,
+    );
+  });
+
   it("deletes own chat", async () => {
     storageMock.getChatSessionById.mockResolvedValueOnce(baseChat as any);
     storageMock.softDeleteChatSession.mockResolvedValueOnce(true);
@@ -115,5 +126,16 @@ describe("chat service", () => {
 
     expect(storageMock.createChatMessage).toHaveBeenCalled();
     expect(storageMock.touchChatSession).toHaveBeenCalledWith("chat-1");
+  });
+
+  it("does not add messages to a chat of another user", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce({
+      ...baseChat,
+      userId: "user-2",
+    } as any);
+
+    await expect(() =>
+      addUserMessage("chat-1", "workspace-1", "user-1", "hello"),
+    ).rejects.toThrow(ChatServiceError);
   });
 });

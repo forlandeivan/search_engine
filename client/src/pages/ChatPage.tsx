@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import ChatSidebar from "@/components/chat/ChatSidebar";
@@ -27,6 +27,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const routeChatId = params?.chatId ?? "";
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
+  const prevWorkspaceRef = useRef<string | null>(workspaceId);
 
   const [overrideChatId, setOverrideChatId] = useState<string | null>(null);
   const effectiveChatId = routeChatId || overrideChatId || null;
@@ -45,6 +46,8 @@ export default function ChatPage({ params }: ChatPageProps) {
   const {
     messages: fetchedMessages,
     isLoading: isMessagesLoading,
+    isError: isMessagesError,
+    error: messagesError,
   } = useChatMessages(
     effectiveChatId ?? undefined,
     workspaceId ? workspaceId : undefined,
@@ -62,6 +65,21 @@ export default function ChatPage({ params }: ChatPageProps) {
   }, [routeChatId]);
 
   useEffect(() => {
+    if (!workspaceId) {
+      return;
+    }
+    if (prevWorkspaceRef.current && prevWorkspaceRef.current !== workspaceId) {
+      setOverrideChatId(null);
+      setLocalChatId(null);
+      setLocalMessages([]);
+      setStreamError(null);
+      setIsStreaming(false);
+      navigate(`/workspaces/${workspaceId}/chat`);
+    }
+    prevWorkspaceRef.current = workspaceId;
+  }, [workspaceId, navigate]);
+
+  useEffect(() => {
     if (localChatId !== effectiveChatId) {
       setLocalChatId(effectiveChatId);
       setLocalMessages([]);
@@ -74,6 +92,20 @@ export default function ChatPage({ params }: ChatPageProps) {
     effectiveChatId && localChatId === effectiveChatId
       ? [...(fetchedMessages ?? []), ...localMessages]
       : fetchedMessages ?? [];
+
+  const normalizedMessagesError = useMemo(() => {
+    if (!isMessagesError || !messagesError) {
+      return null;
+    }
+    const message = messagesError.message ?? "Ошибка загрузки диалога";
+    if (message.startsWith("404")) {
+      return "Диалог не найден или у вас нет доступа.";
+    }
+    if (message.startsWith("403")) {
+      return "У вас нет прав на просмотр этого диалога.";
+    }
+    return message.replace(/^\d+:\s*/, "");
+  }, [isMessagesError, messagesError]);
 
   const handleSelectChat = useCallback(
     (nextChatId: string | null) => {
@@ -178,6 +210,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const isNewChat = !effectiveChatId;
   const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
   const chatTitle = activeChat?.title ?? null;
+  const disableInput = !workspaceId || isStreaming || Boolean(normalizedMessagesError && !isNewChat);
 
   return (
     <div className="flex h-full flex-col bg-muted/20">
@@ -197,10 +230,12 @@ export default function ChatPage({ params }: ChatPageProps) {
             isNewChat={isNewChat}
             isStreaming={isStreaming}
             streamError={streamError}
+            errorMessage={normalizedMessagesError}
+            onReset={() => handleSelectChat(null)}
           />
           <ChatInput
             onSend={handleSend}
-            disabled={!workspaceId || isStreaming}
+            disabled={disableInput}
             placeholder={
               isNewChat ? "Начните с первого вопроса..." : "Введите сообщение и нажмите Enter"
             }
