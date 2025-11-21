@@ -143,6 +143,7 @@ function setupChatServiceMock() {
     renameChat: vi.fn(),
     deleteChat: vi.fn(),
     getChatMessages: vi.fn(),
+    getChatById: vi.fn(),
     addUserMessage: vi.fn(),
     buildChatLlmContext: vi.fn(),
     buildChatCompletionRequestBody: vi.fn(),
@@ -163,7 +164,51 @@ function setupChatServiceMock() {
     ChatServiceError,
   }));
 
-  return chatService;
+  return Object.assign(chatService, { ChatServiceError });
+}
+
+function setupSkillExecutionLogMock() {
+  const startExecution = vi.fn(async (context: any) => ({
+    id: "execution-1",
+    workspaceId: context.workspaceId,
+    userId: context.userId ?? null,
+    skillId: context.skillId,
+    chatId: context.chatId ?? null,
+    userMessageId: context.userMessageId ?? null,
+    source: context.source,
+    status: "running",
+    hasStepErrors: false,
+    startedAt: new Date(),
+    finishedAt: null,
+  }));
+  const logStep = vi.fn();
+  const logStepSuccess = vi.fn();
+  const logStepError = vi.fn();
+  const finishExecution = vi.fn();
+  const markExecutionSuccess = vi.fn();
+  const markExecutionFailed = vi.fn();
+
+  vi.doMock("../server/skill-execution-log-context", () => ({
+    skillExecutionLogService: {
+      startExecution,
+      logStep,
+      logStepSuccess,
+      logStepError,
+      finishExecution,
+      markExecutionSuccess,
+      markExecutionFailed,
+    },
+  }));
+
+  return {
+    startExecution,
+    logStep,
+    logStepSuccess,
+    logStepError,
+    finishExecution,
+    markExecutionSuccess,
+    markExecutionFailed,
+  };
 }
 
 function setupLlmClientMock() {
@@ -291,9 +336,23 @@ describe("Chat API", () => {
     setupAuthMock();
     setupStorageMock();
     setupOtherMocks();
+    const logService = setupSkillExecutionLogMock();
     await setupFetchMock();
     const { executeLlmCompletion } = setupLlmClientMock();
     const chatService = setupChatServiceMock();
+
+    chatService.getChatById.mockResolvedValueOnce({
+      id: "chat-1",
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      skillId: "skill-1",
+      title: "Chat",
+      skillName: "Skill",
+      skillIsSystem: false,
+      skillSystemKey: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
 
     chatService.addUserMessage.mockResolvedValueOnce({
       id: "user-msg-1",
@@ -385,9 +444,343 @@ describe("Chat API", () => {
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { message: { id: string } };
       expect(payload.message.id).toBe("assistant-msg-1");
-      expect(chatService.buildChatLlmContext).toHaveBeenCalledWith("chat-1", "workspace-1", "user-1");
+      expect(chatService.buildChatLlmContext).toHaveBeenCalledWith("chat-1", "workspace-1", "user-1", {
+        executionId: "execution-1",
+      });
       expect(chatService.buildChatCompletionRequestBody).toHaveBeenCalled();
       expect(chatService.addAssistantMessage).toHaveBeenCalledWith("chat-1", "workspace-1", "user-1", "Ответ");
+      expect(logService.startExecution).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        skillId: "skill-1",
+        chatId: "chat-1",
+        source: "workspace_skill",
+      });
+      expect(logService.logStepSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "RECEIVE_HTTP_REQUEST" }),
+      );
+      expect(logService.logStepSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "VALIDATE_REQUEST" }),
+      );
+      expect(logService.logStepSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "WRITE_USER_MESSAGE",
+          output: expect.objectContaining({ messageId: "user-msg-1" }),
+        }),
+      );
+      expect(logService.logStep).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "CALL_LLM", status: "running" }),
+      );
+      expect(logService.logStepSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "CALL_LLM" }),
+      );
+      expect(logService.logStepSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "WRITE_ASSISTANT_MESSAGE" }),
+      );
+      expect(logService.markExecutionSuccess).toHaveBeenCalledWith(
+        "execution-1",
+        expect.objectContaining({ userMessageId: "user-msg-1" }),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("streams assistant reply and logs streaming steps", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    const logService = setupSkillExecutionLogMock();
+    await setupFetchMock();
+    const { executeLlmCompletion } = setupLlmClientMock();
+    const chatService = setupChatServiceMock();
+
+    chatService.getChatById.mockResolvedValueOnce({
+      id: "chat-1",
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      skillId: "skill-1",
+      title: "Chat",
+      skillName: "Skill",
+      skillIsSystem: false,
+      skillSystemKey: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    chatService.addUserMessage.mockResolvedValueOnce({
+      id: "user-msg-1",
+      chatId: "chat-1",
+      role: "user",
+      content: "Привет",
+      metadata: {},
+      createdAt: new Date().toISOString(),
+    });
+    chatService.buildChatLlmContext.mockResolvedValueOnce({
+      chat: {
+        id: "chat-1",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        skillId: "skill-1",
+        title: "Chat",
+        skillName: "Skill",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      provider: {
+        id: "llm-1",
+        name: "Provider",
+        providerType: "gigachat",
+        description: null,
+        isActive: true,
+        tokenUrl: "https://llm.example/token",
+        completionUrl: "https://llm.example/completions",
+        authorizationKey: "basic key",
+        scope: "scope",
+        model: "gpt",
+        availableModels: [],
+        allowSelfSignedCertificate: false,
+        requestHeaders: {},
+        requestConfig: {
+          modelField: "model",
+          messagesField: "messages",
+          temperature: 0.2,
+          additionalBodyFields: {},
+        },
+        responseConfig: null,
+        workspaceId: "workspace-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      requestConfig: {
+        modelField: "model",
+        messagesField: "messages",
+        temperature: 0.2,
+        additionalBodyFields: {},
+      },
+      model: "gpt",
+      messages: [],
+    });
+    chatService.buildChatCompletionRequestBody.mockReturnValueOnce({ stream: true });
+    chatService.addAssistantMessage.mockResolvedValueOnce({
+      id: "assistant-msg-1",
+      chatId: "chat-1",
+      role: "assistant",
+      content: "Потоковый ответ",
+      metadata: {},
+      createdAt: new Date().toISOString(),
+    });
+
+    async function* streamIterator() {
+      yield { event: "delta", data: { text: "part" } };
+    }
+
+    executeLlmCompletion.mockImplementationOnce(() => {
+      const promise = Promise.resolve({
+        answer: "Потоковый ответ",
+        usageTokens: 5,
+        rawResponse: {},
+        request: { url: "", headers: {}, body: {} },
+      });
+      return Object.assign(promise, { streamIterator: streamIterator() });
+    });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/chat/sessions/chat-1/messages/llm`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+          },
+          body: JSON.stringify({ content: "Привет", stream: true }),
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const textPayload = await response.text();
+      expect(textPayload).toContain("event: done");
+      expect(logService.logStep).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "STREAM_TO_CLIENT_START", status: "running" }),
+      );
+      expect(logService.logStepSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "STREAM_TO_CLIENT_FINISH" }),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("writes error steps when user message cannot be stored", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    const logService = setupSkillExecutionLogMock();
+    await setupFetchMock();
+    setupLlmClientMock();
+    const chatService = setupChatServiceMock();
+
+    chatService.getChatById.mockResolvedValueOnce({
+      id: "chat-1",
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      skillId: "skill-1",
+      title: "Chat",
+      skillName: "Skill",
+      skillIsSystem: false,
+      skillSystemKey: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    chatService.addUserMessage.mockRejectedValueOnce(
+      new chatService.ChatServiceError("write failed", 409),
+    );
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/chat/sessions/chat-1/messages/llm`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: "Привет" }),
+        },
+      );
+
+      expect(response.status).toBe(409);
+      expect(logService.logStepError).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "WRITE_USER_MESSAGE" }),
+      );
+      expect(logService.markExecutionFailed).toHaveBeenCalledWith(
+        "execution-1",
+        expect.objectContaining({ userMessageId: undefined }),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("logs assistant message errors", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    const logService = setupSkillExecutionLogMock();
+    await setupFetchMock();
+    const { executeLlmCompletion } = setupLlmClientMock();
+    const chatService = setupChatServiceMock();
+
+    chatService.getChatById.mockResolvedValueOnce({
+      id: "chat-1",
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      skillId: "skill-1",
+      title: "Chat",
+      skillName: "Skill",
+      skillIsSystem: false,
+      skillSystemKey: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    chatService.addUserMessage.mockResolvedValueOnce({
+      id: "user-msg-1",
+      chatId: "chat-1",
+      role: "user",
+      content: "Привет",
+      metadata: {},
+      createdAt: new Date().toISOString(),
+    });
+    chatService.buildChatLlmContext.mockResolvedValueOnce({
+      chat: {
+        id: "chat-1",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        skillId: "skill-1",
+        title: "Chat",
+        skillName: "Skill",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      provider: {
+        id: "llm-1",
+        name: "Provider",
+        providerType: "gigachat",
+        description: null,
+        isActive: true,
+        tokenUrl: "https://llm.example/token",
+        completionUrl: "https://llm.example/completions",
+        authorizationKey: "basic key",
+        scope: "scope",
+        model: "gpt",
+        availableModels: [],
+        allowSelfSignedCertificate: false,
+        requestHeaders: {},
+        requestConfig: {
+          modelField: "model",
+          messagesField: "messages",
+          temperature: 0.2,
+          additionalBodyFields: {},
+        },
+        responseConfig: null,
+        workspaceId: "workspace-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      requestConfig: {
+        modelField: "model",
+        messagesField: "messages",
+        temperature: 0.2,
+        additionalBodyFields: {},
+      },
+      model: "gpt",
+      messages: [],
+    });
+    chatService.buildChatCompletionRequestBody.mockReturnValueOnce({ stream: false });
+    chatService.addAssistantMessage.mockRejectedValueOnce(
+      new chatService.ChatServiceError("db failed", 503),
+    );
+    executeLlmCompletion.mockImplementationOnce(() => {
+      const promise = Promise.resolve({
+        answer: "Ответ",
+        usageTokens: 10,
+        rawResponse: {},
+        request: { url: "", headers: {}, body: {} },
+      });
+      return Object.assign(promise, { streamIterator: undefined });
+    });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/chat/sessions/chat-1/messages/llm`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ content: "Привет" }),
+        },
+      );
+
+      expect(response.status).toBe(503);
+      expect(logService.logStepError).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "WRITE_ASSISTANT_MESSAGE" }),
+      );
+      expect(logService.markExecutionFailed).toHaveBeenCalledWith(
+        "execution-1",
+        expect.objectContaining({ userMessageId: "user-msg-1" }),
+      );
     } finally {
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => (error ? reject(error) : resolve()));

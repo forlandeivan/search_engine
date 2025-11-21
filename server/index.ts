@@ -9,6 +9,7 @@ import { isDatabaseConfigured } from "./db";
 import fs from "fs";
 import path from "path";
 import { configureAuth } from "./auth";
+import { startSkillExecutionLogRetentionJob } from "./skill-execution-log-retention";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -182,6 +183,8 @@ app.use((req, res, next) => {
 
 void configureAuth(app);
 
+const retentionJob = startSkillExecutionLogRetentionJob();
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -353,6 +356,7 @@ function validateProductionSecrets(): void {
     }, 10000);
 
     try {
+      retentionJob?.stop?.();
       // Close HTTP server
       await new Promise<void>((resolve, reject) => {
         server.close((err) => {

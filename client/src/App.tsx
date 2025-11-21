@@ -15,6 +15,7 @@ import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
 import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
 import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
 import LlmProvidersPage from "@/pages/LlmProvidersPage";
+import LlmExecutionsPage from "@/pages/LlmExecutionsPage";
 import WidgetScriptPage from "@/pages/WidgetScriptPage";
 import AuthSettingsPage from "@/pages/AuthSettingsPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
@@ -41,6 +42,12 @@ function AdminRouter() {
       <Route path="/admin/auth" component={AuthSettingsPage} />
       <Route path="/admin/embeddings" component={EmbeddingServicesPage} />
       <Route path="/admin/llm" component={LlmProvidersPage} />
+      <Route path="/admin/llm-executions/:executionId">
+        {(params) => <LlmExecutionsPage selectedExecutionId={params.executionId} />}
+      </Route>
+      <Route path="/admin/llm-executions">
+        <LlmExecutionsPage />
+      </Route>
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />
       <Route path="/admin" component={AdminWorkspacesPage} />

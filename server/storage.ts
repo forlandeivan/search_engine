@@ -856,6 +856,7 @@ export interface IStorage {
   softDeleteChatSession(chatId: string): Promise<boolean>;
   listChatMessages(chatId: string): Promise<ChatMessage[]>;
   createChatMessage(values: ChatMessageInsert): Promise<ChatMessage>;
+  getChatMessage(id: string): Promise<ChatMessage | undefined>;
 }
 
 let embeddingProvidersTableEnsured = false;
@@ -4316,27 +4317,31 @@ export class DatabaseStorage implements IStorage {
         chat: chatSessions,
         skillName: skills.name,
         skillIsSystem: skills.isSystem,
+        skillSystemKey: skills.systemKey,
       })
       .from(chatSessions)
       .innerJoin(skills, eq(chatSessions.skillId, skills.id))
       .where(condition)
       .orderBy(desc(chatSessions.updatedAt));
 
-    return rows.map(({ chat, skillName, skillIsSystem }) => ({
+    return rows.map(({ chat, skillName, skillIsSystem, skillSystemKey }) => ({
       ...chat,
       skillName: skillName ?? null,
       skillIsSystem: Boolean(skillIsSystem),
+      skillSystemKey: skillSystemKey ?? null,
     }));
   }
 
   async getChatSessionById(
     chatId: string,
-  ): Promise<(ChatSession & { skillName: string | null }) | null> {
+  ): Promise<(ChatSession & { skillName: string | null; skillIsSystem: boolean; skillSystemKey: string | null }) | null> {
     await ensureChatTables();
     const rows = await this.db
       .select({
         chat: chatSessions,
         skillName: skills.name,
+        skillIsSystem: skills.isSystem,
+        skillSystemKey: skills.systemKey,
       })
       .from(chatSessions)
       .innerJoin(skills, eq(chatSessions.skillId, skills.id))
@@ -4346,8 +4351,13 @@ export class DatabaseStorage implements IStorage {
       return null;
     }
 
-    const { chat, skillName } = rows[0];
-    return { ...chat, skillName: skillName ?? null };
+    const { chat, skillName, skillIsSystem, skillSystemKey } = rows[0];
+    return {
+      ...chat,
+      skillName: skillName ?? null,
+      skillIsSystem: Boolean(skillIsSystem),
+      skillSystemKey: skillSystemKey ?? null,
+    };
   }
 
   async createChatSession(values: ChatSessionInsert): Promise<ChatSession> {
@@ -4410,6 +4420,12 @@ export class DatabaseStorage implements IStorage {
     await ensureChatTables();
     const [created] = await this.db.insert(chatMessages).values(values).returning();
     return created;
+  }
+
+  async getChatMessage(id: string): Promise<ChatMessage | undefined> {
+    await ensureChatTables();
+    const [message] = await this.db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
+    return message ?? undefined;
   }
 
   async getUnicaChatConfig(): Promise<UnicaChatConfig> {

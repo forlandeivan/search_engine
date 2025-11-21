@@ -1,5 +1,21 @@
 ﻿import { afterEach, describe, expect, it, vi } from "vitest";
 
+const { skillExecutionLogServiceMock } = vi.hoisted(() => ({
+  skillExecutionLogServiceMock: {
+    startExecution: vi.fn(),
+    logStep: vi.fn(),
+    logStepSuccess: vi.fn(),
+    logStepError: vi.fn(),
+    finishExecution: vi.fn(),
+    markExecutionSuccess: vi.fn(),
+    markExecutionFailed: vi.fn(),
+  },
+}));
+
+vi.mock("../server/skill-execution-log-context", () => ({
+  skillExecutionLogService: skillExecutionLogServiceMock,
+}));
+
 vi.mock("../server/storage", () => ({
   storage: {
     listChatSessions: vi.fn(),
@@ -10,18 +26,22 @@ vi.mock("../server/storage", () => ({
     softDeleteChatSession: vi.fn(),
     listChatMessages: vi.fn(),
     createChatMessage: vi.fn(),
+    getUnicaChatConfig: vi.fn(),
+    getLlmProvider: vi.fn(),
   },
 }));
 
 vi.mock("../server/skills", () => ({
   getSkillById: vi.fn(),
+  UNICA_CHAT_SYSTEM_KEY: "UNICA_CHAT",
 }));
 
 import { storage } from "../server/storage";
-import { getSkillById } from "../server/skills";
+import { getSkillById, UNICA_CHAT_SYSTEM_KEY } from "../server/skills";
 
 import {
   addUserMessage,
+  buildChatLlmContext,
   ChatServiceError,
   createChat,
   deleteChat,
@@ -137,5 +157,93 @@ describe("chat service", () => {
     await expect(() =>
       addUserMessage("chat-1", "workspace-1", "user-1", "hello"),
     ).rejects.toThrow(ChatServiceError);
+  });
+
+  it("logs skill config and provider resolution when building LLM context", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce(baseChat as any);
+    getSkillByIdMock.mockResolvedValueOnce({
+      id: "skill-1",
+      llmProviderConfigId: "provider-skill",
+      modelId: "model-skill",
+      systemPrompt: "Skill prompt",
+      isSystem: true,
+      systemKey: UNICA_CHAT_SYSTEM_KEY,
+    } as any);
+    storageMock.getUnicaChatConfig.mockResolvedValueOnce({
+      llmProviderConfigId: "provider-global",
+      modelId: "model-global",
+      systemPrompt: "Global prompt",
+      temperature: 0.7,
+      topP: 0.5,
+      maxTokens: 1024,
+    } as any);
+    storageMock.getLlmProvider.mockResolvedValueOnce({
+      id: "provider-global",
+      name: "Provider",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://example/token",
+      completionUrl: "https://example/completions",
+      authorizationKey: "key",
+      scope: "scope",
+      model: "base-model",
+      availableModels: [],
+      allowSelfSignedCertificate: false,
+      requestHeaders: {},
+      requestConfig: {
+        modelField: "model",
+        messagesField: "messages",
+        temperature: 0.1,
+        additionalBodyFields: {},
+      },
+      responseConfig: null,
+      workspaceId: "workspace-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+    storageMock.listChatMessages.mockResolvedValueOnce([]);
+
+    await buildChatLlmContext("chat-1", "workspace-1", "user-1", { executionId: "exec-1" });
+
+    expect(skillExecutionLogServiceMock.logStepSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionId: "exec-1",
+        type: "LOAD_SKILL_CONFIG",
+      }),
+    );
+    expect(skillExecutionLogServiceMock.logStepSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionId: "exec-1",
+        type: "RESOLVE_LLM_PROVIDER_CONFIG",
+        output: expect.objectContaining({
+          providerId: "provider-global",
+          providerSource: "global_unica_chat",
+        }),
+      }),
+    );
+  });
+
+  it("logs provider resolution errors", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce(baseChat as any);
+    getSkillByIdMock.mockResolvedValueOnce({
+      id: "skill-1",
+      llmProviderConfigId: "provider-missing",
+      modelId: null,
+      systemPrompt: null,
+      isSystem: false,
+    } as any);
+    storageMock.getLlmProvider.mockResolvedValueOnce(null as any);
+
+    await expect(() =>
+      buildChatLlmContext("chat-1", "workspace-1", "user-1", { executionId: "exec-err" }),
+    ).rejects.toThrow(ChatServiceError);
+
+    expect(skillExecutionLogServiceMock.logStepError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionId: "exec-err",
+        type: "RESOLVE_LLM_PROVIDER_CONFIG",
+      }),
+    );
   });
 });

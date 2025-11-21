@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   Building2,
   Bot,
+  ScrollText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -138,7 +139,12 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
           url: "/admin/llm",
           icon: Bot,
         },
-      ],
+        {
+          title: "Журнал запусков LLM",
+          url: "/admin/llm-executions",
+          icon: ScrollText,
+        },
+      ]
     },
     {
       label: "Аутентификация",

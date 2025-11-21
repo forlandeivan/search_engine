@@ -1,6 +1,11 @@
 import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import { createServer, type Server } from "http";
-import fetch, { Headers, type Response as FetchResponse, type RequestInit as FetchRequestInit } from "node-fetch";
+import fetch, {
+  Headers,
+  type HeadersInit,
+  type Response as FetchResponse,
+  type RequestInit as FetchRequestInit,
+} from "node-fetch";
 import { createHash, randomUUID, randomBytes } from "crypto";
 import { performance } from "perf_hooks";
 import { storage } from "./storage";
@@ -55,6 +60,19 @@ import {
   createUnicaChatSkillForWorkspace,
 } from "./skills";
 import {
+  listAdminSkillExecutions,
+  getAdminSkillExecutionDetail,
+} from "./admin-skill-executions";
+import { skillExecutionLogService } from "./skill-execution-log-context";
+import {
+  SKILL_EXECUTION_STATUS,
+  SKILL_EXECUTION_STEP_STATUS,
+  type SkillExecutionStatus,
+  type SkillExecutionStepStatus,
+  type SkillExecutionStepType,
+} from "./skill-execution-log";
+import type { SkillExecutionStartContext } from "./skill-execution-log-service";
+import {
   listUserChats,
   createChat,
   renameChat,
@@ -65,6 +83,7 @@ import {
   buildChatCompletionRequestBody,
   addAssistantMessage,
   ChatServiceError,
+  getChatById,
 } from "./chat-service";
 import {
   fetchLlmCompletion,
@@ -367,6 +386,11 @@ function pickFirstString(...candidates: Array<unknown>): string | null {
   }
 
   return null;
+}
+
+function pickFirstStringOrUndefined(...candidates: Array<unknown>): string | undefined {
+  const value = pickFirstString(...candidates);
+  return value === null ? undefined : value;
 }
 
 const resolveWorkspaceIdForRequest = (req: Request, candidate?: string | null) => {
@@ -5811,6 +5835,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
 
+  const adminLlmExecutionStatusSchema = z.enum(["pending", "running", "success", "error", "timeout", "cancelled"]);
+  const adminLlmExecutionsQuerySchema = z.object({
+    from: z.string().optional(),
+    to: z.string().optional(),
+    workspaceId: z.string().uuid().optional(),
+    skillId: z.string().uuid().optional(),
+    userId: z.string().optional(),
+    status: adminLlmExecutionStatusSchema.optional(),
+    hasError: z
+      .enum(["true", "false"])
+      .optional()
+      .transform((value) => (value === undefined ? undefined : value === "true")),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  });
+
   app.get("/api/workspaces", async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -6488,6 +6528,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
+
+  app.get("/api/admin/llm-executions", requireAdmin, async (req, res, next) => {
+    try {
+      const rawQuery = {
+        from: pickFirstStringOrUndefined(req.query.from),
+        to: pickFirstStringOrUndefined(req.query.to),
+        workspaceId: pickFirstStringOrUndefined(req.query.workspaceId),
+        skillId: pickFirstStringOrUndefined(req.query.skillId),
+        userId: pickFirstStringOrUndefined(req.query.userId),
+        status: pickFirstStringOrUndefined(req.query.status),
+        hasError: pickFirstStringOrUndefined(req.query.hasError),
+        page: pickFirstStringOrUndefined(req.query.page),
+        pageSize: pickFirstStringOrUndefined(req.query.pageSize),
+      };
+      const parsed = adminLlmExecutionsQuerySchema.parse(rawQuery);
+
+      const fromDate = parsed.from ? new Date(parsed.from) : undefined;
+      if (fromDate && Number.isNaN(fromDate.getTime())) {
+        throw new HttpError(400, "Некорректный параметр from");
+      }
+      const toDate = parsed.to ? new Date(parsed.to) : undefined;
+      if (toDate && Number.isNaN(toDate.getTime())) {
+        throw new HttpError(400, "Некорректный параметр to");
+      }
+
+      const payload = await listAdminSkillExecutions({
+        from: fromDate,
+        to: toDate,
+        workspaceId: parsed.workspaceId,
+        skillId: parsed.skillId,
+        userId: parsed.userId,
+        status: parsed.status,
+        hasError: parsed.hasError,
+        page: parsed.page,
+        pageSize: parsed.pageSize,
+      });
+      res.json(payload);
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные параметры запроса", details: error.issues });
+      }
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/llm-executions/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const detail = await getAdminSkillExecutionDetail(req.params.id);
+      if (!detail) {
+        return res.status(404).json({ message: "Запуск не найден" });
+      }
+      res.json(detail);
+    } catch (error) {
+      next(error);
+    }
+  });
+
 
   app.get("/api/embedding/services", requireAdmin, async (req, res, next) => {
     try {
@@ -7673,6 +7773,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept.toLowerCase() : "";
     let streamingResponseStarted = false;
     let resolvedWorkspaceId: string | null = null;
+    let executionId: string | null = null;
+    let userMessageRecord: { id: string } | null = null;
+
+    type StepLogMeta = {
+      input?: unknown;
+      output?: unknown;
+      errorCode?: string;
+      errorMessage?: string;
+      diagnosticInfo?: string;
+    };
+
+    const safeStartExecution = async (context: SkillExecutionStartContext) => {
+      try {
+        const execution = await skillExecutionLogService.startExecution(context);
+        executionId = execution?.id ?? null;
+      } catch (logError) {
+        console.error(
+          `[chat] skill execution log start failed for chat=${req.params.chatId}: ${getErrorDetails(logError)}`,
+        );
+      }
+    };
+
+    const safeLogStep = async (
+      type: SkillExecutionStepType,
+      status: SkillExecutionStepStatus,
+      meta: StepLogMeta = {},
+    ) => {
+      if (!executionId) {
+        return;
+      }
+      try {
+        const payload = {
+          executionId,
+          type,
+          input: meta.input,
+          output: meta.output,
+          errorCode: meta.errorCode,
+          errorMessage: meta.errorMessage,
+          diagnosticInfo: meta.diagnosticInfo,
+        };
+        if (status === SKILL_EXECUTION_STEP_STATUS.SUCCESS) {
+          await skillExecutionLogService.logStepSuccess(payload);
+        } else if (status === SKILL_EXECUTION_STEP_STATUS.ERROR) {
+          await skillExecutionLogService.logStepError(payload);
+        } else {
+          await skillExecutionLogService.logStep({ ...payload, status });
+        }
+      } catch (logError) {
+        console.error(
+          `[chat] step log failed type=${type} chat=${req.params.chatId}: ${getErrorDetails(logError)}`,
+        );
+      }
+    };
+
+    const safeFinishExecution = async (status: SkillExecutionStatus) => {
+      if (!executionId) {
+        return;
+      }
+      try {
+        const extra = { userMessageId: userMessageRecord?.id };
+        if (status === SKILL_EXECUTION_STATUS.SUCCESS) {
+          await skillExecutionLogService.markExecutionSuccess(executionId, extra);
+        } else if (status === SKILL_EXECUTION_STATUS.ERROR) {
+          await skillExecutionLogService.markExecutionFailed(executionId, extra);
+        } else {
+          await skillExecutionLogService.finishExecution(executionId, status, extra);
+        }
+      } catch (logError) {
+        console.error(
+          `[chat] skill execution finish failed chat=${req.params.chatId}: ${getErrorDetails(logError)}`,
+        );
+      }
+    };
+
+    const describeErrorForLog = (error: unknown) => {
+      if (error instanceof ChatServiceError) {
+        return { code: `${error.status}`, message: error.message, diagnosticInfo: undefined as string | undefined };
+      }
+      if (error instanceof Error) {
+        return { code: undefined, message: error.message, diagnosticInfo: error.stack };
+      }
+      return {
+        code: undefined,
+        message: typeof error === "string" ? error : "Unknown error",
+        diagnosticInfo: undefined as string | undefined,
+      };
+    };
+
+    const logAssistantMessageStep = async (
+      status: SkillExecutionStepStatus,
+      meta: StepLogMeta = {},
+    ) => safeLogStep("WRITE_ASSISTANT_MESSAGE", status, meta);
+
+    const writeAssistantMessage = async (
+      chatId: string,
+      workspaceId: string,
+      userId: string,
+      answer: string,
+    ) => {
+      try {
+        const message = await addAssistantMessage(chatId, workspaceId, userId, answer);
+        await logAssistantMessageStep("success", {
+          input: { chatId, workspaceId, responseLength: answer.length },
+          output: { messageId: message.id },
+        });
+        return message;
+      } catch (assistantError) {
+        const info = describeErrorForLog(assistantError);
+        await logAssistantMessageStep("error", {
+          input: { chatId, workspaceId },
+          errorCode: info.code,
+          errorMessage: info.message,
+          diagnosticInfo: info.diagnosticInfo,
+        });
+        throw assistantError;
+      }
+    };
 
     try {
       const payload = createChatMessageSchema.parse(req.body ?? {});
@@ -7685,14 +7902,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
       resolvedWorkspaceId = workspaceId;
       const wantsStream = payload.stream === true || acceptHeader.includes("text/event-stream");
 
+      const chat = await getChatById(req.params.chatId, workspaceId, user.id);
+      await safeStartExecution({
+        workspaceId,
+        userId: user.id,
+        skillId: chat.skillId,
+        chatId: chat.id,
+        source:
+          chat.skillIsSystem && chat.skillSystemKey === UNICA_CHAT_SYSTEM_KEY
+            ? "system_unica_chat"
+            : "workspace_skill",
+      });
+
+      await safeLogStep("RECEIVE_HTTP_REQUEST", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+        input: {
+          chatId: req.params.chatId,
+          workspaceId,
+          hasStreamHeader: acceptHeader.includes("text/event-stream"),
+          bodyLength: typeof payload.content === "string" ? payload.content.length : 0,
+          headers: sanitizeHeadersForLog(new Headers(req.headers as HeadersInit)),
+        },
+        output: { wantsStream },
+      });
+
+      await safeLogStep("VALIDATE_REQUEST", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+        input: {
+          workspaceCandidate,
+          query: req.query ?? {},
+        },
+        output: {
+          workspaceId,
+          chatId: chat.id,
+          skillId: chat.skillId,
+        },
+      });
+
       console.info(
         `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} incoming message`,
       );
 
-      const userMessage = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
-      const context = await buildChatLlmContext(req.params.chatId, workspaceId, user.id);
+      try {
+        userMessageRecord = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
+        await safeLogStep("WRITE_USER_MESSAGE", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+          input: {
+            chatId: req.params.chatId,
+            contentLength: typeof payload.content === "string" ? payload.content.length : 0,
+          },
+          output: { messageId: userMessageRecord.id },
+        });
+      } catch (messageError) {
+        await safeLogStep("WRITE_USER_MESSAGE", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+          input: { chatId: req.params.chatId },
+          errorCode: messageError instanceof ChatServiceError ? `${messageError.status}` : undefined,
+          errorMessage: messageError instanceof Error ? messageError.message : "Failed to save user message",
+        });
+        throw messageError;
+      }
+
+      const context = await buildChatLlmContext(req.params.chatId, workspaceId, user.id, {
+        executionId,
+      });
       const requestBody = buildChatCompletionRequestBody(context, { stream: wantsStream });
       const accessToken = await fetchAccessToken(context.provider);
+
+      const totalPromptChars = Array.isArray(requestBody[context.requestConfig.messagesField])
+        ? JSON.stringify(requestBody[context.requestConfig.messagesField]).length
+        : 0;
+      const llmCallInput = {
+        providerId: context.provider.id,
+        endpoint: context.provider.completionUrl ?? null,
+        model: context.model ?? context.provider.model ?? null,
+        stream: wantsStream,
+        temperature: context.requestConfig.temperature ?? null,
+        messageCount: context.messages.length,
+        promptLength: totalPromptChars,
+      };
+
+      await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.RUNNING, { input: llmCallInput });
+      let llmCallCompleted = false;
 
       if (wantsStream) {
         streamingResponseStarted = true;
@@ -7705,6 +7992,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} streaming response`,
         );
 
+        await safeLogStep("STREAM_TO_CLIENT_START", SKILL_EXECUTION_STEP_STATUS.RUNNING, {
+          input: { chatId: req.params.chatId, workspaceId, stream: true },
+        });
+
         const completionPromise = executeLlmCompletion(context.provider, accessToken, requestBody, { stream: true });
         const streamIterator = completionPromise.streamIterator;
         const forwarder =
@@ -7713,10 +8004,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         try {
           const completion = await completionPromise;
+          llmCallCompleted = true;
+          await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+            output: {
+              usageTokens: completion.usageTokens ?? null,
+              responsePreview: completion.answer.slice(0, 160),
+            },
+          });
           if (forwarder) {
             await forwarder;
           }
-          const assistantMessage = await addAssistantMessage(
+          const assistantMessage = await writeAssistantMessage(
             req.params.chatId,
             workspaceId,
             user.id,
@@ -7727,11 +8025,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
           sendSseEvent(res, "done", {
             assistantMessageId: assistantMessage.id,
-            userMessageId: userMessage.id,
+            userMessageId: userMessageRecord?.id ?? null,
             usage: { llmTokens: completion.usageTokens ?? null },
           });
+          await safeLogStep("STREAM_TO_CLIENT_FINISH", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+            output: { reason: "completed" },
+          });
+          await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
           res.end();
         } catch (error) {
+          const info = describeErrorForLog(error);
+          if (!llmCallCompleted) {
+            await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+              errorCode: info.code,
+              errorMessage: info.message,
+              diagnosticInfo: info.diagnosticInfo,
+            });
+          }
           if (forwarder) {
             try {
               await forwarder;
@@ -7740,13 +8050,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           }
           sendSseEvent(res, "error", { message: error instanceof Error ? error.message : "Ошибка генерации ответа" });
+          await safeLogStep("STREAM_TO_CLIENT_FINISH", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+            errorCode: info.code,
+            errorMessage: info.message,
+            diagnosticInfo: info.diagnosticInfo,
+            output: { reason: "error" },
+          });
+          await safeFinishExecution(SKILL_EXECUTION_STATUS.ERROR);
           res.end();
         }
         return;
       }
 
-      const completion = await executeLlmCompletion(context.provider, accessToken, requestBody);
-      const assistantMessage = await addAssistantMessage(
+      let completion;
+      try {
+        completion = await executeLlmCompletion(context.provider, accessToken, requestBody);
+        llmCallCompleted = true;
+        await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+          output: {
+            usageTokens: completion.usageTokens ?? null,
+            responsePreview: completion.answer.slice(0, 160),
+          },
+        });
+      } catch (error) {
+        const info = describeErrorForLog(error);
+        await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+          errorCode: info.code,
+          errorMessage: info.message,
+          diagnosticInfo: info.diagnosticInfo,
+        });
+        throw error;
+      }
+
+      const assistantMessage = await writeAssistantMessage(
         req.params.chatId,
         workspaceId,
         user.id,
@@ -7755,14 +8091,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.info(
         `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} sync response finished`,
       );
+      await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
       res.json({
         message: assistantMessage,
-        userMessage,
+        userMessage: userMessageRecord,
         usage: { llmTokens: completion.usageTokens ?? null },
       });
     } catch (error) {
       if (streamingResponseStarted) {
         sendSseEvent(res, "error", { message: error instanceof Error ? error.message : "Ошибка" });
+        await safeFinishExecution(SKILL_EXECUTION_STATUS.ERROR);
         res.end();
         return;
       }
@@ -7771,8 +8109,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           req.params.chatId
         } failed: ${getErrorDetails(error)}`,
       );
+      await safeFinishExecution(SKILL_EXECUTION_STATUS.ERROR);
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные параметры запроса", details: error.issues });
+        return res.status(400).json({ message: "Некорректное содержимое запроса", details: error.issues });
       }
       if (error instanceof ChatServiceError) {
         return res.status(error.status).json({ message: error.message });

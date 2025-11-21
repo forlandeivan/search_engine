@@ -3,6 +3,12 @@ import { getSkillById, UNICA_CHAT_SYSTEM_KEY } from "./skills";
 import type { ChatSession, ChatMessage, ChatMessageRole, LlmProvider, LlmRequestConfig } from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
+import { skillExecutionLogService } from "./skill-execution-log-context";
+import {
+  SKILL_EXECUTION_STEP_STATUS,
+  type SkillExecutionStepStatus,
+  type SkillExecutionStepType,
+} from "./skill-execution-log";
 
 export class ChatServiceError extends Error {
   public status: number;
@@ -14,17 +20,78 @@ export class ChatServiceError extends Error {
   }
 }
 
-export type ChatSummary = ChatSession & { skillName: string | null };
+export type ChatSummary = ChatSession & {
+  skillName: string | null;
+  skillIsSystem: boolean;
+  skillSystemKey: string | null;
+};
 
 const sanitizeTitle = (title?: string | null) => title?.trim() ?? "";
 
-const mapChatSummary = (session: ChatSession & { skillName: string | null }) => ({
+type ExecutionLogMeta = {
+  input?: unknown;
+  output?: unknown;
+  errorCode?: string;
+  errorMessage?: string;
+  diagnosticInfo?: string;
+};
+
+async function logExecutionStepForChat(
+  executionId: string | null | undefined,
+  type: SkillExecutionStepType,
+  status: SkillExecutionStepStatus,
+  meta: ExecutionLogMeta = {},
+) {
+  if (!executionId) {
+    return;
+  }
+  try {
+    const payload = {
+      executionId,
+      type,
+      input: meta.input,
+      output: meta.output,
+      errorCode: meta.errorCode,
+      errorMessage: meta.errorMessage,
+      diagnosticInfo: meta.diagnosticInfo,
+    };
+    if (status === SKILL_EXECUTION_STEP_STATUS.SUCCESS) {
+      await skillExecutionLogService.logStepSuccess(payload);
+    } else if (status === SKILL_EXECUTION_STEP_STATUS.ERROR) {
+      await skillExecutionLogService.logStepError(payload);
+    } else {
+      await skillExecutionLogService.logStep({ ...payload, status });
+    }
+  } catch (error) {
+    console.error(`[chat-service] failed to log ${type}:`, error);
+  }
+}
+
+const describeError = (error: unknown) => {
+  if (error instanceof ChatServiceError) {
+    return { code: `${error.status}`, message: error.message, diagnosticInfo: undefined as string | undefined };
+  }
+  if (error instanceof Error) {
+    return { code: undefined, message: error.message, diagnosticInfo: error.stack };
+  }
+  return {
+    code: undefined,
+    message: typeof error === "string" ? error : "Unknown error",
+    diagnosticInfo: undefined as string | undefined,
+  };
+};
+
+const mapChatSummary = (
+  session: ChatSession & { skillName: string | null; skillIsSystem?: boolean; skillSystemKey?: string | null },
+) => ({
   id: session.id,
   workspaceId: session.workspaceId,
   userId: session.userId,
   skillId: session.skillId,
   title: session.title,
   skillName: session.skillName,
+  skillIsSystem: Boolean(session.skillIsSystem),
+  skillSystemKey: session.skillSystemKey ?? null,
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
 });
@@ -86,7 +153,12 @@ export async function createChat({
     title: sanitizeTitle(title),
   });
 
-  return mapChatSummary({ ...session, skillName: skill.name ?? null });
+  return mapChatSummary({
+    ...session,
+    skillName: skill.name ?? null,
+    skillIsSystem: Boolean(skill.isSystem),
+    skillSystemKey: skill.systemKey ?? null,
+  });
 }
 
 export async function renameChat(
@@ -152,26 +224,68 @@ export type ChatLlmContext = {
   messages: ChatConversationMessage[];
 };
 
+export type BuildChatLlmContextOptions = {
+  executionId?: string | null;
+};
+
 export async function buildChatLlmContext(
   chatId: string,
   workspaceId: string,
   userId: string,
+  options?: BuildChatLlmContextOptions,
 ): Promise<ChatLlmContext> {
+  const executionId = options?.executionId ?? null;
   const chat = await getOwnedChat(chatId, workspaceId, userId);
-  const skill = await getSkillById(workspaceId, chat.skillId);
-  if (!skill) {
-    throw new ChatServiceError("Навык не найден", 404);
+
+  let skill;
+  try {
+    skill = await getSkillById(workspaceId, chat.skillId);
+  } catch (error) {
+    const info = describeError(error);
+    await logExecutionStepForChat(executionId, "LOAD_SKILL_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+      input: { chatId, workspaceId, skillId: chat.skillId },
+      errorCode: info.code,
+      errorMessage: info.message,
+      diagnosticInfo: info.diagnosticInfo,
+    });
+    throw error;
   }
+
+  if (!skill) {
+    const notFound = new ChatServiceError("Навык не найден", 404);
+    const info = describeError(notFound);
+    await logExecutionStepForChat(executionId, "LOAD_SKILL_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+      input: { chatId, workspaceId, skillId: chat.skillId },
+      errorCode: info.code,
+      errorMessage: info.message,
+      diagnosticInfo: info.diagnosticInfo,
+    });
+    throw notFound;
+  }
+
+  await logExecutionStepForChat(executionId, "LOAD_SKILL_CONFIG", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+    input: { chatId, workspaceId, skillId: chat.skillId },
+    output: {
+      skillId: skill.id,
+      isSystem: Boolean(skill.isSystem),
+      systemKey: skill.systemKey ?? null,
+      providerId: skill.llmProviderConfigId ?? null,
+      modelId: skill.modelId ?? null,
+      hasSystemPrompt: Boolean(skill.systemPrompt && skill.systemPrompt.trim()),
+    },
+  });
 
   let providerId = skill.llmProviderConfigId ?? null;
   let modelOverride = skill.modelId ?? null;
   let systemPromptOverride = skill.systemPrompt ?? null;
   const requestOverrides: Partial<LlmRequestConfig> = {};
+  let providerSource: "skill" | "global_unica_chat" = "skill";
 
   if (skill.isSystem && skill.systemKey === UNICA_CHAT_SYSTEM_KEY) {
     const unicaConfig = await storage.getUnicaChatConfig();
     if (unicaConfig.llmProviderConfigId) {
       providerId = unicaConfig.llmProviderConfigId;
+      providerSource = "global_unica_chat";
     }
     if (typeof unicaConfig.modelId === "string" && unicaConfig.modelId.trim()) {
       modelOverride = unicaConfig.modelId.trim();
@@ -191,17 +305,59 @@ export async function buildChatLlmContext(
     }
   }
 
+  const providerLogInput = {
+    chatId,
+    workspaceId,
+    skillId: chat.skillId,
+    providerSourceCandidate: providerSource,
+    skillProviderId: skill.llmProviderConfigId ?? null,
+  };
+
   if (!providerId) {
-    throw new ChatServiceError("Для навыка не настроен провайдер LLM", 400);
+    const providerError = new ChatServiceError("Не удалось определить LLM-провайдера", 400);
+    const info = describeError(providerError);
+    await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+      input: providerLogInput,
+      errorCode: info.code,
+      errorMessage: info.message,
+    });
+    throw providerError;
   }
 
-  const provider = await storage.getLlmProvider(providerId, workspaceId);
+  let provider: LlmProvider | null;
+  try {
+    provider = await storage.getLlmProvider(providerId, workspaceId);
+  } catch (error) {
+    const info = describeError(error);
+    await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+      input: { ...providerLogInput, providerId },
+      errorCode: info.code,
+      errorMessage: info.message,
+      diagnosticInfo: info.diagnosticInfo,
+    });
+    throw error;
+  }
+
   if (!provider) {
-    throw new ChatServiceError("LLM-провайдер не найден", 404);
+    const notFound = new ChatServiceError("LLM-провайдер не найден", 404);
+    const info = describeError(notFound);
+    await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+      input: { ...providerLogInput, providerId },
+      errorCode: info.code,
+      errorMessage: info.message,
+    });
+    throw notFound;
   }
 
   if (!provider.isActive) {
-    throw new ChatServiceError("LLM-провайдер отключён", 400);
+    const inactive = new ChatServiceError("LLM-провайдер отключён", 400);
+    const info = describeError(inactive);
+    await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+      input: { ...providerLogInput, providerId },
+      errorCode: info.code,
+      errorMessage: info.message,
+    });
+    throw inactive;
   }
 
   const requestConfig = mergeLlmRequestConfig(provider);
@@ -236,6 +392,21 @@ export async function buildChatLlmContext(
   } else if (provider.model && provider.model.trim().length > 0) {
     resolvedModel = provider.model.trim();
   }
+
+  await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+    input: { ...providerLogInput, providerId },
+    output: {
+      providerId,
+      providerSource,
+      modelId: resolvedModel ?? provider.model ?? null,
+      overrides: {
+        hasSystemPromptOverride: Boolean(systemPromptOverride && systemPromptOverride.trim()),
+        temperature: requestOverrides.temperature ?? null,
+        topP: requestOverrides.topP ?? null,
+        maxTokens: requestOverrides.maxTokens ?? null,
+      },
+    },
+  });
 
   const chatMessages = await storage.listChatMessages(chatId);
   const conversation: ChatConversationMessage[] = chatMessages.map((entry) => ({
