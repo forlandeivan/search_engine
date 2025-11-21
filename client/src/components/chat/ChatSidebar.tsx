@@ -155,7 +155,12 @@ export default function ChatSidebar({
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Чат</p>
           <h2 className="text-base font-semibold">Мои диалоги</h2>
         </div>
-        <Button size="sm" onClick={onCreateNewChat} disabled={!workspaceId}>
+        <Button
+          size="sm"
+          onClick={onCreateNewChat}
+          disabled={!workspaceId}
+          data-testid="button-new-chat"
+        >
           Новый чат
         </Button>
       </div>

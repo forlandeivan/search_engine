@@ -102,10 +102,19 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
   }, [effectiveChatId, localChatId]);
 
-  const visibleMessages =
-    effectiveChatId && localChatId === effectiveChatId
-      ? [...(fetchedMessages ?? []), ...localMessages]
-      : fetchedMessages ?? [];
+  const shouldShowLocal = effectiveChatId && localChatId === effectiveChatId && localMessages.length > 0;
+  const visibleMessages = shouldShowLocal
+    ? [
+        ...(fetchedMessages ?? []).filter(
+          (message) =>
+            !localMessages.some(
+              (local) =>
+                local.role === message.role && local.content.trim() === (message.content ?? "").trim(),
+            ),
+        ),
+        ...localMessages,
+      ]
+    : fetchedMessages ?? [];
 
   const normalizedMessagesError = useMemo(() => {
     if (!isMessagesError || !messagesError) {

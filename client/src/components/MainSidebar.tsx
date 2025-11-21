@@ -50,6 +50,7 @@ interface SidebarItem {
   badge?: string;
   badgeVariant?: "default" | "secondary" | "destructive" | "outline";
   locked?: boolean;
+  testId?: string;
 }
 
 interface MainSidebarProps {
@@ -140,6 +141,9 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
       </>
     );
 
+    const testId =
+      item.testId ?? (item.url === chatUrl ? "link-chat" : getTestId(item));
+
     if (item.locked) {
       return (
         <SidebarMenuButton
@@ -149,7 +153,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
           )}
           disabled
           tooltip={isCollapsed ? collapsedTooltip : "Доступно в платной версии"}
-          data-testid={getTestId(item)}
+          data-testid={testId}
         >
           {content}
         </SidebarMenuButton>
@@ -162,7 +166,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
         isActive={isItemActive(item)}
         className={cn("justify-start", isCollapsed && "justify-center")}
         tooltip={isCollapsed ? collapsedTooltip : undefined}
-        data-testid={getTestId(item)}
+          data-testid={testId}
       >
         <Link
           href={item.url}

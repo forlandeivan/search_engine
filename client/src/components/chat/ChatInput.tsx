@@ -35,9 +35,14 @@ export default function ChatInput({ onSend, disabled, placeholder }: ChatInputPr
           }
         }}
         className="resize-none"
+        data-testid="input-chat-message"
       />
       <div className="mt-3 flex justify-end">
-        <Button onClick={handleSend} disabled={disabled || value.trim().length === 0}>
+        <Button
+          onClick={handleSend}
+          disabled={disabled || value.trim().length === 0}
+          data-testid="button-send-message"
+        >
           Отправить
         </Button>
       </div>
