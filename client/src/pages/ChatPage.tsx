@@ -4,12 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput from "@/components/chat/ChatInput";
-import {
-  useChats,
-  useChatMessages,
-  useCreateChat,
-  sendChatMessageLLM,
-} from "@/hooks/useChats";
+import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { useSkills } from "@/hooks/useSkills";
 import type { ChatMessage } from "@/types/chat";
 
@@ -19,7 +14,7 @@ type ChatPageParams = {
 };
 
 type ChatPageProps = {
-  params?: ChatPageParams;
+  params: ChatPageParams;
 };
 
 const isDev = import.meta.env.DEV;
@@ -47,18 +42,19 @@ export default function ChatPage({ params }: ChatPageProps) {
     () => skills.find((skill) => skill.isSystem && skill.systemKey === "UNICA_CHAT") ?? null,
     [skills],
   );
-  const activeSkill =
-    (activeChat && skills.find((skill) => skill.id === activeChat.skillId)) ?? defaultSkill;
+  const activeSkill = useMemo(() => {
+    if (activeChat) {
+      return skills.find((skill) => skill.id === activeChat.skillId) ?? null;
+    }
+    return defaultSkill;
+  }, [activeChat, defaultSkill, skills]);
 
   const {
     messages: fetchedMessages,
     isLoading: isMessagesLoading,
     isError: isMessagesError,
     error: messagesError,
-  } = useChatMessages(
-    effectiveChatId ?? undefined,
-    workspaceId ? workspaceId : undefined,
-  );
+  } = useChatMessages(effectiveChatId ?? undefined, workspaceId || undefined);
 
   const [localChatId, setLocalChatId] = useState<string | null>(null);
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
@@ -73,8 +69,7 @@ export default function ChatPage({ params }: ChatPageProps) {
 
   useEffect(() => {
     if (isDev) {
-      (window as typeof window & { __chatWorkspaceId?: string | null }).__chatWorkspaceId =
-        workspaceId || null;
+      (window as typeof window & { __chatWorkspaceId?: string | null }).__chatWorkspaceId = workspaceId || null;
     }
   }, [workspaceId]);
 
@@ -102,30 +97,36 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
   }, [effectiveChatId, localChatId]);
 
-  const shouldShowLocal = effectiveChatId && localChatId === effectiveChatId && localMessages.length > 0;
-  const visibleMessages = shouldShowLocal
-    ? [
-        ...(fetchedMessages ?? []).filter(
-          (message) =>
-            !localMessages.some(
-              (local) =>
-                local.role === message.role && local.content.trim() === (message.content ?? "").trim(),
-            ),
+  const shouldShowLocal = Boolean(
+    effectiveChatId && localChatId === effectiveChatId && localMessages.length > 0,
+  );
+
+  const visibleMessages = useMemo(() => {
+    const base = fetchedMessages ?? [];
+    if (!shouldShowLocal) {
+      return base;
+    }
+    const deduped = base.filter(
+      (message) =>
+        !localMessages.some(
+          (local) =>
+            local.role === message.role &&
+            local.content.trim() === (message.content ?? "").trim(),
         ),
-        ...localMessages,
-      ]
-    : fetchedMessages ?? [];
+    );
+    return [...deduped, ...localMessages];
+  }, [fetchedMessages, localMessages, shouldShowLocal]);
 
   const normalizedMessagesError = useMemo(() => {
     if (!isMessagesError || !messagesError) {
       return null;
     }
-    const message = messagesError.message ?? "Ошибка загрузки диалога";
+    const message = messagesError.message ?? "Failed to load chat history.";
     if (message.startsWith("404")) {
-      return "Диалог не найден или у вас нет доступа.";
+      return "Chat not found or not accessible.";
     }
     if (message.startsWith("403")) {
-      return "У вас нет прав на просмотр этого диалога.";
+      return "You do not have permission to view this chat.";
     }
     return message.replace(/^\d+:\s*/, "");
   }, [isMessagesError, messagesError]);
@@ -157,39 +158,37 @@ export default function ChatPage({ params }: ChatPageProps) {
       setLocalMessages([userMessage, assistantMessage]);
       setIsStreaming(true);
 
-    try {
-      await sendChatMessageLLM({
-        chatId: targetChatId,
-        workspaceId,
-        content,
-        handlers: {
-          onDelta: (delta) => {
-            setLocalMessages((prev) =>
-              prev.map((message) =>
-                message.id === assistantMessage.id
-                  ? { ...message, content: `${message.content}${delta}` }
-                  : message,
-              ),
-            );
+      try {
+        await sendChatMessageLLM({
+          chatId: targetChatId,
+          workspaceId,
+          content,
+          handlers: {
+            onDelta: (delta) => {
+              setLocalMessages((prev) =>
+                prev.map((message) =>
+                  message.id === assistantMessage.id ? { ...message, content: `${message.content}${delta}` } : message,
+                ),
+              );
+            },
+            onDone: async () => {
+              setLocalMessages([]);
+              await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+              debugLog("[chat] streamMessage finished", { chatId: targetChatId });
+            },
+            onError: (error) => {
+              debugLog("[chat] streamMessage error", error);
+              setStreamError(error.message);
+            },
           },
-          onDone: async () => {
-            setLocalMessages([]);
-            await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
-            debugLog("[chat] streamMessage finished", { chatId: targetChatId });
-          },
-          onError: (error) => {
-            debugLog("[chat] streamMessage error", error);
-            setStreamError(error.message);
-          },
-        },
-      });
-    } catch (error) {
-      debugLog("[chat] streamMessage failure", error);
-      setStreamError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsStreaming(false);
-    }
-  },
+        });
+      } catch (error) {
+        debugLog("[chat] streamMessage failure", error);
+        setStreamError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setIsStreaming(false);
+      }
+    },
     [queryClient, workspaceId],
   );
 
@@ -208,10 +207,15 @@ export default function ChatPage({ params }: ChatPageProps) {
         return;
       }
 
+      if (!defaultSkill) {
+        setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
+        return;
+      }
+
       try {
         const newChat = await createChat({
           workspaceId,
-          skillId: defaultSkill?.id,
+          skillId: defaultSkill.id,
         });
         debugLog("[chat] created new chat", { chatId: newChat.id });
         setOverrideChatId(newChat.id);
@@ -243,6 +247,12 @@ export default function ChatPage({ params }: ChatPageProps) {
 
   return (
     <div className="flex h-full flex-col bg-muted/20">
+      {/*
+        Chat card specification
+        - Page background stays muted (`bg-muted/20`), while the conversation lives inside a centered white card.
+        - Card (messages + input) sits under the header, max width 880px with 24px padding on desktop (reduced on tablet/mobile).
+        - Message list padding 20-24px horizontal / 16-20px vertical; input area shares the same card, split by `border-t`.
+      */}
       <div className="flex h-full">
         <ChatSidebar
           workspaceId={workspaceId}
@@ -250,36 +260,36 @@ export default function ChatPage({ params }: ChatPageProps) {
           onSelectChat={handleSelectChat}
           onCreateNewChat={() => handleSelectChat(null)}
         />
-        <section className="flex flex-1 flex-col">
-          <ChatMessagesArea
-            chatTitle={chatTitle}
-            skillName={skillLabel}
-            messages={visibleMessages}
-            isLoading={isMessagesLoading && !isNewChat}
-            isNewChat={isNewChat}
-            isStreaming={isStreaming}
-            streamError={streamError}
-            errorMessage={normalizedMessagesError}
-            onReset={() => handleSelectChat(null)}
-          />
-          <ChatInput
-            onSend={handleSend}
-            disabled={disableInput}
-            placeholder={
-              isNewChat ? "Начните с первого вопроса..." : "Введите сообщение и нажмите Enter"
-            }
-          />
+        <section className="flex flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mx-auto flex w-full max-w-[880px] flex-1 flex-col rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80">
+            <div className="flex-1 overflow-hidden">
+              <ChatMessagesArea
+                chatTitle={chatTitle}
+                skillName={skillLabel}
+                messages={visibleMessages}
+                isLoading={isMessagesLoading && !isNewChat}
+                isNewChat={isNewChat}
+                isStreaming={isStreaming}
+                streamError={streamError}
+                errorMessage={normalizedMessagesError}
+                onReset={() => handleSelectChat(null)}
+              />
+            </div>
+            <div className="border-t border-slate-200 bg-white/95 p-4 dark:border-slate-800 dark:bg-slate-900/70">
+              <ChatInput
+                onSend={handleSend}
+                disabled={disableInput}
+                placeholder={isNewChat ? "Начните новый чат..." : "Напишите сообщение и нажмите Enter"}
+              />
+            </div>
+          </div>
         </section>
       </div>
     </div>
   );
 }
 
-function buildLocalMessage(
-  role: ChatMessage["role"],
-  chatId: string,
-  content: string,
-): ChatMessage {
+function buildLocalMessage(role: ChatMessage["role"], chatId: string, content: string): ChatMessage {
   return {
     id: `local-${role}-${Date.now()}`,
     chatId,

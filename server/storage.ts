@@ -23,6 +23,8 @@ import {
   unicaChatConfig,
   chatSessions,
   chatMessages,
+  speechProviders,
+  speechProviderSecrets,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
   type KnowledgeBaseRagSearchSettings,
@@ -52,6 +54,9 @@ import {
   type ChatSessionInsert,
   type ChatMessage,
   type ChatMessageInsert,
+  type SpeechProvider,
+  type SpeechProviderInsert,
+  type SpeechProviderSecret,
 } from "@shared/schema";
 import { db } from "./db";
 import { createUnicaChatSkillForWorkspace } from "./skills";
@@ -846,7 +851,9 @@ export interface IStorage {
     userId: string,
     searchQuery?: string,
   ): Promise<Array<ChatSession & { skillName: string | null; skillIsSystem: boolean }>>;
-  getChatSessionById(chatId: string): Promise<(ChatSession & { skillName: string | null }) | null>;
+  getChatSessionById(
+    chatId: string,
+  ): Promise<(ChatSession & { skillName: string | null; skillIsSystem: boolean; skillSystemKey: string | null }) | null>;
   createChatSession(values: ChatSessionInsert): Promise<ChatSession>;
   updateChatSession(
     chatId: string,
@@ -857,6 +864,8 @@ export interface IStorage {
   listChatMessages(chatId: string): Promise<ChatMessage[]>;
   createChatMessage(values: ChatMessageInsert): Promise<ChatMessage>;
   getChatMessage(id: string): Promise<ChatMessage | undefined>;
+  countChatMessages(chatId: string): Promise<number>;
+  updateChatTitleIfEmpty(chatId: string, title: string): Promise<boolean>;
 }
 
 let embeddingProvidersTableEnsured = false;
@@ -867,6 +876,9 @@ let ensuringLlmProvidersTable: Promise<void> | null = null;
 
 let authProvidersTableEnsured = false;
 let ensuringAuthProvidersTable: Promise<void> | null = null;
+
+let speechProvidersTableEnsured = false;
+let ensuringSpeechProvidersTable: Promise<void> | null = null;
 
 let workspacesTableEnsured = false;
 let ensuringWorkspacesTable: Promise<void> | null = null;
@@ -2583,6 +2595,88 @@ async function ensureLlmProvidersTable(): Promise<void> {
   }
 }
 
+async function ensureSpeechProvidersTables(): Promise<void> {
+  if (speechProvidersTableEnsured) {
+    return;
+  }
+
+  if (ensuringSpeechProvidersTable) {
+    await ensuringSpeechProvidersTable;
+    return;
+  }
+
+  ensuringSpeechProvidersTable = (async () => {
+    await ensureUsersTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "speech_providers" (
+        "id" text PRIMARY KEY,
+        "display_name" text NOT NULL,
+        "provider_type" text NOT NULL DEFAULT 'stt',
+        "direction" text NOT NULL DEFAULT 'audio_to_text',
+        "is_enabled" boolean NOT NULL DEFAULT FALSE,
+        "status" text NOT NULL DEFAULT 'Disabled',
+        "last_status_changed_at" timestamp,
+        "last_validation_at" timestamp,
+        "last_error_code" text,
+        "last_error_message" text,
+        "config_json" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "is_built_in" boolean NOT NULL DEFAULT FALSE,
+        "updated_by_admin_id" varchar REFERENCES "users"("id"),
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "speech_provider_secrets" (
+        "provider_id" text NOT NULL REFERENCES "speech_providers"("id") ON DELETE CASCADE,
+        "secret_key" text NOT NULL,
+        "secret_value" text NOT NULL DEFAULT '',
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT speech_provider_secrets_pk PRIMARY KEY ("provider_id", "secret_key")
+      )
+    `);
+
+    await db.execute(sql`
+      INSERT INTO "speech_providers" (
+        "id",
+        "display_name",
+        "provider_type",
+        "direction",
+        "is_enabled",
+        "status",
+        "config_json",
+        "is_built_in",
+        "created_at",
+        "updated_at"
+      )
+      SELECT
+        'yandex_speechkit',
+        'Yandex SpeechKit',
+        'stt',
+        'audio_to_text',
+        FALSE,
+        'Disabled',
+        '{}'::jsonb,
+        TRUE,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "speech_providers" WHERE "id" = 'yandex_speechkit'
+      )
+    `);
+  })();
+
+  try {
+    await ensuringSpeechProvidersTable;
+    speechProvidersTableEnsured = true;
+  } finally {
+    ensuringSpeechProvidersTable = null;
+  }
+}
+
 async function ensureAuthProvidersTable(): Promise<void> {
   if (authProvidersTableEnsured) {
     return;
@@ -4294,6 +4388,77 @@ export class DatabaseStorage implements IStorage {
     return deleted.length > 0;
   }
 
+  async listSpeechProviders(): Promise<SpeechProvider[]> {
+    await ensureSpeechProvidersTables();
+    return await this.db.select().from(speechProviders).orderBy(asc(speechProviders.id));
+  }
+
+  async getSpeechProvider(id: string): Promise<SpeechProvider | undefined> {
+    await ensureSpeechProvidersTables();
+    const [provider] = await this.db
+      .select()
+      .from(speechProviders)
+      .where(eq(speechProviders.id, id))
+      .limit(1);
+    return provider ?? undefined;
+  }
+
+  async updateSpeechProvider(
+    id: string,
+    updates: Partial<SpeechProviderInsert>,
+  ): Promise<SpeechProvider | undefined> {
+    await ensureSpeechProvidersTables();
+    const sanitizedEntries = Object.entries(updates ?? {}).filter(([, value]) => value !== undefined);
+    if (sanitizedEntries.length === 0) {
+      return await this.getSpeechProvider(id);
+    }
+
+    const normalized = Object.fromEntries(
+      sanitizedEntries.map(([key, value]) => {
+        if (key === "configJson") {
+          const payload = value ?? {};
+          return [key, sql`${JSON.stringify(payload)}::jsonb`];
+        }
+        return [key, value];
+      }),
+    ) as Partial<SpeechProviderInsert>;
+
+    const [updated] = await this.db
+      .update(speechProviders)
+      .set({ ...normalized, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(speechProviders.id, id))
+      .returning();
+
+    return updated ?? undefined;
+  }
+
+  async getSpeechProviderSecrets(providerId: string): Promise<SpeechProviderSecret[]> {
+    await ensureSpeechProvidersTables();
+    return await this.db
+      .select()
+      .from(speechProviderSecrets)
+      .where(eq(speechProviderSecrets.providerId, providerId));
+  }
+
+  async upsertSpeechProviderSecret(providerId: string, secretKey: string, secretValue: string): Promise<void> {
+    await ensureSpeechProvidersTables();
+    const trimmedValue = secretValue ?? "";
+    await this.db
+      .insert(speechProviderSecrets)
+      .values({ providerId, secretKey, secretValue: trimmedValue })
+      .onConflictDoUpdate({
+        target: [speechProviderSecrets.providerId, speechProviderSecrets.secretKey],
+        set: { secretValue: trimmedValue, updatedAt: sql`CURRENT_TIMESTAMP` },
+      });
+  }
+
+  async deleteSpeechProviderSecret(providerId: string, secretKey: string): Promise<void> {
+    await ensureSpeechProvidersTables();
+    await this.db
+      .delete(speechProviderSecrets)
+      .where(and(eq(speechProviderSecrets.providerId, providerId), eq(speechProviderSecrets.secretKey, secretKey)));
+  }
+
   async listChatSessions(
     workspaceId: string,
     userId: string,
@@ -4324,12 +4489,24 @@ export class DatabaseStorage implements IStorage {
       .where(condition)
       .orderBy(desc(chatSessions.updatedAt));
 
-    return rows.map(({ chat, skillName, skillIsSystem, skillSystemKey }) => ({
-      ...chat,
-      skillName: skillName ?? null,
-      skillIsSystem: Boolean(skillIsSystem),
-      skillSystemKey: skillSystemKey ?? null,
-    }));
+    return rows.map(
+      ({
+        chat,
+        skillName,
+        skillIsSystem,
+        skillSystemKey,
+      }: {
+        chat: ChatSession;
+        skillName: string | null;
+        skillIsSystem: boolean | null;
+        skillSystemKey: string | null;
+      }) => ({
+        ...chat,
+        skillName: skillName ?? null,
+        skillIsSystem: Boolean(skillIsSystem),
+        skillSystemKey: skillSystemKey ?? null,
+      }),
+    );
   }
 
   async getChatSessionById(
@@ -4426,6 +4603,25 @@ export class DatabaseStorage implements IStorage {
     await ensureChatTables();
     const [message] = await this.db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
     return message ?? undefined;
+  }
+
+  async countChatMessages(chatId: string): Promise<number> {
+    await ensureChatTables();
+    const result = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(chatMessages)
+      .where(eq(chatMessages.chatId, chatId));
+    return Number(result[0]?.count ?? 0);
+  }
+
+  async updateChatTitleIfEmpty(chatId: string, title: string): Promise<boolean> {
+    await ensureChatTables();
+    const updated = await this.db
+      .update(chatSessions)
+      .set({ title })
+      .where(and(eq(chatSessions.id, chatId), eq(chatSessions.title, "")))
+      .returning({ id: chatSessions.id });
+    return updated.length > 0;
   }
 
   async getUnicaChatConfig(): Promise<UnicaChatConfig> {

@@ -15,7 +15,17 @@ import {
   type NodeFetchOptions,
 } from "./http-utils";
 
+function parseEnvPositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
 const USE_MOCK_LLM = process.env.MOCK_LLM_RESPONSES === "1";
+const LLM_COMPLETION_MAX_ATTEMPTS = parseEnvPositiveInt(process.env.LLM_COMPLETION_MAX_ATTEMPTS, 3);
+const LLM_COMPLETION_RETRY_DELAY_MS = parseEnvPositiveInt(process.env.LLM_COMPLETION_RETRY_DELAY_MS, 1500);
 
 if (USE_MOCK_LLM) {
   console.warn("[llm] MOCK_LLM_RESPONSES enabled: using mock completions");
@@ -315,7 +325,11 @@ export function executeLlmCompletion(
         body,
       });
 
-      completionResponse = await fetch(provider.completionUrl, requestOptions);
+      completionResponse = await fetchWithRetries(provider.completionUrl, requestOptions, {
+        providerId: provider.id,
+        maxAttempts: LLM_COMPLETION_MAX_ATTEMPTS,
+        retryDelayMs: LLM_COMPLETION_RETRY_DELAY_MS,
+      });
       console.info(
         `[llm] provider=${provider.id} response status=${completionResponse.status} content-type=${completionResponse.headers.get(
           "content-type",
@@ -587,4 +601,67 @@ export function fetchLlmCompletion(
     stream: options?.stream === true ? true : undefined,
   });
   return executeLlmCompletion(provider, accessToken, requestBody, options);
+}
+
+type RetryOptions = {
+  providerId: string;
+  maxAttempts: number;
+  retryDelayMs: number;
+};
+
+async function fetchWithRetries(
+  url: string,
+  options: NodeFetchOptions,
+  retryOptions: RetryOptions,
+): Promise<FetchResponse> {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= retryOptions.maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(url, options);
+      if (shouldRetryResponse(response) && attempt < retryOptions.maxAttempts) {
+        const delayMs = computeRetryDelayMs(response, retryOptions.retryDelayMs);
+        console.warn(
+          `[llm] provider=${retryOptions.providerId} status=${response.status} attempt=${attempt}/${retryOptions.maxAttempts} retrying in ${delayMs}ms`,
+        );
+        await delay(delayMs);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retryOptions.maxAttempts) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[llm] provider=${retryOptions.providerId} fetch attempt ${attempt}/${retryOptions.maxAttempts} failed: ${message}`,
+      );
+      await delay(retryOptions.retryDelayMs);
+    }
+  }
+
+  throw lastError ?? new Error("LLM request failed after retries");
+}
+
+function shouldRetryResponse(response: FetchResponse): boolean {
+  return response.status === 429 || response.status === 503;
+}
+
+function computeRetryDelayMs(response: FetchResponse, fallback: number): number {
+  const retryHeader = response.headers?.get?.("retry-after");
+  if (retryHeader) {
+    const seconds = Number(retryHeader);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.max(fallback, seconds * 1000);
+    }
+    const dateMs = Date.parse(retryHeader);
+    if (!Number.isNaN(dateMs)) {
+      const diff = dateMs - Date.now();
+      if (diff > 0) {
+        return Math.max(fallback, diff);
+      }
+    }
+  }
+  return fallback;
 }

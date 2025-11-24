@@ -1,4 +1,4 @@
-import type { Json } from "drizzle-orm/json";
+import type { JsonValue } from "./json-types";
 
 /**
  * Skill execution logging model.
@@ -72,7 +72,7 @@ export interface SkillExecutionRecord {
    * Дополнительные агрегированные сведения (например, tags).
    * Сюда нельзя класть токены/секреты — только служебные пометки.
    */
-  metadata?: Json;
+  metadata?: JsonValue;
 }
 
 /**
@@ -85,6 +85,8 @@ export type SkillExecutionStepType =
   | "WRITE_USER_MESSAGE"
   | "BUILD_SKILL_CONTEXT"
   | "RESOLVE_LLM_CONFIG"
+  | "LOAD_SKILL_CONFIG"
+  | "RESOLVE_LLM_PROVIDER_CONFIG"
   | "FETCH_PROVIDER_TOKEN"
   | "CALL_LLM"
   | "STREAM_TO_CLIENT_START"
@@ -120,8 +122,8 @@ export interface SkillExecutionStepRecord {
   status: SkillExecutionStepStatus;
   startedAt: Date;
   finishedAt: Date | null;
-  inputPayload: Json;
-  outputPayload: Json;
+  inputPayload: JsonValue;
+  outputPayload: JsonValue;
   errorCode?: string;
   errorMessage?: string;
   diagnosticInfo?: string;

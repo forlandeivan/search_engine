@@ -41,8 +41,12 @@ function AdminRouter() {
       <Route path="/admin/workspaces" component={AdminWorkspacesPage} />
       <Route path="/admin/auth" component={AuthSettingsPage} />
       <Route path="/admin/embeddings" component={EmbeddingServicesPage} />
-      <Route path="/admin/llm-executions/:executionId" component={LlmExecutionsPage} />
-      <Route path="/admin/llm-executions" component={LlmExecutionsPage} />
+      <Route path="/admin/llm-executions/:executionId">
+        {(params) => <LlmExecutionsPage selectedExecutionId={params.executionId} />}
+      </Route>
+      <Route path="/admin/llm-executions">
+        <LlmExecutionsPage />
+      </Route>
       <Route path="/admin/llm" component={LlmProvidersPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />

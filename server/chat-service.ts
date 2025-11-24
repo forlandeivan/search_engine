@@ -94,6 +94,7 @@ const mapChatSummary = (
   skillSystemKey: session.skillSystemKey ?? null,
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
+  deletedAt: session.deletedAt ?? null,
 });
 
 const mapMessage = (message: ChatMessage) => ({
@@ -324,9 +325,10 @@ export async function buildChatLlmContext(
     throw providerError;
   }
 
-  let provider: LlmProvider | null;
+  let provider: LlmProvider | null = null;
   try {
-    provider = await storage.getLlmProvider(providerId, workspaceId);
+    const resolved = await storage.getLlmProvider(providerId, workspaceId);
+    provider = resolved ?? null;
   } catch (error) {
     const info = describeError(error);
     await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {

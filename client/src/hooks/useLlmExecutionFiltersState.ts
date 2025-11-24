@@ -23,9 +23,9 @@ export interface LlmExecutionFiltersState {
   setDateRange: (range: DateRange) => void;
   setWorkspaceId: (workspaceId: string) => void;
   setSkillId: (skillId: string) => void;
-  setStatus: (status: string) => void;
+  setStatus: (status: ExecutionFilterState["status"]) => void;
   setHasError: (hasError: boolean) => void;
-  setPage: (page: number) => void;
+  setPage: (page: number | ((prev: number) => number)) => void;
   setUserInput: (value: string) => void;
   resetFilters: () => void;
   defaultRange: DateRange;
@@ -38,7 +38,7 @@ export function useLlmExecutionFiltersState(
   const defaultDays = options.defaultDays ?? DEFAULT_EXECUTIONS_DAYS;
   const defaultRange = useInitialRange(defaultDays);
   const [dateRange, setDateRange] = useState<DateRange>(defaultRange);
-  const [page, setPage] = useState(1);
+  const [page, setPageState] = useState(1);
   const [filters, setFilters] = useState<ExecutionFilterState>({
     workspaceId: "",
     skillId: "",
@@ -55,7 +55,7 @@ export function useLlmExecutionFiltersState(
         if (prev.userId === normalized) {
           return prev;
         }
-        setPage(1);
+        setPageState(1);
         return { ...prev, userId: normalized };
       });
     }, 350);
@@ -74,7 +74,7 @@ export function useLlmExecutionFiltersState(
       }
       return { ...prev, [key]: value };
     });
-    setPage(1);
+    setPageState(1);
   };
 
   const resetFilters = () => {
@@ -87,7 +87,7 @@ export function useLlmExecutionFiltersState(
       hasError: false,
     });
     setUserInput("");
-    setPage(1);
+    setPageState(1);
   };
 
   return {
@@ -98,13 +98,22 @@ export function useLlmExecutionFiltersState(
     userInput,
     setDateRange: (range) => {
       setDateRange(range);
-      setPage(1);
+      setPageState(1);
     },
     setWorkspaceId: (workspaceId) => updateFilter("workspaceId", workspaceId),
     setSkillId: (skillId) => updateFilter("skillId", skillId),
     setStatus: (status) => updateFilter("status", status),
     setHasError: (hasError) => updateFilter("hasError", hasError),
-    setPage,
+    setPage: (next) => {
+      if (typeof next === "function") {
+        setPageState((prev) => {
+          const computed = next(prev);
+          return Number.isFinite(computed) ? computed : prev;
+        });
+      } else {
+        setPageState(next);
+      }
+    },
     setUserInput,
     resetFilters,
     defaultRange,

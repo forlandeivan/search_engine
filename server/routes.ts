@@ -91,6 +91,8 @@ import {
   type LlmCompletionResult,
   type LlmStreamEvent,
 } from "./llm-client";
+import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
+import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
   applyTlsPreferences,
   parseJson,
@@ -1587,20 +1589,6 @@ function removeUndefinedDeep<T>(value: T): T {
   return value;
 }
 
-function sanitizeHeadersForLog(headers: Headers): Record<string, string> {
-  const sanitized: Record<string, string> = {};
-
-  for (const [key, value] of headers.entries()) {
-    if (key.toLowerCase().includes("authorization")) {
-      sanitized[key] = "***";
-    } else {
-      sanitized[key] = value;
-    }
-  }
-
-  return sanitized;
-}
-
 function buildVectorPayload(
   vector: number[],
   vectorFieldName: string | null | undefined,
@@ -1741,188 +1729,12 @@ function buildCustomPayloadFromSchema(
   }, {});
 }
 
-interface ApiRequestLog {
-  url: string;
-  headers: Record<string, string>;
-  body: unknown;
-}
-
 interface EmbeddingVectorResult {
   vector: number[];
   usageTokens?: number;
   embeddingId?: string | number;
   rawResponse: unknown;
   request: ApiRequestLog;
-}
-
-type OAuthProviderConfig = Pick<
-  EmbeddingProvider | LlmProvider,
-  "tokenUrl" | "authorizationKey" | "scope" | "requestHeaders" | "allowSelfSignedCertificate"
->;
-
-type CachedAccessToken = {
-  token: string;
-  expiresAt: number;
-};
-
-const oauthTokenCache = new Map<string, CachedAccessToken>();
-const oauthTokenPromises = new Map<string, Promise<string>>();
-const OAUTH_TOKEN_EXPIRY_FALLBACK_MS = 55 * 60 * 1000;
-const OAUTH_TOKEN_EXPIRY_MIN_MS = 30_000;
-const OAUTH_TOKEN_EXPIRY_SAFETY_MS = 10_000;
-
-function buildOAuthCacheKey(provider: OAuthProviderConfig): string {
-  const sortedHeaders = Object.entries(provider.requestHeaders ?? {}).sort(([a], [b]) =>
-    a.localeCompare(b),
-  );
-  return JSON.stringify({
-    tokenUrl: provider.tokenUrl,
-    authorizationKey: provider.authorizationKey,
-    scope: provider.scope ?? "",
-    headers: sortedHeaders,
-  });
-}
-
-async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> {
-  const cacheKey = buildOAuthCacheKey(provider);
-  const now = Date.now();
-  const cachedToken = oauthTokenCache.get(cacheKey);
-
-  if (cachedToken && cachedToken.expiresAt > now) {
-    return cachedToken.token;
-  }
-
-  const pendingToken = oauthTokenPromises.get(cacheKey);
-  if (pendingToken) {
-    return pendingToken;
-  }
-
-  const fallbackSeconds = Math.floor(OAUTH_TOKEN_EXPIRY_FALLBACK_MS / 1000);
-  const fallbackBaseMs = fallbackSeconds * 1000 - OAUTH_TOKEN_EXPIRY_SAFETY_MS;
-  const fallbackTtlMs = Math.max(OAUTH_TOKEN_EXPIRY_MIN_MS, fallbackBaseMs);
-
-  const tokenPromise = requestAccessToken(provider)
-    .then(({ token, expiresInSeconds }) => {
-      let ttlMs = fallbackTtlMs;
-      if (typeof expiresInSeconds === "number" && Number.isFinite(expiresInSeconds)) {
-        if (expiresInSeconds <= 0) {
-          ttlMs = 0;
-        } else {
-          const baseMs = Math.max(0, expiresInSeconds * 1000 - OAUTH_TOKEN_EXPIRY_SAFETY_MS);
-          ttlMs = Math.max(1_000, baseMs);
-        }
-      }
-      if (ttlMs > 0) {
-        oauthTokenCache.set(cacheKey, { token, expiresAt: Date.now() + ttlMs });
-      } else {
-        oauthTokenCache.delete(cacheKey);
-      }
-      return token;
-    })
-    .catch((error) => {
-      oauthTokenCache.delete(cacheKey);
-      throw error;
-    });
-
-  oauthTokenPromises.set(cacheKey, tokenPromise);
-
-  try {
-    return await tokenPromise;
-  } finally {
-    oauthTokenPromises.delete(cacheKey);
-  }
-}
-
-
-async function requestAccessToken(
-  provider: OAuthProviderConfig,
-): Promise<{ token: string; expiresInSeconds?: number }> {
-  const tokenHeaders = new Headers();
-  const rawAuthorizationKey = provider.authorizationKey.trim();
-  const hasAuthScheme = /^(?:[A-Za-z]+)\s+\S+/.test(rawAuthorizationKey);
-  const authorizationHeader = hasAuthScheme
-    ? rawAuthorizationKey
-    : `Basic ${rawAuthorizationKey}`;
-
-  tokenHeaders.set("Authorization", authorizationHeader);
-  tokenHeaders.set("Content-Type", "application/x-www-form-urlencoded");
-  tokenHeaders.set("Accept", "application/json");
-
-  if (!tokenHeaders.has("RqUID")) {
-    tokenHeaders.set("RqUID", randomUUID());
-  }
-
-  for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
-    tokenHeaders.set(key, value);
-  }
-
-  const tokenRequestBody = new URLSearchParams({
-    scope: provider.scope,
-    grant_type: "client_credentials",
-  }).toString();
-
-  let tokenResponse: FetchResponse;
-
-  try {
-    const requestOptions = applyTlsPreferences<NodeFetchOptions>(
-      {
-        method: "POST",
-        headers: tokenHeaders,
-        body: tokenRequestBody,
-      },
-      provider.allowSelfSignedCertificate,
-    );
-
-    tokenResponse = await fetch(provider.tokenUrl, requestOptions);
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-
-    if (
-      !provider.allowSelfSignedCertificate &&
-      errorMessage.toLowerCase().includes("self-signed certificate")
-    ) {
-      throw new Error(
-        "?? ????? ??????????? ? ????: ?????? ?? ???? ?????. ?????? ????? ?????????? ?????? ? ?????? ??????.",
-      );
-    }
-
-    throw new Error(`?? ????? ??????? ????? ??? ??????? ????: ${errorMessage}`);
-  }
-
-  const rawBody = await tokenResponse.text();
-  const parsedBody = parseJson(rawBody);
-
-  if (!tokenResponse.ok) {
-    let message = `???? ???? ????? ${tokenResponse.status}`;
-
-    if (parsedBody && typeof parsedBody === "object") {
-      const body = parsedBody as Record<string, unknown>;
-      if (typeof body.error_description === "string") {
-        message = body.error_description;
-      } else if (typeof body.message === "string") {
-        message = body.message;
-      }
-    } else if (typeof parsedBody === "string" && parsedBody.trim()) {
-      message = parsedBody.trim();
-    }
-
-    throw new Error(`???? ?? ??? ??????? ????: ${message}`);
-  }
-
-  if (parsedBody && typeof parsedBody === "object") {
-    const body = parsedBody as Record<string, unknown>;
-    const token = body.access_token;
-
-    if (typeof token === "string" && token.trim()) {
-      const expiresIn =
-        typeof body.expires_in === "number" && Number.isFinite(body.expires_in)
-          ? Math.max(0, body.expires_in)
-          : undefined;
-      return { token, expiresInSeconds: expiresIn };
-    }
-  }
-
-  throw new Error("???? ?? ???? access_token");
 }
 
 async function fetchEmbeddingVector(
@@ -7749,6 +7561,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
       const message = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
+      scheduleChatTitleGenerationIfNeeded({
+        chatId: req.params.chatId,
+        workspaceId,
+        userId: user.id,
+        messageText: payload.content ?? "",
+      });
       res.status(201).json({ message });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -7949,6 +7767,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             contentLength: typeof payload.content === "string" ? payload.content.length : 0,
           },
           output: { messageId: userMessageRecord.id },
+        });
+        scheduleChatTitleGenerationIfNeeded({
+          chatId: req.params.chatId,
+          workspaceId,
+          userId: user.id,
+          messageText: payload.content ?? "",
+          chatTitle: chat.title,
         });
       } catch (messageError) {
         await safeLogStep("WRITE_USER_MESSAGE", SKILL_EXECUTION_STEP_STATUS.ERROR, {

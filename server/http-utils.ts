@@ -22,7 +22,7 @@ export function applyTlsPreferences<T extends NodeFetchOptions>(
 export interface ApiRequestLog {
   url: string;
   headers: Record<string, string>;
-  body: Record<string, unknown>;
+  body: unknown;
 }
 
 export function sanitizeHeadersForLog(headers: Headers): Record<string, string> {

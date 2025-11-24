@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { Json } from "drizzle-orm/json";
+import type { JsonValue } from "./json-types";
 import {
   SkillExecutionRecord,
   SkillExecutionSource,
@@ -28,7 +28,7 @@ export type SkillExecutionStartContext = {
   userId?: string | null;
   chatId?: string | null;
   userMessageId?: string | null;
-  metadata?: Json;
+  metadata?: JsonValue;
 };
 
 export interface SkillExecutionLogServiceOptions {
@@ -199,11 +199,11 @@ export class SkillExecutionLogService {
   }
 }
 
-export function sanitizePayload(value: unknown, options: SanitizeOptions = DEFAULT_SANITIZE_OPTIONS): Json {
+export function sanitizePayload(value: unknown, options: SanitizeOptions = DEFAULT_SANITIZE_OPTIONS): JsonValue {
   return sanitizeInternal(value, options, 0);
 }
 
-function sanitizeInternal(value: unknown, options: SanitizeOptions, depth: number): Json {
+function sanitizeInternal(value: unknown, options: SanitizeOptions, depth: number): JsonValue {
   if (depth > options.maxDepth) {
     return "***TRUNCATED***";
   }
@@ -229,7 +229,7 @@ function sanitizeInternal(value: unknown, options: SanitizeOptions, depth: numbe
   }
 
   if (Array.isArray(value)) {
-    const result: Json[] = [];
+    const result: JsonValue[] = [];
     for (let i = 0; i < Math.min(value.length, options.maxArrayLength); i += 1) {
       result.push(sanitizeInternal(value[i], options, depth + 1));
     }
@@ -241,7 +241,7 @@ function sanitizeInternal(value: unknown, options: SanitizeOptions, depth: numbe
 
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>);
-    const result: Record<string, Json> = {};
+    const result: Record<string, JsonValue> = {};
     for (let i = 0; i < Math.min(entries.length, options.maxObjectKeys); i += 1) {
       const [key, entryValue] = entries[i];
       if (SENSITIVE_KEY_PATTERN.test(key)) {

@@ -70,6 +70,7 @@ export function useLlmExecutionsList(params: LlmExecutionListParams = {}) {
       : { page: params.page ?? DEFAULT_PAGE, pageSize: params.pageSize ?? DEFAULT_PAGE_SIZE, total: 0 },
     isLoading: query.isLoading,
     isFetching: query.isFetching,
+    isError: query.isError,
     error: query.error,
     refetch: query.refetch,
   };

@@ -1,4 +1,4 @@
-import type { Json } from "drizzle-orm/json";
+import type { JsonValue } from "./json-types";
 import { storage } from "./storage";
 import { getSkillById } from "./skills";
 import { skillExecutionLogService } from "./skill-execution-log-context";
@@ -55,7 +55,7 @@ export interface AdminSkillExecutionSummary {
 }
 
 export interface AdminSkillExecutionDetail {
-  execution: AdminSkillExecutionSummary & { metadata?: Json };
+  execution: AdminSkillExecutionSummary & { metadata?: JsonValue };
   steps: Array<{
     id: string;
     type: SkillExecutionStepType;
@@ -65,8 +65,8 @@ export interface AdminSkillExecutionDetail {
     errorCode?: string | null;
     errorMessage?: string | null;
     diagnosticInfo?: string | null;
-    input: Json;
-    output: Json;
+    input: JsonValue;
+    output: JsonValue;
   }>;
 }
 
@@ -225,9 +225,13 @@ async function fetchUsers(ids: Set<string>): Promise<Map<string, UserMeta>> {
     Array.from(ids).map(async (id) => {
       try {
         const user = await storage.getUser(id);
+        const displayName =
+          user?.fullName?.trim() ||
+          [user?.firstName ?? "", user?.lastName ?? ""].filter(Boolean).join(" ").trim() ||
+          null;
         return [
           id,
-          { id, name: user?.name ?? null, email: user?.email ?? null },
+          { id, name: displayName, email: user?.email ?? null },
         ] as const;
       } catch {
         return [id, { id, name: null, email: null }] as const;
@@ -259,7 +263,7 @@ async function fetchSkills(keys: Set<string>): Promise<Map<string, SkillMeta>> {
   return new Map(entries);
 }
 
-async function fetchChatMessages(ids: Set<string>): Promise<Map<string, string>> {
+async function fetchChatMessages(ids: Set<string>): Promise<Map<string, string | null>> {
   const entries = await Promise.all(
     Array.from(ids).map(async (id) => {
       try {

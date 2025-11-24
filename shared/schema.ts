@@ -671,6 +671,49 @@ export const knowledgeBaseSearchSettings = pgTable(
   }),
 );
 
+export const speechProviderTypes = ["stt", "tts"] as const;
+export type SpeechProviderType = (typeof speechProviderTypes)[number];
+
+export const speechProviderDirections = ["audio_to_text", "text_to_speech"] as const;
+export type SpeechProviderDirection = (typeof speechProviderDirections)[number];
+
+export const speechProviderStatuses = ["Disabled", "Enabled", "Error"] as const;
+export type SpeechProviderStatus = (typeof speechProviderStatuses)[number];
+
+export const speechProviders = pgTable("speech_providers", {
+  id: text("id").primaryKey(),
+  displayName: text("display_name").notNull(),
+  providerType: text("provider_type").$type<SpeechProviderType>().notNull().default("stt"),
+  direction: text("direction").$type<SpeechProviderDirection>().notNull().default("audio_to_text"),
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  status: text("status").$type<SpeechProviderStatus>().notNull().default("Disabled"),
+  lastStatusChangedAt: timestamp("last_status_changed_at"),
+  lastValidationAt: timestamp("last_validation_at"),
+  lastErrorCode: text("last_error_code"),
+  lastErrorMessage: text("last_error_message"),
+  configJson: jsonb("config_json").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  isBuiltIn: boolean("is_built_in").notNull().default(false),
+  updatedByAdminId: varchar("updated_by_admin_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const speechProviderSecrets = pgTable(
+  "speech_provider_secrets",
+  {
+    providerId: text("provider_id")
+      .notNull()
+      .references(() => speechProviders.id, { onDelete: "cascade" }),
+    secretKey: text("secret_key").notNull(),
+    secretValue: text("secret_value").notNull().default(""),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.providerId, table.secretKey], name: "speech_provider_secrets_pk" }),
+  }),
+);
+
 export const llmProviders = pgTable("llm_providers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
   name: text("name").notNull(),
@@ -1196,6 +1239,9 @@ export type UpsertAuthProvider = z.infer<typeof upsertAuthProviderSchema>;
 export type PublicEmbeddingProvider = Omit<EmbeddingProvider, "authorizationKey"> & {
   hasAuthorizationKey: boolean;
 };
+export type SpeechProvider = typeof speechProviders.$inferSelect;
+export type SpeechProviderInsert = typeof speechProviders.$inferInsert;
+export type SpeechProviderSecret = typeof speechProviderSecrets.$inferSelect;
 export type LlmProvider = typeof llmProviders.$inferSelect;
 export type LlmProviderInsert = typeof llmProviders.$inferInsert;
 export type UnicaChatConfig = typeof unicaChatConfig.$inferSelect;
