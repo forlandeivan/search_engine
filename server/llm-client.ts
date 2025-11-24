@@ -348,102 +348,165 @@ export function executeLlmCompletion(
       throw new Error(message);
     }
 
-    if (wantsStream) {
-      const contentType = completionResponse.headers.get("Content-Type") ?? "";
-
+    if (wantsStream) {
+      const contentType = completionResponse.headers.get("Content-Type") ?? "";
+
       if (!contentType.toLowerCase().includes("text/event-stream")) {
-        streamController?.fail(new Error("LLM не вернул поток данных"));
-        throw new Error("LLM не вернул поток данных");
+        streamController?.fail(new Error("LLM не вернул поток событий"));
+        throw new Error("LLM не вернул поток событий");
       }
-
-      const reader = completionResponse.body?.getReader();
-      if (!reader) {
-        streamController?.fail(new Error("Не удалось прочитать поток LLM"));
-        throw new Error("Не удалось прочитать поток LLM");
+
+      const responseBody = completionResponse.body;
+      if (!responseBody) {
+        streamController?.fail(new Error("Не удалось получить поток LLM"));
+        throw new Error("Не удалось получить поток LLM");
       }
-
+
       const decoder = new TextDecoder();
       let buffer = "";
       let aggregatedAnswer = "";
       let usageTokens: number | null = null;
       const rawEvents: Array<{ event: string; data: unknown }> = [];
       let streamCompleted = false;
+      let currentEventName: string | null = null;
 
-      try {
-        console.info(`[llm] provider=${provider.id} SSE stream started`);
-        while (true) {
-          const chunk = await reader.read();
-          if (chunk.done) {
-            break;
-          }
+      const handleSseEvent = (eventName: string, payload: string) => {
+        rawEvents.push({ event: eventName, data: payload });
 
-          buffer += decoder.decode(chunk.value, { stream: true });
+        const normalizedEvent = eventName || "message";
 
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
+        if (payload === "[DONE]") {
+          streamCompleted = true;
+          return;
+        }
 
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.length === 0) {
-              continue;
-            }
+        if (normalizedEvent === "delta" || normalizedEvent === "message") {
+          let text = "";
 
-            if (trimmed.startsWith("event:")) {
-              const eventName = trimmed.slice(6).trim();
-              const dataLine = lines.shift();
-              const payload =
-                dataLine && dataLine.startsWith("data:") ? dataLine.slice(5).trim() : "";
-
-              rawEvents.push({ event: eventName, data: payload });
-
-              if (eventName === "delta") {
-                const delta = payload ? JSON.parse(payload) : null;
-                const text = delta?.text ?? "";
-                aggregatedAnswer += typeof text === "string" ? text : "";
-                streamController?.push({ event: "delta", data: { text } });
-              } else if (eventName === "usage") {
-                try {
-                  const parsedUsage = JSON.parse(payload);
-                  const total = parsedUsage?.total_tokens;
-                  if (typeof total === "number" && Number.isFinite(total)) {
-                    usageTokens = total;
-                  }
-                } catch {
-                  // ignore
-                }
-              } else if (eventName === "done") {
-                streamCompleted = true;
-              } else {
-                streamController?.push({ event: eventName, data: payload ? JSON.parse(payload) : {} });
+          if (payload) {
+            try {
+              const parsed = JSON.parse(payload);
+              if (typeof parsed?.text === "string") {
+                text = parsed.text;
+              } else if (
+                Array.isArray(parsed?.choices) &&
+                parsed.choices[0]?.delta &&
+                typeof parsed.choices[0].delta?.content === "string"
+              ) {
+                text = parsed.choices[0].delta.content;
+              } else if (typeof parsed?.delta?.text === "string") {
+                text = parsed.delta.text;
+              } else if (typeof parsed?.choices?.[0]?.text === "string") {
+                text = parsed.choices[0].text;
               }
+            } catch {
+              text = payload;
             }
           }
+
+          aggregatedAnswer += text;
+          streamController?.push({ event: "delta", data: { text } });
+        } else if (normalizedEvent === "usage") {
+          try {
+            const parsedUsage = JSON.parse(payload);
+            const total = parsedUsage?.total_tokens ?? parsedUsage?.usage?.total_tokens;
+            if (typeof total === "number" && Number.isFinite(total)) {
+              usageTokens = total;
+            }
+          } catch {
+            // ignore malformed usage payloads
+          }
+        } else if (normalizedEvent === "done") {
+          streamCompleted = true;
+        } else {
+          streamController?.push({
+            event: normalizedEvent,
+            data: payload ? JSON.parse(payload) : {},
+          });
+        }
+      };
+
+      const flushBuffer = () => {
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (line.startsWith(":")) {
+            continue;
+          }
+          const trimmed = line.trimEnd();
+          if (trimmed.length === 0) {
+            currentEventName = null;
+            continue;
+          }
+          if (trimmed.startsWith("event:")) {
+            currentEventName = trimmed.slice(6).trim() || null;
+            continue;
+          }
+          if (trimmed.startsWith("data:")) {
+            const payload = trimmed.slice(5).trim();
+            handleSseEvent(currentEventName ?? "message", payload);
+            continue;
+          }
+        }
+      };
+
+      const processChunk = (chunkValue?: Uint8Array | Buffer | null) => {
+        if (!chunkValue) {
+          return;
+        }
+        buffer += decoder.decode(chunkValue, { stream: true });
+        flushBuffer();
+      };
+
+      try {
+        console.info(`[llm] provider=${provider.id} SSE stream started`);
+        const bodyAny = responseBody as unknown as {
+          getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
+          [Symbol.asyncIterator]?: () => AsyncIterator<Uint8Array | Buffer>;
+        };
+
+        if (typeof bodyAny?.getReader === "function") {
+          const reader = bodyAny.getReader();
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) {
+              break;
+            }
+            processChunk(chunk.value);
+          }
+        } else if (typeof bodyAny?.[Symbol.asyncIterator] === "function") {
+          for await (const chunk of (responseBody as unknown as AsyncIterable<Uint8Array | Buffer>)) {
+            processChunk(chunk);
+          }
+        } else {
+          throw new Error("Поток ответа LLM имеет неподдерживаемый формат");
         }
       } catch (error) {
         streamController?.fail(error);
         const errorMessage = error instanceof Error ? error.message : String(error);
         throw new Error(`Ошибка чтения SSE от LLM: ${errorMessage}`);
       }
-
+
       if (!aggregatedAnswer) {
         streamController?.finish();
         throw new Error("LLM не вернул ответ");
       }
-
-      streamController?.finish();
+
+      streamController?.finish();
       console.info(`[llm] provider=${provider.id} SSE stream completed`);
-      return {
-        answer: aggregatedAnswer,
-        usageTokens,
-        rawResponse: rawEvents,
-        request: {
-          url: provider.completionUrl,
-          headers: sanitizeHeadersForLog(llmHeaders),
-          body,
-        },
-      };
-    }
-
+      return {
+        answer: aggregatedAnswer,
+        usageTokens,
+        rawResponse: rawEvents,
+        request: {
+          url: provider.completionUrl,
+          headers: sanitizeHeadersForLog(llmHeaders),
+          body,
+        },
+      };
+    }
+
     const rawBodyText = await completionResponse.text();
     const parsedBody = parseJson(rawBodyText);
 

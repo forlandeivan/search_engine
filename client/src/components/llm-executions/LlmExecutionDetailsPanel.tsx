@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EXECUTION_STATUS_COLORS, EXECUTION_STATUS_LABELS } from "@/components/llm-executions/status";
-import { useLlmExecutionDetails } from "@/hooks/useLlmExecutions";
 import { ExecutionStepsTimeline } from "@/components/llm-executions/ExecutionStepsTimeline";
+import { useLlmExecutionDetails } from "@/hooks/useLlmExecutions";
 import { formatExecutionDuration, formatExecutionTimestamp } from "@/lib/llm-execution-format";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +24,7 @@ export function LlmExecutionDetailsPanel({ executionId, onClose }: LlmExecutionD
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Выберите запуск слева, чтобы увидеть подробности его выполнения.
+            Выберите запуск слева, чтобы увидеть информацию о его выполнении.
           </p>
         </CardContent>
       </Card>
@@ -37,7 +37,7 @@ export function LlmExecutionDetailsPanel({ executionId, onClose }: LlmExecutionD
 
   if (isLoading) {
     return (
-      <Card className="h-fit">
+      <Card className="h-fit" data-testid="llm-execution-details-panel">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Детали запуска</CardTitle>
           <Button variant="ghost" size="sm" onClick={onClose}>
@@ -57,9 +57,9 @@ export function LlmExecutionDetailsPanel({ executionId, onClose }: LlmExecutionD
     const message =
       error?.message === "Not Found"
         ? "Запуск не найден или уже удалён."
-        : error?.message ?? "Не удалось загрузить запуск.";
+        : error?.message ?? "Не удалось загрузить данные запуска.";
     return (
-      <Card className="h-fit">
+      <Card className="h-fit" data-testid="llm-execution-details-panel">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Детали запуска</CardTitle>
           <Button variant="ghost" size="sm" onClick={onClose}>
@@ -82,7 +82,7 @@ export function LlmExecutionDetailsPanel({ executionId, onClose }: LlmExecutionD
     (summary.finishedAt ? new Date(summary.finishedAt).getTime() - new Date(summary.startedAt).getTime() : null);
 
   return (
-    <Card className="h-fit">
+    <Card className="h-fit" data-testid="llm-execution-details-panel">
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Детали запуска</CardTitle>
         <Button variant="ghost" size="sm" onClick={onClose}>
@@ -131,11 +131,7 @@ export function LlmExecutionDetailsPanel({ executionId, onClose }: LlmExecutionD
           </InfoRow>
           <InfoRow label="Chat ID">{summary.chatId ?? "—"}</InfoRow>
           <InfoRow label="Сообщение пользователя">
-            {summary.userMessagePreview ? (
-              <span className="line-clamp-4">{summary.userMessagePreview}</span>
-            ) : (
-              "—"
-            )}
+            {summary.userMessagePreview ? <span className="line-clamp-4">{summary.userMessagePreview}</span> : "—"}
           </InfoRow>
         </div>
 

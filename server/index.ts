@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./load-env";
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { registerRoutes } from "./routes";

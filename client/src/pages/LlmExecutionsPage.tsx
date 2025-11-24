@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { format } from "date-fns";
 import { CalendarIcon, Filter, RefreshCcw } from "lucide-react";
-import { useLocation } from "wouter";
+import { useLocation, useRoute } from "wouter";
 import {
   Table,
   TableBody,
@@ -84,7 +84,16 @@ export default function LlmExecutionsPage({ selectedExecutionId }: LlmExecutions
     () => skills.find((skill) => skill.isSystem && skill.systemKey === "UNICA_CHAT"),
     [skills],
   );
-  const [, navigate] = useLocation();
+  const [currentLocation, navigate] = useLocation();
+  const [isDetailMatch, detailParams] = useRoute("/admin/llm-executions/:executionId");
+  const locationExecutionId = useMemo(() => {
+    if (detailParams?.executionId) {
+      return detailParams.executionId;
+    }
+    const match = currentLocation.match(/\/admin\/llm-executions\/([^/?#]+)/i);
+    return match?.[1];
+  }, [currentLocation, detailParams?.executionId]);
+  const effectiveExecutionId = selectedExecutionId ?? locationExecutionId;
 
   const { executions, pagination, isLoading, isError, error } = useLlmExecutionsList(params);
   const totalPages = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
@@ -102,7 +111,7 @@ export default function LlmExecutionsPage({ selectedExecutionId }: LlmExecutions
   const executionRangeEnd = Math.min(page * pagination.pageSize, pagination.total);
 
   const handleRowClick = (executionId: string) => {
-    if (executionId === selectedExecutionId) {
+    if (executionId === effectiveExecutionId) {
       return;
     }
     navigate(`/admin/llm-executions/${executionId}`);
@@ -411,7 +420,7 @@ export default function LlmExecutionsPage({ selectedExecutionId }: LlmExecutions
           </Card>
         </div>
 
-        <LlmExecutionDetailsPanel executionId={selectedExecutionId} onClose={handleCloseDetails} />
+        <LlmExecutionDetailsPanel executionId={effectiveExecutionId} onClose={handleCloseDetails} />
       </div>
     </div>
   );
