@@ -27,6 +27,7 @@ import {
   Building2,
   Bot,
   ScrollText,
+  Mic,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -156,7 +157,17 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
         },
       ],
     },
-  ];
+      {
+      label: "TTS&STT",
+      items: [
+        {
+          title: "TTS&STT",
+          url: "/admin/tts-stt",
+          icon: Mic,
+        },
+      ],
+    },
+];
 
   return (
     <Sidebar collapsible="icon">

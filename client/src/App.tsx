@@ -16,6 +16,8 @@ import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
 import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
 import LlmProvidersPage from "@/pages/LlmProvidersPage";
 import LlmExecutionsPage from "@/pages/LlmExecutionsPage";
+import TtsSttProvidersPage from "@/pages/TtsSttProvidersPage";
+import SpeechProviderDetailsPage from "@/pages/SpeechProviderDetailsPage";
 import WidgetScriptPage from "@/pages/WidgetScriptPage";
 import AuthSettingsPage from "@/pages/AuthSettingsPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
@@ -48,6 +50,10 @@ function AdminRouter() {
         <LlmExecutionsPage />
       </Route>
       <Route path="/admin/llm" component={LlmProvidersPage} />
+      <Route path="/admin/tts-stt/providers/:providerId">
+        {(params) => <SpeechProviderDetailsPage providerId={params.providerId} />}
+      </Route>
+      <Route path="/admin/tts-stt" component={TtsSttProvidersPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />
       <Route path="/admin" component={AdminWorkspacesPage} />

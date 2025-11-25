@@ -10,6 +10,7 @@ function resolveEnvPath(): string | null {
     process.env.DOTENV_PATH?.trim(),
     path.resolve(process.cwd(), ".env"),
     path.resolve(__dirname, "..", ".env"),
+    path.resolve(__dirname, "../..", ".env"),
   ].filter(Boolean) as string[];
 
   for (const candidate of candidates) {
@@ -24,6 +25,7 @@ const envPath = resolveEnvPath();
 
 if (envPath) {
   config({ path: envPath });
+  console.log(`[env] Loaded environment variables from ${envPath}`);
 } else {
   console.warn("[env] .env file not found; environment variables must be provided explicitly.");
 }

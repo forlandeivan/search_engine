@@ -1,3 +1,4 @@
+import "./load-env";
 import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import { Pool as PgPool } from "pg";
 import { drizzle as neonDrizzle } from "drizzle-orm/neon-serverless";

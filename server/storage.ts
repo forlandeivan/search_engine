@@ -868,6 +868,9 @@ export interface IStorage {
   updateChatTitleIfEmpty(chatId: string, title: string): Promise<boolean>;
 }
 
+let usersTableEnsured = false;
+let ensuringUsersTable: Promise<void> | null = null;
+
 let embeddingProvidersTableEnsured = false;
 let ensuringEmbeddingProvidersTable: Promise<void> | null = null;
 
@@ -2592,6 +2595,28 @@ async function ensureLlmProvidersTable(): Promise<void> {
     llmProvidersTableEnsured = true;
   } finally {
     ensuringLlmProvidersTable = null;
+  }
+}
+
+async function ensureUsersTable(): Promise<void> {
+  if (usersTableEnsured) {
+    return;
+  }
+
+  if (ensuringUsersTable) {
+    await ensuringUsersTable;
+    return;
+  }
+
+  ensuringUsersTable = (async () => {
+    await db.execute(sql`SELECT 1 FROM "users" LIMIT 1`);
+  })();
+
+  try {
+    await ensuringUsersTable;
+    usersTableEnsured = true;
+  } finally {
+    ensuringUsersTable = null;
   }
 }
 

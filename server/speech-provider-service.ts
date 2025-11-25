@@ -141,7 +141,7 @@ class SpeechProviderService {
       throw new SpeechProviderNotFoundError();
     }
     if (!provider.isBuiltIn) {
-      throw new SpeechProviderServiceError("Настраивать можно только встроенный провайдер", 400);
+      throw new SpeechProviderServiceError("Only built-in provider 'Yandex SpeechKit' is allowed in current version", 400);
     }
 
     const now = new Date();

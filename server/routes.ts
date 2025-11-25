@@ -169,6 +169,14 @@ import {
   resolveOptionalUser,
   WorkspaceContextError,
 } from "./auth";
+import {
+  speechProviderService,
+  SpeechProviderServiceError,
+  SpeechProviderNotFoundError,
+  type SpeechProviderSummary,
+  type SpeechProviderDetail,
+  type SpeechProviderSecretsPatch,
+} from "./speech-provider-service";
 
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
@@ -1047,6 +1055,250 @@ function extractQdrantApiError(error: unknown):
     message,
     details: data ?? null,
   };
+}
+
+const ADMIN_SPEECH_PROVIDER_TIMEOUT_MS = 30_000;
+const ADMIN_SPEECH_PROVIDER_RATE_LIMIT = 30;
+const ADMIN_SPEECH_PROVIDER_RATE_WINDOW_MS = 60_000;
+const ADMIN_SPEECH_PROVIDER_BODY_LIMIT_BYTES = 64 * 1024;
+
+class SpeechProviderRateLimitError extends Error {
+  constructor() {
+    super("Rate limit exceeded");
+    this.name = "SpeechProviderRateLimitError";
+  }
+}
+
+const speechProviderRateLimitBuckets = new Map<string, number[]>();
+
+function trackSpeechProviderRateLimit(adminId: string) {
+  const now = Date.now();
+  const windowStart = now - ADMIN_SPEECH_PROVIDER_RATE_WINDOW_MS;
+  const timestamps = speechProviderRateLimitBuckets.get(adminId) ?? [];
+  const recent = timestamps.filter((value) => value > windowStart);
+  if (recent.length >= ADMIN_SPEECH_PROVIDER_RATE_LIMIT) {
+    throw new SpeechProviderRateLimitError();
+  }
+  recent.push(now);
+  speechProviderRateLimitBuckets.set(adminId, recent);
+}
+
+async function runWithAdminTimeout<T>(operation: () => Promise<T>): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("Request timeout"));
+    }, ADMIN_SPEECH_PROVIDER_TIMEOUT_MS);
+    operation()
+      .then((result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+  });
+}
+
+type AdminMeta = { id: string; email: string | null } | null;
+
+async function resolveAdminMeta(adminId?: string | null): Promise<AdminMeta> {
+  if (!adminId) {
+    return null;
+  }
+  try {
+    const user = await storage.getUser(adminId);
+    return {
+      id: adminId,
+      email: user?.email ?? null,
+    };
+  } catch {
+    return {
+      id: adminId,
+      email: null,
+    };
+  }
+}
+
+function parseSpeechProviderListParams(req: Request):
+  | { limit: number; offset: number }
+  | { error: string } {
+  const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+  const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+
+  const parseNumber = (value: unknown): number | undefined => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return NaN;
+  };
+
+  const limitCandidate = parseNumber(limitRaw);
+  if (limitCandidate !== undefined) {
+    if (!Number.isInteger(limitCandidate) || limitCandidate < 1 || limitCandidate > 100) {
+      return { error: "Invalid value for field 'limit'" };
+    }
+  }
+
+  const offsetCandidate = parseNumber(offsetRaw);
+  if (offsetCandidate !== undefined) {
+    if (!Number.isInteger(offsetCandidate) || offsetCandidate < 0 || offsetCandidate > 1000) {
+      return { error: "Invalid value for field 'offset'" };
+    }
+  }
+
+  return {
+    limit: (limitCandidate ?? 50) as number,
+    offset: (offsetCandidate ?? 0) as number,
+  };
+}
+
+async function buildSpeechProviderListItem(summary: SpeechProviderSummary) {
+  const adminMeta = await resolveAdminMeta(summary.updatedByAdminId ?? null);
+  return {
+    id: summary.id,
+    name: summary.displayName,
+    type: summary.providerType,
+    direction: summary.direction,
+    status: summary.status,
+    isEnabled: summary.isEnabled,
+    lastUpdatedAt: summary.updatedAt,
+    lastStatusChangedAt: summary.lastStatusChangedAt ?? null,
+    updatedByAdmin: adminMeta,
+  };
+}
+
+async function buildSpeechProviderResponse(detail: SpeechProviderDetail) {
+  const adminMeta = await resolveAdminMeta(detail.provider.updatedByAdminId ?? null);
+  return {
+    id: detail.provider.id,
+    name: detail.provider.displayName,
+    type: detail.provider.providerType,
+    direction: detail.provider.direction,
+    status: detail.provider.status,
+    isEnabled: detail.provider.isEnabled,
+    lastUpdatedAt: detail.provider.updatedAt,
+    lastStatusChangedAt: detail.provider.lastStatusChangedAt ?? null,
+    lastValidationAt: detail.provider.lastValidationAt ?? null,
+    lastErrorCode: detail.provider.lastErrorCode ?? null,
+    lastErrorMessage: detail.provider.lastErrorMessage ?? null,
+    config: detail.config,
+    secrets: detail.secrets,
+    updatedByAdmin: adminMeta,
+  };
+}
+
+const speechProviderConfigSchema = z
+  .object({
+    languageCode: z.string().trim().max(64).optional(),
+    model: z.string().trim().max(128).optional(),
+    enablePunctuation: z.boolean().optional(),
+  })
+  .strict();
+
+const speechProviderSecretsSchema = z
+  .object({
+    apiKey: z.union([z.string().trim(), z.null()]).optional(),
+    folderId: z.union([z.string().trim(), z.null()]).optional(),
+  })
+  .strict();
+
+const updateSpeechProviderSchema = z
+  .object({
+    isEnabled: z.boolean().optional(),
+    config: speechProviderConfigSchema.optional(),
+    secrets: speechProviderSecretsSchema.optional(),
+  })
+  .strict();
+
+function normalizeSpeechProviderConfigPatch(
+  config?: z.infer<typeof speechProviderConfigSchema>,
+): Record<string, unknown> | undefined {
+  if (!config) {
+    return undefined;
+  }
+  const payload: Record<string, unknown> = {};
+  if (config.languageCode !== undefined) {
+    payload.languageCode = config.languageCode;
+  }
+  if (config.model !== undefined) {
+    payload.model = config.model;
+  }
+  if (config.enablePunctuation !== undefined) {
+    payload.enablePunctuation = config.enablePunctuation;
+  }
+  return Object.keys(payload).length > 0 ? payload : undefined;
+}
+
+function normalizeSpeechProviderSecretsPatch(
+  secrets?: z.infer<typeof speechProviderSecretsSchema>,
+): SpeechProviderSecretsPatch | undefined {
+  if (!secrets) {
+    return undefined;
+  }
+  const entries: SpeechProviderSecretsPatch = [];
+  for (const [key, value] of Object.entries(secrets)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (value === null || (typeof value === "string" && value.trim().length === 0)) {
+      entries.push({ key, clear: true });
+    } else {
+      entries.push({ key, value });
+    }
+  }
+  return entries.length > 0 ? entries : undefined;
+}
+
+function computeNextSecretFlags(
+  current: Record<string, { isSet: boolean }>,
+  patch?: SpeechProviderSecretsPatch,
+) {
+  const next: Record<string, { isSet: boolean }> = {};
+  for (const [key, value] of Object.entries(current)) {
+    next[key] = { isSet: value.isSet };
+  }
+  if (!patch) {
+    return next;
+  }
+  for (const entry of patch) {
+    if (!entry.key) {
+      continue;
+    }
+    if (entry.clear || !entry.value) {
+      next[entry.key] = { isSet: false };
+    } else {
+      next[entry.key] = { isSet: true };
+    }
+  }
+  return next;
+}
+
+function logSpeechProviderAudit(options: {
+  adminId: string;
+  providerId: string;
+  fields: string[];
+  fromStatus: string;
+  toStatus: string;
+}) {
+  const fieldsLabel = options.fields.length > 0 ? options.fields.join(",") : "none";
+  console.info(
+    `[speech-provider] admin=${options.adminId} provider=${options.providerId} fields=${fieldsLabel} status=${options.fromStatus}->${options.toStatus}`,
+  );
+}
+
+export function __resetSpeechProviderRateLimitForTests() {
+  speechProviderRateLimitBuckets.clear();
+}
+
+export function __seedSpeechProviderRateLimitForTests(adminId: string, timestamps: number[]) {
+  speechProviderRateLimitBuckets.set(adminId, [...timestamps]);
 }
 
 function getAuthorizedUser(req: Request, res: Response): PublicUser | undefined {
@@ -6336,6 +6588,143 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "�?���?�?�?���'�?�<�� �?���?�?�<��", details: error.issues });
+      }
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/tts-stt/providers", requireAdmin, async (req, res, next) => {
+    try {
+      const pagination = parseSpeechProviderListParams(req);
+      if ("error" in pagination) {
+        return res.status(400).json({ message: pagination.error });
+      }
+      const { limit, offset } = pagination;
+      const providers = await runWithAdminTimeout(() => speechProviderService.listProviders());
+      const total = providers.length;
+      const slice = providers.slice(offset, offset + limit);
+      const items = await Promise.all(slice.map((entry) => buildSpeechProviderListItem(entry)));
+      res.json({ providers: items, total, limit, offset });
+    } catch (error) {
+      if (error instanceof SpeechProviderServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof Error && error.message === "Request timeout") {
+        return res.status(504).json({ message: "Request timeout" });
+      }
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/tts-stt/providers/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const detail = await runWithAdminTimeout(() => speechProviderService.getProviderById(req.params.id));
+      const payload = await buildSpeechProviderResponse(detail);
+      res.json({ provider: payload });
+    } catch (error) {
+      if (error instanceof SpeechProviderNotFoundError) {
+        return res.status(404).json({ message: "Provider not found" });
+      }
+      if (error instanceof SpeechProviderServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof Error && error.message === "Request timeout") {
+        return res.status(504).json({ message: "Request timeout" });
+      }
+      next(error);
+    }
+  });
+
+  app.patch("/api/admin/tts-stt/providers/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const adminUser = getSessionUser(req);
+      if (!adminUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const serializedBody = JSON.stringify(req.body ?? {});
+      if (Buffer.byteLength(serializedBody, "utf8") > ADMIN_SPEECH_PROVIDER_BODY_LIMIT_BYTES) {
+        return res.status(413).json({ message: "Request body is too large" });
+      }
+
+      const parsedBody = updateSpeechProviderSchema.parse(req.body ?? {});
+      const providerId = req.params.id;
+      const currentDetail = await runWithAdminTimeout(() => speechProviderService.getProviderById(providerId));
+      const configPatch = normalizeSpeechProviderConfigPatch(parsedBody.config);
+      const secretsPatch = normalizeSpeechProviderSecretsPatch(parsedBody.secrets);
+      const effectiveConfig = { ...currentDetail.config, ...(configPatch ?? {}) };
+      const effectiveSecrets = computeNextSecretFlags(currentDetail.secrets, secretsPatch);
+      const nextIsEnabled = parsedBody.isEnabled ?? currentDetail.provider.isEnabled;
+
+      if (nextIsEnabled) {
+        if (
+          typeof effectiveConfig.languageCode !== "string" ||
+          effectiveConfig.languageCode.trim().length === 0
+        ) {
+          return res.status(400).json({
+            message: "Field 'config.languageCode' is required when provider is enabled",
+          });
+        }
+        if (!effectiveSecrets.apiKey?.isSet) {
+          return res.status(400).json({
+            message: "Secret 'apiKey' must be set before enabling provider",
+          });
+        }
+        if (!effectiveSecrets.folderId?.isSet) {
+          return res.status(400).json({
+            message: "Secret 'folderId' must be set before enabling provider",
+          });
+        }
+      }
+
+      trackSpeechProviderRateLimit(adminUser.id);
+
+      const changedFields: string[] = [];
+      if (parsedBody.isEnabled !== undefined && parsedBody.isEnabled !== currentDetail.provider.isEnabled) {
+        changedFields.push("isEnabled");
+      }
+      if (configPatch) {
+        changedFields.push(...Object.keys(configPatch).map((key) => `config.${key}`));
+      }
+      if (secretsPatch) {
+        changedFields.push(...secretsPatch.map((entry) => `secret.${entry.key}`));
+      }
+
+      const updatedDetail = await runWithAdminTimeout(() =>
+        speechProviderService.updateProviderConfig({
+          providerId,
+          actorAdminId: adminUser.id,
+          isEnabled: parsedBody.isEnabled,
+          configPatch,
+          secretsPatch,
+        }),
+      );
+
+      logSpeechProviderAudit({
+        adminId: adminUser.id,
+        providerId,
+        fields: changedFields,
+        fromStatus: currentDetail.provider.status,
+        toStatus: updatedDetail.provider.status,
+      });
+
+      const payload = await buildSpeechProviderResponse(updatedDetail);
+      res.json({ provider: payload });
+    } catch (error) {
+      if (error instanceof SpeechProviderRateLimitError) {
+        return res.status(429).json({ message: "Rate limit exceeded" });
+      }
+      if (error instanceof SpeechProviderNotFoundError) {
+        return res.status(404).json({ message: "Provider not found" });
+      }
+      if (error instanceof SpeechProviderServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Validation failed", details: error.issues });
+      }
+      if (error instanceof Error && error.message === "Request timeout") {
+        return res.status(504).json({ message: "Request timeout" });
       }
       next(error);
     }
