@@ -5859,7 +5859,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const updateUnicaChatConfigSchema = z.object({
-    llmProviderConfigId: z.string().trim().min(1, "�?������'�� ���?�?�?�����?��? LLM"),
+    llmProviderConfigId: z.string().trim().min(1, "??????? ?????????? LLM"),
     modelId: z
       .string()
       .trim()
@@ -6556,7 +6556,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const payload = updateUnicaChatConfigSchema.parse(req.body ?? {});
       const provider = await storage.getLlmProvider(payload.llmProviderConfigId);
       if (!provider) {
-        return res.status(404).json({ message: "�?�?�?�?�����?��? LLM �?�� �?�����?��?" });
+        return res.status(404).json({ message: "Конфигурация LLM-провайдера не найдена" });
       }
 
       const updates: Partial<UnicaChatConfigInsert> = {
@@ -6588,7 +6588,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ config });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "�?���?�?�?���'�?�<�� �?���?�?�<��", details: error.issues });
+        return res.status(400).json({ message: "Некорректные параметры запроса", details: error.issues });
       }
       next(error);
     }
@@ -7862,7 +7862,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!resolvedSkillId) {
         const systemSkill = await createUnicaChatSkillForWorkspace(workspaceId);
         if (!systemSkill) {
-          throw new HttpError(500, "�� 㤠���� ��������� ��⥬�� ���� Unica Chat");
+          throw new HttpError(500, "Не удалось автоматически создать навык Unica Chat");
         }
         resolvedSkillId = systemSkill.id;
       }
@@ -8190,6 +8190,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           workspaceId,
           skillId: context.skill.id,
           knowledgeBaseId: context.skillConfig.knowledgeBaseIds?.[0] ?? null,
+          collections: context.skillConfig.ragConfig?.collectionIds ?? [],
         };
 
         await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.RUNNING, {

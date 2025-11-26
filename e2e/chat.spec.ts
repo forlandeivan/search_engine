@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 const TEST_USER_EMAIL = process.env.TEST_USER_EMAIL || "forlandeivan@gmail.com";
 const TEST_USER_PASSWORD = process.env.TEST_USER_PASSWORD || "q1w2e3r4";
 
-test("����� ������ �� ����� Unica Chat", async ({ page }) => {
+test("Новый чат на базе Unica Chat", async ({ page }) => {
   await page.goto("/");
 
   await page.waitForSelector("#login-email");
@@ -19,7 +19,7 @@ test("����� ������ �� ����� Unica Chat", asy
 
   await page.getByTestId("button-new-chat").click();
 
-  const message = "���?�ؐ�?�� �:�?���?";
+  const message = "Привет! Как дела?";
   await page.getByTestId("input-chat-message").fill(message);
 
   await page.getByTestId("button-send-message").click();

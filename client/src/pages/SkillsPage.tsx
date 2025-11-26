@@ -63,7 +63,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
-import type { PublicLlmProvider } from "@shared/schema";
+import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { Skill, SkillPayload } from "@/types/skill";
 
 const skillFormSchema = z.object({
@@ -90,9 +90,12 @@ const skillFormSchema = z.object({
   ragMinScore: z.string().optional(),
   ragMaxContextTokens: z.string().optional(),
   ragShowSources: z.boolean(),
+  ragEmbeddingProviderId: z.string().optional().or(z.literal("")),
 });
 
 const buildLlmKey = (providerId: string, modelId: string) => `${providerId}::${modelId}`;
+
+const NO_EMBEDDING_PROVIDER_VALUE = "__none";
 
 const defaultFormValues = {
   name: "",
@@ -106,6 +109,7 @@ const defaultFormValues = {
   ragMinScore: "0.7",
   ragMaxContextTokens: "3000",
   ragShowSources: true,
+  ragEmbeddingProviderId: NO_EMBEDDING_PROVIDER_VALUE,
 };
 
 type SkillFormValues = z.infer<typeof skillFormSchema>;
@@ -326,6 +330,8 @@ type SkillFormDialogProps = {
   knowledgeBases: KnowledgeBaseSummary[];
   vectorCollections: VectorCollectionSummary[];
   isVectorCollectionsLoading: boolean;
+  embeddingProviders: PublicEmbeddingProvider[];
+  isEmbeddingProvidersLoading: boolean;
   llmOptions: LlmSelectionOption[];
   onSubmit: (values: SkillFormValues) => Promise<void>;
   isSubmitting: boolean;
@@ -338,6 +344,8 @@ function SkillFormDialog({
   knowledgeBases,
   vectorCollections,
   isVectorCollectionsLoading,
+  embeddingProviders,
+  isEmbeddingProvidersLoading,
   llmOptions,
   onSubmit,
   isSubmitting,
@@ -354,6 +362,35 @@ function SkillFormDialog({
   const vectorCollectionsUnavailable = isVectorCollectionsLoading || vectorCollectionsEmpty;
   const controlsDisabled = isSubmitting || isSystemSkill;
   const vectorCollectionsDisabled = vectorCollectionsUnavailable || controlsDisabled;
+  const embeddingProvidersEmpty = embeddingProviders.length === 0;
+  const embeddingProvidersUnavailable = isEmbeddingProvidersLoading || embeddingProvidersEmpty;
+  const embeddingProviderSelectDisabled = embeddingProvidersUnavailable || controlsDisabled;
+  const embeddingProviderOptions = useMemo(() => {
+    return embeddingProviders
+      .map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        isActive: provider.isActive,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" }));
+  }, [embeddingProviders]);
+  const effectiveEmbeddingProviderOptions = useMemo(() => {
+    const currentId = skill?.ragConfig?.embeddingProviderId;
+    if (!currentId) {
+      return embeddingProviderOptions;
+    }
+    if (embeddingProviderOptions.some((provider) => provider.id === currentId)) {
+      return embeddingProviderOptions;
+    }
+    return [
+      ...embeddingProviderOptions,
+      {
+        id: currentId,
+        name: `${currentId} (не доступен)`,
+        isActive: false,
+      },
+    ];
+  }, [embeddingProviderOptions, skill]);
   const systemSkillDescription =
     skill?.systemKey === "UNICA_CHAT"
       ? "Настройки Unica Chat управляются администратором инстанса. Изменить их из рабочего пространства нельзя."
@@ -404,6 +441,7 @@ function SkillFormDialog({
             ? null
             : skill.ragConfig.maxContextTokens,
         showSources: skill.ragConfig?.showSources ?? true,
+        embeddingProviderId: skill.ragConfig?.embeddingProviderId ?? null,
       };
       form.reset({
         name: skill.name ?? "",
@@ -420,6 +458,7 @@ function SkillFormDialog({
         ragMinScore: String(ragConfig.minScore),
         ragMaxContextTokens: ragConfig.maxContextTokens !== null ? String(ragConfig.maxContextTokens) : "",
         ragShowSources: ragConfig.showSources,
+        ragEmbeddingProviderId: ragConfig.embeddingProviderId ?? NO_EMBEDDING_PROVIDER_VALUE,
       });
       return;
     }
@@ -615,6 +654,52 @@ function SkillFormDialog({
                   )}
                 />
               )}
+              <FormField
+                control={form.control}
+                name="ragEmbeddingProviderId"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="flex items-center gap-2">
+                      <FormLabel>Сервис эмбеддингов</FormLabel>
+                      <InfoTooltipIcon text="Используется для генерации вектора запроса перед поиском по коллекциям." />
+                    </div>
+                    <Select
+                      value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
+                      onValueChange={field.onChange}
+                      disabled={embeddingProviderSelectDisabled}
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={
+                            embeddingProvidersUnavailable
+                              ? "Загрузка..."
+                              : embeddingProvidersEmpty
+                                ? "Нет доступных сервисов"
+                                : "Выберите сервис"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
+                        {effectiveEmbeddingProviderOptions.map((provider) => (
+                          <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
+                            <div className="flex flex-col gap-0.5">
+                              <span>{provider.name}</span>
+                              {!provider.isActive && (
+                                <span className="text-xs text-muted-foreground">Провайдер отключён</span>
+                              )}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      Провайдер должен совпадать с тем, что используется для выбранных коллекций.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <div className="grid gap-4 md:grid-cols-2">
                 <FormField
                   control={form.control}
@@ -759,6 +844,17 @@ export default function SkillsPage() {
     },
   });
   const {
+    data: embeddingProvidersResponse,
+    isLoading: isEmbeddingProvidersLoading,
+    error: embeddingProvidersErrorRaw,
+  } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
+    queryKey: ["/api/embedding/services"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/embedding/services");
+      return (await response.json()) as { providers: PublicEmbeddingProvider[] };
+    },
+  });
+  const {
     data: llmProvidersResponse,
     isLoading: isLlmLoading,
     error: llmError,
@@ -771,6 +867,8 @@ export default function SkillsPage() {
   const knowledgeBases = knowledgeBaseQuery.data ?? [];
   const vectorCollections = vectorCollectionsQuery.data?.collections ?? [];
   const vectorCollectionsError = vectorCollectionsQuery.error as Error | undefined;
+  const embeddingProviders = embeddingProvidersResponse?.providers ?? [];
+  const embeddingProvidersError = embeddingProvidersErrorRaw as Error | undefined;
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
@@ -921,6 +1019,10 @@ export default function SkillsPage() {
         minScore: ragMinScore,
         maxContextTokens: ragMaxContextTokens,
         showSources: values.ragShowSources,
+        embeddingProviderId:
+          values.ragEmbeddingProviderId && values.ragEmbeddingProviderId !== NO_EMBEDDING_PROVIDER_VALUE
+            ? values.ragEmbeddingProviderId.trim()
+            : null,
       },
     };
 
@@ -980,7 +1082,11 @@ export default function SkillsPage() {
   };
 
   const showLoadingState =
-    isSkillsLoading || knowledgeBaseQuery.isLoading || isLlmLoading || vectorCollectionsQuery.isLoading;
+    isSkillsLoading ||
+    knowledgeBaseQuery.isLoading ||
+    isLlmLoading ||
+    vectorCollectionsQuery.isLoading ||
+    isEmbeddingProvidersLoading;
 
   return (
     <div className="p-6 space-y-6">
@@ -1004,7 +1110,7 @@ export default function SkillsPage() {
         </div>
       </div>
 
-      {(isError || knowledgeBaseQuery.error || llmError || vectorCollectionsError) && (
+      {(isError || knowledgeBaseQuery.error || llmError || vectorCollectionsError || embeddingProvidersError) && (
         <Alert variant="destructive">
           <AlertTitle>Не удалось загрузить данные</AlertTitle>
           <AlertDescription>
@@ -1114,6 +1220,8 @@ export default function SkillsPage() {
         knowledgeBases={knowledgeBases}
         vectorCollections={vectorCollections}
         isVectorCollectionsLoading={vectorCollectionsQuery.isLoading}
+        embeddingProviders={embeddingProviders}
+        isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
         llmOptions={llmOptions}
         onSubmit={handleSubmit}
         isSubmitting={isSaving}

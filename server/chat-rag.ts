@@ -12,6 +12,7 @@ export type KnowledgeRagRequestPayload = {
   q: string;
   kb_id: string;
   top_k: number;
+  collection: string;
   skill_id?: string;
   hybrid: {
     bm25: {
@@ -121,20 +122,21 @@ export async function buildSkillRagRequestPayload(options: {
     topK: skill.ragConfig.topK,
   });
 
-  const embeddingProviderId =
-    sanitizeOptionalString(skill.ragConfig.embeddingProviderId ?? undefined) ??
-    sanitizeOptionalString(resolvedRagSettings.embeddingProviderId ?? undefined);
+  const embeddingProviderId = sanitizeOptionalString(skill.ragConfig.embeddingProviderId ?? undefined);
   if (!embeddingProviderId) {
-    throw new SkillRagConfigurationError("Для базы знаний не настроен сервис эмбеддингов");
+    throw new SkillRagConfigurationError("Для навыка не выбран сервис эмбеддингов. Укажите его в настройках навыка.");
   }
 
-  const llmProviderId =
-    sanitizeOptionalString(skill.llmProviderConfigId) ?? sanitizeOptionalString(resolvedRagSettings.llmProviderId);
+  const llmProviderId = sanitizeOptionalString(skill.llmProviderConfigId);
   if (!llmProviderId) {
     throw new SkillRagConfigurationError("Для навыка не указан LLM-провайдер");
   }
 
-  const llmModel = sanitizeOptionalString(skill.modelId) ?? sanitizeOptionalString(resolvedRagSettings.llmModel);
+  const llmModel = sanitizeOptionalString(skill.modelId);
+  if (!llmModel) {
+    throw new SkillRagConfigurationError("Для навыка не выбрана модель LLM");
+  }
+
   const systemPrompt = sanitizeOptionalString(skill.systemPrompt) ?? undefined;
   const responseFormat = skill.ragConfig.llmResponseFormat ?? resolvedRagSettings.responseFormat ?? undefined;
   const temperature =
@@ -157,15 +159,33 @@ export async function buildSkillRagRequestPayload(options: {
     clampInteger(resolvedRagSettings.vectorLimit ?? null, 1, 50) ??
     topK;
 
-  const vectorCollectionOverride =
+  const selectedCollections =
     skill.ragConfig.mode === "selected_collections"
-      ? skill.ragConfig.collectionIds.map((id) => id.trim()).filter((id) => id.length > 0).join(",")
-      : null;
+      ? skill.ragConfig.collectionIds
+          .map((id) => (typeof id === "string" ? id.trim() : ""))
+          .filter((id) => id.length > 0)
+      : [];
+
+  if (skill.ragConfig.mode === "selected_collections" && selectedCollections.length === 0) {
+    throw new SkillRagConfigurationError("В режиме ручного выбора коллекций укажите хотя бы одну коллекцию.");
+  }
+
+  let vectorCollectionOverride: string | null = selectedCollections[0] ?? null;
+
+  const fallbackCollectionFromSettings = sanitizeOptionalString(resolvedRagSettings.collection ?? undefined);
+  const fallbackCollectionFromSkill = sanitizeOptionalString(skill.collectionName ?? undefined);
 
   const vectorCollection =
     (vectorCollectionOverride && vectorCollectionOverride.length > 0 ? vectorCollectionOverride : undefined) ??
-    sanitizeOptionalString(resolvedRagSettings.collection ?? undefined) ??
-    sanitizeOptionalString(skill.collectionName ?? undefined);
+    fallbackCollectionFromSettings ??
+    fallbackCollectionFromSkill;
+
+  if (!vectorCollection) {
+    throw new SkillRagConfigurationError(
+      "Не удалось определить коллекцию для RAG. Настройте коллекцию в базе знаний или в конфиге навыка.",
+    );
+  }
+
 
   const bm25Weight =
     clampFraction(skill.ragConfig.bm25Weight) ??
@@ -181,6 +201,7 @@ export async function buildSkillRagRequestPayload(options: {
     q: trimmedMessage,
     kb_id: knowledgeBaseId,
     top_k: topK,
+    collection: vectorCollection,
     skill_id: skill.id,
     hybrid: {
       bm25: {
