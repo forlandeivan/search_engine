@@ -1846,7 +1846,10 @@ function buildVectorPayload(
   vector: number[],
   vectorFieldName: string | null | undefined,
 ): Schemas["NamedVectorStruct"] | number[] {
+  console.log(`[buildVectorPayload] vectorFieldName received: ${JSON.stringify(vectorFieldName)}, type: ${typeof vectorFieldName}`);
+  
   if (!Array.isArray(vector) || vector.length === 0) {
+    console.log(`[buildVectorPayload] returning raw vector (empty or not array)`);
     return vector;
   }
 
@@ -1865,10 +1868,12 @@ function buildVectorPayload(
   if (vectorFieldName && typeof vectorFieldName === "string") {
     const trimmed = vectorFieldName.trim();
     if (trimmed.length > 0) {
+      console.log(`[buildVectorPayload] returning NAMED vector with name: "${trimmed}"`);
       return { name: trimmed, vector: sanitizedVector };
     }
   }
 
+  console.log(`[buildVectorPayload] returning raw vector array (no vectorFieldName)`);
   return sanitizedVector;
 }
 
