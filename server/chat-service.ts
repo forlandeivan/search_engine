@@ -1,5 +1,7 @@
 import { storage } from "./storage";
+import type { SkillDto } from "@shared/skills";
 import { getSkillById, UNICA_CHAT_SYSTEM_KEY } from "./skills";
+import { isRagSkill, isUnicaChatSkill } from "./skill-type";
 import type { ChatSession, ChatMessage, ChatMessageRole, LlmProvider, LlmRequestConfig } from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
@@ -217,8 +219,22 @@ type ChatConversationMessage = {
   content: string;
 };
 
+export type ChatSkillType = "UNICA_CHAT" | "RAG_SKILL";
+
+export type ChatSkillContext = {
+  id: string;
+  name: string | null;
+  isSystem: boolean;
+  systemKey: string | null;
+  type: ChatSkillType;
+  isUnicaChat: boolean;
+  isRagSkill: boolean;
+};
+
 export type ChatLlmContext = {
   chat: ChatSummary;
+  skill: ChatSkillContext;
+  skillConfig: SkillDto;
   provider: LlmProvider;
   requestConfig: LlmRequestConfig;
   model: string | null;
@@ -264,12 +280,25 @@ export async function buildChatLlmContext(
     throw notFound;
   }
 
+  const isUnica = isUnicaChatSkill(skill);
+  const skillType: ChatSkillType = isUnica ? "UNICA_CHAT" : "RAG_SKILL";
+  const skillContext: ChatSkillContext = {
+    id: skill.id,
+    name: skill.name ?? null,
+    isSystem: Boolean(skill.isSystem),
+    systemKey: skill.systemKey ?? null,
+    type: skillType,
+    isUnicaChat: isUnica,
+    isRagSkill: isRagSkill(skill),
+  };
+
   await logExecutionStepForChat(executionId, "LOAD_SKILL_CONFIG", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
     input: { chatId, workspaceId, skillId: chat.skillId },
     output: {
       skillId: skill.id,
-      isSystem: Boolean(skill.isSystem),
-      systemKey: skill.systemKey ?? null,
+      isSystem: skillContext.isSystem,
+      systemKey: skillContext.systemKey,
+      skillType: skillContext.type,
       providerId: skill.llmProviderConfigId ?? null,
       modelId: skill.modelId ?? null,
       hasSystemPrompt: Boolean(skill.systemPrompt && skill.systemPrompt.trim()),
@@ -282,7 +311,7 @@ export async function buildChatLlmContext(
   const requestOverrides: Partial<LlmRequestConfig> = {};
   let providerSource: "skill" | "global_unica_chat" = "skill";
 
-  if (skill.isSystem && skill.systemKey === UNICA_CHAT_SYSTEM_KEY) {
+  if (isUnica) {
     const unicaConfig = await storage.getUnicaChatConfig();
     if (unicaConfig.llmProviderConfigId) {
       providerId = unicaConfig.llmProviderConfigId;
@@ -416,8 +445,12 @@ export async function buildChatLlmContext(
     content: entry.content,
   }));
 
+  // TODO: for skillContext.isRagSkill, enrich conversation with RAG context before calling LLM.
+
   return {
     chat,
+    skill: skillContext,
+    skillConfig: skill,
     provider: configuredProvider,
     requestConfig,
     model: resolvedModel ?? null,
@@ -490,13 +523,14 @@ export async function addAssistantMessage(
   workspaceId: string,
   userId: string,
   content: string,
+  metadata?: Record<string, unknown>,
 ) {
   await getOwnedChat(chatId, workspaceId, userId);
   const message = await storage.createChatMessage({
     chatId,
     role: "assistant",
     content,
-    metadata: {},
+    metadata: metadata ?? {},
   });
   await storage.touchChatSession(chatId);
   return mapMessage(message);

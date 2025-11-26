@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
+import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,14 +13,19 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useChats, useDeleteChat, useRenameChat } from "@/hooks/useChats";
+import { useSkills } from "@/hooks/useSkills";
 import type { ChatSummary } from "@/types/chat";
-import { Loader2, MoreVertical, Hash } from "lucide-react";
+import { Loader2, MoreVertical, Hash, Plus } from "lucide-react";
 
 type ChatSidebarProps = {
   workspaceId?: string;
   selectedChatId?: string;
   onSelectChat: (chatId: string | null) => void;
   onCreateNewChat: () => void;
+  isCreatingChat?: boolean;
+  onCreateChatForSkill?: (skillId: string) => void;
+  creatingSkillId?: string | null;
+  className?: string;
 };
 
 export default function ChatSidebar({
@@ -27,10 +33,19 @@ export default function ChatSidebar({
   selectedChatId,
   onSelectChat,
   onCreateNewChat,
+  isCreatingChat = false,
+  onCreateChatForSkill,
+  creatingSkillId = null,
+  className,
 }: ChatSidebarProps) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
   const { chats, isLoading, isFetching } = useChats(workspaceId, debouncedSearch);
+  const {
+    skills: workspaceSkills,
+    isLoading: isSkillsLoading,
+    isFetching: isSkillsFetching,
+  } = useSkills({ enabled: Boolean(workspaceId) });
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
 
@@ -80,6 +95,60 @@ export default function ChatSidebar({
     [deleteChat, workspaceId, onSelectChat, selectedChatId, editingChatId],
   );
 
+  const skillsBlock = useMemo(() => {
+    if (!workspaceId) {
+      return <p className="text-sm text-muted-foreground">Выберите рабочее пространство, чтобы увидеть навыки.</p>;
+    }
+
+    if (isSkillsLoading) {
+      return (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Загружаем навыки…
+        </div>
+      );
+    }
+
+    if (workspaceSkills.length === 0) {
+      return <p className="text-sm text-muted-foreground">Пока нет доступных навыков.</p>;
+    }
+
+    return (
+      <ul className="space-y-1">
+        {workspaceSkills.map((skill) => (
+          <li
+            key={skill.id}
+            className="group flex items-center rounded-lg border border-transparent px-2 py-1 text-sm transition hover:border-slate-200 hover:bg-white dark:hover:bg-slate-900/80"
+          >
+            <span className="flex-1 truncate" title={skill.name}>
+              {skill.name}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "h-7 w-7 shrink-0 rounded-full opacity-0 transition group-hover:opacity-100",
+                creatingSkillId === skill.id && "opacity-100",
+              )}
+              onClick={(event) => {
+                event.stopPropagation();
+                onCreateChatForSkill?.(skill.id);
+              }}
+              disabled={!workspaceId || creatingSkillId === skill.id}
+              aria-label={`Новый чат по навыку ${skill.name}`}
+            >
+              {creatingSkillId === skill.id ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+            </Button>
+          </li>
+        ))}
+      </ul>
+    );
+  }, [workspaceId, workspaceSkills, isSkillsLoading, creatingSkillId, onCreateChatForSkill]);
+
   const sidebarContent = useMemo(() => {
     if (!workspaceId) {
       return (
@@ -93,7 +162,7 @@ export default function ChatSidebar({
       return (
         <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Загружаем чаты...
+          Загружаем чаты…
         </div>
       );
     }
@@ -107,8 +176,8 @@ export default function ChatSidebar({
     }
 
     return (
-      <ScrollArea className="flex-1">
-        <div className="space-y-1 pr-2">
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="space-y-1 px-2 py-1">
           {chats.map((chat) => (
             <ChatSidebarItem
               key={chat.id}
@@ -132,7 +201,7 @@ export default function ChatSidebar({
             />
           ))}
         </div>
-      </ScrollArea>
+      </div>
     );
   }, [
     workspaceId,
@@ -149,38 +218,51 @@ export default function ChatSidebar({
   ]);
 
   return (
-    <aside className="flex w-[320px] flex-col border-r bg-white/70 p-4 dark:bg-slate-900/40">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Чат</p>
-          <h2 className="text-base font-semibold">Мои диалоги</h2>
-        </div>
+    <aside className={cn("flex h-full min-h-0 flex-col overflow-hidden bg-white/70 p-3 dark:bg-slate-900/40", className)}>
+      <div className="space-y-1.5">
+        <Button asChild variant="ghost" className="justify-start text-sm py-2 px-2">
+          <Link href="/skills">Управление навыками</Link>
+        </Button>
         <Button
           size="sm"
+          className="h-9 w-full"
           onClick={onCreateNewChat}
-          disabled={!workspaceId}
+          disabled={!workspaceId || isCreatingChat}
           data-testid="button-new-chat"
         >
-          Новый чат
+          {isCreatingChat ? (
+            <span className="flex items-center justify-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Создаём…
+            </span>
+          ) : (
+            "Новый чат"
+          )}
         </Button>
+        <div className="space-y-0.5">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Навыки {isSkillsFetching ? "…" : null}
+          </div>
+          {skillsBlock}
+        </div>
       </div>
 
-      <div className="mt-4 space-y-3">
+      <Separator className="my-3" />
+
+      <div className="space-y-1.5">
         <Input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Поиск по названию..."
+          placeholder="Поиск по чатам…"
+          className="h-8 text-sm"
         />
         {isFetching && !isLoading && (
-          <p className="text-xs text-muted-foreground">Обновляем список...</p>
+          <p className="text-xs text-muted-foreground">Обновляем историю…</p>
         )}
       </div>
 
-      <div className="mt-4 flex flex-1 flex-col space-y-4">
+      <div className="mt-3 flex flex-1 min-h-0 flex-col">
         {sidebarContent}
-        <Button asChild variant="ghost" className="justify-start text-sm">
-          <Link href="/skills">Управление навыками</Link>
-        </Button>
       </div>
     </aside>
   );
@@ -212,22 +294,29 @@ function ChatSidebarItem({
   onSelect: () => void;
 }) {
   const updatedAt = chat.updatedAt
-    ? formatDistanceToNow(new Date(chat.updatedAt), { addSuffix: true })
+    ? formatDistanceToNow(new Date(chat.updatedAt), { addSuffix: true, locale: ru })
     : null;
 
   return (
     <div
       className={cn(
-        "group flex items-start gap-2 rounded-lg border px-3 py-2 text-left transition hover:bg-white dark:border-slate-800 dark:hover:bg-slate-900",
-        isActive && "border-primary bg-primary/5 dark:bg-primary/10",
+        "group flex w-full items-start gap-2 rounded-lg border bg-white px-3 py-2 text-left shadow-sm transition hover:bg-white/90 dark:border-slate-800 dark:bg-slate-900/60 dark:hover:bg-slate-900",
+        isActive && "border-primary bg-primary/10 dark:bg-primary/20",
       )}
+      role="button"
+      tabIndex={0}
       onClick={() => {
         if (!isEditing) {
           onSelect();
         }
       }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && !isEditing) {
+          onSelect();
+        }
+      }}
     >
-      <div className="flex-1">
+      <div className="flex-1 min-w-0">
         {isEditing ? (
           <form
             onSubmit={(event) => {
@@ -251,13 +340,15 @@ function ChatSidebarItem({
           </form>
         ) : (
           <>
-            <p className="font-medium leading-tight">{chat.title || "Без названия"}</p>
-            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <Hash className="h-3 w-3" />
-                {chat.skillName ?? "навык"}
+            <p className="truncate text-sm font-medium leading-tight">{chat.title || "Без названия"}</p>
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <span className="flex flex-1 min-w-0 items-center gap-1 truncate text-[11px] uppercase tracking-wide">
+                <Hash className="h-3 w-3 shrink-0" />
+                <span className="truncate">{chat.skillName ?? "Навык"}</span>
               </span>
-              {updatedAt && <span>• {updatedAt}</span>}
+              {updatedAt && (
+                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground/80">· {updatedAt}</span>
+              )}
             </div>
           </>
         )}
@@ -268,7 +359,7 @@ function ChatSidebarItem({
             <Button
               size="icon"
               variant="ghost"
-              className="h-8 w-8 opacity-0 transition group-hover:opacity-100"
+              className="h-7 w-7 shrink-0 text-muted-foreground transition hover:text-foreground"
               onClick={(event) => event.stopPropagation()}
             >
               <MoreVertical className="h-4 w-4" />
@@ -298,6 +389,7 @@ function ChatSidebarItem({
     </div>
   );
 }
+
 
 function useDebouncedValue<T>(value: T, delay = 300) {
   const [debouncedValue, setDebouncedValue] = useState(value);

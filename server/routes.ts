@@ -85,6 +85,7 @@ import {
   ChatServiceError,
   getChatById,
 } from "./chat-service";
+import { callRagForSkillChat, SkillRagConfigurationError } from "./chat-rag";
 import {
   fetchLlmCompletion,
   executeLlmCompletion,
@@ -8176,6 +8177,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const context = await buildChatLlmContext(req.params.chatId, workspaceId, user.id, {
         executionId,
       });
+
+      if (context.skill.isRagSkill) {
+        if (wantsStream) {
+          console.info(
+            `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} requested stream for RAG skill – falling back to sync response`,
+          );
+        }
+
+        const ragStepInput = {
+          chatId: req.params.chatId,
+          workspaceId,
+          skillId: context.skill.id,
+          knowledgeBaseId: context.skillConfig.knowledgeBaseIds?.[0] ?? null,
+        };
+
+        await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.RUNNING, {
+          input: ragStepInput,
+        });
+
+        let ragResult:
+          | Awaited<ReturnType<typeof runKnowledgeBaseRagPipeline>>
+          | null = null;
+
+        try {
+          ragResult = (await callRagForSkillChat({
+            req,
+            skill: context.skillConfig,
+            workspaceId,
+            userMessage: payload.content,
+            runPipeline: runKnowledgeBaseRagPipeline,
+            stream: null,
+          })) as Awaited<ReturnType<typeof runKnowledgeBaseRagPipeline>>;
+
+          await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+            output: {
+              answerPreview: ragResult.response.answer.slice(0, 160),
+              knowledgeBaseId: ragResult.response.knowledgeBaseId,
+              usage: ragResult.response.usage ?? null,
+            },
+          });
+        } catch (ragError) {
+          const info = describeErrorForLog(ragError);
+          await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+            errorCode: info.code,
+            errorMessage: info.message,
+            diagnosticInfo: info.diagnosticInfo,
+            input: ragStepInput,
+          });
+
+          if (ragError instanceof SkillRagConfigurationError) {
+            throw new ChatServiceError(ragError.message, 400);
+          }
+          if (ragError instanceof HttpError) {
+            throw ragError;
+          }
+          throw ragError;
+        }
+
+        if (!ragResult) {
+          throw new Error("RAG pipeline returned empty result");
+        }
+
+        const citations = Array.isArray(ragResult.response.citations) ? ragResult.response.citations : [];
+        const metadata = citations.length > 0 ? { citations } : undefined;
+        const assistantMessage = await writeAssistantMessage(
+          req.params.chatId,
+          workspaceId,
+          user.id,
+          ragResult.response.answer,
+          metadata,
+        );
+
+        await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
+        res.json({
+          message: assistantMessage,
+          userMessage: userMessageRecord,
+          usage: ragResult.response.usage ?? null,
+          rag: {
+            knowledgeBaseId: ragResult.response.knowledgeBaseId,
+            normalizedQuery: ragResult.response.normalizedQuery,
+            citations: ragResult.response.citations,
+          },
+        });
+        return;
+      }
+
       const requestBody = buildChatCompletionRequestBody(context, { stream: wantsStream });
       const accessToken = await fetchAccessToken(context.provider);
 

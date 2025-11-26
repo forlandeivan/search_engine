@@ -24,9 +24,9 @@ export default function ChatInput({ onSend, disabled, placeholder }: ChatInputPr
   const isSendDisabled = disabled || value.trim().length === 0;
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-700 dark:bg-slate-900/70 sm:p-3">
-        <div className="flex items-end gap-2">
+    <div className="mx-auto w-full max-w-[880px] pb-14">
+      <div className="rounded-[28px] border border-slate-200 bg-white/95 px-4 py-3 shadow-lg dark:border-slate-700 dark:bg-slate-900/90 sm:px-5 sm:py-4">
+        <div className="flex items-end gap-3">
           <Textarea
             value={value}
             onChange={(event) => setValue(event.target.value)}
@@ -39,7 +39,7 @@ export default function ChatInput({ onSend, disabled, placeholder }: ChatInputPr
                 handleSend();
               }
             }}
-            className="min-h-[64px] flex-1 resize-none border-none bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="min-h-[52px] flex-1 resize-none border-none bg-transparent px-0 py-0 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="input-chat-message"
           />
           <Button
@@ -47,7 +47,7 @@ export default function ChatInput({ onSend, disabled, placeholder }: ChatInputPr
             aria-label="Отправить сообщение"
             title="Отправить сообщение"
             size="icon"
-            className="h-10 w-10 shrink-0 rounded-full"
+            className="h-11 w-11 shrink-0 rounded-full shadow-md"
             onClick={handleSend}
             disabled={isSendDisabled}
             data-testid="button-send-message"
@@ -56,7 +56,7 @@ export default function ChatInput({ onSend, disabled, placeholder }: ChatInputPr
           </Button>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">Shift + Enter — новая строка</p>
+      <p className="mt-3 text-center text-xs text-muted-foreground">Shift + Enter — новая строка</p>
     </div>
   );
 }

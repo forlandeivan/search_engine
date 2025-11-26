@@ -33,6 +33,14 @@ const ragConfigInputSchema = z.object({
   minScore: z.number().min(0).max(1).optional(),
   maxContextTokens: z.number().int().min(500).max(20000).optional(),
   showSources: z.boolean().optional(),
+  bm25Weight: z.number().min(0).max(1).optional(),
+  bm25Limit: z.number().int().min(1).max(50).optional(),
+  vectorWeight: z.number().min(0).max(1).optional(),
+  vectorLimit: z.number().int().min(1).max(50).optional(),
+  embeddingProviderId: optionalString(255),
+  llmTemperature: z.number().min(0).max(2).optional(),
+  llmMaxTokens: z.number().int().min(16).max(4096).optional(),
+  llmResponseFormat: z.enum(["text", "markdown", "html"]).optional(),
 });
 
 const skillEditableFieldsSchema = z.object({
@@ -76,6 +84,14 @@ export type SkillRagConfig = {
   minScore: number;
   maxContextTokens: number | null;
   showSources: boolean;
+  bm25Weight: number | null;
+  bm25Limit: number | null;
+  vectorWeight: number | null;
+  vectorLimit: number | null;
+  embeddingProviderId: string | null;
+  llmTemperature: number | null;
+  llmMaxTokens: number | null;
+  llmResponseFormat: "text" | "markdown" | "html" | null;
 };
 
 export type SkillResponse = {

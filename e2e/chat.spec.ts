@@ -9,7 +9,7 @@ test("����� ������ �� ����� Unica Chat", asy
   await page.waitForSelector("#login-email");
   await page.fill("#login-email", TEST_USER_EMAIL);
   await page.fill("#login-password", TEST_USER_PASSWORD);
-  await page.getByRole("button", { name: /^�'�?���'��$/ }).click();
+  await page.getByTestId("button-login-submit").click();
 
   await page.getByTestId("link-chat").click();
   await expect(page).toHaveURL(/\/chat$/);

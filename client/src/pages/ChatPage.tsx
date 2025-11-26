@@ -33,6 +33,7 @@ export default function ChatPage({ params }: ChatPageProps) {
 
   const [overrideChatId, setOverrideChatId] = useState<string | null>(null);
   const effectiveChatId = routeChatId || overrideChatId || null;
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null);
 
   const { chats } = useChats(workspaceId);
   const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
@@ -62,6 +63,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [streamError, setStreamError] = useState<string | null>(null);
 
   const { createChat } = useCreateChat();
+  const [creatingSkillId, setCreatingSkillId] = useState<string | null>(null);
 
   useEffect(() => {
     setOverrideChatId(null);
@@ -192,6 +194,36 @@ export default function ChatPage({ params }: ChatPageProps) {
     [queryClient, workspaceId],
   );
 
+  const handleCreateChatForSkill = useCallback(
+    async (skillId: string) => {
+      if (!workspaceId || creatingSkillId) {
+        return;
+      }
+      setCreatingSkillId(skillId);
+      try {
+        const newChat = await createChat({
+          workspaceId,
+          skillId,
+        });
+        setOverrideChatId(newChat.id);
+        handleSelectChat(newChat.id);
+      } catch (error) {
+        setStreamError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setCreatingSkillId((prev) => (prev === skillId ? null : prev));
+      }
+    },
+    [workspaceId, creatingSkillId, createChat, handleSelectChat],
+  );
+
+  const handleCreateNewChat = useCallback(async () => {
+    if (!defaultSkill) {
+      setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
+      return;
+    }
+    await handleCreateChatForSkill(defaultSkill.id);
+  }, [defaultSkill, handleCreateChatForSkill]);
+
   const handleSend = useCallback(
     async (content: string) => {
       if (!workspaceId || isStreaming) {
@@ -244,25 +276,47 @@ export default function ChatPage({ params }: ChatPageProps) {
   const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
   const chatTitle = activeChat?.title ?? null;
   const disableInput = !workspaceId || isStreaming || Boolean(normalizedMessagesError && !isNewChat);
+  const isDefaultCreating = creatingSkillId !== null && creatingSkillId === (defaultSkill?.id ?? null);
+
+  useEffect(() => {
+    document.body.classList.add("chat-scroll-locked");
+    return () => {
+      document.body.classList.remove("chat-scroll-locked");
+    };
+  }, []);
 
   return (
-    <div className="flex h-full flex-col bg-muted/20">
+    <div className="flex h-screen min-h-0 bg-muted/20 overflow-hidden">
       {/*
-        Chat card specification
-        - Page background stays muted (`bg-muted/20`), while the conversation lives inside a centered white card.
-        - Card (messages + input) sits under the header, max width 880px with 24px padding on desktop (reduced on tablet/mobile).
-        - Message list padding 20-24px horizontal / 16-20px vertical; input area shares the same card, split by `border-t`.
+        Layout plan:
+        - keep the root full-height; next row splits into two fixed columns (sidebar + main).
+        - TODO: move overflow-y from the page body onto each column for independent scrolls.
       */}
-      <div className="flex h-full">
+      <div className="flex h-full min-h-0 flex-1">
         <ChatSidebar
           workspaceId={workspaceId}
           selectedChatId={effectiveChatId ?? undefined}
           onSelectChat={handleSelectChat}
-          onCreateNewChat={() => handleSelectChat(null)}
+          onCreateNewChat={handleCreateNewChat}
+          onCreateChatForSkill={handleCreateChatForSkill}
+          isCreatingChat={isDefaultCreating}
+          creatingSkillId={creatingSkillId}
+          className="w-[320px] shrink-0 border-r border-slate-200/70 bg-white/70 dark:border-slate-800 dark:bg-slate-900/40"
         />
-        <section className="flex flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto flex w-full max-w-[880px] flex-1 flex-col rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80">
-            <div className="flex-1 overflow-hidden">
+        {/*
+          NOTE:
+          - Right now the scrollable area for the conversation lives inside the white card below.
+            Because that card has `max-w-[880px]`/`mx-auto`, the scrollbar ends up in the middle of the screen.
+          - Target behaviour (ChatGPT-like) is to let this <section> (full width of the right column)
+            own the vertical overflow, so the scrollbar hugs the browser edge while the card remains centred.
+          - Keep this in mind when moving overflow logic in the next step.
+        */}
+        <section className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 sm:px-6 lg:px-8">
+          <div
+            ref={messagesScrollRef}
+            className="chat-scroll flex-1 overflow-y-auto"
+          >
+            <div className="mx-auto w-full max-w-[880px] rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80">
               <ChatMessagesArea
                 chatTitle={chatTitle}
                 skillName={skillLabel}
@@ -272,16 +326,17 @@ export default function ChatPage({ params }: ChatPageProps) {
                 isStreaming={isStreaming}
                 streamError={streamError}
                 errorMessage={normalizedMessagesError}
+                scrollContainerRef={messagesScrollRef}
                 onReset={() => handleSelectChat(null)}
               />
             </div>
-            <div className="border-t border-slate-200 bg-white/95 p-4 dark:border-slate-800 dark:bg-slate-900/70">
-              <ChatInput
-                onSend={handleSend}
-                disabled={disableInput}
-                placeholder={isNewChat ? "Начните новый чат..." : "Напишите сообщение и нажмите Enter"}
-              />
-            </div>
+          </div>
+          <div className="border-t border-slate-200 bg-white/95 pb-6 pt-4 dark:border-slate-800 dark:bg-slate-900/70">
+            <ChatInput
+              onSend={handleSend}
+              disabled={disableInput}
+              placeholder={isNewChat ? "Начните новый чат..." : "Напишите сообщение и нажмите Enter"}
+            />
           </div>
         </section>
       </div>

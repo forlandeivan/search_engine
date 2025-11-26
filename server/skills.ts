@@ -41,6 +41,14 @@ const DEFAULT_RAG_CONFIG: SkillRagConfig = {
   minScore: 0.7,
   maxContextTokens: 3000,
   showSources: true,
+  bm25Weight: null,
+  bm25Limit: null,
+  vectorWeight: null,
+  vectorLimit: null,
+  embeddingProviderId: null,
+  llmTemperature: null,
+  llmMaxTokens: null,
+  llmResponseFormat: null,
 };
 
 function normalizeNullableString(value: string | null | undefined): string | null {
@@ -102,6 +110,61 @@ function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig 
         ? input.maxContextTokens
         : DEFAULT_RAG_CONFIG.maxContextTokens;
 
+  const sanitizeWeight = (value: unknown): number | null => {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+      return null;
+    }
+    if (value < 0 || value > 1) {
+      return null;
+    }
+    return Number(value.toFixed(3));
+  };
+
+  const sanitizeLimit = (value: unknown): number | null => {
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      return null;
+    }
+    if (value < 1 || value > 50) {
+      return null;
+    }
+    return value;
+  };
+
+  const sanitizeTemperature = (value: unknown): number | null => {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+      return null;
+    }
+    if (value < 0 || value > 2) {
+      return null;
+    }
+    return Number(value.toFixed(3));
+  };
+
+  const sanitizeMaxTokens = (value: unknown): number | null => {
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      return null;
+    }
+    if (value < 16 || value > 4096) {
+      return null;
+    }
+    return value;
+  };
+
+  const sanitizeResponseFormat = (value: unknown): "text" | "markdown" | "html" | null => {
+    if (value !== "text" && value !== "markdown" && value !== "html") {
+      return null;
+    }
+    return value;
+  };
+
+  const sanitizeEmbeddingProvider = (value: unknown): string | null => {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
   return {
     mode: normalizeRagModeFromValue(input.mode),
     collectionIds: normalizeCollectionIds(input.collectionIds),
@@ -109,6 +172,14 @@ function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig 
     minScore: sanitizedMinScore,
     maxContextTokens: sanitizedMaxContextTokens,
     showSources: input.showSources ?? DEFAULT_RAG_CONFIG.showSources,
+    bm25Weight: sanitizeWeight(input.bm25Weight),
+    bm25Limit: sanitizeLimit(input.bm25Limit),
+    vectorWeight: sanitizeWeight(input.vectorWeight),
+    vectorLimit: sanitizeLimit(input.vectorLimit),
+    embeddingProviderId: sanitizeEmbeddingProvider(input.embeddingProviderId),
+    llmTemperature: sanitizeTemperature(input.llmTemperature),
+    llmMaxTokens: sanitizeMaxTokens(input.llmMaxTokens),
+    llmResponseFormat: sanitizeResponseFormat(input.llmResponseFormat) ?? DEFAULT_RAG_CONFIG.llmResponseFormat,
   };
 }
 
@@ -135,6 +206,14 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
       minScore: row.ragMinScore ?? DEFAULT_RAG_CONFIG.minScore,
       maxContextTokens: row.ragMaxContextTokens ?? DEFAULT_RAG_CONFIG.maxContextTokens,
       showSources: row.ragShowSources ?? DEFAULT_RAG_CONFIG.showSources,
+      bm25Weight: row.ragBm25Weight ?? DEFAULT_RAG_CONFIG.bm25Weight,
+      bm25Limit: row.ragBm25Limit ?? DEFAULT_RAG_CONFIG.bm25Limit,
+      vectorWeight: row.ragVectorWeight ?? DEFAULT_RAG_CONFIG.vectorWeight,
+      vectorLimit: row.ragVectorLimit ?? DEFAULT_RAG_CONFIG.vectorLimit,
+      embeddingProviderId: row.ragEmbeddingProviderId ?? DEFAULT_RAG_CONFIG.embeddingProviderId,
+      llmTemperature: row.ragLlmTemperature ?? DEFAULT_RAG_CONFIG.llmTemperature,
+      llmMaxTokens: row.ragLlmMaxTokens ?? DEFAULT_RAG_CONFIG.llmMaxTokens,
+      llmResponseFormat: row.ragLlmResponseFormat ?? DEFAULT_RAG_CONFIG.llmResponseFormat,
     },
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
@@ -315,6 +394,22 @@ export async function createSkill(
       ragMinScore: ragConfig.minScore,
       ragMaxContextTokens: ragConfig.maxContextTokens,
       ragShowSources: ragConfig.showSources,
+      ragBm25Weight: ragConfig.bm25Weight,
+      ragBm25Limit: ragConfig.bm25Limit,
+      ragVectorWeight: ragConfig.vectorWeight,
+      ragVectorLimit: ragConfig.vectorLimit,
+      ragEmbeddingProviderId: ragConfig.embeddingProviderId,
+      ragLlmTemperature: ragConfig.llmTemperature,
+      ragLlmMaxTokens: ragConfig.llmMaxTokens,
+      ragLlmResponseFormat: ragConfig.llmResponseFormat,
+      ragBm25Weight: ragConfig.bm25Weight,
+      ragBm25Limit: ragConfig.bm25Limit,
+      ragVectorWeight: ragConfig.vectorWeight,
+      ragVectorLimit: ragConfig.vectorLimit,
+      ragEmbeddingProviderId: ragConfig.embeddingProviderId,
+      ragLlmTemperature: ragConfig.llmTemperature,
+      ragLlmMaxTokens: ragConfig.llmMaxTokens,
+      ragLlmResponseFormat: ragConfig.llmResponseFormat,
     })
     .returning();
 
@@ -378,6 +473,14 @@ export async function updateSkill(
               ragMinScore: ragUpdates.minScore,
               ragMaxContextTokens: ragUpdates.maxContextTokens,
               ragShowSources: ragUpdates.showSources,
+              ragBm25Weight: ragUpdates.bm25Weight,
+              ragBm25Limit: ragUpdates.bm25Limit,
+              ragVectorWeight: ragUpdates.vectorWeight,
+              ragVectorLimit: ragUpdates.vectorLimit,
+              ragEmbeddingProviderId: ragUpdates.embeddingProviderId,
+              ragLlmTemperature: ragUpdates.llmTemperature,
+              ragLlmMaxTokens: ragUpdates.llmMaxTokens,
+              ragLlmResponseFormat: ragUpdates.llmResponseFormat,
             }
           : {}),
         updatedAt: sql`CURRENT_TIMESTAMP`,

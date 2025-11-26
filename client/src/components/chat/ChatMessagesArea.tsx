@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
+import { useTypewriter } from "@/hooks/useTypewriter";
 
 type ChatMessagesAreaProps = {
   chatTitle: string | null;
@@ -15,6 +16,7 @@ type ChatMessagesAreaProps = {
   streamError: string | null;
   errorMessage: string | null;
   onReset?: () => void;
+  scrollContainerRef?: RefObject<HTMLElement | null>;
 };
 
 export default function ChatMessagesArea({
@@ -27,18 +29,17 @@ export default function ChatMessagesArea({
   streamError,
   errorMessage,
   onReset,
+  scrollContainerRef,
 }: ChatMessagesAreaProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!listRef.current) {
+    const target = scrollContainerRef?.current ?? listRef.current;
+    if (!target) {
       return;
     }
-    listRef.current.scrollTo({
-      top: listRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages]);
+    target.scrollTo({ top: target.scrollHeight, behavior: "smooth" });
+  }, [messages, scrollContainerRef]);
 
   const headerTitle = useMemo(() => {
     if (isNewChat) {
@@ -51,17 +52,32 @@ export default function ChatMessagesArea({
   }, [chatTitle, isNewChat]);
 
   const headerSkillLabel = skillName || "Unica Chat";
+  const streamingAssistantId = useMemo(() => {
+    if (!isStreaming || messages.length === 0) {
+      return null;
+    }
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const candidate = messages[index];
+      if (candidate.role === "assistant" && candidate.id?.startsWith("local-assistant")) {
+        return candidate.id;
+      }
+    }
+    return null;
+  }, [isStreaming, messages]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <header className="border-b bg-white/80 px-6 py-4 dark:bg-slate-900/40">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">{headerSkillLabel}</p>
         <h1 className="text-xl font-semibold">{headerTitle}</h1>
       </header>
 
-      <div ref={listRef} className="flex-1 overflow-y-auto px-5 py-5 sm:px-6 lg:px-8">
+      <div
+        ref={listRef}
+        className="flex-1 min-h-0 px-5 pb-24 pt-5 sm:px-6 lg:px-8 overflow-visible"
+      >
         {/* 10px horizontal padding keeps bubbles near the edges but not touching */}
-        <div className="flex h-full flex-col px-2.5">
+        <div className="flex h-full min-h-0 flex-col px-2.5">
           {errorMessage ? (
             <div className="mx-auto mt-10 max-w-lg rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
               <h2 className="text-lg font-semibold">Unable to open chat</h2>
@@ -97,6 +113,7 @@ export default function ChatMessagesArea({
                   key={message.id}
                   message={message}
                   previousRole={index > 0 ? messages[index - 1]?.role : undefined}
+                  isStreamingBubble={streamingAssistantId === message.id}
                 />
               ))
             : null}
@@ -123,15 +140,20 @@ export default function ChatMessagesArea({
 type ChatBubbleProps = {
   message: ChatMessage;
   previousRole?: ChatMessage["role"];
+  isStreamingBubble?: boolean;
 };
 
-function ChatBubble({ message, previousRole }: ChatBubbleProps) {
+function ChatBubble({ message, previousRole, isStreamingBubble = false }: ChatBubbleProps) {
   const isUser = message.role === "user";
   const isGroupedWithPrevious = previousRole === message.role;
   const timestamp =
     message.createdAt && !Number.isNaN(Date.parse(message.createdAt))
       ? new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       : "";
+  const displayContent = useTypewriter(message.content ?? "", {
+    enabled: isStreamingBubble,
+    resetKey: message.id,
+  });
 
   return (
     <div
@@ -150,7 +172,7 @@ function ChatBubble({ message, previousRole }: ChatBubbleProps) {
         )}
         tabIndex={0}
       >
-        <MarkdownRenderer markdown={message.content || ""} className="break-words" />
+        <MarkdownRenderer markdown={displayContent} className="break-words" />
         {timestamp ? (
           <p className={cn("text-xs", isUser ? "text-right text-[#6C7A89]" : "text-left text-muted-foreground")}>
             {timestamp}

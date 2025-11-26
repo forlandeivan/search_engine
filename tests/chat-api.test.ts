@@ -167,6 +167,48 @@ function setupChatServiceMock() {
   return Object.assign(chatService, { ChatServiceError });
 }
 
+const baseSkillContext = {
+  id: "skill-1",
+  name: "Skill",
+  isSystem: false,
+  systemKey: null,
+  type: "RAG_SKILL" as const,
+  isUnicaChat: false,
+  isRagSkill: false,
+};
+
+const baseSkillConfig = {
+  id: "skill-1",
+  workspaceId: "workspace-1",
+  name: "Skill",
+  description: null,
+  systemPrompt: null,
+  modelId: "gpt",
+  llmProviderConfigId: "provider-global",
+  collectionName: null,
+  isSystem: false,
+  systemKey: null,
+  knowledgeBaseIds: [],
+  ragConfig: {
+    mode: "all_collections",
+    collectionIds: [],
+    topK: 6,
+    minScore: 0,
+    maxContextTokens: null,
+    showSources: false,
+    bm25Weight: null,
+    bm25Limit: null,
+    vectorWeight: null,
+    vectorLimit: null,
+    embeddingProviderId: null,
+    llmTemperature: null,
+    llmMaxTokens: null,
+    llmResponseFormat: null,
+  },
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+};
+
 function setupSkillExecutionLogMock() {
   const startExecution = vi.fn(async (context: any) => ({
     id: "execution-1",
@@ -364,6 +406,8 @@ describe("Chat API", () => {
     });
 
     chatService.buildChatLlmContext.mockResolvedValueOnce({
+      skill: { ...baseSkillContext },
+      skillConfig: { ...baseSkillConfig },
       chat: {
         id: "chat-1",
         workspaceId: "workspace-1",
@@ -519,6 +563,8 @@ describe("Chat API", () => {
       createdAt: new Date().toISOString(),
     });
     chatService.buildChatLlmContext.mockResolvedValueOnce({
+      skill: { ...baseSkillContext },
+      skillConfig: { ...baseSkillConfig },
       chat: {
         id: "chat-1",
         workspaceId: "workspace-1",
@@ -703,6 +749,8 @@ describe("Chat API", () => {
       createdAt: new Date().toISOString(),
     });
     chatService.buildChatLlmContext.mockResolvedValueOnce({
+      skill: { ...baseSkillContext },
+      skillConfig: { ...baseSkillConfig },
       chat: {
         id: "chat-1",
         workspaceId: "workspace-1",

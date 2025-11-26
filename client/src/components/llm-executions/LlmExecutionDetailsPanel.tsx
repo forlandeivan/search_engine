@@ -16,13 +16,16 @@ interface LlmExecutionDetailsPanelProps {
 }
 
 export function LlmExecutionDetailsPanel({ executionId, onClose }: LlmExecutionDetailsPanelProps) {
+  const cardBase = "flex max-h-[calc(100vh-96px)] flex-col overflow-hidden";
+  const contentBase = "flex-1 overflow-y-auto space-y-6";
+
   if (!executionId) {
     return (
-      <Card className="h-fit border-dashed">
+      <Card className={cn(cardBase, "border-dashed")}>
         <CardHeader>
           <CardTitle>Детали запуска</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="text-sm text-muted-foreground">
           <p className="text-sm text-muted-foreground">
             Выберите запуск слева, чтобы увидеть информацию о его выполнении.
           </p>
@@ -37,14 +40,14 @@ export function LlmExecutionDetailsPanel({ executionId, onClose }: LlmExecutionD
 
   if (isLoading) {
     return (
-      <Card className="h-fit" data-testid="llm-execution-details-panel">
+      <Card className={cardBase} data-testid="llm-execution-details-panel">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Детали запуска</CardTitle>
           <Button variant="ghost" size="sm" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="flex-1 space-y-3 overflow-y-auto">
           {Array.from({ length: 5 }).map((_, index) => (
             <Skeleton key={index} className="h-4 w-full" />
           ))}
@@ -59,14 +62,14 @@ export function LlmExecutionDetailsPanel({ executionId, onClose }: LlmExecutionD
         ? "Запуск не найден или уже удалён."
         : error?.message ?? "Не удалось загрузить данные запуска.";
     return (
-      <Card className="h-fit" data-testid="llm-execution-details-panel">
+      <Card className={cardBase} data-testid="llm-execution-details-panel">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Детали запуска</CardTitle>
           <Button variant="ghost" size="sm" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
         </CardHeader>
-        <CardContent className="space-y-4 text-sm">
+        <CardContent className="flex-1 space-y-4 overflow-y-auto text-sm">
           <p className="text-destructive">{message}</p>
           <Button variant="outline" size="sm" onClick={onClose}>
             Вернуться к списку
@@ -82,14 +85,14 @@ export function LlmExecutionDetailsPanel({ executionId, onClose }: LlmExecutionD
     (summary.finishedAt ? new Date(summary.finishedAt).getTime() - new Date(summary.startedAt).getTime() : null);
 
   return (
-    <Card className="h-fit" data-testid="llm-execution-details-panel">
+    <Card className={cardBase} data-testid="llm-execution-details-panel">
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Детали запуска</CardTitle>
         <Button variant="ghost" size="sm" onClick={onClose}>
           <X className="h-4 w-4" />
         </Button>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className={contentBase}>
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <Badge

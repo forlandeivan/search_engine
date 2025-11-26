@@ -167,7 +167,7 @@ function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: Works
             </div>
             <HeaderUserArea user={user} />
           </header>
-          <main className="flex-1 overflow-auto">
+          <main className="app-main flex-1 min-h-0 overflow-auto">
             <AdminRouter />
           </main>
         </div>
@@ -198,7 +198,7 @@ function MainAppShell({ user, workspace }: { user: PublicUser; workspace: Worksp
             </div>
             <HeaderUserArea user={user} />
           </header>
-          <main className="flex-1 overflow-auto">
+          <main className="app-main flex-1 min-h-0 overflow-auto">
             <MainRouter />
           </main>
         </div>

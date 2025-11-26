@@ -299,7 +299,12 @@ export default function AuthPage() {
                     <p className="text-sm text-destructive">{loginForm.formState.errors.password.message}</p>
                   )}
                 </div>
-                <Button type="submit" className="w-full" disabled={loginMutation.isPending}>
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={loginMutation.isPending}
+                  data-testid="button-login-submit"
+                >
                   {loginMutation.isPending ? "Входим..." : "Войти"}
                 </Button>
               </form>
