@@ -1996,6 +1996,28 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       swallowPgError(error, ["42710", "0A000"]);
     }
 
+    try {
+      await db.execute(sql`CREATE OR REPLACE FUNCTION sanitized_chunk_text(input text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT regexp_replace(
+           regexp_replace(
+             unaccent(COALESCE($1, '')),
+             E'[-_]+',
+             ' ',
+             'g'
+           ),
+           '[^[:alnum:]\s]+',
+           ' ',
+           'g'
+         );
+$$`);
+    } catch (error) {
+      swallowPgError(error, ["42704"]);
+    }
+
     await ensureSanitizedChunkSearchVector(db);
 
     await db.execute(sql`
@@ -5947,6 +5969,25 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ALTER TABLE "skills"
       ADD COLUMN IF NOT EXISTS "rag_show_sources" boolean NOT NULL DEFAULT true
     `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "is_system" boolean NOT NULL DEFAULT false
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "system_key" text
+    `);
+
+    try {
+      await db.execute(sql`
+        CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS skills_workspace_system_key_unique_idx
+        ON "skills" ("workspace_id", "system_key")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42710", "42P07"]);
+    }
 
     await db.execute(sql`
       CREATE INDEX CONCURRENTLY IF NOT EXISTS skill_knowledge_bases_workspace_idx
