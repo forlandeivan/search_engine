@@ -3418,12 +3418,18 @@ async function runKnowledgeBaseRagPipeline(options: {
           vectorDuration = performance.now() - vectorStart;
           const parsedVectorResponse = parseJson(rawVectorResponse);
 
+          console.log(`[RAG VECTOR DEBUG] Response status: ${vectorResponse.status}`);
+          console.log(`[RAG VECTOR DEBUG] Response body: ${rawVectorResponse.slice(0, 500)}`);
+          console.log(`[RAG VECTOR DEBUG] Collection: ${collectionName}`);
+          console.log(`[RAG VECTOR DEBUG] Embed key: ${embedKey.publicKey.slice(0, 10)}...`);
+
           if (!vectorResponse.ok) {
             const errorMessage =
               parsedVectorResponse && typeof parsedVectorResponse === "object" &&
               typeof (parsedVectorResponse as Record<string, unknown>).error === "string"
                 ? ((parsedVectorResponse as Record<string, unknown>).error as string)
-                : "Workspace vector search API returned an error";
+                : `Vector API error (${vectorResponse.status}): ${rawVectorResponse.slice(0, 200)}`;
+            console.error(`[RAG VECTOR DEBUG] Error: ${errorMessage}`);
             throw new HttpError(vectorResponse.status, errorMessage, parsedVectorResponse);
           }
 
@@ -4401,8 +4407,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const publicVectorSearchHandler: RequestHandler = async (req, res) => {
     try {
+      console.log(`[PUBLIC VECTOR SEARCH] Incoming request body keys: ${Object.keys(req.body ?? {}).join(", ")}`);
+      
       const publicContext = await resolvePublicCollectionRequest(req, res);
       if (!publicContext) {
+        console.log(`[PUBLIC VECTOR SEARCH] No public context - auth failed`);
         return;
       }
 
@@ -4414,6 +4423,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : {};
       delete bodySource.workspaceId;
       delete bodySource.workspace_id;
+      
+      console.log(`[PUBLIC VECTOR SEARCH] Parsing body. Collection: ${bodySource.collection}, has vector: ${Array.isArray(bodySource.vector)}, vector length: ${Array.isArray(bodySource.vector) ? (bodySource.vector as number[]).length : "N/A"}`);
+      
       const body = publicVectorSearchSchema.parse(bodySource);
       const { collection, ...searchOptions } = body;
 
@@ -4475,6 +4487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ collection: collectionName, results });
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
+        console.log(`[PUBLIC VECTOR SEARCH] Qdrant not configured`);
         return res.status(503).json({
           error: "Qdrant не настроен",
           details: error.message,
@@ -4482,6 +4495,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (error instanceof z.ZodError) {
+        console.log(`[PUBLIC VECTOR SEARCH] Zod validation error: ${JSON.stringify(error.errors)}`);
         return res.status(400).json({
           error: "Некорректные параметры поиска",
           details: error.errors,
@@ -4491,7 +4505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const qdrantError = extractQdrantApiError(error);
       if (qdrantError) {
         console.error(
-          `Ошибка Qdrant при публичном векторном поиске в коллекции ${req.body?.collection ?? "<unknown>"}:`,
+          `[PUBLIC VECTOR SEARCH] Qdrant error in collection ${req.body?.collection ?? "<unknown>"}:`,
           error,
         );
         return res.status(qdrantError.status).json({
@@ -4500,7 +4514,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      console.error("Ошибка публичного векторного поиска:", error);
+      console.error("[PUBLIC VECTOR SEARCH] Unknown error:", error);
       res.status(500).json({ error: "Не удалось выполнить векторный поиск" });
     }
   };
