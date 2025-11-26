@@ -3299,6 +3299,8 @@ async function runKnowledgeBaseRagPipeline(options: {
           throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
         }
 
+        console.log(`[RAG DEBUG] embeddingProvider.qdrantConfig: ${JSON.stringify(embeddingProvider.qdrantConfig)}`);
+
         embeddingProviderId = embeddingProvider.id;
         selectedEmbeddingProvider = embeddingProvider;
 
