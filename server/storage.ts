@@ -5980,6 +5980,46 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS "system_key" text
     `);
 
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_bm25_weight" double precision
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_bm25_limit" integer
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_vector_weight" double precision
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_vector_limit" integer
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_embedding_provider_id" varchar
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_llm_temperature" double precision
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_llm_max_tokens" integer
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "rag_llm_response_format" text
+    `);
+
     try {
       await db.execute(sql`
         CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS skills_workspace_system_key_unique_idx
