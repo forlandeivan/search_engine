@@ -5971,6 +5971,25 @@ export async function ensureDatabaseSchema(): Promise<void> {
     `);
 
     await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "is_system" boolean NOT NULL DEFAULT false
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "system_key" text
+    `);
+
+    try {
+      await db.execute(sql`
+        CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS skills_workspace_system_key_unique_idx
+        ON "skills" ("workspace_id", "system_key")
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42710", "42P07"]);
+    }
+
+    await db.execute(sql`
       CREATE INDEX CONCURRENTLY IF NOT EXISTS skill_knowledge_bases_workspace_idx
         ON "skill_knowledge_bases" ("workspace_id")
     `);
