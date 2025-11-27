@@ -204,16 +204,43 @@ class YandexSttAsyncService {
       const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;
       const httpsProxyAgent = process.env.HTTPS_PROXY ? createHttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
 
-      // In production, would upload to Object Storage first
-      // For now, using direct binary body (max 1GB)
+      // Determine audio encoding from mimeType
+      let audioEncoding = "MP3";
+      if (mimeType.includes("ogg") || mimeType.includes("opus")) {
+        audioEncoding = "OGG_OPUS";
+      } else if (mimeType.includes("wav") || mimeType.includes("wave")) {
+        audioEncoding = "LINEAR16_PCM";
+      } else if (mimeType.includes("mp3") || mimeType.includes("mpeg")) {
+        audioEncoding = "MP3";
+      }
+
+      // Yandex SpeechKit longRunningRecognize expects JSON with base64 audio
+      const requestBody = {
+        config: {
+          specification: {
+            languageCode: lang,
+            model: (config.model as string) || "general",
+            audioEncoding: audioEncoding,
+            profanityFilter: false,
+            literature_text: true,
+            rawResults: false,
+          },
+          folderId: folderId,
+        },
+        audio: {
+          content: audioBuffer.toString("base64"),
+        },
+      };
+
+      console.info(`[yandex-stt-async] Sending request with audioEncoding=${audioEncoding}, base64 length=${requestBody.audio.content.length}`);
+
       const response = await fetch(YANDEX_ASYNC_STT_ENDPOINT, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${iamToken}`,
-          "Content-Type": "application/octet-stream",
-          "X-Folder-Id": folderId,
+          "Content-Type": "application/json",
         },
-        body: audioBuffer,
+        body: JSON.stringify(requestBody),
         agent: YANDEX_ASYNC_STT_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent,
       } as Parameters<typeof fetch>[1]);
 
