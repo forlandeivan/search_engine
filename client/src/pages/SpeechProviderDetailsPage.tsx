@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { useSpeechProviderDetails, updateSpeechProvider, UpdateSpeechProviderPayload } from "@/hooks/useSpeechProviders";
+import { useSpeechProviderDetails, updateSpeechProvider, testIamToken, UpdateSpeechProviderPayload } from "@/hooks/useSpeechProviders";
 import type { SpeechProviderDetail, SpeechProviderStatus } from "@/types/speech-providers";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -167,6 +167,23 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     setGeneralError(null);
     mutation.mutate(payload);
   };
+
+  const testTokenMutation = useMutation({
+    mutationFn: () => testIamToken(providerId),
+    onSuccess: (result) => {
+      toast({ 
+        title: "Успех", 
+        description: result.message + (result.tokenPreview ? ` (${result.tokenPreview})` : "")
+      });
+    },
+    onError: (error: Error) => {
+      toast({ 
+        title: "Ошибка", 
+        description: error.message,
+        variant: "destructive"
+      });
+    },
+  });
 
   const validateForm = () => {
     if (!provider) {
@@ -393,6 +410,14 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
                 </div>
               );
             })}
+            <Button 
+              variant="outline" 
+              onClick={() => testTokenMutation.mutate()} 
+              disabled={testTokenMutation.isPending || !provider.secrets.serviceAccountKey?.isSet}
+              data-testid="button-test-iam-token"
+            >
+              {testTokenMutation.isPending ? "Проверка..." : "Протестировать IAM токен"}
+            </Button>
           </div>
         </section>
       </div>

@@ -6734,6 +6734,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/admin/tts-stt/providers/:id/test-iam-token", requireAdmin, async (req, res, next) => {
+    try {
+      const providerId = req.params.id;
+      const detail = await runWithAdminTimeout(() => speechProviderService.getProviderById(providerId));
+      
+      const secretValues = await speechProviderService.getSecretValues(providerId);
+      const serviceAccountKey = secretValues.serviceAccountKey;
+
+      if (!serviceAccountKey) {
+        return res.status(400).json({ message: "Service Account Key не установлен" });
+      }
+
+      const iamToken = await yandexIamTokenService.getIamToken(serviceAccountKey);
+      
+      if (!iamToken) {
+        return res.status(500).json({ message: "Не удалось получить IAM токен" });
+      }
+
+      const tokenPreview = iamToken.substring(0, 20) + "...";
+      res.json({ 
+        success: true, 
+        message: "IAM токен успешно получен",
+        tokenPreview,
+        expiresInMinutes: Math.round((11 * 60 * 60 * 1000) / 1000 / 60)
+      });
+    } catch (error) {
+      console.error(`[test-iam-token] Error for provider ${req.params.id}:`, error);
+      if (error instanceof SpeechProviderNotFoundError) {
+        return res.status(404).json({ message: "Provider not found" });
+      }
+      if (error instanceof SpeechProviderServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof Error && error.message.includes("Invalid service account key")) {
+        return res.status(400).json({ message: "Service Account Key невалиден: " + error.message });
+      }
+      if (error instanceof Error && error.message.includes("getaddrinfo ENOTFOUND")) {
+        return res.status(503).json({ message: "Не удалось подключиться к Yandex Cloud API. Проверьте сетевое подключение." });
+      }
+      res.status(500).json({ message: error instanceof Error ? error.message : "Ошибка при проверке IAM токена" });
+    }
+  });
+
   app.get("/api/admin/llm-executions", requireAdmin, async (req, res, next) => {
     try {
       const rawQuery = {

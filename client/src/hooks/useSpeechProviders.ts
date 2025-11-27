@@ -74,6 +74,31 @@ export async function updateSpeechProvider(providerId: string, payload: UpdateSp
   return parsed as SpeechProviderDetailResponse;
 }
 
+export async function testIamToken(providerId: string) {
+  const response = await fetch(`/api/admin/tts-stt/providers/${providerId}/test-iam-token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "include",
+  });
+
+  const text = await response.text();
+  const isJson = response.headers.get("content-type")?.includes("application/json");
+  const parsed = isJson && text ? JSON.parse(text) : null;
+
+  if (!response.ok) {
+    const errorMessage = parsed?.message ?? `Ошибка (код ${response.status})`;
+    const error = new Error(errorMessage) as Error & { details?: unknown };
+    if (parsed?.details) {
+      error.details = parsed.details;
+    }
+    throw error;
+  }
+
+  return parsed as { success: boolean; message: string; tokenPreview?: string; expiresInMinutes?: number };
+}
+
 export function useSpeechProvidersList(params: SpeechProvidersListParams = {}) {
   const query = useQuery<SpeechProvidersListResponse, Error>({
     queryKey: [...SPEECH_PROVIDERS_QUERY_KEY, params],
