@@ -8565,7 +8565,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const audioUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: 1 * 1024 * 1024, // 1 MB max for sync API
+      fileSize: 500 * 1024 * 1024, // 500 MB for async API (large files)
       files: 1,
     },
     fileFilter: (_req, file, cb) => {
@@ -8597,17 +8597,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
-        // Use sync API for immediate results
-        const result = await yandexSttService.transcribe({
-          audioBuffer: file.buffer,
-          mimeType: file.mimetype,
-          lang,
-        });
+        const SYNC_API_MAX_SIZE = 1 * 1024 * 1024; // 1 MB for sync API
 
-        res.json({
-          text: result.text,
-          lang: result.lang,
-        });
+        if (file.size <= SYNC_API_MAX_SIZE) {
+          // Small files: use sync API for immediate results
+          console.info(`[transcribe] Using sync API for small file (${file.size} bytes)`);
+          const result = await yandexSttService.transcribe({
+            audioBuffer: file.buffer,
+            mimeType: file.mimetype,
+            lang,
+          });
+
+          res.json({
+            text: result.text,
+            lang: result.lang,
+          });
+        } else {
+          // Large files: use async API (requires Object Storage in production)
+          console.info(`[transcribe] Using async API for large file (${file.size} bytes)`);
+          const response = await yandexSttAsyncService.startAsyncTranscription({
+            audioBuffer: file.buffer,
+            mimeType: file.mimetype,
+            lang,
+            userId: user.id,
+          });
+
+          res.json({
+            operationId: response.operationId,
+            message: response.message,
+          });
+        }
       } catch (error) {
         console.error(`[transcribe] user=${user.id} error:`, error);
         
