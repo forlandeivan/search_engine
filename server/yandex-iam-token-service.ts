@@ -1,28 +1,5 @@
 import fetch from "node-fetch";
-import { createSign } from "crypto";
-import type HttpProxyAgent from "http-proxy-agent";
-import type HttpsProxyAgent from "https-proxy-agent";
-
-// Runtime imports for agents
-const createHttpProxyAgent = (url: string) => {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const HttpProxyAgentModule = require("http-proxy-agent");
-    return new HttpProxyAgentModule(url);
-  } catch {
-    return undefined;
-  }
-};
-
-const createHttpsProxyAgent = (url: string) => {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const HttpsProxyAgentModule = require("https-proxy-agent");
-    return new HttpsProxyAgentModule(url);
-  } catch {
-    return undefined;
-  }
-};
+import { createPrivateKey, sign, constants } from "crypto";
 
 interface IamTokenCache {
   token: string;
@@ -31,7 +8,8 @@ interface IamTokenCache {
 
 const tokenCache = new Map<string, IamTokenCache>();
 
-const IAM_ENDPOINT = "https://auth.api.cloud.yandex.net/oauth/token";
+// CORRECT endpoint for Service Account IAM tokens
+const IAM_ENDPOINT = "https://iam.api.cloud.yandex.net/iam/v1/tokens";
 const TOKEN_LIFETIME_MS = 11 * 60 * 60 * 1000; // 11 hours (Yandex gives 12)
 
 export class YandexIamTokenError extends Error {
@@ -39,6 +17,12 @@ export class YandexIamTokenError extends Error {
     super(message);
     this.name = "YandexIamTokenError";
   }
+}
+
+interface ServiceAccountKey {
+  id?: string; // key_id
+  service_account_id?: string;
+  private_key?: string;
 }
 
 class YandexIamTokenService {
@@ -49,7 +33,7 @@ class YandexIamTokenService {
    */
   async getIamToken(serviceAccountKey: string, config?: Record<string, unknown>): Promise<string> {
     try {
-      let parsed: { service_account_id?: string; private_key?: string };
+      let parsed: ServiceAccountKey;
       
       try {
         parsed = JSON.parse(serviceAccountKey);
@@ -60,6 +44,12 @@ class YandexIamTokenService {
       if (!parsed.service_account_id || !parsed.private_key) {
         throw new YandexIamTokenError(
           `Invalid service account key format. Missing: ${!parsed.service_account_id ? 'service_account_id' : ''} ${!parsed.private_key ? 'private_key' : ''}`
+        );
+      }
+
+      if (!parsed.id) {
+        throw new YandexIamTokenError(
+          `Invalid service account key format. Missing: id (key_id). Make sure you're using the full Service Account Key JSON from Yandex Cloud.`
         );
       }
 
@@ -105,57 +95,52 @@ class YandexIamTokenService {
         return cached.token;
       }
 
-      // MODE 2: Auto-generate token using Service Account Key (requires network access to Yandex API)
+      // MODE 2: Auto-generate token using Service Account Key
       console.info(`[yandex-iam] MODE 2: Fetching new IAM token for ${parsed.service_account_id}`);
 
-      // Create JWT assertion with decoded private key
-      const jwt = this.createJwt({ ...parsed, private_key: privateKey });
-      console.info(`[yandex-iam] JWT created, length: ${jwt.length}`);
+      // Create JWT with PS256 algorithm (required by Yandex Cloud)
+      const jwt = this.createJwt({
+        keyId: parsed.id,
+        serviceAccountId: parsed.service_account_id,
+        privateKey: privateKey,
+      });
+      console.info(`[yandex-iam] JWT created with PS256, length: ${jwt.length}`);
 
-      // Setup proxy agents for network compatibility
-      const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;
-      const httpsProxyAgent = process.env.HTTPS_PROXY ? createHttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
-
-      // Build fetch options with optional agent
-      const fetchOptions: Parameters<typeof fetch>[1] = {
+      // Request IAM token with JSON body
+      console.info(`[yandex-iam] Requesting IAM token from ${IAM_ENDPOINT}`);
+      
+      const response = await fetch(IAM_ENDPOINT, {
         method: "POST",
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Type": "application/json",
         },
-        body: new URLSearchParams({
-          grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-          assertion: jwt,
-        }).toString(),
-      };
-
-      // Only add agent if one was successfully created
-      const selectedAgent = IAM_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent;
-      if (selectedAgent) {
-        console.info(`[yandex-iam] Using proxy agent for IAM token request`);
-        fetchOptions.agent = selectedAgent;
-      }
-
-      // Request new token
-      console.info(`[yandex-iam] Requesting IAM token from ${IAM_ENDPOINT}`);
-      const response = await fetch(IAM_ENDPOINT, fetchOptions);
+        body: JSON.stringify({ jwt }),
+      });
 
       if (!response.ok) {
         const text = await response.text();
         console.error(`[yandex-iam] Token fetch error: ${response.status} - ${text}`);
         throw new YandexIamTokenError(
-          `Failed to get IAM token: ${response.status} - ${text.substring(0, 100)}`
+          `Failed to get IAM token: ${response.status} - ${text.substring(0, 200)}`
         );
       }
 
-      const data = (await response.json()) as { access_token?: string; expires_in?: number };
+      const data = (await response.json()) as { iamToken?: string; expiresAt?: string };
 
-      if (!data.access_token) {
-        throw new YandexIamTokenError("No access token in response");
+      if (!data.iamToken) {
+        throw new YandexIamTokenError("No iamToken in response");
       }
 
-      const token = data.access_token;
-      const expiresIn = (data.expires_in ?? 3600) * 1000; // Convert seconds to ms
-      const expiresAt = Date.now() + Math.min(expiresIn, TOKEN_LIFETIME_MS);
+      const token = data.iamToken;
+      
+      // Parse expiration time from response
+      let expiresAt = Date.now() + TOKEN_LIFETIME_MS;
+      if (data.expiresAt) {
+        const parsedExpiry = new Date(data.expiresAt).getTime();
+        if (!isNaN(parsedExpiry)) {
+          expiresAt = parsedExpiry;
+        }
+      }
 
       // Cache for next use
       tokenCache.set(cacheKey, { token, expiresAt });
@@ -175,42 +160,75 @@ class YandexIamTokenService {
     }
   }
 
-  private createJwt(serviceAccount: { service_account_id?: string; private_key?: string }): string {
-    // Standard JWT for Yandex Cloud
+  private createJwt(params: { keyId: string; serviceAccountId: string; privateKey: string }): string {
     const now = Math.floor(Date.now() / 1000);
-    const expiresAt = now + 3600;
+    const expiresAt = now + 3600; // 1 hour
 
-    const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64");
-    const payload = Buffer.from(
-      JSON.stringify({
-        iss: serviceAccount.service_account_id,
-        sub: serviceAccount.service_account_id,
-        aud: "https://auth.api.cloud.yandex.net/oauth/token",
-        iat: now,
-        exp: expiresAt,
-      })
-    ).toString("base64");
+    // JWT Header with PS256 algorithm and key ID
+    const header = {
+      typ: "JWT",
+      alg: "PS256",
+      kid: params.keyId,
+    };
 
-    const signature = this.signJwt(`${header}.${payload}`, serviceAccount.private_key || "");
+    // JWT Payload with correct audience for Yandex Cloud IAM
+    const payload = {
+      iss: params.serviceAccountId,
+      aud: IAM_ENDPOINT,
+      iat: now,
+      exp: expiresAt,
+    };
 
-    return `${header}.${payload}.${signature}`;
+    // Base64url encode header and payload
+    const headerB64 = this.base64urlEncode(JSON.stringify(header));
+    const payloadB64 = this.base64urlEncode(JSON.stringify(payload));
+
+    const message = `${headerB64}.${payloadB64}`;
+
+    // Sign with PS256 (RSA-PSS with SHA-256)
+    const signature = this.signWithPS256(message, params.privateKey);
+
+    return `${message}.${signature}`;
   }
 
-  private signJwt(message: string, privateKey: string): string {
+  private signWithPS256(message: string, privateKeyPem: string): string {
     try {
-      const signer = createSign("RSA-SHA256");
-      signer.update(message);
-      const signature = signer.sign(privateKey, "base64");
-      // Convert to base64url format (RFC 7515)
-      return signature
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=/g, "");
+      // Create private key object
+      const privateKey = createPrivateKey({
+        key: privateKeyPem,
+        format: 'pem',
+      });
+
+      // Sign with RSA-PSS (PS256)
+      const signature = sign(
+        'sha256',
+        Buffer.from(message, 'utf8'),
+        {
+          key: privateKey,
+          padding: constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: constants.RSA_PSS_SALTLEN_DIGEST, // 32 bytes for SHA-256
+        }
+      );
+
+      // Convert to base64url
+      return this.base64urlEncode(signature);
     } catch (error) {
       throw new YandexIamTokenError(
-        `Failed to sign JWT: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to sign JWT with PS256: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+  }
+
+  private base64urlEncode(input: string | Buffer): string {
+    const base64 = Buffer.isBuffer(input) 
+      ? input.toString('base64')
+      : Buffer.from(input, 'utf8').toString('base64');
+    
+    // Convert to base64url format
+    return base64
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
   }
 }
 

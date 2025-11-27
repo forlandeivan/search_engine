@@ -68,41 +68,46 @@ The application supports audio file transcription in chat via Yandex SpeechKit i
 **Async Audio Transcription** is implemented via Yandex SpeechKit long operations API:
 
 **Backend Services:**
-- `server/yandex-iam-token-service.ts`: Handles IAM token generation and caching using Yandex Service Account Keys with JWT signing
+- `server/yandex-iam-token-service.ts`: Handles IAM token generation using PS256 JWT signing and Yandex Cloud IAM API
 - `server/yandex-stt-async-service.ts`: Submits audio files for async transcription and retrieves operation status
 - API endpoint `POST /api/chat/transcribe` (with async mode): Initiates async transcription and returns `operationId`
 - API endpoint `GET /api/chat/transcribe/operations/:operationId`: Polls for transcription completion status
-- Admin endpoint `POST /api/admin/tts-stt/providers/:id/test-iam-token`: Tests IAM token generation (may fail due to Replit network restrictions)
+- Admin endpoint `POST /api/admin/tts-stt/providers/:id/test-iam-token`: Tests IAM token generation
 
 **Frontend:**
 - Polling mechanism in ChatPage to check transcription completion
 - Auto-polling every 2 seconds until completion or timeout
 
 **Authentication:**
-- Service Account Key (JSON) stored in provider secrets
-- IAM token automatically generated and cached (11-hour lifetime)
+- Service Account Key (JSON) stored in provider secrets - must include `id` (key_id), `service_account_id`, and `private_key`
+- IAM token automatically generated using PS256 (RSA-PSS) algorithm and cached (11-hour lifetime)
 - Token expiration handled with 5-minute safety buffer
 
-**Network Configuration & Two Modes of Operation:**
+**Technical Details (Yandex Cloud IAM API):**
+- Endpoint: `https://iam.api.cloud.yandex.net/iam/v1/tokens`
+- JWT Algorithm: PS256 (RSA-PSS with SHA-256)
+- JWT Header must include `kid` (key_id from Service Account Key)
+- Request format: JSON body `{"jwt": "<signed_jwt>"}`
+- Response format: `{"iamToken": "t1.xxx...", "expiresAt": "..."}`
 
-**MODE 1: Pre-generated Token (Recommended for Replit development)**
-- Set env var `YANDEX_IAM_TOKEN` with a pre-generated token (valid for 12 hours)
-- System will use this token directly, no network requests to Yandex Auth API needed
-- Generate token outside Replit (e.g., via Yandex Cloud CLI: `yc iam create-token`) and paste into env var
-- Best for avoiding Replit network restrictions
-- Update token every 12 hours or when it expires
+**Two Modes of Operation:**
 
-**MODE 2: Auto-generated Token (Default - requires network access)**
-- System automatically generates JWT from Service Account Key and requests token from Yandex
-- Works in production or environments with unrestricted network access to auth.api.cloud.yandex.net
-- Token is cached and reused for 11 hours (Yandex grants 12-hour tokens)
-- Requires HTTP/HTTPS proxy agents via `HTTP_PROXY` and `HTTPS_PROXY` env vars if behind corporate proxy
+**MODE 1: Pre-generated Token**
+- Set in admin panel "IAM Mode: Manual" and paste token
+- Or set env var `YANDEX_IAM_TOKEN` with a pre-generated token
+- Generate token via Yandex Cloud CLI: `yc iam create-token`
+- Valid for 12 hours, update when expired
+
+**MODE 2: Auto-generated Token (Default)**
+- System automatically generates JWT from Service Account Key
+- Requests token from `iam.api.cloud.yandex.net` (correct endpoint)
+- Token is cached and reused for 11 hours
+- Requires valid Service Account Key with all three fields: `id`, `service_account_id`, `private_key`
 
 **Priority:**
-1. If `YANDEX_IAM_TOKEN` env var is set → Use MODE 1 (pre-generated)
-2. Otherwise → Use MODE 2 (auto-generate with Service Account Key)
-
-**Note for Replit:** External DNS to auth.api.cloud.yandex.net may be restricted. MODE 1 (pre-generated token) bypasses this limitation entirely.
+1. If admin panel has "Manual" mode with token → Use MODE 1
+2. If `YANDEX_IAM_TOKEN` env var is set → Use MODE 1
+3. Otherwise → Use MODE 2 (auto-generate)
 
 ### Production Deployment Notes
 
