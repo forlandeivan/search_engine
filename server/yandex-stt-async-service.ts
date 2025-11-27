@@ -73,12 +73,23 @@ setInterval(() => {
 
 function needsConversion(mimeType: string): boolean {
   const baseMimeType = mimeType.split(";")[0].trim().toLowerCase();
-  return baseMimeType === "audio/webm";
+  // Только OGG не требует конверсии, всё остальное конвертируем
+  return baseMimeType !== "audio/ogg";
 }
 
-export async function convertWebmToOgg(audioBuffer: Buffer): Promise<Buffer> {
+function getMimeTypeExtension(mimeType: string): string {
+  const baseMimeType = mimeType.split(";")[0].trim().toLowerCase();
+  if (baseMimeType === "audio/mp3" || baseMimeType === "audio/mpeg") return "mp3";
+  if (baseMimeType === "audio/wav" || baseMimeType === "audio/wave") return "wav";
+  if (baseMimeType === "audio/webm") return "webm";
+  if (baseMimeType === "audio/ogg") return "ogg";
+  return "unknown";
+}
+
+export async function convertAudioToOgg(audioBuffer: Buffer, mimeType: string = "audio/webm"): Promise<Buffer> {
   const tempId = randomBytes(8).toString("hex");
-  const inputPath = join(tmpdir(), `input_${tempId}.webm`);
+  const inputExt = getMimeTypeExtension(mimeType);
+  const inputPath = join(tmpdir(), `input_${tempId}.${inputExt}`);
   const outputPath = join(tmpdir(), `output_${tempId}.ogg`);
 
   try {
