@@ -174,7 +174,6 @@ export default function ChatPage({ params }: ChatPageProps) {
               );
             },
             onDone: async () => {
-              setLocalMessages([]);
               await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
               debugLog("[chat] streamMessage finished", { chatId: targetChatId });
             },
