@@ -67,6 +67,15 @@ class YandexIamTokenService {
         return cached.token;
       }
 
+      // Mock mode for testing without network access
+      if (process.env.YANDEX_IAM_MOCK_MODE === "true") {
+        console.info(`[yandex-iam] MOCK MODE: Generating test token for ${parsed.service_account_id}`);
+        const mockToken = "mock_token_" + Buffer.from(Date.now().toString()).toString("base64");
+        const expiresAt = Date.now() + TOKEN_LIFETIME_MS;
+        tokenCache.set(cacheKey, { token: mockToken, expiresAt });
+        return mockToken;
+      }
+
       console.info(`[yandex-iam] Fetching new IAM token for ${parsed.service_account_id}`);
 
       // Setup proxy agents for network compatibility
