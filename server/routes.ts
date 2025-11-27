@@ -1214,6 +1214,8 @@ const speechProviderConfigSchema = z
     languageCode: z.string().trim().max(64).optional(),
     model: z.string().trim().max(128).optional(),
     enablePunctuation: z.boolean().optional(),
+    iamMode: z.enum(["manual", "auto"]).optional(),
+    iamToken: z.string().trim().max(4096).optional(),
   })
   .strict();
 
@@ -1248,6 +1250,12 @@ function normalizeSpeechProviderConfigPatch(
   }
   if (config.enablePunctuation !== undefined) {
     payload.enablePunctuation = config.enablePunctuation;
+  }
+  if (config.iamMode !== undefined) {
+    payload.iamMode = config.iamMode;
+  }
+  if (config.iamToken !== undefined) {
+    payload.iamToken = config.iamToken;
   }
   return Object.keys(payload).length > 0 ? payload : undefined;
 }
@@ -6776,8 +6784,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (error instanceof Error && error.message.includes("getaddrinfo ENOTFOUND")) {
         return res.status(503).json({ 
-          message: "⚠️ Не удалось подключиться к Yandex Cloud API из Replit. Это может быть сетевым ограничением окружения.",
-          details: "Реальное тестирование IAM токена будет выполнено при первой загрузке аудиофайла. Если вы видите ошибку подключения, проверьте: 1) Service Account Key валиден 2) Реплит имеет доступ в интернет 3) На уровне прокси-сервера (если применимо)"
+          message: "⚠️ Не удалось подключиться к Yandex Cloud API. Проверьте доступ в интернет.",
+          details: "Проверьте: 1) Service Account Key валиден 2) Есть доступ к auth.api.cloud.yandex.net 3) Прокси-сервер настроен корректно (если применимо)"
         });
       }
       res.status(500).json({ message: error instanceof Error ? error.message : "Ошибка при проверке IAM токена" });

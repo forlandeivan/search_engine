@@ -15,7 +15,7 @@ const app = express();
 app.set("trust proxy", 1);
 
 // Health check endpoint - must be FIRST, before any middleware
-// This ensures fast response for Replit deployment health checks
+// This ensures fast response for deployment health checks
 let dbInitialized = false;
 app.get("/health", (_req, res) => {
   res.status(200).json({
@@ -124,16 +124,16 @@ const restrictedCors = cors({
       }
 
       // SECURITY FIX: Use proper hostname checking instead of vulnerable includes()
-      // Allow Replit preview domains with secure hostname parsing
-      const isReplitDomain = originHostname === 'replit.dev' || originHostname.endsWith('.replit.dev') ||
+      // Allow cloud development platform domains with secure hostname parsing
+      const isCloudDevDomain = originHostname === 'replit.dev' || originHostname.endsWith('.replit.dev') ||
                             originHostname === 'replit.app' || originHostname.endsWith('.replit.app');
 
       // Allow localhost for development
       const isLocalhost = originHostname === 'localhost' || originHostname === '127.0.0.1' || 
                          originHostname === '0.0.0.0';
 
-      if (isReplitDomain) {
-        log(`CORS: Allowed Replit domain: ${origin} (hostname: ${originHostname})`);
+      if (isCloudDevDomain) {
+        log(`CORS: Allowed cloud dev domain: ${origin} (hostname: ${originHostname})`);
         return callback(null, true);
       }
 
