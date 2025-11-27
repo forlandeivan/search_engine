@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -27,11 +27,13 @@ const STATUS_HINT: Record<SpeechProviderStatus, string> = {
 const SECRET_LABELS: Record<string, string> = {
   apiKey: "API-ключ",
   folderId: "ID каталога",
+  iamToken: "IAM-токен",
 };
 
 const SECRET_DESCRIPTIONS: Record<string, string> = {
-  apiKey: "Сервисный ключ доступа SpeechKit.",
+  apiKey: "Сервисный ключ доступа SpeechKit (синхронный API).",
   folderId: "Идентификатор каталога (folderId), внутри которого доступен SpeechKit.",
+  iamToken: "IAM-токен сервис-аккаунта для асинхронного API (большие файлы до 500 МБ).",
 };
 
 const DEFAULT_CONFIG = {
@@ -43,6 +45,7 @@ const DEFAULT_CONFIG = {
 const DEFAULT_SECRETS = {
   apiKey: "",
   folderId: "",
+  iamToken: "",
 };
 
 interface SpeechProviderDetailsPageProps {
@@ -149,10 +152,26 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     if (isEnabled && !provider.secrets.folderId?.isSet && secretInputs.folderId.trim().length === 0) {
       validationErrors["secrets.folderId"] = "Укажите ID каталога перед включением провайдера.";
     }
+    if (isEnabled && !provider.secrets.iamToken?.isSet && secretInputs.iamToken.trim().length === 0) {
+      validationErrors["secrets.iamToken"] = "Укажите IAM-токен перед включением провайдера (требуется для асинхронного API).";
+    }
 
     setFieldErrors(validationErrors);
     return Object.keys(validationErrors).length === 0;
   };
+
+  const isProviderReady = useMemo(() => {
+    if (!provider || !isEnabled) {
+      return false;
+    }
+    return Boolean(
+      (provider.secrets.apiKey?.isSet || secretInputs.apiKey.trim().length > 0) &&
+      (provider.secrets.folderId?.isSet || secretInputs.folderId.trim().length > 0) &&
+      (provider.secrets.iamToken?.isSet || secretInputs.iamToken.trim().length > 0) &&
+      configState.languageCode.trim().length > 0 &&
+      provider.status === "Enabled"
+    );
+  }, [provider, isEnabled, secretInputs, configState]);
 
   const handleSave = () => {
     if (!provider) {
@@ -177,6 +196,9 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     }
     if (secretInputs.folderId.trim().length > 0) {
       secretsPayload.folderId = secretInputs.folderId.trim();
+    }
+    if (secretInputs.iamToken.trim().length > 0) {
+      secretsPayload.iamToken = secretInputs.iamToken.trim();
     }
     if (Object.keys(secretsPayload).length > 0) {
       payload.secrets = secretsPayload;
@@ -234,10 +256,20 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
 
       {statusHint && (
         <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-          {statusHint}
-          {provider.status === "Error" && provider.lastErrorMessage && (
-            <p className="mt-1 text-destructive">{provider.lastErrorMessage}</p>
-          )}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              {statusHint}
+              {provider.status === "Error" && provider.lastErrorMessage && (
+                <p className="mt-1 text-destructive">{provider.lastErrorMessage}</p>
+              )}
+            </div>
+            {isProviderReady && (
+              <div className="flex items-center gap-2 whitespace-nowrap text-green-600 dark:text-green-400">
+                <CheckCircle2 className="h-5 w-5 shrink-0" />
+                <span className="text-xs font-medium">Готов к использованию</span>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
