@@ -137,6 +137,37 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     navigate("/admin/tts-stt");
   };
 
+  const handleToggleEnabled = (newValue: boolean) => {
+    setIsEnabled(newValue);
+    if (!provider) return;
+    
+    const payload: UpdateSpeechProviderPayload = {
+      isEnabled: newValue,
+      config: {
+        languageCode: configState.languageCode.trim(),
+        model: configState.model.trim() || undefined,
+        enablePunctuation: configState.enablePunctuation,
+      },
+    };
+
+    const secretsPayload: Record<string, string | null> = {};
+    if (secretInputs.apiKey.trim().length > 0) {
+      secretsPayload.apiKey = secretInputs.apiKey.trim();
+    }
+    if (secretInputs.folderId.trim().length > 0) {
+      secretsPayload.folderId = secretInputs.folderId.trim();
+    }
+    if (secretInputs.serviceAccountKey.trim().length > 0) {
+      secretsPayload.serviceAccountKey = secretInputs.serviceAccountKey.trim();
+    }
+    if (Object.keys(secretsPayload).length > 0) {
+      payload.secrets = secretsPayload;
+    }
+
+    setGeneralError(null);
+    mutation.mutate(payload);
+  };
+
   const validateForm = () => {
     if (!provider) {
       return false;
@@ -290,7 +321,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
             </div>
             <div className="flex items-center gap-2">
               <Label htmlFor="provider-enabled">Включить провайдера</Label>
-              <Switch id="provider-enabled" checked={isEnabled} onCheckedChange={setIsEnabled} />
+              <Switch id="provider-enabled" checked={isEnabled} onCheckedChange={handleToggleEnabled} disabled={mutation.isPending} />
             </div>
           </div>
           <div className="space-y-3">
