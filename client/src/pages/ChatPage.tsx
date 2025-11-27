@@ -281,7 +281,9 @@ export default function ChatPage({ params }: ChatPageProps) {
 
       // Check if this is a pending operation
       if (transcribedText.startsWith("__PENDING_OPERATION:")) {
-        const operationId = transcribedText.substring("__PENDING_OPERATION:".length);
+        const parts = transcribedText.substring("__PENDING_OPERATION:".length).split(":");
+        const operationId = parts[0];
+        const fileName = parts.slice(1).join(":") || "audio.ogg";
         
         let targetChatId = effectiveChatId;
         if (!targetChatId) {
@@ -305,7 +307,7 @@ export default function ChatPage({ params }: ChatPageProps) {
         }
 
         // Show waiting message with loading state
-        const userMessage = buildLocalMessage("user", targetChatId, `[Аудиофайл]`);
+        const userMessage = buildLocalMessage("user", targetChatId, `__AUDIO_FILE__:${fileName}`);
         const assistantMessage = buildLocalMessage("assistant", targetChatId, "");
         setLocalChatId(targetChatId);
         setLocalMessages([userMessage, assistantMessage]);

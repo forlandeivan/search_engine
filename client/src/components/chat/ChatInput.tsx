@@ -82,7 +82,7 @@ export default function ChatInput({
 
       if (result.operationId) {
         if (onTranscribe) {
-          onTranscribe(`__PENDING_OPERATION:${result.operationId}`);
+          onTranscribe(`__PENDING_OPERATION:${result.operationId}:${file.name}`);
         }
       } else {
         toast({

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, type RefObject } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2, Sparkles, Music } from "lucide-react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -154,8 +154,16 @@ function ChatBubble({ message, previousRole, isStreamingBubble = false, isTransc
     message.createdAt && !Number.isNaN(Date.parse(message.createdAt))
       ? new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       : "";
+  
+  const isAudioFile = message.content?.startsWith("__AUDIO_FILE__:");
+  const audioFileName = isAudioFile ? message.content.substring("__AUDIO_FILE__:".length) : "";
+  const getAudioExtension = (fileName: string) => {
+    const match = fileName.match(/\.([^.]+)$/);
+    return match ? match[1].toUpperCase() : "AUDIO";
+  };
+  
   const displayContent = useTypewriter(message.content ?? "", {
-    enabled: isStreamingBubble,
+    enabled: isStreamingBubble && !isAudioFile,
     resetKey: message.id,
   });
 
@@ -180,6 +188,14 @@ function ChatBubble({ message, previousRole, isStreamingBubble = false, isTransc
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" />
             <span>Анализируем запись...</span>
+          </div>
+        ) : isAudioFile ? (
+          <div className="flex items-center gap-2">
+            <Music className="h-5 w-5 shrink-0" />
+            <div className="min-w-0">
+              <p className="font-medium truncate">{audioFileName}</p>
+              <p className="text-xs opacity-70">{getAudioExtension(audioFileName)}</p>
+            </div>
           </div>
         ) : (
           <MarkdownRenderer markdown={displayContent} className="break-words" />
