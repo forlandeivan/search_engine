@@ -8232,25 +8232,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const citations = Array.isArray(ragResult.response.citations) ? ragResult.response.citations : [];
         const metadata = citations.length > 0 ? { citations } : undefined;
-        const assistantMessage = await writeAssistantMessage(
-          req.params.chatId,
-          workspaceId,
-          user.id,
-          ragResult.response.answer,
-          metadata,
-        );
 
-        await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
-        res.json({
-          message: assistantMessage,
-          userMessage: userMessageRecord,
-          usage: ragResult.response.usage ?? null,
-          rag: {
-            knowledgeBaseId: ragResult.response.knowledgeBaseId,
-            normalizedQuery: ragResult.response.normalizedQuery,
-            citations: ragResult.response.citations,
-          },
-        });
+        if (wantsStream) {
+          streamingResponseStarted = true;
+          res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+          res.setHeader("Cache-Control", "no-cache, no-transform");
+          res.setHeader("Connection", "keep-alive");
+          res.setHeader("X-Accel-Buffering", "no");
+
+          console.info(
+            `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} streaming RAG response`,
+          );
+
+          const answer = ragResult.response.answer;
+          const chunkSize = 5;
+          const chunks = [];
+          
+          for (let i = 0; i < answer.length; i += chunkSize) {
+            chunks.push(answer.substring(i, i + chunkSize));
+          }
+
+          for (const chunk of chunks) {
+            sendSseEvent(res, "token", { token: chunk });
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+
+          const assistantMessage = await writeAssistantMessage(
+            req.params.chatId,
+            workspaceId,
+            user.id,
+            answer,
+            metadata,
+          );
+
+          console.info(
+            `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} RAG streaming finished`,
+          );
+
+          sendSseEvent(res, "done", {
+            assistantMessageId: assistantMessage.id,
+            userMessageId: userMessageRecord?.id ?? null,
+            rag: {
+              knowledgeBaseId: ragResult.response.knowledgeBaseId,
+              normalizedQuery: ragResult.response.normalizedQuery,
+              citations: ragResult.response.citations,
+            },
+          });
+
+          await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
+          res.end();
+        } else {
+          const assistantMessage = await writeAssistantMessage(
+            req.params.chatId,
+            workspaceId,
+            user.id,
+            ragResult.response.answer,
+            metadata,
+          );
+
+          await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
+          res.json({
+            message: assistantMessage,
+            userMessage: userMessageRecord,
+            usage: ragResult.response.usage ?? null,
+            rag: {
+              knowledgeBaseId: ragResult.response.knowledgeBaseId,
+              normalizedQuery: ragResult.response.normalizedQuery,
+              citations: ragResult.response.citations,
+            },
+          });
+        }
         return;
       }
 
