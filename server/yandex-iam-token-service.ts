@@ -1,4 +1,5 @@
 import fetch from "node-fetch";
+import { createSign } from "crypto";
 
 interface IamTokenCache {
   token: string;
@@ -115,8 +116,7 @@ class YandexIamTokenService {
   }
 
   private signJwt(message: string, privateKey: string): string {
-    const crypto = require("crypto");
-    const signer = crypto.createSign("RSA-SHA256");
+    const signer = createSign("RSA-SHA256");
     signer.update(message);
     const signature = signer.sign(privateKey, "base64");
     return signature.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
