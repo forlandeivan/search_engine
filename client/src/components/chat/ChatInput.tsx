@@ -42,6 +42,7 @@ export default function ChatInput({
   const [isUploading, setIsUploading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [uploadedOperationId, setUploadedOperationId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -61,7 +62,7 @@ export default function ChatInput({
       });
   }, [showAudioAttach]);
 
-  const handleUploadAudio = useCallback(async (file: File) => {
+  const handleUploadAudio = useCallback(async (file: File): Promise<string | null> => {
     setIsUploading(true);
     try {
       const formData = new FormData();
@@ -81,15 +82,15 @@ export default function ChatInput({
       const result = await response.json();
 
       if (result.operationId) {
-        if (onTranscribe) {
-          onTranscribe(`__PENDING_OPERATION:${result.operationId}:${file.name}`);
-        }
+        setUploadedOperationId(result.operationId);
+        return result.operationId;
       } else {
         toast({
           title: "Ошибка",
           description: "Не удалось запустить транскрибацию. Попробуйте еще раз.",
           variant: "destructive",
         });
+        return null;
       }
     } catch (error) {
       console.error("[ChatInput] Transcription error:", error);
@@ -98,20 +99,24 @@ export default function ChatInput({
         description: error instanceof Error ? error.message : "Не удалось распознать аудио",
         variant: "destructive",
       });
+      return null;
     } finally {
       setIsUploading(false);
     }
-  }, [onTranscribe, toast]);
+  }, [toast]);
 
   const handleSend = useCallback(async () => {
     if (disabled) {
       return;
     }
 
-    // If file is attached, upload it
-    if (attachedFile) {
-      await handleUploadAudio(attachedFile);
+    // If file is attached and uploaded, send it
+    if (attachedFile && uploadedOperationId) {
+      if (onTranscribe) {
+        onTranscribe(`__PENDING_OPERATION:${uploadedOperationId}:${attachedFile.name}`);
+      }
       setAttachedFile(null);
+      setUploadedOperationId(null);
       return;
     }
 
@@ -122,7 +127,7 @@ export default function ChatInput({
     }
     setValue("");
     await onSend(trimmed);
-  }, [disabled, onSend, value, attachedFile, handleUploadAudio]);
+  }, [disabled, onSend, value, attachedFile, uploadedOperationId, onTranscribe]);
 
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -185,8 +190,9 @@ export default function ChatInput({
     const file = files[0];
     if (validateAudioFile(file)) {
       setAttachedFile(file);
+      handleUploadAudio(file);
     }
-  }, [toast]);
+  }, [toast, handleUploadAudio]);
 
   const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -198,10 +204,11 @@ export default function ChatInput({
 
     if (validateAudioFile(file)) {
       setAttachedFile(file);
+      handleUploadAudio(file);
     }
-  }, [toast]);
+  }, [toast, handleUploadAudio]);
 
-  const isSendDisabled = disabled || (value.trim().length === 0 && !attachedFile);
+  const isSendDisabled = disabled || (value.trim().length === 0 && !attachedFile) || (attachedFile && !uploadedOperationId);
   const showAttachButton = showAudioAttach;
   const isAttachDisabled = disabled || isUploading || !!attachedFile;
   
@@ -214,16 +221,24 @@ export default function ChatInput({
     <div className="mx-auto w-full max-w-[880px] pb-14">
       {attachedFile && (
         <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30">
+          {isUploading ? (
+            <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-600 dark:text-blue-400" />
+          ) : null}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-blue-900 truncate dark:text-blue-100">{attachedFile.name}</p>
-            <p className="text-xs text-blue-700 dark:text-blue-300">{formatFileSize(attachedFile.size)}</p>
+            <p className="text-xs text-blue-700 dark:text-blue-300">
+              {isUploading ? "Загрузка..." : formatFileSize(attachedFile.size)}
+            </p>
           </div>
           <Button
             type="button"
             variant="ghost"
             size="icon"
             className="h-8 w-8 shrink-0"
-            onClick={() => setAttachedFile(null)}
+            onClick={() => {
+              setAttachedFile(null);
+              setUploadedOperationId(null);
+            }}
             disabled={isUploading}
             data-testid="button-remove-audio"
           >
