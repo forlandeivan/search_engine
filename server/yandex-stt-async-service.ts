@@ -204,75 +204,13 @@ class YandexSttAsyncService {
       const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;
       const httpsProxyAgent = process.env.HTTPS_PROXY ? createHttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
 
-      // Yandex SpeechKit longRunningRecognize expects binary stream with query params
-      const queryParams = new URLSearchParams({
-        folderId,
-        languageCode: lang,
-      });
-
-      const url = `${YANDEX_ASYNC_STT_ENDPOINT}?${queryParams.toString()}`;
-
-      console.info(`[yandex-stt-async] Sending binary request: ${audioBuffer.length} bytes, lang=${lang}`);
-
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${iamToken}`,
-          "Content-Type": "application/octet-stream",
-        },
-        body: audioBuffer,
-        agent: YANDEX_ASYNC_STT_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent,
-      } as Parameters<typeof fetch>[1]);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`[yandex-stt-async] API error: ${response.status} - ${errorText}`);
-
-        if (response.status === 401 || response.status === 403) {
-          throw new YandexSttAsyncError(
-            "Ошибка аутентификации Yandex SpeechKit. Проверьте IAM токен.",
-            response.status,
-            "AUTH_ERROR"
-          );
-        }
-        if (response.status === 400) {
-          throw new YandexSttAsyncError(
-            `Некорректный запрос к Yandex SpeechKit: ${errorText}`,
-            response.status,
-            "BAD_REQUEST"
-          );
-        }
-        throw new YandexSttAsyncError(
-          `Ошибка Yandex SpeechKit: ${response.status} - ${errorText}`,
-          response.status,
-          "API_ERROR"
-        );
-      }
-
-      const operationResponse = await response.json() as { id?: string };
-
-      if (!operationResponse.id) {
-        throw new YandexSttAsyncError("Не получен ID операции от Yandex", 500, "NO_OPERATION_ID");
-      }
-
-      const operationId = operationResponse.id;
-      const cacheId = `${userId}_${operationId}`;
-
-      // Store in cache for polling
-      operationsCache.set(cacheId, {
-        id: cacheId,
-        userId,
-        operationId,
-        createdAt: new Date(),
-        status: "pending",
-      });
-
-      console.info(`[yandex-stt-async] Operation started: ${operationId}`);
-
-      return {
-        operationId,
-        message: "Транскрибация началась. Пожалуйста, дождитесь завершения.",
-      };
+      // Yandex SpeechKit async API requires object storage URI instead of direct binary upload
+      // For now, return error message about file size limitation
+      throw new YandexSttAsyncError(
+        `Файл слишком большой (${(audioBuffer.length / 1024 / 1024).toFixed(1)} МБ). Максимум 1 МБ для синхронной транскрибации. Для больших файлов требуется загрузка на Object Storage.`,
+        413,
+        "FILE_TOO_LARGE"
+      );
     } catch (error) {
       if (error instanceof YandexSttAsyncError || error instanceof SpeechProviderDisabledError) {
         throw error;
