@@ -40,10 +40,13 @@ export interface UpdateSpeechProviderPayload {
     languageCode?: string;
     model?: string;
     enablePunctuation?: boolean;
+    iamMode?: "auto" | "manual";
+    iamToken?: string;
   };
   secrets?: {
     apiKey?: string | null;
     folderId?: string | null;
+    serviceAccountKey?: string | null;
   };
 }
 
