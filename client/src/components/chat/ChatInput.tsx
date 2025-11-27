@@ -1,16 +1,36 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { Send } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
+import AudioRecorder from "./AudioRecorder";
 
 type ChatInputProps = {
   onSend: (message: string) => Promise<void> | void;
   disabled?: boolean;
   placeholder?: string;
+  showAudioRecorder?: boolean;
 };
 
-export default function ChatInput({ onSend, disabled, placeholder }: ChatInputProps) {
+export default function ChatInput({ onSend, disabled, placeholder, showAudioRecorder = true }: ChatInputProps) {
   const [value, setValue] = useState("");
+  const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (!showAudioRecorder) {
+      return;
+    }
+    
+    fetch("/api/chat/transcribe/status", { credentials: "include" })
+      .then((res) => res.json())
+      .then((data) => {
+        setSttAvailable(data.available === true);
+      })
+      .catch(() => {
+        setSttAvailable(false);
+      });
+  }, [showAudioRecorder]);
 
   const handleSend = useCallback(async () => {
     const trimmed = value.trim();
@@ -21,12 +41,35 @@ export default function ChatInput({ onSend, disabled, placeholder }: ChatInputPr
     await onSend(trimmed);
   }, [disabled, onSend, value]);
 
+  const handleTranscription = useCallback((text: string) => {
+    setValue((prev) => {
+      const separator = prev.trim().length > 0 ? " " : "";
+      return prev + separator + text;
+    });
+  }, []);
+
+  const handleAudioError = useCallback((error: string) => {
+    toast({
+      title: "Ошибка записи",
+      description: error,
+      variant: "destructive",
+    });
+  }, [toast]);
+
   const isSendDisabled = disabled || value.trim().length === 0;
+  const showRecorder = showAudioRecorder && sttAvailable === true;
 
   return (
     <div className="mx-auto w-full max-w-[880px] pb-14">
       <div className="rounded-[28px] border border-slate-200 bg-white/95 px-4 py-3 shadow-lg dark:border-slate-700 dark:bg-slate-900/90 sm:px-5 sm:py-4">
-        <div className="flex items-end gap-3">
+        <div className="flex items-end gap-2 sm:gap-3">
+          {showRecorder && (
+            <AudioRecorder
+              onTranscription={handleTranscription}
+              onError={handleAudioError}
+              disabled={disabled}
+            />
+          )}
           <Textarea
             value={value}
             onChange={(event) => setValue(event.target.value)}
@@ -56,7 +99,10 @@ export default function ChatInput({ onSend, disabled, placeholder }: ChatInputPr
           </Button>
         </div>
       </div>
-      <p className="mt-3 text-center text-xs text-muted-foreground">Shift + Enter — новая строка</p>
+      <p className="mt-3 text-center text-xs text-muted-foreground">
+        {showRecorder ? "Используйте микрофон для голосового ввода • " : ""}
+        Shift + Enter — новая строка
+      </p>
     </div>
   );
 }

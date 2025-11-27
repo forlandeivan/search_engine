@@ -34,6 +34,29 @@ Currently, no authentication system is implemented, but Express session infrastr
 
 A public RAG search endpoint is available, configured with specific workspaces, API keys, embedding providers (GigaChat), and LLM providers (GigaChat-Max). This infrastructure enables advanced natural language querying against indexed content.
 
+### TTS/STT Integration (Audio Transcription)
+
+The application supports audio transcription in chat via Yandex SpeechKit integration:
+
+**Backend Components:**
+- `server/yandex-stt-service.ts`: Service for transcribing audio to text using Yandex SpeechKit REST API v1
+- `server/speech-provider-service.ts`: Manages speech provider configuration (API keys, folder IDs, settings)
+- API endpoint `POST /api/chat/transcribe`: Accepts audio via multipart/form-data and returns transcribed text
+- API endpoint `GET /api/chat/transcribe/status`: Checks if STT provider is available and configured
+
+**Frontend Components:**
+- `client/src/components/chat/AudioRecorder.tsx`: Voice recording component using MediaRecorder API
+- Audio recording integrated into `ChatInput.tsx` with automatic transcription
+
+**Configuration:**
+- Admin panel at `/admin/speech-providers` for configuring Yandex SpeechKit credentials
+- Required secrets: `apiKey` (Yandex Cloud API key), `folderId` (Yandex Cloud folder ID)
+- Configurable options: `languageCode`, `model`, `enablePunctuation`
+
+**Supported Audio Formats:** OGG (preferred), WebM (auto-converted to OGG via ffmpeg), WAV
+**Max Recording Duration:** 30 seconds (Yandex SpeechKit sync API limit)
+**System Dependency:** ffmpeg (for WebM to OGG conversion)
+
 ### Production Deployment Notes
 
 For Replit Autoscale deployment, the server binds to `0.0.0.0:5000`. A fast health check endpoint (`/health`) is provided. The server employs a non-blocking startup, allowing asynchronous database initialization. Critical production secrets are validated on startup. Graceful shutdown handlers are implemented to ensure proper resource cleanup upon termination. Chromium is installed as a system dependency for Puppeteer-based crawling, with `PUPPETEER_EXECUTABLE_PATH` configurable via environment variables.

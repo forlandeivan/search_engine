@@ -174,10 +174,18 @@ import {
   speechProviderService,
   SpeechProviderServiceError,
   SpeechProviderNotFoundError,
+  SpeechProviderDisabledError,
   type SpeechProviderSummary,
   type SpeechProviderDetail,
   type SpeechProviderSecretsPatch,
 } from "./speech-provider-service";
+import {
+  yandexSttService,
+  YandexSttError,
+  YandexSttConfigError,
+  isSupportedAudioFormat,
+} from "./yandex-stt-service";
+import multer from "multer";
 
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
@@ -8486,6 +8494,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof HttpError) {
         return res.status(error.status).json({ message: error.message });
       }
+      next(error);
+    }
+  });
+
+  const audioUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 10 * 1024 * 1024,
+      files: 1,
+    },
+    fileFilter: (_req, file, cb) => {
+      if (isSupportedAudioFormat(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Неподдерживаемый формат аудио: ${file.mimetype}`));
+      }
+    },
+  });
+
+  app.post(
+    "/api/chat/transcribe",
+    requireAuth,
+    audioUpload.single("audio"),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const file = req.file;
+        if (!file) {
+          return res.status(400).json({ message: "Аудиофайл не предоставлен" });
+        }
+
+        const lang = typeof req.body.lang === "string" ? req.body.lang : undefined;
+
+        console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
+
+        const result = await yandexSttService.transcribe({
+          audioBuffer: file.buffer,
+          mimeType: file.mimetype,
+          lang,
+        });
+
+        res.json({
+          text: result.text,
+          lang: result.lang,
+        });
+      } catch (error) {
+        console.error(`[transcribe] user=${user.id} error:`, error);
+        
+        if (error instanceof YandexSttConfigError) {
+          return res.status(400).json({ message: error.message, code: error.code });
+        }
+        if (error instanceof YandexSttError) {
+          return res.status(error.status).json({ message: error.message, code: error.code });
+        }
+        if (error instanceof SpeechProviderDisabledError) {
+          return res.status(503).json({ message: error.message });
+        }
+        if (error instanceof Error && error.message.includes("Неподдерживаемый формат")) {
+          return res.status(400).json({ message: error.message });
+        }
+        next(error);
+      }
+    },
+  );
+
+  app.get("/api/chat/transcribe/status", requireAuth, async (req, res, next) => {
+    try {
+      const health = await yandexSttService.checkHealth();
+      res.json(health);
+    } catch (error) {
       next(error);
     }
   });
