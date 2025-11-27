@@ -355,8 +355,33 @@ export default function ChatPage({ params }: ChatPageProps) {
         pollOperation();
         return;
       }
+
+      // Handle regular transcribed text (not a pending operation)
+      let targetChatId = effectiveChatId;
+      if (!targetChatId) {
+        if (!defaultSkill) {
+          setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
+          return;
+        }
+
+        try {
+          const newChat = await createChat({
+            workspaceId,
+            skillId: defaultSkill.id,
+          });
+          targetChatId = newChat.id;
+          setOverrideChatId(newChat.id);
+          handleSelectChat(newChat.id);
+        } catch (error) {
+          setStreamError(error instanceof Error ? error.message : String(error));
+          return;
+        }
+      }
+
+      // Send the transcribed text as a message
+      await streamMessage(targetChatId, transcribedText);
     },
-    [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, queryClient],
+    [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, queryClient, streamMessage],
   );
 
   const isNewChat = !effectiveChatId;
