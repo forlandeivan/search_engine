@@ -8253,8 +8253,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           for (const chunk of chunks) {
-            sendSseEvent(res, "token", { token: chunk });
-            await new Promise((resolve) => setTimeout(resolve, 20));
+            sendSseEvent(res, "delta", chunk);
+            await new Promise((resolve) => setTimeout(resolve, 50));
           }
 
           const assistantMessage = await writeAssistantMessage(
