@@ -209,8 +209,8 @@ class YandexSttAsyncService {
 
     if (needsConversion(mimeType)) {
       try {
-        console.info(`[yandex-stt-async] Converting WebM to OGG...`);
-        audioBuffer = await convertWebmToOgg(audioBuffer);
+        console.info(`[yandex-stt-async] Converting ${mimeType} to OGG...`);
+        audioBuffer = await convertAudioToOgg(audioBuffer, mimeType);
         mimeType = "audio/ogg";
       } catch (conversionError) {
         console.error("[yandex-stt-async] Conversion failed:", conversionError);
