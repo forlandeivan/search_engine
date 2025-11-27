@@ -1220,6 +1220,7 @@ const speechProviderSecretsSchema = z
   .object({
     apiKey: z.union([z.string().trim(), z.null()]).optional(),
     folderId: z.union([z.string().trim(), z.null()]).optional(),
+    serviceAccountKey: z.union([z.string().trim(), z.null()]).optional(),
   })
   .strict();
 
