@@ -8613,13 +8613,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             lang: result.lang,
           });
         } else {
-          // Large files: use async API (requires Object Storage in production)
+          // Large files: use async API with Object Storage
           console.info(`[transcribe] Using async API for large file (${file.size} bytes)`);
           const response = await yandexSttAsyncService.startAsyncTranscription({
             audioBuffer: file.buffer,
             mimeType: file.mimetype,
             lang,
             userId: user.id,
+            originalFileName: file.originalname,
           });
 
           res.json({

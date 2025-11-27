@@ -36,6 +36,18 @@ const SECRET_DESCRIPTIONS: Record<string, string> = {
   serviceAccountKey: "JSON-ключ сервис-аккаунта Yandex Cloud. IAM-токен будет автоматически получен и кэширован с перевыпуском при истечении.",
 };
 
+const S3_SECRET_LABELS: Record<string, string> = {
+  s3AccessKeyId: "Access Key ID",
+  s3SecretAccessKey: "Secret Access Key",
+  s3BucketName: "Имя бакета",
+};
+
+const S3_SECRET_DESCRIPTIONS: Record<string, string> = {
+  s3AccessKeyId: "Access Key ID статического ключа доступа для Object Storage.",
+  s3SecretAccessKey: "Secret Access Key статического ключа доступа для Object Storage.",
+  s3BucketName: "Имя бакета для хранения аудио файлов. Бакет должен быть создан заранее в Yandex Cloud Console.",
+};
+
 const DEFAULT_CONFIG = {
   languageCode: "",
   model: "",
@@ -50,6 +62,12 @@ const DEFAULT_SECRETS = {
   serviceAccountKey: "",
 };
 
+const DEFAULT_S3_SECRETS = {
+  s3AccessKeyId: "",
+  s3SecretAccessKey: "",
+  s3BucketName: "",
+};
+
 interface SpeechProviderDetailsPageProps {
   providerId: string;
 }
@@ -62,6 +80,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
   const [isEnabled, setIsEnabled] = useState(false);
   const [configState, setConfigState] = useState(DEFAULT_CONFIG);
   const [secretInputs, setSecretInputs] = useState(DEFAULT_SECRETS);
+  const [s3SecretInputs, setS3SecretInputs] = useState(DEFAULT_S3_SECRETS);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [generalError, setGeneralError] = useState<string | null>(null);
 
@@ -79,6 +98,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
       iamToken: (provider.config.iamToken as string) ?? "",
     });
     setSecretInputs(DEFAULT_SECRETS);
+    setS3SecretInputs(DEFAULT_S3_SECRETS);
     setFieldErrors({});
     setGeneralError(null);
   }, [provider]);
@@ -91,6 +111,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
       toast({ title: "Настройки провайдера сохранены" });
       if (response?.provider) {
         setSecretInputs(DEFAULT_SECRETS);
+        setS3SecretInputs(DEFAULT_S3_SECRETS);
         setFieldErrors({});
         setGeneralError(null);
         setIsEnabled(response.provider.isEnabled);
@@ -101,6 +122,8 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
             typeof response.provider.config.enablePunctuation === "boolean"
               ? (response.provider.config.enablePunctuation as boolean)
               : true,
+          iamMode: (response.provider.config.iamMode as "auto" | "manual") ?? "auto",
+          iamToken: (response.provider.config.iamToken as string) ?? "",
         });
       }
     },
@@ -133,6 +156,10 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     setSecretInputs((prev) => ({ ...prev, [key]: value }));
   };
 
+  const handleS3SecretChange = (key: keyof typeof s3SecretInputs, value: string) => {
+    setS3SecretInputs((prev) => ({ ...prev, [key]: value }));
+  };
+
   const handleConfigChange = (key: keyof typeof configState, value: string | boolean) => {
     setConfigState((prev) => ({ ...prev, [key]: value }));
   };
@@ -163,6 +190,15 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     }
     if (secretInputs.serviceAccountKey.trim().length > 0) {
       secretsPayload.serviceAccountKey = secretInputs.serviceAccountKey.trim();
+    }
+    if (s3SecretInputs.s3AccessKeyId.trim().length > 0) {
+      secretsPayload.s3AccessKeyId = s3SecretInputs.s3AccessKeyId.trim();
+    }
+    if (s3SecretInputs.s3SecretAccessKey.trim().length > 0) {
+      secretsPayload.s3SecretAccessKey = s3SecretInputs.s3SecretAccessKey.trim();
+    }
+    if (s3SecretInputs.s3BucketName.trim().length > 0) {
+      secretsPayload.s3BucketName = s3SecretInputs.s3BucketName.trim();
     }
     if (Object.keys(secretsPayload).length > 0) {
       payload.secrets = secretsPayload;
@@ -259,6 +295,15 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     }
     if (secretInputs.serviceAccountKey.trim().length > 0) {
       secretsPayload.serviceAccountKey = secretInputs.serviceAccountKey.trim();
+    }
+    if (s3SecretInputs.s3AccessKeyId.trim().length > 0) {
+      secretsPayload.s3AccessKeyId = s3SecretInputs.s3AccessKeyId.trim();
+    }
+    if (s3SecretInputs.s3SecretAccessKey.trim().length > 0) {
+      secretsPayload.s3SecretAccessKey = s3SecretInputs.s3SecretAccessKey.trim();
+    }
+    if (s3SecretInputs.s3BucketName.trim().length > 0) {
+      secretsPayload.s3BucketName = s3SecretInputs.s3BucketName.trim();
     }
     if (Object.keys(secretsPayload).length > 0) {
       payload.secrets = secretsPayload;
@@ -442,7 +487,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="space-y-4 rounded-lg border p-4">
           <div>
-            <h2 className="text-lg font-medium">Секреты</h2>
+            <h2 className="text-lg font-medium">Секреты SpeechKit</h2>
             <p className="text-sm text-muted-foreground">
               Значения не отображаются по соображениям безопасности. Введите новое значение, чтобы обновить секрет.
             </p>
@@ -479,6 +524,41 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
             >
               {testTokenMutation.isPending ? "Проверка..." : "Протестировать IAM токен"}
             </Button>
+          </div>
+        </section>
+
+        <section className="space-y-4 rounded-lg border p-4">
+          <div>
+            <h2 className="text-lg font-medium">Object Storage (для больших файлов)</h2>
+            <p className="text-sm text-muted-foreground">
+              Для транскрибации файлов больше 1 МБ требуется загрузка в Yandex Object Storage.
+              Создайте статический ключ и бакет в Yandex Cloud Console.
+            </p>
+          </div>
+          <div className="space-y-4">
+            {Object.entries(S3_SECRET_LABELS).map(([key, label]) => {
+              const secretKey = key as keyof typeof s3SecretInputs;
+              const isSet = provider.secrets[secretKey]?.isSet ?? false;
+              const fieldKey = `secrets.${secretKey}`;
+              return (
+                <div key={secretKey} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div>
+                      <Label>{label}</Label>
+                      <p className="text-xs text-muted-foreground">{S3_SECRET_DESCRIPTIONS[secretKey]}</p>
+                    </div>
+                    <Badge variant={isSet ? "default" : "secondary"}>{isSet ? "Задан" : "Не задан"}</Badge>
+                  </div>
+                  <Input
+                    type={secretKey === "s3SecretAccessKey" ? "password" : "text"}
+                    value={s3SecretInputs[secretKey]}
+                    onChange={(event) => handleS3SecretChange(secretKey, event.target.value)}
+                    placeholder={isSet ? "Оставьте пустым, чтобы не менять значение" : "Введите значение"}
+                  />
+                  {fieldErrors[fieldKey] && <p className="text-sm text-destructive">{fieldErrors[fieldKey]}</p>}
+                </div>
+              );
+            })}
           </div>
         </section>
       </div>

@@ -60,8 +60,37 @@ The application supports audio file transcription in chat via Yandex SpeechKit i
 - Configurable options: `languageCode`, `model`, `enablePunctuation`
 
 **Supported Audio Formats:** OGG (preferred), WebM (auto-converted to OGG via ffmpeg), WAV, MP3
-**Max File Size:** 10 MB (Yandex SpeechKit sync API limit: 1 MB after conversion)
+**Max File Size (Sync API):** 1 MB (for instant transcription)
+**Max File Size (Async API):** 500 MB (requires Object Storage for files > 1 MB)
 **System Dependency:** ffmpeg (for WebM to OGG conversion)
+
+### Object Storage Integration (Large Files)
+
+For transcribing audio files larger than 1 MB, the system uses Yandex Object Storage (S3-compatible):
+
+**Backend Services:**
+- `server/yandex-object-storage-service.ts`: Handles S3-compatible uploads to Yandex Object Storage
+- Uses `@aws-sdk/client-s3` for S3 API compatibility
+
+**Pipeline for Large Files (> 1 MB):**
+1. User uploads audio file via chat
+2. File is uploaded to Yandex Object Storage bucket
+3. Object Storage URI is sent to SpeechKit async API
+4. System polls for transcription completion
+5. Result is returned as chat message
+6. Temporary file is deleted from Object Storage
+
+**Configuration (Admin Panel → Speech Providers):**
+- `s3AccessKeyId`: Static access key ID for Object Storage
+- `s3SecretAccessKey`: Static secret access key for Object Storage
+- `s3BucketName`: Bucket name for storing audio files
+
+**Creating Object Storage Credentials:**
+1. Create Service Account in Yandex Cloud Console
+2. Assign `storage.editor` role to the service account
+3. Create static access key for the service account
+4. Create bucket in Object Storage
+5. Enter credentials in admin panel
 
 ### IAM Token Management (Async STT)
 
