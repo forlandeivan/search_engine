@@ -13,6 +13,7 @@ type ChatMessagesAreaProps = {
   isLoading: boolean;
   isNewChat: boolean;
   isStreaming: boolean;
+  isTranscribing: boolean;
   streamError: string | null;
   errorMessage: string | null;
   onReset?: () => void;
@@ -26,6 +27,7 @@ export default function ChatMessagesArea({
   isLoading,
   isNewChat,
   isStreaming,
+  isTranscribing,
   streamError,
   errorMessage,
   onReset,
@@ -114,6 +116,7 @@ export default function ChatMessagesArea({
                   message={message}
                   previousRole={index > 0 ? messages[index - 1]?.role : undefined}
                   isStreamingBubble={streamingAssistantId === message.id}
+                  isTranscribingBubble={isTranscribing && index === messages.length - 1 && message.role === "assistant" && !message.content}
                 />
               ))
             : null}
@@ -141,9 +144,10 @@ type ChatBubbleProps = {
   message: ChatMessage;
   previousRole?: ChatMessage["role"];
   isStreamingBubble?: boolean;
+  isTranscribingBubble?: boolean;
 };
 
-function ChatBubble({ message, previousRole, isStreamingBubble = false }: ChatBubbleProps) {
+function ChatBubble({ message, previousRole, isStreamingBubble = false, isTranscribingBubble = false }: ChatBubbleProps) {
   const isUser = message.role === "user";
   const isGroupedWithPrevious = previousRole === message.role;
   const timestamp =
@@ -172,7 +176,14 @@ function ChatBubble({ message, previousRole, isStreamingBubble = false }: ChatBu
         )}
         tabIndex={0}
       >
-        <MarkdownRenderer markdown={displayContent} className="break-words" />
+        {isTranscribingBubble ? (
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>Анализируем запись...</span>
+          </div>
+        ) : (
+          <MarkdownRenderer markdown={displayContent} className="break-words" />
+        )}
         {timestamp ? (
           <p className={cn("text-xs", isUser ? "text-right text-[#6C7A89]" : "text-left text-muted-foreground")}>
             {timestamp}
