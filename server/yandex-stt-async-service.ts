@@ -1,4 +1,5 @@
 import { speechProviderService, SpeechProviderDisabledError } from "./speech-provider-service";
+import { yandexIamTokenService } from "./yandex-iam-token-service";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
 import { writeFile, unlink, readFile } from "fs/promises";
@@ -133,22 +134,29 @@ class YandexSttAsyncService {
     const { provider, secrets } = providerDetail;
     const config = providerDetail.config as Record<string, string | boolean | undefined>;
 
-    if (!secrets.apiKey?.isSet) {
-      throw new YandexSttAsyncConfigError("API ключ Yandex SpeechKit не настроен. Установите его в настройках провайдера.");
-    }
     if (!secrets.folderId?.isSet) {
       throw new YandexSttAsyncConfigError("Folder ID Yandex Cloud не настроен. Установите его в настройках провайдера.");
     }
-    if (!secrets.iamToken?.isSet) {
-      throw new YandexSttAsyncConfigError("IAM токен не настроен. Требуется для асинхронного API.");
+    if (!secrets.serviceAccountKey?.isSet) {
+      throw new YandexSttAsyncConfigError("Service Account Key не настроен. Требуется для асинхронного API. Установите его в настройках провайдера.");
     }
 
     const secretValues = await this.getSecretValues(provider.id);
-    const iamToken = secretValues.iamToken;
+    const serviceAccountKey = secretValues.serviceAccountKey;
     const folderId = secretValues.folderId;
 
-    if (!iamToken || !folderId) {
-      throw new YandexSttAsyncConfigError("IAM токен или Folder ID отсутствуют в хранилище секретов.");
+    if (!serviceAccountKey || !folderId) {
+      throw new YandexSttAsyncConfigError("Service Account Key или Folder ID отсутствуют в хранилище секретов.");
+    }
+
+    // Get IAM token (cached with auto-refresh)
+    let iamToken: string;
+    try {
+      iamToken = await yandexIamTokenService.getIamToken(serviceAccountKey);
+    } catch (error) {
+      throw new YandexSttAsyncConfigError(
+        `Не удалось получить IAM токен: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
 
     if (needsConversion(mimeType)) {
@@ -267,11 +275,13 @@ class YandexSttAsyncService {
     try {
       const providerDetail = await speechProviderService.getActiveSttProviderOrThrow();
       const secretValues = await this.getSecretValues(providerDetail.provider.id);
-      const iamToken = secretValues.iamToken;
+      const serviceAccountKey = secretValues.serviceAccountKey;
 
-      if (!iamToken) {
-        throw new YandexSttAsyncError("IAM токен отсутствует", 500, "NO_TOKEN");
+      if (!serviceAccountKey) {
+        throw new YandexSttAsyncError("Service Account Key отсутствует", 500, "NO_KEY");
       }
+
+      const iamToken = await yandexIamTokenService.getIamToken(serviceAccountKey);
 
       const response = await fetch(`${YANDEX_OPERATION_ENDPOINT}/${operationId}`, {
         method: "GET",
@@ -351,20 +361,17 @@ class YandexSttAsyncService {
     }
   }
 
-  private async getSecretValues(providerId: string): Promise<{ iamToken?: string; folderId?: string; apiKey?: string }> {
+  private async getSecretValues(providerId: string): Promise<{ serviceAccountKey?: string; folderId?: string }> {
     const { storage } = await import("./storage");
     const secrets = await storage.getSpeechProviderSecrets(providerId);
 
-    const result: { iamToken?: string; folderId?: string; apiKey?: string } = {};
+    const result: { serviceAccountKey?: string; folderId?: string } = {};
     for (const secret of secrets) {
-      if (secret.secretKey === "iamToken" && secret.secretValue) {
-        result.iamToken = secret.secretValue;
+      if (secret.secretKey === "serviceAccountKey" && secret.secretValue) {
+        result.serviceAccountKey = secret.secretValue;
       }
       if (secret.secretKey === "folderId" && secret.secretValue) {
         result.folderId = secret.secretValue;
-      }
-      if (secret.secretKey === "apiKey" && secret.secretValue) {
-        result.apiKey = secret.secretValue;
       }
     }
     return result;

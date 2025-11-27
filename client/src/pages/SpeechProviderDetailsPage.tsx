@@ -27,13 +27,13 @@ const STATUS_HINT: Record<SpeechProviderStatus, string> = {
 const SECRET_LABELS: Record<string, string> = {
   apiKey: "API-ключ",
   folderId: "ID каталога",
-  iamToken: "IAM-токен",
+  serviceAccountKey: "Service Account Key",
 };
 
 const SECRET_DESCRIPTIONS: Record<string, string> = {
   apiKey: "Сервисный ключ доступа SpeechKit (синхронный API).",
   folderId: "Идентификатор каталога (folderId), внутри которого доступен SpeechKit.",
-  iamToken: "IAM-токен сервис-аккаунта для асинхронного API (большие файлы до 500 МБ).",
+  serviceAccountKey: "JSON-ключ сервис-аккаунта Yandex Cloud. IAM-токен будет автоматически получен и кэширован с перевыпуском при истечении.",
 };
 
 const DEFAULT_CONFIG = {
@@ -45,7 +45,7 @@ const DEFAULT_CONFIG = {
 const DEFAULT_SECRETS = {
   apiKey: "",
   folderId: "",
-  iamToken: "",
+  serviceAccountKey: "",
 };
 
 interface SpeechProviderDetailsPageProps {
@@ -152,8 +152,8 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     if (isEnabled && !provider.secrets.folderId?.isSet && secretInputs.folderId.trim().length === 0) {
       validationErrors["secrets.folderId"] = "Укажите ID каталога перед включением провайдера.";
     }
-    if (isEnabled && !provider.secrets.iamToken?.isSet && secretInputs.iamToken.trim().length === 0) {
-      validationErrors["secrets.iamToken"] = "Укажите IAM-токен перед включением провайдера (требуется для асинхронного API).";
+    if (isEnabled && !provider.secrets.serviceAccountKey?.isSet && secretInputs.serviceAccountKey.trim().length === 0) {
+      validationErrors["secrets.serviceAccountKey"] = "Укажите Service Account Key перед включением провайдера (требуется для асинхронного API с автоперевыпуском IAM-токена).";
     }
 
     setFieldErrors(validationErrors);
@@ -167,7 +167,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     return Boolean(
       (provider.secrets.apiKey?.isSet || secretInputs.apiKey.trim().length > 0) &&
       (provider.secrets.folderId?.isSet || secretInputs.folderId.trim().length > 0) &&
-      (provider.secrets.iamToken?.isSet || secretInputs.iamToken.trim().length > 0) &&
+      (provider.secrets.serviceAccountKey?.isSet || secretInputs.serviceAccountKey.trim().length > 0) &&
       configState.languageCode.trim().length > 0 &&
       provider.status === "Enabled"
     );
@@ -197,8 +197,8 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     if (secretInputs.folderId.trim().length > 0) {
       secretsPayload.folderId = secretInputs.folderId.trim();
     }
-    if (secretInputs.iamToken.trim().length > 0) {
-      secretsPayload.iamToken = secretInputs.iamToken.trim();
+    if (secretInputs.serviceAccountKey.trim().length > 0) {
+      secretsPayload.serviceAccountKey = secretInputs.serviceAccountKey.trim();
     }
     if (Object.keys(secretsPayload).length > 0) {
       payload.secrets = secretsPayload;
