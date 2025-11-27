@@ -1844,12 +1844,9 @@ function removeUndefinedDeep<T>(value: T): T {
 
 function buildVectorPayload(
   vector: number[],
-  vectorFieldName: string | null | undefined,
-): Schemas["NamedVectorStruct"] | number[] {
-  console.log(`[buildVectorPayload] vectorFieldName received: ${JSON.stringify(vectorFieldName)}, type: ${typeof vectorFieldName}`);
-  
+  _vectorFieldName?: string | null | undefined,
+): number[] {
   if (!Array.isArray(vector) || vector.length === 0) {
-    console.log(`[buildVectorPayload] returning raw vector (empty or not array)`);
     return vector;
   }
 
@@ -1865,38 +1862,11 @@ function buildVectorPayload(
     return entry;
   });
 
-  if (vectorFieldName && typeof vectorFieldName === "string") {
-    const trimmed = vectorFieldName.trim();
-    if (trimmed.length > 0) {
-      console.log(`[buildVectorPayload] returning NAMED vector with name: "${trimmed}"`);
-      return { name: trimmed, vector: sanitizedVector };
-    }
-  }
-
-  console.log(`[buildVectorPayload] returning raw vector array (no vectorFieldName)`);
   return sanitizedVector;
 }
 
-function cloneVectorPayload(vector: unknown): unknown {
-  if (Array.isArray(vector)) {
-    return vector.slice();
-  }
-
-  if (vector && typeof vector === "object") {
-    const record = vector as Record<string, unknown>;
-    const vectorCopy = Array.isArray(record.vector) ? record.vector.slice() : null;
-    const vectorName =
-      typeof record.name === "string" && record.name.trim().length > 0 ? record.name.trim() : null;
-    if (vectorCopy && vectorName) {
-      return {
-        ...record,
-        name: vectorName,
-        vector: vectorCopy,
-      } satisfies Schemas["NamedVectorStruct"];
-    }
-  }
-
-  return vector;
+function cloneVectorPayload(vector: number[]): number[] {
+  return vector.slice();
 }
 
 function normalizeBaseUrl(value: string | undefined | null): string | null {
@@ -3298,8 +3268,6 @@ async function runKnowledgeBaseRagPipeline(options: {
         if (!embeddingProvider.isActive) {
           throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
         }
-
-        console.log(`[RAG DEBUG] embeddingProvider.qdrantConfig: ${JSON.stringify(embeddingProvider.qdrantConfig)}`);
 
         embeddingProviderId = embeddingProvider.id;
         selectedEmbeddingProvider = embeddingProvider;
@@ -8100,9 +8068,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       workspaceId: string,
       userId: string,
       answer: string,
+      metadata?: Record<string, unknown>,
     ) => {
       try {
-        const message = await addAssistantMessage(chatId, workspaceId, userId, answer);
+        const message = await addAssistantMessage(chatId, workspaceId, userId, answer, metadata);
         await logAssistantMessageStep("success", {
           input: { chatId, workspaceId, responseLength: answer.length },
           output: { messageId: message.id },
