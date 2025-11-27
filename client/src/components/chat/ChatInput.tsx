@@ -20,6 +20,16 @@ type ChatInputProps = {
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
 const MAX_FILE_SIZE_MB = 500;
 
+function EqualizerIcon() {
+  return (
+    <div className="flex items-center justify-center gap-1">
+      <div className="h-4 w-1 rounded-full bg-current animate-[pulse_0.6s_ease-in-out_infinite_0s]" />
+      <div className="h-5 w-1 rounded-full bg-current animate-[pulse_0.6s_ease-in-out_infinite_0.2s]" />
+      <div className="h-4 w-1 rounded-full bg-current animate-[pulse_0.6s_ease-in-out_infinite_0.4s]" />
+    </div>
+  );
+}
+
 export default function ChatInput({ 
   onSend, 
   onTranscribe,
@@ -295,6 +305,8 @@ export default function ChatInput({
           >
             {isUploading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
+            ) : attachedFile ? (
+              <EqualizerIcon />
             ) : (
               <Send className="h-4 w-4" />
             )}
