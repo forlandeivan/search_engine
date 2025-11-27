@@ -85,4 +85,3 @@ integrations = ["javascript_mem_db:1.0.0", "javascript_database:1.0.0"]
 [userenv]
 
 [userenv.shared]
-YANDEX_IAM_MOCK_MODE = "true"
