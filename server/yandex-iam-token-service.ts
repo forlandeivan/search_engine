@@ -73,8 +73,8 @@ class YandexIamTokenService {
       const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;
       const httpsProxyAgent = process.env.HTTPS_PROXY ? createHttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
 
-      // Request new token
-      const response = await fetch(IAM_ENDPOINT, {
+      // Build fetch options with optional agent
+      const fetchOptions: Parameters<typeof fetch>[1] = {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -83,8 +83,16 @@ class YandexIamTokenService {
           grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
           assertion: this.createJwt(parsed),
         }).toString(),
-        agent: IAM_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent,
-      } as Parameters<typeof fetch>[1]);
+      };
+
+      // Only add agent if one was successfully created
+      const selectedAgent = IAM_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent;
+      if (selectedAgent) {
+        fetchOptions.agent = selectedAgent;
+      }
+
+      // Request new token
+      const response = await fetch(IAM_ENDPOINT, fetchOptions);
 
       if (!response.ok) {
         const text = await response.text();
