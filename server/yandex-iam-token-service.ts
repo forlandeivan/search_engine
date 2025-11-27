@@ -1,5 +1,7 @@
 import fetch from "node-fetch";
 import { createSign } from "crypto";
+import HttpProxyAgent from "http-proxy-agent";
+import HttpsProxyAgent from "https-proxy-agent";
 
 interface IamTokenCache {
   token: string;
@@ -46,6 +48,10 @@ class YandexIamTokenService {
 
       console.info(`[yandex-iam] Fetching new IAM token for ${parsed.service_account_id}`);
 
+      // Setup proxy agents for network compatibility
+      const httpProxyAgent = process.env.HTTP_PROXY ? new HttpProxyAgent(process.env.HTTP_PROXY) : undefined;
+      const httpsProxyAgent = process.env.HTTPS_PROXY ? new HttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
+
       // Request new token
       const response = await fetch(IAM_ENDPOINT, {
         method: "POST",
@@ -56,7 +62,8 @@ class YandexIamTokenService {
           grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
           assertion: this.createJwt(parsed),
         }).toString(),
-      });
+        agent: IAM_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent,
+      } as any);
 
       if (!response.ok) {
         const text = await response.text();
