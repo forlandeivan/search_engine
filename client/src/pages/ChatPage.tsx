@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput from "@/components/chat/ChatInput";
@@ -61,6 +62,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   const { createChat } = useCreateChat();
   const [creatingSkillId, setCreatingSkillId] = useState<string | null>(null);
@@ -302,11 +304,13 @@ export default function ChatPage({ params }: ChatPageProps) {
           }
         }
 
-        // Show waiting message
+        // Show waiting message with loading state
         const userMessage = buildLocalMessage("user", targetChatId, `[Аудиофайл]`);
-        const assistantMessage = buildLocalMessage("assistant", targetChatId, "⏳ Транскрибация в процессе...");
+        const assistantMessage = buildLocalMessage("assistant", targetChatId, "");
         setLocalChatId(targetChatId);
         setLocalMessages([userMessage, assistantMessage]);
+        setIsTranscribing(true);
+        setStreamError(null);
 
         // Poll for operation result
         const pollOperation = async () => {
@@ -335,11 +339,13 @@ export default function ChatPage({ params }: ChatPageProps) {
                       : message,
                   ),
                 );
+                setIsTranscribing(false);
                 await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
                 return;
               }
               
               if (status.status === "failed") {
+                setIsTranscribing(false);
                 setStreamError(status.error || "Транскрибация не удалась. Попробуйте еще раз.");
                 return;
               }
@@ -354,6 +360,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             }
           }
           
+          setIsTranscribing(false);
           setStreamError("Транскрибация заняла слишком много времени. Попробуйте еще раз.");
         };
 
@@ -446,6 +453,7 @@ export default function ChatPage({ params }: ChatPageProps) {
                 isLoading={isMessagesLoading && !isNewChat}
                 isNewChat={isNewChat}
                 isStreaming={isStreaming}
+                isTranscribing={isTranscribing}
                 streamError={streamError}
                 errorMessage={normalizedMessagesError}
                 scrollContainerRef={messagesScrollRef}
