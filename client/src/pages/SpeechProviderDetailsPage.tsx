@@ -176,10 +176,11 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
         description: result.message + (result.tokenPreview ? ` (${result.tokenPreview})` : "")
       });
     },
-    onError: (error: Error) => {
+    onError: (error: Error & { details?: string }) => {
+      const details = error.details ? `\n\n${error.details}` : "";
       toast({ 
-        title: "Ошибка", 
-        description: error.message,
+        title: "Ошибка подключения", 
+        description: error.message + details,
         variant: "destructive"
       });
     },

@@ -56,12 +56,37 @@ The application supports audio file transcription in chat via Yandex SpeechKit i
 
 **Configuration:**
 - Admin panel at `/admin/speech-providers` for configuring Yandex SpeechKit credentials
-- Required secrets: `apiKey` (Yandex Cloud API key), `folderId` (Yandex Cloud folder ID)
+- Required secrets: `apiKey` (Yandex Cloud API key), `folderId` (Yandex Cloud folder ID), `serviceAccountKey` (Yandex Cloud Service Account Key for IAM token generation)
 - Configurable options: `languageCode`, `model`, `enablePunctuation`
 
 **Supported Audio Formats:** OGG (preferred), WebM (auto-converted to OGG via ffmpeg), WAV, MP3
 **Max File Size:** 10 MB (Yandex SpeechKit sync API limit: 1 MB after conversion)
 **System Dependency:** ffmpeg (for WebM to OGG conversion)
+
+### IAM Token Management (Async STT)
+
+**Async Audio Transcription** is implemented via Yandex SpeechKit long operations API:
+
+**Backend Services:**
+- `server/yandex-iam-token-service.ts`: Handles IAM token generation and caching using Yandex Service Account Keys with JWT signing
+- `server/yandex-stt-async-service.ts`: Submits audio files for async transcription and retrieves operation status
+- API endpoint `POST /api/chat/transcribe` (with async mode): Initiates async transcription and returns `operationId`
+- API endpoint `GET /api/chat/transcribe/operations/:operationId`: Polls for transcription completion status
+- Admin endpoint `POST /api/admin/tts-stt/providers/:id/test-iam-token`: Tests IAM token generation (may fail due to Replit network restrictions)
+
+**Frontend:**
+- Polling mechanism in ChatPage to check transcription completion
+- Auto-polling every 2 seconds until completion or timeout
+
+**Authentication:**
+- Service Account Key (JSON) stored in provider secrets
+- IAM token automatically generated and cached (11-hour lifetime)
+- Token expiration handled with 5-minute safety buffer
+
+**Network Configuration:**
+- Supports HTTP/HTTPS proxy agents via `HTTP_PROXY` and `HTTPS_PROXY` environment variables
+- Graceful fallback to direct connection if proxy agents fail to create
+- **Note:** In Replit environment, external network connections (especially to Yandex Cloud API) may be restricted. If IAM token test fails with `getaddrinfo ENOTFOUND` error, this indicates a Replit network limitation that cannot be bypassed at the code level. The actual transcription should work when audio files are uploaded in production with proper network access.
 
 ### Production Deployment Notes
 

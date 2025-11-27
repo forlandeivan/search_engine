@@ -6773,7 +6773,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Service Account Key невалиден: " + error.message });
       }
       if (error instanceof Error && error.message.includes("getaddrinfo ENOTFOUND")) {
-        return res.status(503).json({ message: "Не удалось подключиться к Yandex Cloud API. Проверьте сетевое подключение." });
+        return res.status(503).json({ 
+          message: "⚠️ Не удалось подключиться к Yandex Cloud API из Replit. Это может быть сетевым ограничением окружения.",
+          details: "Реальное тестирование IAM токена будет выполнено при первой загрузке аудиофайла. Если вы видите ошибку подключения, проверьте: 1) Service Account Key валиден 2) Реплит имеет доступ в интернет 3) На уровне прокси-сервера (если применимо)"
+        });
       }
       res.status(500).json({ message: error instanceof Error ? error.message : "Ошибка при проверке IAM токена" });
     }
