@@ -31,7 +31,7 @@ export class SpeechProviderDisabledError extends SpeechProviderServiceError {
 }
 
 const BUILT_IN_STT_PROVIDER_ID = "yandex_speechkit";
-const BUILT_IN_SECRET_KEYS = ["apiKey", "folderId"] as const;
+const BUILT_IN_SECRET_KEYS = ["apiKey", "folderId", "iamToken"] as const;
 const BUILT_IN_CONFIG_KEYS = ["languageCode", "model", "enablePunctuation"] as const;
 
 export type SpeechProviderSummary = Pick<
