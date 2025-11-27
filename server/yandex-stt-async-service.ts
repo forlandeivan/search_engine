@@ -7,6 +7,27 @@ import { join } from "path";
 import { randomBytes } from "crypto";
 import fetch from "node-fetch";
 
+// Runtime imports for agents
+const createHttpProxyAgent = (url: string) => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const HttpProxyAgentModule = require("http-proxy-agent");
+    return new HttpProxyAgentModule(url);
+  } catch {
+    return undefined;
+  }
+};
+
+const createHttpsProxyAgent = (url: string) => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const HttpsProxyAgentModule = require("https-proxy-agent");
+    return new HttpsProxyAgentModule(url);
+  } catch {
+    return undefined;
+  }
+};
+
 export class YandexSttAsyncError extends Error {
   public status: number;
   public code?: string;
@@ -179,6 +200,10 @@ class YandexSttAsyncService {
     console.info(`[yandex-stt-async] Starting async transcription: ${audioBuffer.length} bytes, lang=${lang}, user=${userId}`);
 
     try {
+      // Setup proxy agents for network compatibility
+      const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;
+      const httpsProxyAgent = process.env.HTTPS_PROXY ? createHttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
+
       // In production, would upload to Object Storage first
       // For now, using direct binary body (max 1GB)
       const response = await fetch(YANDEX_ASYNC_STT_ENDPOINT, {
@@ -189,6 +214,7 @@ class YandexSttAsyncService {
           "X-Folder-Id": folderId,
         },
         body: audioBuffer,
+        agent: YANDEX_ASYNC_STT_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent,
       } as Parameters<typeof fetch>[1]);
 
       if (!response.ok) {
@@ -283,12 +309,17 @@ class YandexSttAsyncService {
 
       const iamToken = await yandexIamTokenService.getIamToken(serviceAccountKey);
 
+      // Setup proxy agents for network compatibility
+      const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;
+      const httpsProxyAgent = process.env.HTTPS_PROXY ? createHttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
+
       const response = await fetch(`${YANDEX_OPERATION_ENDPOINT}/${operationId}`, {
         method: "GET",
         headers: {
           "Authorization": `Bearer ${iamToken}`,
         },
-      });
+        agent: YANDEX_OPERATION_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent,
+      } as Parameters<typeof fetch>[1]);
 
       if (!response.ok) {
         const errorText = await response.text();

@@ -1,7 +1,28 @@
 import fetch from "node-fetch";
 import { createSign } from "crypto";
-import HttpProxyAgent from "http-proxy-agent";
-import HttpsProxyAgent from "https-proxy-agent";
+import type HttpProxyAgent from "http-proxy-agent";
+import type HttpsProxyAgent from "https-proxy-agent";
+
+// Runtime imports for agents
+const createHttpProxyAgent = (url: string) => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const HttpProxyAgentModule = require("http-proxy-agent");
+    return new HttpProxyAgentModule(url);
+  } catch {
+    return undefined;
+  }
+};
+
+const createHttpsProxyAgent = (url: string) => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const HttpsProxyAgentModule = require("https-proxy-agent");
+    return new HttpsProxyAgentModule(url);
+  } catch {
+    return undefined;
+  }
+};
 
 interface IamTokenCache {
   token: string;
@@ -49,8 +70,8 @@ class YandexIamTokenService {
       console.info(`[yandex-iam] Fetching new IAM token for ${parsed.service_account_id}`);
 
       // Setup proxy agents for network compatibility
-      const httpProxyAgent = process.env.HTTP_PROXY ? new HttpProxyAgent(process.env.HTTP_PROXY) : undefined;
-      const httpsProxyAgent = process.env.HTTPS_PROXY ? new HttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
+      const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;
+      const httpsProxyAgent = process.env.HTTPS_PROXY ? createHttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
 
       // Request new token
       const response = await fetch(IAM_ENDPOINT, {
@@ -63,7 +84,7 @@ class YandexIamTokenService {
           assertion: this.createJwt(parsed),
         }).toString(),
         agent: IAM_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent,
-      } as any);
+      } as Parameters<typeof fetch>[1]);
 
       if (!response.ok) {
         const text = await response.text();
