@@ -356,7 +356,7 @@ export default function ChatPage({ params }: ChatPageProps) {
         return;
       }
     },
-    [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, streamMessage],
+    [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, queryClient],
   );
 
   const isNewChat = !effectiveChatId;
