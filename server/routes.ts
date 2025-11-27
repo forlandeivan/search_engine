@@ -8565,7 +8565,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const audioUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: 500 * 1024 * 1024, // 500 MB for async API
+      fileSize: 1 * 1024 * 1024, // 1 MB max for sync API
       files: 1,
     },
     fileFilter: (_req, file, cb) => {
@@ -8597,17 +8597,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
-        // Use async API for all files
-        const response = await yandexSttAsyncService.startAsyncTranscription({
+        // Use sync API for immediate results
+        const result = await yandexSttService.transcribe({
           audioBuffer: file.buffer,
           mimeType: file.mimetype,
           lang,
-          userId: user.id,
         });
 
         res.json({
-          operationId: response.operationId,
-          message: response.message,
+          text: result.text,
+          lang: result.lang,
         });
       } catch (error) {
         console.error(`[transcribe] user=${user.id} error:`, error);
