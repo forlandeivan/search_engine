@@ -185,6 +185,11 @@ import {
   YandexSttConfigError,
   isSupportedAudioFormat,
 } from "./yandex-stt-service";
+import {
+  yandexSttAsyncService,
+  YandexSttAsyncError,
+  YandexSttAsyncConfigError,
+} from "./yandex-stt-async-service";
 import multer from "multer";
 
 function getErrorDetails(error: unknown): string {
@@ -8501,7 +8506,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const audioUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: 10 * 1024 * 1024,
+      fileSize: 500 * 1024 * 1024, // 500 MB for async API
       files: 1,
     },
     fileFilter: (_req, file, cb) => {
@@ -8533,19 +8538,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
-        const result = await yandexSttService.transcribe({
+        // Use async API for all files
+        const response = await yandexSttAsyncService.startAsyncTranscription({
           audioBuffer: file.buffer,
           mimeType: file.mimetype,
           lang,
+          userId: user.id,
         });
 
         res.json({
-          text: result.text,
-          lang: result.lang,
+          operationId: response.operationId,
+          message: response.message,
         });
       } catch (error) {
         console.error(`[transcribe] user=${user.id} error:`, error);
         
+        if (error instanceof YandexSttAsyncConfigError) {
+          return res.status(400).json({ message: error.message, code: error.code });
+        }
+        if (error instanceof YandexSttAsyncError) {
+          return res.status(error.status).json({ message: error.message, code: error.code });
+        }
         if (error instanceof YandexSttConfigError) {
           return res.status(400).json({ message: error.message, code: error.code });
         }
@@ -8562,6 +8575,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     },
   );
+
+  app.get("/api/chat/transcribe/operations/:operationId", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const { operationId } = req.params;
+      if (!operationId || !operationId.trim()) {
+        return res.status(400).json({ message: "ID операции не предоставлен" });
+      }
+
+      const status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
+      res.json(status);
+    } catch (error) {
+      console.error(`[transcribe/operations] user=${user.id} error:`, error);
+      
+      if (error instanceof YandexSttAsyncError) {
+        return res.status(error.status).json({ message: error.message, code: error.code });
+      }
+      next(error);
+    }
+  });
 
   app.get("/api/chat/transcribe/status", requireAuth, async (req, res, next) => {
     try {

@@ -18,7 +18,7 @@ type ChatInputProps = {
 };
 
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
-const MAX_FILE_SIZE_MB = 10;
+const MAX_FILE_SIZE_MB = 500;
 
 export default function ChatInput({ 
   onSend, 
@@ -107,14 +107,15 @@ export default function ChatInput({
 
       const result = await response.json();
       
-      if (result.text && result.text.trim().length > 0) {
+      if (result.operationId) {
+        // Async operation started, let parent component handle polling
         if (onTranscribe) {
-          onTranscribe(result.text.trim());
+          onTranscribe(`__PENDING_OPERATION:${result.operationId}`);
         }
       } else {
         toast({
-          title: "Речь не распознана",
-          description: "В аудиофайле не обнаружена речь. Попробуйте другой файл.",
+          title: "Ошибка",
+          description: "Не удалось запустить транскрибацию. Попробуйте еще раз.",
           variant: "destructive",
         });
       }
