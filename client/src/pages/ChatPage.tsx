@@ -271,6 +271,44 @@ export default function ChatPage({ params }: ChatPageProps) {
     ],
   );
 
+  const handleTranscription = useCallback(
+    async (transcribedText: string) => {
+      if (!workspaceId) {
+        return;
+      }
+
+      let targetChatId = effectiveChatId;
+
+      if (!targetChatId) {
+        if (!defaultSkill) {
+          setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
+          return;
+        }
+
+        try {
+          const newChat = await createChat({
+            workspaceId,
+            skillId: defaultSkill.id,
+          });
+          targetChatId = newChat.id;
+          setOverrideChatId(newChat.id);
+          handleSelectChat(newChat.id);
+        } catch (error) {
+          setStreamError(error instanceof Error ? error.message : String(error));
+          return;
+        }
+      }
+
+      const userMessage = buildLocalMessage("user", targetChatId, `[Аудиофайл]`);
+      const assistantMessage = buildLocalMessage("assistant", targetChatId, transcribedText);
+      setLocalChatId(targetChatId);
+      setLocalMessages([userMessage, assistantMessage]);
+
+      await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+    },
+    [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, queryClient],
+  );
+
   const isNewChat = !effectiveChatId;
   const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
   const chatTitle = activeChat?.title ?? null;
@@ -333,6 +371,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           <div className="border-t border-slate-200 bg-white/95 pb-6 pt-4 dark:border-slate-800 dark:bg-slate-900/70">
             <ChatInput
               onSend={handleSend}
+              onTranscribe={handleTranscription}
               disabled={disableInput}
               placeholder={isNewChat ? "Начните новый чат..." : "Напишите сообщение и нажмите Enter"}
             />

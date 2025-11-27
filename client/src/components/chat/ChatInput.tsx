@@ -1,24 +1,40 @@
-import { useCallback, useState, useEffect } from "react";
-import { Send } from "lucide-react";
+import { useCallback, useState, useEffect, useRef } from "react";
+import { Send, Paperclip, Loader2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import AudioRecorder from "./AudioRecorder";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 type ChatInputProps = {
   onSend: (message: string) => Promise<void> | void;
+  onTranscribe?: (text: string) => void;
   disabled?: boolean;
   placeholder?: string;
-  showAudioRecorder?: boolean;
+  showAudioAttach?: boolean;
 };
 
-export default function ChatInput({ onSend, disabled, placeholder, showAudioRecorder = true }: ChatInputProps) {
+const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
+const MAX_FILE_SIZE_MB = 10;
+
+export default function ChatInput({ 
+  onSend, 
+  onTranscribe,
+  disabled, 
+  placeholder, 
+  showAudioAttach = true 
+}: ChatInputProps) {
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!showAudioRecorder) {
+    if (!showAudioAttach) {
       return;
     }
     
@@ -30,7 +46,7 @@ export default function ChatInput({ onSend, disabled, placeholder, showAudioReco
       .catch(() => {
         setSttAvailable(false);
       });
-  }, [showAudioRecorder]);
+  }, [showAudioAttach]);
 
   const handleSend = useCallback(async () => {
     const trimmed = value.trim();
@@ -41,34 +57,120 @@ export default function ChatInput({ onSend, disabled, placeholder, showAudioReco
     await onSend(trimmed);
   }, [disabled, onSend, value]);
 
-  const handleTranscription = useCallback((text: string) => {
-    setValue((prev) => {
-      const separator = prev.trim().length > 0 ? " " : "";
-      return prev + separator + text;
-    });
+  const handleAttachClick = useCallback(() => {
+    fileInputRef.current?.click();
   }, []);
 
-  const handleAudioError = useCallback((error: string) => {
-    toast({
-      title: "Ошибка записи",
-      description: error,
-      variant: "destructive",
-    });
-  }, [toast]);
+  const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    event.target.value = "";
+
+    if (!file.type.startsWith("audio/")) {
+      toast({
+        title: "Неподдерживаемый формат",
+        description: "Пожалуйста, выберите аудиофайл (MP3, OGG, WAV, WebM и др.)",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const fileSizeMB = file.size / (1024 * 1024);
+    if (fileSizeMB > MAX_FILE_SIZE_MB) {
+      toast({
+        title: "Файл слишком большой",
+        description: `Максимальный размер файла: ${MAX_FILE_SIZE_MB} МБ`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("audio", file);
+
+      const response = await fetch("/api/chat/transcribe", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Ошибка транскрибации: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.text && result.text.trim().length > 0) {
+        if (onTranscribe) {
+          onTranscribe(result.text.trim());
+        }
+      } else {
+        toast({
+          title: "Речь не распознана",
+          description: "В аудиофайле не обнаружена речь. Попробуйте другой файл.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("[ChatInput] Transcription error:", error);
+      toast({
+        title: "Ошибка транскрибации",
+        description: error instanceof Error ? error.message : "Не удалось распознать аудио",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  }, [onTranscribe, toast]);
 
   const isSendDisabled = disabled || value.trim().length === 0;
-  const showRecorder = showAudioRecorder && sttAvailable === true;
+  const showAttachButton = showAudioAttach && sttAvailable === true;
+  const isAttachDisabled = disabled || isUploading;
 
   return (
     <div className="mx-auto w-full max-w-[880px] pb-14">
       <div className="rounded-[28px] border border-slate-200 bg-white/95 px-4 py-3 shadow-lg dark:border-slate-700 dark:bg-slate-900/90 sm:px-5 sm:py-4">
         <div className="flex items-end gap-2 sm:gap-3">
-          {showRecorder && (
-            <AudioRecorder
-              onTranscription={handleTranscription}
-              onError={handleAudioError}
-              disabled={disabled}
-            />
+          {showAttachButton && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_AUDIO_TYPES}
+                onChange={handleFileChange}
+                className="hidden"
+                data-testid="input-audio-file"
+              />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-11 w-11 shrink-0 rounded-full"
+                    onClick={handleAttachClick}
+                    disabled={isAttachDisabled}
+                    data-testid="button-attach-audio"
+                  >
+                    {isUploading ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <Paperclip className="h-5 w-5" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p>Прикрепить аудиофайл для транскрибации</p>
+                </TooltipContent>
+              </Tooltip>
+            </>
           )}
           <Textarea
             value={value}
@@ -100,7 +202,7 @@ export default function ChatInput({ onSend, disabled, placeholder, showAudioReco
         </div>
       </div>
       <p className="mt-3 text-center text-xs text-muted-foreground">
-        {showRecorder ? "Используйте микрофон для голосового ввода • " : ""}
+        {showAttachButton ? "Прикрепите аудиофайл для транскрибации • " : ""}
         Shift + Enter — новая строка
       </p>
     </div>

@@ -36,7 +36,7 @@ A public RAG search endpoint is available, configured with specific workspaces, 
 
 ### TTS/STT Integration (Audio Transcription)
 
-The application supports audio transcription in chat via Yandex SpeechKit integration:
+The application supports audio file transcription in chat via Yandex SpeechKit integration:
 
 **Backend Components:**
 - `server/yandex-stt-service.ts`: Service for transcribing audio to text using Yandex SpeechKit REST API v1
@@ -45,16 +45,22 @@ The application supports audio transcription in chat via Yandex SpeechKit integr
 - API endpoint `GET /api/chat/transcribe/status`: Checks if STT provider is available and configured
 
 **Frontend Components:**
-- `client/src/components/chat/AudioRecorder.tsx`: Voice recording component using MediaRecorder API
-- Audio recording integrated into `ChatInput.tsx` with automatic transcription
+- `client/src/components/chat/ChatInput.tsx`: Chat input with paperclip button for attaching audio files
+- Audio file upload integrated into ChatPage with transcription displayed as AI response
+
+**User Flow:**
+1. User clicks paperclip icon in chat input
+2. User selects an audio file (OGG, WebM, WAV, MP3, etc.)
+3. File is uploaded and transcribed via Yandex SpeechKit
+4. Transcription result is displayed as an AI assistant message
 
 **Configuration:**
 - Admin panel at `/admin/speech-providers` for configuring Yandex SpeechKit credentials
 - Required secrets: `apiKey` (Yandex Cloud API key), `folderId` (Yandex Cloud folder ID)
 - Configurable options: `languageCode`, `model`, `enablePunctuation`
 
-**Supported Audio Formats:** OGG (preferred), WebM (auto-converted to OGG via ffmpeg), WAV
-**Max Recording Duration:** 30 seconds (Yandex SpeechKit sync API limit)
+**Supported Audio Formats:** OGG (preferred), WebM (auto-converted to OGG via ffmpeg), WAV, MP3
+**Max File Size:** 10 MB (Yandex SpeechKit sync API limit: 1 MB after conversion)
 **System Dependency:** ffmpeg (for WebM to OGG conversion)
 
 ### Production Deployment Notes
