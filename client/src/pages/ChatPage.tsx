@@ -277,6 +277,91 @@ export default function ChatPage({ params }: ChatPageProps) {
         return;
       }
 
+      // Check if this is a pending operation
+      if (transcribedText.startsWith("__PENDING_OPERATION:")) {
+        const operationId = transcribedText.substring("__PENDING_OPERATION:".length);
+        
+        let targetChatId = effectiveChatId;
+        if (!targetChatId) {
+          if (!defaultSkill) {
+            setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
+            return;
+          }
+
+          try {
+            const newChat = await createChat({
+              workspaceId,
+              skillId: defaultSkill.id,
+            });
+            targetChatId = newChat.id;
+            setOverrideChatId(newChat.id);
+            handleSelectChat(newChat.id);
+          } catch (error) {
+            setStreamError(error instanceof Error ? error.message : String(error));
+            return;
+          }
+        }
+
+        // Show waiting message
+        const userMessage = buildLocalMessage("user", targetChatId, `[Аудиофайл]`);
+        const assistantMessage = buildLocalMessage("assistant", targetChatId, "⏳ Транскрибация в процессе...");
+        setLocalChatId(targetChatId);
+        setLocalMessages([userMessage, assistantMessage]);
+
+        // Poll for operation result
+        const pollOperation = async () => {
+          let attempts = 0;
+          const maxAttempts = 600; // 10 minutes with 1-second polling
+          
+          while (attempts < maxAttempts) {
+            try {
+              const response = await fetch(`/api/chat/transcribe/operations/${operationId}`, {
+                method: "GET",
+                credentials: "include",
+              });
+
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
+
+              const status = await response.json();
+              
+              if (status.status === "completed" && status.result?.text) {
+                // Success! Update message with transcribed text
+                setLocalMessages((prev) =>
+                  prev.map((message) =>
+                    message.id === assistantMessage.id 
+                      ? { ...message, content: status.result.text }
+                      : message,
+                  ),
+                );
+                await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+                return;
+              }
+              
+              if (status.status === "failed") {
+                setStreamError(status.error || "Транскрибация не удалась. Попробуйте еще раз.");
+                return;
+              }
+
+              // Still pending, wait and retry
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              attempts++;
+            } catch (error) {
+              console.error("[ChatPage] Poll error:", error);
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              attempts++;
+            }
+          }
+          
+          setStreamError("Транскрибация заняла слишком много времени. Попробуйте еще раз.");
+        };
+
+        // Start polling in background
+        pollOperation();
+        return;
+      }
+
       let targetChatId = effectiveChatId;
 
       if (!targetChatId) {

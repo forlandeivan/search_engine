@@ -180,8 +180,8 @@ class YandexSttAsyncService {
           "Content-Type": "application/octet-stream",
           "X-Folder-Id": folderId,
         },
-        body: audioBuffer as unknown as BodyInit,
-      });
+        body: audioBuffer,
+      } as Parameters<typeof fetch>[1]);
 
       if (!response.ok) {
         const errorText = await response.text();
