@@ -8254,7 +8254,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           for (const chunk of chunks) {
             sendSseEvent(res, "token", { token: chunk });
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            await new Promise((resolve) => setTimeout(resolve, 20));
           }
 
           const assistantMessage = await writeAssistantMessage(
