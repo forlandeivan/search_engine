@@ -6748,7 +6748,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Service Account Key не установлен" });
       }
 
-      const iamToken = await yandexIamTokenService.getIamToken(serviceAccountKey);
+      const iamToken = await yandexIamTokenService.getIamToken(serviceAccountKey, detail.config);
       
       if (!iamToken) {
         return res.status(500).json({ message: "Не удалось получить IAM токен" });

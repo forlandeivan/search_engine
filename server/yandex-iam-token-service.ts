@@ -47,7 +47,7 @@ class YandexIamTokenService {
    * @param serviceAccountKey - JSON service account key from Yandex Cloud
    * @returns Valid IAM token string
    */
-  async getIamToken(serviceAccountKey: string): Promise<string> {
+  async getIamToken(serviceAccountKey: string, config?: Record<string, unknown>): Promise<string> {
     try {
       const parsed = JSON.parse(serviceAccountKey) as {
         service_account_id?: string;
@@ -60,15 +60,27 @@ class YandexIamTokenService {
 
       const cacheKey = `iam_${parsed.service_account_id}`;
 
-      // MODE 1: Use pre-generated IAM token from environment variable (easiest for development)
-      if (process.env.YANDEX_IAM_TOKEN) {
-        console.info(`[yandex-iam] MODE 1: Using pre-generated token from YANDEX_IAM_TOKEN env var`);
-        // Cache it for consistency
+      // MODE 1: Use pre-generated IAM token (from config or env variable)
+      const manualToken = config?.iamToken as string | undefined;
+      const envToken = process.env.YANDEX_IAM_TOKEN;
+      const selectedManualToken = manualToken || envToken;
+
+      if (selectedManualToken && config?.iamMode === "manual") {
+        console.info(`[yandex-iam] MODE 1: Using pre-generated token from config (manual mode)`);
         tokenCache.set(cacheKey, {
-          token: process.env.YANDEX_IAM_TOKEN,
+          token: selectedManualToken,
           expiresAt: Date.now() + TOKEN_LIFETIME_MS,
         });
-        return process.env.YANDEX_IAM_TOKEN;
+        return selectedManualToken;
+      }
+
+      if (selectedManualToken && !config?.iamMode) {
+        console.info(`[yandex-iam] MODE 1: Using pre-generated token from YANDEX_IAM_TOKEN env var`);
+        tokenCache.set(cacheKey, {
+          token: selectedManualToken,
+          expiresAt: Date.now() + TOKEN_LIFETIME_MS,
+        });
+        return selectedManualToken;
       }
 
       const cached = tokenCache.get(cacheKey);

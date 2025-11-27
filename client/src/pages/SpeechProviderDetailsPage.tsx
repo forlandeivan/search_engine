@@ -40,6 +40,8 @@ const DEFAULT_CONFIG = {
   languageCode: "",
   model: "",
   enablePunctuation: true,
+  iamMode: "auto" as "auto" | "manual",
+  iamToken: "",
 };
 
 const DEFAULT_SECRETS = {
@@ -73,6 +75,8 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
       model: (provider.config.model as string) ?? "",
       enablePunctuation:
         typeof provider.config.enablePunctuation === "boolean" ? provider.config.enablePunctuation : true,
+      iamMode: (provider.config.iamMode as "auto" | "manual") ?? "auto",
+      iamToken: (provider.config.iamToken as string) ?? "",
     });
     setSecretInputs(DEFAULT_SECRETS);
     setFieldErrors({});
@@ -230,13 +234,20 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
       return;
     }
 
+    const config: Record<string, unknown> = {
+      languageCode: configState.languageCode.trim(),
+      model: configState.model.trim() || undefined,
+      enablePunctuation: configState.enablePunctuation,
+      iamMode: configState.iamMode,
+    };
+    
+    if (configState.iamMode === "manual" && configState.iamToken.trim()) {
+      config.iamToken = configState.iamToken.trim();
+    }
+
     const payload: UpdateSpeechProviderPayload = {
       isEnabled,
-      config: {
-        languageCode: configState.languageCode.trim(),
-        model: configState.model.trim() || undefined,
-        enablePunctuation: configState.enablePunctuation,
-      },
+      config,
     };
 
     const secretsPayload: Record<string, string | null> = {};
@@ -328,7 +339,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6">
         <section className="space-y-4 rounded-lg border p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -341,6 +352,52 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
               <Label htmlFor="provider-enabled">Включить провайдера</Label>
               <Switch id="provider-enabled" checked={isEnabled} onCheckedChange={handleToggleEnabled} disabled={mutation.isPending} />
             </div>
+          </div>
+          <div className="space-y-4 border-t pt-4">
+            <div className="space-y-3">
+              <Label>Режим получения IAM токена</Label>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer" onClick={() => handleConfigChange("iamMode", "auto")}>
+                  <input 
+                    type="radio" 
+                    id="iam-auto" 
+                    name="iamMode" 
+                    checked={configState.iamMode === "auto"}
+                    onChange={() => handleConfigChange("iamMode", "auto")}
+                  />
+                  <label htmlFor="iam-auto" className="flex-1 cursor-pointer">
+                    <div className="font-medium">Автоматический (MODE 2)</div>
+                    <p className="text-xs text-muted-foreground">Система автоматически генерирует IAM токен через Yandex API. Требует сетевого доступа.</p>
+                  </label>
+                </div>
+                <div className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer" onClick={() => handleConfigChange("iamMode", "manual")}>
+                  <input 
+                    type="radio" 
+                    id="iam-manual" 
+                    name="iamMode"
+                    checked={configState.iamMode === "manual"}
+                    onChange={() => handleConfigChange("iamMode", "manual")}
+                  />
+                  <label htmlFor="iam-manual" className="flex-1 cursor-pointer">
+                    <div className="font-medium">Готовый токен (MODE 1)</div>
+                    <p className="text-xs text-muted-foreground">Подставьте готовый IAM токен. Обновляйте каждые 12 часов.</p>
+                  </label>
+                </div>
+              </div>
+            </div>
+            {configState.iamMode === "manual" && (
+              <div className="grid gap-2 p-3 bg-muted/30 rounded-lg">
+                <Label htmlFor="iam-token">IAM Токен</Label>
+                <Textarea
+                  id="iam-token"
+                  value={configState.iamToken}
+                  onChange={(e) => handleConfigChange("iamToken", e.target.value)}
+                  placeholder="Вставьте готовый IAM токен (t1.с...)  - действителен 12 часов"
+                  rows={3}
+                />
+                <p className="text-xs text-muted-foreground">Получите токен командой: yc iam create-token</p>
+              </div>
+            )}
           </div>
           <div className="space-y-3">
             <div className="grid gap-2">
@@ -380,6 +437,9 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
           </div>
         </section>
 
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
         <section className="space-y-4 rounded-lg border p-4">
           <div>
             <h2 className="text-lg font-medium">Секреты</h2>
