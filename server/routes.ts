@@ -190,6 +190,7 @@ import {
   YandexSttAsyncError,
   YandexSttAsyncConfigError,
 } from "./yandex-stt-async-service";
+import { yandexIamTokenService } from "./yandex-iam-token-service";
 import multer from "multer";
 
 function getErrorDetails(error: unknown): string {
@@ -6739,8 +6740,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const providerId = req.params.id;
       const detail = await runWithAdminTimeout(() => speechProviderService.getProviderById(providerId));
       
-      const secretValues = await speechProviderService.getSecretValues(providerId);
-      const serviceAccountKey = secretValues.serviceAccountKey;
+      const secrets = await storage.getSpeechProviderSecrets(providerId);
+      const serviceAccountKeySecret = secrets.find((s) => s.secretKey === "serviceAccountKey");
+      const serviceAccountKey = serviceAccountKeySecret?.secretValue;
 
       if (!serviceAccountKey) {
         return res.status(400).json({ message: "Service Account Key не установлен" });
