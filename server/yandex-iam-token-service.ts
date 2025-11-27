@@ -49,14 +49,22 @@ class YandexIamTokenService {
    */
   async getIamToken(serviceAccountKey: string, config?: Record<string, unknown>): Promise<string> {
     try {
-      const parsed = JSON.parse(serviceAccountKey) as {
-        service_account_id?: string;
-        private_key?: string;
-      };
+      let parsed: { service_account_id?: string; private_key?: string };
+      
+      try {
+        parsed = JSON.parse(serviceAccountKey);
+      } catch (e) {
+        throw new YandexIamTokenError(`Failed to parse Service Account Key as JSON: ${e instanceof Error ? e.message : String(e)}`);
+      }
 
       if (!parsed.service_account_id || !parsed.private_key) {
-        throw new YandexIamTokenError("Invalid service account key format");
+        throw new YandexIamTokenError(
+          `Invalid service account key format. Missing: ${!parsed.service_account_id ? 'service_account_id' : ''} ${!parsed.private_key ? 'private_key' : ''}`
+        );
       }
+
+      // Decode escape sequences in private key if present
+      const privateKey = parsed.private_key.replace(/\\n/g, '\n');
 
       const cacheKey = `iam_${parsed.service_account_id}`;
 
@@ -67,6 +75,9 @@ class YandexIamTokenService {
 
       if (selectedManualToken && config?.iamMode === "manual") {
         console.info(`[yandex-iam] MODE 1: Using pre-generated token from config (manual mode)`);
+        if (!selectedManualToken.startsWith("t1.")) {
+          throw new YandexIamTokenError("Invalid IAM token format - should start with 't1.'");
+        }
         tokenCache.set(cacheKey, {
           token: selectedManualToken,
           expiresAt: Date.now() + TOKEN_LIFETIME_MS,
@@ -76,6 +87,9 @@ class YandexIamTokenService {
 
       if (selectedManualToken && !config?.iamMode) {
         console.info(`[yandex-iam] MODE 1: Using pre-generated token from YANDEX_IAM_TOKEN env var`);
+        if (!selectedManualToken.startsWith("t1.")) {
+          throw new YandexIamTokenError("Invalid IAM token format - should start with 't1.'");
+        }
         tokenCache.set(cacheKey, {
           token: selectedManualToken,
           expiresAt: Date.now() + TOKEN_LIFETIME_MS,
@@ -94,6 +108,10 @@ class YandexIamTokenService {
       // MODE 2: Auto-generate token using Service Account Key (requires network access to Yandex API)
       console.info(`[yandex-iam] MODE 2: Fetching new IAM token for ${parsed.service_account_id}`);
 
+      // Create JWT assertion with decoded private key
+      const jwt = this.createJwt({ ...parsed, private_key: privateKey });
+      console.info(`[yandex-iam] JWT created, length: ${jwt.length}`);
+
       // Setup proxy agents for network compatibility
       const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;
       const httpsProxyAgent = process.env.HTTPS_PROXY ? createHttpsProxyAgent(process.env.HTTPS_PROXY) : undefined;
@@ -106,17 +124,19 @@ class YandexIamTokenService {
         },
         body: new URLSearchParams({
           grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-          assertion: this.createJwt(parsed),
+          assertion: jwt,
         }).toString(),
       };
 
       // Only add agent if one was successfully created
       const selectedAgent = IAM_ENDPOINT.startsWith("https") ? httpsProxyAgent : httpProxyAgent;
       if (selectedAgent) {
+        console.info(`[yandex-iam] Using proxy agent for IAM token request`);
         fetchOptions.agent = selectedAgent;
       }
 
       // Request new token
+      console.info(`[yandex-iam] Requesting IAM token from ${IAM_ENDPOINT}`);
       const response = await fetch(IAM_ENDPOINT, fetchOptions);
 
       if (!response.ok) {
@@ -177,10 +197,20 @@ class YandexIamTokenService {
   }
 
   private signJwt(message: string, privateKey: string): string {
-    const signer = createSign("RSA-SHA256");
-    signer.update(message);
-    const signature = signer.sign(privateKey, "base64");
-    return signature.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+    try {
+      const signer = createSign("RSA-SHA256");
+      signer.update(message);
+      const signature = signer.sign(privateKey, "base64");
+      // Convert to base64url format (RFC 7515)
+      return signature
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=/g, "");
+    } catch (error) {
+      throw new YandexIamTokenError(
+        `Failed to sign JWT: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 }
 
