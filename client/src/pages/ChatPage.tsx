@@ -306,15 +306,10 @@ export default function ChatPage({ params }: ChatPageProps) {
           }
         }
 
-        // Show waiting message with loading state
-        const userMessage = buildLocalMessage("user", targetChatId, `__AUDIO_FILE__:${fileName}`);
-        const assistantMessage = buildLocalMessage("assistant", targetChatId, "");
-        setLocalChatId(targetChatId);
-        setLocalMessages([userMessage, assistantMessage]);
-        setIsTranscribing(true);
-        setStreamError(null);
-
-        // Poll for operation result
+        // Show audio file message
+        await streamMessage(targetChatId, `__AUDIO_FILE__:${fileName}`);
+        
+        // Poll for transcription result
         const pollOperation = async () => {
           let attempts = 0;
           const maxAttempts = 600; // 10 minutes with 1-second polling
@@ -333,21 +328,12 @@ export default function ChatPage({ params }: ChatPageProps) {
               const status = await response.json();
               
               if (status.status === "completed" && status.result?.text) {
-                // Success! Update message with transcribed text
-                setLocalMessages((prev) =>
-                  prev.map((message) =>
-                    message.id === assistantMessage.id 
-                      ? { ...message, content: status.result.text }
-                      : message,
-                  ),
-                );
-                setIsTranscribing(false);
-                await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+                // Success! Send transcribed text as message
+                await streamMessage(targetChatId, status.result.text);
                 return;
               }
               
               if (status.status === "failed") {
-                setIsTranscribing(false);
                 setStreamError(status.error || "Транскрибация не удалась. Попробуйте еще раз.");
                 return;
               }
@@ -362,7 +348,6 @@ export default function ChatPage({ params }: ChatPageProps) {
             }
           }
           
-          setIsTranscribing(false);
           setStreamError("Транскрибация заняла слишком много времени. Попробуйте еще раз.");
         };
 
@@ -370,35 +355,6 @@ export default function ChatPage({ params }: ChatPageProps) {
         pollOperation();
         return;
       }
-
-      let targetChatId = effectiveChatId;
-
-      if (!targetChatId) {
-        if (!defaultSkill) {
-          setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
-          return;
-        }
-
-        try {
-          const newChat = await createChat({
-            workspaceId,
-            skillId: defaultSkill.id,
-          });
-          targetChatId = newChat.id;
-          setOverrideChatId(newChat.id);
-          handleSelectChat(newChat.id);
-        } catch (error) {
-          setStreamError(error instanceof Error ? error.message : String(error));
-          return;
-        }
-      }
-
-      const userMessage = buildLocalMessage("user", targetChatId, `[Аудиофайл]`);
-      const assistantMessage = buildLocalMessage("assistant", targetChatId, transcribedText);
-      setLocalChatId(targetChatId);
-      setLocalMessages([userMessage, assistantMessage]);
-
-      await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
     },
     [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, queryClient],
   );

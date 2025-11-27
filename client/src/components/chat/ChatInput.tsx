@@ -315,7 +315,7 @@ export default function ChatInput({
             size="icon"
             className="h-11 w-11 shrink-0 rounded-full shadow-md"
             onClick={handleSend}
-            disabled={isSendDisabled}
+            disabled={isSendDisabled || false}
             data-testid="button-send-message"
           >
             {isUploading ? (
