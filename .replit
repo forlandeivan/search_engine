@@ -43,5 +43,5 @@ integrations = ["javascript_mem_db:1.0.0", "javascript_database:1.0.0"]
 [userenv.shared]
 
 [[ports]]
-localPort = 39323
+localPort = 5000
 externalPort = 80
