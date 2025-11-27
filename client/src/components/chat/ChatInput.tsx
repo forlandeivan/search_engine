@@ -131,7 +131,7 @@ export default function ChatInput({
   }, [onTranscribe, toast]);
 
   const isSendDisabled = disabled || value.trim().length === 0;
-  const showAttachButton = showAudioAttach && sttAvailable === true;
+  const showAttachButton = showAudioAttach;
   const isAttachDisabled = disabled || isUploading;
 
   return (
