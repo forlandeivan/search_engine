@@ -59,6 +59,18 @@ class YandexIamTokenService {
       }
 
       const cacheKey = `iam_${parsed.service_account_id}`;
+
+      // MODE 1: Use pre-generated IAM token from environment variable (easiest for development)
+      if (process.env.YANDEX_IAM_TOKEN) {
+        console.info(`[yandex-iam] MODE 1: Using pre-generated token from YANDEX_IAM_TOKEN env var`);
+        // Cache it for consistency
+        tokenCache.set(cacheKey, {
+          token: process.env.YANDEX_IAM_TOKEN,
+          expiresAt: Date.now() + TOKEN_LIFETIME_MS,
+        });
+        return process.env.YANDEX_IAM_TOKEN;
+      }
+
       const cached = tokenCache.get(cacheKey);
 
       // Return cached token if still valid (with 5min buffer)
@@ -67,7 +79,8 @@ class YandexIamTokenService {
         return cached.token;
       }
 
-      console.info(`[yandex-iam] Fetching new IAM token for ${parsed.service_account_id}`);
+      // MODE 2: Auto-generate token using Service Account Key (requires network access to Yandex API)
+      console.info(`[yandex-iam] MODE 2: Fetching new IAM token for ${parsed.service_account_id}`);
 
       // Setup proxy agents for network compatibility
       const httpProxyAgent = process.env.HTTP_PROXY ? createHttpProxyAgent(process.env.HTTP_PROXY) : undefined;

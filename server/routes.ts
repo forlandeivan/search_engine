@@ -6755,10 +6755,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const tokenPreview = iamToken.substring(0, 20) + "...";
+      const mode = process.env.YANDEX_IAM_TOKEN ? "MODE 1 (env token)" : "MODE 2 (auto-generated)";
       res.json({ 
         success: true, 
-        message: "IAM токен успешно получен",
+        message: `IAM токен успешно получен (${mode})`,
         tokenPreview,
+        mode,
         expiresInMinutes: Math.round((11 * 60 * 60 * 1000) / 1000 / 60)
       });
     } catch (error) {

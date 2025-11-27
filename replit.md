@@ -83,10 +83,26 @@ The application supports audio file transcription in chat via Yandex SpeechKit i
 - IAM token automatically generated and cached (11-hour lifetime)
 - Token expiration handled with 5-minute safety buffer
 
-**Network Configuration:**
-- Supports HTTP/HTTPS proxy agents via `HTTP_PROXY` and `HTTPS_PROXY` environment variables
-- Graceful fallback to direct connection if proxy agents fail to create
-- **Note:** In Replit environment, external network connections (especially to Yandex Cloud API) may be restricted. If IAM token test fails with `getaddrinfo ENOTFOUND` error, this indicates a Replit network limitation that cannot be bypassed at the code level. The actual transcription should work when audio files are uploaded in production with proper network access.
+**Network Configuration & Two Modes of Operation:**
+
+**MODE 1: Pre-generated Token (Recommended for Replit development)**
+- Set env var `YANDEX_IAM_TOKEN` with a pre-generated token (valid for 12 hours)
+- System will use this token directly, no network requests to Yandex Auth API needed
+- Generate token outside Replit (e.g., via Yandex Cloud CLI: `yc iam create-token`) and paste into env var
+- Best for avoiding Replit network restrictions
+- Update token every 12 hours or when it expires
+
+**MODE 2: Auto-generated Token (Default - requires network access)**
+- System automatically generates JWT from Service Account Key and requests token from Yandex
+- Works in production or environments with unrestricted network access to auth.api.cloud.yandex.net
+- Token is cached and reused for 11 hours (Yandex grants 12-hour tokens)
+- Requires HTTP/HTTPS proxy agents via `HTTP_PROXY` and `HTTPS_PROXY` env vars if behind corporate proxy
+
+**Priority:**
+1. If `YANDEX_IAM_TOKEN` env var is set → Use MODE 1 (pre-generated)
+2. Otherwise → Use MODE 2 (auto-generate with Service Account Key)
+
+**Note for Replit:** External DNS to auth.api.cloud.yandex.net may be restricted. MODE 1 (pre-generated token) bypasses this limitation entirely.
 
 ### Production Deployment Notes
 
