@@ -30,7 +30,9 @@ export default function ChatInput({
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -60,6 +62,99 @@ export default function ChatInput({
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.items?.length > 0) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget === containerRef.current) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    const file = files[0];
+    if (!file.type.startsWith("audio/")) {
+      toast({
+        title: "Неподдерживаемый формат",
+        description: "Пожалуйста, перетащите аудиофайл (MP3, OGG, WAV, WebM и др.)",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const fileSizeMB = file.size / (1024 * 1024);
+    if (fileSizeMB > MAX_FILE_SIZE_MB) {
+      toast({
+        title: "Файл слишком большой",
+        description: `Максимальный размер файла: ${MAX_FILE_SIZE_MB} МБ`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("audio", file);
+
+      const response = await fetch("/api/chat/transcribe", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Ошибка транскрибации: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (result.operationId) {
+        if (onTranscribe) {
+          onTranscribe(`__PENDING_OPERATION:${result.operationId}`);
+        }
+      } else {
+        toast({
+          title: "Ошибка",
+          description: "Не удалось запустить транскрибацию. Попробуйте еще раз.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("[ChatInput] Transcription error:", error);
+      toast({
+        title: "Ошибка транскрибации",
+        description: error instanceof Error ? error.message : "Не удалось распознать аудио",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  }, [onTranscribe, toast]);
 
   const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -137,7 +232,18 @@ export default function ChatInput({
 
   return (
     <div className="mx-auto w-full max-w-[880px] pb-14">
-      <div className="rounded-[28px] border border-slate-200 bg-white/95 px-4 py-3 shadow-lg dark:border-slate-700 dark:bg-slate-900/90 sm:px-5 sm:py-4">
+      <div
+        ref={containerRef}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        className={`rounded-[28px] border px-4 py-3 shadow-lg transition-colors sm:px-5 sm:py-4 ${
+          isDragOver
+            ? "border-blue-400 bg-blue-50/50 dark:border-blue-500 dark:bg-blue-950/30"
+            : "border-slate-200 bg-white/95 dark:border-slate-700 dark:bg-slate-900/90"
+        }`}
+      >
         <div className="flex items-end gap-2 sm:gap-3">
           {showAttachButton && (
             <>
