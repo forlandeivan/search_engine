@@ -1224,8 +1224,19 @@ const speechProviderSecretsSchema = z
     apiKey: z.union([z.string().trim(), z.null()]).optional(),
     folderId: z.union([z.string().trim(), z.null()]).optional(),
     serviceAccountKey: z.union([z.string().trim(), z.null()]).optional(),
+    s3AccessKeyId: z.union([z.string().trim(), z.null()]).optional(),
+    s3SecretAccessKey: z.union([z.string().trim(), z.null()]).optional(),
+    s3BucketName: z.union([z.string().trim(), z.null()]).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (data) => {
+      const hasAnyS3 = data.s3AccessKeyId || data.s3SecretAccessKey || data.s3BucketName;
+      if (!hasAnyS3) return true;
+      return data.s3AccessKeyId && data.s3SecretAccessKey && data.s3BucketName;
+    },
+    { message: "Необходимо заполнить все три поля S3 (Access Key ID, Secret Access Key, Bucket Name) или оставить их пустыми" }
+  );
 
 const updateSpeechProviderSchema = z
   .object({
