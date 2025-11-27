@@ -208,7 +208,7 @@ export default function ChatInput({
     }
   }, [toast, handleUploadAudio]);
 
-  const isSendDisabled = disabled || (value.trim().length === 0 && !attachedFile) || (attachedFile && !uploadedOperationId);
+  const isSendDisabled = disabled || (value.trim().length === 0 && !attachedFile) || !!(attachedFile && !uploadedOperationId);
   const showAttachButton = showAudioAttach;
   const isAttachDisabled = disabled || isUploading || !!attachedFile;
   
@@ -315,7 +315,7 @@ export default function ChatInput({
             size="icon"
             className="h-11 w-11 shrink-0 rounded-full shadow-md"
             onClick={handleSend}
-            disabled={isSendDisabled || false}
+            disabled={isSendDisabled}
             data-testid="button-send-message"
           >
             {isUploading ? (
