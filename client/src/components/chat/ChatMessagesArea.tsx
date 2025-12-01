@@ -45,12 +45,12 @@ export default function ChatMessagesArea({
 
   const headerTitle = useMemo(() => {
     if (isNewChat) {
-      return "Start a new conversation";
+      return "Начните новый разговор";
     }
     if (chatTitle && chatTitle.trim().length > 0) {
       return chatTitle.trim();
     }
-    return "Recent conversation";
+    return "Последний разговор";
   }, [chatTitle, isNewChat]);
 
   const headerSkillLabel = skillName || "Unica Chat";
@@ -82,11 +82,11 @@ export default function ChatMessagesArea({
         <div className="flex h-full min-h-0 flex-col px-2.5">
           {errorMessage ? (
             <div className="mx-auto mt-10 max-w-lg rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
-              <h2 className="text-lg font-semibold">Unable to open chat</h2>
+              <h2 className="text-lg font-semibold">Не удалось открыть чат</h2>
               <p className="mt-2 text-sm text-muted-foreground">{errorMessage}</p>
               {onReset ? (
                 <Button className="mt-4" variant="outline" onClick={onReset}>
-                  Back to list
+                  Вернуться к списку
                 </Button>
               ) : null}
             </div>
@@ -95,9 +95,9 @@ export default function ChatMessagesArea({
           {!errorMessage && isNewChat && messages.length === 0 ? (
             <div className="mx-auto mt-10 max-w-xl rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
               <Sparkles className="mx-auto h-8 w-8 text-primary" />
-              <h2 className="mt-4 text-lg font-semibold">Start a new chat</h2>
+              <h2 className="mt-4 text-lg font-semibold">Начните новый чат</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                The Unica Chat system skill is ready to help. Ask your first question to begin.
+                Системный навык Unica Chat готов помочь. Задайте свой первый вопрос, чтобы начать.
               </p>
             </div>
           ) : null}
@@ -105,7 +105,7 @@ export default function ChatMessagesArea({
           {isLoading && !errorMessage ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Loading chat history...
+              Загрузка истории чата...
             </div>
           ) : null}
 
@@ -122,7 +122,7 @@ export default function ChatMessagesArea({
             : null}
 
           {!isLoading && !errorMessage && messages.length === 0 && !isNewChat ? (
-            <div className="text-center text-sm text-muted-foreground">No messages yet.</div>
+            <div className="text-center text-sm text-muted-foreground">Сообщений нет.</div>
           ) : null}
         </div>
       </div>
@@ -133,7 +133,7 @@ export default function ChatMessagesArea({
 
       {isStreaming ? (
         <div className="border-t bg-white/60 px-6 py-3 text-sm text-muted-foreground dark:bg-slate-900/60">
-          Assistant is typing...
+          Помощник печатает...
         </div>
       ) : null}
     </div>
