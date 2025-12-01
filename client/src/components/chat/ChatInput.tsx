@@ -298,14 +298,14 @@ export default function ChatInput({
             onChange={(event) => setValue(event.target.value)}
             placeholder={placeholder ?? "Напишите сообщение и нажмите Enter"}
             disabled={disabled}
-            rows={3}
+            rows={1}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 handleSend();
               }
             }}
-            className="min-h-[52px] flex-1 resize-none border-none bg-transparent px-0 py-2 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="h-11 flex-1 resize-none border-none bg-transparent px-0 py-0 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="input-chat-message"
           />
           <Button
