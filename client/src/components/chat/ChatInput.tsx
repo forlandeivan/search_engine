@@ -258,7 +258,7 @@ export default function ChatInput({
             : "border-slate-200 bg-white/95 dark:border-slate-700 dark:bg-slate-900/90"
         }`}
       >
-        <div className="flex items-end gap-2 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           {showAttachButton && (
             <>
               <input
@@ -305,7 +305,7 @@ export default function ChatInput({
                 handleSend();
               }
             }}
-            className="min-h-[52px] flex-1 resize-none border-none bg-transparent px-0 py-0 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="min-h-[52px] flex-1 resize-none border-none bg-transparent px-0 py-2 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="input-chat-message"
           />
           <Button
