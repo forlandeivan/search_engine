@@ -24,11 +24,9 @@ import {
   Boxes,
   Brain,
   ChevronLeft,
-  Settings,
   Shield,
   Users,
   LayoutDashboard,
-  Bot,
   Sparkles,
   MessageSquare,
 } from "lucide-react";
@@ -229,28 +227,12 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
       ],
     },
     {
-      label: "Виджеты",
-      items: [
-        {
-          title: "Чат-виджет",
-          url: "/integrations/widget",
-          icon: Bot,
-        },
-      ],
-    },
-    {
       label: "Рабочее пространство",
       items: [
         {
           title: "Участники",
           url: "/workspaces/members",
           icon: Users,
-        },
-        {
-          title: "Настройки",
-          url: "/settings",
-          icon: Settings,
-          locked: true,
         },
       ],
     },

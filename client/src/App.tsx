@@ -18,7 +18,6 @@ import LlmProvidersPage from "@/pages/LlmProvidersPage";
 import LlmExecutionsPage from "@/pages/LlmExecutionsPage";
 import TtsSttProvidersPage from "@/pages/TtsSttProvidersPage";
 import SpeechProviderDetailsPage from "@/pages/SpeechProviderDetailsPage";
-import WidgetScriptPage from "@/pages/WidgetScriptPage";
 import AuthSettingsPage from "@/pages/AuthSettingsPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -73,7 +72,6 @@ function MainRouter() {
       <Route path="/skills" component={SkillsPage} />
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
-      <Route path="/integrations/widget" component={WidgetScriptPage} />
       <Route path="/integrations/api" component={ApiDocsPage} />
       <Route path="/workspaces/members" component={WorkspaceMembersPage} />
       <Route path="/profile" component={ProfilePage} />
