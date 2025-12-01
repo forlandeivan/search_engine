@@ -45,7 +45,7 @@ export default function ChatMessagesArea({
 
   const headerTitle = useMemo(() => {
     if (isNewChat) {
-      return "Начните новый разговор";
+      return "";
     }
     if (chatTitle && chatTitle.trim().length > 0) {
       return chatTitle.trim();
@@ -71,7 +71,7 @@ export default function ChatMessagesArea({
     <div className="flex h-full min-h-0 flex-col">
       <header className="border-b bg-white/80 px-6 py-4 dark:bg-slate-900/40">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">{headerSkillLabel}</p>
-        <h1 className="text-xl font-semibold">{headerTitle}</h1>
+        {headerTitle && <h1 className="text-xl font-semibold">{headerTitle}</h1>}
       </header>
 
       <div
@@ -97,7 +97,7 @@ export default function ChatMessagesArea({
               <Sparkles className="mx-auto h-8 w-8 text-primary" />
               <h2 className="mt-4 text-lg font-semibold">Начните новый чат</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                Системный навык Unica Chat готов помочь. Задайте свой первый вопрос, чтобы начать.
+                Системный навык Unica Chat готов помочь. Задайте свой первый вопрос, чтобы начать
               </p>
             </div>
           ) : null}
