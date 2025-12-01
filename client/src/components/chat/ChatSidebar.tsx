@@ -109,18 +109,22 @@ export default function ChatSidebar({
       );
     }
 
-    if (workspaceSkills.length === 0) {
+    const customSkills = workspaceSkills.filter(
+      (skill) => !(skill.isSystem && skill.systemKey === "UNICA_CHAT")
+    );
+
+    if (customSkills.length === 0) {
       return <p className="text-sm text-muted-foreground">Пока нет доступных навыков.</p>;
     }
 
     return (
       <ul className="space-y-1">
-        {workspaceSkills.map((skill) => (
+        {customSkills.map((skill) => (
           <li
             key={skill.id}
             className="group flex items-center rounded-lg border border-transparent px-2 py-1 text-sm transition hover:border-slate-200 hover:bg-white dark:hover:bg-slate-900/80"
           >
-            <span className="flex-1 truncate" title={skill.name}>
+            <span className="flex-1 truncate" title={skill.name || ""}>
               {skill.name}
             </span>
             <Button
