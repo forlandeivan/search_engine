@@ -322,9 +322,8 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
                 />
                 {!isCollapsed && (
                   <div className="flex min-w-0 flex-col text-left leading-tight">
-                    <span className="text-sm font-medium">Профиль</span>
-                    <span className="text-xs text-muted-foreground truncate">{user.fullName}</span>
-                    <span className="text-[11px] text-muted-foreground/70 truncate">{user.email}</span>
+                    <span className="text-sm font-medium truncate">{user.fullName}</span>
+                    <span className="text-xs text-muted-foreground truncate">{user.email}</span>
                   </div>
                 )}
               </Link>
