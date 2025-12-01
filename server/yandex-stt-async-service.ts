@@ -7,6 +7,8 @@ import { writeFile, unlink, readFile } from "fs/promises";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import fetch from "node-fetch";
+import type { ChatMessageMetadata, TranscriptStatus } from "@shared/schema";
+import ffmpegPath from "ffmpeg-static";
 
 const createHttpProxyAgent = (url: string) => {
   try {
@@ -73,7 +75,7 @@ setInterval(() => {
 
 function needsConversion(mimeType: string): boolean {
   const baseMimeType = mimeType.split(";")[0].trim().toLowerCase();
-  // Только OGG не требует конверсии, всё остальное конвертируем
+  // Конвертируем все форматы, кроме OGG, в OGG для совместимости с async STT
   return baseMimeType !== "audio/ogg";
 }
 
@@ -91,12 +93,13 @@ export async function convertAudioToOgg(audioBuffer: Buffer, mimeType: string = 
   const inputExt = getMimeTypeExtension(mimeType);
   const inputPath = join(tmpdir(), `input_${tempId}.${inputExt}`);
   const outputPath = join(tmpdir(), `output_${tempId}.ogg`);
+  const executable = ffmpegPath || "ffmpeg";
 
   try {
     await writeFile(inputPath, audioBuffer);
 
     await new Promise<void>((resolve, reject) => {
-      const ffmpeg = spawn("ffmpeg", [
+      const ffmpeg = spawn(executable, [
         "-i", inputPath,
         "-c:a", "libopus",
         "-b:a", "48k",
@@ -148,6 +151,7 @@ export interface AsyncTranscribeOptions {
 export interface AsyncTranscribeResponse {
   operationId: string;
   message: string;
+  uploadResult?: UploadResult;
 }
 
 export interface TranscribeOperationStatus {
@@ -340,6 +344,7 @@ class YandexSttAsyncService {
       return {
         operationId,
         message: "Транскрибация началась. Пожалуйста, дождитесь завершения.",
+        uploadResult,
       };
     } catch (error) {
       if (error instanceof YandexSttAsyncError || error instanceof SpeechProviderDisabledError) {
@@ -405,6 +410,7 @@ class YandexSttAsyncService {
         if (response.status === 404) {
           cached.status = "failed";
           cached.error = "Операция не найдена на сервере Yandex";
+          await this.updateTranscriptAndMessage(cached.objectKey, "failed", undefined, cached.error);
           await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
           return {
             operationId,
@@ -425,6 +431,7 @@ class YandexSttAsyncService {
       if (operationData.error) {
         cached.status = "failed";
         cached.error = operationData.error.message;
+        await this.updateTranscriptAndMessage(cached.objectKey, "failed", undefined, operationData.error.message);
         await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
         return {
           operationId,
@@ -443,6 +450,7 @@ class YandexSttAsyncService {
         cached.status = "completed";
         cached.result = { text, lang: "ru-RU" };
 
+        await this.updateTranscriptAndMessage(cached.objectKey, "ready", text);
         await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
 
         console.info(`[yandex-stt-async] Operation completed: ${operationId}, text length: ${text.length}`);
@@ -519,6 +527,74 @@ class YandexSttAsyncService {
       }
     }
     return result;
+  }
+
+  private buildPreview(text: string, maxWords = 60): string {
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.length <= maxWords) {
+      return text.trim();
+    }
+    return words.slice(0, maxWords).join(" ").trim();
+  }
+
+  private async updateTranscriptAndMessage(
+    sourceFileId: string | undefined,
+    status: TranscriptStatus,
+    fullText?: string,
+    errorMessage?: string,
+  ): Promise<void> {
+    if (!sourceFileId) return;
+    const { storage } = await import("./storage");
+
+    const transcript = await storage.getTranscriptBySourceFileId(sourceFileId);
+    if (!transcript) {
+      return;
+    }
+
+    const updates: Partial<{
+      status: TranscriptStatus;
+      fullText: string | null;
+      previewText: string | null;
+    }> = { status };
+
+    if (status === "ready" && fullText !== undefined) {
+      updates.fullText = fullText;
+      updates.previewText = this.buildPreview(fullText);
+    }
+
+    if (status === "failed" && !updates.previewText) {
+      updates.previewText = errorMessage ?? "Ошибка распознавания аудио";
+    }
+
+    await storage.updateTranscript(transcript.id, updates);
+
+    const message = await storage.findChatMessageByTranscriptId(transcript.id);
+    if (!message) {
+      return;
+    }
+
+    const newMetadata: ChatMessageMetadata = {
+      ...(message.metadata as ChatMessageMetadata | undefined ?? {}),
+      type: "transcript",
+      transcriptId: transcript.id,
+      transcriptStatus: status,
+    };
+
+    if (updates.previewText) {
+      (newMetadata as Record<string, unknown>).previewText = updates.previewText;
+    }
+
+    let content = message.content;
+    if (status === "ready") {
+      content = "Готова стенограмма. Нажмите, чтобы открыть.";
+    } else if (status === "failed") {
+      content = "Не удалось распознать аудио. Попробуйте позже или загрузите другой файл.";
+    }
+
+    await storage.updateChatMessage(message.id, {
+      content,
+      metadata: newMetadata,
+    });
   }
 }
 

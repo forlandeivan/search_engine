@@ -21,4 +21,24 @@ export type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
   createdAt: string;
+  metadata?: {
+    type?: "transcript" | string;
+    transcriptId?: string;
+    transcriptStatus?: "processing" | "ready" | "failed";
+    previewText?: string;
+    [key: string]: unknown;
+  };
+};
+
+export type Transcript = {
+  id: string;
+  workspaceId: string;
+  chatId: string;
+  sourceFileId: string | null;
+  status: "processing" | "ready" | "failed";
+  title: string | null;
+  previewText: string | null;
+  fullText: string | null;
+  createdAt: string;
+  updatedAt: string;
 };

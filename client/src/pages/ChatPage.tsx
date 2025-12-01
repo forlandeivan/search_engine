@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput from "@/components/chat/ChatInput";
 import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { useSkills } from "@/hooks/useSkills";
-import type { ChatMessage } from "@/types/chat";
+import type { ChatMessage, Transcript } from "@/types/chat";
 
 type ChatPageParams = {
   workspaceId?: string;
@@ -35,6 +35,10 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [overrideChatId, setOverrideChatId] = useState<string | null>(null);
   const effectiveChatId = routeChatId || overrideChatId || null;
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
+  const [openedTranscriptId, setOpenedTranscriptId] = useState<string | null>(null);
+  const [openedTranscript, setOpenedTranscript] = useState<Transcript | null>(null);
+  const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
 
   const { chats } = useChats(workspaceId);
   const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
@@ -328,17 +332,15 @@ export default function ChatPage({ params }: ChatPageProps) {
               const status = await response.json();
               
               if (status.status === "completed" && status.result?.text) {
-                // Success! Send transcribed text as message
                 await streamMessage(targetChatId, status.result.text);
                 return;
               }
               
+              
               if (status.status === "failed") {
-                setStreamError(status.error || "Транскрибация не удалась. Попробуйте еще раз.");
+                setStreamError(status.error || "Transcription failed. Please try again.");
                 return;
               }
-
-              // Still pending, wait and retry
               await new Promise((resolve) => setTimeout(resolve, 1000));
               attempts++;
             } catch (error) {
@@ -348,7 +350,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             }
           }
           
-          setStreamError("Транскрибация заняла слишком много времени. Попробуйте еще раз.");
+          setStreamError("Transcription took too long. Please try again.");
         };
 
         // Start polling in background
@@ -384,6 +386,41 @@ export default function ChatPage({ params }: ChatPageProps) {
     [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, queryClient, streamMessage],
   );
 
+
+  const handleOpenTranscript = useCallback(
+    async (transcriptId: string) => {
+      if (!workspaceId || !transcriptId) {
+        return;
+      }
+      setOpenedTranscriptId(transcriptId);
+      setIsTranscriptLoading(true);
+      setTranscriptError(null);
+      try {
+        const response = await fetch(`/api/workspaces/${workspaceId}/transcripts/${transcriptId}`, {
+          credentials: "include",
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.message || `Failed to load transcript (${response.status})`);
+        }
+        const transcript = (await response.json()) as Transcript;
+        setOpenedTranscript(transcript);
+      } catch (error) {
+        setTranscriptError(error instanceof Error ? error.message : "Failed to load transcript");
+        setOpenedTranscript(null);
+      } finally {
+        setIsTranscriptLoading(false);
+      }
+    },
+    [workspaceId],
+  );
+
+  const handleCloseTranscript = useCallback(() => {
+    setOpenedTranscriptId(null);
+    setOpenedTranscript(null);
+    setTranscriptError(null);
+  }, []);
+
   const isNewChat = !effectiveChatId;
   const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
   const chatTitle = activeChat?.title ?? null;
@@ -398,72 +435,93 @@ export default function ChatPage({ params }: ChatPageProps) {
   }, []);
 
   return (
-    <div className="flex h-screen min-h-0 bg-muted/20 overflow-hidden">
-      {/*
-        Layout plan:
-        - keep the root full-height; next row splits into two fixed columns (sidebar + main).
-        - TODO: move overflow-y from the page body onto each column for independent scrolls.
-      */}
-      <div className="flex h-full min-h-0 flex-1">
-        <ChatSidebar
-          workspaceId={workspaceId}
-          selectedChatId={effectiveChatId ?? undefined}
-          onSelectChat={handleSelectChat}
-          onCreateNewChat={handleCreateNewChat}
-          onCreateChatForSkill={handleCreateChatForSkill}
-          isCreatingChat={isDefaultCreating}
-          creatingSkillId={creatingSkillId}
-          className="w-[320px] shrink-0 border-r border-slate-200/70 bg-white/70 dark:border-slate-800 dark:bg-slate-900/40"
-        />
-        {/*
-          NOTE:
-          - Right now the scrollable area for the conversation lives inside the white card below.
-            Because that card has `max-w-[880px]`/`mx-auto`, the scrollbar ends up in the middle of the screen.
-          - Target behaviour (ChatGPT-like) is to let this <section> (full width of the right column)
-            own the vertical overflow, so the scrollbar hugs the browser edge while the card remains centred.
-          - Keep this in mind when moving overflow logic in the next step.
-        */}
-        <section className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 sm:px-6 lg:px-8">
-          <div
-            ref={messagesScrollRef}
-            className="chat-scroll flex-1 overflow-y-auto"
-          >
-            <div className="mx-auto w-full max-w-[880px] rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80">
-              <ChatMessagesArea
-                chatTitle={chatTitle}
-                skillName={skillLabel}
-                messages={visibleMessages}
-                isLoading={isMessagesLoading && !isNewChat}
-                isNewChat={isNewChat}
-                isStreaming={isStreaming}
-                isTranscribing={isTranscribing}
-                streamError={streamError}
-                errorMessage={normalizedMessagesError}
-                scrollContainerRef={messagesScrollRef}
-                onReset={() => handleSelectChat(null)}
-              />
+    <>
+      <div className="flex h-screen min-h-0 bg-muted/20 overflow-hidden">
+        <div className="flex h-full min-h-0 flex-1">
+          <ChatSidebar
+            workspaceId={workspaceId}
+            selectedChatId={effectiveChatId ?? undefined}
+            onSelectChat={handleSelectChat}
+            onCreateNewChat={handleCreateNewChat}
+            onCreateChatForSkill={handleCreateChatForSkill}
+            isCreatingChat={isDefaultCreating}
+            creatingSkillId={creatingSkillId}
+            className="w-[320px] shrink-0 border-r border-slate-200/70 bg-white/70 dark:border-slate-800 dark:bg-slate-900/40"
+          />
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 sm:px-6 lg:px-8">
+            <div ref={messagesScrollRef} className="chat-scroll flex-1 overflow-y-auto">
+              <div className="mx-auto w-full max-w-[880px] rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80">
+                <ChatMessagesArea
+                  chatTitle={chatTitle}
+                  skillName={skillLabel}
+                  messages={visibleMessages}
+                  isLoading={isMessagesLoading && !isNewChat}
+                  isNewChat={isNewChat}
+                  isStreaming={isStreaming}
+                  isTranscribing={isTranscribing}
+                  streamError={streamError}
+                  errorMessage={normalizedMessagesError}
+                  scrollContainerRef={messagesScrollRef}
+                  onOpenTranscript={handleOpenTranscript}
+                  onReset={() => handleSelectChat(null)}
+                />
+              </div>
             </div>
-          </div>
-          <div className="border-t border-slate-200 bg-white/95 pb-6 pt-4 dark:border-slate-800 dark:bg-slate-900/70">
+            <div className="border-t border-slate-200 bg-white/95 pb-6 pt-4 dark:border-slate-800 dark:bg-slate-900/70">
             <ChatInput
               onSend={handleSend}
               onTranscribe={handleTranscription}
               disabled={disableInput}
-              placeholder={isNewChat ? "Начните новый чат..." : "Напишите сообщение и нажмите Enter"}
+              chatId={effectiveChatId}
+              placeholder={isNewChat ? "Start a new chat..." : "Type a message and press Enter"}
             />
-          </div>
-        </section>
+            </div>
+          </section>
+        </div>
       </div>
-    </div>
+      {openedTranscriptId ? (
+        <div className="fixed inset-0 z-50 flex">
+          <div
+            className="flex-1 bg-black/30"
+            onClick={handleCloseTranscript}
+            role="button"
+            aria-label="Close transcript"
+          />
+          <div className="relative w-full max-w-[520px] bg-white shadow-2xl dark:bg-slate-900">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Transcript</p>
+                <h2 className="text-lg font-semibold line-clamp-1">
+                  {openedTranscript?.title || "Audio transcript"}
+                </h2>
+              </div>
+              <button
+                className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800"
+                onClick={handleCloseTranscript}
+                aria-label="Close transcript"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="h-[calc(100vh-80px)] overflow-y-auto px-5 py-4">
+              {isTranscriptLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading transcript...
+                </div>
+              ) : transcriptError ? (
+                <p className="text-sm text-destructive">{transcriptError}</p>
+              ) : openedTranscript ? (
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {openedTranscript.fullText || "Transcript text is empty."}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Transcript not found.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
-}
-
-function buildLocalMessage(role: ChatMessage["role"], chatId: string, content: string): ChatMessage {
-  return {
-    id: `local-${role}-${Date.now()}`,
-    chatId,
-    role,
-    content,
-    createdAt: new Date().toISOString(),
-  };
 }

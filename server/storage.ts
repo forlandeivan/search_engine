@@ -23,6 +23,7 @@ import {
   unicaChatConfig,
   chatSessions,
   chatMessages,
+  transcripts,
   speechProviders,
   speechProviderSecrets,
   type KnowledgeBaseSearchSettingsRow,
@@ -54,6 +55,10 @@ import {
   type ChatSessionInsert,
   type ChatMessage,
   type ChatMessageInsert,
+  type Transcript,
+  type TranscriptInsert,
+  type TranscriptStatus,
+  type ChatMessageMetadata,
   type SpeechProvider,
   type SpeechProviderInsert,
   type SpeechProviderSecret,
@@ -897,6 +902,8 @@ let chatSessionsTableEnsured = false;
 let ensuringChatSessionsTable: Promise<void> | null = null;
 let chatMessagesTableEnsured = false;
 let ensuringChatMessagesTable: Promise<void> | null = null;
+let transcriptsTableEnsured = false;
+let ensuringTranscriptsTable: Promise<void> | null = null;
 
 let workspaceCollectionsTableEnsured = false;
 let ensuringWorkspaceCollectionsTable: Promise<void> | null = null;
@@ -1187,9 +1194,70 @@ async function ensureChatMessagesTable(): Promise<void> {
   ensuringChatMessagesTable = null;
 }
 
+async function ensureTranscriptsTable(): Promise<void> {
+  if (transcriptsTableEnsured) {
+    return;
+  }
+
+  if (ensuringTranscriptsTable) {
+    await ensuringTranscriptsTable;
+    return;
+  }
+
+  ensuringTranscriptsTable = (async () => {
+    await ensureChatSessionsTable();
+    await ensureWorkspacesTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "transcripts" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "workspace_id" varchar NOT NULL,
+        "chat_id" varchar NOT NULL,
+        "source_file_id" varchar,
+        "status" text NOT NULL DEFAULT 'processing',
+        "title" text,
+        "preview_text" text,
+        "full_text" text,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "transcripts",
+      "transcripts_workspace_id_fkey",
+      sql`
+        ALTER TABLE "transcripts"
+        ADD CONSTRAINT "transcripts_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "transcripts",
+      "transcripts_chat_id_fkey",
+      sql`
+        ALTER TABLE "transcripts"
+        ADD CONSTRAINT "transcripts_chat_id_fkey"
+        FOREIGN KEY ("chat_id") REFERENCES "chat_sessions"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "transcripts_workspace_idx" ON "transcripts" ("workspace_id")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "transcripts_chat_idx" ON "transcripts" ("chat_id")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "transcripts_status_idx" ON "transcripts" ("status")`);
+
+    transcriptsTableEnsured = true;
+  })();
+
+  await ensuringTranscriptsTable;
+  ensuringTranscriptsTable = null;
+}
+
 async function ensureChatTables(): Promise<void> {
   await ensureChatSessionsTable();
   await ensureChatMessagesTable();
+  await ensureTranscriptsTable();
 }
 
 export async function ensureKnowledgeBaseTables(): Promise<void> {
@@ -4506,6 +4574,16 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(speechProviderSecrets.providerId, providerId), eq(speechProviderSecrets.secretKey, secretKey)));
   }
 
+  async getWorkspaceMember(userId: string, workspaceId: string): Promise<WorkspaceMember | undefined> {
+    await ensureWorkspaceMembersTable();
+    const [member] = await this.db
+      .select()
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.userId, userId), eq(workspaceMembers.workspaceId, workspaceId)))
+      .limit(1);
+    return member ?? undefined;
+  }
+
   async listChatSessions(
     workspaceId: string,
     userId: string,
@@ -4659,6 +4737,86 @@ export class DatabaseStorage implements IStorage {
       .from(chatMessages)
       .where(eq(chatMessages.chatId, chatId));
     return Number(result[0]?.count ?? 0);
+  }
+
+  async updateChatMessage(
+    id: string,
+    updates: Partial<Pick<ChatMessageInsert, "content" | "metadata">>,
+  ): Promise<ChatMessage | undefined> {
+    if (!updates || Object.keys(updates).length === 0) {
+      return await this.getChatMessage(id);
+    }
+
+    await ensureChatTables();
+    const [updated] = await this.db
+      .update(chatMessages)
+      .set({
+        ...updates,
+      })
+      .where(eq(chatMessages.id, id))
+      .returning();
+
+    return updated ?? undefined;
+  }
+
+  async findChatMessageByTranscriptId(transcriptId: string): Promise<ChatMessage | undefined> {
+    await ensureChatTables();
+    const [message] = await this.db
+      .select()
+      .from(chatMessages)
+      .where(eq(sql`"metadata"->>'transcriptId'`, transcriptId))
+      .limit(1);
+    return message ?? undefined;
+  }
+
+  async createTranscript(values: TranscriptInsert): Promise<Transcript> {
+    await ensureChatTables();
+    const [created] = await this.db.insert(transcripts).values(values).returning();
+    return created;
+  }
+
+  async getTranscriptBySourceFileId(sourceFileId: string): Promise<Transcript | undefined> {
+    await ensureChatTables();
+    const [found] = await this.db
+      .select()
+      .from(transcripts)
+      .where(eq(transcripts.sourceFileId, sourceFileId))
+      .limit(1);
+    return found ?? undefined;
+  }
+
+  async getTranscriptById(id: string): Promise<Transcript | undefined> {
+    await ensureChatTables();
+    const [found] = await this.db.select().from(transcripts).where(eq(transcripts.id, id)).limit(1);
+    return found ?? undefined;
+  }
+
+  async updateTranscript(
+    id: string,
+    updates: Partial<Pick<TranscriptInsert, "status" | "title" | "previewText" | "fullText">>,
+  ): Promise<Transcript | undefined> {
+    if (!updates || Object.keys(updates).length === 0) {
+      const [current] = await this.db.select().from(transcripts).where(eq(transcripts.id, id)).limit(1);
+      return current ?? undefined;
+    }
+
+    await ensureChatTables();
+    const [updated] = await this.db
+      .update(transcripts)
+      .set({
+        ...updates,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(transcripts.id, id))
+      .returning();
+
+    return updated ?? undefined;
+  }
+
+  async createTranscript(values: TranscriptInsert): Promise<Transcript> {
+    await ensureChatTables();
+    const [created] = await this.db.insert(transcripts).values(values).returning();
+    return created;
   }
 
   async updateChatTitleIfEmpty(chatId: string, title: string): Promise<boolean> {

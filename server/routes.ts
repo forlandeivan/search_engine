@@ -130,6 +130,7 @@ import {
   workspaceMemberRoles,
   type KnowledgeBaseAskAiPipelineStepLog,
   type UnicaChatConfigInsert,
+  type ChatMessageMetadata,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type { KnowledgeBaseSearchSettingsRow } from "@shared/schema";
@@ -8573,6 +8574,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get(
+    "/api/workspaces/:workspaceId/transcripts/:transcriptId",
+    requireAuth,
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const { workspaceId, transcriptId } = req.params;
+        if (!workspaceId || !transcriptId) {
+          return res.status(400).json({ message: "workspaceId и transcriptId обязательны" });
+        }
+
+        const transcript = await storage.getTranscriptById?.(transcriptId);
+        if (!transcript || transcript.workspaceId !== workspaceId) {
+          return res.status(404).json({ message: "Стенограмма не найдена" });
+        }
+
+        // Проверка доступа: пользователь должен быть участником workspace (по аналогии с чатом)
+        const workspaceMember = await storage.getWorkspaceMember(user.id, workspaceId);
+        if (!workspaceMember) {
+          return res.status(403).json({ message: "Нет доступа к рабочему пространству" });
+        }
+
+        res.json({
+          id: transcript.id,
+          workspaceId: transcript.workspaceId,
+          chatId: transcript.chatId,
+          sourceFileId: transcript.sourceFileId,
+          status: transcript.status,
+          title: transcript.title,
+          previewText: transcript.previewText,
+          fullText: transcript.fullText,
+          createdAt: transcript.createdAt,
+          updatedAt: transcript.updatedAt,
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
   const audioUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -8605,6 +8650,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         const lang = typeof req.body.lang === "string" ? req.body.lang : undefined;
+        const chatId = pickFirstString(req.body?.chatId, req.body?.chat_id, req.query.chatId, req.query.chat_id);
+        if (!chatId) {
+          return res.status(400).json({ message: "chatId обязателен для транскрибации" });
+        }
+
+        const chat = await storage.getChatSessionById(chatId);
+        if (!chat || chat.userId !== user.id) {
+          return res.status(404).json({ message: "Чат не найден или недоступен" });
+        }
+        const workspaceId = chat.workspaceId;
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
@@ -8634,9 +8689,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
             originalFileName: file.originalname,
           });
 
+          const transcript = await storage.createTranscript({
+            workspaceId,
+            chatId,
+            sourceFileId: response.uploadResult?.objectKey ?? null,
+            status: "processing",
+            title: file.originalname ? `Аудиозапись: ${file.originalname}` : "Аудиозапись заседания",
+            previewText: null,
+            fullText: null,
+          });
+
+          const placeholderMetadata: ChatMessageMetadata = {
+            type: "transcript",
+            transcriptId: transcript.id,
+            transcriptStatus: "processing",
+          };
+
+          const placeholderMessage = await storage.createChatMessage({
+            chatId,
+            role: "assistant",
+            content: "Аудиозапись загружена. Идёт расшифровка...",
+            metadata: placeholderMetadata,
+          });
+
           res.json({
             operationId: response.operationId,
             message: response.message,
+            transcriptId: transcript.id,
+            chatMessage: {
+              id: placeholderMessage.id,
+              chatId: placeholderMessage.chatId,
+              role: placeholderMessage.role,
+              content: placeholderMessage.content,
+              metadata: placeholderMessage.metadata ?? {},
+              createdAt: placeholderMessage.createdAt,
+            },
           });
         }
       } catch (error) {

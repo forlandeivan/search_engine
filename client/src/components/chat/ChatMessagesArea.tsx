@@ -18,6 +18,7 @@ type ChatMessagesAreaProps = {
   errorMessage: string | null;
   onReset?: () => void;
   scrollContainerRef?: RefObject<HTMLElement | null>;
+  onOpenTranscript?: (transcriptId: string) => void;
 };
 
 export default function ChatMessagesArea({
@@ -32,6 +33,7 @@ export default function ChatMessagesArea({
   errorMessage,
   onReset,
   scrollContainerRef,
+  onOpenTranscript,
 }: ChatMessagesAreaProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -117,6 +119,7 @@ export default function ChatMessagesArea({
                   previousRole={index > 0 ? messages[index - 1]?.role : undefined}
                   isStreamingBubble={streamingAssistantId === message.id}
                   isTranscribingBubble={isTranscribing && index === messages.length - 1 && message.role === "assistant" && !message.content}
+                  onOpenTranscript={onOpenTranscript}
                 />
               ))
             : null}
@@ -145,9 +148,16 @@ type ChatBubbleProps = {
   previousRole?: ChatMessage["role"];
   isStreamingBubble?: boolean;
   isTranscribingBubble?: boolean;
+  onOpenTranscript?: (transcriptId: string) => void;
 };
 
-function ChatBubble({ message, previousRole, isStreamingBubble = false, isTranscribingBubble = false }: ChatBubbleProps) {
+function ChatBubble({
+  message,
+  previousRole,
+  isStreamingBubble = false,
+  isTranscribingBubble = false,
+  onOpenTranscript,
+}: ChatBubbleProps) {
   const isUser = message.role === "user";
   const isGroupedWithPrevious = previousRole === message.role;
   const timestamp =
@@ -167,6 +177,9 @@ function ChatBubble({ message, previousRole, isStreamingBubble = false, isTransc
     resetKey: message.id,
   });
 
+  const metadata = (message.metadata ?? {}) as ChatMessage["metadata"];
+  const isTranscript = metadata?.type === "transcript" && metadata.transcriptId;
+
   return (
     <div
       className={cn(
@@ -184,7 +197,13 @@ function ChatBubble({ message, previousRole, isStreamingBubble = false, isTransc
         )}
         tabIndex={0}
       >
-        {isTranscribingBubble ? (
+        {isTranscript ? (
+          <TranscriptCard
+            status={(metadata?.transcriptStatus as string) ?? "processing"}
+            preview={metadata?.previewText || message.content}
+            onOpen={() => metadata?.transcriptId && onOpenTranscript?.(metadata.transcriptId)}
+          />
+        ) : isTranscribingBubble ? (
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" />
             <span>Анализируем запись...</span>
@@ -206,6 +225,48 @@ function ChatBubble({ message, previousRole, isStreamingBubble = false, isTransc
           </p>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function TranscriptCard({
+  status,
+  preview,
+  onOpen,
+}: {
+  status: string;
+  preview?: string;
+  onOpen?: () => void;
+}) {
+  if (status === "processing") {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm font-semibold">Аудиозапись загружена</p>
+        <p className="text-sm text-muted-foreground">Идёт расшифровка…</p>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Обработка может занять несколько минут
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "failed") {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-destructive">Не удалось распознать аудио</p>
+        <p className="text-sm text-muted-foreground">Попробуйте загрузить запись повторно.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-semibold">Стенограмма заседания</p>
+      {preview ? <p className="text-sm text-muted-foreground line-clamp-2">{preview}</p> : null}
+      <Button size="sm" onClick={onOpen}>
+        Открыть стенограмму
+      </Button>
     </div>
   );
 }

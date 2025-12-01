@@ -839,11 +839,45 @@ export const chatMessages = pgTable(
       .references(() => chatSessions.id, { onDelete: "cascade" }),
     role: text("role").$type<ChatMessageRole>().notNull(),
     content: text("content").notNull(),
-    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    metadata: jsonb("metadata").$type<ChatMessageMetadata>().notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
   (table) => ({
     chatIdx: index("chat_messages_chat_idx").on(table.chatId, table.createdAt),
+  }),
+);
+
+export const transcriptStatuses = ["processing", "ready", "failed"] as const;
+export type TranscriptStatus = (typeof transcriptStatuses)[number];
+
+export type ChatMessageMetadata = {
+  transcriptId?: string;
+  transcriptStatus?: TranscriptStatus;
+  [key: string]: unknown;
+};
+
+export const transcripts = pgTable(
+  "transcripts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    chatId: varchar("chat_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    sourceFileId: varchar("source_file_id"),
+    status: text("status").$type<TranscriptStatus>().notNull().default("processing"),
+    title: text("title"),
+    previewText: text("preview_text"),
+    fullText: text("full_text"),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("transcripts_workspace_idx").on(table.workspaceId),
+    chatIdx: index("transcripts_chat_idx").on(table.chatId),
+    statusIdx: index("transcripts_status_idx").on(table.status),
   }),
 );
 
@@ -1266,6 +1300,8 @@ export type ChatSession = typeof chatSessions.$inferSelect;
 export type ChatSessionInsert = typeof chatSessions.$inferInsert;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type ChatMessageInsert = typeof chatMessages.$inferInsert;
+export type Transcript = typeof transcripts.$inferSelect;
+export type TranscriptInsert = typeof transcripts.$inferInsert;
 export type KnowledgeBaseRagRequest = typeof knowledgeBaseRagRequests.$inferSelect;
 export type KnowledgeBaseRagRequestInsert = typeof knowledgeBaseRagRequests.$inferInsert;
 export type KnowledgeBaseSearchSettingsRow = typeof knowledgeBaseSearchSettings.$inferSelect;
