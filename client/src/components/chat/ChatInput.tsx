@@ -252,7 +252,7 @@ export default function ChatInput({
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
-        className={`rounded-[28px] border px-4 py-3 shadow-lg transition-colors sm:px-5 sm:py-4 ${
+        className={`rounded-[28px] border px-4 py-2 shadow-lg transition-colors sm:px-5 sm:py-2 ${
           isDragOver
             ? "border-blue-400 bg-blue-50/50 dark:border-blue-500 dark:bg-blue-950/30"
             : "border-slate-200 bg-white/95 dark:border-slate-700 dark:bg-slate-900/90"
@@ -305,7 +305,7 @@ export default function ChatInput({
                 handleSend();
               }
             }}
-            className="h-11 flex-1 resize-none border-none bg-transparent px-0 py-0 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="h-11 flex-1 resize-none border-none bg-transparent px-0 py-2 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="input-chat-message"
           />
           <Button
