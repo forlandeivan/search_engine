@@ -1218,6 +1218,7 @@ async function ensureTranscriptsTable(): Promise<void> {
         "title" text,
         "preview_text" text,
         "full_text" text,
+        "last_edited_by_user_id" varchar,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
@@ -1246,6 +1247,9 @@ async function ensureTranscriptsTable(): Promise<void> {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS "transcripts_workspace_idx" ON "transcripts" ("workspace_id")`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS "transcripts_chat_idx" ON "transcripts" ("chat_id")`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS "transcripts_status_idx" ON "transcripts" ("status")`);
+    await db.execute(
+      sql`ALTER TABLE "transcripts" ADD COLUMN IF NOT EXISTS "last_edited_by_user_id" varchar`,
+    );
 
     transcriptsTableEnsured = true;
   })();
@@ -4793,7 +4797,9 @@ export class DatabaseStorage implements IStorage {
 
   async updateTranscript(
     id: string,
-    updates: Partial<Pick<TranscriptInsert, "status" | "title" | "previewText" | "fullText">>,
+    updates: Partial<
+      Pick<TranscriptInsert, "status" | "title" | "previewText" | "fullText" | "lastEditedByUserId">
+    >,
   ): Promise<Transcript | undefined> {
     if (!updates || Object.keys(updates).length === 0) {
       const [current] = await this.db.select().from(transcripts).where(eq(transcripts.id, id)).limit(1);

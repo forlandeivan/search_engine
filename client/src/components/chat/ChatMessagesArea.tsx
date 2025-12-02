@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Loader2, Sparkles, Music } from "lucide-react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { useTypewriter } from "@/hooks/useTypewriter";
 type ChatMessagesAreaProps = {
   chatTitle: string | null;
   skillName: string | null;
+  chatId?: string | null;
   messages: ChatMessage[];
   isLoading: boolean;
   isNewChat: boolean;
@@ -19,11 +20,13 @@ type ChatMessagesAreaProps = {
   onReset?: () => void;
   scrollContainerRef?: RefObject<HTMLElement | null>;
   onOpenTranscript?: (transcriptId: string) => void;
+  onRenameChat?: (title: string) => Promise<void>;
 };
 
 export default function ChatMessagesArea({
   chatTitle,
   skillName,
+  chatId,
   messages,
   isLoading,
   isNewChat,
@@ -34,32 +37,28 @@ export default function ChatMessagesArea({
   onReset,
   scrollContainerRef,
   onOpenTranscript,
+  onRenameChat,
 }: ChatMessagesAreaProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(chatTitle ?? "");
+  const [isSavingTitle, setIsSavingTitle] = useState(false);
 
   useEffect(() => {
     const target = scrollContainerRef?.current ?? listRef.current;
-    if (!target) {
-      return;
-    }
+    if (!target) return;
     target.scrollTo({ top: target.scrollHeight, behavior: "smooth" });
   }, [messages, scrollContainerRef]);
 
   const headerTitle = useMemo(() => {
-    if (isNewChat) {
-      return "";
-    }
-    if (chatTitle && chatTitle.trim().length > 0) {
-      return chatTitle.trim();
-    }
-    return "Последний разговор";
+    if (isNewChat) return "";
+    if (chatTitle && chatTitle.trim().length > 0) return chatTitle.trim();
+    return "История диалога";
   }, [chatTitle, isNewChat]);
 
   const headerSkillLabel = skillName || "Unica Chat";
   const streamingAssistantId = useMemo(() => {
-    if (!isStreaming || messages.length === 0) {
-      return null;
-    }
+    if (!isStreaming || messages.length === 0) return null;
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const candidate = messages[index];
       if (candidate.role === "assistant" && candidate.id?.startsWith("local-assistant")) {
@@ -73,22 +72,78 @@ export default function ChatMessagesArea({
     <div className="flex h-full min-h-0 flex-col">
       <header className="border-b bg-white/80 px-6 py-4 dark:bg-slate-900/40">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">{headerSkillLabel}</p>
-        {headerTitle && <h1 className="text-xl font-semibold">{headerTitle}</h1>}
+        {headerTitle && !isEditingTitle ? (
+          <h1
+            className="text-xl font-semibold cursor-pointer hover:underline"
+            title="Переименовать чат"
+            onClick={() => {
+              if (!chatId || !onRenameChat) return;
+              setDraftTitle(headerTitle);
+              setIsEditingTitle(true);
+            }}
+          >
+            {headerTitle}
+          </h1>
+        ) : null}
+        {isEditingTitle ? (
+          <div className="flex items-center gap-2">
+            <input
+              className="w-full max-w-xs rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-800"
+              value={draftTitle}
+              autoFocus
+              onChange={(e) => setDraftTitle(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (!onRenameChat || !draftTitle.trim()) {
+                    setIsEditingTitle(false);
+                    return;
+                  }
+                  try {
+                    setIsSavingTitle(true);
+                    await onRenameChat(draftTitle);
+                  } finally {
+                    setIsSavingTitle(false);
+                    setIsEditingTitle(false);
+                  }
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setDraftTitle(headerTitle);
+                  setIsEditingTitle(false);
+                }
+              }}
+              onBlur={async () => {
+                if (!onRenameChat || !draftTitle.trim()) {
+                  setIsEditingTitle(false);
+                  return;
+                }
+                try {
+                  setIsSavingTitle(true);
+                  await onRenameChat(draftTitle);
+                } finally {
+                  setIsSavingTitle(false);
+                  setIsEditingTitle(false);
+                }
+              }}
+            />
+            {isSavingTitle ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
+          </div>
+        ) : null}
       </header>
 
       <div
         ref={listRef}
         className="flex-1 min-h-0 px-5 pb-24 pt-5 sm:px-6 lg:px-8 overflow-visible"
       >
-        {/* 10px horizontal padding keeps bubbles near the edges but not touching */}
         <div className="flex h-full min-h-0 flex-col px-2.5">
           {errorMessage ? (
             <div className="mx-auto mt-10 max-w-lg rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
-              <h2 className="text-lg font-semibold">Не удалось открыть чат</h2>
+              <h2 className="text-lg font-semibold">Не удалось загрузить сообщения</h2>
               <p className="mt-2 text-sm text-muted-foreground">{errorMessage}</p>
               {onReset ? (
                 <Button className="mt-4" variant="outline" onClick={onReset}>
-                  Вернуться к списку
+                  Вернуться к списку диалогов
                 </Button>
               ) : null}
             </div>
@@ -97,9 +152,9 @@ export default function ChatMessagesArea({
           {!errorMessage && isNewChat && messages.length === 0 ? (
             <div className="mx-auto mt-10 max-w-xl rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
               <Sparkles className="mx-auto h-8 w-8 text-primary" />
-              <h2 className="mt-4 text-lg font-semibold">Начните новый чат</h2>
+              <h2 className="mt-4 text-lg font-semibold">Создайте первый запрос</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                Системный навык Unica Chat готов помочь. Задайте свой первый вопрос, чтобы начать
+                Напишите вопрос или прикрепите аудио — ответ появится здесь.
               </p>
             </div>
           ) : null}
@@ -107,7 +162,7 @@ export default function ChatMessagesArea({
           {isLoading && !errorMessage ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Загрузка истории чата...
+              Загружаем историю чата...
             </div>
           ) : null}
 
@@ -118,14 +173,19 @@ export default function ChatMessagesArea({
                   message={message}
                   previousRole={index > 0 ? messages[index - 1]?.role : undefined}
                   isStreamingBubble={streamingAssistantId === message.id}
-                  isTranscribingBubble={isTranscribing && index === messages.length - 1 && message.role === "assistant" && !message.content}
+                  isTranscribingBubble={
+                    isTranscribing &&
+                    index === messages.length - 1 &&
+                    message.role === "assistant" &&
+                    !message.content
+                  }
                   onOpenTranscript={onOpenTranscript}
                 />
               ))
             : null}
 
           {!isLoading && !errorMessage && messages.length === 0 && !isNewChat ? (
-            <div className="text-center text-sm text-muted-foreground">Сообщений нет.</div>
+            <div className="text-center text-sm text-muted-foreground">Сообщений пока нет.</div>
           ) : null}
         </div>
       </div>
@@ -136,7 +196,7 @@ export default function ChatMessagesArea({
 
       {isStreaming ? (
         <div className="border-t bg-white/60 px-6 py-3 text-sm text-muted-foreground dark:bg-slate-900/60">
-          Помощник печатает...
+          Формируем ответ...
         </div>
       ) : null}
     </div>
@@ -164,14 +224,14 @@ function ChatBubble({
     message.createdAt && !Number.isNaN(Date.parse(message.createdAt))
       ? new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       : "";
-  
+
   const isAudioFile = message.content?.startsWith("__AUDIO_FILE__:");
   const audioFileName = isAudioFile ? message.content.substring("__AUDIO_FILE__:".length) : "";
   const getAudioExtension = (fileName: string) => {
     const match = fileName.match(/\.([^.]+)$/);
     return match ? match[1].toUpperCase() : "AUDIO";
   };
-  
+
   const displayContent = useTypewriter(message.content ?? "", {
     enabled: isStreamingBubble && !isAudioFile,
     resetKey: message.id,
@@ -206,7 +266,7 @@ function ChatBubble({
         ) : isTranscribingBubble ? (
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" />
-            <span>Анализируем запись...</span>
+            <span>Идёт расшифровка аудио…</span>
           </div>
         ) : isAudioFile ? (
           <div className="flex items-center gap-2">
@@ -241,11 +301,11 @@ function TranscriptCard({
   if (status === "processing") {
     return (
       <div className="space-y-2">
-        <p className="text-sm font-semibold">Аудиозапись загружена</p>
-        <p className="text-sm text-muted-foreground">Идёт расшифровка…</p>
+        <p className="text-sm font-semibold">Идёт расшифровка аудио…</p>
+        <p className="text-sm text-muted-foreground">Обработка может занять несколько минут</p>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Обработка может занять несколько минут
+          Подождите, готовим стенограмму
         </div>
       </div>
     );
@@ -255,18 +315,25 @@ function TranscriptCard({
     return (
       <div className="space-y-2">
         <p className="text-sm font-semibold text-destructive">Не удалось распознать аудио</p>
-        <p className="text-sm text-muted-foreground">Попробуйте загрузить запись повторно.</p>
+        <p className="text-sm text-muted-foreground">Пожалуйста, попробуйте загрузить файл снова.</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-2">
-      <p className="text-sm font-semibold">Стенограмма заседания</p>
-      {preview ? <p className="text-sm text-muted-foreground line-clamp-2">{preview}</p> : null}
-      <Button size="sm" onClick={onOpen}>
-        Открыть стенограмму
-      </Button>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">Стенограмма заседания</p>
+          {status === "ready" ? (
+            <p className="text-xs text-muted-foreground">Готова к просмотру</p>
+          ) : null}
+        </div>
+        <Button size="sm" variant="outline" onClick={onOpen}>
+          Открыть стенограмму
+        </Button>
+      </div>
+      {preview ? <p className="text-sm text-muted-foreground">{preview}</p> : null}
     </div>
   );
 }

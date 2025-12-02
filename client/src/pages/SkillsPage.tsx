@@ -56,32 +56,30 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useToast } from "@/hooks/use-toast";
 
 import { useSkills, useCreateSkill, useUpdateSkill } from "@/hooks/useSkills";
-import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
+import type { ActionDto, SkillActionDto } from "@shared/skills";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { Skill, SkillPayload } from "@/types/skill";
 
 const skillFormSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "Нужно указать название")
-    .max(200, "Название до 200 символов"),
+  name: z.string().trim().min(1, "Название обязательно").max(200, "Не более 200 символов"),
   description: z
     .string()
-    .max(4000, "Описание до 4000 символов")
+    .max(4000, "Не более 4000 символов")
     .optional()
     .or(z.literal("")),
   knowledgeBaseIds: z.array(z.string()).min(1, "Выберите хотя бы одну базу знаний"),
-  llmKey: z.string().min(1, "Выберите модель LLM"),
+  llmKey: z.string().min(1, "Выберите конфиг LLM"),
   systemPrompt: z
     .string()
-    .max(20000, "Системный промпт до 20000 символов")
+    .max(20000, "Не более 20000 символов")
     .optional()
     .or(z.literal("")),
   ragMode: z.enum(["all_collections", "selected_collections"]),
@@ -92,6 +90,9 @@ const skillFormSchema = z.object({
   ragShowSources: z.boolean(),
   ragEmbeddingProviderId: z.string().optional().or(z.literal("")),
 });
+
+
+
 
 const buildLlmKey = (providerId: string, modelId: string) => `${providerId}::${modelId}`;
 
@@ -144,6 +145,30 @@ type VectorCollectionMultiSelectProps = {
 
 type VectorCollectionsResponse = {
   collections: VectorCollectionSummary[];
+};
+
+type SkillActionConfigItem = {
+  action: ActionDto;
+  skillAction: SkillActionDto | null;
+  ui: {
+    effectiveLabel: string;
+    editable: boolean;
+  };
+};
+
+type SkillActionRowState = {
+  action: ActionDto;
+  skillAction: SkillActionDto | null;
+  ui: {
+    effectiveLabel: string;
+    editable: boolean;
+  };
+  enabled: boolean;
+  enabledPlacements: string[];
+  labelOverride: string | null;
+  saving: boolean;
+  editing: boolean;
+  draftLabel: string;
 };
 
 function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }: KnowledgeBaseMultiSelectProps) {
@@ -321,6 +346,406 @@ function InfoTooltipIcon({ text }: InfoTooltipIconProps) {
       </TooltipTrigger>
       <TooltipContent className="max-w-xs text-xs">{text}</TooltipContent>
     </Tooltip>
+  );
+}
+
+type SkillActionsPreviewProps = {
+  skillId: string;
+  canEdit?: boolean;
+};
+
+function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewProps) {
+  const { toast } = useToast();
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery<SkillActionConfigItem[]>({
+    queryKey: ["skill-actions", skillId],
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/skills/${skillId}/actions`);
+      const json = await response.json();
+      return (json.items ?? []) as SkillActionConfigItem[];
+    },
+  });
+
+  const [rows, setRows] = useState<SkillActionRowState[]>([]);
+
+  useEffect(() => {
+    if (!data) return;
+    setRows(
+      data.map((item) => ({
+        ...item,
+        enabled: item.skillAction?.enabled ?? false,
+        enabledPlacements: item.skillAction?.enabledPlacements ?? [],
+        labelOverride: item.skillAction?.labelOverride ?? null,
+        saving: false,
+        editing: false,
+        draftLabel: item.skillAction?.labelOverride ?? "",
+        ui: { ...item.ui, editable: item.ui.editable && canEdit },
+      })),
+    );
+  }, [data, canEdit]);
+
+  const targetLabels: Record<string, string> = {
+    transcript: "Стенограмма",
+    message: "Сообщение",
+    selection: "Выделение",
+    conversation: "Диалог",
+  };
+
+  const outputModeLabels: Record<string, string> = {
+    replace_text: "Заменить текст",
+    new_version: "Новая версия",
+    new_message: "Новое сообщение",
+    document: "Документ",
+  };
+  const placementTooltips: Record<string, string> = {
+    canvas: "Холст — панель действий справа от стенограммы",
+    chat_message: "Действия в меню конкретного сообщения",
+    chat_toolbar: "Быстрые действия над полем ввода/диалогом",
+  };
+
+  const [search, setSearch] = useState("");
+  const [scopeFilter, setScopeFilter] = useState<"all" | "system" | "workspace">("all");
+  const [enabledFilter, setEnabledFilter] = useState<"all" | "enabled" | "disabled">("all");
+  const [targetFilter, setTargetFilter] = useState<string | "all">("all");
+
+  const sendUpdate = async (row: SkillActionRowState, next: Partial<SkillActionRowState>) => {
+    setRows((prev) =>
+      prev.map((item) => (item.action.id === row.action.id ? { ...item, ...next, saving: true } : item)),
+    );
+
+    const payload = {
+      enabled: next.enabled ?? row.enabled,
+      enabledPlacements: next.enabledPlacements ?? row.enabledPlacements,
+      labelOverride:
+        next.labelOverride === undefined
+          ? row.labelOverride
+          : next.labelOverride && next.labelOverride.trim().length > 0
+            ? next.labelOverride
+            : null,
+    };
+
+    try {
+      const response = await apiRequest("PATCH", `/api/skills/${skillId}/actions/${row.action.id}`, {
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error("Не удалось сохранить изменения");
+      }
+      setRows((prev) =>
+        prev.map((item) =>
+          item.action.id === row.action.id
+            ? {
+                ...item,
+                enabled: payload.enabled,
+                enabledPlacements: payload.enabledPlacements,
+                labelOverride: payload.labelOverride,
+                ui: { ...item.ui, effectiveLabel: payload.labelOverride ?? item.action.label },
+                saving: false,
+                editing: false,
+                draftLabel: payload.labelOverride ?? "",
+              }
+            : item,
+        ),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Не удалось сохранить изменения";
+      toast({
+        title: "Ошибка",
+        description: message,
+        variant: "destructive",
+      });
+      // откат
+      setRows((prev) =>
+        prev.map((item) =>
+          item.action.id === row.action.id
+            ? {
+                ...item,
+                saving: false,
+              }
+            : item,
+        ),
+      );
+    }
+  };
+
+  const renderPlacementCell = (row: SkillActionRowState, placement: string) => {
+    const supported = row.action.placements.includes(placement as any);
+    const active = supported && row.enabledPlacements.includes(placement as any);
+
+    if (!supported) {
+      return <span className="text-center text-xs text-muted-foreground">—</span>;
+    }
+
+    return (
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Checkbox
+              checked={active}
+              disabled={!row.ui.editable || row.saving}
+              aria-label={placement}
+              onCheckedChange={(checked) => {
+                if (!row.ui.editable || row.saving) return;
+                const nextPlacements = checked
+                  ? [...row.enabledPlacements, placement]
+                  : row.enabledPlacements.filter((p) => p !== placement);
+                sendUpdate(row, { enabledPlacements: nextPlacements });
+              }}
+            />
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-xs text-xs">
+            {placementTooltips[placement] ?? placement}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  };
+
+  if (isLoading && rows.length === 0) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Загрузка действий...
+      </div>
+    );
+  }
+
+  if (isError) {
+    const message = error instanceof Error ? error.message : "Не удалось загрузить действия";
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Ошибка загрузки</AlertTitle>
+        <AlertDescription className="flex items-center justify-between gap-4">
+          <span className="text-sm">{message}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => refetch()}>
+            Повторить
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  const filteredRows = rows.filter((row) => {
+    const q = search.trim().toLowerCase();
+    const labelText = (row.labelOverride ?? row.ui.effectiveLabel ?? row.action.label ?? "").toLowerCase();
+    const descText = (row.action.description ?? "").toLowerCase();
+    if (q && !labelText.includes(q) && !descText.includes(q)) {
+      return false;
+    }
+
+    if (scopeFilter === "system" && row.action.scope !== "system") return false;
+    if (scopeFilter === "workspace" && row.action.scope !== "workspace") return false;
+
+    if (enabledFilter === "enabled" && !row.enabled) return false;
+    if (enabledFilter === "disabled" && row.enabled) return false;
+
+    if (targetFilter !== "all" && row.action.target !== targetFilter) return false;
+
+    return true;
+  });
+
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
+        Для этого навыка пока нет доступных действий.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
+        <div className="flex-1 min-w-[220px]">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Поиск по названию и описанию..."
+          />
+        </div>
+        <Select value={scopeFilter} onValueChange={(v) => setScopeFilter(v as any)}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Scope" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="system">Системные</SelectItem>
+            <SelectItem value="workspace">Рабочего пространства</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={enabledFilter} onValueChange={(v) => setEnabledFilter(v as any)}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Статус" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все</SelectItem>
+            <SelectItem value="enabled">Только включённые</SelectItem>
+            <SelectItem value="disabled">Только выключенные</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={targetFilter} onValueChange={(v) => setTargetFilter(v as any)}>
+          <SelectTrigger className="w-[170px]">
+            <SelectValue placeholder="Цель" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все цели</SelectItem>
+            <SelectItem value="transcript">Стенограмма</SelectItem>
+            <SelectItem value="message">Сообщение</SelectItem>
+            <SelectItem value="selection">Выделение</SelectItem>
+            <SelectItem value="conversation">Диалог</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <p className="text-sm text-muted-foreground">
+        Отметьте, какие действия доступны в этом навыке и где они отображаются: в холсте, сообщениях чата или в панели ввода.
+      </p>
+
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Название</TableHead>
+            <TableHead>Scope</TableHead>
+            <TableHead>Target</TableHead>
+            <TableHead>Enabled</TableHead>
+            <TableHead className="text-center">Canvas</TableHead>
+            <TableHead className="text-center">Message</TableHead>
+            <TableHead className="text-center">Toolbar</TableHead>
+            <TableHead>Output</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filteredRows.map((row) => {
+            const { action, ui } = row;
+            const label = row.labelOverride ?? action.label;
+            return (
+              <TableRow key={action.id}>
+                <TableCell>
+                  <div className="space-y-1">
+                    <div className="flex items-start gap-2">
+                      {row.editing ? (
+                        <div className="flex w-full items-center gap-2">
+                          <Input
+                            value={row.draftLabel}
+                            placeholder={action.label}
+                            onChange={(e) =>
+                              setRows((prev) =>
+                                prev.map((item) =>
+                                  item.action.id === row.action.id ? { ...item, draftLabel: e.target.value } : item,
+                                ),
+                              )
+                            }
+                            disabled={row.saving}
+                            className="h-8"
+                            autoFocus
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() =>
+                              sendUpdate(row, {
+                                labelOverride: row.draftLabel.trim().length > 0 ? row.draftLabel.trim() : null,
+                              })
+                            }
+                            disabled={row.saving}
+                          >
+                            Сохранить
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              setRows((prev) =>
+                                prev.map((item) =>
+                                  item.action.id === row.action.id
+                                    ? { ...item, editing: false, draftLabel: item.labelOverride ?? "" }
+                                    : item,
+                                ),
+                              )
+                            }
+                            disabled={row.saving}
+                          >
+                            Отмена
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-sm font-medium leading-tight">{label}</p>
+                          {ui.editable && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs"
+                              onClick={() =>
+                                setRows((prev) =>
+                                  prev.map((item) =>
+                                    item.action.id === row.action.id
+                                      ? { ...item, editing: true, draftLabel: item.labelOverride ?? label }
+                                      : item,
+                                  ),
+                                )
+                              }
+                              disabled={row.saving}
+                            >
+                              Переименовать
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    {row.labelOverride && !row.editing && (
+                      <p className="text-xs text-muted-foreground">Базовое: {action.label}</p>
+                    )}
+                    {action.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-2">{action.description}</p>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className="text-[11px] uppercase">
+                    {action.scope === "system" ? "Системное" : "Рабочее пространство"}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <span className="text-sm text-muted-foreground">{targetLabels[action.target] ?? action.target}</span>
+                </TableCell>
+                <TableCell>
+                  <Checkbox
+                    checked={row.enabled}
+                    disabled={!ui.editable || row.saving}
+                    aria-label="enabled"
+                    onCheckedChange={(checked) => {
+                      if (!ui.editable || row.saving) return;
+                      sendUpdate(row, { enabled: Boolean(checked) });
+                    }}
+                  />
+                </TableCell>
+                <TableCell className="text-center">
+                  {renderPlacementCell(row, "canvas")}
+                </TableCell>
+                <TableCell className="text-center">
+                  {renderPlacementCell(row, "chat_message")}
+                </TableCell>
+                <TableCell className="text-center">
+                  {renderPlacementCell(row, "chat_toolbar")}
+                </TableCell>
+                <TableCell>
+                  <span className="text-sm text-muted-foreground">
+                    {outputModeLabels[action.outputMode] ?? action.outputMode}
+                  </span>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+      {isFetching && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Обновляем список...
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -808,6 +1233,24 @@ function SkillFormDialog({
             />
             </fieldset>
 
+            <fieldset className="space-y-2 rounded-xl border border-dashed border-slate-200 p-4 dark:border-slate-800">
+              <div className="space-y-1">
+                <FormLabel className="text-base">Действия</FormLabel>
+                <FormDescription>
+                  Настройте, какие действия доступны в навыке и где они отображаются (холст, сообщения, панель ввода).
+                </FormDescription>
+              </div>
+              {skill?.id && !isSystemSkill ? (
+                <SkillActionsPreview skillId={skill.id} />
+              ) : (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
+                  {isSystemSkill
+                    ? "Настройка действий недоступна для системных навыков."
+                    : "Сохраните навык, чтобы настроить действия."}
+                </div>
+              )}
+            </fieldset>
+
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
                 Отменить
@@ -1230,6 +1673,13 @@ export default function SkillsPage() {
     </div>
   );
 }
+
+
+
+
+
+
+
 
 
 

@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import type { ChatMessage } from "@/types/chat";
 
 type ChatInputProps = {
   onSend: (message: string) => Promise<void> | void;
-  onTranscribe?: (text: string) => void;
+  onTranscribe?: (payload: string | { operationId: string; placeholder?: ChatMessage }) => void;
   disabled?: boolean;
   placeholder?: string;
   showAudioAttach?: boolean;
@@ -38,9 +39,16 @@ export default function ChatInput({
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
-  const [uploadedOperationId, setUploadedOperationId] = useState<string | null>(null);
+  const [uploadedTranscription, setUploadedTranscription] = useState<
+    | {
+        operationId: string;
+        placeholder?: ChatMessage;
+      }
+    | null
+  >(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -55,7 +63,7 @@ export default function ChatInput({
   }, [showAudioAttach]);
 
   const handleUploadAudio = useCallback(
-    async (file: File): Promise<string | null> => {
+    async (file: File): Promise<{ operationId: string; placeholder?: ChatMessage } | null> => {
       if (!chatId) {
         toast({
           title: "Ошибка",
@@ -85,8 +93,12 @@ export default function ChatInput({
         const result = await response.json();
 
         if (result.operationId) {
-          setUploadedOperationId(result.operationId);
-          return result.operationId;
+          const payload = {
+            operationId: result.operationId as string,
+            placeholder: result.chatMessage as ChatMessage | undefined,
+          };
+          setUploadedTranscription(payload);
+          return payload;
         }
 
         toast({
@@ -113,18 +125,26 @@ export default function ChatInput({
   const handleSend = useCallback(async () => {
     if (disabled) return;
 
-    if (attachedFile && uploadedOperationId) {
-      onTranscribe?.(`__PENDING_OPERATION:${uploadedOperationId}:${attachedFile.name}`);
+    if (attachedFile && uploadedTranscription) {
+      onTranscribe?.({
+        operationId: uploadedTranscription.operationId,
+        placeholder: uploadedTranscription.placeholder,
+      });
       setAttachedFile(null);
-      setUploadedOperationId(null);
+      setUploadedTranscription(null);
       return;
     }
 
     const trimmed = value.trim();
     if (!trimmed) return;
     setValue("");
-    await onSend(trimmed);
-  }, [attachedFile, disabled, onSend, onTranscribe, uploadedOperationId, value]);
+    try {
+      setIsSending(true);
+      await onSend(trimmed);
+    } finally {
+      setIsSending(false);
+    }
+  }, [attachedFile, disabled, onSend, onTranscribe, uploadedTranscription, value]);
 
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -208,7 +228,11 @@ export default function ChatInput({
   );
 
   const isSendDisabled =
-    disabled || (value.trim().length === 0 && !attachedFile) || (attachedFile && !uploadedOperationId);
+    disabled ||
+    isSending ||
+    isUploading ||
+    (value.trim().length === 0 && !attachedFile) ||
+    (attachedFile && !uploadedTranscription);
   const showAttachButton = showAudioAttach;
   const isAttachDisabled = disabled || isUploading || !!attachedFile;
 
@@ -237,7 +261,7 @@ export default function ChatInput({
             className="h-8 w-8 shrink-0"
             onClick={() => {
               setAttachedFile(null);
-              setUploadedOperationId(null);
+              setUploadedTranscription(null);
             }}
             disabled={isUploading}
             data-testid="button-remove-audio"
@@ -276,12 +300,12 @@ export default function ChatInput({
                     variant="ghost"
                     size="icon"
                     className="h-11 w-11 shrink-0 rounded-full"
-                    onClick={handleAttachClick}
-                    disabled={isAttachDisabled}
-                    data-testid="button-attach-audio"
-                  >
-                    {isUploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
-                  </Button>
+                  onClick={handleAttachClick}
+                  disabled={isAttachDisabled}
+                  data-testid="button-attach-audio"
+                >
+                  <Paperclip className="h-5 w-5" />
+                </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
                   <p>Прикрепить аудио для транскрибации</p>
@@ -314,13 +338,12 @@ export default function ChatInput({
             disabled={isSendDisabled || false}
             data-testid="button-send-message"
           >
-            {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : attachedFile ? <EqualizerIcon /> : <Send className="h-4 w-4" />}
+            {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : attachedFile ? <EqualizerIcon /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
       </div>
       <p className="mt-3 text-center text-xs text-muted-foreground">
-        {showAttachButton ? "Прикрепите аудио для транскрибации и " : ""}
-        Shift + Enter — новая строка
+        Прикрепляйте файлы и задавайте вопросы. Enter — отправить, Shift+Enter — новая строка
       </p>
     </div>
   );

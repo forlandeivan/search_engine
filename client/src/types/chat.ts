@@ -39,6 +39,7 @@ export type Transcript = {
   title: string | null;
   previewText: string | null;
   fullText: string | null;
+   lastEditedByUserId?: string | null;
   createdAt: string;
   updatedAt: string;
 };

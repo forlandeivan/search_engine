@@ -6,6 +6,10 @@ import { drizzle as pgDrizzle } from "drizzle-orm/node-postgres";
 import ws from "ws";
 import * as schema from "@shared/schema";
 
+// ВАЖНО: все timestamps храним в UTC. Таймзона выставляется на уровне соединения.
+process.env.TZ = process.env.TZ || "UTC";
+process.env.PGTZ = process.env.PGTZ || "UTC";
+
 neonConfig.webSocketConstructor = ws;
 
 let pool: any = null;
@@ -64,6 +68,12 @@ function tryConnectCustomPostgres(): void {
       idleTimeoutMillis: 60_000,
       max: 20,
       allowExitOnIdle: true,
+    });
+
+    customPool.on("connect", (client) => {
+      client.query("SET TIME ZONE 'UTC'").catch((error) => {
+        console.warn("[db] Failed to set timezone UTC for custom pool client:", error);
+      });
     });
 
     pool = customPool;
@@ -128,6 +138,12 @@ function connectUsingPgPool(databaseUrl: string): void {
       allowExitOnIdle: true,
     });
 
+    pgPool.on("connect", (client) => {
+      client.query("SET TIME ZONE 'UTC'").catch((error) => {
+        console.warn("[db] Failed to set timezone UTC for pgPool client:", error);
+      });
+    });
+
     pool = pgPool;
     db = pgDrizzle({ 
       client: pgPool, 
@@ -167,6 +183,11 @@ function tryConnectDatabaseUrl(): void {
   if (isLikelyNeonConnection(databaseUrl)) {
     try {
       pool = new NeonPool({ connectionString: databaseUrl });
+      pool.on("connect", (client) => {
+        client.query("SET TIME ZONE 'UTC'").catch((error: unknown) => {
+          console.warn("[db] Failed to set timezone UTC for Neon client:", error);
+        });
+      });
       db = neonDrizzle({ 
         client: pool, 
         schema,

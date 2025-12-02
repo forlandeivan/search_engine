@@ -105,7 +105,8 @@ const mapMessage = (message: ChatMessage) => ({
   role: message.role,
   content: message.content,
   metadata: message.metadata ?? {},
-  createdAt: message.createdAt,
+  // Всегда возвращаем ISO в UTC; отображение в UI — локальное время браузера.
+  createdAt: new Date(message.createdAt ?? Date.now()).toISOString(),
 });
 
 async function getOwnedChat(

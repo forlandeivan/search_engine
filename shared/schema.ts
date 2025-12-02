@@ -871,6 +871,7 @@ export const transcripts = pgTable(
     title: text("title"),
     previewText: text("preview_text"),
     fullText: text("full_text"),
+    lastEditedByUserId: varchar("last_edited_by_user_id"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },

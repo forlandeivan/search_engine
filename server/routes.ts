@@ -135,6 +135,16 @@ import {
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type { KnowledgeBaseSearchSettingsRow } from "@shared/schema";
 import { createSkillSchema, updateSkillSchema } from "@shared/skills";
+import {
+  actionInputTypes,
+  actionOutputModes,
+  actionPlacements,
+  actionTargets,
+} from "@shared/skills";
+import { actionsRepository } from "./actions";
+import { skillActionsRepository } from "./skill-actions";
+import { randomUUID } from "crypto";
+import { resolveLlmConfigForAction, LlmConfigNotFoundError } from "./llm-config-resolver";
 import type {
   KnowledgeDocumentVectorizationJobStatus,
   KnowledgeDocumentVectorizationJobResult,
@@ -2000,6 +2010,10 @@ interface EmbeddingVectorResult {
   request: ApiRequestLog;
 }
 
+const EMBEDDING_MAX_RETRIES = 3;
+const EMBEDDING_RETRY_DELAY_MS = 200;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function fetchEmbeddingVector(
   provider: EmbeddingProvider,
   accessToken: string,
@@ -2027,57 +2041,76 @@ async function fetchEmbeddingVector(
     body: embeddingBody,
   });
 
-  let embeddingResponse: FetchResponse;
+  let lastError: Error | null = null;
 
-  try {
-    const requestOptions = applyTlsPreferences<NodeFetchOptions>(
-      {
-        method: "POST",
-        headers: embeddingHeaders,
-        body: JSON.stringify(embeddingBody),
-      },
-      provider.allowSelfSignedCertificate,
-    );
+  for (let attempt = 1; attempt <= EMBEDDING_MAX_RETRIES; attempt++) {
+    let embeddingResponse: FetchResponse | null = null;
 
-    embeddingResponse = await fetch(provider.embeddingsUrl, requestOptions);
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Не удалось выполнить запрос к сервису эмбеддингов: ${errorMessage}`);
-  }
+    try {
+      const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+        {
+          method: "POST",
+          headers: embeddingHeaders,
+          body: JSON.stringify(embeddingBody),
+        },
+        provider.allowSelfSignedCertificate,
+      );
 
-  const rawBody = await embeddingResponse.text();
-  const parsedBody = parseJson(rawBody);
+      embeddingResponse = await fetch(provider.embeddingsUrl, requestOptions);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      lastError = new Error(`Failed to call embeddings service: ${errorMessage}`);
 
-  if (!embeddingResponse.ok) {
-    let message = `Сервис эмбеддингов вернул статус ${embeddingResponse.status}`;
-
-    if (parsedBody && typeof parsedBody === "object") {
-      const body = parsedBody as Record<string, unknown>;
-      if (typeof body.error_description === "string") {
-        message = body.error_description;
-      } else if (typeof body.message === "string") {
-        message = body.message;
+      if (attempt < EMBEDDING_MAX_RETRIES) {
+        await sleep(EMBEDDING_RETRY_DELAY_MS * attempt);
+        continue;
       }
-    } else if (typeof parsedBody === "string" && parsedBody.trim()) {
-      message = parsedBody.trim();
+
+      throw lastError;
     }
 
-    throw new Error(`Ошибка на этапе получения вектора: ${message}`);
+    const rawBody = await embeddingResponse.text();
+    const parsedBody = parseJson(rawBody);
+
+    if (!embeddingResponse.ok) {
+      let message = `Embeddings service returned status ${embeddingResponse.status}`;
+
+      if (parsedBody && typeof parsedBody === "object") {
+        const body = parsedBody as Record<string, unknown>;
+        if (typeof body.error_description === "string") {
+          message = body.error_description;
+        } else if (typeof body.message === "string") {
+          message = body.message;
+        }
+      } else if (typeof parsedBody === "string" && parsedBody.trim()) {
+        message = parsedBody.trim();
+      }
+
+      const isRetryable = embeddingResponse.status === 429 || embeddingResponse.status === 503;
+      if (isRetryable && attempt < EMBEDDING_MAX_RETRIES) {
+        await sleep(EMBEDDING_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+
+      throw new Error(`Ошибка на этапе получения вектора: ${message}`);
+    }
+
+    const { vector, usageTokens, embeddingId } = extractEmbeddingResponse(parsedBody);
+
+    return {
+      vector,
+      usageTokens,
+      embeddingId,
+      rawResponse: parsedBody,
+      request: {
+        url: provider.embeddingsUrl,
+        headers: sanitizedHeaders,
+        body: embeddingBody,
+      },
+    };
   }
 
-  const { vector, usageTokens, embeddingId } = extractEmbeddingResponse(parsedBody);
-
-  return {
-    vector,
-    usageTokens,
-    embeddingId,
-    rawResponse: parsedBody,
-    request: {
-      url: provider.embeddingsUrl,
-      headers: sanitizedHeaders,
-      body: embeddingBody,
-    },
-  };
+  throw lastError ?? new Error("Не удалось получить вектор эмбеддингов");
 }
 
 type GenerativeContextEntry = {
@@ -2118,6 +2151,15 @@ function sendSseEvent(res: Response, eventName: string, data?: unknown) {
   if (typeof flusher === "function") {
     flusher.call(res);
   }
+}
+
+function buildTranscriptPreview(fullText: string, maxWords = 60): string {
+  if (!fullText) return "";
+  const words = fullText.trim().split(/\s+/);
+  if (words.length <= maxWords) {
+    return fullText.trim();
+  }
+  return words.slice(0, maxWords).join(" ");
 }
 
 function extractTextDeltaFromChunk(chunk: unknown): string {
@@ -8574,6 +8616,479 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Actions (workspace library)
+  app.get("/api/workspaces/:workspaceId/actions", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+
+    try {
+      const { workspaceId } = req.params;
+      const actions = await actionsRepository.listForWorkspace(workspaceId, { includeSystem: true });
+      const payload = actions.map((action) => ({
+        ...action,
+        editable: action.scope === "workspace" && action.workspaceId === workspaceId,
+      }));
+      res.json({ actions: payload });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/workspaces/:workspaceId/actions", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+
+    try {
+      const { workspaceId } = req.params;
+      const body = req.body ?? {};
+
+      if (!body.label || typeof body.label !== "string") {
+        return res.status(400).json({ message: "label is required" });
+      }
+      if (!actionTargets.includes(body.target)) {
+        return res.status(400).json({ message: "invalid target" });
+      }
+      if (!Array.isArray(body.placements) || body.placements.some((p: unknown) => !actionPlacements.includes(p as string))) {
+        return res.status(400).json({ message: "invalid placements" });
+      }
+      if (!body.promptTemplate || typeof body.promptTemplate !== "string") {
+        return res.status(400).json({ message: "promptTemplate is required" });
+      }
+      if (!actionInputTypes.includes(body.inputType)) {
+        return res.status(400).json({ message: "invalid inputType" });
+      }
+      if (!actionOutputModes.includes(body.outputMode)) {
+        return res.status(400).json({ message: "invalid outputMode" });
+      }
+
+      // validate llmConfigId if provided
+      let llmConfigId: string | null = null;
+      if (body.llmConfigId !== undefined) {
+        if (body.llmConfigId === null || body.llmConfigId === "") {
+          llmConfigId = null;
+        } else if (typeof body.llmConfigId === "string") {
+          const cfg = await storage.getLlmProvider(body.llmConfigId, workspaceId);
+          if (!cfg) {
+            return res.status(400).json({ message: "LLM config not found or not accessible for this workspace" });
+          }
+          llmConfigId = body.llmConfigId;
+        } else {
+          return res.status(400).json({ message: "llmConfigId must be string or null" });
+        }
+      }
+
+      const created = await actionsRepository.createWorkspaceAction(workspaceId, {
+        label: body.label,
+        description: typeof body.description === "string" ? body.description : null,
+        target: body.target,
+        placements: body.placements,
+        promptTemplate: body.promptTemplate,
+        inputType: body.inputType,
+        outputMode: body.outputMode,
+        llmConfigId,
+      });
+
+      res.status(201).json({
+        action: {
+          ...created,
+          editable: true,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch(
+    "/api/workspaces/:workspaceId/actions/:actionId",
+    requireAuth,
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
+
+      try {
+        const { workspaceId, actionId } = req.params;
+        const body = req.body ?? {};
+
+        const patch: Record<string, unknown> = {};
+        if (typeof body.label === "string") patch.label = body.label;
+        if (typeof body.description === "string" || body.description === null) patch.description = body.description;
+        if (body.target && actionTargets.includes(body.target)) patch.target = body.target;
+        if (Array.isArray(body.placements) && body.placements.every((p: unknown) => actionPlacements.includes(p as string))) {
+          patch.placements = body.placements;
+        }
+        if (typeof body.promptTemplate === "string") patch.promptTemplate = body.promptTemplate;
+        if (body.inputType && actionInputTypes.includes(body.inputType)) patch.inputType = body.inputType;
+        if (body.outputMode && actionOutputModes.includes(body.outputMode)) patch.outputMode = body.outputMode;
+        if (body.llmConfigId !== undefined) {
+          if (body.llmConfigId === null || body.llmConfigId === "") {
+            patch.llmConfigId = null;
+          } else if (typeof body.llmConfigId === "string") {
+            const cfg = await storage.getLlmProvider(body.llmConfigId, workspaceId);
+            if (!cfg) {
+              return res.status(400).json({ message: "LLM config not found or not accessible for this workspace" });
+            }
+            patch.llmConfigId = body.llmConfigId;
+          } else {
+            return res.status(400).json({ message: "llmConfigId must be string or null" });
+          }
+        }
+
+        const updated = await actionsRepository.updateWorkspaceAction(workspaceId, actionId, patch);
+        res.json({
+          action: {
+            ...updated,
+            editable: true,
+          },
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("system action")) {
+          return res.status(403).json({ message: error.message });
+        }
+        if (error instanceof Error && error.message.includes("not found")) {
+          return res.status(404).json({ message: "Action not found" });
+        }
+        next(error);
+      }
+    },
+  );
+
+  app.delete(
+    "/api/workspaces/:workspaceId/actions/:actionId",
+    requireAuth,
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
+
+      try {
+        const { workspaceId, actionId } = req.params;
+        await actionsRepository.softDeleteWorkspaceAction(workspaceId, actionId);
+        res.status(204).send();
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("system action")) {
+          return res.status(403).json({ message: error.message });
+        }
+        if (error instanceof Error && error.message.includes("not found")) {
+          return res.status(404).json({ message: "Action not found" });
+        }
+        next(error);
+      }
+    },
+  );
+
+  // Run action (compute only, no apply)
+  app.post(
+    "/api/skills/:skillId/actions/:actionId/run",
+    requireAuth,
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
+
+      try {
+        const { skillId, actionId } = req.params;
+        const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+        const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+
+        // Skill
+        const skill = await getSkillById(workspaceId, skillId);
+        if (!skill) {
+          return res.status(404).json({ message: "Skill not found" });
+        }
+
+        // Action (system или workspace)
+        const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
+        if (!action) {
+          return res.status(404).json({ message: "Action not found for this workspace" });
+        }
+
+        // SkillAction настройки
+        const skillAction = await skillActionsRepository.getForSkillAndAction(skillId, actionId);
+        if (!skillAction || !skillAction.enabled) {
+          return res.status(403).json({ message: "Action is not enabled for this skill" });
+        }
+
+        const { placement, target, context, applyMode, apply } = req.body ?? {};
+        if (!placement || !actionPlacements.includes(placement)) {
+          return res.status(400).json({ message: "placement is required and must be valid" });
+        }
+        if (!skillAction.enabledPlacements.includes(placement)) {
+          return res.status(403).json({ message: "Action is not enabled for this placement" });
+        }
+
+        if (!target || !actionTargets.includes(target)) {
+          return res.status(400).json({ message: "target is required and must be valid" });
+        }
+        if (target !== action.target) {
+          return res.status(400).json({ message: "target does not match action target" });
+        }
+
+        // Собираем текст для промпта (упрощённо, без доступа к БД сообщений/транскриптов)
+        const ctx = context ?? {};
+        let textForPrompt: string | undefined;
+
+        if (target === "selection") {
+          textForPrompt = typeof ctx.text === "string" ? ctx.text : undefined;
+        } else {
+          // transcript/message/conversation — требуем selectionText для первого шага (без загрузки сущностей)
+          textForPrompt = typeof ctx.selectionText === "string" ? ctx.selectionText : undefined;
+        }
+
+        if (!textForPrompt || textForPrompt.trim().length === 0) {
+          return res.status(400).json({ message: "text/selectionText is required for this target" });
+        }
+
+        const prompt = action.promptTemplate.replace(/{{\s*text\s*}}/gi, textForPrompt);
+
+        let llmText = prompt;
+        let llmUsage: unknown = null;
+
+        try {
+          const llmConfig = await resolveLlmConfigForAction(skill, action);
+          // TODO: заменить на реальный вызов llmService/llm-client с llmConfig.
+          // Пока оставляем prompt как текст, но в llmUsage вернем конфиг.
+          llmUsage = {
+            provider: llmConfig.name,
+            model: llmConfig.providerType,
+          };
+        } catch (llmErr) {
+          if (llmErr instanceof LlmConfigNotFoundError) {
+            return res.status(llmErr.status).json({ message: llmErr.message });
+          }
+          throw llmErr;
+        }
+        const runId = randomUUID();
+
+        const shouldApply = applyMode === "apply" || apply === true;
+        let applied = false;
+        let appliedChanges: unknown = null;
+
+        if (shouldApply) {
+          const outputMode = action.outputMode;
+          try {
+            if (outputMode === "replace_text") {
+              if (target === "transcript") {
+                const transcriptId = ctx.transcriptId;
+                if (!transcriptId || typeof transcriptId !== "string") {
+                  return res.status(400).json({ message: "transcriptId is required for transcript target" });
+                }
+                const transcript = await storage.getTranscriptById?.(transcriptId);
+                if (!transcript || transcript.workspaceId !== skill.workspaceId) {
+                  return res.status(404).json({ message: "Transcript not found" });
+                }
+                const fullText = transcript.fullText ?? "";
+                let newText = llmText;
+                if (action.inputType === "selection") {
+                  if (typeof ctx.selectionText === "string" && ctx.selectionText.length > 0) {
+                    newText = fullText.replace(ctx.selectionText, llmText);
+                  } else if (
+                    ctx.selectionRange &&
+                    typeof ctx.selectionRange.start === "number" &&
+                    typeof ctx.selectionRange.end === "number"
+                  ) {
+                    const { start, end } = ctx.selectionRange;
+                    newText = fullText.slice(0, start) + llmText + fullText.slice(end);
+                  }
+                }
+                await storage.updateTranscript(transcriptId, {
+                  fullText: newText,
+                  lastEditedByUserId: user.id,
+                });
+                applied = true;
+                appliedChanges = {
+                  type: "transcript_replace",
+                  transcriptId,
+                };
+              } else if (target === "message") {
+                const messageId = ctx.messageId;
+                if (!messageId || typeof messageId !== "string") {
+                  return res.status(400).json({ message: "messageId is required for message target" });
+                }
+                const message = await storage.getChatMessage(messageId);
+                if (!message) {
+                  return res.status(404).json({ message: "Message not found" });
+                }
+                const chat = await storage.getChatSessionById(message.chatId);
+                if (!chat || chat.workspaceId !== skill.workspaceId) {
+                  return res.status(404).json({ message: "Message not found" });
+                }
+                const fullText = message.content ?? "";
+                let newText = llmText;
+                if (action.inputType === "selection") {
+                  if (typeof ctx.selectionText === "string" && ctx.selectionText.length > 0) {
+                    newText = fullText.replace(ctx.selectionText, llmText);
+                  } else if (
+                    ctx.selectionRange &&
+                    typeof ctx.selectionRange.start === "number" &&
+                    typeof ctx.selectionRange.end === "number"
+                  ) {
+                    const { start, end } = ctx.selectionRange;
+                    newText = fullText.slice(0, start) + llmText + fullText.slice(end);
+                  }
+                }
+                await storage.updateChatMessage(messageId, { content: newText });
+                applied = true;
+                appliedChanges = {
+                  type: "message_replace",
+                  messageId,
+                  chatId: message.chatId,
+                };
+              } else if (target === "selection") {
+                applied = true;
+                appliedChanges = { type: "selection_only", newText: llmText };
+              } else {
+                return res.status(400).json({ message: "replace_text not supported for this target" });
+              }
+            } else if (outputMode === "new_message") {
+              return res.status(400).json({ message: "new_message outputMode not implemented yet" });
+            } else if (outputMode === "new_version") {
+              return res.status(400).json({ message: "new_version outputMode not implemented yet" });
+            } else if (outputMode === "document") {
+              return res.status(400).json({ message: "document outputMode not implemented yet" });
+            }
+          } catch (applyError) {
+            return next(applyError);
+          }
+        }
+
+        res.json({
+          runId,
+          skillId,
+          actionId,
+          placement,
+          target,
+          outputMode: action.outputMode,
+          context: ctx,
+          result: {
+            text: llmText,
+          },
+          llmUsage,
+          applied,
+          appliedChanges: appliedChanges ?? null,
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  // Skill ↔ Actions configuration
+  app.get("/api/skills/:skillId/actions", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+
+    try {
+      const { skillId } = req.params;
+      const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      // Найти скилл и workspace
+      const skill = await getSkillById(workspaceId, skillId);
+      if (!skill) {
+        return res.status(404).json({ message: "Skill not found" });
+      }
+
+      const actions = await actionsRepository.listForWorkspace(skill.workspaceId, { includeSystem: true });
+      const skillActions = await skillActionsRepository.listForSkill(skillId);
+      const skillActionMap = new Map(skillActions.map((sa) => [sa.actionId, sa]));
+
+      const items = actions.map((action) => {
+        const sa = skillActionMap.get(action.id);
+        const effectiveLabel = sa?.labelOverride ?? action.label;
+        const editable =
+          action.scope === "system" ||
+          (action.scope === "workspace" && action.workspaceId === skill.workspaceId);
+
+        return {
+          action,
+          skillAction: sa
+            ? {
+                enabled: sa.enabled,
+                enabledPlacements: sa.enabledPlacements,
+                labelOverride: sa.labelOverride,
+              }
+            : null,
+          ui: {
+            effectiveLabel,
+            editable,
+          },
+        };
+      });
+
+      res.json({ items });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.put(
+    "/api/skills/:skillId/actions/:actionId",
+    requireAuth,
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
+
+      try {
+        const { skillId, actionId } = req.params;
+        const body = req.body ?? {};
+
+        if (typeof body.enabled !== "boolean") {
+          return res.status(400).json({ message: "enabled is required" });
+        }
+        if (!Array.isArray(body.enabledPlacements) || body.enabledPlacements.some((p: unknown) => !actionPlacements.includes(p as string))) {
+          return res.status(400).json({ message: "invalid enabledPlacements" });
+        }
+
+        const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+        const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+        const skill = await getSkillById(workspaceId, skillId);
+        if (!skill) {
+          return res.status(404).json({ message: "Skill not found" });
+        }
+
+        const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
+        if (!action) {
+          return res.status(404).json({ message: "Action not found for this workspace" });
+        }
+
+        // проверяем, что enabledPlacements ⊆ action.placements
+        const isSubset = body.enabledPlacements.every((p: string) => (action.placements ?? []).includes(p));
+        if (!isSubset) {
+          return res.status(400).json({ message: "enabledPlacements must be subset of action.placements" });
+        }
+
+        const updatedSkillAction = await skillActionsRepository.upsertForSkill(
+          skill.workspaceId,
+          skillId,
+          actionId,
+          {
+            enabled: body.enabled,
+            enabledPlacements: body.enabledPlacements,
+            labelOverride:
+              typeof body.labelOverride === "string" || body.labelOverride === null
+                ? body.labelOverride
+                : undefined,
+          },
+        );
+
+        res.json({
+          action,
+          skillAction: {
+            enabled: updatedSkillAction.enabled,
+            enabledPlacements: updatedSkillAction.enabledPlacements,
+            labelOverride: updatedSkillAction.labelOverride,
+          },
+          ui: {
+            effectiveLabel: updatedSkillAction.labelOverride ?? action.label,
+            editable: true,
+          },
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("another workspace")) {
+          return res.status(403).json({ message: error.message });
+        }
+        next(error);
+      }
+    },
+  );
   app.get(
     "/api/workspaces/:workspaceId/transcripts/:transcriptId",
     requireAuth,
@@ -8611,6 +9126,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
           fullText: transcript.fullText,
           createdAt: transcript.createdAt,
           updatedAt: transcript.updatedAt,
+          lastEditedByUserId: transcript.lastEditedByUserId ?? null,
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.patch(
+    "/api/workspaces/:workspaceId/transcripts/:transcriptId",
+    requireAuth,
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const { workspaceId, transcriptId } = req.params;
+        if (!workspaceId || !transcriptId) {
+          return res.status(400).json({ message: "workspaceId и transcriptId обязательны" });
+        }
+
+        const transcript = await storage.getTranscriptById?.(transcriptId);
+        if (!transcript || transcript.workspaceId !== workspaceId) {
+          return res.status(404).json({ message: "Стенограмма не найдена" });
+        }
+
+        const workspaceMember = await storage.getWorkspaceMember(user.id, workspaceId);
+        if (!workspaceMember) {
+          return res.status(403).json({ message: "Нет доступа к этому workspace" });
+        }
+
+        const { fullText, title } = req.body ?? {};
+        if (typeof fullText !== "string" || fullText.trim().length === 0) {
+          return res.status(400).json({ message: "fullText обязателен и должен быть строкой" });
+        }
+
+        const MAX_LENGTH = 500_000;
+        if (fullText.length > MAX_LENGTH) {
+          return res.status(400).json({ message: `fullText слишком длинный (макс ${MAX_LENGTH} символов)` });
+        }
+
+        const previewText = buildTranscriptPreview(fullText, 60);
+
+        const updated = await storage.updateTranscript(transcriptId, {
+          fullText,
+          previewText,
+          lastEditedByUserId: user.id,
+          title: typeof title === "string" ? title : transcript.title,
+        });
+
+        if (!updated) {
+          return res.status(404).json({ message: "Стенограмма не найдена" });
+        }
+
+        res.json({
+          id: updated.id,
+          workspaceId: updated.workspaceId,
+          chatId: updated.chatId,
+          sourceFileId: updated.sourceFileId,
+          status: updated.status,
+          title: updated.title,
+          previewText: updated.previewText,
+          fullText: updated.fullText,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+          lastEditedByUserId: updated.lastEditedByUserId ?? null,
         });
       } catch (error) {
         next(error);
@@ -8722,7 +9305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               role: placeholderMessage.role,
               content: placeholderMessage.content,
               metadata: placeholderMessage.metadata ?? {},
-              createdAt: placeholderMessage.createdAt,
+              createdAt: new Date().toISOString(),
             },
           });
         }

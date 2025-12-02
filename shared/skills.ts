@@ -11,7 +11,7 @@ const optionalString = (limit: number) =>
         return true;
       }
       return value.length <= limit;
-    }, `Превышена максимальная длина ${limit} символов`);
+    }, `Длина поля не должна превышать ${limit} символов`);
 
 const optionalText = (limit: number) =>
   z
@@ -22,7 +22,7 @@ const optionalText = (limit: number) =>
         return true;
       }
       return value.length <= limit;
-    }, `Превышена максимальная длина ${limit} символов`);
+    }, `Длина поля не должна превышать ${limit} символов`);
 
 const knowledgeBaseIdSchema = z.string().min(1);
 
@@ -100,4 +100,48 @@ export type SkillResponse = {
 
 export type SkillListResponse = {
   skills: SkillDto[];
+};
+
+// Actions domain
+export const actionScopes = ["system", "workspace"] as const;
+export type ActionScope = (typeof actionScopes)[number];
+
+export const actionTargets = ["transcript", "message", "selection", "conversation"] as const;
+export type ActionTarget = (typeof actionTargets)[number];
+
+export const actionPlacements = ["canvas", "chat_message", "chat_toolbar"] as const;
+export type ActionPlacement = (typeof actionPlacements)[number];
+
+export const actionInputTypes = ["full_transcript", "selection"] as const;
+export type ActionInputType = (typeof actionInputTypes)[number];
+
+export const actionOutputModes = ["replace_text", "new_version", "new_message", "document"] as const;
+export type ActionOutputMode = (typeof actionOutputModes)[number];
+
+export type ActionDto = {
+  id: string;
+  scope: ActionScope;
+  workspaceId: string | null;
+  label: string;
+  description: string | null;
+  target: ActionTarget;
+  placements: ActionPlacement[];
+  promptTemplate: string;
+  inputType: ActionInputType;
+  outputMode: ActionOutputMode;
+  llmConfigId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string | null;
+};
+
+export type SkillActionDto = {
+  id: string;
+  skillId: string;
+  actionId: string;
+  enabled: boolean;
+  enabledPlacements: ActionPlacement[];
+  labelOverride: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
