@@ -177,6 +177,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
   };
 
   const chatUrl = workspaceId ? `/workspaces/${workspaceId}/chat` : "/chat";
+  const actionsUrl = workspaceId ? `/workspaces/${workspaceId}/actions` : "/workspaces/actions";
 
   const sections: Array<{ label: string; items: SidebarItem[] }> = [
     {
@@ -233,6 +234,11 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
           title: "Участники",
           url: "/workspaces/members",
           icon: Users,
+        },
+        {
+          title: "Действия",
+          url: actionsUrl,
+          icon: Sparkles,
         },
       ],
     },
@@ -338,3 +344,4 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
     </Sidebar>
   );
 }
+

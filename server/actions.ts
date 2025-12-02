@@ -106,6 +106,10 @@ async function createWorkspaceAction(
   workspaceId: string,
   payload: CreateActionPayload,
 ): Promise<ActionDto> {
+  const placementsValue = sql`ARRAY[${sql.join(
+    payload.placements.map((p) => sql`${p}`),
+    sql`, `,
+  )}]::text[]`;
   const result = await db.execute<ActionRow>(
     sql`
       INSERT INTO "actions" (
@@ -113,7 +117,7 @@ async function createWorkspaceAction(
         "prompt_template", "input_type", "output_mode", "llm_config_id"
       ) VALUES (
         'workspace', ${workspaceId}, ${payload.label}, ${payload.description ?? null},
-        ${payload.target}, ${payload.placements},
+        ${payload.target}, ${placementsValue},
         ${payload.promptTemplate}, ${payload.inputType}, ${payload.outputMode}, ${payload.llmConfigId ?? null}
       )
       RETURNING *
@@ -142,6 +146,12 @@ async function updateWorkspaceAction(
     throw new Error("Cannot modify action from another workspace");
   }
 
+  const placementsValue = patch.placements
+    ? sql`ARRAY[${sql.join(
+        patch.placements.map((p) => sql`${p}`),
+        sql`, `,
+      )}]::text[]`
+    : null;
   const updated = await db.execute<ActionRow>(
     sql`
       UPDATE "actions"
@@ -149,7 +159,7 @@ async function updateWorkspaceAction(
         "label" = COALESCE(${patch.label}, "label"),
         "description" = COALESCE(${patch.description ?? null}, "description"),
         "target" = COALESCE(${patch.target}, "target"),
-        "placements" = COALESCE(${patch.placements ?? null}, "placements"),
+        "placements" = COALESCE(${placementsValue}, "placements"),
         "prompt_template" = COALESCE(${patch.promptTemplate}, "prompt_template"),
         "input_type" = COALESCE(${patch.inputType}, "input_type"),
         "output_mode" = COALESCE(${patch.outputMode}, "output_mode"),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, X, Save, RotateCcw, Bold, Italic, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ import ChatInput from "@/components/chat/ChatInput";
 import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM, useRenameChat } from "@/hooks/useChats";
 import { useSkills } from "@/hooks/useSkills";
 import type { ChatMessage, Transcript } from "@/types/chat";
+import type { ActionDto, SkillActionDto } from "@shared/skills";
 
 type ChatPageParams = {
   workspaceId?: string;
@@ -56,6 +57,9 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [isSavingTranscript, setIsSavingTranscript] = useState(false);
   const [saveTranscriptMessage, setSaveTranscriptMessage] = useState<string | null>(null);
   const [saveTranscriptError, setSaveTranscriptError] = useState<string | null>(null);
+  const [isRunningActionId, setIsRunningActionId] = useState<string | null>(null);
+  const [isRunningMessageActionId, setIsRunningMessageActionId] = useState<string | null>(null);
+  const [isRunningToolbarActionId, setIsRunningToolbarActionId] = useState<string | null>(null);
 
   const { chats } = useChats(workspaceId);
   const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
@@ -71,6 +75,80 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
     return defaultSkill;
   }, [activeChat, defaultSkill, skills]);
+
+  const skillActionsQuery = useQuery<{
+    items: { action: ActionDto; skillAction: SkillActionDto | null; ui: { effectiveLabel: string; editable: boolean } }[];
+  }>({
+    queryKey: ["skill-actions", activeSkill?.id],
+    enabled: Boolean(activeSkill?.id),
+    queryFn: async () => {
+      const response = await fetch(`/api/skills/${activeSkill?.id}/actions`);
+      if (!response.ok) {
+        throw new Error("Failed to load actions");
+      }
+      return (await response.json()) as {
+        items: { action: ActionDto; skillAction: SkillActionDto | null; ui: { effectiveLabel: string; editable: boolean } }[];
+      };
+    },
+  });
+
+const canvasActions = useMemo(() => {
+    const items = skillActionsQuery.data?.items ?? [];
+    return items
+      .filter((item) => {
+        const { action, skillAction } = item;
+        if (!skillAction || !skillAction.enabled) return false;
+        if (!skillAction.enabledPlacements.includes("canvas")) return false;
+        return action.target === "transcript" || action.target === "selection";
+      })
+      .map((item) => ({
+        id: item.action.id,
+        label: item.ui.effectiveLabel || item.action.label,
+        description: item.action.description,
+        target: item.action.target,
+        inputType: item.action.inputType,
+        outputMode: item.action.outputMode,
+      }));
+  }, [skillActionsQuery.data]);
+
+  const messageActions = useMemo(() => {
+    const items = skillActionsQuery.data?.items ?? [];
+    return items
+      .filter((item) => {
+        const { action, skillAction } = item;
+        if (!skillAction || !skillAction.enabled) return false;
+        if (!skillAction.enabledPlacements.includes("chat_message")) return false;
+        return action.target === "message" || action.target === "selection";
+      })
+      .map((item) => ({
+        id: item.action.id,
+        label: item.ui.effectiveLabel || item.action.label,
+        description: item.action.description,
+        target: item.action.target,
+        inputType: item.action.inputType,
+        outputMode: item.action.outputMode,
+        scope: item.action.scope,
+      }));
+  }, [skillActionsQuery.data]);
+
+  const toolbarActions = useMemo(() => {
+    const items = skillActionsQuery.data?.items ?? [];
+    return items
+      .filter((item) => {
+        const { action, skillAction } = item;
+        if (!skillAction || !skillAction.enabled) return false;
+        if (!skillAction.enabledPlacements.includes("chat_toolbar")) return false;
+        return action.target === "selection" || action.target === "conversation";
+      })
+      .map((item) => ({
+        id: item.action.id,
+        label: item.ui.effectiveLabel || item.action.label,
+        description: item.action.description,
+        target: item.action.target,
+        inputType: item.action.inputType,
+        outputMode: item.action.outputMode,
+      }));
+  }, [skillActionsQuery.data]);
 
   const {
     messages: fetchedMessages,
@@ -622,6 +700,128 @@ export default function ChatPage({ params }: ChatPageProps) {
                 scrollContainerRef={messagesScrollRef}
                 onOpenTranscript={handleOpenTranscript}
                 onRenameChat={handleRenameChat}
+                messageActions={messageActions}
+                messageActionsLoading={skillActionsQuery.isLoading}
+                messageActionsError={
+                  skillActionsQuery.error instanceof Error ? skillActionsQuery.error.message : null
+                }
+                onRunMessageAction={async (message, action) => {
+                  if (!activeSkill?.id || !workspaceId) return;
+                  if (action.inputType === "selection") {
+                    // Пока нет выделения в UI сообщений
+                    setStreamError("Это действие требует выделения текста сообщения. Поддержка появится позже.");
+                    return;
+                  }
+                  setIsRunningMessageActionId(`${message.id}:${action.id}`);
+                  try {
+                    const body =
+                      action.target === "selection"
+                        ? {
+                            placement: "chat_message",
+                            target: "selection",
+                            applyMode: "apply",
+                            context: { text: message.content ?? "" },
+                          }
+                        : {
+                            placement: "chat_message",
+                            target: "message",
+                            applyMode: "apply",
+                            context: { messageId: message.id },
+                          };
+                    const res = await fetch(
+                      `/api/skills/${activeSkill.id}/actions/${action.id}/run`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(body),
+                      },
+                    );
+                    if (!res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      const msg = data?.message || "Не удалось выполнить действие";
+                      throw new Error(msg);
+                    }
+                    const result = await res.json();
+                    if (result?.applied) {
+                      const changeType = result?.appliedChanges?.type;
+                      if (changeType === "message_replace" || changeType === "message_new") {
+                        queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveChatId] });
+                        setStreamError(null);
+                      } else if (changeType === "document") {
+                        setStreamError(null);
+                        setSaveTranscriptMessage("Создан документ на основе сообщения.");
+                      } else {
+                        setStreamError(null);
+                        setSaveTranscriptMessage("Действие выполнено.");
+                      }
+                    }
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : "Не удалось выполнить действие";
+                    setStreamError(msg);
+                  } finally {
+                    setIsRunningMessageActionId(null);
+                  }
+                }}
+                toolbarActions={toolbarActions}
+                toolbarLoadingId={isRunningToolbarActionId}
+                onRunToolbarAction={async (action, inputValue) => {
+                  if (!activeSkill?.id || !workspaceId) return;
+                  if (!inputValue.trim() && action.target === "selection") {
+                    setStreamError("Введите текст, с которым нужно выполнить действие.");
+                    return;
+                  }
+                  setIsRunningToolbarActionId(action.id);
+                  try {
+                    const isConversation = action.target === "conversation";
+                    const useApply = action.outputMode === "new_message" || action.outputMode === "document";
+                    const body =
+                      isConversation
+                        ? {
+                            placement: "chat_toolbar",
+                            target: "conversation",
+                            applyMode: useApply ? "apply" : "none",
+                            context: { conversationId: effectiveChatId },
+                          }
+                        : {
+                            placement: "chat_toolbar",
+                            target: "selection",
+                            applyMode: "none",
+                            context: { text: inputValue },
+                          };
+                    const res = await fetch(
+                      `/api/skills/${activeSkill.id}/actions/${action.id}/run`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(body),
+                      },
+                    );
+                    if (!res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      const msg = data?.message || "Не удалось выполнить действие";
+                      throw new Error(msg);
+                    }
+                    const result = await res.json();
+                    if (useApply && result?.applied) {
+                      if (
+                        result?.appliedChanges?.type === "message_new" ||
+                        result?.appliedChanges?.type === "message_replace"
+                      ) {
+                        queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveChatId] });
+                        setStreamError(null);
+                      } else if (result?.appliedChanges?.type === "document") {
+                        setSaveTranscriptMessage("Документ создан на основе диалога.");
+                      }
+                    } else if (result?.result?.text) {
+                      setPendingInput(result.result.text);
+                    }
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : "Не удалось выполнить действие";
+                    setStreamError(msg);
+                  } finally {
+                    setIsRunningToolbarActionId(null);
+                  }
+                }}
                 onReset={() => handleSelectChat(null)}
               />
             </div>
@@ -632,7 +832,67 @@ export default function ChatPage({ params }: ChatPageProps) {
               onTranscribe={handleTranscription}
               disabled={disableInput}
               chatId={effectiveChatId}
-              placeholder={isNewChat ? "Start a new chat..." : "Type a message and press Enter"}
+              placeholder="Прикрепляйте файлы и задавайте вопросы. Enter — отправить, Shift+Enter — новая строка"
+              toolbarActions={toolbarActions}
+              toolbarLoadingId={isRunningToolbarActionId}
+              onRunToolbarAction={async (action, currentText) => {
+                if (!activeSkill?.id || !workspaceId) return;
+                if (!currentText.trim() && action.target === "selection") {
+                  setStreamError("Введите текст, с которым нужно выполнить действие.");
+                  return;
+                }
+                setIsRunningToolbarActionId(action.id);
+                try {
+                  const isConversation = action.target === "conversation";
+                  const useApply = action.outputMode === "new_message" || action.outputMode === "document";
+                  const body =
+                    isConversation
+                      ? {
+                          placement: "chat_toolbar",
+                          target: "conversation",
+                          applyMode: useApply ? "apply" : "none",
+                          context: { conversationId: effectiveChatId },
+                        }
+                      : {
+                          placement: "chat_toolbar",
+                          target: "selection",
+                          applyMode: "none",
+                          context: { text: currentText },
+                        };
+                  const res = await fetch(
+                    `/api/skills/${activeSkill.id}/actions/${action.id}/run`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(body),
+                    },
+                  );
+                  if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    const msg = data?.message || "Не удалось выполнить действие";
+                    throw new Error(msg);
+                  }
+                  const result = await res.json();
+                  if (useApply && result?.applied) {
+                    if (
+                      result?.appliedChanges?.type === "message_new" ||
+                      result?.appliedChanges?.type === "message_replace"
+                    ) {
+                      queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveChatId] });
+                      setStreamError(null);
+                    } else if (result?.appliedChanges?.type === "document") {
+                      setSaveTranscriptMessage("Документ создан на основе диалога.");
+                    }
+                  } else if (result?.result?.text) {
+                    setPendingInput(result.result.text);
+                  }
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Не удалось выполнить действие";
+                  setStreamError(msg);
+                } finally {
+                  setIsRunningToolbarActionId(null);
+                }
+              }}
             />
           </div>
         </section>
@@ -693,8 +953,128 @@ export default function ChatPage({ params }: ChatPageProps) {
                 </div>
               ) : transcriptError ? (
                 <p className="text-sm text-destructive">{transcriptError}</p>
-              ) : openedTranscript ? (
+                  ) : openedTranscript ? (
                 <div className="space-y-3">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-sm font-semibold">Действия</p>
+                      {skillActionsQuery.isLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      ) : null}
+                    </div>
+                    {skillActionsQuery.isError ? (
+                      <div className="flex items-center justify-between gap-2 text-sm text-destructive">
+                        <span>Не удалось загрузить действия.</span>
+                        <Button size="sm" variant="outline" onClick={() => skillActionsQuery.refetch()}>
+                          Повторить
+                        </Button>
+                      </div>
+                    ) : canvasActions.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        Для этого навыка нет действий, доступных в холсте.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {canvasActions.map((item) => (
+                          <Button
+                            key={item.id}
+                            variant="outline"
+                            className="w-full justify-start"
+                            disabled={isRunningActionId === item.id}
+                            onClick={async () => {
+                              if (!openedTranscriptId || !activeSkill?.id) return;
+                              setIsRunningActionId(item.id);
+                              setSaveTranscriptError(null);
+                              setSaveTranscriptMessage(null);
+                              try {
+                                let selectionText: string | null = null;
+                                let selectionRange: { start: number; end: number } | null = null;
+                                const textarea = transcriptTextareaRef.current;
+                                if (item.inputType === "selection" && textarea) {
+                                  const { selectionStart, selectionEnd, value } = textarea;
+                                  if (selectionStart !== selectionEnd) {
+                                    selectionText = value.slice(selectionStart, selectionEnd);
+                                    selectionRange = { start: selectionStart, end: selectionEnd };
+                                  }
+                                }
+                                if (item.inputType === "selection" && (!selectionText || selectionText.length === 0)) {
+                                  setSaveTranscriptError(
+                                    "Это действие работает с выделенным текстом. Выделите фрагмент и попробуйте снова.",
+                                  );
+                                  return;
+                                }
+                                const body = {
+                                  placement: "canvas",
+                                  target: item.target,
+                                  applyMode: "apply",
+                                  context:
+                                    item.target === "selection"
+                                      ? { text: selectionText }
+                                      : {
+                                          transcriptId: openedTranscriptId,
+                                          selectionText: selectionText ?? undefined,
+                                          selectionRange: selectionRange ?? undefined,
+                                        },
+                                };
+                                const response = await fetch(
+                                  `/api/skills/${activeSkill.id}/actions/${item.id}/run`,
+                                  {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify(body),
+                                  },
+                                );
+                                if (!response.ok) {
+                                  const data = await response.json().catch(() => ({}));
+                                  const msg = data?.message || "Не удалось выполнить действие";
+                                  throw new Error(msg);
+                                }
+                                const result = await response.json();
+                                if (result?.applied) {
+                                  // рефетч стенограммы
+                                  const transcriptResponse = await fetch(
+                                    `/api/workspaces/${workspaceId}/transcripts/${openedTranscriptId}`,
+                                  );
+                                  if (transcriptResponse.ok) {
+                                    const transcript = (await transcriptResponse.json()) as Transcript;
+                                    setOpenedTranscript(transcript);
+                                    setDraftTranscriptText(transcript.fullText ?? "");
+                                  }
+                                  const changeType = result?.appliedChanges?.type;
+                                  if (changeType === "document") {
+                                    setSaveTranscriptMessage("Документ создан на основе действия.");
+                                  } else if (changeType === "message_new") {
+                                    setSaveTranscriptMessage("Сгенерировано новое сообщение в чате.");
+                                    if (effectiveChatId) {
+                                      queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveChatId] });
+                                    }
+                                  } else {
+                                    setSaveTranscriptMessage(`Действие «${item.label}» применено`);
+                                  }
+                                }
+                              } catch (err) {
+                                const msg = err instanceof Error ? err.message : "Не удалось выполнить действие";
+                                setSaveTranscriptError(msg);
+                              } finally {
+                                setIsRunningActionId(null);
+                              }
+                            }}
+                          >
+                            {isRunningActionId === item.id ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : null}
+                            <span className="truncate">{item.label}</span>
+                            <span className="ml-2 text-[11px] text-muted-foreground">
+                              {item.outputMode === "replace_text" && "✏️"}
+                              {item.outputMode === "new_version" && "📄"}
+                              {item.outputMode === "document" && "📁"}
+                              {item.outputMode === "new_message" && "💬"}
+                            </span>
+                          </Button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     <Button
                       size="icon"

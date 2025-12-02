@@ -29,6 +29,7 @@ import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
 import ProfilePage from "@/pages/ProfilePage";
 import WorkspaceMembersPage from "@/pages/WorkspaceMembersPage";
+import WorkspaceActionsPage from "@/pages/WorkspaceActionsPage";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -70,6 +71,8 @@ function MainRouter() {
       <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
       <Route path="/knowledge" component={KnowledgeBasePage} />
       <Route path="/skills" component={SkillsPage} />
+      <Route path="/workspaces/:workspaceId/actions" component={WorkspaceActionsPage} />
+      <Route path="/workspaces/actions" component={WorkspaceActionsPage} />
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
       <Route path="/integrations/api" component={ApiDocsPage} />
