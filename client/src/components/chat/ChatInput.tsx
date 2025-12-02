@@ -25,6 +25,7 @@ type ChatInputProps = {
   toolbarActions?: ToolbarAction[];
   toolbarLoadingId?: string | null;
   onRunToolbarAction?: (action: ToolbarAction, currentText: string) => void;
+  externalValue?: string;
 };
 
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
@@ -50,6 +51,7 @@ export default function ChatInput({
   toolbarActions,
   toolbarLoadingId,
   onRunToolbarAction,
+  externalValue,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
@@ -71,6 +73,12 @@ export default function ChatInput({
   useEffect(() => {
     setValue("");
   }, [chatId]);
+
+  useEffect(() => {
+    if (externalValue !== undefined) {
+      setValue(externalValue);
+    }
+  }, [externalValue]);
 
   useEffect(() => {
     if (!showAudioAttach) return;

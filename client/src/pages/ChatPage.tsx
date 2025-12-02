@@ -60,6 +60,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [isRunningActionId, setIsRunningActionId] = useState<string | null>(null);
   const [isRunningMessageActionId, setIsRunningMessageActionId] = useState<string | null>(null);
   const [isRunningToolbarActionId, setIsRunningToolbarActionId] = useState<string | null>(null);
+  const [pendingInput, setPendingInput] = useState<string>("");
 
   const { chats } = useChats(workspaceId);
   const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
@@ -835,6 +836,7 @@ const canvasActions = useMemo(() => {
               placeholder="Прикрепляйте файлы и задавайте вопросы. Enter — отправить, Shift+Enter — новая строка"
               toolbarActions={toolbarActions}
               toolbarLoadingId={isRunningToolbarActionId}
+              externalValue={pendingInput || undefined}
               onRunToolbarAction={async (action, currentText) => {
                 if (!activeSkill?.id || !workspaceId) return;
                 if (!currentText.trim() && action.target === "selection") {
