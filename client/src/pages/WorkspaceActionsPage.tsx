@@ -32,6 +32,14 @@ type WorkspaceActionsResponse = {
   actions: (ActionDto & { editable: boolean })[];
 };
 
+type LlmProvider = {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  isDefault: boolean;
+};
+
 type WorkspaceActionsPageProps = {
   params?: { workspaceId?: string };
 };
@@ -80,6 +88,15 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/workspaces/${workspaceId}/actions`);
       return (await res.json()) as WorkspaceActionsResponse;
+    },
+  });
+
+  const llmProvidersQuery = useQuery({
+    queryKey: ["/api/llm/providers"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/llm/providers");
+      if (!res.ok) return [] as LlmProvider[];
+      return (await res.json()) as LlmProvider[];
     },
   });
 
@@ -359,12 +376,36 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
                 />
               </div>
               <div className="space-y-1">
-                <p className="text-sm font-medium">LLM конфиг (опционально)</p>
-                <Input
-                  value={createState.llmConfigId}
-                  onChange={(e) => setCreateState((prev) => ({ ...prev, llmConfigId: e.target.value }))}
-                  placeholder="ID конфига LLM или оставьте пустым"
-                />
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">LLM провайдер</p>
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="text-muted-foreground text-xs cursor-help">?</span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-xs max-w-xs">
+                        Выберите LLM провайдера для выполнения действия. Если не выбран, будет использован провайдер по умолчанию.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <Select
+                  value={createState.llmConfigId || "_none"}
+                  onValueChange={(value) => setCreateState((prev) => ({ ...prev, llmConfigId: value === "_none" ? "" : value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="По умолчанию" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">По умолчанию</SelectItem>
+                    {llmProvidersQuery.data?.map((provider) => (
+                      <SelectItem key={provider.id} value={provider.id}>
+                        {provider.name} ({provider.provider} / {provider.model})
+                        {provider.isDefault && " ★"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex items-center gap-2">
                 <Button onClick={handleCreateOrUpdate} disabled={createState.saving}>
