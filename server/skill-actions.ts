@@ -52,6 +52,7 @@ async function listForSkill(skillId: string): Promise<SkillActionDto[]> {
   const result = await db.execute<SkillActionRow>(
     sql`SELECT * FROM "skill_actions" WHERE "skill_id" = ${skillId} ORDER BY "created_at" DESC`,
   );
+  console.log("[skill-actions] listForSkill raw rows:", JSON.stringify(result.rows, null, 2));
   return (result.rows ?? []).map(mapSkillActionRow);
 }
 
