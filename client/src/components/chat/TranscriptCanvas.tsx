@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Save, RotateCcw, Loader2, MoreVertical } from "lucide-react";
+import { X, Save, RotateCcw, Loader2, MoreVertical, Circle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -10,6 +10,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useTranscript, useUpdateTranscript } from "@/hooks/useTranscript";
 import { useSkillActions, useRunSkillAction } from "@/hooks/useSkillActions";
 import { useToast } from "@/hooks/use-toast";
@@ -162,9 +167,16 @@ export function TranscriptCanvas({
     <div className="flex h-full flex-col border-l border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/80">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-200 px-6 py-3 dark:border-slate-800">
-        <div className="flex-1">
+        <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">Стенограмма</h2>
-          {hasChanges && <p className="text-xs text-amber-600 dark:text-amber-400">Есть несохранённые изменения</p>}
+          {hasChanges && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Circle className="h-2.5 w-2.5 fill-amber-400 text-amber-400" />
+              </TooltipTrigger>
+              <TooltipContent>Есть несохранённые изменения</TooltipContent>
+            </Tooltip>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {/* Actions dropdown */}
