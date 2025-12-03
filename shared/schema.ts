@@ -566,6 +566,33 @@ export const unicaChatConfig = pgTable("unica_chat_config", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Constants and interfaces (must be before schemas that use them)
+export const llmProviderTypes = ["gigachat", "openai", "huggingface"] as const;
+export type LlmProviderType = (typeof llmProviderTypes)[number];
+
+interface LlmRequestConfig {
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  max_tokens?: number;
+  [key: string]: unknown;
+}
+
+interface LlmResponseConfig {
+  response_format?: string;
+  [key: string]: unknown;
+}
+
+const DEFAULT_LLM_REQUEST_CONFIG: LlmRequestConfig = {
+  temperature: 0.7,
+  top_p: 0.9,
+  max_tokens: 2000,
+};
+
+const DEFAULT_LLM_RESPONSE_CONFIG: LlmResponseConfig = {
+  response_format: "text",
+};
+
 // Schemas and types
 
 export const insertUserSchema = createInsertSchema(users).omit({
@@ -758,32 +785,6 @@ export const updateLlmProviderSchema = z
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нет данных для обновления",
   });
-
-export const llmProviderTypes = ["gigachat", "openai", "huggingface"] as const;
-export type LlmProviderType = (typeof llmProviderTypes)[number];
-
-interface LlmRequestConfig {
-  temperature?: number;
-  top_p?: number;
-  top_k?: number;
-  max_tokens?: number;
-  [key: string]: unknown;
-}
-
-interface LlmResponseConfig {
-  response_format?: string;
-  [key: string]: unknown;
-}
-
-const DEFAULT_LLM_REQUEST_CONFIG: LlmRequestConfig = {
-  temperature: 0.7,
-  top_p: 0.9,
-  max_tokens: 2000,
-};
-
-const DEFAULT_LLM_RESPONSE_CONFIG: LlmResponseConfig = {
-  response_format: "text",
-};
 
 // Types for UI/database
 
