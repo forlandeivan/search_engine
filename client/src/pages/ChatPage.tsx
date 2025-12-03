@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -334,7 +334,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               }
               
               if (status.status === "failed") {
-                setStreamError(status.error || "Транскрибация не удалась. Попробуйте еще раз.");
+                setStreamError(status.error || "РўСЂР°РЅСЃРєСЂРёР±Р°С†РёСЏ РЅРµ СѓРґР°Р»Р°СЃСЊ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰Рµ СЂР°Р·.");
                 return;
               }
 
@@ -348,7 +348,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             }
           }
           
-          setStreamError("Транскрибация заняла слишком много времени. Попробуйте еще раз.");
+          setStreamError("РўСЂР°РЅСЃРєСЂРёР±Р°С†РёСЏ Р·Р°РЅСЏР»Р° СЃР»РёС€РєРѕРј РјРЅРѕРіРѕ РІСЂРµРјРµРЅРё. РџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰Рµ СЂР°Р·.");
         };
 
         // Start polling in background
@@ -445,11 +445,12 @@ export default function ChatPage({ params }: ChatPageProps) {
             </div>
           </div>
           <div className="border-t border-slate-200 bg-white/95 pb-6 pt-4 dark:border-slate-800 dark:bg-slate-900/70">
-            <ChatInput
+                        <ChatInput
               onSend={handleSend}
               onTranscribe={handleTranscription}
               disabled={disableInput}
-              placeholder={isNewChat ? "Начните новый чат..." : "Напишите сообщение и нажмите Enter"}
+              chatId={effectiveChatId ?? null}
+              placeholder={isNewChat ? "Ask something..." : "Type a message and press Enter"}
             />
           </div>
         </section>
@@ -467,3 +468,7 @@ function buildLocalMessage(role: ChatMessage["role"], chatId: string, content: s
     createdAt: new Date().toISOString(),
   };
 }
+
+
+
+

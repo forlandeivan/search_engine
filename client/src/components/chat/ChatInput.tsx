@@ -15,6 +15,7 @@ type ChatInputProps = {
   disabled?: boolean;
   placeholder?: string;
   showAudioAttach?: boolean;
+  chatId?: string | null;
 };
 
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
@@ -35,7 +36,8 @@ export default function ChatInput({
   onTranscribe,
   disabled, 
   placeholder, 
-  showAudioAttach = true 
+  showAudioAttach = true,
+  chatId = null,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
@@ -63,10 +65,19 @@ export default function ChatInput({
   }, [showAudioAttach]);
 
   const handleUploadAudio = useCallback(async (file: File): Promise<string | null> => {
+    if (!chatId) {
+      toast({
+        title: "Нет чата",
+        description: "Создайте или выберите чат перед отправкой аудио.",
+        variant: "destructive",
+      });
+      return null;
+    }
     setIsUploading(true);
     try {
       const formData = new FormData();
       formData.append("audio", file);
+      formData.append("chatId", chatId);
 
       const response = await fetch("/api/chat/transcribe", {
         method: "POST",
