@@ -451,13 +451,10 @@ const isNewChat = !effectiveChatId;
           - Keep this in mind when moving overflow logic in the next step.
         */}
         <section className={cn(
-          "flex min-h-0 overflow-hidden",
-          openTranscriptId ? "flex-row" : "flex-1 flex-col"
+          "flex min-h-0 flex-1 overflow-hidden",
+          openTranscriptId ? "flex-row" : "flex-col"
         )}>
-          <div className={cn(
-            "flex flex-col overflow-hidden",
-            openTranscriptId ? "flex-1 min-w-0" : "flex-1"
-          )}>
+          <div className="flex flex-col overflow-hidden flex-1 min-w-0">
             <div
               ref={messagesScrollRef}
               className="chat-scroll flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8"
