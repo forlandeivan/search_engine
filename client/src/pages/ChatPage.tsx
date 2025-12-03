@@ -369,7 +369,6 @@ export default function ChatPage({ params }: ChatPageProps) {
                               ...msg,
                               content: completeData.message.content,
                               metadata: completeData.message.metadata,
-                              createdAt: completeData.message.createdAt,
                             }
                           : msg,
                       ),
@@ -391,11 +390,11 @@ export default function ChatPage({ params }: ChatPageProps) {
                 return;
               }
 
-              await new Promise((resolve) => setTimeout(resolve, 1000));
+              await new Promise((resolve) => setTimeout(resolve, 500));
               attempts += 1;
             } catch (error) {
               console.error('[ChatPage] Poll error:', error);
-              await new Promise((resolve) => setTimeout(resolve, 1000));
+              await new Promise((resolve) => setTimeout(resolve, 500));
               attempts += 1;
             }
           }
