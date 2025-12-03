@@ -310,8 +310,9 @@ export default function ChatPage({ params }: ChatPageProps) {
       if (targetChatId) {
         const audioMessageTime = new Date();
         const userMessage = buildLocalMessage('user', targetChatId, fileName, audioMessageTime);
+        const placeholderId = `local-transcript-${Date.now()}`;
         const assistantMessage: ChatMessage = {
-          id: `local-transcript-${Date.now()}`,
+          id: placeholderId,
           chatId: targetChatId,
           role: 'assistant',
           content: 'Аудиозапись загружена. Идёт расшифровка...',
@@ -319,52 +320,55 @@ export default function ChatPage({ params }: ChatPageProps) {
             type: 'transcript',
             transcriptStatus: 'processing',
           },
-          createdAt: new Date(audioMessageTime.getTime() + 1).toISOString(),
+          createdAt: new Date(audioMessageTime.getTime() + 1000000).toISOString(),
         };
         setLocalChatId(targetChatId);
         setLocalMessages((prev) => [...prev, userMessage, assistantMessage]);
-      }
 
-      const pollOperation = async () => {
-        let attempts = 0;
-        const maxAttempts = 600;
+        const pollOperation = async () => {
+          let attempts = 0;
+          const maxAttempts = 600;
 
-        while (attempts < maxAttempts) {
-          try {
-            const response = await fetch(`/api/chat/transcribe/operations/${operationId}`, {
-              method: 'GET',
-              credentials: 'include',
-            });
+          while (attempts < maxAttempts) {
+            try {
+              const response = await fetch(`/api/chat/transcribe/operations/${operationId}`, {
+                method: 'GET',
+                credentials: 'include',
+              });
 
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
+
+              const status = await response.json();
+
+              if (status.status === 'completed') {
+                setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
+                await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
+                return;
+              }
+
+              if (status.status === 'failed') {
+                setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
+                setStreamError(status.error || 'Транскрибация не удалась. Попробуйте снова.');
+                return;
+              }
+
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              attempts += 1;
+            } catch (error) {
+              console.error('[ChatPage] Poll error:', error);
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              attempts += 1;
             }
-
-            const status = await response.json();
-
-            if (status.status === 'completed') {
-              await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
-              return;
-            }
-
-            if (status.status === 'failed') {
-              setStreamError(status.error || 'Транскрибация не удалась. Попробуйте снова.');
-              return;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            attempts += 1;
-          } catch (error) {
-            console.error('[ChatPage] Poll error:', error);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            attempts += 1;
           }
-        }
 
-        setStreamError('Транскрибация заняла слишком много времени. Попробуйте снова.');
-      };
+          setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
+          setStreamError('Транскрибация заняла слишком много времени. Попробуйте снова.');
+        };
 
-      await pollOperation();
+        await pollOperation();
+      }
       setIsTranscribing(false);
     },
     [activeChat?.skillId, activeSkill?.id, createChat, defaultSkill?.id, effectiveChatId, handleSelectChat, queryClient, workspaceId],
