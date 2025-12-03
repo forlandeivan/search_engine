@@ -262,6 +262,14 @@ class YandexSttService {
         result.folderId = secret.secretValue;
       }
     }
+    
+    // Fallback to environment variables if DB values are missing
+    if (!result.apiKey) {
+      result.apiKey = process.env.YANDEX_STT_API_KEY;
+    }
+    if (!result.folderId) {
+      result.folderId = process.env.YANDEX_STT_FOLDER_ID;
+    }
     return result;
   }
 
