@@ -325,9 +325,10 @@ export default function ChatPage({ params }: ChatPageProps) {
           id: placeholderId,
           chatId: targetChatId,
           role: 'assistant',
-          content: 'Аудиозапись загружена. Идёт расшифровка...',
+          content: '',
           metadata: {
             type: 'transcript',
+            transcriptId: placeholderId,
             transcriptStatus: 'processing',
           },
           createdAt: new Date(audioMessageTime.getTime() + 1000).toISOString(),

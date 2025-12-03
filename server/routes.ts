@@ -9402,7 +9402,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         metadata: {
           type: 'transcript',
           transcriptId: result.transcriptId,
-          transcriptStatus: 'completed',
+          transcriptStatus: 'ready',
+          previewText: transcriptText.substring(0, 200),
         },
       });
 
