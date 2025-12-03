@@ -308,22 +308,7 @@ export default function ChatPage({ params }: ChatPageProps) {
       }
 
       if (targetChatId) {
-        const audioMessageTime = new Date();
-        const userMessage = buildLocalMessage('user', targetChatId, fileName, audioMessageTime);
-        const placeholderId = `local-transcript-${Date.now()}`;
-        const assistantMessage: ChatMessage = {
-          id: placeholderId,
-          chatId: targetChatId,
-          role: 'assistant',
-          content: 'Аудиозапись загружена. Идёт расшифровка...',
-          metadata: {
-            type: 'transcript',
-            transcriptStatus: 'processing',
-          },
-          createdAt: new Date(audioMessageTime.getTime() + 1000).toISOString(),
-        };
         setLocalChatId(targetChatId);
-        setLocalMessages((prev) => [...prev, userMessage, assistantMessage]);
 
         const pollOperation = async () => {
           let attempts = 0;
@@ -347,13 +332,11 @@ export default function ChatPage({ params }: ChatPageProps) {
                   method: 'POST',
                   credentials: 'include',
                 });
-                setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
                 await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
                 return;
               }
 
               if (status.status === 'failed') {
-                setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
                 setStreamError(status.error || 'Транскрибация не удалась. Попробуйте снова.');
                 return;
               }
@@ -367,7 +350,6 @@ export default function ChatPage({ params }: ChatPageProps) {
             }
           }
 
-          setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
           setStreamError('Транскрибация заняла слишком много времени. Попробуйте снова.');
         };
 

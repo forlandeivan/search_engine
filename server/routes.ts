@@ -9246,6 +9246,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
+        // Create audio message (user-sent audio file)
+        const audioMetadata: ChatMessageMetadata = {
+          type: "audio",
+          fileName: file.originalname,
+          mimeType: file.mimetype,
+          size: file.size,
+        };
+
+        const audioMessage = await storage.createChatMessage({
+          chatId,
+          role: "user",
+          content: file.originalname || "Аудиозапись",
+          metadata: audioMetadata,
+        });
+
         // Use async API for all files regardless of size
         console.info(`[transcribe] Using async API for file (${file.size} bytes)`);
         const response = await yandexSttAsyncService.startAsyncTranscription({
@@ -9283,13 +9298,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
           operationId: response.operationId,
           message: response.message,
           transcriptId: transcript.id,
-          chatMessage: {
+          audioMessageId: audioMessage.id,
+          audioMessage: {
+            id: audioMessage.id,
+            chatId: audioMessage.chatId,
+            role: audioMessage.role,
+            content: audioMessage.content,
+            metadata: audioMessage.metadata ?? {},
+            createdAt: audioMessage.createdAt,
+          },
+          placeholderMessage: {
             id: placeholderMessage.id,
             chatId: placeholderMessage.chatId,
             role: placeholderMessage.role,
             content: placeholderMessage.content,
             metadata: placeholderMessage.metadata ?? {},
-            createdAt: new Date().toISOString(),
+            createdAt: placeholderMessage.createdAt,
           },
         });
       } catch (error) {
