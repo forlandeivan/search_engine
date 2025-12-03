@@ -95,6 +95,14 @@ export default function ChatMessagesArea({
     return null;
   }, [isStreaming, messages]);
 
+  const sortedMessages = useMemo(() => {
+    return [...messages].sort((a, b) => {
+      const dateA = new Date(a.createdAt).getTime();
+      const dateB = new Date(b.createdAt).getTime();
+      return dateA - dateB;
+    });
+  }, [messages]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="border-b bg-white/80 px-6 py-4 dark:bg-slate-900/40">
@@ -191,11 +199,11 @@ export default function ChatMessagesArea({
           ) : null}
 
           {!errorMessage
-            ? messages.map((message, index) => (
+            ? sortedMessages.map((message, index) => (
                 <ChatBubble
                   key={message.id}
                   message={message}
-                  previousRole={index > 0 ? messages[index - 1]?.role : undefined}
+                  previousRole={index > 0 ? sortedMessages[index - 1]?.role : undefined}
                   isStreamingBubble={streamingAssistantId === message.id}
                   isTranscribingBubble={
                     isTranscribing && index === messages.length - 1 && message.role === "assistant" && !message.content

@@ -361,12 +361,8 @@ export default function ChatPage({ params }: ChatPageProps) {
                 if (completeRes.ok) {
                   const completeData = await completeRes.json();
                   if (completeData.message) {
-                    const transcriptMessage: ChatMessage = {
-                      ...completeData.message,
-                      createdAt: new Date(audioMessageTime.getTime() + 2000).toISOString(),
-                    };
                     setLocalMessages((prev) => 
-                      prev.filter((msg) => msg.id !== placeholderId).concat([transcriptMessage])
+                      prev.filter((msg) => msg.id !== placeholderId).concat([completeData.message as ChatMessage])
                     );
                   } else {
                     setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
