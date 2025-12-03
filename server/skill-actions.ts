@@ -94,9 +94,9 @@ async function upsertForSkill(
   const result = await db.execute<SkillActionRow>(
     sql`
       INSERT INTO "skill_actions" (
-        "skill_id", "action_id", "enabled", "enabled_placements", "label_override"
+        "skill_id", "action_id", "workspace_id", "enabled", "enabled_placements", "label_override"
       ) VALUES (
-        ${skillId}, ${actionId}, ${payload.enabled},
+        ${skillId}, ${actionId}, ${workspaceId}, ${payload.enabled},
         ${placementsArray}::text[], ${payload.labelOverride ?? null}
       )
       ON CONFLICT ("skill_id", "action_id") DO UPDATE SET
