@@ -21,11 +21,23 @@ export function SkillActionsPanel({
   const { mutate: runAction, isPending } = useRunSkillAction(workspaceId);
 
   // Фильтруем действия: enabled, enabledPlacements содержит "canvas", target = "transcript"
+  console.log("[SkillActionsPanel] Received actions:", JSON.stringify(actions, null, 2));
   const canvasActions = (actions ?? []).filter(
-    (item) =>
-      item.skillAction?.enabled &&
-      item.skillAction?.enabledPlacements.includes("canvas") &&
-      item.action.target === "transcript"
+    (item) => {
+      const pass = 
+        item.skillAction?.enabled &&
+        item.skillAction?.enabledPlacements.includes("canvas") &&
+        item.action.target === "transcript";
+      console.log("[SkillActionsPanel] Action filter:", {
+        actionId: item.action.id,
+        label: item.action.label,
+        target: item.action.target,
+        enabled: item.skillAction?.enabled,
+        enabledPlacements: item.skillAction?.enabledPlacements,
+        pass,
+      });
+      return pass;
+    }
   );
 
   if (isLoading) {
