@@ -390,40 +390,40 @@ function TranscriptCard({
   preview?: string;
   onOpen?: () => void;
 }) {
-  if (status === "processing") {
-    return (
-      <div className="space-y-2">
-        <p className="text-sm font-semibold">Идёт расшифровка аудио</p>
-        <p className="text-sm text-muted-foreground">Обработка может занять несколько минут</p>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Подождите, готовим стенограмму
-        </div>
-      </div>
-    );
-  }
-
-  if (status === "failed") {
-    return (
-      <div className="space-y-2">
-        <p className="text-sm font-semibold text-destructive">Не удалось распознать аудио</p>
-        <p className="text-sm text-muted-foreground">Попробуйте позже или загрузите другой файл.</p>
-      </div>
-    );
-  }
+  const isProcessing = status === "processing";
+  const isFailed = status === "failed";
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold">Стенограмма заседания</p>
-          {status === "ready" ? <p className="text-xs text-muted-foreground">Готова к просмотру</p> : null}
+        <div className="flex-1">
+          <p className="text-sm font-semibold">
+            {isFailed ? "Не удалось распознать аудио" : "Стенограмма заседания"}
+          </p>
+          {!isProcessing && !isFailed ? (
+            <p className="text-xs text-muted-foreground">Готова к просмотру</p>
+          ) : null}
+          {isProcessing ? (
+            <p className="text-xs text-muted-foreground">Обработка может занять несколько минут</p>
+          ) : null}
         </div>
-        <Button size="sm" variant="outline" onClick={onOpen}>
-          Открыть стенограмму
-        </Button>
+        {isProcessing ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </div>
+        ) : !isFailed ? (
+          <Button size="sm" variant="outline" onClick={onOpen}>
+            Открыть
+          </Button>
+        ) : null}
       </div>
-      {preview ? <p className="text-sm text-muted-foreground line-clamp-4">{preview}</p> : null}
+      {isProcessing ? (
+        <p className="text-xs text-muted-foreground">Подождите, готовим стенограмму</p>
+      ) : isFailed ? (
+        <p className="text-sm text-muted-foreground">Попробуйте позже или загрузите другой файл.</p>
+      ) : preview ? (
+        <p className="text-sm text-muted-foreground line-clamp-4">{preview}</p>
+      ) : null}
     </div>
   );
 }
