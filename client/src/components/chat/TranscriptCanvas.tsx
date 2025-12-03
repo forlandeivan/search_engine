@@ -121,9 +121,10 @@ export function TranscriptCanvas({
       },
       {
         onSuccess: (result) => {
-          if (result.output) {
-            setDraftText(result.output);
-            setHasChanges(result.output !== originalText);
+          const outputText = result.result?.text || result.output;
+          if (outputText) {
+            setDraftText(outputText);
+            setHasChanges(outputText !== originalText);
             toast({
               title: "Текст обновлён",
               description: `Действие "${label}" применено`,
