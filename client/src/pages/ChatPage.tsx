@@ -308,7 +308,8 @@ export default function ChatPage({ params }: ChatPageProps) {
       }
 
       if (targetChatId) {
-        const userMessage = buildLocalMessage('user', targetChatId, fileName);
+        const audioMessageTime = new Date();
+        const userMessage = buildLocalMessage('user', targetChatId, fileName, audioMessageTime);
         const assistantMessage: ChatMessage = {
           id: `local-transcript-${Date.now()}`,
           chatId: targetChatId,
@@ -318,7 +319,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             type: 'transcript',
             transcriptStatus: 'processing',
           },
-          createdAt: new Date().toISOString(),
+          createdAt: new Date(audioMessageTime.getTime() + 1).toISOString(),
         };
         setLocalChatId(targetChatId);
         setLocalMessages((prev) => [...prev, userMessage, assistantMessage]);
@@ -444,13 +445,14 @@ const isNewChat = !effectiveChatId;
   );
 }
 
-function buildLocalMessage(role: ChatMessage["role"], chatId: string, content: string): ChatMessage {
+function buildLocalMessage(role: ChatMessage["role"], chatId: string, content: string, timestamp?: Date): ChatMessage {
+  const date = timestamp || new Date();
   return {
     id: `local-${role}-${Date.now()}`,
     chatId,
     role,
     content,
-    createdAt: new Date().toISOString(),
+    createdAt: date.toISOString(),
   };
 }
 
