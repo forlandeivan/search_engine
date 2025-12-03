@@ -353,12 +353,25 @@ export default function ChatPage({ params }: ChatPageProps) {
               const status = await response.json();
 
               if (status.status === 'completed') {
-                await fetch(`/api/chat/transcribe/complete/${operationId}`, {
+                const completeRes = await fetch(`/api/chat/transcribe/complete/${operationId}`, {
                   method: 'POST',
                   credentials: 'include',
                 });
-                setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
-                await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
+                
+                if (completeRes.ok) {
+                  const completeData = await completeRes.json();
+                  if (completeData.message) {
+                    setLocalMessages((prev) => 
+                      prev.filter((msg) => msg.id !== placeholderId).concat([completeData.message as ChatMessage])
+                    );
+                  } else {
+                    setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
+                    await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
+                  }
+                } else {
+                  setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
+                  await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
+                }
                 return;
               }
 

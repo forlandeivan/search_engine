@@ -9408,8 +9408,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({
         status: 'ok',
-        messageId: createdMessage.id,
-        text: transcriptText,
+        message: {
+          id: createdMessage.id,
+          chatId: createdMessage.chatId,
+          role: createdMessage.role,
+          content: createdMessage.content,
+          metadata: createdMessage.metadata ?? {},
+          createdAt: createdMessage.createdAt,
+        },
       });
     } catch (error) {
       console.error(`[transcribe/complete] user=${user.id} error:`, error);
