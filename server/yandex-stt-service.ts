@@ -253,22 +253,29 @@ class YandexSttService {
     const { storage } = await import("./storage");
     const secrets = await storage.getSpeechProviderSecrets(providerId);
     
+    console.info(`[yandex-stt] Retrieved ${secrets.length} secrets from DB`);
+    
     const result: { apiKey?: string; folderId?: string } = {};
     for (const secret of secrets) {
+      console.info(`[yandex-stt] Processing secret: ${secret.secretKey}`);
       if (secret.secretKey === "apiKey" && secret.secretValue) {
         result.apiKey = secret.secretValue;
+        console.info(`[yandex-stt] Found API key from DB: ${secret.secretValue.substring(0, 10)}...`);
       }
       if (secret.secretKey === "folderId" && secret.secretValue) {
         result.folderId = secret.secretValue;
+        console.info(`[yandex-stt] Found folder ID from DB: ${secret.secretValue}`);
       }
     }
     
     // Fallback to environment variables if DB values are missing
     if (!result.apiKey) {
       result.apiKey = process.env.YANDEX_STT_API_KEY;
+      if (result.apiKey) console.info(`[yandex-stt] Using API key from env`);
     }
     if (!result.folderId) {
       result.folderId = process.env.YANDEX_STT_FOLDER_ID;
+      if (result.folderId) console.info(`[yandex-stt] Using folder ID from env`);
     }
     return result;
   }
