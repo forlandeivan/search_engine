@@ -491,6 +491,7 @@ const isNewChat = !effectiveChatId;
               <TranscriptCanvas
                 workspaceId={workspaceId}
                 transcriptId={openTranscriptId}
+                skillId={activeSkill?.id}
                 onClose={() => setOpenTranscriptId(null)}
               />
             </div>

@@ -3,17 +3,20 @@ import { X, Save, RotateCcw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useTranscript, useUpdateTranscript } from "@/hooks/useTranscript";
+import { SkillActionsPanel } from "@/components/chat/SkillActionsPanel";
 import { useToast } from "@/hooks/use-toast";
 
 type TranscriptCanvasProps = {
   workspaceId: string;
   transcriptId: string;
+  skillId?: string;
   onClose: () => void;
 };
 
 export function TranscriptCanvas({
   workspaceId,
   transcriptId,
+  skillId,
   onClose,
 }: TranscriptCanvasProps) {
   const { toast } = useToast();
@@ -154,6 +157,19 @@ export function TranscriptCanvas({
         )}
       </div>
 
+      {/* Actions Panel */}
+      {skillId && (
+        <SkillActionsPanel
+          workspaceId={workspaceId}
+          skillId={skillId}
+          transcriptText={draftText}
+          onActionComplete={() => {
+            toast({
+              description: "Действие выполнено",
+            });
+          }}
+        />
+      )}
     </div>
   );
 }
