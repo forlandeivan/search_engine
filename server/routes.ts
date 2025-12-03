@@ -9246,69 +9246,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
-        const SYNC_API_MAX_SIZE = 1 * 1024 * 1024; // 1 MB for sync API
+        // Use async API for all files regardless of size
+        console.info(`[transcribe] Using async API for file (${file.size} bytes)`);
+        const response = await yandexSttAsyncService.startAsyncTranscription({
+          audioBuffer: file.buffer,
+          mimeType: file.mimetype,
+          lang,
+          userId: user.id,
+          originalFileName: file.originalname,
+        });
 
-        if (file.size <= SYNC_API_MAX_SIZE) {
-          // Small files: use sync API for immediate results
-          console.info(`[transcribe] Using sync API for small file (${file.size} bytes)`);
-          const result = await yandexSttService.transcribe({
-            audioBuffer: file.buffer,
-            mimeType: file.mimetype,
-            lang,
-          });
+        const transcript = await storage.createTranscript({
+          workspaceId,
+          chatId,
+          sourceFileId: response.uploadResult?.objectKey ?? null,
+          status: "processing",
+          title: file.originalname ? `Аудиозапись: ${file.originalname}` : "Аудиозапись заседания",
+          previewText: null,
+          fullText: null,
+        });
 
-          res.json({
-            text: result.text,
-            lang: result.lang,
-          });
-        } else {
-          // Large files: use async API with Object Storage
-          console.info(`[transcribe] Using async API for large file (${file.size} bytes)`);
-          const response = await yandexSttAsyncService.startAsyncTranscription({
-            audioBuffer: file.buffer,
-            mimeType: file.mimetype,
-            lang,
-            userId: user.id,
-            originalFileName: file.originalname,
-          });
+        const placeholderMetadata: ChatMessageMetadata = {
+          type: "transcript",
+          transcriptId: transcript.id,
+          transcriptStatus: "processing",
+        };
 
-          const transcript = await storage.createTranscript({
-            workspaceId,
-            chatId,
-            sourceFileId: response.uploadResult?.objectKey ?? null,
-            status: "processing",
-            title: file.originalname ? `Аудиозапись: ${file.originalname}` : "Аудиозапись заседания",
-            previewText: null,
-            fullText: null,
-          });
+        const placeholderMessage = await storage.createChatMessage({
+          chatId,
+          role: "assistant",
+          content: "Аудиозапись загружена. Идёт расшифровка...",
+          metadata: placeholderMetadata,
+        });
 
-          const placeholderMetadata: ChatMessageMetadata = {
-            type: "transcript",
-            transcriptId: transcript.id,
-            transcriptStatus: "processing",
-          };
-
-          const placeholderMessage = await storage.createChatMessage({
-            chatId,
-            role: "assistant",
-            content: "Аудиозапись загружена. Идёт расшифровка...",
-            metadata: placeholderMetadata,
-          });
-
-          res.json({
-            operationId: response.operationId,
-            message: response.message,
-            transcriptId: transcript.id,
-            chatMessage: {
-              id: placeholderMessage.id,
-              chatId: placeholderMessage.chatId,
-              role: placeholderMessage.role,
-              content: placeholderMessage.content,
-              metadata: placeholderMessage.metadata ?? {},
-              createdAt: new Date().toISOString(),
-            },
-          });
-        }
+        res.json({
+          operationId: response.operationId,
+          message: response.message,
+          transcriptId: transcript.id,
+          chatMessage: {
+            id: placeholderMessage.id,
+            chatId: placeholderMessage.chatId,
+            role: placeholderMessage.role,
+            content: placeholderMessage.content,
+            metadata: placeholderMessage.metadata ?? {},
+            createdAt: new Date().toISOString(),
+          },
+        });
       } catch (error) {
         console.error(`[transcribe] user=${user.id} error:`, error);
         
