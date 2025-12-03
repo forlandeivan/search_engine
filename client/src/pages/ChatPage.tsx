@@ -361,8 +361,17 @@ export default function ChatPage({ params }: ChatPageProps) {
                 if (completeRes.ok) {
                   const completeData = await completeRes.json();
                   if (completeData.message) {
-                    setLocalMessages((prev) => 
-                      prev.filter((msg) => msg.id !== placeholderId).concat([completeData.message as ChatMessage])
+                    setLocalMessages((prev) =>
+                      prev.map((msg) =>
+                        msg.id === placeholderId
+                          ? {
+                              ...msg,
+                              content: completeData.message.content,
+                              metadata: completeData.message.metadata,
+                              createdAt: completeData.message.createdAt,
+                            }
+                          : msg,
+                      ),
                     );
                   } else {
                     setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
