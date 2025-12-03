@@ -758,6 +758,53 @@ function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewPro
   );
 }
 
+function ActionsPreviewForNewSkill() {
+  const { data, isLoading, isError } = useQuery<{ actions: ActionDto[] }>({
+    queryKey: ["/api/actions/available"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/actions/available");
+      if (!response.ok) {
+        return { actions: [] };
+      }
+      return (await response.json()) as { actions: ActionDto[] };
+    },
+  });
+
+  const actions = data?.actions ?? [];
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Загрузка действий...
+      </div>
+    );
+  }
+
+  if (isError || actions.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
+        Действия будут доступны после сохранения навыка.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-muted-foreground">
+        После сохранения навыка вы сможете настроить следующие действия:
+      </p>
+      <div className="flex flex-wrap gap-1">
+        {actions.map((action) => (
+          <Badge key={action.id} variant="secondary" className="text-xs">
+            {action.label}
+          </Badge>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 type SkillFormDialogProps = {
   open: boolean;
   onOpenChange: (next: boolean) => void;
@@ -1249,14 +1296,14 @@ function SkillFormDialog({
                   Настройте, какие действия доступны в навыке и где они отображаются (холст, сообщения, панель ввода).
                 </FormDescription>
               </div>
-              {skill?.id && !isSystemSkill ? (
+              {isSystemSkill ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
+                  Настройка действий недоступна для системных навыков.
+                </div>
+              ) : skill?.id ? (
                 <SkillActionsPreview skillId={skill.id} />
               ) : (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
-                  {isSystemSkill
-                    ? "Настройка действий недоступна для системных навыков."
-                    : "Сохраните навык, чтобы настроить действия."}
-                </div>
+                <ActionsPreviewForNewSkill />
               )}
             </fieldset>
 
@@ -1475,6 +1522,13 @@ export default function SkillsPage() {
           values.ragEmbeddingProviderId && values.ragEmbeddingProviderId !== NO_EMBEDDING_PROVIDER_VALUE
             ? values.ragEmbeddingProviderId.trim()
             : null,
+        bm25Weight: null,
+        bm25Limit: null,
+        vectorWeight: null,
+        vectorLimit: null,
+        llmTemperature: null,
+        llmMaxTokens: null,
+        llmResponseFormat: null,
       },
     };
 

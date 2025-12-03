@@ -8616,6 +8616,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Available system actions (for preview before creating skill)
+  app.get("/api/actions/available", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+
+    try {
+      const systemActions = await actionsRepository.listSystemActions();
+      res.json({ actions: systemActions });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // Actions (workspace library)
   app.get("/api/workspaces/:workspaceId/actions", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);

@@ -198,10 +198,25 @@ async function softDeleteWorkspaceAction(workspaceId: string, actionId: string):
     );
 }
 
+async function listSystemActions(): Promise<ActionDto[]> {
+  const rows = await db
+    .select()
+    .from(actions)
+    .where(
+      and(
+        isNull(actions.deletedAt),
+        eq(actions.scope, "system")
+      )
+    )
+    .orderBy(desc(actions.createdAt));
+  return rows.map(mapActionToDto);
+}
+
 export const actionsRepository = {
   getById,
   getByIdForWorkspace,
   listForWorkspace,
+  listSystemActions,
   createWorkspaceAction,
   updateWorkspaceAction,
   softDeleteWorkspaceAction,
