@@ -4,6 +4,12 @@ import { db } from "./db";
 import { actionsRepository } from "./actions";
 import { getSkillById } from "./skills";
 
+function toPgArray(arr: string[]): string {
+  if (!arr || arr.length === 0) return "{}";
+  const escaped = arr.map(s => `"${s.replace(/"/g, '\\"')}"`);
+  return `{${escaped.join(",")}}`;
+}
+
 type SkillActionRow = {
   id: string;
   skill_id: string;
@@ -84,13 +90,14 @@ async function upsertForSkill(
     throw new Error("Invalid system action configuration");
   }
 
+  const placementsArray = toPgArray(payload.enabledPlacements);
   const result = await db.execute<SkillActionRow>(
     sql`
       INSERT INTO "skill_actions" (
         "skill_id", "action_id", "enabled", "enabled_placements", "label_override"
       ) VALUES (
         ${skillId}, ${actionId}, ${payload.enabled},
-        ${payload.enabledPlacements}, ${payload.labelOverride ?? null}
+        ${placementsArray}::text[], ${payload.labelOverride ?? null}
       )
       ON CONFLICT ("skill_id", "action_id") DO UPDATE SET
         "enabled" = EXCLUDED."enabled",
