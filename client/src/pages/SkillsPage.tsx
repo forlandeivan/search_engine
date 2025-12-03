@@ -368,7 +368,13 @@ function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewPro
   const [rows, setRows] = useState<SkillActionRowState[]>([]);
 
   useEffect(() => {
-    if (!data) return;
+    if (!data) {
+      return;
+    }
+    if (!Array.isArray(data)) {
+      setRows([]);
+      return;
+    }
     setRows(
       data.map((item) => ({
         ...item,
@@ -412,9 +418,14 @@ function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewPro
       prev.map((item) => (item.action.id === row.action.id ? { ...item, ...next, saving: true } : item)),
     );
 
+    const nextEnabled = next.enabled ?? row.enabled;
+    const basePlacements = next.enabledPlacements ?? row.enabledPlacements;
+    const effectivePlacements =
+      basePlacements.length > 0 ? basePlacements : [...(row.action.placements ?? [])];
+
     const payload = {
-      enabled: next.enabled ?? row.enabled,
-      enabledPlacements: next.enabledPlacements ?? row.enabledPlacements,
+      enabled: nextEnabled,
+      enabledPlacements: effectivePlacements,
       labelOverride:
         next.labelOverride === undefined
           ? row.labelOverride
@@ -424,9 +435,7 @@ function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewPro
     };
 
     try {
-      const response = await apiRequest("PATCH", `/api/skills/${skillId}/actions/${row.action.id}`, {
-        body: JSON.stringify(payload),
-      });
+      const response = await apiRequest("PUT", `/api/skills/${skillId}/actions/${row.action.id}`, payload);
       if (!response.ok) {
         throw new Error("Не удалось сохранить изменения");
       }
@@ -904,7 +913,7 @@ function SkillFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>{skill ? "Редактирование навыка" : "Создание навыка"}</DialogTitle>
           <DialogDescription>
