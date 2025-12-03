@@ -8852,21 +8852,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const prompt = action.promptTemplate.replace(/{{\s*text\s*}}/gi, textForPrompt);
 
-        let llmText = prompt;
+        let llmText: string;
         let llmUsage: unknown = null;
 
         try {
-          const llmConfig = await resolveLlmConfigForAction(skill, action);
-          // TODO: заменить на реальный вызов llmService/llm-client с llmConfig.
-          // Пока оставляем prompt как текст, но в llmUsage вернем конфиг.
-          llmUsage = {
-            provider: llmConfig.name,
-            model: llmConfig.providerType,
+          const llmProvider = await resolveLlmConfigForAction(skill, action);
+          const requestConfig = mergeLlmRequestConfig(llmProvider);
+
+          const messages: Array<{ role: string; content: string }> = [];
+
+          if (requestConfig.systemPrompt && requestConfig.systemPrompt.trim()) {
+            messages.push({ role: "system", content: requestConfig.systemPrompt.trim() });
+          }
+
+          messages.push({ role: "user", content: prompt });
+
+          const requestBody: Record<string, unknown> = {
+            [requestConfig.modelField]: llmProvider.model,
+            [requestConfig.messagesField]: messages,
           };
+
+          if (requestConfig.temperature !== undefined) {
+            requestBody.temperature = requestConfig.temperature;
+          }
+
+          if (requestConfig.maxTokens !== undefined) {
+            requestBody.max_tokens = requestConfig.maxTokens;
+          }
+
+          console.info(
+            `[skill-action] skillId=${skillId} actionId=${actionId} calling LLM provider=${llmProvider.id} model=${llmProvider.model}`,
+          );
+
+          const accessToken = await fetchAccessToken(llmProvider);
+          const completion = await executeLlmCompletion(llmProvider, accessToken, requestBody);
+
+          llmText = completion.answer;
+          llmUsage = {
+            provider: llmProvider.name,
+            model: llmProvider.model,
+            usageTokens: completion.usageTokens ?? null,
+          };
+
+          console.info(
+            `[skill-action] skillId=${skillId} actionId=${actionId} LLM response received, tokens=${completion.usageTokens ?? "unknown"}`,
+          );
         } catch (llmErr) {
           if (llmErr instanceof LlmConfigNotFoundError) {
             return res.status(llmErr.status).json({ message: llmErr.message });
           }
+          console.error(`[skill-action] skillId=${skillId} actionId=${actionId} LLM error:`, llmErr);
           throw llmErr;
         }
         const runId = randomUUID();
