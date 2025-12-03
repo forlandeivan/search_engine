@@ -9342,6 +9342,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/chat/transcribe/complete/:operationId", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+
+    try {
+      const { operationId } = req.params;
+      if (!operationId || !operationId.trim()) {
+        return res.status(400).json({ message: "ID операции не предоставлен" });
+      }
+
+      const status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
+      
+      if (status.status !== 'completed' || !status.text) {
+        return res.status(400).json({ message: "Операция не завершена или нет текста" });
+      }
+
+      const result = status as typeof status & { chatId?: string; transcriptId?: string };
+      if (!result.chatId) {
+        return res.status(400).json({ message: "Chat ID не найден в операции" });
+      }
+
+      const chat = await storage.getChatSessionById(result.chatId);
+      if (!chat || chat.userId !== user.id) {
+        return res.status(404).json({ message: "Чат не найден или недоступен" });
+      }
+
+      const transcriptText = status.text || 'Стенограмма получена';
+      const createdMessage = await storage.createChatMessage({
+        chatId: result.chatId,
+        role: 'assistant',
+        content: transcriptText,
+        metadata: {
+          type: 'transcript',
+          transcriptId: result.transcriptId,
+          transcriptStatus: 'completed',
+        },
+      });
+
+      res.json({
+        status: 'ok',
+        messageId: createdMessage.id,
+        text: transcriptText,
+      });
+    } catch (error) {
+      console.error(`[transcribe/complete] user=${user.id} error:`, error);
+      
+      if (error instanceof YandexSttAsyncError) {
+        return res.status(error.status).json({ message: error.message, code: error.code });
+      }
+      next(error);
+    }
+  });
+
   app.get("/api/chat/transcribe/status", requireAuth, async (req, res, next) => {
     try {
       const health = await yandexSttService.checkHealth();

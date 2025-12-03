@@ -320,7 +320,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             type: 'transcript',
             transcriptStatus: 'processing',
           },
-          createdAt: new Date(audioMessageTime.getTime() + 1000000).toISOString(),
+          createdAt: new Date(audioMessageTime.getTime() + 1000).toISOString(),
         };
         setLocalChatId(targetChatId);
         setLocalMessages((prev) => [...prev, userMessage, assistantMessage]);
@@ -343,6 +343,10 @@ export default function ChatPage({ params }: ChatPageProps) {
               const status = await response.json();
 
               if (status.status === 'completed') {
+                await fetch(`/api/chat/transcribe/complete/${operationId}`, {
+                  method: 'POST',
+                  credentials: 'include',
+                });
                 setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
                 await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
                 return;
