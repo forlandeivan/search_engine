@@ -157,18 +157,32 @@ export function TranscriptCanvas({
         )}
       </div>
 
-      {/* Actions Panel */}
+      {/* Actions Panel - shrink-0 чтобы не сжималась */}
       {skillId && (
-        <SkillActionsPanel
-          workspaceId={workspaceId}
-          skillId={skillId}
-          transcriptText={draftText}
-          onActionComplete={() => {
-            toast({
-              description: "Действие выполнено",
-            });
-          }}
-        />
+        <div className="shrink-0">
+          <SkillActionsPanel
+            workspaceId={workspaceId}
+            skillId={skillId}
+            transcriptText={draftText}
+            onActionComplete={(result) => {
+              if (result && typeof result === 'object' && 'output' in result) {
+                const output = (result as { output?: string }).output;
+                if (output) {
+                  setDraftText(output);
+                  setHasChanges(output !== originalText);
+                  toast({
+                    title: "Текст обновлён",
+                    description: "Результат действия применён к стенограмме",
+                  });
+                  return;
+                }
+              }
+              toast({
+                description: "Действие выполнено",
+              });
+            }}
+          />
+        </div>
       )}
     </div>
   );
