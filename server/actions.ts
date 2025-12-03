@@ -1,5 +1,6 @@
-import { sql } from "drizzle-orm";
+import { eq, and, or, isNull, desc } from "drizzle-orm";
 import { db } from "./db";
+import { actions, type Action } from "@shared/schema";
 import type {
   ActionDto,
   ActionScope,
@@ -22,65 +23,50 @@ type CreateActionPayload = {
 
 type UpdateActionPayload = Partial<CreateActionPayload>;
 
-type ActionRow = {
-  id: string;
-  scope: string;
-  workspace_id: string | null;
-  label: string;
-  description: string | null;
-  target: string;
-  placements: string[] | null;
-  prompt_template: string;
-  input_type: string;
-  output_mode: string;
-  llm_config_id: string | null;
-  created_at: Date | string;
-  updated_at: Date | string;
-  deleted_at: Date | string | null;
-};
-
-function mapActionRow(row: ActionRow): ActionDto {
+function mapActionToDto(row: Action): ActionDto {
   return {
     id: row.id,
     scope: row.scope as ActionScope,
-    workspaceId: row.workspace_id,
+    workspaceId: row.workspaceId,
     label: row.label,
     description: row.description,
     target: row.target as ActionTarget,
     placements: (row.placements ?? []) as ActionPlacement[],
-    promptTemplate: row.prompt_template,
-    inputType: row.input_type as ActionInputType,
-    outputMode: row.output_mode as ActionOutputMode,
-    llmConfigId: row.llm_config_id ?? null,
-    createdAt: new Date(row.created_at).toISOString(),
-    updatedAt: new Date(row.updated_at).toISOString(),
-    deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
+    promptTemplate: row.promptTemplate,
+    inputType: row.inputType as ActionInputType,
+    outputMode: row.outputMode as ActionOutputMode,
+    llmConfigId: row.llmConfigId ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
   };
 }
 
 async function getById(actionId: string): Promise<ActionDto | null> {
-  const result = await db.execute<ActionRow>(
-    sql`SELECT * FROM "actions" WHERE "id" = ${actionId} AND "deleted_at" IS NULL LIMIT 1`,
-  );
-  const row = result.rows?.[0];
-  return row ? mapActionRow(row) : null;
+  const [row] = await db
+    .select()
+    .from(actions)
+    .where(and(eq(actions.id, actionId), isNull(actions.deletedAt)))
+    .limit(1);
+  return row ? mapActionToDto(row) : null;
 }
 
 async function getByIdForWorkspace(workspaceId: string, actionId: string): Promise<ActionDto | null> {
-  const result = await db.execute<ActionRow>(
-    sql`
-      SELECT * FROM "actions"
-      WHERE "id" = ${actionId}
-        AND "deleted_at" IS NULL
-        AND (
-          ("scope" = 'workspace' AND "workspace_id" = ${workspaceId})
-          OR ("scope" = 'system')
+  const [row] = await db
+    .select()
+    .from(actions)
+    .where(
+      and(
+        eq(actions.id, actionId),
+        isNull(actions.deletedAt),
+        or(
+          and(eq(actions.scope, "workspace"), eq(actions.workspaceId, workspaceId)),
+          eq(actions.scope, "system")
         )
-      LIMIT 1
-    `,
-  );
-  const row = result.rows?.[0];
-  return row ? mapActionRow(row) : null;
+      )
+    )
+    .limit(1);
+  return row ? mapActionToDto(row) : null;
 }
 
 async function listForWorkspace(
@@ -88,46 +74,54 @@ async function listForWorkspace(
   options: { includeSystem?: boolean } = {},
 ): Promise<ActionDto[]> {
   const includeSystem = options.includeSystem ?? false;
-  const result = await db.execute<ActionRow>(
-    sql`
-      SELECT * FROM "actions"
-      WHERE "deleted_at" IS NULL
-        AND (
-          ("scope" = 'workspace' AND "workspace_id" = ${workspaceId})
-          ${includeSystem ? sql`OR ("scope" = 'system')` : sql``}
+
+  const condition = includeSystem
+    ? and(
+        isNull(actions.deletedAt),
+        or(
+          and(eq(actions.scope, "workspace"), eq(actions.workspaceId, workspaceId)),
+          eq(actions.scope, "system")
         )
-      ORDER BY "created_at" DESC
-    `,
-  );
-  return (result.rows ?? []).map(mapActionRow);
+      )
+    : and(
+        isNull(actions.deletedAt),
+        eq(actions.scope, "workspace"),
+        eq(actions.workspaceId, workspaceId)
+      );
+
+  const rows = await db
+    .select()
+    .from(actions)
+    .where(condition)
+    .orderBy(desc(actions.createdAt));
+
+  return rows.map(mapActionToDto);
 }
 
 async function createWorkspaceAction(
   workspaceId: string,
   payload: CreateActionPayload,
 ): Promise<ActionDto> {
-  const placementsValue = sql`ARRAY[${sql.join(
-    payload.placements.map((p) => sql`${p}`),
-    sql`, `,
-  )}]::text[]`;
-  const result = await db.execute<ActionRow>(
-    sql`
-      INSERT INTO "actions" (
-        "scope", "workspace_id", "label", "description", "target", "placements",
-        "prompt_template", "input_type", "output_mode", "llm_config_id"
-      ) VALUES (
-        'workspace', ${workspaceId}, ${payload.label}, ${payload.description ?? null},
-        ${payload.target}, ${placementsValue},
-        ${payload.promptTemplate}, ${payload.inputType}, ${payload.outputMode}, ${payload.llmConfigId ?? null}
-      )
-      RETURNING *
-    `,
-  );
-  const row = result.rows?.[0];
+  const [row] = await db
+    .insert(actions)
+    .values({
+      scope: "workspace",
+      workspaceId,
+      label: payload.label,
+      description: payload.description ?? null,
+      target: payload.target,
+      placements: payload.placements,
+      promptTemplate: payload.promptTemplate,
+      inputType: payload.inputType,
+      outputMode: payload.outputMode,
+      llmConfigId: payload.llmConfigId ?? null,
+    })
+    .returning();
+
   if (!row) {
     throw new Error("Failed to create action");
   }
-  return mapActionRow(row);
+  return mapActionToDto(row);
 }
 
 async function updateWorkspaceAction(
@@ -146,35 +140,35 @@ async function updateWorkspaceAction(
     throw new Error("Cannot modify action from another workspace");
   }
 
-  const placementsValue = patch.placements
-    ? sql`ARRAY[${sql.join(
-        patch.placements.map((p) => sql`${p}`),
-        sql`, `,
-      )}]::text[]`
-    : null;
-  const updated = await db.execute<ActionRow>(
-    sql`
-      UPDATE "actions"
-      SET
-        "label" = COALESCE(${patch.label}, "label"),
-        "description" = COALESCE(${patch.description ?? null}, "description"),
-        "target" = COALESCE(${patch.target}, "target"),
-        "placements" = COALESCE(${placementsValue}, "placements"),
-        "prompt_template" = COALESCE(${patch.promptTemplate}, "prompt_template"),
-        "input_type" = COALESCE(${patch.inputType}, "input_type"),
-        "output_mode" = COALESCE(${patch.outputMode}, "output_mode"),
-        "llm_config_id" = COALESCE(${patch.llmConfigId ?? null}, "llm_config_id"),
-        "updated_at" = CURRENT_TIMESTAMP
-      WHERE "id" = ${actionId} AND "scope" = 'workspace' AND "workspace_id" = ${workspaceId}
-      RETURNING *
-    `,
-  );
+  const updateData: Partial<typeof actions.$inferInsert> = {
+    updatedAt: new Date(),
+  };
 
-  const row = updated.rows?.[0];
+  if (patch.label !== undefined) updateData.label = patch.label;
+  if (patch.description !== undefined) updateData.description = patch.description;
+  if (patch.target !== undefined) updateData.target = patch.target;
+  if (patch.placements !== undefined) updateData.placements = patch.placements;
+  if (patch.promptTemplate !== undefined) updateData.promptTemplate = patch.promptTemplate;
+  if (patch.inputType !== undefined) updateData.inputType = patch.inputType;
+  if (patch.outputMode !== undefined) updateData.outputMode = patch.outputMode;
+  if (patch.llmConfigId !== undefined) updateData.llmConfigId = patch.llmConfigId;
+
+  const [row] = await db
+    .update(actions)
+    .set(updateData)
+    .where(
+      and(
+        eq(actions.id, actionId),
+        eq(actions.scope, "workspace"),
+        eq(actions.workspaceId, workspaceId)
+      )
+    )
+    .returning();
+
   if (!row) {
     throw new Error("Failed to update action");
   }
-  return mapActionRow(row);
+  return mapActionToDto(row);
 }
 
 async function softDeleteWorkspaceAction(workspaceId: string, actionId: string): Promise<void> {
@@ -189,13 +183,19 @@ async function softDeleteWorkspaceAction(workspaceId: string, actionId: string):
     throw new Error("Cannot delete action from another workspace");
   }
 
-  await db.execute(
-    sql`
-      UPDATE "actions"
-      SET "deleted_at" = CURRENT_TIMESTAMP, "updated_at" = CURRENT_TIMESTAMP
-      WHERE "id" = ${actionId} AND "scope" = 'workspace' AND "workspace_id" = ${workspaceId}
-    `,
-  );
+  await db
+    .update(actions)
+    .set({
+      deletedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(actions.id, actionId),
+        eq(actions.scope, "workspace"),
+        eq(actions.workspaceId, workspaceId)
+      )
+    );
 }
 
 export const actionsRepository = {
@@ -207,4 +207,4 @@ export const actionsRepository = {
   softDeleteWorkspaceAction,
 };
 
-export type { CreateActionPayload, UpdateActionPayload };
+export type { ActionDto, CreateActionPayload, UpdateActionPayload };

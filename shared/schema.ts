@@ -800,6 +800,69 @@ export const skills = pgTable(
   }),
 );
 
+// Action scopes, targets, placements and modes
+export const actionScopes = ["system", "workspace"] as const;
+export type ActionScope = (typeof actionScopes)[number];
+
+export const actionTargets = ["transcript", "message", "selection", "conversation"] as const;
+export type ActionTarget = (typeof actionTargets)[number];
+
+export const actionPlacements = ["canvas", "chat_message", "chat_toolbar"] as const;
+export type ActionPlacement = (typeof actionPlacements)[number];
+
+export const actionInputTypes = ["full_transcript", "full_text", "selection", "message_text"] as const;
+export type ActionInputType = (typeof actionInputTypes)[number];
+
+export const actionOutputModes = ["replace_text", "new_version", "new_message", "document"] as const;
+export type ActionOutputMode = (typeof actionOutputModes)[number];
+
+export const actions = pgTable(
+  "actions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    scope: text("scope").$type<ActionScope>().notNull().default("workspace"),
+    workspaceId: varchar("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    description: text("description"),
+    target: text("target").$type<ActionTarget>().notNull(),
+    placements: text("placements").array().notNull().default(sql`'{}'::text[]`),
+    promptTemplate: text("prompt_template").notNull(),
+    inputType: text("input_type").$type<ActionInputType>().notNull().default("full_text"),
+    outputMode: text("output_mode").$type<ActionOutputMode>().notNull().default("replace_text"),
+    llmConfigId: varchar("llm_config_id").references(() => llmProviders.id, { onDelete: "set null" }),
+    deletedAt: timestamp("deleted_at"),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("actions_workspace_idx").on(table.workspaceId),
+    scopeIdx: index("actions_scope_idx").on(table.scope),
+  }),
+);
+
+export const skillActions = pgTable(
+  "skill_actions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    skillId: varchar("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    actionId: varchar("action_id")
+      .notNull()
+      .references(() => actions.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(false),
+    enabledPlacements: text("enabled_placements").array().notNull().default(sql`'{}'::text[]`),
+    labelOverride: text("label_override"),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    skillIdx: index("skill_actions_skill_idx").on(table.skillId),
+    actionIdx: index("skill_actions_action_idx").on(table.actionId),
+    skillActionUnique: uniqueIndex("skill_actions_skill_action_unique_idx").on(table.skillId, table.actionId),
+  }),
+);
+
 export const chatMessageRoles = ["user", "assistant", "system"] as const;
 export type ChatMessageRole = (typeof chatMessageRoles)[number];
 
@@ -1313,3 +1376,7 @@ export type KnowledgeDocumentChunkSet = typeof knowledgeDocumentChunkSets.$infer
 export type KnowledgeDocumentChunkSetInsert = typeof knowledgeDocumentChunkSets.$inferInsert;
 export type KnowledgeDocumentChunkItem = typeof knowledgeDocumentChunkItems.$inferSelect;
 export type KnowledgeDocumentChunkItemInsert = typeof knowledgeDocumentChunkItems.$inferInsert;
+export type Action = typeof actions.$inferSelect;
+export type ActionInsert = typeof actions.$inferInsert;
+export type SkillAction = typeof skillActions.$inferSelect;
+export type SkillActionInsert = typeof skillActions.$inferInsert;

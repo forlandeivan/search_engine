@@ -112,7 +112,7 @@ export type ActionTarget = (typeof actionTargets)[number];
 export const actionPlacements = ["canvas", "chat_message", "chat_toolbar"] as const;
 export type ActionPlacement = (typeof actionPlacements)[number];
 
-export const actionInputTypes = ["full_transcript", "selection"] as const;
+export const actionInputTypes = ["full_transcript", "full_text", "selection", "message_text"] as const;
 export type ActionInputType = (typeof actionInputTypes)[number];
 
 export const actionOutputModes = ["replace_text", "new_version", "new_message", "document"] as const;
