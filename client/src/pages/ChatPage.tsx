@@ -2,6 +2,7 @@
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput from "@/components/chat/ChatInput";
@@ -449,47 +450,55 @@ const isNewChat = !effectiveChatId;
             own the vertical overflow, so the scrollbar hugs the browser edge while the card remains centred.
           - Keep this in mind when moving overflow logic in the next step.
         */}
-        <section className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 sm:px-6 lg:px-8">
-          <div
-            ref={messagesScrollRef}
-            className="chat-scroll flex-1 overflow-y-auto"
-          >
-            <div className="mx-auto w-full max-w-[880px] rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80">
-              <ChatMessagesArea
-                chatTitle={chatTitle}
-                skillName={skillLabel}
-                messages={visibleMessages}
-                isLoading={isMessagesLoading && !isNewChat}
-                isNewChat={isNewChat}
-                isStreaming={isStreaming}
-                isTranscribing={isTranscribing}
-                streamError={streamError}
-                errorMessage={normalizedMessagesError}
-                scrollContainerRef={messagesScrollRef}
-                onReset={() => handleSelectChat(null)}
-                onOpenTranscript={setOpenTranscriptId}
+        <section className={cn(
+          "flex min-h-0 overflow-hidden",
+          openTranscriptId ? "flex-row" : "flex-1 flex-col"
+        )}>
+          <div className={cn(
+            "flex flex-col overflow-hidden",
+            openTranscriptId ? "flex-1 min-w-0" : "flex-1"
+          )}>
+            <div
+              ref={messagesScrollRef}
+              className="chat-scroll flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8"
+            >
+              <div className="mx-auto w-full max-w-[880px] rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80">
+                <ChatMessagesArea
+                  chatTitle={chatTitle}
+                  skillName={skillLabel}
+                  messages={visibleMessages}
+                  isLoading={isMessagesLoading && !isNewChat}
+                  isNewChat={isNewChat}
+                  isStreaming={isStreaming}
+                  isTranscribing={isTranscribing}
+                  streamError={streamError}
+                  errorMessage={normalizedMessagesError}
+                  scrollContainerRef={messagesScrollRef}
+                  onReset={() => handleSelectChat(null)}
+                  onOpenTranscript={setOpenTranscriptId}
+                />
+              </div>
+            </div>
+            <div className="border-t border-slate-200 bg-white/95 pb-6 pt-4 px-4 sm:px-6 lg:px-8 dark:border-slate-800 dark:bg-slate-900/70">
+              <ChatInput
+                onSend={handleSend}
+                onTranscribe={handleTranscription}
+                disabled={disableInput}
+                chatId={effectiveChatId ?? null}
+                placeholder={isNewChat ? "Ask something..." : "Type a message and press Enter"}
               />
             </div>
           </div>
-          <div className="border-t border-slate-200 bg-white/95 pb-6 pt-4 dark:border-slate-800 dark:bg-slate-900/70">
-                        <ChatInput
-              onSend={handleSend}
-              onTranscribe={handleTranscription}
-              disabled={disableInput}
-              chatId={effectiveChatId ?? null}
-              placeholder={isNewChat ? "Ask something..." : "Type a message and press Enter"}
-            />
-          </div>
+          {openTranscriptId && (
+            <div className="flex-1 min-w-0 overflow-hidden">
+              <TranscriptCanvas
+                workspaceId={workspaceId}
+                transcriptId={openTranscriptId}
+                onClose={() => setOpenTranscriptId(null)}
+              />
+            </div>
+          )}
         </section>
-        {openTranscriptId && (
-          <div className="w-[600px] shrink-0 overflow-hidden lg:w-[700px]">
-            <TranscriptCanvas
-              workspaceId={workspaceId}
-              transcriptId={openTranscriptId}
-              onClose={() => setOpenTranscriptId(null)}
-            />
-          </div>
-        )}
       </div>
     </div>
   );
