@@ -92,20 +92,45 @@ export function TranscriptCanvas({
   return (
     <div className="flex h-full flex-col border-l border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/80">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
-        <div>
+      <div className="flex items-center justify-between border-b border-slate-200 px-6 py-3 dark:border-slate-800">
+        <div className="flex-1">
           <h2 className="text-lg font-semibold">Стенограмма</h2>
           {hasChanges && <p className="text-xs text-amber-600 dark:text-amber-400">Есть несохранённые изменения</p>}
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="h-8 w-8"
-          aria-label="Закрыть холст"
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleReset}
+            disabled={!hasChanges || isPending || isLoading}
+            className="gap-2"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Отменить
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!hasChanges || isPending || isLoading}
+            className="gap-2"
+          >
+            {isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            Сохранить
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="h-8 w-8"
+            aria-label="Закрыть холст"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Content */}
@@ -129,32 +154,6 @@ export function TranscriptCanvas({
         )}
       </div>
 
-      {/* Footer */}
-      <div className="flex gap-2 border-t border-slate-200 bg-slate-50/50 px-6 py-3 dark:border-slate-800 dark:bg-slate-900/40">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleReset}
-          disabled={!hasChanges || isPending || isLoading}
-          className="gap-2"
-        >
-          <RotateCcw className="h-4 w-4" />
-          Отменить
-        </Button>
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={!hasChanges || isPending || isLoading}
-          className="gap-2"
-        >
-          {isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          Сохранить
-        </Button>
-      </div>
     </div>
   );
 }
