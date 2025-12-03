@@ -8,7 +8,6 @@ import { join } from "path";
 import { randomBytes } from "crypto";
 import fetch from "node-fetch";
 import type { ChatMessageMetadata, TranscriptStatus } from "@shared/schema";
-import ffmpegPath from "ffmpeg-static";
 
 const createHttpProxyAgent = (url: string) => {
   try {
@@ -93,7 +92,7 @@ export async function convertAudioToOgg(audioBuffer: Buffer, mimeType: string = 
   const inputExt = getMimeTypeExtension(mimeType);
   const inputPath = join(tmpdir(), `input_${tempId}.${inputExt}`);
   const outputPath = join(tmpdir(), `output_${tempId}.ogg`);
-  const executable = ffmpegPath || "ffmpeg";
+  const executable = "ffmpeg";
 
   try {
     await writeFile(inputPath, audioBuffer);
