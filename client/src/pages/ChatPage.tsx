@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput from "@/components/chat/ChatInput";
+import { TranscriptCanvas } from "@/components/chat/TranscriptCanvas";
 import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { useSkills } from "@/hooks/useSkills";
 import type { ChatMessage } from "@/types/chat";
@@ -63,6 +64,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [openTranscriptId, setOpenTranscriptId] = useState<string | null>(null);
 
   const { createChat } = useCreateChat();
   const [creatingSkillId, setCreatingSkillId] = useState<string | null>(null);
@@ -465,6 +467,7 @@ const isNewChat = !effectiveChatId;
                 errorMessage={normalizedMessagesError}
                 scrollContainerRef={messagesScrollRef}
                 onReset={() => handleSelectChat(null)}
+                onOpenTranscript={setOpenTranscriptId}
               />
             </div>
           </div>
@@ -478,6 +481,15 @@ const isNewChat = !effectiveChatId;
             />
           </div>
         </section>
+        {openTranscriptId && (
+          <div className="w-[400px] shrink-0 overflow-hidden">
+            <TranscriptCanvas
+              workspaceId={workspaceId}
+              transcriptId={openTranscriptId}
+              onClose={() => setOpenTranscriptId(null)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
