@@ -482,7 +482,7 @@ const isNewChat = !effectiveChatId;
           </div>
         </section>
         {openTranscriptId && (
-          <div className="w-[400px] shrink-0 overflow-hidden">
+          <div className="w-[600px] shrink-0 overflow-hidden lg:w-[700px]">
             <TranscriptCanvas
               workspaceId={workspaceId}
               transcriptId={openTranscriptId}
