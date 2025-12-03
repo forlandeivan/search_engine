@@ -1,17 +1,14 @@
-import { useCallback, useState, useEffect, useRef } from "react";
-import { Send, Paperclip, Loader2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, Paperclip, Send, X } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 type ChatInputProps = {
   onSend: (message: string) => Promise<void> | void;
   onTranscribe?: (text: string) => void;
+  onEnsureChat?: () => Promise<string | null> | string | null;
   disabled?: boolean;
   placeholder?: string;
   showAudioAttach?: boolean;
@@ -31,17 +28,19 @@ function EqualizerIcon() {
   );
 }
 
-export default function ChatInput({ 
-  onSend, 
+export default function ChatInput({
+  onSend,
   onTranscribe,
-  disabled, 
-  placeholder, 
+  onEnsureChat,
+  disabled,
+  placeholder,
   showAudioAttach = true,
   chatId = null,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [uploadedOperationId, setUploadedOperationId] = useState<string | null>(null);
@@ -50,95 +49,123 @@ export default function ChatInput({
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!showAudioAttach) {
-      return;
-    }
-    
+    if (!showAudioAttach) return;
     fetch("/api/chat/transcribe/status", { credentials: "include" })
       .then((res) => res.json())
-      .then((data) => {
-        setSttAvailable(data.available === true);
-      })
-      .catch(() => {
-        setSttAvailable(false);
-      });
+      .then((data) => setSttAvailable(data.available === true))
+      .catch(() => setSttAvailable(false));
   }, [showAudioAttach]);
 
-  const handleUploadAudio = useCallback(async (file: File): Promise<string | null> => {
-    if (!chatId) {
+  const validateAudioFile = (file: File): boolean => {
+    if (!file.type.startsWith("audio/")) {
       toast({
-        title: "Нет чата",
-        description: "Создайте или выберите чат перед отправкой аудио.",
+        title: "Неподдерживаемый тип файла",
+        description: "Выберите аудио-файл (MP3, OGG, WAV, WebM и т.д.).",
         variant: "destructive",
       });
-      return null;
+      return false;
     }
-    setIsUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("audio", file);
-      formData.append("chatId", chatId);
-
-      const response = await fetch("/api/chat/transcribe", {
-        method: "POST",
-        credentials: "include",
-        body: formData,
+    const sizeMb = file.size / (1024 * 1024);
+    if (sizeMb > MAX_FILE_SIZE_MB) {
+      toast({
+        title: "Файл слишком большой",
+        description: `Максимальный размер: ${MAX_FILE_SIZE_MB} МБ`,
+        variant: "destructive",
       });
+      return false;
+    }
+    return true;
+  };
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Ошибка транскрибации: ${response.status}`);
-      }
+  const ensureChatId = useCallback(async (): Promise<string | null> => {
+    if (chatId) return chatId;
+    if (onEnsureChat) {
+      const res = await onEnsureChat();
+      return res ?? null;
+    }
+    return null;
+  }, [chatId, onEnsureChat]);
 
-      const result = await response.json();
-
-      if (result.operationId) {
-        setUploadedOperationId(result.operationId);
-        return result.operationId;
-      } else {
+  const handleUploadAudio = useCallback(
+    async (file: File): Promise<string | null> => {
+      const targetChatId = await ensureChatId();
+      if (!targetChatId) {
         toast({
-          title: "Ошибка",
-          description: "Не удалось запустить транскрибацию. Попробуйте еще раз.",
+          title: "Нужен чат",
+          description: "Сначала выберите или создайте чат, чтобы прикрепить файл.",
           variant: "destructive",
         });
         return null;
       }
-    } catch (error) {
-      console.error("[ChatInput] Transcription error:", error);
-      toast({
-        title: "Ошибка транскрибации",
-        description: error instanceof Error ? error.message : "Не удалось распознать аудио",
-        variant: "destructive",
-      });
-      return null;
-    } finally {
-      setIsUploading(false);
-    }
-  }, [toast]);
+
+      setIsUploading(true);
+      try {
+        const formData = new FormData();
+        formData.append("audio", file);
+        formData.append("chatId", targetChatId);
+
+        const response = await fetch("/api/chat/transcribe", {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || `Ошибка отправки аудио: ${response.status}`);
+        }
+
+        const result = await response.json();
+
+        if (result.operationId) {
+          setUploadedOperationId(result.operationId);
+          return result.operationId;
+        }
+
+        toast({
+          title: "Ошибка",
+          description: "Не удалось начать транскрибацию файла.",
+          variant: "destructive",
+        });
+        return null;
+      } catch (error) {
+        console.error("[ChatInput] Transcription error:", error);
+        toast({
+          title: "Ошибка транскрибации",
+          description: error instanceof Error ? error.message : "Не удалось отправить файл",
+          variant: "destructive",
+        });
+        return null;
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [ensureChatId, toast],
+  );
 
   const handleSend = useCallback(async () => {
-    if (disabled) {
-      return;
-    }
+    if (disabled) return;
+    setIsSending(true);
 
-    // If file is attached and uploaded, send it
     if (attachedFile && uploadedOperationId) {
       if (onTranscribe) {
-        onTranscribe(`__PENDING_OPERATION:${uploadedOperationId}:${attachedFile.name}`);
+        onTranscribe(`__PENDING_OPERATION:${uploadedOperationId}:${encodeURIComponent(attachedFile.name)}`);
       }
       setAttachedFile(null);
       setUploadedOperationId(null);
+      setIsSending(false);
       return;
     }
 
-    // Otherwise send text message
     const trimmed = value.trim();
     if (!trimmed) {
+      setIsSending(false);
       return;
     }
     setValue("");
     await onSend(trimmed);
-  }, [disabled, onSend, value, attachedFile, uploadedOperationId, onTranscribe]);
+    setIsSending(false);
+  }, [attachedFile, disabled, onSend, onTranscribe, uploadedOperationId, value]);
 
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -165,64 +192,43 @@ export default function ChatInput({
     e.stopPropagation();
   }, []);
 
-  const validateAudioFile = (file: File): boolean => {
-    if (!file.type.startsWith("audio/")) {
-      toast({
-        title: "Неподдерживаемый формат",
-        description: "Пожалуйста, прикрепите аудиофайл (MP3, OGG, WAV, WebM и др.)",
-        variant: "destructive",
-      });
-      return false;
-    }
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(false);
+      const files = e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      const file = files[0];
+      if (validateAudioFile(file)) {
+        setAttachedFile(file);
+        handleUploadAudio(file);
+      }
+    },
+    [handleUploadAudio],
+  );
 
-    const fileSizeMB = file.size / (1024 * 1024);
-    if (fileSizeMB > MAX_FILE_SIZE_MB) {
-      toast({
-        title: "Файл слишком большой",
-        description: `Максимальный размер файла: ${MAX_FILE_SIZE_MB} МБ`,
-        variant: "destructive",
-      });
-      return false;
-    }
+  const handleFileChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      event.target.value = "";
+      if (validateAudioFile(file)) {
+        setAttachedFile(file);
+        handleUploadAudio(file);
+      }
+    },
+    [handleUploadAudio],
+  );
 
-    return true;
-  };
-
-  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-
-    const files = e.dataTransfer.files;
-    if (!files || files.length === 0) {
-      return;
-    }
-
-    const file = files[0];
-    if (validateAudioFile(file)) {
-      setAttachedFile(file);
-      handleUploadAudio(file);
-    }
-  }, [toast, handleUploadAudio]);
-
-  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-
-    event.target.value = "";
-
-    if (validateAudioFile(file)) {
-      setAttachedFile(file);
-      handleUploadAudio(file);
-    }
-  }, [toast, handleUploadAudio]);
-
-  const isSendDisabled = disabled || (value.trim().length === 0 && !attachedFile) || (attachedFile && !uploadedOperationId);
-  const showAttachButton = showAudioAttach;
+  const isSendDisabled =
+    disabled ||
+    isUploading ||
+    isSending ||
+    (value.trim().length === 0 && !attachedFile) ||
+    (attachedFile && !uploadedOperationId);
   const isAttachDisabled = disabled || isUploading || !!attachedFile;
-  
+
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -232,13 +238,11 @@ export default function ChatInput({
     <div className="mx-auto w-full max-w-[880px] pb-14">
       {attachedFile && (
         <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30">
-          {isUploading ? (
-            <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-600 dark:text-blue-400" />
-          ) : null}
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-blue-900 truncate dark:text-blue-100">{attachedFile.name}</p>
+          {isUploading ? <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-600 dark:text-blue-400" /> : null}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-blue-900 dark:text-blue-100">{attachedFile.name}</p>
             <p className="text-xs text-blue-700 dark:text-blue-300">
-              {isUploading ? "Загрузка..." : formatFileSize(attachedFile.size)}
+              {isUploading ? "Загружаем..." : formatFileSize(attachedFile.size)}
             </p>
           </div>
           <Button
@@ -257,6 +261,7 @@ export default function ChatInput({
           </Button>
         </div>
       )}
+
       <div
         ref={containerRef}
         onDragEnter={handleDragEnter}
@@ -270,7 +275,7 @@ export default function ChatInput({
         }`}
       >
         <div className="flex items-center gap-2 sm:gap-3">
-          {showAttachButton && (
+          {showAudioAttach && (
             <>
               <input
                 ref={fileInputRef}
@@ -291,23 +296,25 @@ export default function ChatInput({
                     disabled={isAttachDisabled}
                     data-testid="button-attach-audio"
                   >
-                    {isUploading ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <Paperclip className="h-5 w-5" />
-                    )}
+                    <Paperclip className="h-5 w-5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
-                  <p>Прикрепить аудиофайл для транскрибации</p>
+                  <p>Прикрепите файл для транскрибации</p>
                 </TooltipContent>
               </Tooltip>
             </>
           )}
+
           <Textarea
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            placeholder={placeholder ?? "Напишите сообщение и нажмите Enter"}
+            placeholder={
+              placeholder ??
+              (sttAvailable === false
+                ? "Введите текст и отправьте"
+                : "Прикрепляйте файлы и задавайте вопросы. Enter — отправить, Shift+Enter — новая строка")
+            }
             disabled={disabled}
             rows={1}
             onKeyDown={(event) => {
@@ -316,20 +323,21 @@ export default function ChatInput({
                 handleSend();
               }
             }}
-            className="!min-h-0 h-11 flex-1 resize-none border-none bg-transparent px-0 py-2 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="h-11 !min-h-0 flex-1 resize-none border-none bg-transparent px-0 py-2 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="input-chat-message"
           />
+
           <Button
             type="button"
-            aria-label={attachedFile ? "Отправить аудиофайл" : "Отправить сообщение"}
-            title={attachedFile ? "Отправить аудиофайл" : "Отправить сообщение"}
+            aria-label={attachedFile ? "Отправить аудио" : "Отправить сообщение"}
+            title={attachedFile ? "Отправить аудио" : "Отправить сообщение"}
             size="icon"
             className="h-11 w-11 shrink-0 rounded-full shadow-md"
             onClick={handleSend}
             disabled={isSendDisabled || false}
             data-testid="button-send-message"
           >
-            {isUploading ? (
+            {isSending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : attachedFile ? (
               <EqualizerIcon />
@@ -339,9 +347,10 @@ export default function ChatInput({
           </Button>
         </div>
       </div>
+
       <p className="mt-3 text-center text-xs text-muted-foreground">
-        {showAttachButton ? "Прикрепите аудиофайл для транскрибации • " : ""}
-        Shift + Enter — новая строка
+        {showAudioAttach ? "Прикрепляйте файлы и задавайте вопросы. " : ""}
+        Enter — отправить, Shift+Enter — новая строка
       </p>
     </div>
   );

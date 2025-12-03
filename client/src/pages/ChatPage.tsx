@@ -275,116 +275,98 @@ export default function ChatPage({ params }: ChatPageProps) {
 
   const handleTranscription = useCallback(
     async (transcribedText: string) => {
-      if (!workspaceId) {
+      if (!workspaceId) return;
+      setIsTranscribing(true);
+
+      if (!transcribedText.startsWith('__PENDING_OPERATION:')) {
+        setIsTranscribing(false);
         return;
       }
 
-      // Check if this is a pending operation
-      if (transcribedText.startsWith("__PENDING_OPERATION:")) {
-        const parts = transcribedText.substring("__PENDING_OPERATION:".length).split(":");
-        const operationId = parts[0];
-        const fileName = parts.slice(1).join(":") || "audio.ogg";
-        
-        let targetChatId = effectiveChatId;
-        if (!targetChatId) {
-          if (!defaultSkill) {
-            setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
-            return;
-          }
+      const parts = transcribedText.substring('__PENDING_OPERATION:'.length).split(':');
+      const operationId = parts[0];
+      const fileName = parts[1] ? decodeURIComponent(parts[1]) : 'audio';
 
-          try {
-            const newChat = await createChat({
-              workspaceId,
-              skillId: defaultSkill.id,
-            });
-            targetChatId = newChat.id;
-            setOverrideChatId(newChat.id);
-            handleSelectChat(newChat.id);
-          } catch (error) {
-            setStreamError(error instanceof Error ? error.message : String(error));
-            return;
-          }
-        }
-
-        // Show audio file message
-        await streamMessage(targetChatId, `__AUDIO_FILE__:${fileName}`);
-        
-        // Poll for transcription result
-        const pollOperation = async () => {
-          let attempts = 0;
-          const maxAttempts = 600; // 10 minutes with 1-second polling
-          
-          while (attempts < maxAttempts) {
-            try {
-              const response = await fetch(`/api/chat/transcribe/operations/${operationId}`, {
-                method: "GET",
-                credentials: "include",
-              });
-
-              if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-              }
-
-              const status = await response.json();
-              
-              if (status.status === "completed" && status.result?.text) {
-                // Success! Send transcribed text as message
-                await streamMessage(targetChatId, status.result.text);
-                return;
-              }
-              
-              if (status.status === "failed") {
-                setStreamError(status.error || "РўСЂР°РЅСЃРєСЂРёР±Р°С†РёСЏ РЅРµ СѓРґР°Р»Р°СЃСЊ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰Рµ СЂР°Р·.");
-                return;
-              }
-
-              // Still pending, wait and retry
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-              attempts++;
-            } catch (error) {
-              console.error("[ChatPage] Poll error:", error);
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-              attempts++;
-            }
-          }
-          
-          setStreamError("РўСЂР°РЅСЃРєСЂРёР±Р°С†РёСЏ Р·Р°РЅСЏР»Р° СЃР»РёС€РєРѕРј РјРЅРѕРіРѕ РІСЂРµРјРµРЅРё. РџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰Рµ СЂР°Р·.");
-        };
-
-        // Start polling in background
-        pollOperation();
-        return;
-      }
-
-      // Handle regular transcribed text (not a pending operation)
       let targetChatId = effectiveChatId;
       if (!targetChatId) {
-        if (!defaultSkill) {
-          setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
+        const skillId = activeChat?.skillId ?? activeSkill?.id ?? defaultSkill?.id;
+        if (!skillId) {
+          setStreamError('Unica Chat skill is not configured. Please contact the administrator.');
+          setIsTranscribing(false);
           return;
         }
-
         try {
-          const newChat = await createChat({
-            workspaceId,
-            skillId: defaultSkill.id,
-          });
+          const newChat = await createChat({ workspaceId, skillId });
           targetChatId = newChat.id;
           setOverrideChatId(newChat.id);
           handleSelectChat(newChat.id);
-        } catch (error) {
-          setStreamError(error instanceof Error ? error.message : String(error));
-          return;
-        }
-      }
+        } catch (error):
+          setStreamError(error.message if isinstance(error, Exception) else str(error))
+          setIsTranscribing(False)
+          return
 
-      // Send the transcribed text as a message
-      await streamMessage(targetChatId, transcribedText);
+      if targetChatId:
+        const userMessage = buildLocalMessage('user', targetChatId, fileName)
+        const assistantMessage: ChatMessage = {
+          id: `local-transcript-${Date.now()}`,
+          chatId: targetChatId,
+          role: 'assistant',
+          content: 'Аудиозапись загружена. Идёт расшифровка...',
+          metadata: {
+            type: 'transcript',
+            transcriptStatus: 'processing',
+          },
+          createdAt: new Date().toISOString(),
+        };
+        setLocalChatId(targetChatId);
+        setLocalMessages((prev) => [...prev, userMessage, assistantMessage]);
+
+      const pollOperation = async () => {
+        let attempts = 0;
+        const maxAttempts = 600;
+
+        while (attempts < maxAttempts) {
+          try {
+            const response = await fetch(`/api/chat/transcribe/operations/${operationId}`, {
+              method: 'GET',
+              credentials: 'include',
+            });
+
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+
+            const status = await response.json();
+
+            if (status.status === 'completed') {
+              await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
+              return;
+            }
+
+            if (status.status === 'failed') {
+              setStreamError(status.error || 'Транскрибация не удалась. Попробуйте снова.');
+              return;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            attempts += 1;
+          } catch (error) {
+            console.error('[ChatPage] Poll error:', error);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            attempts += 1;
+          }
+        }
+
+        setStreamError('Транскрибация заняла слишком много времени. Попробуйте снова.');
+      };
+
+      await pollOperation();
+      setIsTranscribing(false);
     },
-    [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, queryClient, streamMessage],
+    [activeChat?.skillId, activeSkill?.id, createChat, defaultSkill?.id, effectiveChatId, handleSelectChat, queryClient, workspaceId],
   );
 
-  const isNewChat = !effectiveChatId;
+const isNewChat = !effectiveChatId;
   const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
   const chatTitle = activeChat?.title ?? null;
   const disableInput = !workspaceId || isStreaming || Boolean(normalizedMessagesError && !isNewChat);
