@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, X, Save, RotateCcw, Bold, Italic, List } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput from "@/components/chat/ChatInput";
-import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM, useRenameChat } from "@/hooks/useChats";
+import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { useSkills } from "@/hooks/useSkills";
-import type { ChatMessage, Transcript } from "@/types/chat";
-import type { ActionDto, SkillActionDto } from "@shared/skills";
+import type { ChatMessage } from "@/types/chat";
 
 type ChatPageParams = {
   workspaceId?: string;
@@ -28,16 +25,6 @@ const debugLog = (...args: unknown[]) => {
   }
 };
 
-function buildLocalMessage(role: ChatMessage["role"], chatId: string, content: string): ChatMessage {
-  return {
-    id: `local-${role}-${Date.now()}`,
-    chatId,
-    role,
-    content,
-    createdAt: new Date().toISOString(),
-  };
-}
-
 export default function ChatPage({ params }: ChatPageProps) {
   const workspaceId = params?.workspaceId ?? "";
   const routeChatId = params?.chatId ?? "";
@@ -48,19 +35,6 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [overrideChatId, setOverrideChatId] = useState<string | null>(null);
   const effectiveChatId = routeChatId || overrideChatId || null;
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
-  const transcriptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [openedTranscriptId, setOpenedTranscriptId] = useState<string | null>(null);
-  const [openedTranscript, setOpenedTranscript] = useState<Transcript | null>(null);
-  const [isTranscriptLoading, setIsTranscriptLoading] = useState(false);
-  const [transcriptError, setTranscriptError] = useState<string | null>(null);
-  const [draftTranscriptText, setDraftTranscriptText] = useState("");
-  const [isSavingTranscript, setIsSavingTranscript] = useState(false);
-  const [saveTranscriptMessage, setSaveTranscriptMessage] = useState<string | null>(null);
-  const [saveTranscriptError, setSaveTranscriptError] = useState<string | null>(null);
-  const [isRunningActionId, setIsRunningActionId] = useState<string | null>(null);
-  const [isRunningMessageActionId, setIsRunningMessageActionId] = useState<string | null>(null);
-  const [isRunningToolbarActionId, setIsRunningToolbarActionId] = useState<string | null>(null);
-  const [pendingInput, setPendingInput] = useState<string>("");
 
   const { chats } = useChats(workspaceId);
   const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
@@ -77,87 +51,12 @@ export default function ChatPage({ params }: ChatPageProps) {
     return defaultSkill;
   }, [activeChat, defaultSkill, skills]);
 
-  const skillActionsQuery = useQuery<{
-    items: { action: ActionDto; skillAction: SkillActionDto | null; ui: { effectiveLabel: string; editable: boolean } }[];
-  }>({
-    queryKey: ["skill-actions", activeSkill?.id],
-    enabled: Boolean(activeSkill?.id),
-    queryFn: async () => {
-      const response = await fetch(`/api/skills/${activeSkill?.id}/actions`);
-      if (!response.ok) {
-        throw new Error("Failed to load actions");
-      }
-      return (await response.json()) as {
-        items: { action: ActionDto; skillAction: SkillActionDto | null; ui: { effectiveLabel: string; editable: boolean } }[];
-      };
-    },
-  });
-
-const canvasActions = useMemo(() => {
-    const items = skillActionsQuery.data?.items ?? [];
-    return items
-      .filter((item) => {
-        const { action, skillAction } = item;
-        if (!skillAction || !skillAction.enabled) return false;
-        if (!skillAction.enabledPlacements.includes("canvas")) return false;
-        return action.target === "transcript" || action.target === "selection";
-      })
-      .map((item) => ({
-        id: item.action.id,
-        label: item.ui.effectiveLabel || item.action.label,
-        description: item.action.description,
-        target: item.action.target,
-        inputType: item.action.inputType,
-        outputMode: item.action.outputMode,
-      }));
-  }, [skillActionsQuery.data]);
-
-  const messageActions = useMemo(() => {
-    const items = skillActionsQuery.data?.items ?? [];
-    return items
-      .filter((item) => {
-        const { action, skillAction } = item;
-        if (!skillAction || !skillAction.enabled) return false;
-        if (!skillAction.enabledPlacements.includes("chat_message")) return false;
-        return action.target === "message" || action.target === "selection";
-      })
-      .map((item) => ({
-        id: item.action.id,
-        label: item.ui.effectiveLabel || item.action.label,
-        description: item.action.description,
-        target: item.action.target,
-        inputType: item.action.inputType,
-        outputMode: item.action.outputMode,
-        scope: item.action.scope,
-      }));
-  }, [skillActionsQuery.data]);
-
-  const toolbarActions = useMemo(() => {
-    const items = skillActionsQuery.data?.items ?? [];
-    return items
-      .filter((item) => {
-        const { action, skillAction } = item;
-        if (!skillAction || !skillAction.enabled) return false;
-        if (!skillAction.enabledPlacements.includes("chat_toolbar")) return false;
-        return action.target === "selection" || action.target === "conversation";
-      })
-      .map((item) => ({
-        id: item.action.id,
-        label: item.ui.effectiveLabel || item.action.label,
-        description: item.action.description,
-        target: item.action.target,
-        inputType: item.action.inputType,
-        outputMode: item.action.outputMode,
-      }));
-  }, [skillActionsQuery.data]);
-
   const {
     messages: fetchedMessages,
     isLoading: isMessagesLoading,
     isError: isMessagesError,
     error: messagesError,
   } = useChatMessages(effectiveChatId ?? undefined, workspaceId || undefined);
-  const { renameChat } = useRenameChat();
 
   const [localChatId, setLocalChatId] = useState<string | null>(null);
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
@@ -211,28 +110,15 @@ const canvasActions = useMemo(() => {
     if (!shouldShowLocal) {
       return base;
     }
-    const filteredLocal = localMessages.filter((local) => {
-      const localMetadata = (local.metadata ?? {}) as Record<string, unknown>;
-      const localTranscriptId = localMetadata.transcriptId as string | undefined;
-
-      return !base.some((message) => {
-        const messageMetadata = (message.metadata ?? {}) as Record<string, unknown>;
-        const messageTranscriptId = messageMetadata.transcriptId as string | undefined;
-
-        // If server already returned a message for this transcript, skip local placeholder
-        if (localTranscriptId && messageTranscriptId && localTranscriptId === messageTranscriptId) {
-          return true;
-        }
-
-        // Fallback: same role and identical content
-        return (
-          local.role === message.role &&
-          local.content.trim() === (message.content ?? "").trim()
-        );
-      });
-    });
-
-    return [...base, ...filteredLocal];
+    const deduped = base.filter(
+      (message) =>
+        !localMessages.some(
+          (local) =>
+            local.role === message.role &&
+            local.content.trim() === (message.content ?? "").trim(),
+        ),
+    );
+    return [...deduped, ...localMessages];
   }, [fetchedMessages, localMessages, shouldShowLocal]);
 
   const normalizedMessagesError = useMemo(() => {
@@ -248,14 +134,6 @@ const canvasActions = useMemo(() => {
     }
     return message.replace(/^\d+:\s*/, "");
   }, [isMessagesError, messagesError]);
-
-  useEffect(() => {
-    if (openedTranscript) {
-      setDraftTranscriptText(openedTranscript.fullText ?? "");
-      setSaveTranscriptMessage(null);
-      setSaveTranscriptError(null);
-    }
-  }, [openedTranscript]);
 
   const handleSelectChat = useCallback(
     (nextChatId: string | null) => {
@@ -396,70 +274,40 @@ const canvasActions = useMemo(() => {
   );
 
   const handleTranscription = useCallback(
-    async (transcribed: string | { operationId: string; placeholder?: ChatMessage }) => {
+    async (transcribedText: string) => {
       if (!workspaceId) {
         return;
       }
 
-      if (typeof transcribed !== "string") {
-        const operationId = transcribed.operationId;
-        const placeholder = transcribed.placeholder;
-
-        if (placeholder) {
-          setLocalMessages((prev) => [...prev, placeholder]);
-        }
-
-        setIsTranscribing(true);
-        const pollOperation = async () => {
-          let attempts = 0;
-          const maxAttempts = 600; // 10 minutes with 1-second polling
-
-          while (attempts < maxAttempts) {
-            try {
-              const response = await fetch(`/api/chat/transcribe/operations/${operationId}`, {
-                method: "GET",
-                credentials: "include",
-              });
-
-              if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-              }
-
-              const status = await response.json();
-
-              if (status.status === "completed" && status.result?.text) {
-                await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
-                setIsTranscribing(false);
-                return;
-              }
-
-              if (status.status === "failed") {
-                setStreamError(status.error || "Transcription failed. Please try again.");
-                setIsTranscribing(false);
-                return;
-              }
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-              attempts++;
-            } catch (error) {
-              console.error("[ChatPage] Poll error:", error);
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-              attempts++;
-            }
+      // Check if this is a pending operation
+      if (transcribedText.startsWith("__PENDING_OPERATION:")) {
+        const parts = transcribedText.substring("__PENDING_OPERATION:".length).split(":");
+        const operationId = parts[0];
+        const fileName = parts.slice(1).join(":") || "audio.ogg";
+        
+        let targetChatId = effectiveChatId;
+        if (!targetChatId) {
+          if (!defaultSkill) {
+            setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
+            return;
           }
 
-          setStreamError("Transcription took too long. Please try again.");
-          setIsTranscribing(false);
-        };
+          try {
+            const newChat = await createChat({
+              workspaceId,
+              skillId: defaultSkill.id,
+            });
+            targetChatId = newChat.id;
+            setOverrideChatId(newChat.id);
+            handleSelectChat(newChat.id);
+          } catch (error) {
+            setStreamError(error instanceof Error ? error.message : String(error));
+            return;
+          }
+        }
 
-        pollOperation();
-        return;
-      }
-
-      // Check if this is a pending operation
-      if (transcribed.startsWith("__PENDING_OPERATION:")) {
-        const parts = transcribed.substring("__PENDING_OPERATION:".length).split(":");
-        const operationId = parts[0];
-        setIsTranscribing(true);
+        // Show audio file message
+        await streamMessage(targetChatId, `__AUDIO_FILE__:${fileName}`);
         
         // Poll for transcription result
         const pollOperation = async () => {
@@ -480,17 +328,17 @@ const canvasActions = useMemo(() => {
               const status = await response.json();
               
               if (status.status === "completed" && status.result?.text) {
-                await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
-                setIsTranscribing(false);
+                // Success! Send transcribed text as message
+                await streamMessage(targetChatId, status.result.text);
                 return;
               }
-              
               
               if (status.status === "failed") {
-                setStreamError(status.error || "Transcription failed. Please try again.");
-                setIsTranscribing(false);
+                setStreamError(status.error || "Транскрибация не удалась. Попробуйте еще раз.");
                 return;
               }
+
+              // Still pending, wait and retry
               await new Promise((resolve) => setTimeout(resolve, 1000));
               attempts++;
             } catch (error) {
@@ -500,8 +348,7 @@ const canvasActions = useMemo(() => {
             }
           }
           
-          setStreamError("Transcription took too long. Please try again.");
-          setIsTranscribing(false);
+          setStreamError("Транскрибация заняла слишком много времени. Попробуйте еще раз.");
         };
 
         // Start polling in background
@@ -532,127 +379,16 @@ const canvasActions = useMemo(() => {
       }
 
       // Send the transcribed text as a message
-      await streamMessage(targetChatId, transcribed);
+      await streamMessage(targetChatId, transcribedText);
     },
     [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, queryClient, streamMessage],
   );
-
-
-  const handleOpenTranscript = useCallback(
-    async (transcriptId: string) => {
-      if (!workspaceId || !transcriptId) {
-        return;
-      }
-      setOpenedTranscriptId(transcriptId);
-      setIsTranscriptLoading(true);
-      setTranscriptError(null);
-      try {
-        const response = await fetch(`/api/workspaces/${workspaceId}/transcripts/${transcriptId}`, {
-          credentials: "include",
-        });
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.message || `Failed to load transcript (${response.status})`);
-        }
-        const transcript = (await response.json()) as Transcript;
-        setOpenedTranscript(transcript);
-      } catch (error) {
-        setTranscriptError(error instanceof Error ? error.message : "Failed to load transcript");
-        setOpenedTranscript(null);
-      } finally {
-        setIsTranscriptLoading(false);
-      }
-    },
-    [workspaceId],
-  );
-
-  const handleSaveTranscript = useCallback(async () => {
-    if (!workspaceId || !openedTranscriptId) {
-      return;
-    }
-    setIsSavingTranscript(true);
-    setSaveTranscriptMessage(null);
-    setSaveTranscriptError(null);
-    try {
-      const response = await fetch(
-        `/api/workspaces/${workspaceId}/transcripts/${openedTranscriptId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ fullText: draftTranscriptText }),
-        },
-      );
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || `Failed to save transcript (${response.status})`);
-      }
-
-      const updated = (await response.json()) as Transcript;
-      setOpenedTranscript(updated);
-      setDraftTranscriptText(updated.fullText ?? "");
-      setSaveTranscriptMessage("Сохранено");
-    } catch (error) {
-      setSaveTranscriptError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsSavingTranscript(false);
-    }
-  }, [workspaceId, openedTranscriptId, draftTranscriptText]);
-
-  const handleCloseTranscript = useCallback(() => {
-    setOpenedTranscriptId(null);
-    setOpenedTranscript(null);
-    setTranscriptError(null);
-    setDraftTranscriptText("");
-    setSaveTranscriptMessage(null);
-    setSaveTranscriptError(null);
-  }, []);
-
-  const handleResetTranscript = useCallback(() => {
-    if (!openedTranscript) return;
-    setDraftTranscriptText(openedTranscript.fullText ?? "");
-    setSaveTranscriptMessage(null);
-    setSaveTranscriptError(null);
-  }, [openedTranscript]);
 
   const isNewChat = !effectiveChatId;
   const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
   const chatTitle = activeChat?.title ?? null;
   const disableInput = !workspaceId || isStreaming || Boolean(normalizedMessagesError && !isNewChat);
   const isDefaultCreating = creatingSkillId !== null && creatingSkillId === (defaultSkill?.id ?? null);
-  const isTranscriptDirty =
-    openedTranscript !== null && draftTranscriptText !== (openedTranscript.fullText ?? "");
-
-  const handleRenameChat = useCallback(
-    async (title: string) => {
-      if (!effectiveChatId || !title.trim()) return;
-      await renameChat({ chatId: effectiveChatId, title: title.trim() });
-      await queryClient.invalidateQueries({ queryKey: ["chats"] });
-      await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
-    },
-    [effectiveChatId, queryClient, renameChat],
-  );
-
-  const applyInlineMarkdown = useCallback(
-    (prefix: string, suffix: string = prefix) => {
-      const textarea = transcriptTextareaRef.current;
-      if (!textarea) return;
-      const { selectionStart, selectionEnd, value } = textarea;
-      const selected = value.slice(selectionStart, selectionEnd);
-      const before = value.slice(0, selectionStart);
-      const after = value.slice(selectionEnd);
-      const next = `${before}${prefix}${selected}${suffix}${after}`;
-      setDraftTranscriptText(next);
-      // restore cursor after formatting
-      const newPos = selectionStart + prefix.length + selected.length + suffix.length;
-      requestAnimationFrame(() => {
-        textarea.focus();
-        textarea.setSelectionRange(newPos, newPos);
-      });
-    },
-    [],
-  );
 
   useEffect(() => {
     document.body.classList.add("chat-scroll-locked");
@@ -663,34 +399,39 @@ const canvasActions = useMemo(() => {
 
   return (
     <div className="flex h-screen min-h-0 bg-muted/20 overflow-hidden">
-      <ChatSidebar
-        workspaceId={workspaceId}
-        selectedChatId={effectiveChatId ?? undefined}
-        onSelectChat={handleSelectChat}
-        onCreateNewChat={handleCreateNewChat}
-        onCreateChatForSkill={handleCreateChatForSkill}
-        isCreatingChat={isDefaultCreating}
-        creatingSkillId={creatingSkillId}
-        className="w-[320px] shrink-0 border-r border-slate-200/70 bg-white/70 dark:border-slate-800 dark:bg-slate-900/40"
-      />
-      <div className={cn("flex min-h-0 flex-1 flex-row overflow-hidden", openedTranscriptId && "chat-page--with-transcript")}>
-        <section
-          className={cn(
-            "flex min-h-0 flex-1 flex-col overflow-hidden px-4 sm:px-6 lg:px-8 transition-all",
-            openedTranscriptId ? "max-w-none px-4" : "max-w-full",
-          )}
-        >
-          <div ref={messagesScrollRef} className="chat-scroll flex-1 overflow-y-auto">
-            <div
-              className={cn(
-                "w-full rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80",
-                openedTranscriptId ? "" : "mx-auto max-w-[880px]",
-              )}
-            >
+      {/*
+        Layout plan:
+        - keep the root full-height; next row splits into two fixed columns (sidebar + main).
+        - TODO: move overflow-y from the page body onto each column for independent scrolls.
+      */}
+      <div className="flex h-full min-h-0 flex-1">
+        <ChatSidebar
+          workspaceId={workspaceId}
+          selectedChatId={effectiveChatId ?? undefined}
+          onSelectChat={handleSelectChat}
+          onCreateNewChat={handleCreateNewChat}
+          onCreateChatForSkill={handleCreateChatForSkill}
+          isCreatingChat={isDefaultCreating}
+          creatingSkillId={creatingSkillId}
+          className="w-[320px] shrink-0 border-r border-slate-200/70 bg-white/70 dark:border-slate-800 dark:bg-slate-900/40"
+        />
+        {/*
+          NOTE:
+          - Right now the scrollable area for the conversation lives inside the white card below.
+            Because that card has `max-w-[880px]`/`mx-auto`, the scrollbar ends up in the middle of the screen.
+          - Target behaviour (ChatGPT-like) is to let this <section> (full width of the right column)
+            own the vertical overflow, so the scrollbar hugs the browser edge while the card remains centred.
+          - Keep this in mind when moving overflow logic in the next step.
+        */}
+        <section className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 sm:px-6 lg:px-8">
+          <div
+            ref={messagesScrollRef}
+            className="chat-scroll flex-1 overflow-y-auto"
+          >
+            <div className="mx-auto w-full max-w-[880px] rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80">
               <ChatMessagesArea
                 chatTitle={chatTitle}
                 skillName={skillLabel}
-                chatId={effectiveChatId}
                 messages={visibleMessages}
                 isLoading={isMessagesLoading && !isNewChat}
                 isNewChat={isNewChat}
@@ -699,130 +440,6 @@ const canvasActions = useMemo(() => {
                 streamError={streamError}
                 errorMessage={normalizedMessagesError}
                 scrollContainerRef={messagesScrollRef}
-                onOpenTranscript={handleOpenTranscript}
-                onRenameChat={handleRenameChat}
-                messageActions={messageActions}
-                messageActionsLoading={skillActionsQuery.isLoading}
-                messageActionsError={
-                  skillActionsQuery.error instanceof Error ? skillActionsQuery.error.message : null
-                }
-                onRunMessageAction={async (message, action) => {
-                  if (!activeSkill?.id || !workspaceId) return;
-                  if (action.inputType === "selection") {
-                    // Пока нет выделения в UI сообщений
-                    setStreamError("Это действие требует выделения текста сообщения. Поддержка появится позже.");
-                    return;
-                  }
-                  setIsRunningMessageActionId(`${message.id}:${action.id}`);
-                  try {
-                    const body =
-                      action.target === "selection"
-                        ? {
-                            placement: "chat_message",
-                            target: "selection",
-                            applyMode: "apply",
-                            context: { text: message.content ?? "" },
-                          }
-                        : {
-                            placement: "chat_message",
-                            target: "message",
-                            applyMode: "apply",
-                            context: { messageId: message.id },
-                          };
-                    const res = await fetch(
-                      `/api/skills/${activeSkill.id}/actions/${action.id}/run`,
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(body),
-                      },
-                    );
-                    if (!res.ok) {
-                      const data = await res.json().catch(() => ({}));
-                      const msg = data?.message || "Не удалось выполнить действие";
-                      throw new Error(msg);
-                    }
-                    const result = await res.json();
-                    if (result?.applied) {
-                      const changeType = result?.appliedChanges?.type;
-                      if (changeType === "message_replace" || changeType === "message_new") {
-                        queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveChatId] });
-                        setStreamError(null);
-                      } else if (changeType === "document") {
-                        setStreamError(null);
-                        setSaveTranscriptMessage("Создан документ на основе сообщения.");
-                      } else {
-                        setStreamError(null);
-                        setSaveTranscriptMessage("Действие выполнено.");
-                      }
-                    }
-                  } catch (err) {
-                    const msg = err instanceof Error ? err.message : "Не удалось выполнить действие";
-                    setStreamError(msg);
-                  } finally {
-                    setIsRunningMessageActionId(null);
-                  }
-                }}
-                toolbarActions={toolbarActions}
-                toolbarLoadingId={isRunningToolbarActionId}
-                onRunToolbarAction={async (action, inputValue) => {
-                  if (!activeSkill?.id || !workspaceId) return;
-                  if (!inputValue.trim() && action.target === "selection") {
-                    setStreamError("Введите текст, с которым нужно выполнить действие.");
-                    return;
-                  }
-                  setIsRunningToolbarActionId(action.id);
-                  try {
-                    const isConversation = action.target === "conversation";
-                    const useApply = action.outputMode === "new_message" || action.outputMode === "document";
-                    const body =
-                      isConversation
-                        ? {
-                            placement: "chat_toolbar",
-                            target: "conversation",
-                            applyMode: useApply ? "apply" : "none",
-                            context: { conversationId: effectiveChatId },
-                          }
-                        : {
-                            placement: "chat_toolbar",
-                            target: "selection",
-                            applyMode: "none",
-                            context: { text: inputValue },
-                          };
-                    const res = await fetch(
-                      `/api/skills/${activeSkill.id}/actions/${action.id}/run`,
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(body),
-                      },
-                    );
-                    if (!res.ok) {
-                      const data = await res.json().catch(() => ({}));
-                      const msg = data?.message || "Не удалось выполнить действие";
-                      throw new Error(msg);
-                    }
-                    const result = await res.json();
-                    if (useApply && result?.applied) {
-                      if (
-                        result?.appliedChanges?.type === "message_new" ||
-                        result?.appliedChanges?.type === "message_replace"
-                      ) {
-                        queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveChatId] });
-                        setStreamError(null);
-                      } else if (result?.appliedChanges?.type === "document") {
-                        setSaveTranscriptMessage("Документ создан на основе диалога.");
-                      }
-                    } else if (result?.result?.text) {
-                      setPendingInput(result.result.text);
-                    }
-                  } catch (err) {
-                    const msg = err instanceof Error ? err.message : "Не удалось выполнить действие";
-                    setStreamError(msg);
-                  } finally {
-                    setIsRunningToolbarActionId(null);
-                  }
-                }}
                 onReset={() => handleSelectChat(null)}
               />
             </div>
@@ -832,310 +449,21 @@ const canvasActions = useMemo(() => {
               onSend={handleSend}
               onTranscribe={handleTranscription}
               disabled={disableInput}
-              chatId={effectiveChatId}
-              placeholder="Прикрепляйте файлы и задавайте вопросы. Enter — отправить, Shift+Enter — новая строка"
-              toolbarActions={toolbarActions}
-              toolbarLoadingId={isRunningToolbarActionId}
-              externalValue={pendingInput || undefined}
-              onRunToolbarAction={async (action, currentText) => {
-                if (!activeSkill?.id || !workspaceId) return;
-                if (!currentText.trim() && action.target === "selection") {
-                  setStreamError("Введите текст, с которым нужно выполнить действие.");
-                  return;
-                }
-                setIsRunningToolbarActionId(action.id);
-                try {
-                  const isConversation = action.target === "conversation";
-                  const useApply = action.outputMode === "new_message" || action.outputMode === "document";
-                  const body =
-                    isConversation
-                      ? {
-                          placement: "chat_toolbar",
-                          target: "conversation",
-                          applyMode: useApply ? "apply" : "none",
-                          context: { conversationId: effectiveChatId },
-                        }
-                      : {
-                          placement: "chat_toolbar",
-                          target: "selection",
-                          applyMode: "none",
-                          context: { text: currentText },
-                        };
-                  const res = await fetch(
-                    `/api/skills/${activeSkill.id}/actions/${action.id}/run`,
-                    {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify(body),
-                    },
-                  );
-                  if (!res.ok) {
-                    const data = await res.json().catch(() => ({}));
-                    const msg = data?.message || "Не удалось выполнить действие";
-                    throw new Error(msg);
-                  }
-                  const result = await res.json();
-                  if (useApply && result?.applied) {
-                    if (
-                      result?.appliedChanges?.type === "message_new" ||
-                      result?.appliedChanges?.type === "message_replace"
-                    ) {
-                      queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveChatId] });
-                      setStreamError(null);
-                    } else if (result?.appliedChanges?.type === "document") {
-                      setSaveTranscriptMessage("Документ создан на основе диалога.");
-                    }
-                  } else if (result?.result?.text) {
-                    setPendingInput(result.result.text);
-                  }
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : "Не удалось выполнить действие";
-                  setStreamError(msg);
-                } finally {
-                  setIsRunningToolbarActionId(null);
-                }
-              }}
+              placeholder={isNewChat ? "Начните новый чат..." : "Напишите сообщение и нажмите Enter"}
             />
           </div>
         </section>
-
-        {openedTranscriptId ? (
-          <aside className="flex w-[720px] max-w-[55%] min-w-[420px] flex-col border-l border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between gap-3 border-b px-5 py-4">
-              <div className="min-w-0">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Transcript</p>
-                <h2 className="text-lg font-semibold line-clamp-1">
-                  {openedTranscript?.title || "Audio transcript"}
-                </h2>
-              </div>
-              <div className="flex items-center gap-2">
-                {saveTranscriptMessage ? (
-                  <span className="text-xs text-emerald-600">{saveTranscriptMessage}</span>
-                ) : null}
-                {saveTranscriptError ? (
-                  <span className="text-xs text-destructive max-w-[140px] line-clamp-2">
-                    {saveTranscriptError}
-                  </span>
-                ) : null}
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  title="Сбросить изменения"
-                  disabled={isTranscriptLoading || isSavingTranscript || !isTranscriptDirty}
-                  onClick={handleResetTranscript}
-                >
-                  <RotateCcw className="h-4 w-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="secondary"
-                  disabled={isTranscriptLoading || isSavingTranscript || !isTranscriptDirty}
-                  onClick={handleSaveTranscript}
-                >
-                  {isSavingTranscript ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                </Button>
-                <button
-                  className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800"
-                  onClick={handleCloseTranscript}
-                  aria-label="Close transcript"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-            <div className="h-[calc(100vh-80px)] overflow-y-auto px-5 py-4">
-              {isTranscriptLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading transcript...
-                </div>
-              ) : transcriptError ? (
-                <p className="text-sm text-destructive">{transcriptError}</p>
-                  ) : openedTranscript ? (
-                <div className="space-y-3">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/40">
-                    <div className="mb-2 flex items-center justify-between">
-                      <p className="text-sm font-semibold">Действия</p>
-                      {skillActionsQuery.isLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      ) : null}
-                    </div>
-                    {skillActionsQuery.isError ? (
-                      <div className="flex items-center justify-between gap-2 text-sm text-destructive">
-                        <span>Не удалось загрузить действия.</span>
-                        <Button size="sm" variant="outline" onClick={() => skillActionsQuery.refetch()}>
-                          Повторить
-                        </Button>
-                      </div>
-                    ) : canvasActions.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        Для этого навыка нет действий, доступных в холсте.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {canvasActions.map((item) => (
-                          <Button
-                            key={item.id}
-                            variant="outline"
-                            className="w-full justify-start"
-                            disabled={isRunningActionId === item.id}
-                            onClick={async () => {
-                              if (!openedTranscriptId || !activeSkill?.id) return;
-                              setIsRunningActionId(item.id);
-                              setSaveTranscriptError(null);
-                              setSaveTranscriptMessage(null);
-                              try {
-                                let selectionText: string | null = null;
-                                let selectionRange: { start: number; end: number } | null = null;
-                                const textarea = transcriptTextareaRef.current;
-                                if (item.inputType === "selection" && textarea) {
-                                  const { selectionStart, selectionEnd, value } = textarea;
-                                  if (selectionStart !== selectionEnd) {
-                                    selectionText = value.slice(selectionStart, selectionEnd);
-                                    selectionRange = { start: selectionStart, end: selectionEnd };
-                                  }
-                                }
-                                if (item.inputType === "selection" && (!selectionText || selectionText.length === 0)) {
-                                  setSaveTranscriptError(
-                                    "Это действие работает с выделенным текстом. Выделите фрагмент и попробуйте снова.",
-                                  );
-                                  return;
-                                }
-                                const body = {
-                                  placement: "canvas",
-                                  target: item.target,
-                                  applyMode: "apply",
-                                  context:
-                                    item.target === "selection"
-                                      ? { text: selectionText }
-                                      : {
-                                          transcriptId: openedTranscriptId,
-                                          selectionText: selectionText ?? undefined,
-                                          selectionRange: selectionRange ?? undefined,
-                                        },
-                                };
-                                const response = await fetch(
-                                  `/api/skills/${activeSkill.id}/actions/${item.id}/run`,
-                                  {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify(body),
-                                  },
-                                );
-                                if (!response.ok) {
-                                  const data = await response.json().catch(() => ({}));
-                                  const msg = data?.message || "Не удалось выполнить действие";
-                                  throw new Error(msg);
-                                }
-                                const result = await response.json();
-                                if (result?.applied) {
-                                  // рефетч стенограммы
-                                  const transcriptResponse = await fetch(
-                                    `/api/workspaces/${workspaceId}/transcripts/${openedTranscriptId}`,
-                                  );
-                                  if (transcriptResponse.ok) {
-                                    const transcript = (await transcriptResponse.json()) as Transcript;
-                                    setOpenedTranscript(transcript);
-                                    setDraftTranscriptText(transcript.fullText ?? "");
-                                  }
-                                  const changeType = result?.appliedChanges?.type;
-                                  if (changeType === "document") {
-                                    setSaveTranscriptMessage("Документ создан на основе действия.");
-                                  } else if (changeType === "message_new") {
-                                    setSaveTranscriptMessage("Сгенерировано новое сообщение в чате.");
-                                    if (effectiveChatId) {
-                                      queryClient.invalidateQueries({ queryKey: ["chat-messages", effectiveChatId] });
-                                    }
-                                  } else {
-                                    setSaveTranscriptMessage(`Действие «${item.label}» применено`);
-                                  }
-                                }
-                              } catch (err) {
-                                const msg = err instanceof Error ? err.message : "Не удалось выполнить действие";
-                                setSaveTranscriptError(msg);
-                              } finally {
-                                setIsRunningActionId(null);
-                              }
-                            }}
-                          >
-                            {isRunningActionId === item.id ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : null}
-                            <span className="truncate">{item.label}</span>
-                            <span className="ml-2 text-[11px] text-muted-foreground">
-                              {item.outputMode === "replace_text" && "✏️"}
-                              {item.outputMode === "new_version" && "📄"}
-                              {item.outputMode === "document" && "📁"}
-                              {item.outputMode === "new_message" && "💬"}
-                            </span>
-                          </Button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => applyInlineMarkdown("**", "**")}
-                      title="Жирный"
-                    >
-                      <Bold className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => applyInlineMarkdown("*", "*")}
-                      title="Курсив"
-                    >
-                      <Italic className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => {
-                        const textarea = transcriptTextareaRef.current;
-                        if (!textarea) return;
-                        const { selectionStart, selectionEnd, value } = textarea;
-                        const selected = value.slice(selectionStart, selectionEnd) || "элемент списка";
-                        const before = value.slice(0, selectionStart);
-                        const after = value.slice(selectionEnd);
-                        const linePrefix = selected.startsWith("- ") ? "" : "- ";
-                        const next = `${before}${linePrefix}${selected}\n${after}`;
-                        setDraftTranscriptText(next);
-                        requestAnimationFrame(() => {
-                          const pos = before.length + linePrefix.length + selected.length + 1;
-                          textarea.focus();
-                          textarea.setSelectionRange(pos, pos);
-                        });
-                      }}
-                      title="Маркированный список"
-                    >
-                      <List className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <textarea
-                    ref={transcriptTextareaRef}
-                    value={draftTranscriptText}
-                    onChange={(e) => setDraftTranscriptText(e.target.value)}
-                    className="h-[70vh] w-full resize-none rounded-lg border border-slate-200 bg-white p-3 text-sm leading-relaxed shadow-inner outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-900"
-                    placeholder="Текст стенограммы..."
-                  />
-                  {!isTranscriptDirty && saveTranscriptMessage ? (
-                    <p className="text-xs text-emerald-600">Изменений нет, текст актуален.</p>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Transcript not found.</p>
-              )}
-            </div>
-          </aside>
-        ) : null}
       </div>
     </div>
   );
+}
+
+function buildLocalMessage(role: ChatMessage["role"], chatId: string, content: string): ChatMessage {
+  return {
+    id: `local-${role}-${Date.now()}`,
+    chatId,
+    role,
+    content,
+    createdAt: new Date().toISOString(),
+  };
 }

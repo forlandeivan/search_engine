@@ -1,32 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Paperclip, Send, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useCallback, useState, useEffect, useRef } from "react";
+import { Send, Paperclip, Loader2, X } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
-import type { ChatMessage } from "@/types/chat";
-
-type ToolbarAction = {
-  id: string;
-  label: string;
-  description?: string | null;
-  target: string;
-  inputType: string;
-  outputMode: string;
-};
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 type ChatInputProps = {
   onSend: (message: string) => Promise<void> | void;
-  onTranscribe?: (payload: string | { operationId: string; placeholder?: ChatMessage }) => void;
+  onTranscribe?: (text: string) => void;
   disabled?: boolean;
   placeholder?: string;
   showAudioAttach?: boolean;
-  chatId?: string | null;
-  toolbarActions?: ToolbarAction[];
-  toolbarLoadingId?: string | null;
-  onRunToolbarAction?: (action: ToolbarAction, currentText: string) => void;
-  externalValue?: string;
 };
 
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
@@ -42,303 +30,308 @@ function EqualizerIcon() {
   );
 }
 
-export default function ChatInput({
-  onSend,
+export default function ChatInput({ 
+  onSend, 
   onTranscribe,
-  disabled,
-  placeholder,
-  showAudioAttach = true,
-  chatId,
-  toolbarActions,
-  toolbarLoadingId,
-  onRunToolbarAction,
-  externalValue,
+  disabled, 
+  placeholder, 
+  showAudioAttach = true 
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [isSending, setIsSending] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
-  const [uploadedTranscription, setUploadedTranscription] = useState<
-    | {
-        operationId: string;
-        placeholder?: ChatMessage;
-      }
-    | null
-  >(null);
+  const [uploadedOperationId, setUploadedOperationId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   useEffect(() => {
-    setValue("");
-  }, [chatId]);
-
-  useEffect(() => {
-    if (externalValue !== undefined) {
-      setValue(externalValue);
+    if (!showAudioAttach) {
+      return;
     }
-  }, [externalValue]);
-
-  useEffect(() => {
-    if (!showAudioAttach) return;
-
+    
     fetch("/api/chat/transcribe/status", { credentials: "include" })
       .then((res) => res.json())
-      .then((data) => setSttAvailable(data.available === true))
-      .catch(() => setSttAvailable(false));
+      .then((data) => {
+        setSttAvailable(data.available === true);
+      })
+      .catch(() => {
+        setSttAvailable(false);
+      });
   }, [showAudioAttach]);
 
-  const handleUploadAudio = useCallback(
-    async (file: File): Promise<{ operationId: string; placeholder?: ChatMessage } | null> => {
-      if (!chatId) {
+  const handleUploadAudio = useCallback(async (file: File): Promise<string | null> => {
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("audio", file);
+
+      const response = await fetch("/api/chat/transcribe", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Ошибка транскрибации: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (result.operationId) {
+        setUploadedOperationId(result.operationId);
+        return result.operationId;
+      } else {
         toast({
           title: "Ошибка",
-          description: "Нет чата. Создайте или выберите чат перед отправкой аудио.",
+          description: "Не удалось запустить транскрибацию. Попробуйте еще раз.",
           variant: "destructive",
         });
         return null;
       }
-
-      setIsUploading(true);
-      try {
-        const formData = new FormData();
-        formData.append("audio", file);
-        formData.append("chatId", chatId);
-
-        const response = await fetch("/api/chat/transcribe", {
-          method: "POST",
-          credentials: "include",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || `Ошибка транскрибации: ${response.status}`);
-        }
-
-        const result = await response.json();
-
-        if (result.operationId) {
-          const payload = {
-            operationId: result.operationId as string,
-            placeholder: result.chatMessage as ChatMessage | undefined,
-          };
-          setUploadedTranscription(payload);
-          return payload;
-        }
-
-        toast({
-          title: "Ошибка",
-          description: "Не удалось инициировать транскрибацию. Попробуйте ещё раз.",
-          variant: "destructive",
-        });
-        return null;
-      } catch (error) {
-        console.error("[ChatInput] Transcription error:", error);
-        toast({
-          title: "Ошибка транскрибации",
-          description: error instanceof Error ? error.message : "Не удалось распознать файл",
-          variant: "destructive",
-        });
-        return null;
-      } finally {
-        setIsUploading(false);
-      }
-    },
-    [chatId, toast],
-  );
-
-  const handleFileChange = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-        toast({
-          title: "Файл слишком большой",
-          description: `Максимальный размер ${MAX_FILE_SIZE_MB} МБ`,
-          variant: "destructive",
-        });
-        return;
-      }
-      const transcription = await handleUploadAudio(file);
-      if (transcription && onTranscribe) {
-        onTranscribe(transcription);
-      }
-    },
-    [handleUploadAudio, onTranscribe, toast],
-  );
-
-  const handleDrop = useCallback(
-    async (event: React.DragEvent) => {
-      event.preventDefault();
-      setIsDragOver(false);
-      const file = event.dataTransfer.files?.[0];
-      if (!file) return;
-      if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-        toast({
-          title: "Файл слишком большой",
-          description: `Максимальный размер ${MAX_FILE_SIZE_MB} МБ`,
-          variant: "destructive",
-        });
-        return;
-      }
-      setAttachedFile(file);
-      const transcription = await handleUploadAudio(file);
-      if (transcription && onTranscribe) {
-        onTranscribe(transcription);
-      }
-    },
-    [handleUploadAudio, onTranscribe, toast],
-  );
-
-  const resetFile = () => {
-    setAttachedFile(null);
-    setUploadedTranscription(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+    } catch (error) {
+      console.error("[ChatInput] Transcription error:", error);
+      toast({
+        title: "Ошибка транскрибации",
+        description: error instanceof Error ? error.message : "Не удалось распознать аудио",
+        variant: "destructive",
+      });
+      return null;
+    } finally {
+      setIsUploading(false);
     }
-  };
+  }, [toast]);
 
-  const handleSubmit = useCallback(async () => {
+  const handleSend = useCallback(async () => {
+    if (disabled) {
+      return;
+    }
+
+    // If file is attached and uploaded, send it
+    if (attachedFile && uploadedOperationId) {
+      if (onTranscribe) {
+        onTranscribe(`__PENDING_OPERATION:${uploadedOperationId}:${attachedFile.name}`);
+      }
+      setAttachedFile(null);
+      setUploadedOperationId(null);
+      return;
+    }
+
+    // Otherwise send text message
     const trimmed = value.trim();
     if (!trimmed) {
       return;
     }
+    setValue("");
+    await onSend(trimmed);
+  }, [disabled, onSend, value, attachedFile, uploadedOperationId, onTranscribe]);
 
-    setIsSending(true);
-    try {
-      await onSend(trimmed);
-      setValue("");
-    } finally {
-      setIsSending(false);
+  const handleAttachClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.items?.length > 0) {
+      setIsDragOver(true);
     }
-  }, [onSend, value]);
+  }, []);
 
-  const disableSend =
-    disabled || isSending || isUploading || (!value.trim() && !attachedFile && !uploadedTranscription);
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget === containerRef.current) {
+      setIsDragOver(false);
+    }
+  }, []);
 
-  const showAudioButton = showAudioAttach && sttAvailable !== false;
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const validateAudioFile = (file: File): boolean => {
+    if (!file.type.startsWith("audio/")) {
+      toast({
+        title: "Неподдерживаемый формат",
+        description: "Пожалуйста, прикрепите аудиофайл (MP3, OGG, WAV, WebM и др.)",
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    const fileSizeMB = file.size / (1024 * 1024);
+    if (fileSizeMB > MAX_FILE_SIZE_MB) {
+      toast({
+        title: "Файл слишком большой",
+        description: `Максимальный размер файла: ${MAX_FILE_SIZE_MB} МБ`,
+        variant: "destructive",
+      });
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    const file = files[0];
+    if (validateAudioFile(file)) {
+      setAttachedFile(file);
+      handleUploadAudio(file);
+    }
+  }, [toast, handleUploadAudio]);
+
+  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    event.target.value = "";
+
+    if (validateAudioFile(file)) {
+      setAttachedFile(file);
+      handleUploadAudio(file);
+    }
+  }, [toast, handleUploadAudio]);
+
+  const isSendDisabled = disabled || (value.trim().length === 0 && !attachedFile) || (attachedFile && !uploadedOperationId);
+  const showAttachButton = showAudioAttach;
+  const isAttachDisabled = disabled || isUploading || !!attachedFile;
+  
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   return (
-    <div
-      ref={containerRef}
-      className={cn(
-        "relative flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-800 dark:bg-slate-900",
-        isDragOver && "border-dashed border-primary",
-        disabled && "opacity-60 pointer-events-none",
-      )}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setIsDragOver(true);
-      }}
-      onDragLeave={() => setIsDragOver(false)}
-      onDrop={handleDrop}
-    >
-      {toolbarActions && toolbarActions.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2">
-          {toolbarActions.map((action) => (
-            <Tooltip key={action.id}>
-              <TooltipTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={Boolean(toolbarLoadingId)}
-                  onClick={() => onRunToolbarAction?.(action, value)}
-                  className="h-8"
-                >
-                  {toolbarLoadingId === action.id ? (
-                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  ) : null}
-                  {action.label}
-                </Button>
-              </TooltipTrigger>
-              {action.description ? (
-                <TooltipContent side="top" className="max-w-xs text-xs">
-                  {action.description}
-                </TooltipContent>
-              ) : null}
-            </Tooltip>
-          ))}
+    <div className="mx-auto w-full max-w-[880px] pb-14">
+      {attachedFile && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30">
+          {isUploading ? (
+            <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-600 dark:text-blue-400" />
+          ) : null}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-blue-900 truncate dark:text-blue-100">{attachedFile.name}</p>
+            <p className="text-xs text-blue-700 dark:text-blue-300">
+              {isUploading ? "Загрузка..." : formatFileSize(attachedFile.size)}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={() => {
+              setAttachedFile(null);
+              setUploadedOperationId(null);
+            }}
+            disabled={isUploading}
+            data-testid="button-remove-audio"
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
-      ) : null}
-
-      <div className="flex items-start gap-3">
-        {showAudioButton ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-10 w-10"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={disabled || isSending || isUploading}
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="text-xs">
-              Прикрепить аудио для транскрибации
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
-
-        <div className="flex-1 space-y-2">
+      )}
+      <div
+        ref={containerRef}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        className={`rounded-[28px] border px-4 py-2 shadow-lg transition-colors sm:px-5 sm:py-2 ${
+          isDragOver
+            ? "border-blue-400 bg-blue-50/50 dark:border-blue-500 dark:bg-blue-950/30"
+            : "border-slate-200 bg-white/95 dark:border-slate-700 dark:bg-slate-900/90"
+        }`}
+      >
+        <div className="flex items-center gap-2 sm:gap-3">
+          {showAttachButton && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_AUDIO_TYPES}
+                onChange={handleFileChange}
+                className="hidden"
+                data-testid="input-audio-file"
+              />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-11 w-11 shrink-0 rounded-full"
+                    onClick={handleAttachClick}
+                    disabled={isAttachDisabled}
+                    data-testid="button-attach-audio"
+                  >
+                    {isUploading ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <Paperclip className="h-5 w-5" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p>Прикрепить аудиофайл для транскрибации</p>
+                </TooltipContent>
+              </Tooltip>
+            </>
+          )}
           <Textarea
             value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={placeholder || "Напишите сообщение..."}
-            className="min-h-[80px]"
+            onChange={(event) => setValue(event.target.value)}
+            placeholder={placeholder ?? "Напишите сообщение и нажмите Enter"}
             disabled={disabled}
+            rows={1}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                handleSend();
+              }
+            }}
+            className="!min-h-0 h-11 flex-1 resize-none border-none bg-transparent px-0 py-2 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
+            data-testid="input-chat-message"
           />
-          {attachedFile ? (
-            <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800/60">
-              <span className="truncate">{attachedFile.name}</span>
-              <Button type="button" size="icon" variant="ghost" onClick={resetFile} aria-label="Удалить файл">
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          ) : null}
-          {uploadedTranscription?.placeholder ? (
-            <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800/60">
-              <span className="truncate">{uploadedTranscription.placeholder.content}</span>
-              <Button type="button" size="icon" variant="ghost" onClick={resetFile} aria-label="Удалить">
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          ) : null}
+          <Button
+            type="button"
+            aria-label={attachedFile ? "Отправить аудиофайл" : "Отправить сообщение"}
+            title={attachedFile ? "Отправить аудиофайл" : "Отправить сообщение"}
+            size="icon"
+            className="h-11 w-11 shrink-0 rounded-full shadow-md"
+            onClick={handleSend}
+            disabled={isSendDisabled || false}
+            data-testid="button-send-message"
+          >
+            {isUploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : attachedFile ? (
+              <EqualizerIcon />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+          </Button>
         </div>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button type="button" variant="default" size="icon" disabled={disableSend} onClick={handleSubmit}>
-              {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">
-            Отправить
-          </TooltipContent>
-        </Tooltip>
       </div>
-
-      {showAudioButton ? (
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={ACCEPTED_AUDIO_TYPES}
-          onChange={handleFileChange}
-          hidden
-        />
-      ) : null}
-
-      {isUploading ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <EqualizerIcon />
-          Загружаем аудио...
-        </div>
-      ) : null}
+      <p className="mt-3 text-center text-xs text-muted-foreground">
+        {showAttachButton ? "Прикрепите аудиофайл для транскрибации • " : ""}
+        Shift + Enter — новая строка
+      </p>
     </div>
   );
 }
