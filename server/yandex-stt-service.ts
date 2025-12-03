@@ -4,7 +4,6 @@ import { tmpdir } from "os";
 import { writeFile, unlink, readFile } from "fs/promises";
 import { join } from "path";
 import { randomBytes } from "crypto";
-import ffmpegPath from "ffmpeg-static";
 
 export class YandexSttError extends Error {
   public status: number;
@@ -71,7 +70,7 @@ export async function convertWebmToOgg(audioBuffer: Buffer): Promise<Buffer> {
   const tempId = randomBytes(8).toString("hex");
   const inputPath = join(tmpdir(), `input_${tempId}.webm`);
   const outputPath = join(tmpdir(), `output_${tempId}.ogg`);
-  const executable = ffmpegPath || "ffmpeg";
+  const executable = "ffmpeg";
   
   try {
     await writeFile(inputPath, audioBuffer);

@@ -300,13 +300,15 @@ export default function ChatPage({ params }: ChatPageProps) {
           targetChatId = newChat.id;
           setOverrideChatId(newChat.id);
           handleSelectChat(newChat.id);
-        } catch (error):
-          setStreamError(error.message if isinstance(error, Exception) else str(error))
-          setIsTranscribing(False)
-          return
+        } catch (error) {
+          setStreamError(error instanceof Error ? error.message : String(error));
+          setIsTranscribing(false);
+          return;
+        }
+      }
 
-      if targetChatId:
-        const userMessage = buildLocalMessage('user', targetChatId, fileName)
+      if (targetChatId) {
+        const userMessage = buildLocalMessage('user', targetChatId, fileName);
         const assistantMessage: ChatMessage = {
           id: `local-transcript-${Date.now()}`,
           chatId: targetChatId,
@@ -320,6 +322,7 @@ export default function ChatPage({ params }: ChatPageProps) {
         };
         setLocalChatId(targetChatId);
         setLocalMessages((prev) => [...prev, userMessage, assistantMessage]);
+      }
 
       const pollOperation = async () => {
         let attempts = 0;
