@@ -1,9 +1,17 @@
 import { useState, useEffect } from "react";
-import { X, Save, RotateCcw, Loader2 } from "lucide-react";
+import { X, Save, RotateCcw, Loader2, MoreVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
 import { useTranscript, useUpdateTranscript } from "@/hooks/useTranscript";
-import { SkillActionsPanel } from "@/components/chat/SkillActionsPanel";
+import { useSkillActions, useRunSkillAction } from "@/hooks/useSkillActions";
 import { useToast } from "@/hooks/use-toast";
 
 type TranscriptCanvasProps = {
@@ -28,6 +36,9 @@ export function TranscriptCanvas({
     workspaceId
   );
 
+  const { data: actions } = useSkillActions(workspaceId, skillId || "");
+  const { mutate: runAction, isPending: isActionPending } = useRunSkillAction(workspaceId);
+
   const [draftText, setDraftText] = useState("");
   const [originalText, setOriginalText] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
@@ -39,6 +50,13 @@ export function TranscriptCanvas({
       setHasChanges(false);
     }
   }, [transcript?.fullText]);
+
+  const canvasActions = (actions ?? []).filter(
+    (item) =>
+      item.skillAction?.enabled &&
+      item.skillAction?.enabledPlacements.includes("canvas") &&
+      item.action.target === "transcript"
+  );
 
   const handleSave = async () => {
     if (!draftText.trim()) {
@@ -81,6 +99,53 @@ export function TranscriptCanvas({
     });
   };
 
+  const handleRunAction = (actionId: string, label: string) => {
+    if (!skillId) return;
+    
+    if (!draftText.trim()) {
+      toast({
+        title: "Ошибка",
+        description: "Текст стенограммы пуст",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    runAction(
+      {
+        skillId,
+        actionId,
+        placement: "canvas",
+        target: "transcript",
+        selectionText: draftText,
+      },
+      {
+        onSuccess: (result) => {
+          if (result.output) {
+            setDraftText(result.output);
+            setHasChanges(result.output !== originalText);
+            toast({
+              title: "Текст обновлён",
+              description: `Действие "${label}" применено`,
+            });
+          } else {
+            toast({
+              title: "Выполнено",
+              description: result.ui?.effectiveLabel || label,
+            });
+          }
+        },
+        onError: (error) => {
+          toast({
+            title: "Ошибка",
+            description: error instanceof Error ? error.message : "Не удалось выполнить действие",
+            variant: "destructive",
+          });
+        },
+      }
+    );
+  };
+
   if (isError) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
@@ -101,6 +166,39 @@ export function TranscriptCanvas({
           {hasChanges && <p className="text-xs text-amber-600 dark:text-amber-400">Есть несохранённые изменения</p>}
         </div>
         <div className="flex items-center gap-2">
+          {/* Actions dropdown */}
+          {skillId && canvasActions.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  disabled={isActionPending || isLoading}
+                  data-testid="button-canvas-actions"
+                >
+                  {isActionPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <MoreVertical className="h-4 w-4" />
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Действия</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {canvasActions.map((item) => (
+                  <DropdownMenuItem
+                    key={item.action.id}
+                    onClick={() => handleRunAction(item.action.id, item.ui.effectiveLabel)}
+                    disabled={isActionPending}
+                    data-testid={`action-${item.action.id}`}
+                  >
+                    {item.ui.effectiveLabel}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -156,34 +254,6 @@ export function TranscriptCanvas({
           />
         )}
       </div>
-
-      {/* Actions Panel - shrink-0 чтобы не сжималась */}
-      {skillId && (
-        <div className="shrink-0">
-          <SkillActionsPanel
-            workspaceId={workspaceId}
-            skillId={skillId}
-            transcriptText={draftText}
-            onActionComplete={(result) => {
-              if (result && typeof result === 'object' && 'output' in result) {
-                const output = (result as { output?: string }).output;
-                if (output) {
-                  setDraftText(output);
-                  setHasChanges(output !== originalText);
-                  toast({
-                    title: "Текст обновлён",
-                    description: "Результат действия применён к стенограмме",
-                  });
-                  return;
-                }
-              }
-              toast({
-                description: "Действие выполнено",
-              });
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 }
