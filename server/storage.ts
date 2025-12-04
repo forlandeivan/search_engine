@@ -6212,6 +6212,11 @@ export async function ensureDatabaseSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS "rag_llm_response_format" text
     `);
 
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "icon" text
+    `);
+
     try {
       await db.execute(sql`
         CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS skills_workspace_system_key_unique_idx

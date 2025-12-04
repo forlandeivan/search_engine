@@ -788,6 +788,7 @@ export const skills = pgTable(
     ragLlmTemperature: doublePrecision("rag_llm_temperature"),
     ragLlmMaxTokens: integer("rag_llm_max_tokens"),
     ragLlmResponseFormat: text("rag_llm_response_format"),
+    icon: text("icon"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
