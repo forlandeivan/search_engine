@@ -2361,6 +2361,15 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
     } catch (error) {
       swallowPgError(error, ["42P07", "42710"]);
     }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "embedding_providers"
+        ADD COLUMN "is_global" boolean NOT NULL DEFAULT false
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
   })();
 
   try {
@@ -2681,6 +2690,15 @@ async function ensureLlmProvidersTable(): Promise<void> {
       `);
     } catch (error) {
       swallowPgError(error, ["42P07", "42710"]);
+    }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "llm_providers"
+        ADD COLUMN "is_global" boolean NOT NULL DEFAULT false
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
     }
   })();
 
