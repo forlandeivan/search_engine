@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Paperclip, Send, X } from "lucide-react";
+import { Loader2, Paperclip, Send, X, Mic } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -235,7 +235,7 @@ export default function ChatInput({
   };
 
   return (
-    <div className="mx-auto w-full max-w-[880px] pb-14">
+    <div className="mx-auto w-full max-w-[808px] px-24 pb-6 pt-5">
       {attachedFile && (
         <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30">
           {isUploading ? <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-600 dark:text-blue-400" /> : null}
@@ -268,13 +268,13 @@ export default function ChatInput({
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
-        className={`rounded-[28px] border px-4 py-2 shadow-lg transition-colors sm:px-5 sm:py-2 ${
+        className={`rounded-full border bg-white px-3 py-2 shadow-lg transition-colors dark:bg-slate-900 ${
           isDragOver
             ? "border-blue-400 bg-blue-50/50 dark:border-blue-500 dark:bg-blue-950/30"
-            : "border-slate-200 bg-white/95 dark:border-slate-700 dark:bg-slate-900/90"
+            : "border-slate-300 dark:border-slate-700"
         }`}
       >
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1">
           {showAudioAttach && (
             <>
               <input
@@ -291,12 +291,12 @@ export default function ChatInput({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-11 w-11 shrink-0 rounded-full"
+                    className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
                     onClick={handleAttachClick}
                     disabled={isAttachDisabled}
                     data-testid="button-attach-audio"
                   >
-                    <Paperclip className="h-5 w-5" />
+                    <Paperclip className="h-6 w-6" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
@@ -309,12 +309,7 @@ export default function ChatInput({
           <Textarea
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            placeholder={
-              placeholder ??
-              (sttAvailable === false
-                ? "Введите текст и отправьте"
-                : "Прикрепляйте файлы и задавайте вопросы. Enter — отправить, Shift+Enter — новая строка")
-            }
+            placeholder={placeholder ?? "Спросите что-нибудь..."}
             disabled={disabled}
             rows={1}
             onKeyDown={(event) => {
@@ -323,35 +318,47 @@ export default function ChatInput({
                 handleSend();
               }
             }}
-            className="h-11 !min-h-0 flex-1 resize-none border-none bg-transparent px-0 py-2 text-base leading-6 focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="h-10 !min-h-0 flex-1 resize-none border-none bg-transparent px-2 py-2 text-base leading-6 text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
             data-testid="input-chat-message"
           />
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
+                data-testid="button-voice-input"
+              >
+                <Mic className="h-6 w-6" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>Голосовой ввод</p>
+            </TooltipContent>
+          </Tooltip>
 
           <Button
             type="button"
             aria-label={attachedFile ? "Отправить аудио" : "Отправить сообщение"}
             title={attachedFile ? "Отправить аудио" : "Отправить сообщение"}
             size="icon"
-            className="h-11 w-11 shrink-0 rounded-full shadow-md"
+            className="h-10 w-10 shrink-0 rounded-full bg-[#095998] shadow-md hover:bg-[#0a6ab8]"
             onClick={handleSend}
             disabled={isSendDisabled || false}
             data-testid="button-send-message"
           >
             {isSending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-5 w-5 animate-spin text-white" />
             ) : attachedFile ? (
               <EqualizerIcon />
             ) : (
-              <Send className="h-4 w-4" />
+              <Send className="h-5 w-5 text-white" />
             )}
           </Button>
         </div>
       </div>
-
-      <p className="mt-3 text-center text-xs text-muted-foreground">
-        {showAudioAttach ? "Прикрепляйте файлы и задавайте вопросы. " : ""}
-        Enter — отправить, Shift+Enter — новая строка
-      </p>
     </div>
   );
 }

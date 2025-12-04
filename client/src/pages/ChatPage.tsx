@@ -1,8 +1,8 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ChatIconRail from "@/components/chat/ChatIconRail";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput from "@/components/chat/ChatInput";
@@ -411,7 +411,7 @@ export default function ChatPage({ params }: ChatPageProps) {
     [activeChat?.skillId, activeSkill?.id, createChat, defaultSkill?.id, effectiveChatId, handleSelectChat, queryClient, workspaceId],
   );
 
-const isNewChat = !effectiveChatId;
+  const isNewChat = !effectiveChatId;
   const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
   const chatTitle = activeChat?.title ?? null;
   const disableInput = !workspaceId || isStreaming || Boolean(normalizedMessagesError && !isNewChat);
@@ -425,79 +425,65 @@ const isNewChat = !effectiveChatId;
   }, []);
 
   return (
-    <div className="flex h-screen min-h-0 bg-muted/20 overflow-hidden">
-      {/*
-        Layout plan:
-        - keep the root full-height; next row splits into two fixed columns (sidebar + main).
-        - TODO: move overflow-y from the page body onto each column for independent scrolls.
-      */}
-      <div className="flex h-full min-h-0 flex-1">
-        <ChatSidebar
-          workspaceId={workspaceId}
-          selectedChatId={effectiveChatId ?? undefined}
-          onSelectChat={handleSelectChat}
-          onCreateNewChat={handleCreateNewChat}
-          onCreateChatForSkill={handleCreateChatForSkill}
-          isCreatingChat={isDefaultCreating}
-          creatingSkillId={creatingSkillId}
-          className="w-[320px] shrink-0 border-r border-slate-200/70 bg-white/70 dark:border-slate-800 dark:bg-slate-900/40"
-        />
-        {/*
-          NOTE:
-          - Right now the scrollable area for the conversation lives inside the white card below.
-            Because that card has `max-w-[880px]`/`mx-auto`, the scrollbar ends up in the middle of the screen.
-          - Target behaviour (ChatGPT-like) is to let this <section> (full width of the right column)
-            own the vertical overflow, so the scrollbar hugs the browser edge while the card remains centred.
-          - Keep this in mind when moving overflow logic in the next step.
-        */}
-        <section className={cn(
-          "flex min-h-0 flex-1 overflow-hidden",
-          openTranscriptId ? "flex-row" : "flex-col"
-        )}>
-          <div className="flex flex-col overflow-hidden flex-1 min-w-0">
-            <div
-              ref={messagesScrollRef}
-              className="chat-scroll flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8"
-            >
-              <div className="mx-auto w-full max-w-[880px] rounded-3xl border border-slate-200 bg-white shadow-lg dark:border-slate-800 dark:bg-slate-900/80">
-                <ChatMessagesArea
-                  chatTitle={chatTitle}
-                  skillName={skillLabel}
-                  messages={visibleMessages}
-                  isLoading={isMessagesLoading && !isNewChat}
-                  isNewChat={isNewChat}
-                  isStreaming={isStreaming}
-                  isTranscribing={isTranscribing}
-                  streamError={streamError}
-                  errorMessage={normalizedMessagesError}
-                  scrollContainerRef={messagesScrollRef}
-                  onReset={() => handleSelectChat(null)}
-                  onOpenTranscript={setOpenTranscriptId}
-                />
-              </div>
-            </div>
-            <div className="border-t border-slate-200 bg-white/95 pb-6 pt-4 px-4 sm:px-6 lg:px-8 dark:border-slate-800 dark:bg-slate-900/70">
-              <ChatInput
-                onSend={handleSend}
-                onTranscribe={handleTranscription}
-                disabled={disableInput}
-                chatId={effectiveChatId ?? null}
-                placeholder={isNewChat ? "Ask something..." : "Type a message and press Enter"}
-              />
-            </div>
+    <div className="flex h-screen min-h-0 overflow-hidden" data-testid="chat-page">
+      <ChatIconRail className="w-20 shrink-0" />
+      
+      <ChatSidebar
+        workspaceId={workspaceId}
+        selectedChatId={effectiveChatId ?? undefined}
+        onSelectChat={handleSelectChat}
+        onCreateNewChat={handleCreateNewChat}
+        onCreateChatForSkill={handleCreateChatForSkill}
+        isCreatingChat={isDefaultCreating}
+        creatingSkillId={creatingSkillId}
+        className="w-[400px] shrink-0"
+      />
+
+      <section className={cn(
+        "flex min-h-0 flex-1 overflow-hidden",
+        openTranscriptId ? "flex-row" : "flex-col"
+      )}>
+        <div className="flex flex-col overflow-hidden flex-1 min-w-0">
+          <div
+            ref={messagesScrollRef}
+            className="flex-1 overflow-y-auto"
+          >
+            <ChatMessagesArea
+              chatTitle={chatTitle}
+              skillName={skillLabel}
+              messages={visibleMessages}
+              isLoading={isMessagesLoading && !isNewChat}
+              isNewChat={isNewChat}
+              isStreaming={isStreaming}
+              isTranscribing={isTranscribing}
+              streamError={streamError}
+              errorMessage={normalizedMessagesError}
+              scrollContainerRef={messagesScrollRef}
+              onReset={() => handleSelectChat(null)}
+              onOpenTranscript={setOpenTranscriptId}
+            />
           </div>
-          {openTranscriptId && (
-            <div className="flex-1 min-w-0 overflow-hidden">
-              <TranscriptCanvas
-                workspaceId={workspaceId}
-                transcriptId={openTranscriptId}
-                skillId={activeSkill?.id}
-                onClose={() => setOpenTranscriptId(null)}
-              />
-            </div>
-          )}
-        </section>
-      </div>
+          <div className="border-t border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900">
+            <ChatInput
+              onSend={handleSend}
+              onTranscribe={handleTranscription}
+              disabled={disableInput}
+              chatId={effectiveChatId ?? null}
+              placeholder={isNewChat ? "Спросите что-нибудь..." : "Введите сообщение..."}
+            />
+          </div>
+        </div>
+        {openTranscriptId && (
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <TranscriptCanvas
+              workspaceId={workspaceId}
+              transcriptId={openTranscriptId}
+              skillId={activeSkill?.id}
+              onClose={() => setOpenTranscriptId(null)}
+            />
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -512,7 +498,3 @@ function buildLocalMessage(role: ChatMessage["role"], chatId: string, content: s
     createdAt: date.toISOString(),
   };
 }
-
-
-
-

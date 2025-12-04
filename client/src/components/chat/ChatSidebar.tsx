@@ -4,7 +4,6 @@ import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +14,20 @@ import { cn } from "@/lib/utils";
 import { useChats, useDeleteChat, useRenameChat } from "@/hooks/useChats";
 import { useSkills } from "@/hooks/useSkills";
 import type { ChatSummary } from "@/types/chat";
-import { Loader2, MoreVertical, Hash, Plus } from "lucide-react";
+import {
+  Loader2,
+  MoreVertical,
+  PenLine,
+  Search,
+  X,
+  Cpu,
+  Wand2,
+  FileText,
+  Briefcase,
+  Grid2X2,
+  Mic,
+  ChevronDown,
+} from "lucide-react";
 
 type ChatSidebarProps = {
   workspaceId?: string;
@@ -26,6 +38,15 @@ type ChatSidebarProps = {
   onCreateChatForSkill?: (skillId: string) => void;
   creatingSkillId?: string | null;
   className?: string;
+};
+
+const skillIcons: Record<string, typeof Cpu> = {
+  "Управление навыками": Cpu,
+  "Анализ судебного дела": Wand2,
+  "Подготовка судебных решений": FileText,
+  "Судебное делопроизводство": Briefcase,
+  "Техподдержка ГАС Правосудие": Grid2X2,
+  "Транскрибация": Mic,
 };
 
 export default function ChatSidebar({
@@ -95,68 +116,69 @@ export default function ChatSidebar({
     [deleteChat, workspaceId, onSelectChat, selectedChatId, editingChatId],
   );
 
+  const customSkills = useMemo(() => {
+    return workspaceSkills.filter(
+      (skill) => !(skill.isSystem && skill.systemKey === "UNICA_CHAT")
+    );
+  }, [workspaceSkills]);
+
   const skillsBlock = useMemo(() => {
     if (!workspaceId) {
-      return <p className="text-sm text-muted-foreground">Выберите рабочее пространство, чтобы увидеть навыки.</p>;
+      return null;
     }
 
     if (isSkillsLoading) {
       return (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 px-6 py-3 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Загружаем навыки…
         </div>
       );
     }
 
-    const customSkills = workspaceSkills.filter(
-      (skill) => !(skill.isSystem && skill.systemKey === "UNICA_CHAT")
-    );
-
-    if (customSkills.length === 0) {
-      return <p className="text-sm text-muted-foreground">Пока нет доступных навыков.</p>;
-    }
-
     return (
-      <ul className="space-y-1">
-        {customSkills.map((skill) => (
-          <li
-            key={skill.id}
-            className="group flex items-center rounded-lg border border-transparent px-2 py-1 text-sm transition hover:border-slate-200 hover:bg-white dark:hover:bg-slate-900/80"
+      <div className="flex flex-col">
+        <Link href="/skills">
+          <div
+            className="flex cursor-pointer items-center gap-2 px-6 py-5 hover:bg-slate-100 dark:hover:bg-slate-800"
+            data-testid="link-manage-skills"
           >
-            <span className="flex-1 truncate" title={skill.name || ""}>
-              {skill.name}
+            <Cpu className="h-6 w-6 text-slate-400" />
+            <span className="text-base font-medium text-slate-900 dark:text-slate-100">
+              Управление навыками
             </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn(
-                "h-7 w-7 shrink-0 rounded-full opacity-0 transition group-hover:opacity-100",
-                creatingSkillId === skill.id && "opacity-100",
-              )}
-              onClick={(event) => {
-                event.stopPropagation();
-                onCreateChatForSkill?.(skill.id);
-              }}
-              disabled={!workspaceId || creatingSkillId === skill.id}
-              aria-label={`Новый чат по навыку ${skill.name}`}
+          </div>
+        </Link>
+
+        {customSkills.map((skill) => {
+          const Icon = skillIcons[skill.name || ""] || Wand2;
+          return (
+            <div
+              key={skill.id}
+              className="group flex cursor-pointer items-center gap-2 px-6 py-5 hover:bg-slate-100 dark:hover:bg-slate-800"
+              onClick={() => onCreateChatForSkill?.(skill.id)}
+              data-testid={`skill-${skill.id}`}
             >
+              <Icon className="h-6 w-6 text-slate-400" />
+              <span className="flex-1 text-base font-medium text-slate-900 dark:text-slate-100">
+                {skill.name}
+              </span>
               {creatingSkillId === skill.id ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
               ) : (
-                <Plus className="h-4 w-4" />
+                <X className="invisible h-5 w-5 text-slate-400 group-hover:visible" />
               )}
-            </Button>
-          </li>
-        ))}
-      </ul>
+            </div>
+          );
+        })}
+      </div>
     );
-  }, [workspaceId, workspaceSkills, isSkillsLoading, creatingSkillId, onCreateChatForSkill]);
+  }, [workspaceId, customSkills, isSkillsLoading, creatingSkillId, onCreateChatForSkill]);
 
   const sidebarContent = useMemo(() => {
     if (!workspaceId) {
       return (
-        <div className="p-4 text-sm text-muted-foreground">
+        <div className="px-6 py-4 text-sm text-muted-foreground">
           Чтобы работать с чатами, выберите рабочее пространство.
         </div>
       );
@@ -164,7 +186,7 @@ export default function ChatSidebar({
 
     if (isLoading) {
       return (
-        <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 px-6 py-4 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Загружаем чаты…
         </div>
@@ -173,7 +195,7 @@ export default function ChatSidebar({
 
     if (chats.length === 0) {
       return (
-        <div className="p-4 text-sm text-muted-foreground">
+        <div className="px-6 py-4 text-sm text-muted-foreground">
           Пока нет диалогов. Создайте новый чат, чтобы начать.
         </div>
       );
@@ -181,30 +203,28 @@ export default function ChatSidebar({
 
     return (
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="space-y-1 px-2 py-1">
-          {chats.map((chat) => (
-            <ChatSidebarItem
-              key={chat.id}
-              chat={chat}
-              isActive={chat.id === selectedChatId}
-              isEditing={editingChatId === chat.id}
-              editingTitle={editingTitle}
-              isMutating={isRenaming || isDeleting}
-              onStartRename={() => {
-                setEditingChatId(chat.id);
-                setEditingTitle(chat.title ?? "");
-              }}
-              onEditingChange={setEditingTitle}
-              onSubmitRename={handleRenameSubmit}
-              onCancelRename={() => {
-                setEditingChatId(null);
-                setEditingTitle("");
-              }}
-              onDelete={() => handleDelete(chat)}
-              onSelect={() => onSelectChat(chat.id)}
-            />
-          ))}
-        </div>
+        {chats.map((chat) => (
+          <ChatSidebarItem
+            key={chat.id}
+            chat={chat}
+            isActive={chat.id === selectedChatId}
+            isEditing={editingChatId === chat.id}
+            editingTitle={editingTitle}
+            isMutating={isRenaming || isDeleting}
+            onStartRename={() => {
+              setEditingChatId(chat.id);
+              setEditingTitle(chat.title ?? "");
+            }}
+            onEditingChange={setEditingTitle}
+            onSubmitRename={handleRenameSubmit}
+            onCancelRename={() => {
+              setEditingChatId(null);
+              setEditingTitle("");
+            }}
+            onDelete={() => handleDelete(chat)}
+            onSelect={() => onSelectChat(chat.id)}
+          />
+        ))}
       </div>
     );
   }, [
@@ -222,50 +242,67 @@ export default function ChatSidebar({
   ]);
 
   return (
-    <aside className={cn("flex h-full min-h-0 flex-col overflow-hidden bg-white/70 p-3 dark:bg-slate-900/40", className)}>
-      <div className="space-y-1.5">
-        <Button asChild variant="ghost" className="justify-start text-sm py-2 px-2">
-          <Link href="/skills">Управление навыками</Link>
-        </Button>
+    <aside
+      className={cn(
+        "flex h-full min-h-0 flex-col overflow-hidden border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/40",
+        className
+      )}
+      data-testid="chat-sidebar"
+    >
+      <div className="flex items-center justify-between gap-4 border-b border-slate-300 px-6 py-5 dark:border-slate-700">
+        <h1
+          className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100"
+          data-testid="text-sidebar-title"
+        >
+          AI-ассистент
+        </h1>
         <Button
-          size="sm"
-          className="h-9 w-full"
+          variant="outline"
+          size="icon"
+          className="h-10 w-10 rounded-full border-slate-300 dark:border-slate-600"
           onClick={onCreateNewChat}
           disabled={!workspaceId || isCreatingChat}
           data-testid="button-new-chat"
         >
           {isCreatingChat ? (
-            <span className="flex items-center justify-center gap-2">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Создаём…
-            </span>
+            <Loader2 className="h-5 w-5 animate-spin" />
           ) : (
-            "Новый чат"
+            <PenLine className="h-5 w-5 text-slate-600 dark:text-slate-300" />
           )}
         </Button>
-        <div className="space-y-0.5">
-          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-            Навыки {isSkillsFetching ? "…" : null}
-          </div>
-          {skillsBlock}
-        </div>
       </div>
 
-      <Separator className="my-3" />
+      <div className="border-b border-slate-300 dark:border-slate-700">
+        {skillsBlock}
+      </div>
 
-      <div className="space-y-1.5">
-        <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Поиск по чатам…"
-          className="h-8 text-sm"
-        />
+      <div className="flex flex-col gap-2 px-5 pb-2 pt-4">
+        <div className="relative">
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Поиск..."
+            className="h-10 rounded-full border-slate-300 bg-white pl-4 pr-10 text-base dark:border-slate-600 dark:bg-slate-800"
+            data-testid="input-search-chats"
+          />
+          <Search className="absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
+        </div>
         {isFetching && !isLoading && (
-          <p className="text-xs text-muted-foreground">Обновляем историю…</p>
+          <p className="px-1 text-xs text-muted-foreground">Обновляем историю…</p>
         )}
       </div>
 
-      <div className="mt-3 flex flex-1 min-h-0 flex-col">
+      <div className="flex items-center justify-between gap-4 px-6 pb-3 pt-4">
+        <h2
+          className="text-lg font-semibold text-slate-900 dark:text-slate-100"
+          data-testid="text-history-title"
+        >
+          История
+        </h2>
+        <ChevronDown className="h-6 w-6 text-slate-400" />
+      </div>
+
+      <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
         {sidebarContent}
       </div>
     </aside>
@@ -297,15 +334,13 @@ function ChatSidebarItem({
   onDelete: () => void;
   onSelect: () => void;
 }) {
-  const updatedAt = chat.updatedAt
-    ? formatDistanceToNow(new Date(chat.updatedAt), { addSuffix: true, locale: ru })
-    : null;
-
   return (
     <div
       className={cn(
-        "group flex w-full items-start gap-2 rounded-lg border bg-white px-3 py-2 text-left shadow-sm transition hover:bg-white/90 dark:border-slate-800 dark:bg-slate-900/60 dark:hover:bg-slate-900",
-        isActive && "border-primary bg-primary/10 dark:bg-primary/20",
+        "group flex w-full cursor-pointer items-center gap-2 px-6 py-3 text-left transition-colors",
+        isActive
+          ? "border-r-4 border-[#1269a2] bg-indigo-50 dark:bg-indigo-950/30"
+          : "hover:bg-slate-100 dark:hover:bg-slate-800"
       )}
       role="button"
       tabIndex={0}
@@ -319,6 +354,7 @@ function ChatSidebarItem({
           onSelect();
         }
       }}
+      data-testid={`chat-item-${chat.id}`}
     >
       <div className="flex-1 min-w-0">
         {isEditing ? (
@@ -340,21 +376,16 @@ function ChatSidebarItem({
                 }
               }}
               className="h-8"
+              data-testid="input-rename-chat"
             />
           </form>
         ) : (
-          <>
-            <p className="truncate text-sm font-medium leading-tight">{chat.title || "Без названия"}</p>
-            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-              <span className="flex flex-1 min-w-0 items-center gap-1 truncate text-[11px] uppercase tracking-wide">
-                <Hash className="h-3 w-3 shrink-0" />
-                <span className="truncate">{chat.skillName ?? "Навык"}</span>
-              </span>
-              {updatedAt && (
-                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground/80">· {updatedAt}</span>
-              )}
-            </div>
-          </>
+          <p
+            className="truncate text-base font-medium text-slate-900 dark:text-slate-100"
+            data-testid={`text-chat-title-${chat.id}`}
+          >
+            {chat.title || "Без названия"}
+          </p>
         )}
       </div>
       {!isEditing && (
@@ -363,8 +394,9 @@ function ChatSidebarItem({
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7 shrink-0 text-muted-foreground transition hover:text-foreground"
+              className="invisible h-7 w-7 shrink-0 text-muted-foreground transition group-hover:visible hover:text-foreground"
               onClick={(event) => event.stopPropagation()}
+              data-testid={`button-chat-menu-${chat.id}`}
             >
               <MoreVertical className="h-4 w-4" />
             </Button>
@@ -375,6 +407,7 @@ function ChatSidebarItem({
                 event.stopPropagation();
                 onStartRename();
               }}
+              data-testid={`button-rename-chat-${chat.id}`}
             >
               Переименовать
             </DropdownMenuItem>
@@ -384,6 +417,7 @@ function ChatSidebarItem({
                 event.stopPropagation();
                 onDelete();
               }}
+              data-testid={`button-delete-chat-${chat.id}`}
             >
               Удалить
             </DropdownMenuItem>
