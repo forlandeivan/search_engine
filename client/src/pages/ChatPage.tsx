@@ -116,11 +116,13 @@ export default function ChatPage({ params }: ChatPageProps) {
       (message) =>
         !localMessages.some(
           (local) =>
-            local.role === message.role &&
-            local.content.trim() === (message.content ?? "").trim(),
+            local.id === message.id ||
+            (local.role === message.role &&
+            local.content.trim() === (message.content ?? "").trim()),
         ),
     );
-    return [...deduped, ...localMessages];
+    const combined = [...deduped, ...localMessages];
+    return combined.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   }, [fetchedMessages, localMessages, shouldShowLocal]);
 
   const normalizedMessagesError = useMemo(() => {
@@ -315,10 +317,10 @@ export default function ChatPage({ params }: ChatPageProps) {
           id: `local-audio-${Date.now()}`,
           chatId: targetChatId,
           role: 'user',
-          content: fileName,
+          content: fileName || 'Audio file',
           metadata: {
             type: 'audio',
-            fileName,
+            fileName: fileName || 'Audio file',
           },
           createdAt: audioMessageTime.toISOString(),
         };
@@ -327,7 +329,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           id: placeholderId,
           chatId: targetChatId,
           role: 'assistant',
-          content: '',
+          content: 'Идёт расшифровка аудиозаписи...',
           metadata: {
             type: 'transcript',
             transcriptId: placeholderId,

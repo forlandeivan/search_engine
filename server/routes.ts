@@ -9271,9 +9271,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
         // Create audio message (user-sent audio file)
+        const fileName = file.originalname || "Аудиозапись";
         const audioMetadata: ChatMessageMetadata = {
           type: "audio",
-          fileName: file.originalname,
+          fileName,
           mimeType: file.mimetype,
           size: file.size,
         };
@@ -9281,7 +9282,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const audioMessage = await storage.createChatMessage({
           chatId,
           role: "user",
-          content: file.originalname || "Аудиозапись",
+          content: fileName,
           metadata: audioMetadata,
         });
 
