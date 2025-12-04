@@ -40,6 +40,7 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 import { UserAvatar } from "@/components/UserAvatar";
+import judicialEmblem from "@assets/judicial-emblem.png";
 
 interface SidebarItem {
   title: string;
@@ -257,17 +258,29 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
       <SidebarRail />
       <SidebarHeader className={cn("border-b px-3 py-2", isCollapsed && "items-center p-2.5")}>
         {isCollapsed ? (
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
-            AI
+          <div
+            className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-md border border-[#0e4c7d]"
+            data-testid="icon-judicial-emblem"
+          >
+            <img
+              src={judicialEmblem}
+              alt="Судебный департамент"
+              className="h-full w-full object-cover"
+            />
           </div>
         ) : (
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-3">
-              <img
-                src="/branding/logo.svg"
-                alt="Логотип AI KMS"
-                className="h-9 w-9"
-              />
+              <div
+                className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-md border border-[#0e4c7d]"
+                data-testid="icon-judicial-emblem-expanded"
+              >
+                <img
+                  src={judicialEmblem}
+                  alt="Судебный департамент"
+                  className="h-full w-full object-cover"
+                />
+              </div>
               <div>
                 <h2 className="text-lg font-semibold">AI KMS</h2>
                 <p className="text-sm text-muted-foreground">Рабочее пространство</p>

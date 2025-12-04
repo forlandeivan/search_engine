@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-import ChatIconRail from "@/components/chat/ChatIconRail";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput from "@/components/chat/ChatInput";
@@ -426,8 +425,6 @@ export default function ChatPage({ params }: ChatPageProps) {
 
   return (
     <div className="flex h-screen min-h-0 overflow-hidden" data-testid="chat-page">
-      <ChatIconRail className="w-20 shrink-0" />
-      
       <ChatSidebar
         workspaceId={workspaceId}
         selectedChatId={effectiveChatId ?? undefined}
