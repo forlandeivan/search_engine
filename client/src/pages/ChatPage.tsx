@@ -440,10 +440,10 @@ export default function ChatPage({ params }: ChatPageProps) {
         "flex min-h-0 flex-1 overflow-hidden",
         openTranscriptId ? "flex-row" : "flex-col"
       )}>
-        <div className="flex flex-col overflow-hidden flex-1 min-w-0">
+        <div className="flex min-h-0 flex-col flex-1">
           <div
             ref={messagesScrollRef}
-            className="flex-1 overflow-y-auto"
+            className="min-h-0 flex-1 overflow-y-auto"
           >
             <ChatMessagesArea
               chatTitle={chatTitle}
@@ -460,13 +460,15 @@ export default function ChatPage({ params }: ChatPageProps) {
               onOpenTranscript={setOpenTranscriptId}
             />
           </div>
-          <ChatInput
-            onSend={handleSend}
-            onTranscribe={handleTranscription}
-            disabled={disableInput}
-            chatId={effectiveChatId ?? null}
-            placeholder={isNewChat ? "Спросите что-нибудь..." : "Введите сообщение..."}
-          />
+          <div className="shrink-0">
+            <ChatInput
+              onSend={handleSend}
+              onTranscribe={handleTranscription}
+              disabled={disableInput}
+              chatId={effectiveChatId ?? null}
+              placeholder={isNewChat ? "Спросите что-нибудь..." : "Введите сообщение..."}
+            />
+          </div>
         </div>
         {openTranscriptId && (
           <div className="flex-1 min-w-0 overflow-hidden">

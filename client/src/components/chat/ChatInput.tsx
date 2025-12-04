@@ -235,7 +235,7 @@ export default function ChatInput({
   };
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-4">
+    <div className="mx-auto w-full max-w-3xl px-4 py-2">
       {attachedFile && (
         <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30">
           {isUploading ? <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-600 dark:text-blue-400" /> : null}
