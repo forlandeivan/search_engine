@@ -143,7 +143,6 @@ import {
 } from "@shared/skills";
 import { actionsRepository } from "./actions";
 import { skillActionsRepository } from "./skill-actions";
-import { randomUUID } from "crypto";
 import { resolveLlmConfigForAction, LlmConfigNotFoundError } from "./llm-config-resolver";
 import type {
   KnowledgeDocumentVectorizationJobStatus,
@@ -8991,7 +8990,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             } else if (outputMode === "new_version") {
               return res.status(400).json({ message: "new_version outputMode not implemented yet" });
             } else if (outputMode === "document") {
-              return res.status(400).json({ message: "document outputMode not implemented yet" });
+              applied = false;
+              appliedChanges = {
+                type: "document",
+                actionLabel: action.label,
+              };
             }
           } catch (applyError) {
             return next(applyError);
