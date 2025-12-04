@@ -1018,6 +1018,46 @@ function SkillFormDialog({
             />
             <FormField
               control={form.control}
+              name="icon"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Иконка навыка</FormLabel>
+                  <FormControl>
+                    <div className="grid grid-cols-4 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => field.onChange("")}
+                        className={cn(
+                          "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 transition-all",
+                          field.value === "" ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
+                        )}
+                      >
+                        <span className="text-lg">✕</span>
+                        <span className="text-xs text-muted-foreground">Нет</span>
+                      </button>
+                      {ICON_OPTIONS.map((icon) => (
+                        <button
+                          key={icon.value}
+                          type="button"
+                          onClick={() => field.onChange(icon.value)}
+                          className={cn(
+                            "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 transition-all",
+                            field.value === icon.value ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
+                          )}
+                        >
+                          {getIconComponent(icon.value)}
+                          <span className="text-xs text-muted-foreground text-center">{icon.value}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </FormControl>
+                  <FormDescription>Выберите визуальный идентификатор для навыка</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
               name="description"
               render={({ field }) => (
                 <FormItem>
@@ -1307,32 +1347,6 @@ function SkillFormDialog({
                     />
                   </FormControl>
                   <FormDescription>Опциональные инструкции, которые всегда будут отправляться в LLM.</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="icon"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Иконка навыка</FormLabel>
-                  <Select value={field.value || "_none"} onValueChange={(val) => field.onChange(val === "_none" ? "" : val)}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите иконку" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="_none">Без иконки</SelectItem>
-                      {ICON_OPTIONS.map((icon) => (
-                        <SelectItem key={icon.value} value={icon.value}>
-                          {icon.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormDescription>Визуальный идентификатор для навыка</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
