@@ -440,12 +440,8 @@ export default function ChatPage({ params }: ChatPageProps) {
         "flex min-h-0 flex-1 overflow-hidden",
         openTranscriptId ? "flex-row" : "flex-col"
       )}>
-        <div className="flex min-h-0 flex-col flex-1">
-          <div
-            ref={messagesScrollRef}
-            className="min-h-0 flex-1 overflow-y-auto"
-          >
-            <ChatMessagesArea
+        <div className="flex min-h-0 flex-col flex-1 overflow-hidden">
+          <ChatMessagesArea
               chatTitle={chatTitle}
               skillName={skillLabel}
               messages={visibleMessages}
@@ -459,7 +455,6 @@ export default function ChatPage({ params }: ChatPageProps) {
               onReset={() => handleSelectChat(null)}
               onOpenTranscript={setOpenTranscriptId}
             />
-          </div>
           <div className="shrink-0">
             <ChatInput
               onSend={handleSend}

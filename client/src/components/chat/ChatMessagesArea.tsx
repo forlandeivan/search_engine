@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Loader2, Sparkles, Music, Check, Search } from "lucide-react";
+import { Loader2, Sparkles, Music, Search } from "lucide-react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -77,7 +77,7 @@ export default function ChatMessagesArea({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-900">
-      <header className="flex h-20 items-center justify-between border-b border-slate-200 bg-slate-50 px-6 dark:border-slate-800 dark:bg-slate-900">
+      <header className="flex h-20 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex-1">
           {headerTitle && !isEditingTitle ? (
             <h1
@@ -289,18 +289,12 @@ function ChatBubble({
               </div>
               <div className="flex items-center justify-end gap-1 p-2">
                 <span className="text-xs text-indigo-300">{timestamp}</span>
-                <Check className="h-4 w-4 text-indigo-300" />
-                <Check className="h-4 w-4 -ml-2 text-indigo-300" />
               </div>
             </div>
           ) : (
             <div className="flex items-center gap-1 rounded-2xl bg-[#2278bf] px-3 py-2.5">
               <p className="flex-1 text-sm font-medium text-white">{displayContent}</p>
-              <div className="flex shrink-0 items-center gap-1 pl-2">
-                <span className="text-xs text-indigo-300">{timestamp}</span>
-                <Check className="h-4 w-4 text-indigo-300" />
-                <Check className="h-4 w-4 -ml-2 text-indigo-300" />
-              </div>
+              <span className="shrink-0 pl-2 text-xs text-indigo-300">{timestamp}</span>
             </div>
           )}
         </div>
@@ -334,10 +328,8 @@ function ChatBubble({
                 markdown={displayContent}
                 className="text-sm text-slate-900 break-words dark:text-slate-100"
               />
-              <div className="mt-2 flex items-center gap-1">
+              <div className="mt-2">
                 <span className="text-xs text-slate-500">{timestamp}</span>
-                <Check className="h-4 w-4 text-slate-400" />
-                <Check className="h-4 w-4 -ml-2 text-slate-400" />
               </div>
             </>
           )}
