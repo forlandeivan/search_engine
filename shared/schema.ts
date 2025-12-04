@@ -922,7 +922,7 @@ export const chatMessages = pgTable(
   }),
 );
 
-export const transcriptStatuses = ["processing", "ready", "failed"] as const;
+export const transcriptStatuses = ["processing", "postprocessing", "ready", "failed", "auto_action_failed"] as const;
 export type TranscriptStatus = (typeof transcriptStatuses)[number];
 
 export type ChatMessageMetadata = {
@@ -947,6 +947,7 @@ export const transcripts = pgTable(
     previewText: text("preview_text"),
     fullText: text("full_text"),
     lastEditedByUserId: varchar("last_edited_by_user_id"),
+    defaultViewActionId: varchar("default_view_action_id"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
@@ -954,6 +955,7 @@ export const transcripts = pgTable(
     workspaceIdx: index("transcripts_workspace_idx").on(table.workspaceId),
     chatIdx: index("transcripts_chat_idx").on(table.chatId),
     statusIdx: index("transcripts_status_idx").on(table.status),
+    defaultViewIdx: index("transcripts_default_view_action_idx").on(table.defaultViewActionId),
   }),
 );
 

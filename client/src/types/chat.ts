@@ -24,7 +24,7 @@ export type ChatMessage = {
   metadata?: {
     type?: "transcript" | string;
     transcriptId?: string;
-    transcriptStatus?: "processing" | "ready" | "failed";
+    transcriptStatus?: "processing" | "postprocessing" | "ready" | "failed" | "auto_action_failed";
     previewText?: string;
     [key: string]: unknown;
   };
@@ -39,6 +39,7 @@ export type Transcript = {
   title: string | null;
   previewText: string | null;
   fullText: string | null;
+  defaultViewActionId?: string | null;
    lastEditedByUserId?: string | null;
   createdAt: string;
   updatedAt: string;

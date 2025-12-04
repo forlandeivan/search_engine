@@ -358,8 +358,8 @@ function TranscriptCard({
   preview?: string;
   onOpen?: () => void;
 }) {
-  const isProcessing = status === "processing";
-  const isFailed = status === "failed";
+  const isProcessing = status === "processing" || status === "postprocessing";
+  const isFailed = status === "failed" || status === "auto_action_failed";
 
   return (
     <div className="space-y-2">

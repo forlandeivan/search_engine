@@ -4826,7 +4826,10 @@ export class DatabaseStorage implements IStorage {
   async updateTranscript(
     id: string,
     updates: Partial<
-      Pick<TranscriptInsert, "status" | "title" | "previewText" | "fullText" | "lastEditedByUserId">
+      Pick<
+        TranscriptInsert,
+        "status" | "title" | "previewText" | "fullText" | "lastEditedByUserId" | "defaultViewActionId"
+      >
     >,
   ): Promise<Transcript | undefined> {
     if (!updates || Object.keys(updates).length === 0) {

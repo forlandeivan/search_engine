@@ -142,6 +142,7 @@ import {
   actionTargets,
 } from "@shared/skills";
 import { actionsRepository } from "./actions";
+import type { SkillDto, ActionPlacement } from "@shared/skills";
 import { skillActionsRepository } from "./skill-actions";
 import { resolveLlmConfigForAction, LlmConfigNotFoundError } from "./llm-config-resolver";
 import type {
@@ -5674,9 +5675,93 @@ export async function registerRoutes(app: Express): Promise<Server> {
         google: { enabled: googleAuthEnabled },
         yandex: { enabled: yandexAuthEnabled },
       },
-    });
+  });
+});
+
+type AutoActionRunPayload = {
+  userId: string;
+  skill: SkillDto;
+  action: Awaited<ReturnType<typeof actionsRepository.getByIdForWorkspace>>;
+  placement: ActionPlacement;
+  transcriptId?: string | null;
+  transcriptText: string;
+  context: Record<string, unknown>;
+  placement?: ActionPlacement | null;
+};
+
+async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise<{
+  text: string;
+  applied: boolean;
+  appliedChanges: unknown;
+}> {
+  const { userId, skill, action, transcriptId, transcriptText, context } = payload;
+
+  const prompt = action.promptTemplate.replace(/{{\s*text\s*}}/gi, transcriptText);
+  const llmProvider = await resolveLlmConfigForAction(skill, action);
+  const requestConfig = mergeLlmRequestConfig(llmProvider);
+
+  const messages: Array<{ role: string; content: string }> = [];
+  if (requestConfig.systemPrompt && requestConfig.systemPrompt.trim()) {
+    messages.push({ role: "system", content: requestConfig.systemPrompt.trim() });
+  }
+  messages.push({ role: "user", content: prompt });
+
+  const requestBody: Record<string, unknown> = {
+    [requestConfig.modelField]: llmProvider.model,
+    [requestConfig.messagesField]: messages,
+  };
+
+  if (requestConfig.temperature !== undefined) {
+    requestBody.temperature = requestConfig.temperature;
+  }
+  if (requestConfig.maxTokens !== undefined) {
+    requestBody.max_tokens = requestConfig.maxTokens;
+  }
+
+  const accessToken = await fetchAccessToken(llmProvider);
+  const completion = await executeLlmCompletion(llmProvider, accessToken, requestBody);
+  const llmText = completion.answer;
+
+  // Применяем только replace_text для transcript
+  if (action.outputMode !== "replace_text") {
+    console.warn(
+      `[auto-action] action=${action.id} outputMode=${action.outputMode} не поддерживается для авто-действия`,
+    );
+    return { text: llmText, applied: false, appliedChanges: null };
+  }
+  if (!transcriptId) {
+    console.warn(`[auto-action] transcriptId отсутствует, пропускаем применение`);
+    return { text: llmText, applied: false, appliedChanges: null };
+  }
+  const transcript = await storage.getTranscriptById?.(transcriptId);
+  if (!transcript || transcript.workspaceId !== skill.workspaceId) {
+    console.warn(`[auto-action] transcript ${transcriptId} не найден или не принадлежит workspace=${skill.workspaceId}`);
+    return { text: llmText, applied: false, appliedChanges: null };
+  }
+
+  let newText = llmText;
+  if (action.inputType === "selection") {
+    if (typeof context.selectionText === "string" && context.selectionText.length > 0) {
+      const full = transcript.fullText ?? "";
+      newText = full.replace(context.selectionText, llmText);
+    }
+  }
+
+  await storage.updateTranscript(transcriptId, {
+    fullText: newText,
+    lastEditedByUserId: userId,
   });
 
+  console.info(`[transcript-action] skill=${skill.id} action=${action.id} применён к transcript=${transcriptId}`);
+  return {
+    text: llmText,
+    applied: true,
+    appliedChanges: {
+      type: "transcript_replace",
+      transcriptId,
+    },
+  };
+}
   app.get("/api/auth/session", async (req, res, next) => {
     try {
       const user = getSessionUser(req);
@@ -8814,12 +8899,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (target === "selection") {
           textForPrompt = typeof ctx.text === "string" ? ctx.text : undefined;
         } else {
-          // transcript/message/conversation — требуем selectionText для первого шага (без загрузки сущностей)
-          textForPrompt = typeof ctx.selectionText === "string" ? ctx.selectionText : undefined;
+          // transcript/message/conversation — допускаем selectionText или text
+          textForPrompt =
+            typeof ctx.selectionText === "string"
+              ? ctx.selectionText
+              : typeof ctx.text === "string"
+                ? ctx.text
+                : undefined;
         }
 
         if (!textForPrompt || textForPrompt.trim().length === 0) {
           return res.status(400).json({ message: "text/selectionText is required for this target" });
+        }
+
+        if (target === "transcript") {
+          const transcriptId = ctx.transcriptId;
+          if (!transcriptId || typeof transcriptId !== "string") {
+            return res.status(400).json({ message: "transcriptId is required for transcript target" });
+          }
+          const resultAction = await runTranscriptActionCommon({
+            userId: user.id,
+            skill,
+            action,
+            placement,
+            transcriptId,
+            transcriptText: textForPrompt,
+            context: ctx,
+          });
+
+          return res.json({
+            runId: randomUUID(),
+            skillId,
+            actionId,
+            placement,
+            target,
+            outputMode: action.outputMode,
+            context: ctx,
+            result: {
+              text: resultAction.text,
+            },
+            llmUsage: null,
+            applied: resultAction.applied,
+            appliedChanges: resultAction.appliedChanges ?? null,
+          });
         }
 
         const prompt = action.promptTemplate.replace(/{{\s*text\s*}}/gi, textForPrompt);
@@ -9430,6 +9552,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const transcriptText = status.text || 'Стенограмма получена';
+      const skill = chat.skillId ? await getSkillById(chat.workspaceId, chat.skillId) : null;
+      const autoActionEnabled = Boolean(
+        skill && skill.onTranscriptionMode === "auto_action" && skill.onTranscriptionAutoActionId,
+      );
+      const initialTranscriptStatus = autoActionEnabled ? "postprocessing" : "ready";
+
       const createdMessage = await storage.createChatMessage({
         chatId: result.chatId,
         role: 'assistant',
@@ -9437,10 +9565,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
         metadata: {
           type: 'transcript',
           transcriptId: result.transcriptId,
-          transcriptStatus: 'ready',
+          transcriptStatus: initialTranscriptStatus,
           previewText: transcriptText.substring(0, 200),
         },
       });
+
+      if (autoActionEnabled && skill) {
+        (async () => {
+          try {
+            const actionId = skill.onTranscriptionAutoActionId!;
+            const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
+            if (!action || action.target !== "transcript") {
+              console.warn(
+                `[transcribe/complete] action ${actionId} не найден/target!=transcript для workspace ${skill.workspaceId}`,
+              );
+              throw new Error("auto action not applicable");
+            }
+            const skillAction = await skillActionsRepository.getForSkillAndAction(skill.id, action.id);
+            if (!skillAction || !skillAction.enabled) {
+              console.warn(
+                `[transcribe/complete] skill=${skill.id} action=${action.id} выключен или не связан, авто-действие пропущено`,
+              );
+              throw new Error("auto action disabled");
+            }
+            const allowedPlacements = action.placements ?? [];
+            const enabledPlacements = skillAction.enabledPlacements ?? [];
+            const placement =
+              enabledPlacements.find((p) => allowedPlacements.includes(p)) ?? allowedPlacements[0] ?? null;
+            if (!placement) {
+              console.warn(
+                `[transcribe/complete] action=${action.id} нет подходящих placements для авто-действия`,
+              );
+              throw new Error("no placement");
+            }
+
+            const ctx = {
+              transcriptId: result.transcriptId,
+              selectionText: transcriptText,
+            };
+
+            console.info(
+              `[transcribe/complete] авто-действие skill=${skill.id} action=${action.id} placement=${placement}`,
+            );
+            const resultAction = await runTranscriptActionCommon({
+              userId: chat.userId,
+              skill,
+              action,
+              placement,
+              transcriptId: result.transcriptId,
+              transcriptText,
+              context: ctx,
+            });
+
+            if (result.transcriptId) {
+              await storage.updateTranscript(result.transcriptId, {
+                previewText: (resultAction.text ?? transcriptText).slice(0, 200),
+                defaultViewActionId: action.id,
+                status: "ready",
+              });
+            }
+            await storage.updateChatMessage(createdMessage.id, {
+              metadata: {
+                ...(createdMessage.metadata as Record<string, unknown>),
+                transcriptStatus: "ready",
+                previewText: (resultAction.text ?? transcriptText).slice(0, 200),
+                autoActionFailed: false,
+              },
+            });
+          } catch (autoError) {
+            console.error("[transcribe/complete] авто-действие не удалось:", autoError);
+            await storage.updateChatMessage(createdMessage.id, {
+              metadata: {
+                ...(createdMessage.metadata as Record<string, unknown>),
+                transcriptStatus: "auto_action_failed",
+                autoActionFailed: true,
+                previewText: transcriptText.substring(0, 200),
+              },
+            });
+            if (result.transcriptId) {
+              await storage.updateTranscript(result.transcriptId, {
+                status: "ready",
+                previewText: transcriptText.substring(0, 200),
+              });
+            }
+          }
+        })();
+      } else {
+        if (result.transcriptId) {
+          await storage.updateTranscript(result.transcriptId, {
+            status: "ready",
+            previewText: transcriptText.substring(0, 200),
+          });
+        }
+      }
 
       res.json({
         status: 'ok',
