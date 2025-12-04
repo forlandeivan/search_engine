@@ -27,6 +27,7 @@ import {
   Grid2X2,
   Mic,
   ChevronDown,
+  Plus,
 } from "lucide-react";
 
 type ChatSidebarProps = {
@@ -166,7 +167,7 @@ export default function ChatSidebar({
               {creatingSkillId === skill.id ? (
                 <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
               ) : (
-                <X className="invisible h-5 w-5 text-slate-400 group-hover:visible" />
+                <Plus className="invisible h-5 w-5 text-slate-400 group-hover:visible" />
               )}
             </div>
           );
