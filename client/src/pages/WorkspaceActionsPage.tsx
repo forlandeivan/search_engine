@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -74,6 +74,7 @@ const outputModeLabels: Record<string, string> = {
 
 export default function WorkspaceActionsPage({ params }: WorkspaceActionsPageProps) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const sessionQuery = useQuery({
     queryKey: ["/api/auth/session"],
     queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
@@ -188,6 +189,7 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
         throw new Error(msg);
       }
       await actionsQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
       toast({ title: createState.editingActionId ? "Действие обновлено" : "Действие создано" });
       resetCreateState();
     } catch (error) {
