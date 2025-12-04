@@ -452,7 +452,6 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
                                   inputType: action.inputType,
                                   outputMode: action.outputMode,
                                   promptTemplate: action.promptTemplate,
-                                  llmConfigId: action.llmConfigId ?? "",
                                   saving: false,
                                   open: true,
                                   editingActionId: action.id,
