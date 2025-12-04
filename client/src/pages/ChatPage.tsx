@@ -460,15 +460,13 @@ export default function ChatPage({ params }: ChatPageProps) {
               onOpenTranscript={setOpenTranscriptId}
             />
           </div>
-          <div className="border-t border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900">
-            <ChatInput
-              onSend={handleSend}
-              onTranscribe={handleTranscription}
-              disabled={disableInput}
-              chatId={effectiveChatId ?? null}
-              placeholder={isNewChat ? "Спросите что-нибудь..." : "Введите сообщение..."}
-            />
-          </div>
+          <ChatInput
+            onSend={handleSend}
+            onTranscribe={handleTranscription}
+            disabled={disableInput}
+            chatId={effectiveChatId ?? null}
+            placeholder={isNewChat ? "Спросите что-нибудь..." : "Введите сообщение..."}
+          />
         </div>
         {openTranscriptId && (
           <div className="flex-1 min-w-0 overflow-hidden">
