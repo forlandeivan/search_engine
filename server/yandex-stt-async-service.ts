@@ -442,7 +442,18 @@ class YandexSttAsyncService {
       if (operationData.done && operationData.response) {
         const chunks = operationData.response.chunks || [];
         const text = chunks
-          .map((chunk) => chunk.alternatives?.[0]?.text || "")
+          .map((chunk) => {
+            const alternatives = chunk.alternatives || [];
+            if (alternatives.length === 0) return "";
+            // Возьми альтернативу с наивысшей confidence или первую если confidence не задана
+            const best = alternatives.reduce((best, alt) => {
+              const altConf = (alt as any).confidence ?? 0;
+              const bestConf = (best as any).confidence ?? 0;
+              return altConf > bestConf ? alt : best;
+            });
+            return best.text || "";
+          })
+          .filter(text => text.length > 0)
           .join(" ")
           .trim();
 
@@ -452,7 +463,7 @@ class YandexSttAsyncService {
         await this.updateTranscriptAndMessage(cached.objectKey, "ready", text);
         await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
 
-        console.info(`[yandex-stt-async] Operation completed: ${operationId}, text length: ${text.length}`);
+        console.info(`[yandex-stt-async] Operation completed: ${operationId}, chunks: ${chunks.length}, text length: ${text.length}`);
 
         return {
           operationId,
