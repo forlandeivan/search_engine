@@ -983,9 +983,12 @@ function SkillFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-5xl">
         <DialogHeader>
-          <DialogTitle>{skill ? "Редактирование навыка" : "Создание навыка"}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {skill?.icon && getIconComponent(skill.icon)}
+            {skill ? "Редактирование навыка" : "Создание навыка"}
+          </DialogTitle>
           <DialogDescription>
-            Настройте параметры навыка: выберите связанные базы знаний, модель LLM и при необходимости системный промпт.
+            Настройте параметры навыка: выберите связанные базы знаний, модель LLM и при необходимости систем промпт.
           </DialogDescription>
 
           {isSystemSkill && (
@@ -1597,6 +1600,15 @@ export default function SkillsPage() {
     }
   };
 
+  const getIconComponent = (iconName: string | null | undefined) => {
+    if (!iconName) return null;
+    const iconMap: Record<string, typeof Zap> = {
+      Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
+    };
+    const Icon = iconMap[iconName];
+    return Icon ? <Icon className="h-4 w-4" /> : null;
+  };
+
   const renderKnowledgeBases = (skill: Skill) => {
     const ids = skill.knowledgeBaseIds ?? [];
     if (ids.length === 0) {
@@ -1707,6 +1719,8 @@ export default function SkillsPage() {
                       <div className="space-y-1">
 
                         <div className="flex items-center gap-2">
+
+                          {getIconComponent(skill.icon)}
 
                           <p className="font-semibold leading-tight">{skill.name ?? "Без названия"}</p>
 
