@@ -84,7 +84,6 @@ import {
   Cog,
   Coins,
   Columns,
-  Command,
   Compass,
   ConciergeBell,
   Container,
@@ -232,7 +231,6 @@ const ICON_OPTIONS = [
   { value: "Cog" },
   { value: "Coins" },
   { value: "Columns" },
-  { value: "Command" },
   { value: "Compass" },
   { value: "ConciergeBell" },
   { value: "Container" },
@@ -1839,7 +1837,7 @@ export default function SkillsPage() {
       ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Chrome, Circle, CircleDollarSign,
       CircleOff, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudOff, CloudRain,
       CloudRainWind, CloudSnow, Code, Code2, Codepen, Codesandbox, Coffee, Cog, Coins,
-      Columns, Command, Compass, ConciergeBell, Container, Contrast, Cookie, Copy,
+      Columns, Compass, ConciergeBell, Container, Contrast, Cookie, Copy,
       CreditCard, Crop, Crown, Cube, Cuboid, Cup, CupSoda, Cupcake, Cursor,
     };
     const Icon = iconMap[iconName];
