@@ -8675,22 +8675,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "invalid outputMode" });
       }
 
-      // validate llmConfigId if provided
-      let llmConfigId: string | null = null;
-      if (body.llmConfigId !== undefined) {
-        if (body.llmConfigId === null || body.llmConfigId === "") {
-          llmConfigId = null;
-        } else if (typeof body.llmConfigId === "string") {
-          const cfg = await storage.getLlmProvider(body.llmConfigId, workspaceId);
-          if (!cfg) {
-            return res.status(400).json({ message: "LLM config not found or not accessible for this workspace" });
-          }
-          llmConfigId = body.llmConfigId;
-        } else {
-          return res.status(400).json({ message: "llmConfigId must be string or null" });
-        }
-      }
-
       const created = await actionsRepository.createWorkspaceAction(workspaceId, {
         label: body.label,
         description: typeof body.description === "string" ? body.description : null,
@@ -8699,7 +8683,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         promptTemplate: body.promptTemplate,
         inputType: body.inputType,
         outputMode: body.outputMode,
-        llmConfigId,
+        llmConfigId: null,
       });
 
       res.status(201).json({
@@ -8734,19 +8718,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (typeof body.promptTemplate === "string") patch.promptTemplate = body.promptTemplate;
         if (body.inputType && actionInputTypes.includes(body.inputType)) patch.inputType = body.inputType;
         if (body.outputMode && actionOutputModes.includes(body.outputMode)) patch.outputMode = body.outputMode;
-        if (body.llmConfigId !== undefined) {
-          if (body.llmConfigId === null || body.llmConfigId === "") {
-            patch.llmConfigId = null;
-          } else if (typeof body.llmConfigId === "string") {
-            const cfg = await storage.getLlmProvider(body.llmConfigId, workspaceId);
-            if (!cfg) {
-              return res.status(400).json({ message: "LLM config not found or not accessible for this workspace" });
-            }
-            patch.llmConfigId = body.llmConfigId;
-          } else {
-            return res.status(400).json({ message: "llmConfigId must be string or null" });
-          }
-        }
 
         const updated = await actionsRepository.updateWorkspaceAction(workspaceId, actionId, patch);
         res.json({
