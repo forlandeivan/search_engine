@@ -20,7 +20,7 @@ type KnowledgeBaseIdRow = { id: string };
 type SkillKnowledgeBaseLinkRow = { skillId: string; knowledgeBaseId: string };
 type EditableSkillColumns = Pick<
   SkillRow,
-  "name" | "description" | "systemPrompt" | "modelId" | "llmProviderConfigId" | "collectionName"
+  "name" | "description" | "systemPrompt" | "modelId" | "llmProviderConfigId" | "collectionName" | "icon"
 >;
 
 type RagConfigInput = CreateSkillPayload["ragConfig"];
@@ -300,6 +300,9 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   if (input.collectionName !== undefined) {
     next.collectionName = normalizeNullableString(input.collectionName);
   }
+  if (input.icon !== undefined) {
+    next.icon = normalizeNullableString(input.icon);
+  }
   if (input.knowledgeBaseIds !== undefined) {
     const filtered = input.knowledgeBaseIds.filter(
       (value) => typeof value === "string" && value.trim().length > 0,
@@ -388,6 +391,7 @@ export async function createSkill(
       modelId: normalized.modelId,
       llmProviderConfigId: normalized.llmProviderConfigId,
       collectionName: normalized.collectionName,
+      icon: normalized.icon,
       ragMode: ragConfig.mode,
       ragCollectionIds: ragConfig.collectionIds,
       ragTopK: ragConfig.topK,
