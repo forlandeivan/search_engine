@@ -18,6 +18,88 @@ import {
   MessageSquare,
   Settings,
   BookOpen,
+  Airplay,
+  AlertCircle,
+  Archive,
+  ArrowRight,
+  Award,
+  Backpack,
+  BarChart2,
+  Battery,
+  Bell,
+  BellOff,
+  Binoculars,
+  Bluetooth,
+  Bold,
+  BookMarked,
+  Bookmark,
+  Box,
+  Briefcase,
+  BriefcaseBusiness,
+  Bug,
+  Building,
+  Building2,
+  Burnout,
+  Cactus,
+  Calendar,
+  Camera,
+  CameraOff,
+  Captions,
+  Capsules,
+  Car,
+  CarFront,
+  Carrot,
+  Cast,
+  Castle,
+  Cent,
+  ChartArea,
+  ChartLine,
+  ChartPie,
+  Chat,
+  ChatCircle,
+  CheckCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Chrome,
+  Circle,
+  CircleDollarSign,
+  CircleOff,
+  Clock,
+  Cloud,
+  CloudDrizzle,
+  CloudFog,
+  CloudLightning,
+  CloudOff,
+  CloudRain,
+  CloudRainWind,
+  CloudSnow,
+  Code,
+  Code2,
+  Codepen,
+  Codesandbox,
+  Coffee,
+  Cog,
+  Coins,
+  Columns,
+  Command,
+  Compass,
+  ConciergeBell,
+  Container,
+  Contrast,
+  Cookie,
+  Copy,
+  CreditCard,
+  Crop,
+  Crown,
+  Cube,
+  Cuboid,
+  Cup,
+  CupSoda,
+  Cupcake,
+  Cursor,
 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,14 +158,96 @@ import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema"
 import type { Skill, SkillPayload } from "@/types/skill";
 
 const ICON_OPTIONS = [
-  { value: "Zap", label: "⚡ Zap" },
-  { value: "Brain", label: "🧠 Brain" },
-  { value: "Search", label: "🔍 Search" },
-  { value: "FileText", label: "📄 FileText" },
-  { value: "MessageSquare", label: "💬 MessageSquare" },
-  { value: "Settings", label: "⚙️ Settings" },
-  { value: "BookOpen", label: "📖 BookOpen" },
-  { value: "Sparkles", label: "✨ Sparkles" },
+  { value: "Zap" },
+  { value: "Brain" },
+  { value: "Search" },
+  { value: "FileText" },
+  { value: "MessageSquare" },
+  { value: "Settings" },
+  { value: "BookOpen" },
+  { value: "Sparkles" },
+  { value: "Airplay" },
+  { value: "AlertCircle" },
+  { value: "Archive" },
+  { value: "ArrowRight" },
+  { value: "Award" },
+  { value: "Backpack" },
+  { value: "BarChart2" },
+  { value: "Battery" },
+  { value: "Bell" },
+  { value: "BellOff" },
+  { value: "Binoculars" },
+  { value: "Bluetooth" },
+  { value: "Bold" },
+  { value: "BookMarked" },
+  { value: "Bookmark" },
+  { value: "Box" },
+  { value: "Briefcase" },
+  { value: "BriefcaseBusiness" },
+  { value: "Bug" },
+  { value: "Building" },
+  { value: "Building2" },
+  { value: "Burnout" },
+  { value: "Cactus" },
+  { value: "Calendar" },
+  { value: "Camera" },
+  { value: "CameraOff" },
+  { value: "Captions" },
+  { value: "Capsules" },
+  { value: "Car" },
+  { value: "CarFront" },
+  { value: "Carrot" },
+  { value: "Cast" },
+  { value: "Castle" },
+  { value: "Cent" },
+  { value: "ChartArea" },
+  { value: "ChartLine" },
+  { value: "ChartPie" },
+  { value: "Chat" },
+  { value: "ChatCircle" },
+  { value: "CheckCircle" },
+  { value: "CheckCircle2" },
+  { value: "ChevronDown" },
+  { value: "ChevronLeft" },
+  { value: "ChevronRight" },
+  { value: "ChevronUp" },
+  { value: "Chrome" },
+  { value: "Circle" },
+  { value: "CircleDollarSign" },
+  { value: "CircleOff" },
+  { value: "Clock" },
+  { value: "Cloud" },
+  { value: "CloudDrizzle" },
+  { value: "CloudFog" },
+  { value: "CloudLightning" },
+  { value: "CloudOff" },
+  { value: "CloudRain" },
+  { value: "CloudRainWind" },
+  { value: "CloudSnow" },
+  { value: "Code" },
+  { value: "Code2" },
+  { value: "Codepen" },
+  { value: "Codesandbox" },
+  { value: "Coffee" },
+  { value: "Cog" },
+  { value: "Coins" },
+  { value: "Columns" },
+  { value: "Command" },
+  { value: "Compass" },
+  { value: "ConciergeBell" },
+  { value: "Container" },
+  { value: "Contrast" },
+  { value: "Cookie" },
+  { value: "Copy" },
+  { value: "CreditCard" },
+  { value: "Crop" },
+  { value: "Crown" },
+  { value: "Cube" },
+  { value: "Cuboid" },
+  { value: "Cup" },
+  { value: "CupSoda" },
+  { value: "Cupcake" },
+  { value: "Cursor" },
 ];
 
 const skillFormSchema = z.object({
@@ -1025,32 +1189,34 @@ function SkillFormDialog({
                 <FormItem>
                   <FormLabel>Иконка навыка</FormLabel>
                   <FormControl>
-                    <div className="grid grid-cols-4 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => field.onChange("")}
-                        className={cn(
-                          "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 transition-all",
-                          field.value === "" ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
-                        )}
-                      >
-                        <span className="text-lg">✕</span>
-                        <span className="text-xs text-muted-foreground">Нет</span>
-                      </button>
-                      {ICON_OPTIONS.map((icon) => (
+                    <div className="border rounded-lg p-2 max-h-[360px] overflow-y-auto">
+                      <div className="grid grid-cols-6 gap-1">
                         <button
-                          key={icon.value}
                           type="button"
-                          onClick={() => field.onChange(icon.value)}
+                          onClick={() => field.onChange("")}
                           className={cn(
-                            "flex flex-col items-center justify-center gap-1 rounded-lg border-2 p-3 transition-all",
-                            field.value === icon.value ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
+                            "flex flex-col items-center justify-center gap-1 rounded-md border p-2 transition-all text-xs",
+                            field.value === "" ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
                           )}
+                          title="Без иконки"
                         >
-                          {getIconComponent(icon.value)}
-                          <span className="text-xs text-muted-foreground text-center">{icon.value}</span>
+                          <span className="text-sm">✕</span>
                         </button>
-                      ))}
+                        {ICON_OPTIONS.map((icon) => (
+                          <button
+                            key={icon.value}
+                            type="button"
+                            onClick={() => field.onChange(icon.value)}
+                            className={cn(
+                              "flex flex-col items-center justify-center gap-1 rounded-md border p-2 transition-all",
+                              field.value === icon.value ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
+                            )}
+                            title={icon.value}
+                          >
+                            {getIconComponent(icon.value)}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </FormControl>
                   <FormDescription>Выберите визуальный идентификатор для навыка</FormDescription>
@@ -1665,9 +1831,19 @@ export default function SkillsPage() {
     if (!iconName) return null;
     const iconMap: Record<string, typeof Zap> = {
       Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
+      Airplay, AlertCircle, Archive, ArrowRight, Award, Backpack, BarChart2, Battery,
+      Bell, BellOff, Binoculars, Bluetooth, Bold, BookMarked, Bookmark, Box,
+      Briefcase, BriefcaseBusiness, Bug, Building, Building2, Burnout, Cactus, Calendar,
+      Camera, CameraOff, Captions, Capsules, Car, CarFront, Carrot, Cast, Castle, Cent,
+      ChartArea, ChartLine, ChartPie, Chat, ChatCircle, CheckCircle, CheckCircle2,
+      ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Chrome, Circle, CircleDollarSign,
+      CircleOff, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudOff, CloudRain,
+      CloudRainWind, CloudSnow, Code, Code2, Codepen, Codesandbox, Coffee, Cog, Coins,
+      Columns, Command, Compass, ConciergeBell, Container, Contrast, Cookie, Copy,
+      CreditCard, Crop, Crown, Cube, Cuboid, Cup, CupSoda, Cupcake, Cursor,
     };
     const Icon = iconMap[iconName];
-    return Icon ? <Icon className="h-4 w-4" /> : null;
+    return Icon ? <Icon className="h-5 w-5" /> : null;
   };
 
   return (
