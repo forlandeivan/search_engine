@@ -19,7 +19,7 @@ type ChatMessagesAreaProps = {
   errorMessage: string | null;
   onReset?: () => void;
   scrollContainerRef?: RefObject<HTMLElement | null>;
-  onOpenTranscript?: (transcriptId: string) => void;
+  onOpenTranscript?: (transcriptId: string, defaultTabId?: string | null) => void;
   onRenameChat?: (title: string) => Promise<void>;
 };
 
@@ -224,7 +224,7 @@ type ChatBubbleProps = {
   previousRole?: ChatMessage["role"];
   isStreamingBubble?: boolean;
   isTranscribingBubble?: boolean;
-  onOpenTranscript?: (transcriptId: string) => void;
+  onOpenTranscript?: (transcriptId: string, defaultTabId?: string | null) => void;
 };
 
 function ChatBubble({
@@ -325,7 +325,17 @@ function ChatBubble({
             <TranscriptCard
               status={(metadata?.transcriptStatus as string) ?? "processing"}
               preview={metadata?.previewText || message.content}
-              onOpen={() => metadata?.transcriptId && onOpenTranscript?.(metadata.transcriptId)}
+              onOpen={() =>
+                metadata?.transcriptId &&
+                onOpenTranscript?.(
+                  metadata.transcriptId,
+                  (
+                    (metadata as Record<string, unknown>)?.preferredTranscriptTabId ??
+                    (metadata as Record<string, unknown>)?.defaultViewActionId ??
+                    null
+                  ) as string | null
+                )
+              }
             />
           ) : isTranscribingBubble ? (
             <div className="flex items-center gap-2">

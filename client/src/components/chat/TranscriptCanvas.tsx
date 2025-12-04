@@ -35,6 +35,7 @@ type TranscriptCanvasProps = {
   workspaceId: string;
   transcriptId: string;
   skillId?: string;
+  initialTabId?: string | null;
   onClose: () => void;
 };
 
@@ -42,6 +43,7 @@ export function TranscriptCanvas({
   workspaceId,
   transcriptId,
   skillId,
+  initialTabId = null,
   onClose,
 }: TranscriptCanvasProps) {
   const { toast } = useToast();
@@ -58,6 +60,7 @@ export function TranscriptCanvas({
 
   const [tabs, setTabs] = useState<CanvasTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>("original");
+  const [initializedTab, setInitializedTab] = useState(false);
 
   useEffect(() => {
     const text = transcript?.fullText ?? "";
@@ -87,6 +90,18 @@ export function TranscriptCanvas({
       );
     }
   }, [transcript?.fullText]);
+
+  // Инициализация активного таба с учётом initialTabId или дефолтного таба транскрипта
+  useEffect(() => {
+    const preferredTabId = initialTabId ?? transcript?.defaultViewActionId ?? null;
+    if (!initializedTab && preferredTabId && tabs.some((t) => t.id === preferredTabId)) {
+      setActiveTabId(preferredTabId);
+      setInitializedTab(true);
+    } else if (!initializedTab && tabs.length > 0) {
+      setActiveTabId((prev) => (prev ? prev : "original"));
+      setInitializedTab(true);
+    }
+  }, [initializedTab, initialTabId, transcript?.defaultViewActionId, tabs]);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
 

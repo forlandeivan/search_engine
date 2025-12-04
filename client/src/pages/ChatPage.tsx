@@ -64,7 +64,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [openTranscriptId, setOpenTranscriptId] = useState<string | null>(null);
+  const [openTranscript, setOpenTranscript] = useState<{ id: string; tabId?: string | null } | null>(null);
 
   const { createChat } = useCreateChat();
   const [creatingSkillId, setCreatingSkillId] = useState<string | null>(null);
@@ -102,6 +102,10 @@ export default function ChatPage({ params }: ChatPageProps) {
       setIsStreaming(false);
     }
   }, [effectiveChatId, localChatId]);
+
+  useEffect(() => {
+    setOpenTranscript(null);
+  }, [effectiveChatId]);
 
   const shouldShowLocal = Boolean(
     effectiveChatId && localChatId === effectiveChatId && localMessages.length > 0,
@@ -495,7 +499,7 @@ export default function ChatPage({ params }: ChatPageProps) {
 
       <section className={cn(
         "flex min-h-0 flex-1 overflow-hidden",
-        openTranscriptId ? "flex-row" : "flex-col"
+        openTranscript ? "flex-row" : "flex-col"
       )}>
         <div className="flex min-h-0 flex-col flex-1 overflow-hidden">
           <ChatMessagesArea
@@ -510,7 +514,9 @@ export default function ChatPage({ params }: ChatPageProps) {
               errorMessage={normalizedMessagesError}
               scrollContainerRef={messagesScrollRef}
               onReset={() => handleSelectChat(null)}
-              onOpenTranscript={setOpenTranscriptId}
+              onOpenTranscript={(id: string, defaultTabId?: string | null) =>
+                setOpenTranscript({ id, tabId: defaultTabId ?? null })
+              }
             />
           <div className="shrink-0">
             <ChatInput
@@ -522,13 +528,14 @@ export default function ChatPage({ params }: ChatPageProps) {
             />
           </div>
         </div>
-        {openTranscriptId && (
+        {openTranscript?.id && (
           <div className="flex-1 min-w-0 overflow-hidden">
             <TranscriptCanvas
               workspaceId={workspaceId}
-              transcriptId={openTranscriptId}
+              transcriptId={openTranscript.id}
               skillId={activeSkill?.id}
-              onClose={() => setOpenTranscriptId(null)}
+              initialTabId={openTranscript.tabId ?? null}
+              onClose={() => setOpenTranscript(null)}
             />
           </div>
         )}

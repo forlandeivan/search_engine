@@ -26,6 +26,8 @@ export type ChatMessage = {
     transcriptId?: string;
     transcriptStatus?: "processing" | "postprocessing" | "ready" | "failed" | "auto_action_failed";
     previewText?: string;
+    defaultViewActionId?: string | null;
+    preferredTranscriptTabId?: string | null;
     [key: string]: unknown;
   };
 };
