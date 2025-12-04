@@ -4,10 +4,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import type { ChatMessage } from "@/types/chat";
+
+export type TranscribePayload =
+  | string
+  | {
+      operationId: string;
+      fileName: string;
+      chatId: string;
+      audioMessage?: ChatMessage;
+      placeholderMessage?: ChatMessage;
+    };
 
 type ChatInputProps = {
   onSend: (message: string) => Promise<void> | void;
-  onTranscribe?: (text: string) => void;
+  onTranscribe?: (payload: TranscribePayload) => void;
   onEnsureChat?: () => Promise<string | null> | string | null;
   disabled?: boolean;
   placeholder?: string;
@@ -43,7 +54,7 @@ export default function ChatInput({
   const [isSending, setIsSending] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
-  const [uploadedOperationId, setUploadedOperationId] = useState<string | null>(null);
+  const [pendingTranscribe, setPendingTranscribe] = useState<TranscribePayload | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -87,7 +98,7 @@ export default function ChatInput({
   }, [chatId, onEnsureChat]);
 
   const handleUploadAudio = useCallback(
-    async (file: File): Promise<string | null> => {
+    async (file: File): Promise<TranscribePayload | null> => {
       const targetChatId = await ensureChatId();
       if (!targetChatId) {
         toast({
@@ -118,8 +129,15 @@ export default function ChatInput({
         const result = await response.json();
 
         if (result.operationId) {
-          setUploadedOperationId(result.operationId);
-          return result.operationId;
+          const payload: TranscribePayload = {
+            operationId: result.operationId,
+            fileName: file.name,
+            chatId: targetChatId,
+            audioMessage: result.audioMessage,
+            placeholderMessage: result.placeholderMessage,
+          };
+          setPendingTranscribe(payload);
+          return payload;
         }
 
         toast({
@@ -147,12 +165,12 @@ export default function ChatInput({
     if (disabled) return;
     setIsSending(true);
 
-    if (attachedFile && uploadedOperationId) {
+    if (attachedFile && pendingTranscribe) {
       if (onTranscribe) {
-        onTranscribe(`__PENDING_OPERATION:${uploadedOperationId}:${encodeURIComponent(attachedFile.name)}`);
+        onTranscribe(pendingTranscribe);
       }
       setAttachedFile(null);
-      setUploadedOperationId(null);
+      setPendingTranscribe(null);
       setIsSending(false);
       return;
     }
@@ -165,7 +183,7 @@ export default function ChatInput({
     setValue("");
     await onSend(trimmed);
     setIsSending(false);
-  }, [attachedFile, disabled, onSend, onTranscribe, uploadedOperationId, value]);
+  }, [attachedFile, disabled, onSend, onTranscribe, pendingTranscribe, value]);
 
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -226,7 +244,7 @@ export default function ChatInput({
     isUploading ||
     isSending ||
     (value.trim().length === 0 && !attachedFile) ||
-    (attachedFile && !uploadedOperationId);
+    (attachedFile && !pendingTranscribe);
   const isAttachDisabled = disabled || isUploading || !!attachedFile;
 
   const formatFileSize = (bytes: number): string => {
@@ -252,7 +270,7 @@ export default function ChatInput({
             className="h-8 w-8 shrink-0"
             onClick={() => {
               setAttachedFile(null);
-              setUploadedOperationId(null);
+              setPendingTranscribe(null);
             }}
             disabled={isUploading}
             data-testid="button-remove-audio"

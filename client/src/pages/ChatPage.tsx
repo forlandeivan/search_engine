@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
-import ChatInput from "@/components/chat/ChatInput";
+import ChatInput, { type TranscribePayload } from "@/components/chat/ChatInput";
 import { TranscriptCanvas } from "@/components/chat/TranscriptCanvas";
 import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { useSkills } from "@/hooks/useSkills";
@@ -112,13 +112,29 @@ export default function ChatPage({ params }: ChatPageProps) {
     if (!shouldShowLocal) {
       return base;
     }
+    const isSameTranscript = (a?: ChatMessage, b?: ChatMessage) =>
+      a?.metadata?.type === "transcript" &&
+      b?.metadata?.type === "transcript" &&
+      a?.metadata?.transcriptId &&
+      b?.metadata?.transcriptId &&
+      a.metadata.transcriptId === b.metadata.transcriptId;
+
+    const isSameAudio = (a?: ChatMessage, b?: ChatMessage) =>
+      a?.metadata?.type === "audio" &&
+      b?.metadata?.type === "audio" &&
+      a?.metadata?.fileName &&
+      b?.metadata?.fileName &&
+      a.metadata.fileName === b.metadata.fileName;
+
     const deduped = base.filter(
       (message) =>
         !localMessages.some(
           (local) =>
             local.id === message.id ||
             (local.role === message.role &&
-            local.content.trim() === (message.content ?? "").trim()),
+              (local.content ?? "").trim() === (message.content ?? "").trim()) ||
+            isSameTranscript(local, message) ||
+            isSameAudio(local, message),
         ),
     );
     const combined = [...deduped, ...localMessages];
@@ -278,20 +294,41 @@ export default function ChatPage({ params }: ChatPageProps) {
   );
 
   const handleTranscription = useCallback(
-    async (transcribedText: string) => {
+    async (input: TranscribePayload) => {
       if (!workspaceId) return;
       setIsTranscribing(true);
 
-      if (!transcribedText.startsWith('__PENDING_OPERATION:')) {
+      let operationId: string | null = null;
+      let fileName = "audio";
+      let providedChatId: string | null = null;
+      let serverAudioMessage: ChatMessage | null = null;
+      let serverPlaceholder: ChatMessage | null = null;
+
+      if (typeof input === "string") {
+        if (!input.startsWith("__PENDING_OPERATION:")) {
+          setIsTranscribing(false);
+          return;
+        }
+        const parts = input.substring("__PENDING_OPERATION:".length).split(":");
+        operationId = parts[0] ?? null;
+        fileName = parts[1] ? decodeURIComponent(parts[1]) : "audio";
+      } else {
+        operationId = input.operationId;
+        fileName = input.fileName || "audio";
+        providedChatId = input.chatId ?? null;
+        serverAudioMessage = input.audioMessage ?? null;
+        serverPlaceholder = input.placeholderMessage ?? null;
+      }
+
+      if (!operationId) {
         setIsTranscribing(false);
         return;
       }
 
-      const parts = transcribedText.substring('__PENDING_OPERATION:'.length).split(':');
-      const operationId = parts[0];
-      const fileName = parts[1] ? decodeURIComponent(parts[1]) : 'audio';
-
       let targetChatId = effectiveChatId;
+      if (providedChatId) {
+        targetChatId = providedChatId;
+      }
       if (!targetChatId) {
         const skillId = activeChat?.skillId ?? activeSkill?.id ?? defaultSkill?.id;
         if (!skillId) {
@@ -312,33 +349,43 @@ export default function ChatPage({ params }: ChatPageProps) {
       }
 
       if (targetChatId) {
-        const audioMessageTime = new Date();
-        const audioMessage: ChatMessage = {
-          id: `local-audio-${Date.now()}`,
-          chatId: targetChatId,
-          role: 'user',
-          content: fileName || 'Audio file',
-          metadata: {
-            type: 'audio',
-            fileName: fileName || 'Audio file',
-          },
-          createdAt: audioMessageTime.toISOString(),
-        };
-        const placeholderId = `local-transcript-${Date.now()}`;
-        const placeholderMessage: ChatMessage = {
-          id: placeholderId,
-          chatId: targetChatId,
-          role: 'assistant',
-          content: 'Идёт расшифровка аудиозаписи...',
-          metadata: {
-            type: 'transcript',
-            transcriptId: placeholderId,
-            transcriptStatus: 'processing',
-          },
-          createdAt: new Date(audioMessageTime.getTime() + 1000).toISOString(),
-        };
+        const audioMessageTime = serverAudioMessage?.createdAt
+          ? new Date(serverAudioMessage.createdAt)
+          : new Date();
+        const placeholderId = serverPlaceholder?.id ?? `local-transcript-${Date.now()}`;
+        const audioMessage: ChatMessage =
+          serverAudioMessage ?? {
+            id: `local-audio-${Date.now()}`,
+            chatId: targetChatId,
+            role: "user",
+            content: fileName || "Audio file",
+            metadata: {
+              type: "audio",
+              fileName: fileName || "Audio file",
+            },
+            createdAt: audioMessageTime.toISOString(),
+          };
+
+        const placeholderMessage: ChatMessage =
+          serverPlaceholder ?? {
+            id: placeholderId,
+            chatId: targetChatId,
+            role: "assistant",
+            content: "Идёт расшифровка аудиозаписи...",
+            metadata: {
+              type: "transcript",
+              transcriptId: placeholderId,
+              transcriptStatus: "processing",
+            },
+            createdAt: new Date(audioMessageTime.getTime() + 1000).toISOString(),
+          };
         setLocalChatId(targetChatId);
-        setLocalMessages((prev) => [...prev, audioMessage, placeholderMessage]);
+        setLocalMessages((prev) => {
+          const filtered = prev.filter(
+            (msg) => msg.id !== audioMessage.id && msg.id !== placeholderMessage.id,
+          );
+          return [...filtered, audioMessage, placeholderMessage];
+        });
 
         const pollOperation = async () => {
           let attempts = 0;
@@ -368,28 +415,27 @@ export default function ChatPage({ params }: ChatPageProps) {
                   if (completeData.message) {
                     setLocalMessages((prev) =>
                       prev.map((msg) =>
-                        msg.id === placeholderId
+                        msg.id === placeholderMessage.id
                           ? {
-                              ...msg,
-                              content: completeData.message.content,
-                              metadata: completeData.message.metadata,
+                              ...completeData.message,
+                              createdAt: completeData.message.createdAt,
                             }
                           : msg,
-                      ),
+                      )
                     );
                   } else {
-                    setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
+                    setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                     await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
                   }
                 } else {
-                  setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
+                  setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                   await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
                 }
                 return;
               }
 
               if (status.status === 'failed') {
-                setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
+                setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                 setStreamError(status.error || 'Транскрибация не удалась. Попробуйте снова.');
                 return;
               }
@@ -401,7 +447,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             }
           }
 
-          setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderId));
+          setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
           setStreamError('Транскрибация заняла слишком много времени. Попробуйте снова.');
         };
 
@@ -409,7 +455,16 @@ export default function ChatPage({ params }: ChatPageProps) {
       }
       setIsTranscribing(false);
     },
-    [activeChat?.skillId, activeSkill?.id, createChat, defaultSkill?.id, effectiveChatId, handleSelectChat, queryClient, workspaceId],
+    [
+      activeChat?.skillId,
+      activeSkill?.id,
+      createChat,
+      defaultSkill?.id,
+      effectiveChatId,
+      handleSelectChat,
+      queryClient,
+      workspaceId,
+    ],
   );
 
   const isNewChat = !effectiveChatId;
