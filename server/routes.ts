@@ -6905,7 +6905,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
 
-  app.get("/api/embedding/services", requireAdmin, async (req, res, next) => {
+  app.get("/api/embedding/services", requireAuth, async (req, res, next) => {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
       const providers = await storage.listEmbeddingProviders(workspaceId);
@@ -7341,7 +7341,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/llm/providers", requireAdmin, async (req, res, next) => {
+  app.get("/api/llm/providers", requireAuth, async (req, res, next) => {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
       const providers = await storage.listLlmProviders(workspaceId);
