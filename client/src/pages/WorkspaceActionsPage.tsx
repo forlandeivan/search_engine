@@ -32,14 +32,6 @@ type WorkspaceActionsResponse = {
   actions: (ActionDto & { editable: boolean })[];
 };
 
-type LlmProvider = {
-  id: string;
-  name: string;
-  provider: string;
-  model: string;
-  isDefault: boolean;
-};
-
 type WorkspaceActionsPageProps = {
   params?: { workspaceId?: string };
 };
@@ -52,7 +44,6 @@ type CreateActionState = {
   inputType: string;
   outputMode: string;
   promptTemplate: string;
-  llmConfigId: string;
   saving: boolean;
   open: boolean;
   editingActionId: string | null;
@@ -92,16 +83,6 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
     },
   });
 
-  const llmProvidersQuery = useQuery({
-    queryKey: ["/api/llm/providers"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/llm/providers");
-      if (!res.ok) return [] as LlmProvider[];
-      const data = await res.json();
-      return (data.providers ?? []) as LlmProvider[];
-    },
-  });
-
   const actions = actionsQuery.data?.actions ?? [];
 
   const placementLabels = useMemo(
@@ -121,7 +102,6 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
     inputType: "full_transcript",
     outputMode: "replace_text",
     promptTemplate: "",
-    llmConfigId: "",
     saving: false,
     open: false,
     editingActionId: null,
@@ -136,7 +116,6 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
       inputType: "full_transcript",
       outputMode: "replace_text",
       promptTemplate: "",
-      llmConfigId: "",
       saving: false,
       open: false,
       editingActionId: null,
@@ -177,7 +156,6 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
         inputType: createState.inputType,
         outputMode: createState.outputMode,
         promptTemplate: createState.promptTemplate,
-        llmConfigId: createState.llmConfigId.trim() || null,
       };
       const url = createState.editingActionId
         ? `/api/workspaces/${workspaceId}/actions/${createState.editingActionId}`
@@ -378,38 +356,6 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
                   placeholder="Используйте {{text}} для подстановки входного текста"
                 />
               </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium">LLM провайдер</p>
-                  <TooltipProvider delayDuration={200}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="text-muted-foreground text-xs cursor-help">?</span>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="text-xs max-w-xs">
-                        Выберите LLM провайдера для выполнения действия. Если не выбран, будет использован провайдер по умолчанию.
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-                <Select
-                  value={createState.llmConfigId || "_none"}
-                  onValueChange={(value) => setCreateState((prev) => ({ ...prev, llmConfigId: value === "_none" ? "" : value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="По умолчанию" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none">По умолчанию</SelectItem>
-                    {llmProvidersQuery.data?.map((provider) => (
-                      <SelectItem key={provider.id} value={provider.id}>
-                        {provider.name} ({provider.provider} / {provider.model})
-                        {provider.isDefault && " ★"}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
               <div className="flex items-center gap-2">
                 <Button onClick={handleCreateOrUpdate} disabled={createState.saving}>
                   {createState.saving ? "Сохраняем..." : createState.editingActionId ? "Сохранить" : "Создать"}
@@ -506,7 +452,6 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
                                   inputType: action.inputType,
                                   outputMode: action.outputMode,
                                   promptTemplate: action.promptTemplate,
-                                  llmConfigId: action.llmConfigId ?? "",
                                   saving: false,
                                   open: true,
                                   editingActionId: action.id,

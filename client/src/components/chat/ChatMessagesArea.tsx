@@ -244,8 +244,18 @@ function ChatBubble({
   const isAudioMessage = message.metadata?.type === "audio";
   const audioFileName = isAudioMessage ? (message.metadata?.fileName as string) || message.content : "";
   
-  const isAudioFile = message.content?.startsWith("__AUDIO_FILE__:");
-  const legacyAudioFileName = isAudioFile ? message.content.substring("__AUDIO_FILE__:".length) : "";
+  const isAudioFile = message.content?.startsWith("__AUDIO_FILE__:") || message.content?.startsWith("__PENDING_OPERATION:");
+  let legacyAudioFileName = "";
+  
+  if (message.content?.startsWith("__AUDIO_FILE__:")) {
+    legacyAudioFileName = message.content.substring("__AUDIO_FILE__:".length);
+  } else if (message.content?.startsWith("__PENDING_OPERATION:")) {
+    const parts = message.content.split(":");
+    if (parts.length >= 3) {
+      legacyAudioFileName = decodeURIComponent(parts.slice(2).join(":"));
+    }
+  }
+  
   const getAudioExtension = (fileName: string) => {
     const match = fileName.match(/\.([^.]+)$/);
     return match ? match[1].toLowerCase() : "audio";

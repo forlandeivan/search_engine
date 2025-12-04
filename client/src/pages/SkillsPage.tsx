@@ -11,6 +11,84 @@ import {
   ChevronsUpDown,
   Check,
   Info,
+  Zap,
+  Brain,
+  Search,
+  FileText,
+  MessageSquare,
+  Settings,
+  BookOpen,
+  Airplay,
+  AlertCircle,
+  Archive,
+  ArrowRight,
+  Award,
+  Backpack,
+  BarChart2,
+  Battery,
+  Bell,
+  BellOff,
+  Binoculars,
+  Bluetooth,
+  Bold,
+  BookMarked,
+  Bookmark,
+  Box,
+  Briefcase,
+  BriefcaseBusiness,
+  Bug,
+  Building,
+  Building2,
+  Calendar,
+  Camera,
+  CameraOff,
+  Captions,
+  Car,
+  CarFront,
+  Carrot,
+  Cast,
+  Castle,
+  ChartArea,
+  ChartLine,
+  ChartPie,
+  CheckCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Chrome,
+  Circle,
+  CircleDollarSign,
+  CircleOff,
+  Clock,
+  Cloud,
+  CloudDrizzle,
+  CloudFog,
+  CloudLightning,
+  CloudOff,
+  CloudRain,
+  CloudRainWind,
+  CloudSnow,
+  Code,
+  Code2,
+  Codepen,
+  Codesandbox,
+  Coffee,
+  Cog,
+  Coins,
+  Columns,
+  Compass,
+  ConciergeBell,
+  Container,
+  Contrast,
+  Cookie,
+  Copy,
+  CreditCard,
+  Crop,
+  Crown,
+  Cuboid,
+  CupSoda,
 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -68,6 +146,88 @@ import type { ActionDto, SkillActionDto } from "@shared/skills";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { Skill, SkillPayload } from "@/types/skill";
 
+const ICON_OPTIONS = [
+  { value: "Zap" },
+  { value: "Brain" },
+  { value: "Search" },
+  { value: "FileText" },
+  { value: "MessageSquare" },
+  { value: "Settings" },
+  { value: "BookOpen" },
+  { value: "Sparkles" },
+  { value: "Airplay" },
+  { value: "AlertCircle" },
+  { value: "Archive" },
+  { value: "ArrowRight" },
+  { value: "Award" },
+  { value: "Backpack" },
+  { value: "BarChart2" },
+  { value: "Battery" },
+  { value: "Bell" },
+  { value: "BellOff" },
+  { value: "Binoculars" },
+  { value: "Bluetooth" },
+  { value: "Bold" },
+  { value: "BookMarked" },
+  { value: "Bookmark" },
+  { value: "Box" },
+  { value: "Briefcase" },
+  { value: "BriefcaseBusiness" },
+  { value: "Bug" },
+  { value: "Building" },
+  { value: "Building2" },
+  { value: "Calendar" },
+  { value: "Camera" },
+  { value: "CameraOff" },
+  { value: "Captions" },
+  { value: "Car" },
+  { value: "CarFront" },
+  { value: "Carrot" },
+  { value: "Cast" },
+  { value: "Castle" },
+  { value: "ChartArea" },
+  { value: "ChartLine" },
+  { value: "ChartPie" },
+  { value: "CheckCircle" },
+  { value: "CheckCircle2" },
+  { value: "ChevronDown" },
+  { value: "ChevronLeft" },
+  { value: "ChevronRight" },
+  { value: "ChevronUp" },
+  { value: "Chrome" },
+  { value: "Circle" },
+  { value: "CircleDollarSign" },
+  { value: "CircleOff" },
+  { value: "Clock" },
+  { value: "Cloud" },
+  { value: "CloudDrizzle" },
+  { value: "CloudFog" },
+  { value: "CloudLightning" },
+  { value: "CloudOff" },
+  { value: "CloudRain" },
+  { value: "CloudRainWind" },
+  { value: "CloudSnow" },
+  { value: "Code" },
+  { value: "Code2" },
+  { value: "Codepen" },
+  { value: "Codesandbox" },
+  { value: "Coffee" },
+  { value: "Cog" },
+  { value: "Coins" },
+  { value: "Columns" },
+  { value: "Compass" },
+  { value: "ConciergeBell" },
+  { value: "Container" },
+  { value: "Contrast" },
+  { value: "Cookie" },
+  { value: "Copy" },
+  { value: "CreditCard" },
+  { value: "Crop" },
+  { value: "Crown" },
+  { value: "Cuboid" },
+  { value: "CupSoda" },
+];
+
 const skillFormSchema = z.object({
   name: z.string().trim().min(1, "Название обязательно").max(200, "Не более 200 символов"),
   description: z
@@ -82,6 +242,7 @@ const skillFormSchema = z.object({
     .max(20000, "Не более 20000 символов")
     .optional()
     .or(z.literal("")),
+  icon: z.string().optional().or(z.literal("")),
   ragMode: z.enum(["all_collections", "selected_collections"]),
   ragCollectionIds: z.array(z.string()),
   ragTopK: z.string().optional(),
@@ -104,6 +265,7 @@ const defaultFormValues = {
   knowledgeBaseIds: [] as string[],
   llmKey: "",
   systemPrompt: "",
+  icon: "",
   ragMode: "all_collections" as "all_collections" | "selected_collections",
   ragCollectionIds: [] as string[],
   ragTopK: "5",
@@ -817,6 +979,7 @@ type SkillFormDialogProps = {
   onSubmit: (values: SkillFormValues) => Promise<void>;
   isSubmitting: boolean;
   skill?: Skill | null;
+  getIconComponent: (iconName: string | null | undefined) => JSX.Element | null;
 };
 
 function SkillFormDialog({
@@ -831,6 +994,7 @@ function SkillFormDialog({
   onSubmit,
   isSubmitting,
   skill,
+  getIconComponent,
 }: SkillFormDialogProps) {
   const form = useForm<SkillFormValues>({
     resolver: zodResolver(skillFormSchema),
@@ -933,6 +1097,7 @@ function SkillFormDialog({
             ? buildLlmKey(skill.llmProviderConfigId, skill.modelId)
             : "",
         systemPrompt: skill.systemPrompt ?? "",
+        icon: skill.icon ?? "",
         ragMode: ragConfig.mode,
         ragCollectionIds: ragConfig.collectionIds,
         ragTopK: String(ragConfig.topK),
@@ -962,9 +1127,12 @@ function SkillFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-5xl">
         <DialogHeader>
-          <DialogTitle>{skill ? "Редактирование навыка" : "Создание навыка"}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {skill?.icon && getIconComponent(skill.icon)}
+            {skill ? "Редактирование навыка" : "Создание навыка"}
+          </DialogTitle>
           <DialogDescription>
-            Настройте параметры навыка: выберите связанные базы знаний, модель LLM и при необходимости системный промпт.
+            Настройте параметры навыка: выберите связанные базы знаний, модель LLM и при необходимости систем промпт.
           </DialogDescription>
 
           {isSystemSkill && (
@@ -988,6 +1156,48 @@ function SkillFormDialog({
                     <Input {...field} placeholder="Например, Поддержка клиентов" />
                   </FormControl>
                   <FormDescription>Это имя будет отображаться в списке навыков.</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="icon"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Иконка навыка</FormLabel>
+                  <FormControl>
+                    <div className="border rounded-lg p-2 max-h-[360px] overflow-y-auto">
+                      <div className="grid grid-cols-6 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => field.onChange("")}
+                          className={cn(
+                            "flex flex-col items-center justify-center gap-1 rounded-md border p-2 transition-all text-xs",
+                            field.value === "" ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
+                          )}
+                          title="Без иконки"
+                        >
+                          <span className="text-sm">✕</span>
+                        </button>
+                        {ICON_OPTIONS.map((icon) => (
+                          <button
+                            key={icon.value}
+                            type="button"
+                            onClick={() => field.onChange(icon.value)}
+                            className={cn(
+                              "flex flex-col items-center justify-center gap-1 rounded-md border p-2 transition-all",
+                              field.value === icon.value ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
+                            )}
+                            title={icon.value}
+                          >
+                            {getIconComponent(icon.value)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </FormControl>
+                  <FormDescription>Выберите визуальный идентификатор для навыка</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -1508,6 +1718,7 @@ export default function SkillsPage() {
       name: values.name.trim(),
       description: values.description?.trim() ? values.description.trim() : null,
       systemPrompt: values.systemPrompt?.trim() ? values.systemPrompt.trim() : null,
+      icon: values.icon?.trim() ? values.icon.trim() : null,
       knowledgeBaseIds: values.knowledgeBaseIds,
       llmProviderConfigId: providerId,
       modelId,
@@ -1594,6 +1805,25 @@ export default function SkillsPage() {
     vectorCollectionsQuery.isLoading ||
     isEmbeddingProvidersLoading;
 
+  const getIconComponent = (iconName: string | null | undefined) => {
+    if (!iconName) return null;
+    const iconMap: Record<string, typeof Zap> = {
+      Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
+      Airplay, AlertCircle, Archive, ArrowRight, Award, Backpack, BarChart2, Battery,
+      Bell, BellOff, Binoculars, Bluetooth, Bold, BookMarked, Bookmark, Box,
+      Briefcase, BriefcaseBusiness, Bug, Building, Building2, Calendar,
+      Camera, CameraOff, Captions, Car, CarFront, Carrot, Cast, Castle,
+      ChartArea, ChartLine, ChartPie, CheckCircle, CheckCircle2,
+      ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Chrome, Circle, CircleDollarSign,
+      CircleOff, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudOff, CloudRain,
+      CloudRainWind, CloudSnow, Code, Code2, Codepen, Codesandbox, Coffee, Cog, Coins,
+      Columns, Compass, ConciergeBell, Container, Contrast, Cookie, Copy,
+      CreditCard, Crop, Crown, Cuboid, CupSoda,
+    };
+    const Icon = iconMap[iconName];
+    return Icon ? <Icon className="h-5 w-5" /> : null;
+  };
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -1643,6 +1873,7 @@ export default function SkillsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[60px] text-center">Иконка</TableHead>
                   <TableHead className="w-[220px]">Название</TableHead>
                   <TableHead>Описание</TableHead>
                   <TableHead className="w-[240px]">Базы знаний</TableHead>
@@ -1654,28 +1885,27 @@ export default function SkillsPage() {
               <TableBody>
                 {sortedSkills.map((skill) => (
                   <TableRow key={skill.id}>
-                                        <TableCell>
-
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center">
+                        {getIconComponent(skill.icon) ? (
+                          getIconComponent(skill.icon)
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
                       <div className="space-y-1">
-
                         <div className="flex items-center gap-2">
-
                           <p className="font-semibold leading-tight">{skill.name ?? "Без названия"}</p>
-
                           {skill.isSystem && (
-
                             <Badge variant="outline" className="text-[10px] uppercase">
                               Системный
                             </Badge>
-
                           )}
-
                         </div>
-
                         <p className="text-xs text-muted-foreground">ID: {skill.id}</p>
-
                       </div>
-
                     </TableCell>
                     <TableCell>
                       {skill.description ? (
@@ -1732,6 +1962,7 @@ export default function SkillsPage() {
         onSubmit={handleSubmit}
         isSubmitting={isSaving}
         skill={editingSkill}
+        getIconComponent={getIconComponent}
       />
     </div>
   );

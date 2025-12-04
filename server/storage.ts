@@ -65,7 +65,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { createUnicaChatSkillForWorkspace } from "./skills";
-import { and, asc, desc, eq, ilike, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
 import type {
@@ -2361,6 +2361,15 @@ async function ensureEmbeddingProvidersTable(): Promise<void> {
     } catch (error) {
       swallowPgError(error, ["42P07", "42710"]);
     }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "embedding_providers"
+        ADD COLUMN "is_global" boolean NOT NULL DEFAULT false
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
+    }
   })();
 
   try {
@@ -2681,6 +2690,15 @@ async function ensureLlmProvidersTable(): Promise<void> {
       `);
     } catch (error) {
       swallowPgError(error, ["42P07", "42710"]);
+    }
+
+    try {
+      await db.execute(sql`
+        ALTER TABLE "llm_providers"
+        ADD COLUMN "is_global" boolean NOT NULL DEFAULT false
+      `);
+    } catch (error) {
+      swallowPgError(error, ["42701"]);
     }
   })();
 
@@ -4364,7 +4382,12 @@ export class DatabaseStorage implements IStorage {
     await ensureEmbeddingProvidersTable();
     let query = this.db.select().from(embeddingProviders);
     if (workspaceId) {
-      query = query.where(eq(embeddingProviders.workspaceId, workspaceId));
+      query = query.where(
+        or(
+          eq(embeddingProviders.workspaceId, workspaceId),
+          eq(embeddingProviders.isGlobal, true)
+        )
+      );
     }
     return await query.orderBy(desc(embeddingProviders.createdAt));
   }
@@ -4428,7 +4451,12 @@ export class DatabaseStorage implements IStorage {
     await ensureLlmProvidersTable();
     let query = this.db.select().from(llmProviders);
     if (workspaceId) {
-      query = query.where(eq(llmProviders.workspaceId, workspaceId));
+      query = query.where(
+        or(
+          eq(llmProviders.workspaceId, workspaceId),
+          eq(llmProviders.isGlobal, true)
+        )
+      );
     }
     return await query.orderBy(desc(llmProviders.createdAt));
   }
@@ -6182,6 +6210,11 @@ export async function ensureDatabaseSchema(): Promise<void> {
     await db.execute(sql`
       ALTER TABLE "skills"
       ADD COLUMN IF NOT EXISTS "rag_llm_response_format" text
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "icon" text
     `);
 
     try {

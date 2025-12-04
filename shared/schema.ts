@@ -578,6 +578,7 @@ export const embeddingProviders = pgTable("embedding_providers", {
   providerType: text("provider_type").$type<EmbeddingProviderType>().notNull().default("gigachat"),
   description: text("description"),
   isActive: boolean("is_active").notNull().default(true),
+  isGlobal: boolean("is_global").notNull().default(false),
   tokenUrl: text("token_url").notNull(),
   embeddingsUrl: text("embeddings_url").notNull(),
   authorizationKey: text("authorization_key").notNull(),
@@ -720,6 +721,7 @@ export const llmProviders = pgTable("llm_providers", {
   providerType: text("provider_type").$type<LlmProviderType>().notNull().default("gigachat"),
   description: text("description"),
   isActive: boolean("is_active").notNull().default(true),
+  isGlobal: boolean("is_global").notNull().default(false),
   tokenUrl: text("token_url").notNull(),
   completionUrl: text("completion_url").notNull(),
   authorizationKey: text("authorization_key").notNull(),
@@ -786,6 +788,7 @@ export const skills = pgTable(
     ragLlmTemperature: doublePrecision("rag_llm_temperature"),
     ragLlmMaxTokens: integer("rag_llm_max_tokens"),
     ragLlmResponseFormat: text("rag_llm_response_format"),
+    icon: text("icon"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
@@ -1118,6 +1121,7 @@ export const updateEmbeddingProviderSchema = z
       .optional()
       .transform((value) => (value && value.length > 0 ? value : undefined)),
     isActive: z.boolean().optional(),
+    isGlobal: z.boolean().optional(),
     tokenUrl: z
       .string()
       .trim()
@@ -1236,6 +1240,7 @@ export const updateLlmProviderSchema = z
       .optional()
       .transform((value) => (value && value.length > 0 ? value : undefined)),
     isActive: z.boolean().optional(),
+    isGlobal: z.boolean().optional(),
     tokenUrl: z
       .string()
       .trim()

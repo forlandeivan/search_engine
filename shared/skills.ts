@@ -52,6 +52,7 @@ const skillEditableFieldsSchema = z.object({
   collectionName: optionalString(200),
   knowledgeBaseIds: z.array(knowledgeBaseIdSchema).optional(),
   ragConfig: ragConfigInputSchema.optional(),
+  icon: optionalString(100),
 });
 
 export const createSkillSchema = skillEditableFieldsSchema;
@@ -73,6 +74,7 @@ export type SkillDto = {
   systemKey?: string | null;
   knowledgeBaseIds?: string[];
   ragConfig: SkillRagConfig;
+  icon?: string | null;
   createdAt: string;
   updatedAt: string;
 };
