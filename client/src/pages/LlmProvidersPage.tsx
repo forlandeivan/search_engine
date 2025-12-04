@@ -69,6 +69,7 @@ type FormValues = {
   name: string;
   description: string;
   isActive: boolean;
+  isGlobal: boolean;
   tokenUrl: string;
   completionUrl: string;
   authorizationKey: string;
@@ -90,6 +91,7 @@ const emptyFormValues: FormValues = {
   name: "",
   description: "",
   isActive: false,
+  isGlobal: false,
   tokenUrl: "",
   completionUrl: "",
   authorizationKey: "",
@@ -198,6 +200,7 @@ const mapProviderToFormValues = (provider: PublicLlmProvider): FormValues => {
     name: provider.name,
     description: provider.description ?? "",
     isActive: provider.isActive,
+    isGlobal: provider.isGlobal ?? false,
     tokenUrl: provider.tokenUrl,
     completionUrl: provider.completionUrl,
     authorizationKey: "",
@@ -390,6 +393,7 @@ export default function LlmProvidersPage() {
       name: values.name.trim(),
       description: values.description.trim() ? values.description.trim() : undefined,
       isActive: values.isActive,
+      isGlobal: values.isGlobal,
       tokenUrl: values.tokenUrl.trim(),
       completionUrl: values.completionUrl.trim(),
       scope: values.scope.trim(),
@@ -1025,6 +1029,24 @@ export default function LlmProvidersPage() {
                               <FormLabel className="text-sm">Статус провайдера</FormLabel>
                               <FormDescription className="text-xs">
                                 Только активные провайдеры доступны в интерфейсе поиска.
+                              </FormDescription>
+                            </div>
+                            <FormControl>
+                              <Switch checked={field.value} onCheckedChange={field.onChange} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="isGlobal"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                            <div className="space-y-1">
+                              <FormLabel className="text-sm">Глобальный провайдер</FormLabel>
+                              <FormDescription className="text-xs">
+                                Глобальные провайдеры доступны всем пользователям системы.
                               </FormDescription>
                             </div>
                             <FormControl>
