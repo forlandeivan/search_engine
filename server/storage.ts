@@ -65,7 +65,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { createUnicaChatSkillForWorkspace } from "./skills";
-import { and, asc, desc, eq, ilike, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
 import type {
@@ -4364,7 +4364,12 @@ export class DatabaseStorage implements IStorage {
     await ensureEmbeddingProvidersTable();
     let query = this.db.select().from(embeddingProviders);
     if (workspaceId) {
-      query = query.where(eq(embeddingProviders.workspaceId, workspaceId));
+      query = query.where(
+        or(
+          eq(embeddingProviders.workspaceId, workspaceId),
+          eq(embeddingProviders.isGlobal, true)
+        )
+      );
     }
     return await query.orderBy(desc(embeddingProviders.createdAt));
   }
@@ -4428,7 +4433,12 @@ export class DatabaseStorage implements IStorage {
     await ensureLlmProvidersTable();
     let query = this.db.select().from(llmProviders);
     if (workspaceId) {
-      query = query.where(eq(llmProviders.workspaceId, workspaceId));
+      query = query.where(
+        or(
+          eq(llmProviders.workspaceId, workspaceId),
+          eq(llmProviders.isGlobal, true)
+        )
+      );
     }
     return await query.orderBy(desc(llmProviders.createdAt));
   }
