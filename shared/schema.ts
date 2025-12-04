@@ -850,6 +850,9 @@ export const skillActions = pgTable(
     actionId: varchar("action_id")
       .notNull()
       .references(() => actions.id, { onDelete: "cascade" }),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
     enabled: boolean("enabled").notNull().default(false),
     enabledPlacements: text("enabled_placements").array().notNull().default(sql`'{}'::text[]`),
     labelOverride: text("label_override"),
@@ -857,6 +860,7 @@ export const skillActions = pgTable(
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
   (table) => ({
+    workspaceIdx: index("skill_actions_workspace_idx").on(table.workspaceId),
     skillIdx: index("skill_actions_skill_idx").on(table.skillId),
     actionIdx: index("skill_actions_action_idx").on(table.actionId),
     skillActionUnique: uniqueIndex("skill_actions_skill_action_unique_idx").on(table.skillId, table.actionId),
