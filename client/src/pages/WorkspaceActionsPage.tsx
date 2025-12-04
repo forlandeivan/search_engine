@@ -98,7 +98,8 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
       const res = await apiRequest("GET", "/api/llm/providers");
       if (!res.ok) return [] as LlmProvider[];
       const data = await res.json();
-      return (data.providers ?? []) as LlmProvider[];
+      const providers = Array.isArray(data) ? data : (data.providers ?? []);
+      return providers as LlmProvider[];
     },
   });
 
