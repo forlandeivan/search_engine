@@ -152,8 +152,9 @@ export default function ChatMessagesArea({
         </div>
       </header>
 
-      <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto px-24 py-6">
-        <div className="flex h-full min-h-0 flex-col gap-3">
+      <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto py-6">
+        <div className="mx-auto max-w-3xl px-4">
+          <div className="flex h-full min-h-0 flex-col gap-3">
           {errorMessage ? (
             <div className="mx-auto mt-10 max-w-lg rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
               <h2 className="text-lg font-semibold">Не удалось загрузить историю</h2>
@@ -201,6 +202,7 @@ export default function ChatMessagesArea({
           {!isLoading && !errorMessage && messages.length === 0 && !isNewChat ? (
             <div className="text-center text-sm text-muted-foreground">Сообщений пока нет.</div>
           ) : null}
+          </div>
         </div>
       </div>
 
