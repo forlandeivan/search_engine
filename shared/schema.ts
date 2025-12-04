@@ -1116,6 +1116,7 @@ export const updateEmbeddingProviderSchema = z
       .optional()
       .transform((value) => (value && value.length > 0 ? value : undefined)),
     isActive: z.boolean().optional(),
+    isGlobal: z.boolean().optional(),
     tokenUrl: z
       .string()
       .trim()
@@ -1234,6 +1235,7 @@ export const updateLlmProviderSchema = z
       .optional()
       .transform((value) => (value && value.length > 0 ? value : undefined)),
     isActive: z.boolean().optional(),
+    isGlobal: z.boolean().optional(),
     tokenUrl: z
       .string()
       .trim()

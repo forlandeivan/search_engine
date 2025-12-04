@@ -7256,6 +7256,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (payload.providerType !== undefined) updates.providerType = payload.providerType;
       if (payload.description !== undefined) updates.description = payload.description ?? null;
       if (payload.isActive !== undefined) updates.isActive = payload.isActive;
+      if (payload.isGlobal !== undefined) updates.isGlobal = payload.isGlobal;
       if (payload.tokenUrl !== undefined) updates.tokenUrl = payload.tokenUrl;
       if (payload.embeddingsUrl !== undefined) updates.embeddingsUrl = payload.embeddingsUrl;
       if (payload.authorizationKey !== undefined) updates.authorizationKey = payload.authorizationKey;
@@ -7390,6 +7391,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (payload.providerType !== undefined) updates.providerType = payload.providerType;
       if (payload.description !== undefined) updates.description = payload.description ?? null;
       if (payload.isActive !== undefined) updates.isActive = payload.isActive;
+      if (payload.isGlobal !== undefined) updates.isGlobal = payload.isGlobal;
       if (payload.tokenUrl !== undefined) updates.tokenUrl = payload.tokenUrl;
       if (payload.completionUrl !== undefined) updates.completionUrl = payload.completionUrl;
       if (payload.authorizationKey !== undefined) updates.authorizationKey = payload.authorizationKey;
