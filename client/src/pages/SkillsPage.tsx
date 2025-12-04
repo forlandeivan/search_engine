@@ -11,6 +11,13 @@ import {
   ChevronsUpDown,
   Check,
   Info,
+  Zap,
+  Brain,
+  Search,
+  FileText,
+  MessageSquare,
+  Settings,
+  BookOpen,
 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -68,6 +75,17 @@ import type { ActionDto, SkillActionDto } from "@shared/skills";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { Skill, SkillPayload } from "@/types/skill";
 
+const ICON_OPTIONS = [
+  { value: "Zap", label: "⚡ Zap" },
+  { value: "Brain", label: "🧠 Brain" },
+  { value: "Search", label: "🔍 Search" },
+  { value: "FileText", label: "📄 FileText" },
+  { value: "MessageSquare", label: "💬 MessageSquare" },
+  { value: "Settings", label: "⚙️ Settings" },
+  { value: "BookOpen", label: "📖 BookOpen" },
+  { value: "Sparkles", label: "✨ Sparkles" },
+];
+
 const skillFormSchema = z.object({
   name: z.string().trim().min(1, "Название обязательно").max(200, "Не более 200 символов"),
   description: z
@@ -82,6 +100,7 @@ const skillFormSchema = z.object({
     .max(20000, "Не более 20000 символов")
     .optional()
     .or(z.literal("")),
+  icon: z.string().optional().or(z.literal("")),
   ragMode: z.enum(["all_collections", "selected_collections"]),
   ragCollectionIds: z.array(z.string()),
   ragTopK: z.string().optional(),
@@ -104,6 +123,7 @@ const defaultFormValues = {
   knowledgeBaseIds: [] as string[],
   llmKey: "",
   systemPrompt: "",
+  icon: "",
   ragMode: "all_collections" as "all_collections" | "selected_collections",
   ragCollectionIds: [] as string[],
   ragTopK: "5",
@@ -933,6 +953,7 @@ function SkillFormDialog({
             ? buildLlmKey(skill.llmProviderConfigId, skill.modelId)
             : "",
         systemPrompt: skill.systemPrompt ?? "",
+        icon: skill.icon ?? "",
         ragMode: ragConfig.mode,
         ragCollectionIds: ragConfig.collectionIds,
         ragTopK: String(ragConfig.topK),
@@ -1287,6 +1308,32 @@ function SkillFormDialog({
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="icon"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Иконка навыка</FormLabel>
+                  <Select value={field.value || ""} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите иконку" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="">Без иконки</SelectItem>
+                      {ICON_OPTIONS.map((icon) => (
+                        <SelectItem key={icon.value} value={icon.value}>
+                          {icon.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>Визуальный идентификатор для навыка</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             </fieldset>
 
             <fieldset className="space-y-2 rounded-xl border border-dashed border-slate-200 p-4 dark:border-slate-800">
@@ -1508,6 +1555,7 @@ export default function SkillsPage() {
       name: values.name.trim(),
       description: values.description?.trim() ? values.description.trim() : null,
       systemPrompt: values.systemPrompt?.trim() ? values.systemPrompt.trim() : null,
+      icon: values.icon?.trim() ? values.icon.trim() : null,
       knowledgeBaseIds: values.knowledgeBaseIds,
       llmProviderConfigId: providerId,
       modelId,
