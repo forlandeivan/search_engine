@@ -424,7 +424,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   }, []);
 
   return (
-    <div className="flex h-screen overflow-hidden" data-testid="chat-page">
+    <div className="flex h-full overflow-hidden" data-testid="chat-page">
       <ChatSidebar
         workspaceId={workspaceId}
         selectedChatId={effectiveChatId ?? undefined}
