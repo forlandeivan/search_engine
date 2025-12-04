@@ -2,6 +2,7 @@ import { speechProviderService, SpeechProviderDisabledError } from "./speech-pro
 import { yandexIamTokenService } from "./yandex-iam-token-service";
 import { yandexObjectStorageService, ObjectStorageError, ObjectStorageCredentials } from "./yandex-object-storage-service";
 import { spawn } from "child_process";
+import ffmpegPath from "ffmpeg-static";
 import { tmpdir } from "os";
 import { writeFile, unlink, readFile } from "fs/promises";
 import { join } from "path";
@@ -74,8 +75,8 @@ setInterval(() => {
 
 function needsConversion(mimeType: string): boolean {
   const baseMimeType = mimeType.split(";")[0].trim().toLowerCase();
-  // Конвертируем все форматы, кроме OGG, в OGG для совместимости с async STT
-  return baseMimeType !== "audio/ogg";
+  // Конвертируем всё, что не OGG/OPUS, в OGG для совместимости с async STT.
+  return baseMimeType !== "audio/ogg" && baseMimeType !== "audio/opus";
 }
 
 function getMimeTypeExtension(mimeType: string): string {
@@ -92,7 +93,7 @@ export async function convertAudioToOgg(audioBuffer: Buffer, mimeType: string = 
   const inputExt = getMimeTypeExtension(mimeType);
   const inputPath = join(tmpdir(), `input_${tempId}.${inputExt}`);
   const outputPath = join(tmpdir(), `output_${tempId}.ogg`);
-  const executable = "ffmpeg";
+  const executable = ffmpegPath || "ffmpeg";
 
   try {
     await writeFile(inputPath, audioBuffer);

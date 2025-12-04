@@ -1,5 +1,6 @@
 import { speechProviderService, SpeechProviderDisabledError } from "./speech-provider-service";
 import { spawn } from "child_process";
+import ffmpegPath from "ffmpeg-static";
 import { tmpdir } from "os";
 import { writeFile, unlink, readFile } from "fs/promises";
 import { join } from "path";
@@ -70,7 +71,7 @@ export async function convertWebmToOgg(audioBuffer: Buffer): Promise<Buffer> {
   const tempId = randomBytes(8).toString("hex");
   const inputPath = join(tmpdir(), `input_${tempId}.webm`);
   const outputPath = join(tmpdir(), `output_${tempId}.ogg`);
-  const executable = "ffmpeg";
+  const executable = ffmpegPath || "ffmpeg";
   
   try {
     await writeFile(inputPath, audioBuffer);
