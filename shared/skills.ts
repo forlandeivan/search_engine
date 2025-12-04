@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { skillRagModes } from "./schema";
-import type { SkillRagMode } from "./schema";
+import { skillRagModes, skillTranscriptionModes } from "./schema";
+import type { SkillRagMode, SkillTranscriptionMode } from "./schema";
 
 const optionalString = (limit: number) =>
   z
@@ -53,6 +53,8 @@ const skillEditableFieldsSchema = z.object({
   knowledgeBaseIds: z.array(knowledgeBaseIdSchema).optional(),
   ragConfig: ragConfigInputSchema.optional(),
   icon: optionalString(100),
+  onTranscriptionMode: z.enum(skillTranscriptionModes).optional(),
+  onTranscriptionAutoActionId: optionalString(200),
 });
 
 export const createSkillSchema = skillEditableFieldsSchema;
@@ -74,6 +76,8 @@ export type SkillDto = {
   systemKey?: string | null;
   knowledgeBaseIds?: string[];
   ragConfig: SkillRagConfig;
+  onTranscriptionMode: SkillTranscriptionMode;
+  onTranscriptionAutoActionId: string | null;
   icon?: string | null;
   createdAt: string;
   updatedAt: string;

@@ -1,4 +1,4 @@
-import type { SkillRagConfig } from "@shared/skills";
+import type { SkillRagConfig, SkillTranscriptionMode } from "@shared/skills";
 
 export interface Skill {
   id: string;
@@ -13,6 +13,8 @@ export interface Skill {
   systemKey?: string | null;
   knowledgeBaseIds?: string[];
   ragConfig: SkillRagConfig;
+  onTranscriptionMode: SkillTranscriptionMode;
+  onTranscriptionAutoActionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -26,4 +28,6 @@ export interface SkillPayload {
   collectionName?: string | null;
   knowledgeBaseIds?: string[];
   ragConfig?: SkillRagConfig;
+  onTranscriptionMode?: SkillTranscriptionMode;
+  onTranscriptionAutoActionId?: string | null;
 }

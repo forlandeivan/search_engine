@@ -250,6 +250,8 @@ const skillFormSchema = z.object({
   ragMaxContextTokens: z.string().optional(),
   ragShowSources: z.boolean(),
   ragEmbeddingProviderId: z.string().optional().or(z.literal("")),
+  onTranscriptionMode: z.enum(["raw_only", "auto_action"]),
+  onTranscriptionAutoActionId: z.string().optional().or(z.literal("")),
 });
 
 
@@ -273,6 +275,8 @@ const defaultFormValues = {
   ragMaxContextTokens: "3000",
   ragShowSources: true,
   ragEmbeddingProviderId: NO_EMBEDDING_PROVIDER_VALUE,
+  onTranscriptionMode: "raw_only" as "raw_only" | "auto_action",
+  onTranscriptionAutoActionId: "",
 };
 
 type SkillFormValues = z.infer<typeof skillFormSchema>;
@@ -1003,6 +1007,8 @@ function SkillFormDialog({
   const isSystemSkill = Boolean(skill?.isSystem);
   const ragMode = form.watch("ragMode");
   const isManualRagMode = ragMode === "selected_collections";
+  const transcriptionMode = form.watch("onTranscriptionMode");
+  const isAutoActionMode = transcriptionMode === "auto_action";
   const vectorCollectionsEmpty = vectorCollections.length === 0;
   const vectorCollectionsUnavailable = isVectorCollectionsLoading || vectorCollectionsEmpty;
   const controlsDisabled = isSubmitting || isSystemSkill;
@@ -1036,6 +1042,17 @@ function SkillFormDialog({
       },
     ];
   }, [embeddingProviderOptions, skill]);
+  const transcriptActionsQuery = useQuery<SkillActionConfigItem[]>({
+    queryKey: ["skill-actions", skill?.id, "transcript"],
+    enabled: Boolean(skill?.id),
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/skills/${skill!.id}/actions`);
+      const json = await response.json();
+      const items = (json.items ?? []) as SkillActionConfigItem[];
+      return items.filter((item) => item.action.target === "transcript");
+    },
+  });
+  const transcriptActions = transcriptActionsQuery.data ?? [];
   const systemSkillDescription =
     skill?.systemKey === "UNICA_CHAT"
       ? "Настройки Unica Chat управляются администратором инстанса. Изменить их из рабочего пространства нельзя."
@@ -1105,6 +1122,8 @@ function SkillFormDialog({
         ragMaxContextTokens: ragConfig.maxContextTokens !== null ? String(ragConfig.maxContextTokens) : "",
         ragShowSources: ragConfig.showSources,
         ragEmbeddingProviderId: ragConfig.embeddingProviderId ?? NO_EMBEDDING_PROVIDER_VALUE,
+        onTranscriptionMode: skill.onTranscriptionMode ?? "raw_only",
+        onTranscriptionAutoActionId: skill.onTranscriptionAutoActionId ?? "",
       });
       return;
     }
@@ -1479,6 +1498,114 @@ function SkillFormDialog({
                 )}
               />
             </div>
+            <div className="space-y-4 rounded-lg border p-4">
+              <div className="space-y-1">
+                <h3 className="text-base font-semibold">Поведение при транскрибировании аудио</h3>
+                <p className="text-sm text-muted-foreground">
+                  Оставить сырую стенограмму или автоматически запустить действие после транскрипции.
+                </p>
+              </div>
+              <FormField
+                control={form.control}
+                name="onTranscriptionMode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Режим</FormLabel>
+                    <FormControl>
+                      <RadioGroup
+                        value={field.value}
+                        onValueChange={controlsDisabled ? undefined : field.onChange}
+                        className="grid gap-3 md:grid-cols-2"
+                      >
+                        <div className="rounded-lg border p-3">
+                          <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                            <RadioGroupItem
+                              value="raw_only"
+                              id="transcription-mode-raw"
+                              className="mt-1"
+                              disabled={controlsDisabled}
+                            />
+                            <span>
+                              Только транскрипция
+                              <span className="block text-xs font-normal text-muted-foreground">
+                                Создаётся сырая стенограмма без дополнительных шагов.
+                              </span>
+                            </span>
+                          </label>
+                        </div>
+                        <div className="rounded-lg border p-3">
+                          <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                            <RadioGroupItem
+                              value="auto_action"
+                              id="transcription-mode-auto"
+                              className="mt-1"
+                              disabled={controlsDisabled}
+                            />
+                            <span>
+                              Транскрипция + авто-действие
+                              <span className="block text-xs font-normal text-muted-foreground">
+                                После получения стенограммы запускается выбранное действие.
+                              </span>
+                            </span>
+                          </label>
+                        </div>
+                      </RadioGroup>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {isAutoActionMode ? (
+                <FormField
+                  control={form.control}
+                  name="onTranscriptionAutoActionId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Действие для авто-запуска</FormLabel>
+                      {skill ? (
+                        <FormControl>
+                          <Select
+                            value={field.value ?? ""}
+                            onValueChange={field.onChange}
+                            disabled={
+                              controlsDisabled || transcriptActionsQuery.isLoading || transcriptActions.length === 0
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue
+                                placeholder={
+                                  transcriptActionsQuery.isLoading
+                                    ? "Загружаем действия..."
+                                    : transcriptActions.length === 0
+                                      ? "Нет действий с целью «Стенограмма»"
+                                      : "Выберите действие"
+                                }
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {transcriptActions.map((item) => (
+                                <SelectItem key={item.action.id} value={item.action.id}>
+                                  {item.action.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                      ) : (
+                        <div className="rounded-md border border-dashed bg-slate-50 p-3 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
+                          Доступно после сохранения навыка. Сначала создайте навык, затем выберите авто-действие.
+                        </div>
+                      )}
+                      <FormDescription>
+                        Покажем превью обработанного результата и откроем вкладку действия при просмотре стенограммы.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : null}
+            </div>
             <FormField
               control={form.control}
               name="systemPrompt"
@@ -1682,6 +1809,13 @@ export default function SkillsPage() {
 
   const handleSubmit = async (values: SkillFormValues) => {
     const [providerId, modelId] = values.llmKey.split("::");
+    if (values.onTranscriptionMode === "auto_action") {
+      const selectedAction = values.onTranscriptionAutoActionId?.trim();
+      if (!selectedAction) {
+        form.setError("onTranscriptionAutoActionId", { message: "Выберите действие для авто-запуска" });
+        return;
+      }
+    }
     const parseIntegerOrDefault = (candidate: string | undefined, fallback: number) => {
       if (!candidate) {
         return fallback;
@@ -1714,6 +1848,10 @@ export default function SkillsPage() {
       values.ragMode === "selected_collections"
         ? values.ragCollectionIds.map((name) => name.trim()).filter((name) => name.length > 0)
         : [];
+    const autoActionId =
+      values.onTranscriptionMode === "auto_action" && values.onTranscriptionAutoActionId
+        ? values.onTranscriptionAutoActionId.trim() || null
+        : null;
     const payload: SkillPayload = {
       name: values.name.trim(),
       description: values.description?.trim() ? values.description.trim() : null,
@@ -1741,6 +1879,8 @@ export default function SkillsPage() {
         llmMaxTokens: null,
         llmResponseFormat: null,
       },
+      onTranscriptionMode: values.onTranscriptionMode,
+      onTranscriptionAutoActionId: autoActionId,
     };
 
     try {

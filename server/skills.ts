@@ -1,8 +1,8 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
-import { skills, skillKnowledgeBases, knowledgeBases, skillRagModes } from "@shared/schema";
+import { skills, skillKnowledgeBases, knowledgeBases, skillRagModes, skillTranscriptionModes } from "@shared/schema";
 import type { SkillDto, SkillRagConfig, CreateSkillPayload } from "@shared/skills";
-import type { SkillRagMode } from "@shared/schema";
+import type { SkillRagMode, SkillTranscriptionMode } from "@shared/schema";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -20,7 +20,15 @@ type KnowledgeBaseIdRow = { id: string };
 type SkillKnowledgeBaseLinkRow = { skillId: string; knowledgeBaseId: string };
 type EditableSkillColumns = Pick<
   SkillRow,
-  "name" | "description" | "systemPrompt" | "modelId" | "llmProviderConfigId" | "collectionName" | "icon"
+  | "name"
+  | "description"
+  | "systemPrompt"
+  | "modelId"
+  | "llmProviderConfigId"
+  | "collectionName"
+  | "icon"
+  | "onTranscriptionMode"
+  | "onTranscriptionAutoActionId"
 >;
 
 type RagConfigInput = CreateSkillPayload["ragConfig"];
@@ -50,6 +58,7 @@ const DEFAULT_RAG_CONFIG: SkillRagConfig = {
   llmMaxTokens: null,
   llmResponseFormat: null,
 };
+const DEFAULT_TRANSCRIPTION_MODE: SkillTranscriptionMode = "raw_only";
 
 function normalizeNullableString(value: string | null | undefined): string | null {
   if (value === undefined || value === null) {
@@ -85,6 +94,17 @@ const isSkillRagMode = (value: unknown): value is SkillRagMode =>
 
 const normalizeRagModeFromValue = (value: unknown): SkillRagMode =>
   isSkillRagMode(value) ? value : DEFAULT_RAG_CONFIG.mode;
+
+const isSkillTranscriptionMode = (value: unknown): value is SkillTranscriptionMode =>
+  typeof value === "string" && skillTranscriptionModes.includes(value as SkillTranscriptionMode);
+
+const normalizeTranscriptionMode = (value: unknown): SkillTranscriptionMode =>
+  isSkillTranscriptionMode(value) ? value : DEFAULT_TRANSCRIPTION_MODE;
+
+const normalizeActionId = (value: string | null | undefined): string | null => {
+  const normalized = normalizeNullableString(value);
+  return normalized;
+};
 
 function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig {
   if (!input) {
@@ -215,6 +235,8 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
       llmMaxTokens: row.ragLlmMaxTokens ?? DEFAULT_RAG_CONFIG.llmMaxTokens,
       llmResponseFormat: row.ragLlmResponseFormat ?? DEFAULT_RAG_CONFIG.llmResponseFormat,
     },
+    onTranscriptionMode: normalizeTranscriptionMode(row.onTranscriptionMode),
+    onTranscriptionAutoActionId: row.onTranscriptionAutoActionId ?? null,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   };
@@ -303,6 +325,12 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   if (input.icon !== undefined) {
     next.icon = normalizeNullableString(input.icon);
   }
+  if (input.onTranscriptionMode !== undefined) {
+    next.onTranscriptionMode = normalizeTranscriptionMode(input.onTranscriptionMode);
+  }
+  if (input.onTranscriptionAutoActionId !== undefined) {
+    next.onTranscriptionAutoActionId = normalizeActionId(input.onTranscriptionAutoActionId);
+  }
   if (input.knowledgeBaseIds !== undefined) {
     const filtered = input.knowledgeBaseIds.filter(
       (value) => typeof value === "string" && value.trim().length > 0,
@@ -380,6 +408,8 @@ export async function createSkill(
   }
 
   const ragConfig = normalized.ragConfig ?? { ...DEFAULT_RAG_CONFIG };
+  const transcriptionMode = normalized.onTranscriptionMode ?? DEFAULT_TRANSCRIPTION_MODE;
+  const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
 
   const [inserted] = await db
     .insert(skills)
@@ -406,6 +436,8 @@ export async function createSkill(
       ragLlmTemperature: ragConfig.llmTemperature,
       ragLlmMaxTokens: ragConfig.llmMaxTokens,
       ragLlmResponseFormat: ragConfig.llmResponseFormat,
+      onTranscriptionMode: transcriptionMode,
+      onTranscriptionAutoActionId: transcriptionAutoActionId,
       ragBm25Weight: ragConfig.bm25Weight,
       ragBm25Limit: ragConfig.bm25Limit,
       ragVectorWeight: ragConfig.vectorWeight,

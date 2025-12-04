@@ -788,6 +788,11 @@ export const skills = pgTable(
     ragLlmTemperature: doublePrecision("rag_llm_temperature"),
     ragLlmMaxTokens: integer("rag_llm_max_tokens"),
     ragLlmResponseFormat: text("rag_llm_response_format"),
+    onTranscriptionMode: text("on_transcription_mode")
+      .$type<SkillTranscriptionMode>()
+      .notNull()
+      .default("raw_only"),
+    onTranscriptionAutoActionId: varchar("on_transcription_auto_action_id"),
     icon: text("icon"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -954,6 +959,8 @@ export const transcripts = pgTable(
 
 export const skillRagModes = ["all_collections", "selected_collections"] as const;
 export type SkillRagMode = (typeof skillRagModes)[number];
+export const skillTranscriptionModes = ["raw_only", "auto_action"] as const;
+export type SkillTranscriptionMode = (typeof skillTranscriptionModes)[number];
 
 export const skillKnowledgeBases = pgTable(
   "skill_knowledge_bases",
