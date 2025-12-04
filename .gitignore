@@ -14,6 +14,13 @@ text_tsv_output.txt
 suggest.json
 dev-server.log
 
+# Attached assets (screenshots, pasted content from Replit Agent)
+attached_assets/image_*.png
+attached_assets/Pasted-*.txt
+attached_assets/generated_images/
+attached_assets/generated_videos/
+attached_assets/stock_images/
+
 # Playwright
 /test-results/
 /playwright-report/
