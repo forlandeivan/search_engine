@@ -76,7 +76,7 @@ export default function ChatMessagesArea({
   }, [messages]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-slate-50 dark:bg-slate-900">
+    <div className="flex min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-900">
       <header className="flex h-20 items-center justify-between border-b border-slate-200 bg-slate-50 px-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex-1">
           {headerTitle && !isEditingTitle ? (
