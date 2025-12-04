@@ -979,6 +979,15 @@ function SkillFormDialog({
   const selectedKnowledgeBasesDisabled = sortedKnowledgeBases.length === 0;
   const llmDisabled = effectiveLlmOptions.length === 0;
 
+  const getIconComponent = (iconName: string | null | undefined) => {
+    if (!iconName) return null;
+    const iconMap: Record<string, typeof Zap> = {
+      Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
+    };
+    const Icon = iconMap[iconName];
+    return Icon ? <Icon className="h-4 w-4" /> : null;
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-5xl">
@@ -1612,15 +1621,6 @@ export default function SkillsPage() {
         variant: "destructive",
       });
     }
-  };
-
-  const getIconComponent = (iconName: string | null | undefined) => {
-    if (!iconName) return null;
-    const iconMap: Record<string, typeof Zap> = {
-      Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
-    };
-    const Icon = iconMap[iconName];
-    return Icon ? <Icon className="h-4 w-4" /> : null;
   };
 
   const renderKnowledgeBases = (skill: Skill) => {
