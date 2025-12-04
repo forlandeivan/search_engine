@@ -837,6 +837,7 @@ type SkillFormDialogProps = {
   onSubmit: (values: SkillFormValues) => Promise<void>;
   isSubmitting: boolean;
   skill?: Skill | null;
+  getIconComponent: (iconName: string | null | undefined) => JSX.Element | null;
 };
 
 function SkillFormDialog({
@@ -851,6 +852,7 @@ function SkillFormDialog({
   onSubmit,
   isSubmitting,
   skill,
+  getIconComponent,
 }: SkillFormDialogProps) {
   const form = useForm<SkillFormValues>({
     resolver: zodResolver(skillFormSchema),
@@ -978,15 +980,6 @@ function SkillFormDialog({
 
   const selectedKnowledgeBasesDisabled = sortedKnowledgeBases.length === 0;
   const llmDisabled = effectiveLlmOptions.length === 0;
-
-  const getIconComponent = (iconName: string | null | undefined) => {
-    if (!iconName) return null;
-    const iconMap: Record<string, typeof Zap> = {
-      Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
-    };
-    const Icon = iconMap[iconName];
-    return Icon ? <Icon className="h-4 w-4" /> : null;
-  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1668,6 +1661,15 @@ export default function SkillsPage() {
     vectorCollectionsQuery.isLoading ||
     isEmbeddingProvidersLoading;
 
+  const getIconComponent = (iconName: string | null | undefined) => {
+    if (!iconName) return null;
+    const iconMap: Record<string, typeof Zap> = {
+      Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
+    };
+    const Icon = iconMap[iconName];
+    return Icon ? <Icon className="h-4 w-4" /> : null;
+  };
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -1808,6 +1810,7 @@ export default function SkillsPage() {
         onSubmit={handleSubmit}
         isSubmitting={isSaving}
         skill={editingSkill}
+        getIconComponent={getIconComponent}
       />
     </div>
   );
