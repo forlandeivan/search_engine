@@ -320,7 +320,19 @@ export async function reloadYandexAuth(app: Express): Promise<void> {
 
 export async function configureAuth(app: Express): Promise<void> {
   const sessionSecret = process.env.SESSION_SECRET || "dev-session-secret";
-  const cookieSecure = app.get("env") === "production";
+  const cookieSecure =
+    process.env.SESSION_COOKIE_SECURE?.toLowerCase() === "true"
+      ? true
+      : process.env.SESSION_COOKIE_SECURE?.toLowerCase() === "false"
+        ? false
+        : app.get("env") === "production";
+  const cookieSameSiteEnv = (process.env.SESSION_COOKIE_SAMESITE ?? "").toLowerCase();
+  const cookieSameSite: session.CookieOptions["sameSite"] =
+    cookieSameSiteEnv === "none"
+      ? "none"
+      : cookieSameSiteEnv === "strict"
+        ? "strict"
+        : "lax";
 
   const sessionOptions: session.SessionOptions = {
     secret: sessionSecret,
@@ -328,7 +340,7 @@ export async function configureAuth(app: Express): Promise<void> {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: cookieSameSite,
       secure: cookieSecure,
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
     },
