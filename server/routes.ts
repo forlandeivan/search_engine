@@ -9240,6 +9240,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   });
 
+  const decodeUploadFileName = (name?: string | null): string => {
+    if (!name) return "Аудиозапись";
+    try {
+      const decoded = Buffer.from(name, "latin1").toString("utf8");
+      return decoded.trim().length > 0 ? decoded : "Аудиозапись";
+    } catch {
+      return name;
+    }
+  };
+
   app.post(
     "/api/chat/transcribe",
     requireAuth,
@@ -9271,7 +9281,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
         // Create audio message (user-sent audio file)
-        const fileName = file.originalname || "Аудиозапись";
+        const fileName = decodeUploadFileName(file.originalname);
         const audioMetadata: ChatMessageMetadata = {
           type: "audio",
           fileName,
@@ -9293,7 +9303,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           mimeType: file.mimetype,
           lang,
           userId: user.id,
-          originalFileName: file.originalname,
+          originalFileName: fileName,
         });
 
         const transcript = await storage.createTranscript({
@@ -9301,7 +9311,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           chatId,
           sourceFileId: response.uploadResult?.objectKey ?? null,
           status: "processing",
-          title: file.originalname ? `Аудиозапись: ${file.originalname}` : "Аудиозапись заседания",
+          title: file.originalname ? `Аудиозапись: ${fileName}` : "Аудиозапись заседания",
           previewText: null,
           fullText: null,
         });
