@@ -1873,6 +1873,7 @@ export default function SkillsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[60px] text-center">Иконка</TableHead>
                   <TableHead className="w-[220px]">Название</TableHead>
                   <TableHead>Описание</TableHead>
                   <TableHead className="w-[240px]">Базы знаний</TableHead>
@@ -1884,30 +1885,27 @@ export default function SkillsPage() {
               <TableBody>
                 {sortedSkills.map((skill) => (
                   <TableRow key={skill.id}>
-                                        <TableCell>
-
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center">
+                        {getIconComponent(skill.icon) ? (
+                          getIconComponent(skill.icon)
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
                       <div className="space-y-1">
-
                         <div className="flex items-center gap-2">
-
-                          {getIconComponent(skill.icon)}
-
                           <p className="font-semibold leading-tight">{skill.name ?? "Без названия"}</p>
-
                           {skill.isSystem && (
-
                             <Badge variant="outline" className="text-[10px] uppercase">
                               Системный
                             </Badge>
-
                           )}
-
                         </div>
-
                         <p className="text-xs text-muted-foreground">ID: {skill.id}</p>
-
                       </div>
-
                     </TableCell>
                     <TableCell>
                       {skill.description ? (
