@@ -1317,14 +1317,14 @@ function SkillFormDialog({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Иконка навыка</FormLabel>
-                  <Select value={field.value || ""} onValueChange={field.onChange}>
+                  <Select value={field.value || "_none"} onValueChange={(val) => field.onChange(val === "_none" ? "" : val)}>
                     <FormControl>
                       <SelectTrigger>
                         <SelectValue placeholder="Выберите иконку" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="">Без иконки</SelectItem>
+                      <SelectItem value="_none">Без иконки</SelectItem>
                       {ICON_OPTIONS.map((icon) => (
                         <SelectItem key={icon.value} value={icon.value}>
                           {icon.label}
