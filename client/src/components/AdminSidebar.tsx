@@ -1,4 +1,4 @@
-import { Link, useLocation } from "wouter";
+﻿import { Link, useLocation } from "wouter";
 import {
   Sidebar,
   SidebarContent,
@@ -105,68 +105,35 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
   const sections: Array<{ label?: string; items: SidebarItem[] }> = [
     {
       items: [
-        {
-          title: "Рабочие пространства",
-          url: "/admin/workspaces",
-          icon: Building2,
-        },
-        {
-          title: "Пользователи",
-          url: "/admin/users",
-          icon: Users,
-        },
+        { title: "Рабочие пространства", url: "/admin/workspaces", icon: Building2 },
+        { title: "Пользователи", url: "/admin/users", icon: Users },
       ],
     },
     {
       label: "Векторный поиск",
       items: [
-        {
-          title: "Настройки хранилища",
-          url: "/admin/storage",
-          icon: HardDrive,
-        },
-        {
-          title: "Эмбеддинги",
-          url: "/admin/embeddings",
-          icon: Sparkles,
-        },
+        { title: "Настройки хранилища", url: "/admin/storage", icon: HardDrive },
+        { title: "Эмбеддинги", url: "/admin/embeddings", icon: Sparkles },
       ],
     },
     {
       label: "Управление LLM",
       items: [
-        {
-          title: "Провайдеры LLM",
-          url: "/admin/llm",
-          icon: Bot,
-        },
-        {
-          title: "Журнал запусков LLM",
-          url: "/admin/llm-executions",
-          icon: ScrollText,
-        },
+        { title: "Провайдеры LLM", url: "/admin/llm", icon: Bot },
+        { title: "Журнал запусков LLM", url: "/admin/llm-executions", icon: ScrollText },
       ]
     },
     {
       label: "Аутентификация",
+      items: [{ title: "Настройки входа", url: "/admin/auth", icon: ShieldCheck }],
+    },
+    {
+      label: "TTS&STT",
       items: [
-        {
-          title: "Настройки входа",
-          url: "/admin/auth",
-          icon: ShieldCheck,
-        },
+        { title: "TTS&STT", url: "/admin/tts-stt", icon: Mic },
+        { title: "ASR executions", url: "/admin/asr-executions", icon: Mic },
       ],
     },
-      {
-      label: "TTS&STT",
-      items: [
-        {
-          title: "TTS&STT",
-          url: "/admin/tts-stt",
-          icon: Mic,
-        },
-      ],
-    },
 ];
 
   return (
@@ -262,3 +229,4 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
     </Sidebar>
   );
 }
+

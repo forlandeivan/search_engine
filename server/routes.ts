@@ -59,10 +59,16 @@ import {
   UNICA_CHAT_SYSTEM_KEY,
   createUnicaChatSkillForWorkspace,
 } from "./skills";
+import { asrExecutionLogService } from "./asr-execution-log-context";
 import {
   listAdminSkillExecutions,
   getAdminSkillExecutionDetail,
 } from "./admin-skill-executions";
+import {
+  adminAsrExecutionsQuerySchema,
+  getAdminAsrExecutionDetail,
+  listAdminAsrExecutions,
+} from "./admin-asr-executions";
 import { skillExecutionLogService } from "./skill-execution-log-context";
 import {
   SKILL_EXECUTION_STATUS,
@@ -6989,6 +6995,54 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  app.get("/api/admin/asr-executions", requireAdmin, async (req, res, next) => {
+    try {
+      const rawQuery = {
+        from: pickFirstStringOrUndefined(req.query.from),
+        to: pickFirstStringOrUndefined(req.query.to),
+        workspaceId: pickFirstStringOrUndefined(req.query.workspaceId),
+        skillId: pickFirstStringOrUndefined(req.query.skillId),
+        chatId: pickFirstStringOrUndefined(req.query.chatId),
+        provider: pickFirstStringOrUndefined(req.query.provider),
+        status: pickFirstStringOrUndefined(req.query.status),
+        page: pickFirstStringOrUndefined(req.query.page),
+        pageSize: pickFirstStringOrUndefined(req.query.pageSize),
+      };
+      const parsed = adminAsrExecutionsQuerySchema.parse(rawQuery);
+      const fromDate = parsed.from ? new Date(parsed.from) : undefined;
+      const toDate = parsed.to ? new Date(parsed.to) : undefined;
+      const payload = await listAdminAsrExecutions({
+        page: parsed.page,
+        pageSize: parsed.pageSize,
+        status: parsed.status,
+        provider: parsed.provider,
+        workspaceId: parsed.workspaceId,
+        chatId: parsed.chatId,
+        skillId: parsed.skillId,
+        from: fromDate,
+        to: toDate,
+      });
+      res.json(payload);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные параметры запроса", details: error.issues });
+      }
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/asr-executions/:id", requireAdmin, async (req, res, next) => {
+    try {
+      const detail = await getAdminAsrExecutionDetail(req.params.id);
+      if (!detail) {
+        return res.status(404).json({ message: "Запуск не найден" });
+      }
+      res.json(detail);
+    } catch (error) {
+      next(error);
+    }
+  });
+
 
   app.get("/api/embedding/services", requireAuth, async (req, res, next) => {
     try {
@@ -9399,6 +9453,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(404).json({ message: "Чат не найден или недоступен" });
         }
         const workspaceId = chat.workspaceId;
+        const skillIdForChat = chat.skillId ?? null;
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
@@ -9418,6 +9473,32 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           metadata: audioMetadata,
         });
 
+        // Создаём запись выполнения ASR
+        const asrExecution = await asrExecutionLogService.createExecution({
+          workspaceId,
+          skillId: skillIdForChat,
+          chatId,
+          userMessageId: audioMessage.id,
+          provider: "yandex_speechkit",
+          status: "processing",
+          fileName,
+          fileSizeBytes: file.size,
+          language: lang ?? null,
+          startedAt: new Date(),
+        });
+        await asrExecutionLogService.addEvent(asrExecution.id, {
+          stage: "file_uploaded",
+          details: { fileName, fileSizeBytes: file.size, contentType: file.mimetype },
+        });
+        await asrExecutionLogService.addEvent(asrExecution.id, {
+          stage: "audio_message_created",
+          details: { messageId: audioMessage.id, chatId },
+        });
+        audioMessage.metadata = {
+          ...(audioMessage.metadata as Record<string, unknown>),
+          asrExecutionId: asrExecution.id,
+        };
+
         // Use async API for all files regardless of size
         console.info(`[transcribe] Using async API for file (${file.size} bytes)`);
         const response = await yandexSttAsyncService.startAsyncTranscription({
@@ -9427,6 +9508,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           userId: user.id,
           originalFileName: fileName,
           chatId,
+          executionId: asrExecution.id,
         });
 
         const transcript = await storage.createTranscript({
@@ -9442,12 +9524,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         yandexSttAsyncService.setOperationContext(user.id, response.operationId, {
           chatId,
           transcriptId: transcript.id,
+          executionId: asrExecution.id,
         });
 
         const placeholderMetadata: ChatMessageMetadata = {
           type: "transcript",
           transcriptId: transcript.id,
           transcriptStatus: "processing",
+          asrExecutionId: asrExecution.id,
         };
 
         const placeholderMessage = await storage.createChatMessage({
@@ -9455,6 +9539,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           role: "assistant",
           content: "Аудиозапись загружена. Идёт расшифровка...",
           metadata: placeholderMetadata,
+        });
+        await asrExecutionLogService.addEvent(asrExecution.id, {
+          stage: "transcript_placeholder_message_created",
+          details: { transcriptId: transcript.id, placeholderMessageId: placeholderMessage.id },
+        });
+        await asrExecutionLogService.addEvent(asrExecution.id, {
+          stage: "asr_request_sent",
+          details: { provider: "yandex_speechkit", operationId: response.operationId, language: lang ?? null },
         });
 
         res.json({
@@ -9550,7 +9642,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "Операция не завершена или нет текста" });
       }
 
-      const result = status as typeof status & { chatId?: string; transcriptId?: string };
+      const result = status as typeof status & { chatId?: string; transcriptId?: string; executionId?: string };
       if (!result.chatId) {
         return res.status(400).json({ message: "Chat ID не найден в операции" });
       }
@@ -9565,6 +9657,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const autoActionEnabled = Boolean(
         skill && skill.onTranscriptionMode === "auto_action" && skill.onTranscriptionAutoActionId,
       );
+      const asrExecutionId = result.executionId ?? null;
       console.info(
         `[transcribe/complete] chat=${chat.id} skill=${skill?.id ?? "none"} mode=${skill?.onTranscriptionMode ?? "n/a"} autoAction=${skill?.onTranscriptionAutoActionId ?? "none"} enabled=${autoActionEnabled}`,
       );
@@ -9579,8 +9672,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           transcriptId: result.transcriptId,
           transcriptStatus: initialTranscriptStatus,
           previewText: transcriptText.substring(0, 200),
+          asrExecutionId,
         },
       });
+      if (asrExecutionId) {
+        await asrExecutionLogService.addEvent(asrExecutionId, {
+          stage: "asr_result_final",
+          details: { operationId, previewText: transcriptText.slice(0, 200) },
+        });
+      }
 
       if (autoActionEnabled && skill) {
         try {
@@ -9588,6 +9688,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           console.info(
             `[transcribe/complete] auto-action start chat=${chat.id} transcript=${result.transcriptId} action=${actionId}`,
           );
+          if (asrExecutionId) {
+            await asrExecutionLogService.addEvent(asrExecutionId, {
+              stage: "auto_action_triggered",
+              details: { skillId: skill.id, actionId },
+            });
+          }
           const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
           if (!action || action.target !== "transcript") {
             console.warn(
@@ -9635,6 +9741,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           console.info(
             `[transcribe/complete] auto-action success chat=${chat.id} action=${action.id} preview="${previewText.slice(0, 80)}"`,
           );
+          if (asrExecutionId) {
+            await asrExecutionLogService.addEvent(asrExecutionId, {
+              stage: "auto_action_completed",
+              details: { skillId: skill.id, actionId, success: true },
+            });
+          }
           if (result.transcriptId) {
             await storage.updateTranscript(result.transcriptId, {
               previewText,
@@ -9658,6 +9770,20 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             metadata: updatedMetadata as ChatMessageMetadata,
             content: previewText,
           };
+          if (asrExecutionId) {
+            await asrExecutionLogService.addEvent(asrExecutionId, {
+              stage: "transcript_saved",
+              details: { transcriptId: result.transcriptId },
+            });
+            await asrExecutionLogService.addEvent(asrExecutionId, {
+              stage: "transcript_preview_message_created",
+              details: { messageId: createdMessage.id, transcriptId: result.transcriptId },
+            });
+            await asrExecutionLogService.updateExecution(asrExecutionId, {
+              status: "success",
+              finishedAt: new Date(),
+            });
+          }
         } catch (autoError) {
           console.error("[transcribe/complete] авто-действие не удалось:", autoError);
           const failedMetadata = {
@@ -9676,12 +9802,41 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               previewText: transcriptText.substring(0, 200),
             });
           }
+          if (asrExecutionId) {
+            await asrExecutionLogService.addEvent(asrExecutionId, {
+              stage: "auto_action_completed",
+              details: {
+                skillId: skill?.id ?? null,
+                actionId: skill?.onTranscriptionAutoActionId ?? null,
+                success: false,
+                errorMessage: autoError instanceof Error ? autoError.message : String(autoError),
+              },
+            });
+            await asrExecutionLogService.updateExecution(asrExecutionId, {
+              status: "failed",
+              errorMessage: autoError instanceof Error ? autoError.message : String(autoError),
+            });
+          }
         }
       } else {
         if (result.transcriptId) {
           await storage.updateTranscript(result.transcriptId, {
             status: "ready",
             previewText: transcriptText.substring(0, 200),
+          });
+        }
+        if (asrExecutionId) {
+          await asrExecutionLogService.addEvent(asrExecutionId, {
+            stage: "transcript_saved",
+            details: { transcriptId: result.transcriptId },
+          });
+          await asrExecutionLogService.addEvent(asrExecutionId, {
+            stage: "transcript_preview_message_created",
+            details: { messageId: createdMessage.id, transcriptId: result.transcriptId },
+          });
+          await asrExecutionLogService.updateExecution(asrExecutionId, {
+            status: "success",
+            finishedAt: new Date(),
           });
         }
       }

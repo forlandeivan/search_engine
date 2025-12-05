@@ -16,6 +16,7 @@ import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
 import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
 import LlmProvidersPage from "@/pages/LlmProvidersPage";
 import LlmExecutionsPage from "@/pages/LlmExecutionsPage";
+import AsrExecutionsPage from "@/pages/AsrExecutionsPage";
 import TtsSttProvidersPage from "@/pages/TtsSttProvidersPage";
 import SpeechProviderDetailsPage from "@/pages/SpeechProviderDetailsPage";
 import AuthSettingsPage from "@/pages/AuthSettingsPage";
@@ -48,6 +49,12 @@ function AdminRouter() {
       </Route>
       <Route path="/admin/llm-executions">
         <LlmExecutionsPage />
+      </Route>
+      <Route path="/admin/asr-executions/:executionId">
+        {(params) => <AsrExecutionsPage key={params.executionId} />}
+      </Route>
+      <Route path="/admin/asr-executions">
+        <AsrExecutionsPage />
       </Route>
       <Route path="/admin/llm" component={LlmProvidersPage} />
       <Route path="/admin/tts-stt/providers/:providerId">
