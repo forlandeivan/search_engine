@@ -226,6 +226,7 @@ export function TranscriptCanvas({
         placement: "canvas",
         target: "transcript",
         selectionText: sourceText,
+        transcriptId,
       },
       {
         onSuccess: (result) => {
@@ -311,6 +312,7 @@ export function TranscriptCanvas({
         placement: "canvas",
         target: "transcript",
         selectionText: sourceText,
+        transcriptId,
       },
       {
         onSuccess: (result) => {

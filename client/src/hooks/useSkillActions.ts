@@ -46,12 +46,14 @@ export function useRunSkillAction(workspaceId: string) {
       placement,
       target,
       selectionText,
+      transcriptId,
     }: {
       skillId: string;
       actionId: string;
       placement: string;
       target: string;
       selectionText: string;
+      transcriptId?: string;
     }) => {
       const res = await fetch(`/api/skills/${skillId}/actions/${actionId}/run?workspaceId=${workspaceId}`, {
         method: "POST",
@@ -60,7 +62,10 @@ export function useRunSkillAction(workspaceId: string) {
         body: JSON.stringify({
           placement,
           target,
-          context: { selectionText },
+          context: {
+            selectionText,
+            transcriptId,
+          },
         }),
       });
       if (!res.ok) {

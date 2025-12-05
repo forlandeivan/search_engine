@@ -9426,6 +9426,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           lang,
           userId: user.id,
           originalFileName: fileName,
+          chatId,
         });
 
         const transcript = await storage.createTranscript({
@@ -9436,6 +9437,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           title: file.originalname ? `Аудиозапись: ${fileName}` : "Аудиозапись заседания",
           previewText: null,
           fullText: null,
+        });
+
+        yandexSttAsyncService.setOperationContext(user.id, response.operationId, {
+          chatId,
+          transcriptId: transcript.id,
         });
 
         const placeholderMetadata: ChatMessageMetadata = {
@@ -9538,6 +9544,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
       
       if (status.status !== 'completed' || !status.text) {
+        console.warn(
+          `[transcribe/complete] operation=${operationId} not ready: status=${status.status} hasText=${Boolean(status.text)}`,
+        );
         return res.status(400).json({ message: "Операция не завершена или нет текста" });
       }
 
@@ -9556,9 +9565,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const autoActionEnabled = Boolean(
         skill && skill.onTranscriptionMode === "auto_action" && skill.onTranscriptionAutoActionId,
       );
+      console.info(
+        `[transcribe/complete] chat=${chat.id} skill=${skill?.id ?? "none"} mode=${skill?.onTranscriptionMode ?? "n/a"} autoAction=${skill?.onTranscriptionAutoActionId ?? "none"} enabled=${autoActionEnabled}`,
+      );
       const initialTranscriptStatus = autoActionEnabled ? "postprocessing" : "ready";
 
-      const createdMessage = await storage.createChatMessage({
+      let createdMessage = await storage.createChatMessage({
         chatId: result.chatId,
         role: 'assistant',
         content: transcriptText,
@@ -9571,85 +9583,100 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
 
       if (autoActionEnabled && skill) {
-        (async () => {
-          try {
-            const actionId = skill.onTranscriptionAutoActionId!;
-            const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
-            if (!action || action.target !== "transcript") {
-              console.warn(
-                `[transcribe/complete] action ${actionId} не найден/target!=transcript для workspace ${skill.workspaceId}`,
-              );
-              throw new Error("auto action not applicable");
-            }
-            const skillAction = await skillActionsRepository.getForSkillAndAction(skill.id, action.id);
-            if (!skillAction || !skillAction.enabled) {
-              console.warn(
-                `[transcribe/complete] skill=${skill.id} action=${action.id} выключен или не связан, авто-действие пропущено`,
-              );
-              throw new Error("auto action disabled");
-            }
-            const allowedPlacements = action.placements ?? [];
-            const enabledPlacements = skillAction.enabledPlacements ?? [];
-            const placement =
-              enabledPlacements.find((p) => allowedPlacements.includes(p)) ?? allowedPlacements[0] ?? null;
-            if (!placement) {
-              console.warn(
-                `[transcribe/complete] action=${action.id} нет подходящих placements для авто-действия`,
-              );
-              throw new Error("no placement");
-            }
-
-            const ctx = {
-              transcriptId: result.transcriptId,
-              selectionText: transcriptText,
-            };
-
-            console.info(
-              `[transcribe/complete] авто-действие skill=${skill.id} action=${action.id} placement=${placement}`,
+        try {
+          const actionId = skill.onTranscriptionAutoActionId!;
+          console.info(
+            `[transcribe/complete] auto-action start chat=${chat.id} transcript=${result.transcriptId} action=${actionId}`,
+          );
+          const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
+          if (!action || action.target !== "transcript") {
+            console.warn(
+              `[transcribe/complete] action ${actionId} не найден/target!=transcript для workspace ${skill.workspaceId}`,
             );
-            const resultAction = await runTranscriptActionCommon({
-              userId: chat.userId,
-              skill,
-              action,
-              placement,
-              transcriptId: result.transcriptId,
-              transcriptText,
-              context: ctx,
-            });
-
-            if (result.transcriptId) {
-              await storage.updateTranscript(result.transcriptId, {
-                previewText: (resultAction.text ?? transcriptText).slice(0, 200),
-                defaultViewActionId: action.id,
-                status: "ready",
-              });
-            }
-            await storage.updateChatMessage(createdMessage.id, {
-              metadata: {
-                ...(createdMessage.metadata as Record<string, unknown>),
-                transcriptStatus: "ready",
-                previewText: (resultAction.text ?? transcriptText).slice(0, 200),
-                autoActionFailed: false,
-              },
-            });
-          } catch (autoError) {
-            console.error("[transcribe/complete] авто-действие не удалось:", autoError);
-            await storage.updateChatMessage(createdMessage.id, {
-              metadata: {
-                ...(createdMessage.metadata as Record<string, unknown>),
-                transcriptStatus: "auto_action_failed",
-                autoActionFailed: true,
-                previewText: transcriptText.substring(0, 200),
-              },
-            });
-            if (result.transcriptId) {
-              await storage.updateTranscript(result.transcriptId, {
-                status: "ready",
-                previewText: transcriptText.substring(0, 200),
-              });
-            }
+            throw new Error("auto action not applicable");
           }
-        })();
+          const skillAction = await skillActionsRepository.getForSkillAndAction(skill.id, action.id);
+          if (!skillAction || !skillAction.enabled) {
+            console.warn(
+              `[transcribe/complete] skill=${skill.id} action=${action.id} выключен или не связан, авто-действие пропущено`,
+            );
+            throw new Error("auto action disabled");
+          }
+          const allowedPlacements = action.placements ?? [];
+          const enabledPlacements = skillAction.enabledPlacements ?? [];
+          const placement =
+            enabledPlacements.find((p) => allowedPlacements.includes(p)) ?? allowedPlacements[0] ?? null;
+          if (!placement) {
+            console.warn(
+              `[transcribe/complete] action=${action.id} нет подходящих placements для авто-действия`,
+            );
+            throw new Error("no placement");
+          }
+
+          const ctx = {
+            transcriptId: result.transcriptId,
+            selectionText: transcriptText,
+          };
+
+          console.info(
+            `[transcribe/complete] авто-действие skill=${skill.id} action=${action.id} placement=${placement}`,
+          );
+          const resultAction = await runTranscriptActionCommon({
+            userId: chat.userId,
+            skill,
+            action,
+            placement,
+            transcriptId: result.transcriptId,
+            transcriptText,
+            context: ctx,
+          });
+
+          const previewText = (resultAction.text ?? transcriptText).slice(0, 200);
+          console.info(
+            `[transcribe/complete] auto-action success chat=${chat.id} action=${action.id} preview="${previewText.slice(0, 80)}"`,
+          );
+          if (result.transcriptId) {
+            await storage.updateTranscript(result.transcriptId, {
+              previewText,
+              defaultViewActionId: action.id,
+              status: "ready",
+            });
+          }
+          const updatedMetadata = {
+            ...(createdMessage.metadata as Record<string, unknown>),
+            transcriptStatus: "ready",
+            previewText,
+            defaultViewActionId: action.id,
+            autoActionFailed: false,
+          };
+          await storage.updateChatMessage(createdMessage.id, {
+            metadata: updatedMetadata,
+            content: previewText,
+          });
+          createdMessage = {
+            ...createdMessage,
+            metadata: updatedMetadata as ChatMessageMetadata,
+            content: previewText,
+          };
+        } catch (autoError) {
+          console.error("[transcribe/complete] авто-действие не удалось:", autoError);
+          const failedMetadata = {
+            ...(createdMessage.metadata as Record<string, unknown>),
+            transcriptStatus: "auto_action_failed",
+            autoActionFailed: true,
+            previewText: transcriptText.substring(0, 200),
+          };
+          await storage.updateChatMessage(createdMessage.id, {
+            metadata: failedMetadata,
+          });
+          createdMessage = { ...createdMessage, metadata: failedMetadata as ChatMessageMetadata };
+          if (result.transcriptId) {
+            await storage.updateTranscript(result.transcriptId, {
+              status: "ready",
+              previewText: transcriptText.substring(0, 200),
+            });
+          }
+        }
       } else {
         if (result.transcriptId) {
           await storage.updateTranscript(result.transcriptId, {

@@ -60,6 +60,8 @@ interface TranscriptionOperation {
   status: "pending" | "completed" | "failed";
   result?: { text: string; lang: string };
   error?: string;
+  chatId?: string;
+  transcriptId?: string;
 }
 
 const operationsCache = new Map<string, TranscriptionOperation>();
@@ -146,6 +148,8 @@ export interface AsyncTranscribeOptions {
   lang?: string;
   userId: string;
   originalFileName?: string;
+  chatId?: string;
+  transcriptId?: string;
 }
 
 export interface AsyncTranscribeResponse {
@@ -159,6 +163,8 @@ export interface TranscribeOperationStatus {
   status: "pending" | "completed" | "failed";
   result?: { text: string; lang: string };
   error?: string;
+  chatId?: string;
+  transcriptId?: string;
 }
 
 interface SecretValues {
@@ -172,7 +178,7 @@ interface SecretValues {
 
 class YandexSttAsyncService {
   async startAsyncTranscription(options: AsyncTranscribeOptions): Promise<AsyncTranscribeResponse> {
-    let { audioBuffer, mimeType, userId, originalFileName } = options;
+    let { audioBuffer, mimeType, userId, originalFileName, chatId, transcriptId } = options;
 
     const providerDetail = await speechProviderService.getActiveSttProviderOrThrow();
     const { provider, secrets } = providerDetail;
@@ -337,6 +343,8 @@ class YandexSttAsyncService {
         bucketName: uploadResult.bucketName,
         createdAt: new Date(),
         status: "pending",
+        chatId,
+        transcriptId,
       });
 
       console.info(`[yandex-stt-async] Operation started: ${operationId}`);
@@ -378,6 +386,8 @@ class YandexSttAsyncService {
         status: cached.status,
         result: cached.result,
         error: cached.error,
+        chatId: cached.chatId,
+        transcriptId: cached.transcriptId,
       };
     }
 
@@ -407,17 +417,19 @@ class YandexSttAsyncService {
         const errorText = await response.text();
         console.error(`[yandex-stt-async] Operation check error: ${response.status} - ${errorText}`);
 
-        if (response.status === 404) {
-          cached.status = "failed";
-          cached.error = "Операция не найдена на сервере Yandex";
-          await this.updateTranscriptAndMessage(cached.objectKey, "failed", undefined, cached.error);
-          await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
-          return {
-            operationId,
-            status: "failed",
-            error: "Операция не найдена на сервере Yandex",
-          };
-        }
+      if (response.status === 404) {
+        cached.status = "failed";
+        cached.error = "Операция не найдена на сервере Yandex";
+        await this.updateTranscriptAndMessage(cached.objectKey, "failed", undefined, cached.error);
+        await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
+        return {
+          operationId,
+          status: "failed",
+          error: "Операция не найдена на сервере Yandex",
+          chatId: cached.chatId,
+          transcriptId: cached.transcriptId,
+        };
+      }
 
         throw new YandexSttAsyncError(`Ошибка при проверке статуса: ${response.status}`, response.status, "CHECK_ERROR");
       }
@@ -460,6 +472,9 @@ class YandexSttAsyncService {
 
         cached.status = "completed";
         cached.result = { text, lang: "ru-RU" };
+        if (!cached.chatId && jobId) {
+          cached.chatId = jobId;
+        }
 
         await this.updateTranscriptAndMessage(cached.objectKey, "ready", text);
         await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
@@ -470,12 +485,16 @@ class YandexSttAsyncService {
           operationId,
           status: "completed",
           result: { text, lang: "ru-RU" },
+          chatId: cached.chatId,
+          transcriptId: cached.transcriptId,
         };
       }
 
       return {
         operationId,
         status: "pending",
+        chatId: cached.chatId,
+        transcriptId: cached.transcriptId,
       };
     } catch (error) {
       if (error instanceof YandexSttAsyncError) {
@@ -488,6 +507,21 @@ class YandexSttAsyncService {
         "CHECK_ERROR"
       );
     }
+  }
+
+  setOperationContext(userId: string, operationId: string, context: { chatId?: string; transcriptId?: string }): void {
+    const cacheId = `${userId}_${operationId}`;
+    const cached = operationsCache.get(cacheId);
+    if (!cached) {
+      return;
+    }
+    if (context.chatId) {
+      cached.chatId = context.chatId;
+    }
+    if (context.transcriptId) {
+      cached.transcriptId = context.transcriptId;
+    }
+    operationsCache.set(cacheId, cached);
   }
 
   private async cleanupOperationFile(

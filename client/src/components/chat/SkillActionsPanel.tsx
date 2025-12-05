@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 type SkillActionsPanelProps = {
   workspaceId: string;
   skillId: string;
+  transcriptId: string;
   transcriptText: string;
   onActionComplete?: (result: unknown) => void;
 };
@@ -13,6 +14,7 @@ type SkillActionsPanelProps = {
 export function SkillActionsPanel({
   workspaceId,
   skillId,
+  transcriptId,
   transcriptText,
   onActionComplete,
 }: SkillActionsPanelProps) {
@@ -70,6 +72,7 @@ export function SkillActionsPanel({
         placement: "canvas",
         target: "transcript",
         selectionText: transcriptText,
+        transcriptId,
       },
       {
         onSuccess: (result) => {
