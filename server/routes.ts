@@ -8211,6 +8211,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         workspaceId,
         userId: user.id,
         messageText: payload.content ?? "",
+        messageMetadata: message?.metadata ?? {},
+        chatTitle: message?.chatTitle ?? undefined,
       });
       res.status(201).json({ message });
     } catch (error) {
@@ -8419,6 +8421,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           workspaceId,
           userId: user.id,
           messageText: payload.content ?? "",
+          messageMetadata: userMessageRecord?.metadata ?? {},
           chatTitle: chat.title,
         });
       } catch (messageError) {
@@ -9475,6 +9478,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           role: "user",
           content: fileName,
           metadata: audioMetadata,
+        });
+        scheduleChatTitleGenerationIfNeeded({
+          chatId,
+          workspaceId,
+          userId: user.id,
+          messageText: fileName ?? "",
+          messageMetadata: audioMetadata,
+          chatTitle: chat.title,
         });
 
         // Создаём запись выполнения ASR

@@ -6,6 +6,7 @@ type ScheduleArgs = {
   workspaceId: string;
   userId: string;
   messageText: string;
+  messageMetadata?: Record<string, unknown> | null;
   chatTitle?: string | null;
 };
 
@@ -19,12 +20,17 @@ type JobPayload = {
 const pendingChatTitleJobs = new Set<string>();
 const CHAT_TITLE_GENERATION_DELAY_MS = 500;
 const AUDIO_TITLE_MAX_LENGTH = 80;
+const AUDIO_EXT_REGEX = /\.(mp3|wav|wave|ogg|opus|webm|m4a|aac)$/i;
 
 function extractAudioFileName(raw: string): string | null {
   if (!raw || typeof raw !== "string") return null;
   const trimmed = raw.trim();
   if (trimmed.startsWith("__AUDIO_FILE__:")) {
     return trimmed.substring("__AUDIO_FILE__:".length).trim() || null;
+  }
+  // Если передан просто файл (название с расширением)
+  if (AUDIO_EXT_REGEX.test(trimmed)) {
+    return trimmed;
   }
   return null;
 }
@@ -47,14 +53,16 @@ export function scheduleChatTitleGenerationIfNeeded(args: ScheduleArgs): void {
     return;
   }
 
-  const audioFileName = extractAudioFileName(trimmedMessage);
+  const metadata = (args.messageMetadata ?? {}) as Record<string, unknown>;
+  const metaFileName =
+    typeof metadata?.fileName === "string" && metadata.fileName.trim() ? metadata.fileName.trim() : null;
+  const metaType = typeof metadata?.type === "string" ? metadata.type : "";
+  const audioFileName =
+    metaFileName ||
+    (metaType === "audio" ? metaFileName ?? trimmedMessage : extractAudioFileName(trimmedMessage));
   if (audioFileName) {
     void (async () => {
       try {
-        const messageCount = await storage.countChatMessages(args.chatId);
-        if (messageCount !== 1) {
-          return;
-        }
         const title = buildAudioTitle(audioFileName);
         if (!title) return;
         const updated = await storage.updateChatTitleIfEmpty(args.chatId, title);
