@@ -5730,7 +5730,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   const executionId = execution?.id ?? null;
 
   const prompt = action.promptTemplate.replace(/{{\s*text\s*}}/gi, transcriptText);
-  const llmProvider = await resolveLlmConfigForAction(skill, action);
+  const resolvedProvider = await resolveLlmConfigForAction(skill, action);
+  const modelOverride = skill.modelId && skill.modelId.trim().length > 0 ? skill.modelId.trim() : null;
+  const llmProvider = modelOverride ? { ...resolvedProvider, model: modelOverride } : resolvedProvider;
   const requestConfig = mergeLlmRequestConfig(llmProvider);
 
   const messages: Array<{ role: string; content: string }> = [];
