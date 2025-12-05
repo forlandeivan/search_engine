@@ -9678,6 +9678,20 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       if (asrExecutionId) {
         await asrExecutionLogService.addEvent(asrExecutionId, {
           stage: "asr_result_final",
+          details: {
+            provider: "yandex_speechkit",
+            operationId,
+            previewText: transcriptText.substring(0, 200),
+          },
+        });
+        await asrExecutionLogService.updateExecution(asrExecutionId, {
+          transcriptMessageId: createdMessage.id,
+          transcriptId: result.transcriptId ?? null,
+        });
+      }
+      if (asrExecutionId) {
+        await asrExecutionLogService.addEvent(asrExecutionId, {
+          stage: "asr_result_final",
           details: { operationId, previewText: transcriptText.slice(0, 200) },
         });
       }
@@ -9782,6 +9796,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             await asrExecutionLogService.updateExecution(asrExecutionId, {
               status: "success",
               finishedAt: new Date(),
+              transcriptId: result.transcriptId ?? null,
             });
           }
         } catch (autoError) {
@@ -9815,6 +9830,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             await asrExecutionLogService.updateExecution(asrExecutionId, {
               status: "failed",
               errorMessage: autoError instanceof Error ? autoError.message : String(autoError),
+              transcriptId: result.transcriptId ?? null,
+              transcriptMessageId: createdMessage.id,
+              finishedAt: new Date(),
             });
           }
         }
@@ -9837,6 +9855,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           await asrExecutionLogService.updateExecution(asrExecutionId, {
             status: "success",
             finishedAt: new Date(),
+            transcriptId: result.transcriptId ?? null,
+            transcriptMessageId: createdMessage.id,
           });
         }
       }

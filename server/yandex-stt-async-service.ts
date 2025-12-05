@@ -427,6 +427,22 @@ class YandexSttAsyncService {
         cached.error = "Операция не найдена на сервере Yandex";
         await this.updateTranscriptAndMessage(cached.objectKey, "failed", undefined, cached.error);
         await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
+        if (cached.executionId) {
+          const { asrExecutionLogService } = await import("./asr-execution-log-context");
+          await asrExecutionLogService.addEvent(
+            cached.executionId,
+            {
+              stage: "asr_result_error",
+              details: {
+                provider: "yandex_speechkit",
+                operationId,
+                errorMessage: "Операция не найдена на сервере Yandex",
+              },
+            },
+            "failed",
+            { message: "Операция не найдена на сервере Yandex" },
+          );
+        }
         return {
           operationId,
           status: "failed",
@@ -451,6 +467,23 @@ class YandexSttAsyncService {
         cached.error = operationData.error.message;
         await this.updateTranscriptAndMessage(cached.objectKey, "failed", undefined, operationData.error.message);
         await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
+        if (cached.executionId) {
+          const { asrExecutionLogService } = await import("./asr-execution-log-context");
+          await asrExecutionLogService.addEvent(
+            cached.executionId,
+            {
+              stage: "asr_result_error",
+              details: {
+                provider: "yandex_speechkit",
+                operationId,
+                errorMessage: operationData.error.message,
+                errorCode: String(operationData.error.code ?? ""),
+              },
+            },
+            "failed",
+            { code: String(operationData.error.code ?? ""), message: operationData.error.message },
+          );
+        }
         return {
           operationId,
           status: "failed",
@@ -512,6 +545,21 @@ class YandexSttAsyncService {
         throw error;
       }
       console.error("[yandex-stt-async] Status check error:", error);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const { asrExecutionLogService } = await import("./asr-execution-log-context");
+      const cacheId = `${userId}_${operationId}`;
+      const cached = operationsCache.get(cacheId);
+      if (cached?.executionId) {
+        await asrExecutionLogService.addEvent(
+          cached.executionId,
+          {
+            stage: "asr_result_error",
+            details: { provider: "yandex_speechkit", operationId, errorMessage: errMsg },
+          },
+          "failed",
+          { message: errMsg },
+        );
+      }
       throw new YandexSttAsyncError(
         `Ошибка при проверке статуса операции: ${error instanceof Error ? error.message : String(error)}`,
         503,
