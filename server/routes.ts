@@ -9658,6 +9658,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         skill && skill.onTranscriptionMode === "auto_action" && skill.onTranscriptionAutoActionId,
       );
       const asrExecutionId = result.executionId ?? null;
+      if (asrExecutionId) {
+        await asrExecutionLogService.addEvent(asrExecutionId, {
+          stage: "transcribe_complete_called",
+          details: { operationId, chatId: chat.id, transcriptId: result.transcriptId ?? null },
+        });
+      }
+      console.info(
+        `[transcribe/complete][auto-action-check] chat=${chat.id} skill=${skill?.id ?? "none"} ` +
+          `mode=${skill?.onTranscriptionMode ?? "n/a"} autoActionId=${skill?.onTranscriptionAutoActionId ?? "none"} ` +
+          `enabled=${autoActionEnabled} executionId=${asrExecutionId ?? "none"} transcriptId=${result.transcriptId ?? "none"}`,
+      );
       console.info(
         `[transcribe/complete] chat=${chat.id} skill=${skill?.id ?? "none"} mode=${skill?.onTranscriptionMode ?? "n/a"} autoAction=${skill?.onTranscriptionAutoActionId ?? "none"} enabled=${autoActionEnabled}`,
       );
@@ -9716,6 +9727,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             throw new Error("auto action not applicable");
           }
           const skillAction = await skillActionsRepository.getForSkillAndAction(skill.id, action.id);
+          console.info(
+            `[transcribe/complete][auto-action-check] action=${action.id} placements=${action.placements} skillActionEnabled=${skillAction?.enabled} enabledPlacements=${skillAction?.enabledPlacements}`,
+          );
           if (!skillAction || !skillAction.enabled) {
             console.warn(
               `[transcribe/complete] skill=${skill.id} action=${action.id} выключен или не связан, авто-действие пропущено`,
@@ -9741,6 +9755,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           console.info(
             `[transcribe/complete] авто-действие skill=${skill.id} action=${action.id} placement=${placement}`,
           );
+          if (asrExecutionId) {
+            await asrExecutionLogService.addEvent(asrExecutionId, {
+              stage: "auto_action_triggered",
+              details: { skillId: skill.id, actionId: action.id, placement },
+            });
+          }
           const resultAction = await runTranscriptActionCommon({
             userId: chat.userId,
             skill,

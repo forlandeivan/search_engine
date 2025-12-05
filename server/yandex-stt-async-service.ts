@@ -518,17 +518,98 @@ class YandexSttAsyncService {
           cached.executionId = jobId;
         }
 
-        await this.updateTranscriptAndMessage(cached.objectKey, "ready", text);
+        // Подготавливаем контекст для авто-действия (если оно включено у навыка)
+        const { storage } = await import("./storage");
+        const { getSkillById } = await import("./skills");
+        const transcriptForContext =
+          cached.transcriptId && cached.transcriptId.trim().length > 0
+            ? await storage.getTranscriptById(cached.transcriptId)
+            : cached.objectKey
+              ? await storage.getTranscriptBySourceFileId(cached.objectKey)
+              : undefined;
+        const chatForContext =
+          transcriptForContext && transcriptForContext.chatId
+            ? await storage.getChatSessionById(transcriptForContext.chatId)
+            : cached.chatId
+              ? await storage.getChatSessionById(cached.chatId)
+              : undefined;
+        const skillForContext =
+          chatForContext?.skillId && chatForContext.workspaceId
+            ? await getSkillById(chatForContext.workspaceId, chatForContext.skillId)
+            : null;
+        const autoActionEnabled =
+          Boolean(
+            skillForContext &&
+              skillForContext.onTranscriptionMode === "auto_action" &&
+              skillForContext.onTranscriptionAutoActionId,
+          ) && Boolean(transcriptForContext);
+
+        const initialStatus: TranscriptStatus = autoActionEnabled ? "postprocessing" : "ready";
+        await this.updateTranscriptAndMessage(cached.objectKey, initialStatus, text);
         await this.cleanupOperationFile(cached, s3AccessKeyId, s3SecretAccessKey, s3BucketName);
 
         console.info(`[yandex-stt-async] Operation completed: ${operationId}, chunks: ${chunks.length}, text length: ${text.length}`);
+
+        // Логируем в журнал ASR
+        if (cached.executionId) {
+          const { asrExecutionLogService } = await import("./asr-execution-log-context");
+          const previewText = text.slice(0, 200);
+          await asrExecutionLogService.addEvent(cached.executionId, {
+            stage: "asr_result_final",
+            details: { provider: "yandex_speechkit", operationId, previewText },
+          });
+        }
+
+        // Авто-действие (если настроено)
+        if (autoActionEnabled && transcriptForContext && chatForContext && skillForContext) {
+          await this.applyAutoActionForTranscript({
+            transcript: transcriptForContext,
+            chat: chatForContext,
+            skill: skillForContext,
+            fullText: text,
+            executionId: cached.executionId ?? null,
+            operationId,
+          });
+        } else {
+          // Обычное завершение без авто-действия
+          const transcriptId =
+            transcriptForContext?.id ??
+            (cached.transcriptId ? cached.transcriptId : undefined) ??
+            null;
+          let transcriptMessageId: string | null = null;
+          if (transcriptId) {
+            const message = await storage.findChatMessageByTranscriptId(transcriptId);
+            transcriptMessageId = message?.id ?? null;
+          }
+          if (cached.executionId) {
+            const { asrExecutionLogService } = await import("./asr-execution-log-context");
+            if (transcriptId) {
+              await asrExecutionLogService.addEvent(cached.executionId, {
+                stage: "transcript_saved",
+                details: { transcriptId },
+              });
+            }
+            if (transcriptMessageId || transcriptId) {
+              await asrExecutionLogService.addEvent(cached.executionId, {
+                stage: "transcript_preview_message_created",
+                details: { messageId: transcriptMessageId, transcriptId },
+              });
+            }
+            await asrExecutionLogService.updateExecution(cached.executionId, {
+              status: "success",
+              finishedAt: new Date(),
+              transcriptId: transcriptId ?? null,
+              transcriptMessageId,
+            });
+          }
+        }
 
         return {
           operationId,
           status: "completed",
           result: { text, lang: "ru-RU" },
           chatId: cached.chatId,
-          transcriptId: cached.transcriptId,
+          transcriptId: transcriptForContext?.id ?? cached.transcriptId,
           executionId: cached.executionId,
         };
       }
@@ -588,6 +669,184 @@ class YandexSttAsyncService {
       cached.executionId = context.executionId;
     }
     operationsCache.set(cacheId, cached);
+  }
+
+  private async applyAutoActionForTranscript(params: {
+    transcript: import("@shared/schema").Transcript;
+    chat: import("@shared/schema").ChatSession;
+    skill: import("@shared/skills").SkillDto;
+    fullText: string;
+    executionId: string | null;
+    operationId: string;
+  }): Promise<void> {
+    const { transcript, chat, skill, fullText, executionId, operationId } = params;
+    const { storage } = await import("./storage");
+    const { actionsRepository } = await import("./actions");
+    const { skillActionsRepository } = await import("./skill-actions");
+    const { resolveLlmConfigForAction } = await import("./llm-config-resolver");
+    const { mergeLlmRequestConfig } = await import("./search/utils");
+    const { fetchAccessToken } = await import("./llm-access-token");
+    const { executeLlmCompletion } = await import("./llm-client");
+    const { asrExecutionLogService } = await import("./asr-execution-log-context");
+
+    const actionId = skill.onTranscriptionAutoActionId;
+    if (!actionId) {
+      return;
+    }
+
+    const message = await storage.findChatMessageByTranscriptId(transcript.id);
+
+    try {
+      const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
+      if (!action || action.target !== "transcript") {
+        throw new Error("auto action not found or wrong target");
+      }
+      const skillAction = await skillActionsRepository.getForSkillAndAction(skill.id, action.id);
+      if (!skillAction || !skillAction.enabled) {
+        throw new Error("auto action disabled for skill");
+      }
+      const allowedPlacements = action.placements ?? [];
+      const enabledPlacements = skillAction.enabledPlacements ?? [];
+      const placement =
+        enabledPlacements.find((p) => allowedPlacements.includes(p)) ?? allowedPlacements[0] ?? null;
+      if (!placement) {
+        throw new Error("no placement available for auto action");
+      }
+
+      if (executionId) {
+        await asrExecutionLogService.addEvent(executionId, {
+          stage: "auto_action_triggered",
+          details: { skillId: skill.id, actionId, placement },
+        });
+      }
+
+      const prompt = action.promptTemplate.replace(/{{\s*text\s*}}/gi, fullText);
+      const llmProvider = await resolveLlmConfigForAction(skill, action);
+      const requestConfig = mergeLlmRequestConfig(llmProvider);
+
+      const messages: Array<{ role: string; content: string }> = [];
+      if (requestConfig.systemPrompt && requestConfig.systemPrompt.trim()) {
+        messages.push({ role: "system", content: requestConfig.systemPrompt.trim() });
+      }
+      messages.push({ role: "user", content: prompt });
+
+      const requestBody: Record<string, unknown> = {
+        [requestConfig.modelField]: llmProvider.model,
+        [requestConfig.messagesField]: messages,
+      };
+
+      if (requestConfig.temperature !== undefined) {
+        requestBody.temperature = requestConfig.temperature;
+      }
+      if (requestConfig.maxTokens !== undefined) {
+        requestBody.max_tokens = requestConfig.maxTokens;
+      }
+
+      const accessToken = await fetchAccessToken(llmProvider);
+      const completion = await executeLlmCompletion(llmProvider, accessToken, requestBody);
+      const llmText = completion.answer ?? "";
+
+      let previewText = llmText && llmText.trim().length > 0 ? llmText.trim().slice(0, 200) : "";
+      if (!previewText) {
+        previewText = this.buildPreview(fullText);
+      }
+
+      // Для replace_text перезаписываем стенограмму, иначе сохраняем raw текст и делаем превью по авто-действию.
+      if (action.outputMode === "replace_text") {
+        await storage.updateTranscript(transcript.id, {
+          fullText: llmText,
+          lastEditedByUserId: chat.userId,
+        });
+      }
+
+      await storage.updateTranscript(transcript.id, {
+        status: "ready",
+        previewText,
+        defaultViewActionId: action.id,
+      });
+
+      if (message) {
+        const baseMetadata = (message.metadata as Record<string, unknown>) ?? {};
+        const metadata = {
+          ...baseMetadata,
+          transcriptStatus: "ready",
+          previewText,
+          defaultViewActionId: action.id,
+          autoActionFailed: false,
+        };
+        await storage.updateChatMessage(message.id, {
+          metadata,
+          content: previewText,
+        });
+      }
+
+      if (executionId) {
+        await asrExecutionLogService.addEvent(executionId, {
+          stage: "auto_action_completed",
+          details: { skillId: skill.id, actionId, success: true },
+        });
+        await asrExecutionLogService.addEvent(executionId, {
+          stage: "transcript_saved",
+          details: { transcriptId: transcript.id },
+        });
+        await asrExecutionLogService.addEvent(executionId, {
+          stage: "transcript_preview_message_created",
+          details: { messageId: message?.id, transcriptId: transcript.id },
+        });
+        await asrExecutionLogService.updateExecution(executionId, {
+          status: "success",
+          finishedAt: new Date(),
+          transcriptId: transcript.id,
+          transcriptMessageId: message?.id ?? null,
+        });
+      }
+    } catch (error) {
+      console.error("[yandex-stt-async] auto action failed:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (executionId) {
+        const { asrExecutionLogService } = await import("./asr-execution-log-context");
+        await asrExecutionLogService.addEvent(executionId, {
+          stage: "auto_action_completed",
+          details: { skillId: skill.id, actionId: skill.onTranscriptionAutoActionId, success: false, errorMessage },
+        });
+        await asrExecutionLogService.updateExecution(executionId, {
+          status: "failed",
+          errorMessage,
+          finishedAt: new Date(),
+          transcriptId: transcript.id,
+        });
+      }
+
+      // Отмечаем карточку/стенограмму как готовую, но с ошибкой авто-действия
+      const fallbackPreview = this.buildPreview(fullText);
+      await storage.updateTranscript(transcript.id, {
+        status: "ready",
+        previewText: fallbackPreview,
+      });
+      const message = await storage.findChatMessageByTranscriptId(transcript.id);
+      if (message) {
+        const baseMetadata = (message.metadata as Record<string, unknown>) ?? {};
+        const metadata = {
+          ...baseMetadata,
+          transcriptStatus: "auto_action_failed",
+          autoActionFailed: true,
+          previewText: fallbackPreview,
+        };
+        await storage.updateChatMessage(message.id, { metadata });
+
+        if (executionId) {
+          const { asrExecutionLogService } = await import("./asr-execution-log-context");
+          await asrExecutionLogService.addEvent(executionId, {
+            stage: "transcript_saved",
+            details: { transcriptId: transcript.id },
+          });
+          await asrExecutionLogService.addEvent(executionId, {
+            stage: "transcript_preview_message_created",
+            details: { messageId: message.id, transcriptId: transcript.id },
+          });
+        }
+      }
+    }
   }
 
   private async cleanupOperationFile(
@@ -668,9 +927,11 @@ class YandexSttAsyncService {
       previewText: string | null;
     }> = { status };
 
-    if (status === "ready" && fullText !== undefined) {
+    if (fullText !== undefined) {
       updates.fullText = fullText;
-      updates.previewText = this.buildPreview(fullText);
+      if (status === "ready") {
+        updates.previewText = this.buildPreview(fullText);
+      }
     }
 
     if (status === "failed" && !updates.previewText) {
