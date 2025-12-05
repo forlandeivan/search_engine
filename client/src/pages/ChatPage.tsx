@@ -390,6 +390,8 @@ export default function ChatPage({ params }: ChatPageProps) {
           );
           return [...filtered, audioMessage, placeholderMessage];
         });
+        // Обновляем список чатов: название может смениться после загрузки аудио
+        queryClient.invalidateQueries({ queryKey: ["chats"] }).catch(() => {});
 
         const pollOperation = async () => {
           let attempts = 0;
@@ -427,13 +429,16 @@ export default function ChatPage({ params }: ChatPageProps) {
                           : msg,
                       )
                     );
+                    await queryClient.invalidateQueries({ queryKey: ["chats"] });
                   } else {
                     setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                     await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
+                    await queryClient.invalidateQueries({ queryKey: ["chats"] });
                   }
                 } else {
                   setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                   await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
+                  await queryClient.invalidateQueries({ queryKey: ["chats"] });
                 }
                 return;
               }
@@ -441,6 +446,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               if (status.status === 'failed') {
                 setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                 setStreamError(status.error || 'Транскрибация не удалась. Попробуйте снова.');
+                await queryClient.invalidateQueries({ queryKey: ["chats"] });
                 return;
               }
 
