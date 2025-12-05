@@ -24,6 +24,7 @@ import {
   chatSessions,
   chatMessages,
   transcripts,
+  transcriptViews,
   speechProviders,
   speechProviderSecrets,
   type KnowledgeBaseSearchSettingsRow,
@@ -57,6 +58,8 @@ import {
   type ChatMessageInsert,
   type Transcript,
   type TranscriptInsert,
+  type TranscriptView,
+  type TranscriptViewInsert,
   type TranscriptStatus,
   type ChatMessageMetadata,
   type SpeechProvider,
@@ -1250,6 +1253,18 @@ async function ensureTranscriptsTable(): Promise<void> {
     await db.execute(
       sql`ALTER TABLE "transcripts" ADD COLUMN IF NOT EXISTS "last_edited_by_user_id" varchar`,
     );
+    await db.execute(
+      sql`ALTER TABLE "transcripts" ADD COLUMN IF NOT EXISTS "default_view_id" varchar`,
+    );
+    await db.execute(
+      sql`ALTER TABLE "transcripts" ADD COLUMN IF NOT EXISTS "default_view_action_id" varchar`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "transcripts_default_view_idx" ON "transcripts" ("default_view_id")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "transcripts_default_view_action_idx" ON "transcripts" ("default_view_action_id")`,
+    );
 
     transcriptsTableEnsured = true;
   })();
@@ -1258,10 +1273,47 @@ async function ensureTranscriptsTable(): Promise<void> {
   ensuringTranscriptsTable = null;
 }
 
+let transcriptViewsEnsured = false;
+let ensuringTranscriptViewsTable: Promise<void> | null = null;
+
+async function ensureTranscriptViewsTable(): Promise<void> {
+  if (transcriptViewsEnsured) {
+    return;
+  }
+  if (ensuringTranscriptViewsTable) {
+    await ensuringTranscriptViewsTable;
+    return;
+  }
+
+  ensuringTranscriptViewsTable = (async () => {
+    const uuidExpression = await getUuidGenerationExpression();
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "transcript_views" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "transcript_id" varchar NOT NULL REFERENCES "transcripts"("id") ON DELETE CASCADE,
+        "action_id" varchar,
+        "label" text NOT NULL,
+        "content" text NOT NULL,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "transcript_views_transcript_idx" ON "transcript_views" ("transcript_id")`,
+    );
+
+    transcriptViewsEnsured = true;
+  })();
+
+  await ensuringTranscriptViewsTable;
+  ensuringTranscriptViewsTable = null;
+}
+
 async function ensureChatTables(): Promise<void> {
   await ensureChatSessionsTable();
   await ensureChatMessagesTable();
   await ensureTranscriptsTable();
+  await ensureTranscriptViewsTable();
 }
 
 export async function ensureKnowledgeBaseTables(): Promise<void> {
@@ -4823,12 +4875,33 @@ export class DatabaseStorage implements IStorage {
     return found ?? undefined;
   }
 
+  async listTranscriptViews(transcriptId: string): Promise<TranscriptView[]> {
+    await ensureTranscriptViewsTable();
+    return await this.db
+      .select()
+      .from(transcriptViews)
+      .where(eq(transcriptViews.transcriptId, transcriptId))
+      .orderBy(transcriptViews.createdAt);
+  }
+
+  async createTranscriptView(values: TranscriptViewInsert): Promise<TranscriptView> {
+    await ensureTranscriptViewsTable();
+    const [created] = await this.db.insert(transcriptViews).values(values).returning();
+    return created;
+  }
+
   async updateTranscript(
     id: string,
     updates: Partial<
       Pick<
         TranscriptInsert,
-        "status" | "title" | "previewText" | "fullText" | "lastEditedByUserId" | "defaultViewActionId"
+        | "status"
+        | "title"
+        | "previewText"
+        | "fullText"
+        | "lastEditedByUserId"
+        | "defaultViewActionId"
+        | "defaultViewId"
       >
     >,
   ): Promise<Transcript | undefined> {

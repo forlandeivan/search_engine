@@ -9308,6 +9308,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         if (!transcript || transcript.workspaceId !== workspaceId) {
           return res.status(404).json({ message: "Стенограмма не найдена" });
         }
+        const views = await storage.listTranscriptViews(transcriptId);
 
         // Проверка доступа: пользователь должен быть участником workspace (по аналогии с чатом)
         const workspaceMember = await storage.getWorkspaceMember(user.id, workspaceId);
@@ -9327,6 +9328,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           createdAt: transcript.createdAt,
           updatedAt: transcript.updatedAt,
           lastEditedByUserId: transcript.lastEditedByUserId ?? null,
+          defaultViewActionId: transcript.defaultViewActionId ?? null,
+          defaultViewId: transcript.defaultViewId ?? null,
+          views,
         });
       } catch (error) {
         next(error);

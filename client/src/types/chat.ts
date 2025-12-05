@@ -26,10 +26,20 @@ export type ChatMessage = {
     transcriptId?: string;
     transcriptStatus?: "processing" | "postprocessing" | "ready" | "failed" | "auto_action_failed";
     previewText?: string;
+    defaultViewId?: string | null;
     defaultViewActionId?: string | null;
     preferredTranscriptTabId?: string | null;
     [key: string]: unknown;
   };
+};
+
+export type TranscriptView = {
+  id: string;
+  transcriptId: string;
+  actionId?: string | null;
+  label: string;
+  content: string;
+  createdAt: string;
 };
 
 export type Transcript = {
@@ -41,8 +51,10 @@ export type Transcript = {
   title: string | null;
   previewText: string | null;
   fullText: string | null;
+  defaultViewId?: string | null;
   defaultViewActionId?: string | null;
-   lastEditedByUserId?: string | null;
+  views?: TranscriptView[];
+  lastEditedByUserId?: string | null;
   createdAt: string;
   updatedAt: string;
 };

@@ -746,10 +746,18 @@ class YandexSttAsyncService {
       const completion = await executeLlmCompletion(llmProvider, accessToken, requestBody);
       const llmText = completion.answer ?? "";
 
-      let previewText = llmText && llmText.trim().length > 0 ? llmText.trim().slice(0, 200) : "";
+      const viewContent = llmText && llmText.trim().length > 0 ? llmText.trim() : fullText;
+      let previewText = viewContent ? viewContent.slice(0, 200) : "";
       if (!previewText) {
         previewText = this.buildPreview(fullText);
       }
+
+      const view = await storage.createTranscriptView({
+        transcriptId: transcript.id,
+        actionId: action.id,
+        label: action.label ?? "Авто-действие",
+        content: viewContent,
+      });
 
       // Для replace_text перезаписываем стенограмму, иначе сохраняем raw текст и делаем превью по авто-действию.
       if (action.outputMode === "replace_text") {
@@ -759,10 +767,12 @@ class YandexSttAsyncService {
         });
       }
 
+      const defaultViewId = transcript.defaultViewId ?? view.id;
       await storage.updateTranscript(transcript.id, {
         status: "ready",
         previewText,
         defaultViewActionId: action.id,
+        defaultViewId,
       });
 
       if (message) {
@@ -772,6 +782,8 @@ class YandexSttAsyncService {
           transcriptStatus: "ready",
           previewText,
           defaultViewActionId: action.id,
+          defaultViewId,
+          preferredTranscriptTabId: view.id,
           autoActionFailed: false,
         };
         await storage.updateChatMessage(message.id, {
@@ -783,15 +795,15 @@ class YandexSttAsyncService {
       if (executionId) {
         await asrExecutionLogService.addEvent(executionId, {
           stage: "auto_action_completed",
-          details: { skillId: skill.id, actionId, success: true },
+          details: { skillId: skill.id, actionId, actionLabel: action.label, success: true, viewId: view.id },
         });
         await asrExecutionLogService.addEvent(executionId, {
           stage: "transcript_saved",
-          details: { transcriptId: transcript.id },
+          details: { transcriptId: transcript.id, viewId: view.id, defaultViewId },
         });
         await asrExecutionLogService.addEvent(executionId, {
           stage: "transcript_preview_message_created",
-          details: { messageId: message?.id, transcriptId: transcript.id },
+          details: { messageId: message?.id, transcriptId: transcript.id, viewId: view.id, defaultViewId },
         });
         await asrExecutionLogService.updateExecution(executionId, {
           status: "success",

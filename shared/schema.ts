@@ -6,6 +6,7 @@ import {
   timestamp,
   integer,
   boolean,
+  json,
   jsonb,
   customType,
   primaryKey,
@@ -13,6 +14,9 @@ import {
   uniqueIndex,
   index,
   doublePrecision,
+  uuid,
+  bigint,
+  pgEnum,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -192,6 +196,7 @@ export const knowledgeBases = pgTable("knowledge_bases", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+const knowledgeNodeTypeEnum = pgEnum("knowledge_node_type", ["folder", "document"]);
 export const knowledgeNodes = pgTable(
   "knowledge_nodes",
   {
@@ -204,7 +209,7 @@ export const knowledgeNodes = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     parentId: varchar("parent_id"),
     title: text("title").notNull().default("Без названия"),
-    type: text("type").$type<KnowledgeBaseNodeType>().notNull().default("document"),
+    type: knowledgeNodeTypeEnum("type").$type<KnowledgeBaseNodeType>().notNull().default("document"),
     content: text("content"),
     slug: text("slug").notNull().default(""),
     path: ltree("path").notNull(),
@@ -947,6 +952,7 @@ export const transcripts = pgTable(
     previewText: text("preview_text"),
     fullText: text("full_text"),
     lastEditedByUserId: varchar("last_edited_by_user_id"),
+    defaultViewId: varchar("default_view_id"),
     defaultViewActionId: varchar("default_view_action_id"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -955,7 +961,25 @@ export const transcripts = pgTable(
     workspaceIdx: index("transcripts_workspace_idx").on(table.workspaceId),
     chatIdx: index("transcripts_chat_idx").on(table.chatId),
     statusIdx: index("transcripts_status_idx").on(table.status),
-    defaultViewIdx: index("transcripts_default_view_action_idx").on(table.defaultViewActionId),
+    defaultViewIdx: index("transcripts_default_view_idx").on(table.defaultViewId),
+    defaultViewActionIdx: index("transcripts_default_view_action_idx").on(table.defaultViewActionId),
+  }),
+);
+
+export const transcriptViews = pgTable(
+  "transcript_views",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    transcriptId: varchar("transcript_id")
+      .notNull()
+      .references(() => transcripts.id, { onDelete: "cascade" }),
+    actionId: varchar("action_id"),
+    label: text("label").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    transcriptIdx: index("transcript_views_transcript_idx").on(table.transcriptId),
   }),
 );
 
@@ -1384,6 +1408,48 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type ChatMessageInsert = typeof chatMessages.$inferInsert;
 export type Transcript = typeof transcripts.$inferSelect;
 export type TranscriptInsert = typeof transcripts.$inferInsert;
+export type TranscriptView = typeof transcriptViews.$inferSelect;
+export type TranscriptViewInsert = typeof transcriptViews.$inferInsert;
+export const sessions = pgTable("session", {
+  sid: varchar("sid").primaryKey(),
+  sess: json("sess").notNull(),
+  expire: timestamp("expire", { precision: 6, withTimezone: false }).notNull(),
+});
+export type SessionRow = typeof sessions.$inferSelect;
+export const asrExecutions = pgTable(
+  "asr_executions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    workspaceId: uuid("workspace_id"),
+    skillId: uuid("skill_id"),
+    chatId: uuid("chat_id"),
+    userMessageId: uuid("user_message_id"),
+    transcriptMessageId: uuid("transcript_message_id"),
+    transcriptId: uuid("transcript_id"),
+    provider: text("provider"),
+    mode: text("mode"),
+    status: text("status").notNull().default("pending"),
+    language: text("language"),
+    fileName: text("file_name"),
+    fileSizeBytes: bigint("file_size_bytes", { mode: "bigint" }),
+    durationMs: bigint("duration_ms", { mode: "bigint" }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    pipelineEvents: jsonb("pipeline_events").$type<unknown[]>(),
+  },
+  (table) => ({
+    createdAtIdx: index("asr_executions_created_at_idx").on(table.createdAt),
+    workspaceIdx: index("asr_executions_workspace_idx").on(table.workspaceId, table.createdAt),
+    statusIdx: index("asr_executions_status_idx").on(table.status, table.createdAt),
+  }),
+);
+
+export type AsrExecution = typeof asrExecutions.$inferSelect;
+export type AsrExecutionInsert = typeof asrExecutions.$inferInsert;
 export type KnowledgeBaseRagRequest = typeof knowledgeBaseRagRequests.$inferSelect;
 export type KnowledgeBaseRagRequestInsert = typeof knowledgeBaseRagRequests.$inferInsert;
 export type KnowledgeBaseSearchSettingsRow = typeof knowledgeBaseSearchSettings.$inferSelect;

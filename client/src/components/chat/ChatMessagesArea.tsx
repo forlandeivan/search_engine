@@ -330,6 +330,7 @@ function ChatBubble({
                 onOpenTranscript?.(
                   metadata.transcriptId,
                   (
+                    (metadata as Record<string, unknown>)?.defaultViewId ??
                     (metadata as Record<string, unknown>)?.preferredTranscriptTabId ??
                     (metadata as Record<string, unknown>)?.defaultViewActionId ??
                     null

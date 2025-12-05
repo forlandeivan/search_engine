@@ -63,37 +63,69 @@ export function TranscriptCanvas({
   const [initializedTab, setInitializedTab] = useState(false);
 
   useEffect(() => {
-    const text = transcript?.fullText ?? "";
-    if (tabs.length === 0) {
-      setTabs([
-        {
-          id: "original",
-          title: "Исходный",
-          content: text,
-          originalContent: text,
-          isLoading: false,
-          type: "original",
-          hasChanges: false,
-        },
-      ]);
-    } else if (transcript) {
-      setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === "original"
+    if (!transcript) return;
+    const text = transcript.fullText ?? "";
+    const viewTabs =
+      transcript.views?.map((view) => ({
+        id: view.id,
+        title: view.label || "Версия",
+        content: view.content ?? "",
+        originalContent: view.content ?? "",
+        isLoading: false,
+        type: "action_result" as const,
+        actionId: view.actionId ?? undefined,
+        hasChanges: false,
+      })) ?? [];
+
+    setTabs((prev) => {
+      const existingMap = new Map(prev.map((t) => [t.id, t]));
+      const originalExisting = existingMap.get("original");
+      const originalTab: CanvasTab = originalExisting
+        ? {
+            ...originalExisting,
+            content: originalExisting.hasChanges ? originalExisting.content : text,
+            originalContent: text,
+          }
+        : {
+            id: "original",
+            title: "Исходный",
+            content: text,
+            originalContent: text,
+            isLoading: false,
+            type: "original",
+            hasChanges: false,
+          };
+
+      const nextTabs: CanvasTab[] = [originalTab];
+      for (const vt of viewTabs) {
+        const existing = existingMap.get(vt.id);
+        nextTabs.push(
+          existing
             ? {
-                ...tab,
-                content: tab.hasChanges ? tab.content : text,
-                originalContent: text,
+                ...existing,
+                content: existing.hasChanges ? existing.content : vt.content,
+                originalContent: vt.originalContent,
+                type: "action_result",
+                actionId: vt.actionId,
+                isLoading: false,
               }
-            : tab
-        )
-      );
-    }
-  }, [transcript?.fullText]);
+            : vt,
+        );
+      }
+      return nextTabs;
+    });
+  }, [transcript?.id, transcript?.fullText, transcript?.views]);
 
   // Инициализация активного таба с учётом initialTabId или дефолтного таба транскрипта
   useEffect(() => {
-    const preferredTabId = initialTabId ?? transcript?.defaultViewActionId ?? null;
+    let preferredTabId = initialTabId ?? transcript?.defaultViewId ?? null;
+    if (!preferredTabId && transcript?.defaultViewActionId) {
+      const tabByAction = tabs.find((t) => t.actionId === transcript.defaultViewActionId);
+      if (tabByAction) {
+        preferredTabId = tabByAction.id;
+      }
+    }
+
     if (!initializedTab && preferredTabId && tabs.some((t) => t.id === preferredTabId)) {
       setActiveTabId(preferredTabId);
       setInitializedTab(true);
