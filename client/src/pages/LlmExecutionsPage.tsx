@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { CalendarIcon, Filter, RefreshCcw } from "lucide-react";
 import { useLocation, useRoute } from "wouter";
@@ -42,6 +42,7 @@ import { useAdminWorkspaces } from "@/hooks/useAdminWorkspaces";
 import { useLlmExecutionFiltersState, DEFAULT_EXECUTIONS_DAYS } from "@/hooks/useLlmExecutionFiltersState";
 import { useLlmExecutionsList } from "@/hooks/useLlmExecutions";
 import { useSkills } from "@/hooks/useSkills";
+import { Switch } from "@/components/ui/switch";
 import { LlmExecutionDetailsPanel } from "@/components/llm-executions/LlmExecutionDetailsPanel";
 import { EXECUTION_STATUS_COLORS, EXECUTION_STATUS_LABELS } from "@/components/llm-executions/status";
 import { formatExecutionDuration, formatExecutionTimestamp } from "@/lib/llm-execution-format";
@@ -95,7 +96,30 @@ export default function LlmExecutionsPage({ selectedExecutionId }: LlmExecutions
   }, [currentLocation, detailParams?.executionId]);
   const effectiveExecutionId = selectedExecutionId ?? locationExecutionId;
 
-  const { executions, pagination, isLoading, isError, error } = useLlmExecutionsList(params);
+  const { executions, pagination, isLoading, isFetching, isError, error, refetch } = useLlmExecutionsList(params);
+  const [debugEnabled, setDebugEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/llm-debug", { credentials: "include" })
+      .then((res) => res.json())
+      .then((data) => setDebugEnabled(Boolean(data?.enabled)))
+      .catch(() => setDebugEnabled(false));
+  }, []);
+
+  const toggleDebug = async (value: boolean) => {
+    setDebugEnabled(value);
+    try {
+      await fetch("/api/admin/llm-debug", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ enabled: value }),
+      });
+    } catch {
+      // rollback on failure
+      setDebugEnabled((prev) => !prev);
+    }
+  };
   const totalPages = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
   const dateLabel = useMemo(() => {
     if (dateRange?.from && dateRange?.to) {
@@ -290,7 +314,31 @@ export default function LlmExecutionsPage({ selectedExecutionId }: LlmExecutions
 
           <Card>
             <CardHeader>
-              <CardTitle>История запусков</CardTitle>
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <CardTitle>История запусков</CardTitle>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Switch
+                      id="llm-debug-toggle"
+                      checked={Boolean(debugEnabled)}
+                      onCheckedChange={(checked) => toggleDebug(Boolean(checked))}
+                      disabled={debugEnabled === null}
+                    />
+                    <label htmlFor="llm-debug-toggle" className="cursor-pointer">
+                      Режим отладки (логировать промпты)
+                    </label>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => refetch()}
+                  disabled={isFetching}
+                  title="Обновить список"
+                >
+                  <RefreshCcw className={cn("h-4 w-4", isFetching && "animate-spin")} />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {isError ? (

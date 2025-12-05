@@ -209,6 +209,7 @@ import {
 } from "./yandex-stt-async-service";
 import { yandexIamTokenService } from "./yandex-iam-token-service";
 import multer from "multer";
+import { getLlmPromptDebugConfig, isLlmPromptDebugEnabled, setLlmPromptDebugEnabled } from "./llm-debug-config";
 
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
@@ -5700,7 +5701,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   applied: boolean;
   appliedChanges: unknown;
 }> {
-  const LLM_DEBUG_PROMPTS = process.env.LLM_LOG_DEBUG_PROMPTS === "true";
+  const LLM_DEBUG_PROMPTS = isLlmPromptDebugEnabled();
   const truncate = (value: string, limit = 2000) =>
     typeof value === "string" && value.length > limit ? `${value.slice(0, limit)}…` : value;
   const { userId, skill, action, transcriptId, transcriptText, context } = payload;
@@ -7133,6 +7134,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     } catch (error) {
       next(error);
     }
+  });
+
+  // Toggle for LLM prompt debug logging
+  app.get("/api/admin/llm-debug", requireAdmin, async (_req, res) => {
+    res.json(getLlmPromptDebugConfig());
+  });
+
+  app.post("/api/admin/llm-debug", requireAdmin, async (req, res) => {
+    const enabled = Boolean((req.body as { enabled?: unknown })?.enabled);
+    setLlmPromptDebugEnabled(enabled);
+    res.json(getLlmPromptDebugConfig());
   });
 
 
