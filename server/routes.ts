@@ -5700,6 +5700,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   applied: boolean;
   appliedChanges: unknown;
 }> {
+  const LLM_DEBUG_PROMPTS = process.env.LLM_LOG_DEBUG_PROMPTS === "true";
+  const truncate = (value: string, limit = 2000) =>
+    typeof value === "string" && value.length > limit ? `${value.slice(0, limit)}…` : value;
   const { userId, skill, action, transcriptId, transcriptText, context } = payload;
   const logContext = {
     workspaceId: skill.workspaceId,
@@ -5767,6 +5770,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           actionId: action.id,
           target: action.target,
           placement: payload.placement,
+          ...(LLM_DEBUG_PROMPTS
+            ? {
+                prompt: truncate(prompt, 2000),
+                systemPrompt: truncate(requestConfig.systemPrompt ?? "", 1200),
+              }
+            : {}),
         },
         output: {
           usageTokens: completion.usageTokens ?? null,
@@ -5784,6 +5793,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           actionId: action.id,
           target: action.target,
           placement: payload.placement,
+          ...(LLM_DEBUG_PROMPTS
+            ? {
+                prompt: truncate(prompt, 2000),
+                systemPrompt: truncate(requestConfig.systemPrompt ?? "", 1200),
+              }
+            : {}),
         },
         errorMessage: llmError instanceof Error ? llmError.message : String(llmError),
       });

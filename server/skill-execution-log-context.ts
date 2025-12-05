@@ -1,6 +1,13 @@
-import { InMemorySkillExecutionLogRepository, SkillExecutionLogService } from "./skill-execution-log-service";
+import {
+  InMemorySkillExecutionLogRepository,
+  DatabaseSkillExecutionLogRepository,
+  SkillExecutionLogService,
+} from "./skill-execution-log-service";
 
-const repository = new InMemorySkillExecutionLogRepository();
+const repository =
+  process.env.SKILL_EXECUTION_LOG_STORAGE === "memory"
+    ? new InMemorySkillExecutionLogRepository()
+    : new DatabaseSkillExecutionLogRepository();
 
 const skillExecutionLogService = new SkillExecutionLogService(repository, {
   enabled: process.env.SKILL_EXECUTION_LOG_ENABLED !== "false",

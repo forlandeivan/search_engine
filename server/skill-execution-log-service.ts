@@ -1,4 +1,6 @@
 import { randomUUID } from "crypto";
+import { sql } from "drizzle-orm";
+import { db } from "./db";
 import type { JsonValue } from "./json-types";
 import {
   SkillExecutionRecord,
@@ -310,4 +312,132 @@ function cloneRecord<T>(value: T): T {
     return structuredClone(value);
   }
   return JSON.parse(JSON.stringify(value));
+}
+
+export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRepository {
+  private mapExecution(row: any): SkillExecutionRecord {
+    return {
+      id: row.id,
+      workspaceId: row.workspace_id,
+      userId: row.user_id,
+      skillId: row.skill_id,
+      chatId: row.chat_id,
+      userMessageId: row.user_message_id,
+      source: row.source,
+      status: row.status,
+      hasStepErrors: row.has_step_errors ?? false,
+      startedAt: new Date(row.started_at),
+      finishedAt: row.finished_at ? new Date(row.finished_at) : null,
+      metadata: row.metadata ?? undefined,
+    };
+  }
+
+  private mapStep(row: any): SkillExecutionStepRecord {
+    return {
+      id: row.id,
+      executionId: row.execution_id,
+      order: Number(row.order),
+      type: row.type,
+      status: row.status,
+      startedAt: new Date(row.started_at),
+      finishedAt: row.finished_at ? new Date(row.finished_at) : null,
+      inputPayload: row.input_payload ?? undefined,
+      outputPayload: row.output_payload ?? undefined,
+      errorCode: row.error_code ?? null,
+      errorMessage: row.error_message ?? null,
+      diagnosticInfo: row.diagnostic_info ?? null,
+    };
+  }
+
+  async createExecution(record: SkillExecutionRecord): Promise<void> {
+    await db.execute(sql`
+      INSERT INTO skill_executions (
+        id, workspace_id, user_id, skill_id, chat_id, user_message_id, source, status,
+        has_step_errors, started_at, finished_at, metadata
+      ) VALUES (
+        ${record.id},
+        ${record.workspaceId},
+        ${record.userId},
+        ${record.skillId},
+        ${record.chatId},
+        ${record.userMessageId},
+        ${record.source},
+        ${record.status},
+        ${record.hasStepErrors},
+        ${record.startedAt.toISOString()},
+        ${record.finishedAt ? record.finishedAt.toISOString() : null},
+        ${record.metadata ?? null}::jsonb
+      )
+    `);
+  }
+
+  async updateExecution(id: string, updates: Partial<SkillExecutionRecord>): Promise<void> {
+    const fragments: any[] = [];
+    const add = (fragment: any) => fragments.push(fragment);
+
+    if (updates.workspaceId !== undefined) add(sql`workspace_id = ${updates.workspaceId}`);
+    if (updates.userId !== undefined) add(sql`user_id = ${updates.userId}`);
+    if (updates.skillId !== undefined) add(sql`skill_id = ${updates.skillId}`);
+    if (updates.chatId !== undefined) add(sql`chat_id = ${updates.chatId}`);
+    if (updates.userMessageId !== undefined) add(sql`user_message_id = ${updates.userMessageId}`);
+    if (updates.source !== undefined) add(sql`source = ${updates.source}`);
+    if (updates.status !== undefined) add(sql`status = ${updates.status}`);
+    if (updates.hasStepErrors !== undefined) add(sql`has_step_errors = ${updates.hasStepErrors}`);
+    if (updates.startedAt !== undefined)
+      add(sql`started_at = ${updates.startedAt ? updates.startedAt.toISOString() : null}`);
+    if (updates.finishedAt !== undefined)
+      add(sql`finished_at = ${updates.finishedAt ? updates.finishedAt.toISOString() : null}`);
+    if (updates.metadata !== undefined) add(sql`metadata = ${updates.metadata ?? null}::jsonb`);
+
+    if (fragments.length === 0) return;
+    const setClause = fragments.reduce((acc, part, idx) => (idx === 0 ? part : sql`${acc}, ${part}`));
+    await db.execute(sql`UPDATE skill_executions SET ${setClause} WHERE id = ${id}`);
+  }
+
+  async createStep(record: SkillExecutionStepRecord): Promise<void> {
+    await db.execute(sql`
+      INSERT INTO skill_execution_steps (
+        id, execution_id, "order", type, status,
+        started_at, finished_at, input_payload, output_payload, error_code, error_message, diagnostic_info
+      ) VALUES (
+        ${record.id},
+        ${record.executionId},
+        ${record.order},
+        ${record.type},
+        ${record.status},
+        ${record.startedAt.toISOString()},
+        ${record.finishedAt ? record.finishedAt.toISOString() : null},
+        ${record.inputPayload ?? null}::jsonb,
+        ${record.outputPayload ?? null}::jsonb,
+        ${record.errorCode ?? null},
+        ${record.errorMessage ?? null},
+        ${record.diagnosticInfo ?? null}
+      )
+    `);
+  }
+
+  async listExecutions(): Promise<SkillExecutionRecord[]> {
+    const result = await db.execute(sql`SELECT * FROM skill_executions ORDER BY started_at DESC`);
+    const rows = (result as any)?.rows ?? [];
+    return rows.map((row: any) => this.mapExecution(row));
+  }
+
+  async getExecutionById(id: string): Promise<SkillExecutionRecord | null> {
+    const result = await db.execute(sql`SELECT * FROM skill_executions WHERE id = ${id} LIMIT 1`);
+    const row = (result as any)?.rows?.[0];
+    return row ? this.mapExecution(row) : null;
+  }
+
+  async listExecutionSteps(executionId: string): Promise<SkillExecutionStepRecord[]> {
+    const result = await db.execute(
+      sql`SELECT * FROM skill_execution_steps WHERE execution_id = ${executionId} ORDER BY "order" ASC`,
+    );
+    const rows = (result as any)?.rows ?? [];
+    return rows.map((row: any) => this.mapStep(row));
+  }
+
+  async deleteExecutions(executionIds: readonly string[]): Promise<void> {
+    if (!executionIds || executionIds.length === 0) return;
+    await db.execute(sql`DELETE FROM skill_executions WHERE id = ANY(${sql.array(executionIds, "text")})`);
+  }
 }
