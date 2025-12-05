@@ -395,7 +395,8 @@ export default function ChatPage({ params }: ChatPageProps) {
 
         const pollOperation = async () => {
           let attempts = 0;
-          const maxAttempts = 600;
+          const maxAttempts = 900; // до ~30 минут при интервале 2с
+          const delayMs = 2000;
 
           while (attempts < maxAttempts) {
             try {
@@ -451,9 +452,15 @@ export default function ChatPage({ params }: ChatPageProps) {
               }
 
               attempts += 1;
+              if (attempts < maxAttempts) {
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
+              }
             } catch (error) {
               console.error('[ChatPage] Poll error:', error);
               attempts += 1;
+              if (attempts < maxAttempts) {
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
+              }
             }
           }
 
