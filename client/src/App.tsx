@@ -159,8 +159,8 @@ function HeaderUserArea({ user }: { user: PublicUser }) {
 
 function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   const style = {
-    "--sidebar-width": "20rem",
-    "--sidebar-width-icon": "4rem",
+    "--sidebar-width": "220px",
+    "--sidebar-width-icon": "48px",
   } as CSSProperties;
 
   return (
@@ -186,8 +186,8 @@ function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: Works
 
 function MainAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   const style = {
-    "--sidebar-width": "20rem",
-    "--sidebar-width-icon": "4rem",
+    "--sidebar-width": "220px",
+    "--sidebar-width-icon": "48px",
   } as CSSProperties;
 
   return (
