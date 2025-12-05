@@ -18,13 +18,60 @@ type JobPayload = {
 
 const pendingChatTitleJobs = new Set<string>();
 const CHAT_TITLE_GENERATION_DELAY_MS = 500;
+const AUDIO_TITLE_MAX_LENGTH = 80;
+
+function extractAudioFileName(raw: string): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("__AUDIO_FILE__:")) {
+    return trimmed.substring("__AUDIO_FILE__:".length).trim() || null;
+  }
+  return null;
+}
+
+function buildAudioTitle(fileName: string): string | null {
+  if (!fileName) return null;
+  const base = fileName.split("/").pop() ?? fileName;
+  const withoutExt = base.replace(/\.[^.]+$/, "");
+  const cleaned = withoutExt.replace(/[_]+/g, " ").trim();
+  if (!cleaned) return null;
+  const limited = cleaned.length > AUDIO_TITLE_MAX_LENGTH ? cleaned.slice(0, AUDIO_TITLE_MAX_LENGTH).trim() : cleaned;
+  return limited || null;
+}
 
 export function scheduleChatTitleGenerationIfNeeded(args: ScheduleArgs): void {
-  const trimmedMessage = (args.messageText ?? "").trim();
-  if (!trimmedMessage) {
+  const rawMessage = args.messageText ?? "";
+  const trimmedMessage = rawMessage.trim();
+  const hasTitleAlready = args.chatTitle && args.chatTitle.trim().length > 0;
+  if (hasTitleAlready) {
     return;
   }
-  if (args.chatTitle && args.chatTitle.trim().length > 0) {
+
+  const audioFileName = extractAudioFileName(trimmedMessage);
+  if (audioFileName) {
+    void (async () => {
+      try {
+        const messageCount = await storage.countChatMessages(args.chatId);
+        if (messageCount !== 1) {
+          return;
+        }
+        const title = buildAudioTitle(audioFileName);
+        if (!title) return;
+        const updated = await storage.updateChatTitleIfEmpty(args.chatId, title);
+        if (updated) {
+          console.info(`[chat-title-job] chat=${args.chatId} title set from audio file: ${title}`);
+        }
+      } catch (error) {
+        console.warn(
+          `[chat-title-job] failed to set audio title for chat=${args.chatId}:`,
+          error instanceof Error ? error : String(error),
+        );
+      }
+    })();
+    return;
+  }
+
+  if (!trimmedMessage) {
     return;
   }
 
