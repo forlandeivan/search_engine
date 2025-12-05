@@ -5701,6 +5701,33 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   appliedChanges: unknown;
 }> {
   const { userId, skill, action, transcriptId, transcriptText, context } = payload;
+  const logContext = {
+    workspaceId: skill.workspaceId,
+    skillId: skill.id,
+    userId,
+    chatId: typeof context?.chatId === "string" ? context.chatId : undefined,
+    actionId: action.id,
+    target: action.target,
+    placement: payload.placement,
+    transcriptId: transcriptId ?? undefined,
+    trigger: typeof context?.trigger === "string" ? context.trigger : undefined,
+  };
+  const execution = await skillExecutionLogService.startExecution({
+    workspaceId: logContext.workspaceId,
+    skillId: logContext.skillId,
+    userId: logContext.userId ?? null,
+    chatId: logContext.chatId ?? null,
+    userMessageId: null,
+    source: "workspace_skill",
+    metadata: {
+      trigger: logContext.trigger ?? "manual_action",
+      actionId: logContext.actionId,
+      target: logContext.target,
+      placement: logContext.placement,
+      transcriptId: logContext.transcriptId,
+    },
+  });
+  const executionId = execution?.id ?? null;
 
   const prompt = action.promptTemplate.replace(/{{\s*text\s*}}/gi, transcriptText);
   const llmProvider = await resolveLlmConfigForAction(skill, action);
@@ -5725,7 +5752,43 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   }
 
   const accessToken = await fetchAccessToken(llmProvider);
-  const completion = await executeLlmCompletion(llmProvider, accessToken, requestBody);
+  let completion: Awaited<ReturnType<typeof executeLlmCompletion>>;
+  try {
+    completion = await executeLlmCompletion(llmProvider, accessToken, requestBody);
+    if (executionId) {
+      await skillExecutionLogService.logStepSuccess({
+        executionId,
+        type: "CALL_LLM",
+        input: {
+          model: llmProvider.model,
+          provider: llmProvider.name,
+          actionId: action.id,
+          target: action.target,
+          placement: payload.placement,
+        },
+        output: {
+          usageTokens: completion.usageTokens ?? null,
+        },
+      });
+    }
+  } catch (llmError) {
+    if (executionId) {
+      await skillExecutionLogService.logStepError({
+        executionId,
+        type: "CALL_LLM",
+        input: {
+          model: llmProvider.model,
+          provider: llmProvider.name,
+          actionId: action.id,
+          target: action.target,
+          placement: payload.placement,
+        },
+        errorMessage: llmError instanceof Error ? llmError.message : String(llmError),
+      });
+      await skillExecutionLogService.markExecutionFailed(executionId);
+    }
+    throw llmError;
+  }
   const llmText = completion.answer;
 
   // Применяем только replace_text для transcript
@@ -5733,15 +5796,24 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     console.warn(
       `[auto-action] action=${action.id} outputMode=${action.outputMode} не поддерживается для авто-действия`,
     );
+    if (executionId) {
+      await skillExecutionLogService.markExecutionSuccess(executionId);
+    }
     return { text: llmText, applied: false, appliedChanges: null };
   }
   if (!transcriptId) {
     console.warn(`[auto-action] transcriptId отсутствует, пропускаем применение`);
+    if (executionId) {
+      await skillExecutionLogService.markExecutionSuccess(executionId);
+    }
     return { text: llmText, applied: false, appliedChanges: null };
   }
   const transcript = await storage.getTranscriptById?.(transcriptId);
   if (!transcript || transcript.workspaceId !== skill.workspaceId) {
     console.warn(`[auto-action] transcript ${transcriptId} не найден или не принадлежит workspace=${skill.workspaceId}`);
+    if (executionId) {
+      await skillExecutionLogService.markExecutionSuccess(executionId);
+    }
     return { text: llmText, applied: false, appliedChanges: null };
   }
 
@@ -5757,6 +5829,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     fullText: newText,
     lastEditedByUserId: userId,
   });
+  if (executionId) {
+    await skillExecutionLogService.markExecutionSuccess(executionId);
+  }
 
   console.info(`[transcript-action] skill=${skill.id} action=${action.id} применён к transcript=${transcriptId}`);
   return {
@@ -8974,6 +9049,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           if (!transcriptId || typeof transcriptId !== "string") {
             return res.status(400).json({ message: "transcriptId is required for transcript target" });
           }
+          let transcriptChatId: string | undefined;
+          try {
+            const t = await storage.getTranscriptById?.(transcriptId);
+            if (t) {
+              transcriptChatId = t.chatId;
+            }
+          } catch {
+            // ignore
+          }
           const resultAction = await runTranscriptActionCommon({
             userId: user.id,
             skill,
@@ -8982,6 +9066,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             transcriptId,
             transcriptText: textForPrompt,
             context: ctx,
+            ...(transcriptChatId ? { placement, context: { ...ctx, chatId: transcriptChatId } } : { context: ctx }),
           });
 
           return res.json({
@@ -9765,6 +9850,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           const ctx = {
             transcriptId: result.transcriptId,
             selectionText: transcriptText,
+            chatId: chat.id,
+            trigger: "auto_action",
           };
 
           console.info(
