@@ -114,6 +114,19 @@ const gigachatModelOptions: FormValues["availableModels"] = [
   { label: "GigaChat Lite", value: "GigaChat-Lite" },
 ];
 
+const aitunnelModelOptions: FormValues["availableModels"] = [
+  { label: "OpenAI · GPT-5.1 Chat (флагман)", value: "gpt-5.1-chat" },
+  { label: "OpenAI · GPT-5 Mini (быстрый)", value: "gpt-5-mini" },
+  { label: "OpenAI · GPT-4.1", value: "gpt-4.1" },
+  { label: "OpenAI · GPT-4.1 Mini", value: "gpt-4.1-mini" },
+  { label: "OpenAI · GPT-4o Mini", value: "gpt-4o-mini" },
+  { label: "DeepSeek · R1 (рассуждения)", value: "deepseek-r1" },
+  { label: "Anthropic · Claude 3.7 Sonnet", value: "claude-3.7-sonnet" },
+  { label: "Anthropic · Claude 3.7 Sonnet Thinking", value: "claude-3.7-sonnet-thinking" },
+  { label: "Google · Gemini 2.5 Pro", value: "gemini-2.5-pro" },
+  { label: "Google · Gemini 2.5 Flash", value: "gemini-2.5-flash" },
+];
+
 type LlmTemplateFactory = () => Partial<FormValues>;
 
 const llmTemplates: Partial<Record<FormValues["providerType"], LlmTemplateFactory>> = {
@@ -127,6 +140,24 @@ const llmTemplates: Partial<Record<FormValues["providerType"], LlmTemplateFactor
     scope: "GIGACHAT_API_PERS",
     model: gigachatModelOptions[0]?.value ?? "GigaChat",
     availableModels: gigachatModelOptions.map((model) => ({ ...model })),
+    requestHeaders: formatJson(defaultRequestHeaders),
+    systemPrompt: DEFAULT_LLM_REQUEST_CONFIG.systemPrompt ?? "",
+    temperature: String(DEFAULT_LLM_REQUEST_CONFIG.temperature ?? 0.2),
+    maxTokens: DEFAULT_LLM_REQUEST_CONFIG.maxTokens
+      ? String(DEFAULT_LLM_REQUEST_CONFIG.maxTokens)
+      : "1024",
+    allowSelfSignedCertificate: false,
+  }),
+  aitunnel: () => ({
+    providerType: "aitunnel",
+    name: "AITunnel",
+    description: "OpenAI, DeepSeek, Claude, Gemini через единый API",
+    isActive: true,
+    tokenUrl: "https://api.aitunnel.ru/v1", // не используется для OAuth, но поле требуется схемой
+    completionUrl: "https://api.aitunnel.ru/v1/chat/completions",
+    scope: "",
+    model: "gpt-5.1-chat",
+    availableModels: aitunnelModelOptions.map((model) => ({ ...model })),
     requestHeaders: formatJson(defaultRequestHeaders),
     systemPrompt: DEFAULT_LLM_REQUEST_CONFIG.systemPrompt ?? "",
     temperature: String(DEFAULT_LLM_REQUEST_CONFIG.temperature ?? 0.2),
@@ -206,7 +237,10 @@ const mapProviderToFormValues = (provider: PublicLlmProvider): FormValues => {
     authorizationKey: "",
     scope: provider.scope ?? "",
     model: provider.model ?? "",
-    availableModels: provider.availableModels ?? [],
+    availableModels:
+      provider.availableModels?.length && provider.availableModels.length > 0
+        ? provider.availableModels
+        : provider.recommendedModels ?? [],
     allowSelfSignedCertificate: provider.allowSelfSignedCertificate ?? false,
     requestHeaders: formatJson(provider.requestHeaders ?? defaultRequestHeaders),
     systemPrompt:
@@ -254,6 +288,17 @@ export default function LlmProvidersPage() {
 
   const modelsArray = useFieldArray({ control: form.control, name: "availableModels" });
   const providerTypeValue = form.watch("providerType");
+  const modelSelectOptions = useMemo(
+    () =>
+      modelsArray.fields
+        .map((field) => ({
+          label: field.label?.trim() ?? "",
+          value: field.value?.trim() ?? "",
+        }))
+        .filter((option) => option.label.length > 0 && option.value.length > 0),
+    [modelsArray.fields],
+  );
+  const isAitunnelProvider = providerTypeValue === "aitunnel";
 
   const unicaForm = useForm<UnicaChatFormValues>({
     defaultValues: {
@@ -381,12 +426,17 @@ export default function LlmProvidersPage() {
 
     const modelName = values.model.trim().length > 0
       ? values.model.trim()
-      : sanitizedAvailableModels[0]?.value ?? "";
+      : sanitizedAvailableModels[0]?.value ??
+        (values.providerType === "aitunnel" ? "gpt-5.1-chat" : "");
     if (!modelName) {
       throw new Error("Укажите модель по умолчанию или добавьте варианты в список моделей.");
     }
 
     const trimmedAuthorizationKey = values.authorizationKey.trim();
+    const needsApiKey =
+      values.providerType === "aitunnel" &&
+      !selectedProvider?.hasAuthorizationKey &&
+      trimmedAuthorizationKey.length === 0;
 
     const sharedFields = {
       providerType: values.providerType,
@@ -419,7 +469,11 @@ export default function LlmProvidersPage() {
 
     if (mode === "create") {
       if (trimmedAuthorizationKey.length === 0) {
-        throw new Error("Укажите Authorization key для нового провайдера.");
+        throw new Error(
+          values.providerType === "aitunnel"
+            ? "Укажите API ключ AITunnel."
+            : "Укажите Authorization key для нового провайдера.",
+        );
       }
 
       return {
@@ -429,6 +483,10 @@ export default function LlmProvidersPage() {
         },
         formattedRequestHeaders,
       } satisfies CreateLlmProviderVariables;
+    }
+
+    if (needsApiKey) {
+      throw new Error("Укажите API ключ AITunnel.");
     }
 
     const updatePayload: UpdateLlmProvider = {
@@ -1006,14 +1064,18 @@ export default function LlmProvidersPage() {
                                 <SelectContent>
                                   {llmProviderTypes.map((type) => (
                                     <SelectItem key={type} value={type}>
-                                      {type === "gigachat" ? "GigaChat" : "Другой сервис"}
+                                      {type === "gigachat"
+                                        ? "GigaChat"
+                                        : type === "aitunnel"
+                                          ? "AITunnel (GPT-5, DeepSeek, Claude, Gemini)"
+                                          : "Другой сервис"}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
                             </FormControl>
                             <FormDescription>
-                              Выберите «GigaChat», чтобы мы автоматически заполнили рабочие URL, scope и список моделей.
+                              Выберите «GigaChat», чтобы мы автоматически заполнили рабочие URL, scope и список моделей. Для AITunnel будут предложены топовые модели OpenAI/DeepSeek/Claude/Gemini.
                             </FormDescription>
                             <FormMessage />
                           </FormItem>
@@ -1091,7 +1153,11 @@ export default function LlmProvidersPage() {
                           <FormItem>
                             <FormLabel>Endpoint получения токена</FormLabel>
                             <FormControl>
-                              <Input {...field} placeholder="https://.../oauth" required />
+                              <Input
+                                {...field}
+                                placeholder={isAitunnelProvider ? "Не обязателен для AITunnel" : "https://.../oauth"}
+                                required={!isAitunnelProvider}
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -1117,13 +1183,15 @@ export default function LlmProvidersPage() {
                         name="authorizationKey"
                         render={({ field }) => (
                           <FormItem className="md:col-span-2">
-                            <FormLabel>Authorization key</FormLabel>
+                            <FormLabel>
+                              {isAitunnelProvider ? "API ключ AITunnel" : "Authorization key"}
+                            </FormLabel>
                             <FormControl>
                               <div className="relative">
                                 <Input
                                   {...field}
                                   type={isAuthorizationVisible ? "text" : "password"}
-                                  placeholder="Base64(client_id:client_secret)"
+                                  placeholder={isAitunnelProvider ? "sk-aitunnel-..." : "Base64(client_id:client_secret)"}
                                   autoComplete="new-password"
                                   className="pr-10"
                                   required={isCreating}
@@ -1151,7 +1219,9 @@ export default function LlmProvidersPage() {
                             <FormDescription>
                               {selectedProvider?.hasAuthorizationKey && !isCreating
                                 ? "Секрет сохранён. Оставьте поле пустым, если не требуется обновление."
-                                : "Укажите ключ, который будет использоваться для запроса access_token."}
+                                : isAitunnelProvider
+                                  ? "Ключ из личного кабинета AITunnel. Используется напрямую (Bearer)."
+                                  : "Укажите ключ, который будет использоваться для запроса access_token."}
                             </FormDescription>
                             <FormMessage />
                           </FormItem>
@@ -1165,7 +1235,11 @@ export default function LlmProvidersPage() {
                           <FormItem>
                             <FormLabel>OAuth scope</FormLabel>
                             <FormControl>
-                              <Input {...field} placeholder="GIGACHAT_API_PERS" required />
+                              <Input
+                                {...field}
+                                placeholder={isAitunnelProvider ? "Не требуется" : "GIGACHAT_API_PERS"}
+                                required={!isAitunnelProvider}
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -1178,12 +1252,39 @@ export default function LlmProvidersPage() {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Модель по умолчанию</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Например, GigaChat" required />
-                            </FormControl>
-                            <FormDescription className="text-xs">
-                              Используется, если пользователь не выбрал конкретную модель.
-                            </FormDescription>
+                            {providerTypeValue === "aitunnel" && modelSelectOptions.length > 0 ? (
+                              <>
+                                <FormControl>
+                                  <Select
+                                    value={field.value || modelSelectOptions[0]?.value || ""}
+                                    onValueChange={(value) => field.onChange(value)}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Выберите модель" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {modelSelectOptions.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </FormControl>
+                                <FormDescription className="text-xs">
+                                  Рекомендуемые модели AITunnel; можно сохранить любую, даже если её нет в списке.
+                                </FormDescription>
+                              </>
+                            ) : (
+                              <>
+                                <FormControl>
+                                  <Input {...field} placeholder="Например, GigaChat" required />
+                                </FormControl>
+                                <FormDescription className="text-xs">
+                                  Используется, если пользователь не выбрал конкретную модель.
+                                </FormDescription>
+                              </>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}

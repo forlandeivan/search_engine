@@ -264,12 +264,259 @@ type ExecuteOptions = {
   onBeforeRequest?: (details: ApiRequestLog) => void;
 };
 
+async function executeAitunnelCompletion(
+  provider: LlmProvider,
+  accessToken: string,
+  rawBody: Record<string, unknown>,
+  options?: ExecuteOptions,
+): Promise<LlmCompletionResult> & { streamIterator?: AsyncIterable<LlmStreamEvent> } {
+  const wantsStream = options?.stream === true || rawBody.stream === true;
+
+  const body: Record<string, unknown> = {
+    ...rawBody,
+    stream: wantsStream,
+  };
+
+  if (!body.model && provider.model) {
+    body.model = provider.model;
+  }
+
+  const headers = new Headers();
+  headers.set("Content-Type", "application/json");
+  headers.set("Accept", wantsStream ? "text/event-stream" : "application/json");
+  headers.set("Authorization", `Bearer ${accessToken}`);
+
+  for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+    headers.set(key, value);
+  }
+
+  options?.onBeforeRequest?.({
+    url: provider.completionUrl,
+    headers: sanitizeHeadersForLog(headers),
+    body,
+  });
+
+  if (wantsStream) {
+    const streamController = createAsyncStreamController<LlmStreamEvent>();
+    const streamPromise = (async () => {
+      let response: FetchResponse;
+      try {
+        const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+          { method: "POST", headers, body: JSON.stringify(body) },
+          provider.allowSelfSignedCertificate,
+        );
+        response = await fetchWithRetries(provider.completionUrl, requestOptions, {
+          providerId: provider.id,
+          maxAttempts: LLM_COMPLETION_MAX_ATTEMPTS,
+          retryDelayMs: LLM_COMPLETION_RETRY_DELAY_MS,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        streamController.fail(error);
+        throw new Error(`Не удалось выполнить запрос к AITunnel: ${message}`);
+      }
+
+      const rawEvents: Array<{ event: string; data: unknown }> = [];
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok) {
+        const text = await response.text();
+        streamController.fail(new Error(text || `AITunnel вернул ошибку ${response.status}`));
+        throw new Error(text || `AITunnel вернул ошибку ${response.status}`);
+      }
+
+      if (!contentType.toLowerCase().includes("text/event-stream")) {
+        const text = await response.text();
+        streamController.fail(new Error("AITunnel не вернул поток событий"));
+        throw new Error(text || "AITunnel не вернул поток событий");
+      }
+
+      const responseBody = response.body;
+      if (!responseBody) {
+        const err = new Error("Не удалось получить поток AITunnel");
+        streamController.fail(err);
+        throw err;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let aggregatedAnswer = "";
+      let usageTokens: number | null = null;
+      let finishReason: string | null = null;
+
+      const handlePayload = (payload: string) => {
+        rawEvents.push({ event: "data", data: payload });
+        if (payload === "[DONE]") {
+          return;
+        }
+        try {
+          const json = JSON.parse(payload) as {
+            choices?: Array<{
+              delta?: { content?: string; tool_calls?: unknown };
+              finish_reason?: string | null;
+            }>;
+            usage?: { total_tokens?: number };
+          };
+          const choice = json.choices?.[0];
+          if (choice?.delta?.content) {
+            const text = choice.delta.content;
+            aggregatedAnswer += text;
+            streamController.push({ event: "delta", data: { text } });
+          }
+          if (choice?.finish_reason) {
+            finishReason = choice.finish_reason;
+          }
+          if (json.usage && typeof json.usage.total_tokens === "number") {
+            usageTokens = json.usage.total_tokens;
+          }
+        } catch {
+          // fallback: push raw text
+          aggregatedAnswer += payload;
+          streamController.push({ event: "delta", data: { text: payload } });
+        }
+      };
+
+      try {
+        const bodyAny = responseBody as unknown as {
+          getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
+          [Symbol.asyncIterator]?: () => AsyncIterator<Uint8Array | Buffer>;
+        };
+
+        const processChunk = (chunk: Uint8Array | Buffer) => {
+          buffer += decoder.decode(chunk, { stream: true });
+          let boundary: number;
+          while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+            const segment = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const trimmed = segment.trim();
+            if (trimmed.startsWith("data:")) {
+              const payload = trimmed.replace(/^data:\s*/, "");
+              handlePayload(payload);
+            }
+          }
+        };
+
+        if (typeof bodyAny?.getReader === "function") {
+          const reader = bodyAny.getReader();
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            processChunk(chunk.value);
+          }
+        } else if (typeof bodyAny?.[Symbol.asyncIterator] === "function") {
+          for await (const chunk of responseBody as AsyncIterable<Uint8Array | Buffer>) {
+            processChunk(chunk);
+          }
+        } else {
+          throw new Error("Поток ответа AITunnel имеет неподдерживаемый формат");
+        }
+      } catch (error) {
+        streamController.fail(error);
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Ошибка чтения SSE от AITunnel: ${message}`);
+      }
+
+      streamController.finish();
+
+      return {
+        answer: aggregatedAnswer,
+        usageTokens,
+        rawResponse: rawEvents,
+        request: {
+          url: provider.completionUrl,
+          headers: sanitizeHeadersForLog(headers),
+          body,
+        },
+      };
+    })();
+
+    return Object.assign(streamPromise, { streamIterator: streamController.iterator });
+  }
+
+  // Non-streaming branch
+  let completionResponse: FetchResponse;
+  try {
+    const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      },
+      provider.allowSelfSignedCertificate,
+    );
+
+    completionResponse = await fetchWithRetries(provider.completionUrl, requestOptions, {
+      providerId: provider.id,
+      maxAttempts: LLM_COMPLETION_MAX_ATTEMPTS,
+      retryDelayMs: LLM_COMPLETION_RETRY_DELAY_MS,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Не удалось выполнить запрос к AITunnel: ${message}`);
+  }
+
+  const rawBodyText = await completionResponse.text();
+  const parsedBody = parseJson(rawBodyText);
+
+  if (!completionResponse.ok) {
+    let message = `AITunnel вернул ошибку ${completionResponse.status}`;
+    if (parsedBody && typeof parsedBody === "object") {
+      const err = (parsedBody as Record<string, unknown>).error;
+      if (err && typeof err === "object" && typeof (err as Record<string, unknown>).message === "string") {
+        message = (err as Record<string, unknown>).message as string;
+      } else if (typeof (parsedBody as Record<string, unknown>).message === "string") {
+        message = (parsedBody as Record<string, unknown>).message as string;
+      }
+    }
+    throw new Error(message);
+  }
+
+  if (!parsedBody || typeof parsedBody !== "object") {
+    throw new Error("Некорректный ответ AITunnel");
+  }
+
+  const choices = (parsedBody as Record<string, unknown>).choices;
+  const firstChoice = Array.isArray(choices) && choices.length > 0 ? choices[0] : null;
+  const message = firstChoice && typeof firstChoice === "object" ? (firstChoice as Record<string, unknown>).message : null;
+  const content =
+    message && typeof message === "object" && typeof (message as Record<string, unknown>).content === "string"
+      ? ((message as Record<string, unknown>).content as string)
+      : null;
+
+  if (!content) {
+    throw new Error("AITunnel не вернул текст ответа");
+  }
+
+  let usageTokens: number | null = null;
+  const usage = (parsedBody as Record<string, unknown>).usage;
+  if (usage && typeof usage === "object") {
+    const total = (usage as Record<string, unknown>).total_tokens;
+    if (typeof total === "number" && Number.isFinite(total)) {
+      usageTokens = total;
+    }
+  }
+
+  return {
+    answer: content.trim(),
+    usageTokens,
+    rawResponse: parsedBody,
+    request: {
+      url: provider.completionUrl,
+      headers: sanitizeHeadersForLog(headers),
+      body,
+    },
+  };
+}
+
 export function executeLlmCompletion(
   provider: LlmProvider,
   accessToken: string,
   rawBody: Record<string, unknown>,
   options?: ExecuteOptions,
 ): LlmCompletionPromise {
+  if (provider.providerType === "aitunnel") {
+    return executeAitunnelCompletion(provider, accessToken, rawBody, options) as LlmCompletionPromise;
+  }
+
   const body: Record<string, unknown> = { ...rawBody };
   if (options?.stream === true) {
     body.stream = true;

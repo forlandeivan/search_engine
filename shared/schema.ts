@@ -402,7 +402,7 @@ export const insertUserSchema = createInsertSchema(users).omit({
 export const embeddingProviderTypes = ["gigachat", "custom"] as const;
 export type EmbeddingProviderType = (typeof embeddingProviderTypes)[number];
 
-export const llmProviderTypes = ["gigachat", "custom"] as const;
+export const llmProviderTypes = ["gigachat", "custom", "aitunnel"] as const;
 export type LlmProviderType = (typeof llmProviderTypes)[number];
 
 export const authProviderTypes = ["google", "yandex"] as const;
@@ -1119,7 +1119,7 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
       .trim()
       .url("Некорректный URL сервиса эмбеддингов"),
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
-    scope: z.string().trim().min(1, "Укажите OAuth scope"),
+    scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")),
     model: z.string().trim().min(1, "Укажите модель"),
     allowSelfSignedCertificate: z.boolean().default(false),
     maxTokensPerVectorization: z
@@ -1166,7 +1166,7 @@ export const updateEmbeddingProviderSchema = z
       .url("Некорректный URL сервиса эмбеддингов")
       .optional(),
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key").optional(),
-    scope: z.string().trim().min(1, "Укажите OAuth scope").optional(),
+    scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")).optional(),
     model: z.string().trim().min(1, "Укажите модель").optional(),
     allowSelfSignedCertificate: z.boolean().optional(),
     maxTokensPerVectorization: z
@@ -1209,7 +1209,7 @@ export const insertLlmProviderSchema = createInsertSchema(llmProviders)
       .trim()
       .url("Некорректный URL сервиса LLM"),
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
-    scope: z.string().trim().min(1, "Укажите OAuth scope"),
+    scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")),
     model: z.string().trim().min(1, "Укажите модель"),
     availableModels: z
       .array(
@@ -1285,7 +1285,7 @@ export const updateLlmProviderSchema = z
       .url("Некорректный URL сервиса LLM")
       .optional(),
     authorizationKey: z.string().trim().min(1, "Укажите Authorization key").optional(),
-    scope: z.string().trim().min(1, "Укажите OAuth scope").optional(),
+    scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")).optional(),
     model: z.string().trim().min(1, "Укажите модель").optional(),
     availableModels: z
       .array(
@@ -1401,6 +1401,7 @@ export type UpdateLlmProvider = z.infer<typeof updateLlmProviderSchema>;
 export type PublicLlmProvider = Omit<LlmProvider, "authorizationKey" | "availableModels"> & {
   hasAuthorizationKey: boolean;
   availableModels: LlmModelOption[];
+  recommendedModels?: LlmModelOption[];
 };
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type ChatSessionInsert = typeof chatSessions.$inferInsert;

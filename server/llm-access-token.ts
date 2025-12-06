@@ -35,6 +35,11 @@ function buildOAuthCacheKey(provider: OAuthProviderConfig): string {
 }
 
 export async function fetchAccessToken(provider: OAuthProviderConfig): Promise<string> {
+  // AITunnel использует API-ключ без OAuth.
+  if ((provider as Partial<LlmProvider>).providerType === "aitunnel") {
+    return provider.authorizationKey.trim();
+  }
+
   const cacheKey = buildOAuthCacheKey(provider);
   const now = Date.now();
   const cachedToken = oauthTokenCache.get(cacheKey);

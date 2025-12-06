@@ -210,6 +210,7 @@ import {
 import { yandexIamTokenService } from "./yandex-iam-token-service";
 import multer from "multer";
 import { getLlmPromptDebugConfig, isLlmPromptDebugEnabled, setLlmPromptDebugEnabled } from "./llm-debug-config";
+import { getRecommendedAitunnelModels } from "./llm-providers/aitunnel-models";
 
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
@@ -1501,6 +1502,10 @@ function toPublicLlmProvider(provider: LlmProvider): PublicLlmProvider {
     responseConfig,
     hasAuthorizationKey: Boolean(authorizationKey && authorizationKey.length > 0),
     availableModels: sanitizeLlmModelOptions(availableModels),
+    recommendedModels:
+      rest.providerType === "aitunnel"
+        ? getRecommendedAitunnelModels()
+        : [],
   };
 }
 

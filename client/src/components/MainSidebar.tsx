@@ -202,7 +202,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
     const iconElement = (
       <item.icon
         className={cn(
-          "h-5 w-5 shrink-0",
+          "h-6 w-6 shrink-0",
           isActive ? "text-[#0f5a90]" : "text-slate-500"
         )}
       />
@@ -211,7 +211,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
     const labelElement = !isCollapsed && (
       <span
         className={cn(
-          "flex-1 truncate text-[13px] font-medium",
+          "flex-1 truncate text-base font-medium",
           isActive ? "text-[#0f5a90]" : "text-slate-800 dark:text-slate-200"
         )}
       >
@@ -237,7 +237,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
       return (
         <SidebarMenuButton
           className={cn(
-            "h-10 gap-2 rounded-md p-2 opacity-60 cursor-not-allowed",
+            "h-12 gap-3 rounded-lg px-3 py-3 opacity-60 cursor-not-allowed",
             isCollapsed ? "justify-center" : "justify-start"
           )}
           disabled
@@ -256,7 +256,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
         asChild
         isActive={isActive}
         className={cn(
-          "h-10 gap-2 rounded-md p-2 transition-colors",
+          "h-12 gap-3 rounded-lg px-3 py-3 transition-colors",
           isCollapsed ? "justify-center" : "justify-start",
           isActive
             ? "bg-[rgba(15,90,144,0.11)] hover:bg-[rgba(15,90,144,0.15)]"
