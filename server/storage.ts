@@ -25,6 +25,7 @@ import {
   chatMessages,
   transcripts,
   transcriptViews,
+  canvasDocuments,
   speechProviders,
   speechProviderSecrets,
   type KnowledgeBaseSearchSettingsRow,
@@ -60,6 +61,8 @@ import {
   type TranscriptInsert,
   type TranscriptView,
   type TranscriptViewInsert,
+  type CanvasDocument,
+  type CanvasDocumentInsert,
   type TranscriptStatus,
   type ChatMessageMetadata,
   type SpeechProvider,
@@ -1276,6 +1279,9 @@ async function ensureTranscriptsTable(): Promise<void> {
 let transcriptViewsEnsured = false;
 let ensuringTranscriptViewsTable: Promise<void> | null = null;
 
+let canvasDocumentsEnsured = false;
+let ensuringCanvasDocumentsTable: Promise<void> | null = null;
+
 async function ensureTranscriptViewsTable(): Promise<void> {
   if (transcriptViewsEnsured) {
     return;
@@ -1307,6 +1313,46 @@ async function ensureTranscriptViewsTable(): Promise<void> {
 
   await ensuringTranscriptViewsTable;
   ensuringTranscriptViewsTable = null;
+}
+
+async function ensureCanvasDocumentsTable(): Promise<void> {
+  if (canvasDocumentsEnsured) {
+    return;
+  }
+  if (ensuringCanvasDocumentsTable) {
+    await ensuringCanvasDocumentsTable;
+    return;
+  }
+
+  ensuringCanvasDocumentsTable = (async () => {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "canvas_documents" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "workspace_id" varchar NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        "chat_id" varchar NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+        "transcript_id" varchar REFERENCES transcripts(id) ON DELETE CASCADE,
+        "skill_id" varchar REFERENCES skills(id) ON DELETE SET NULL,
+        "action_id" varchar REFERENCES actions(id) ON DELETE SET NULL,
+        "type" text NOT NULL DEFAULT 'derived',
+        "title" text NOT NULL,
+        "content" text NOT NULL,
+        "is_default" boolean NOT NULL DEFAULT false,
+        "created_by_user_id" varchar REFERENCES users(id) ON DELETE SET NULL,
+        "created_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        "updated_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        "deleted_at" timestamp
+      );
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "canvas_documents_workspace_idx" ON "canvas_documents" ("workspace_id")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "canvas_documents_chat_idx" ON "canvas_documents" ("chat_id")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "canvas_documents_transcript_idx" ON "canvas_documents" ("transcript_id")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "canvas_documents_skill_idx" ON "canvas_documents" ("skill_id")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "canvas_documents_action_idx" ON "canvas_documents" ("action_id")`);
+    canvasDocumentsEnsured = true;
+  })();
+
+  await ensuringCanvasDocumentsTable;
+  ensuringCanvasDocumentsTable = null;
 }
 
 async function ensureChatTables(): Promise<void> {
@@ -4888,6 +4934,83 @@ export class DatabaseStorage implements IStorage {
     await ensureTranscriptViewsTable();
     const [created] = await this.db.insert(transcriptViews).values(values).returning();
     return created;
+  }
+
+  async listCanvasDocumentsByChat(chatId: string): Promise<CanvasDocument[]> {
+    await ensureCanvasDocumentsTable();
+    return await this.db
+      .select()
+      .from(canvasDocuments)
+      .where(and(eq(canvasDocuments.chatId, chatId), isNull(canvasDocuments.deletedAt)))
+      .orderBy(desc(canvasDocuments.createdAt));
+  }
+
+  async listCanvasDocumentsByTranscript(transcriptId: string): Promise<CanvasDocument[]> {
+    await ensureCanvasDocumentsTable();
+    return await this.db
+      .select()
+      .from(canvasDocuments)
+      .where(
+        and(
+          eq(canvasDocuments.transcriptId, transcriptId),
+          isNull(canvasDocuments.deletedAt),
+        ),
+      )
+      .orderBy(desc(canvasDocuments.createdAt));
+  }
+
+  async getCanvasDocument(id: string): Promise<CanvasDocument | undefined> {
+    await ensureCanvasDocumentsTable();
+    const [found] = await this.db
+      .select()
+      .from(canvasDocuments)
+      .where(eq(canvasDocuments.id, id))
+      .limit(1);
+    return found ?? undefined;
+  }
+
+  async createCanvasDocument(values: CanvasDocumentInsert): Promise<CanvasDocument> {
+    await ensureCanvasDocumentsTable();
+    const [created] = await this.db.insert(canvasDocuments).values(values).returning();
+    return created;
+  }
+
+  async updateCanvasDocument(
+    id: string,
+    updates: Partial<Pick<CanvasDocumentInsert, "title" | "content" | "isDefault">>,
+  ): Promise<CanvasDocument | undefined> {
+    if (!updates || Object.keys(updates).length === 0) {
+      return await this.getCanvasDocument(id);
+    }
+
+    await ensureCanvasDocumentsTable();
+    const [updated] = await this.db
+      .update(canvasDocuments)
+      .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(canvasDocuments.id, id))
+      .returning();
+    return updated ?? undefined;
+  }
+
+  async softDeleteCanvasDocument(id: string): Promise<boolean> {
+    await ensureCanvasDocumentsTable();
+    const result = await this.db
+      .update(canvasDocuments)
+      .set({ deletedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(canvasDocuments.id, id));
+    return result.rowCount > 0;
+  }
+
+  async setDefaultCanvasDocument(chatId: string, documentId: string): Promise<void> {
+    await ensureCanvasDocumentsTable();
+    await this.db
+      .update(canvasDocuments)
+      .set({ isDefault: false, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(canvasDocuments.chatId, chatId));
+    await this.db
+      .update(canvasDocuments)
+      .set({ isDefault: true, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(canvasDocuments.id, documentId));
   }
 
   async updateTranscript(

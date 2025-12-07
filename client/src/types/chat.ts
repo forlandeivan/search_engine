@@ -58,3 +58,22 @@ export type Transcript = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type CanvasDocumentType = "source" | "derived" | "summary" | "cleaned" | "custom";
+
+export type CanvasDocument = {
+  id: string;
+  workspaceId: string;
+  chatId: string;
+  transcriptId?: string | null;
+  skillId?: string | null;
+  actionId?: string | null;
+  type: CanvasDocumentType;
+  title: string;
+  content: string;
+  isDefault: boolean;
+  createdByUserId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string | null;
+};

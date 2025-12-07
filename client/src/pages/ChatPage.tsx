@@ -545,6 +545,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           <div className="flex-1 min-w-0 overflow-hidden">
             <TranscriptCanvas
               workspaceId={workspaceId}
+              chatId={effectiveChatId ?? ""}
               transcriptId={openTranscript.id}
               skillId={activeSkill?.id}
               initialTabId={openTranscript.tabId ?? null}

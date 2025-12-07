@@ -19,6 +19,11 @@ import { cn } from "@/lib/utils";
 import { useTranscript, useUpdateTranscript } from "@/hooks/useTranscript";
 import { useSkillActions, useRunSkillAction } from "@/hooks/useSkillActions";
 import { useToast } from "@/hooks/use-toast";
+import {
+  useCreateCanvasDocument,
+  useCanvasDocumentsByTranscript,
+  useDeleteCanvasDocument,
+} from "@/hooks/useCanvasDocuments";
 
 type CanvasTab = {
   id: string;
@@ -33,6 +38,7 @@ type CanvasTab = {
 
 type TranscriptCanvasProps = {
   workspaceId: string;
+  chatId: string;
   transcriptId: string;
   skillId?: string;
   initialTabId?: string | null;
@@ -41,6 +47,7 @@ type TranscriptCanvasProps = {
 
 export function TranscriptCanvas({
   workspaceId,
+  chatId,
   transcriptId,
   skillId,
   initialTabId = null,
@@ -51,12 +58,15 @@ export function TranscriptCanvas({
     workspaceId,
     transcriptId
   );
+  const { data: canvasDocuments, isLoading: isDocsLoading } = useCanvasDocumentsByTranscript(transcriptId);
   const { mutate: updateTranscript, isPending } = useUpdateTranscript(
     workspaceId
   );
 
   const { data: actions } = useSkillActions(workspaceId, skillId || "");
   const { mutate: runAction } = useRunSkillAction(workspaceId);
+  const { mutateAsync: createCanvasDocument } = useCreateCanvasDocument();
+  const { mutateAsync: deleteCanvasDocument } = useDeleteCanvasDocument();
 
   const [tabs, setTabs] = useState<CanvasTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>("original");
@@ -65,15 +75,16 @@ export function TranscriptCanvas({
   useEffect(() => {
     if (!transcript) return;
     const text = transcript.fullText ?? "";
-    const viewTabs =
-      transcript.views?.map((view) => ({
-        id: view.id,
-        title: view.label || "Версия",
-        content: view.content ?? "",
-        originalContent: view.content ?? "",
+
+    const docTabs =
+      canvasDocuments?.map((doc) => ({
+        id: doc.id,
+        title: doc.title,
+        content: doc.content,
+        originalContent: doc.content,
         isLoading: false,
         type: "action_result" as const,
-        actionId: view.actionId ?? undefined,
+        actionId: doc.actionId ?? undefined,
         hasChanges: false,
       })) ?? [];
 
@@ -97,24 +108,24 @@ export function TranscriptCanvas({
           };
 
       const nextTabs: CanvasTab[] = [originalTab];
-      for (const vt of viewTabs) {
-        const existing = existingMap.get(vt.id);
+      for (const dt of docTabs) {
+        const existing = existingMap.get(dt.id);
         nextTabs.push(
           existing
             ? {
                 ...existing,
-                content: existing.hasChanges ? existing.content : vt.content,
-                originalContent: vt.originalContent,
+                content: existing.hasChanges ? existing.content : dt.content,
+                originalContent: dt.originalContent,
                 type: "action_result",
-                actionId: vt.actionId,
+                actionId: dt.actionId,
                 isLoading: false,
               }
-            : vt,
+            : dt,
         );
       }
       return nextTabs;
     });
-  }, [transcript?.id, transcript?.fullText, transcript?.views]);
+  }, [transcript?.id, transcript?.fullText, canvasDocuments]);
 
   // Инициализация активного таба с учётом initialTabId или дефолтного таба транскрипта
   useEffect(() => {
@@ -348,28 +359,54 @@ export function TranscriptCanvas({
       },
       {
         onSuccess: (result) => {
-          const outputText = result.result?.text || result.output || "";
-          setTabs((prev) =>
-            prev.map((tab) =>
-              tab.id === newTabId
-                ? {
-                    ...tab,
-                    content: outputText,
-                    originalContent: outputText,
-                    isLoading: false,
-                  }
-                : tab
-            )
-          );
-          toast({
-            title: "Готово",
-            description: `Результат "${label}" получен`,
-          });
-        },
-        onError: (error) => {
-          setTabs((prev) => prev.filter((tab) => tab.id !== newTabId));
-          setActiveTabId("original");
-          toast({
+        const outputText = result.result?.text || result.output || "";
+        createCanvasDocument(
+          {
+            chatId,
+            transcriptId,
+            skillId,
+            actionId,
+            type: "derived",
+            title: label,
+            content: outputText,
+          },
+          {
+            onSuccess: ({ document }) => {
+              setTabs((prev) =>
+                prev.map((tab) =>
+                  tab.id === newTabId
+                    ? {
+                        ...tab,
+                        id: document.id,
+                        content: outputText,
+                        originalContent: outputText,
+                        isLoading: false,
+                      }
+                    : tab
+                )
+              );
+              setActiveTabId(document.id);
+              toast({
+                title: "Готово",
+                description: `Результат "${label}" сохранён`,
+              });
+            },
+            onError: (error) => {
+              setTabs((prev) => prev.filter((tab) => tab.id !== newTabId));
+              setActiveTabId("original");
+              toast({
+                title: "Ошибка",
+                description: error instanceof Error ? error.message : "Не удалось сохранить документ",
+                variant: "destructive",
+              });
+            },
+          }
+        );
+      },
+      onError: (error) => {
+        setTabs((prev) => prev.filter((tab) => tab.id !== newTabId));
+        setActiveTabId("original");
+        toast({
             title: "Ошибка",
             description: error instanceof Error ? error.message : "Не удалось выполнить действие",
             variant: "destructive",
@@ -381,17 +418,38 @@ export function TranscriptCanvas({
 
   const handleCloseTab = (tabId: string) => {
     if (tabId === "original") return;
-    
+
     const tabToClose = tabs.find((t) => t.id === tabId);
     if (tabToClose?.hasChanges) {
       const confirmed = window.confirm("В этом табе есть несохранённые изменения. Закрыть?");
       if (!confirmed) return;
     }
 
-    setTabs((prev) => prev.filter((tab) => tab.id !== tabId));
-    if (activeTabId === tabId) {
-      setActiveTabId("original");
+    if (!tabToClose?.id || tabToClose.id.startsWith("action-")) {
+      // локальная вкладка без сохранённого документа (fallback)
+      setTabs((prev) => prev.filter((tab) => tab.id !== tabId));
+      if (activeTabId === tabId) {
+        setActiveTabId("original");
+      }
+      return;
     }
+
+    deleteCanvasDocument(tabToClose.id, {
+      onSuccess: () => {
+        setTabs((prev) => prev.filter((tab) => tab.id !== tabId));
+        if (activeTabId === tabId) {
+          setActiveTabId("original");
+        }
+        toast({ description: "Документ удалён" });
+      },
+      onError: (error) => {
+        toast({
+          title: "Ошибка",
+          description: error instanceof Error ? error.message : "Не удалось удалить документ",
+          variant: "destructive",
+        });
+      },
+    });
   };
 
   if (isError) {
@@ -594,7 +652,7 @@ export function TranscriptCanvas({
 
           {/* Tab content area */}
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col px-6 py-4 relative">
-            {isLoading && tabs.length === 0 ? (
+            {(isLoading && tabs.length === 0) || isDocsLoading ? (
               <div className="flex items-center justify-center gap-2 text-muted-foreground h-full">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Загрузка стенограммы...

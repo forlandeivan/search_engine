@@ -119,6 +119,7 @@ import {
   updateEmbeddingProviderSchema,
   insertLlmProviderSchema,
   updateLlmProviderSchema,
+  canvasDocumentTypes,
   upsertAuthProviderSchema,
   type PublicEmbeddingProvider,
   type PublicLlmProvider,
@@ -127,6 +128,7 @@ import {
   type LlmModelOption,
   type LlmRequestConfig,
   type LlmResponseConfig,
+  type CanvasDocument,
   type AuthProviderInsert,
   type Site,
   type WorkspaceEmbedKey,
@@ -1512,6 +1514,23 @@ function toPublicLlmProvider(provider: LlmProvider): PublicLlmProvider {
 const sendJsonToWebhookSchema = z.object({
   webhookUrl: z.string().trim().url("Некорректный URL"),
   payload: z.string().min(1, "JSON не может быть пустым")
+});
+
+const canvasDocumentTypeEnum = z.enum(canvasDocumentTypes);
+const createCanvasDocumentSchema = z.object({
+  chatId: z.string().trim().min(1, "Укажите чат"),
+  transcriptId: z.string().trim().min(1).optional().nullable().transform((v) => (v && v.length > 0 ? v : undefined)),
+  skillId: z.string().trim().min(1).optional().nullable().transform((v) => (v && v.length > 0 ? v : undefined)),
+  actionId: z.string().trim().min(1).optional().nullable().transform((v) => (v && v.length > 0 ? v : undefined)),
+  type: canvasDocumentTypeEnum.default("derived"),
+  title: z.string().trim().min(1, "Укажите заголовок"),
+  content: z.string().trim().default(""),
+  isDefault: z.boolean().optional(),
+});
+const updateCanvasDocumentSchema = z.object({
+  title: z.string().trim().min(1).optional(),
+  content: z.string().trim().optional(),
+  isDefault: z.boolean().optional(),
 });
 
 
@@ -9292,6 +9311,139 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+
+  // Canvas documents
+  app.get("/api/chats/:chatId/canvas-documents", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+    try {
+      const { chatId } = req.params;
+      const chat = await storage.getChatSessionById(chatId);
+      if (!chat) {
+        return res.status(404).json({ message: "Чат не найден" });
+      }
+      const isMember = await storage.isWorkspaceMember(chat.workspaceId, user.id);
+      if (!isMember) {
+        return res.status(403).json({ message: "Нет доступа к этому workspace" });
+      }
+      const documents = await storage.listCanvasDocumentsByChat(chatId);
+      res.json({ documents });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get(
+    "/api/transcripts/:transcriptId/canvas-documents",
+    requireAuth,
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
+      try {
+        const { transcriptId } = req.params;
+        const transcript = await storage.getTranscriptById?.(transcriptId);
+        if (!transcript) {
+          return res.status(404).json({ message: "Стенограмма не найдена" });
+        }
+        const isMember = await storage.isWorkspaceMember(transcript.workspaceId, user.id);
+        if (!isMember) {
+          return res.status(403).json({ message: "Нет доступа к этому workspace" });
+        }
+        const documents = await storage.listCanvasDocumentsByTranscript(transcriptId);
+        res.json({ documents });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.post("/api/canvas-documents", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+    try {
+      const payload = createCanvasDocumentSchema.parse(req.body ?? {});
+      const chat = await storage.getChatSessionById(payload.chatId);
+      if (!chat) {
+        return res.status(404).json({ message: "Чат не найден" });
+      }
+      const isMember = await storage.isWorkspaceMember(chat.workspaceId, user.id);
+      if (!isMember) {
+        return res.status(403).json({ message: "Нет доступа к этому workspace" });
+      }
+      if (payload.transcriptId) {
+        const transcript = await storage.getTranscriptById?.(payload.transcriptId);
+        if (!transcript || transcript.chatId !== chat.id) {
+          return res.status(400).json({ message: "Стенограмма не принадлежит чату" });
+        }
+      }
+      const document = await storage.createCanvasDocument({
+        workspaceId: chat.workspaceId,
+        chatId: payload.chatId,
+        transcriptId: payload.transcriptId,
+        skillId: payload.skillId,
+        actionId: payload.actionId,
+        type: payload.type,
+        title: payload.title,
+        content: payload.content,
+        isDefault: payload.isDefault ?? false,
+        createdByUserId: user.id,
+      });
+      if (payload.isDefault) {
+        await storage.setDefaultCanvasDocument(payload.chatId, document.id);
+      }
+      res.status(201).json({ document });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/canvas-documents/:id", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+    try {
+      const { id } = req.params;
+      const document = await storage.getCanvasDocument(id);
+      if (!document || document.deletedAt) {
+        return res.status(404).json({ message: "Документ не найден" });
+      }
+      const isMember = await storage.isWorkspaceMember(document.workspaceId, user.id);
+      if (!isMember) {
+        return res.status(403).json({ message: "Нет доступа к этому workspace" });
+      }
+      const payload = updateCanvasDocumentSchema.parse(req.body ?? {});
+      const updated = await storage.updateCanvasDocument(id, {
+        title: payload.title,
+        content: payload.content,
+        isDefault: payload.isDefault,
+      });
+      if (payload.isDefault) {
+        await storage.setDefaultCanvasDocument(document.chatId, id);
+      }
+      res.json({ document: updated });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/canvas-documents/:id", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+    try {
+      const { id } = req.params;
+      const document = await storage.getCanvasDocument(id);
+      if (!document || document.deletedAt) {
+        return res.status(404).json({ message: "Документ не найден" });
+      }
+      const isMember = await storage.isWorkspaceMember(document.workspaceId, user.id);
+      if (!isMember) {
+        return res.status(403).json({ message: "Нет доступа к этому workspace" });
+      }
+      await storage.softDeleteCanvasDocument(id);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  });
 
   // Skill ↔ Actions configuration
   app.get("/api/skills/:skillId/actions", requireAuth, async (req, res, next) => {

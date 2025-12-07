@@ -983,6 +983,40 @@ export const transcriptViews = pgTable(
   }),
 );
 
+export const canvasDocumentTypes = ["source", "derived", "summary", "cleaned", "custom"] as const;
+export type CanvasDocumentType = (typeof canvasDocumentTypes)[number];
+
+export const canvasDocuments = pgTable(
+  "canvas_documents",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    chatId: varchar("chat_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    transcriptId: varchar("transcript_id").references(() => transcripts.id, { onDelete: "cascade" }),
+    skillId: varchar("skill_id").references(() => skills.id, { onDelete: "set null" }),
+    actionId: varchar("action_id").references(() => actions.id, { onDelete: "set null" }),
+    type: text("type").$type<CanvasDocumentType>().notNull().default("derived"),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    deletedAt: timestamp("deleted_at"),
+  },
+  (table) => ({
+    workspaceIdx: index("canvas_documents_workspace_idx").on(table.workspaceId),
+    chatIdx: index("canvas_documents_chat_idx").on(table.chatId),
+    transcriptIdx: index("canvas_documents_transcript_idx").on(table.transcriptId),
+    skillIdx: index("canvas_documents_skill_idx").on(table.skillId),
+    actionIdx: index("canvas_documents_action_idx").on(table.actionId),
+  }),
+);
+
 export const skillRagModes = ["all_collections", "selected_collections"] as const;
 export type SkillRagMode = (typeof skillRagModes)[number];
 export const skillTranscriptionModes = ["raw_only", "auto_action"] as const;
@@ -1411,6 +1445,8 @@ export type Transcript = typeof transcripts.$inferSelect;
 export type TranscriptInsert = typeof transcripts.$inferInsert;
 export type TranscriptView = typeof transcriptViews.$inferSelect;
 export type TranscriptViewInsert = typeof transcriptViews.$inferInsert;
+export type CanvasDocument = typeof canvasDocuments.$inferSelect;
+export type CanvasDocumentInsert = typeof canvasDocuments.$inferInsert;
 export const sessions = pgTable("session", {
   sid: varchar("sid").primaryKey(),
   sess: json("sess").notNull(),
