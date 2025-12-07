@@ -5013,6 +5013,31 @@ export class DatabaseStorage implements IStorage {
       .where(eq(canvasDocuments.id, documentId));
   }
 
+  async duplicateCanvasDocument(id: string, titleOverride?: string): Promise<CanvasDocument | undefined> {
+    await ensureCanvasDocumentsTable();
+    const source = await this.getCanvasDocument(id);
+    if (!source || source.deletedAt) {
+      return undefined;
+    }
+    const nextTitle =
+      (titleOverride && titleOverride.trim()) ||
+      `${source.title}${source.title.includes("копия") ? "" : " (копия)"}`;
+    const insert: CanvasDocumentInsert = {
+      workspaceId: source.workspaceId,
+      chatId: source.chatId,
+      transcriptId: source.transcriptId ?? undefined,
+      skillId: source.skillId ?? undefined,
+      actionId: source.actionId ?? undefined,
+      type: source.type,
+      title: nextTitle,
+      content: source.content,
+      isDefault: false,
+      createdByUserId: source.createdByUserId ?? undefined,
+    };
+    const created = await this.createCanvasDocument(insert);
+    return created;
+  }
+
   async updateTranscript(
     id: string,
     updates: Partial<

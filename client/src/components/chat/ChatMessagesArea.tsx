@@ -75,6 +75,18 @@ export default function ChatMessagesArea({
     });
   }, [messages]);
 
+  // Debug: helps detect phantom bubbles (messages without content)
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[ChatMessagesArea] render messages", sortedMessages.map((m) => ({
+      id: m.id,
+      role: m.role,
+      contentPreview: (m.content ?? "").slice(0, 30),
+      createdAt: m.createdAt,
+      metadataType: (m.metadata as Record<string, unknown> | undefined)?.type ?? null,
+    })));
+  }, [sortedMessages]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-slate-50 dark:bg-slate-900">
       <header className="flex h-20 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-6 dark:border-slate-800 dark:bg-slate-900">
@@ -185,18 +197,31 @@ export default function ChatMessagesArea({
           ) : null}
 
           {!errorMessage
-            ? sortedMessages.map((message, index) => (
-                <ChatBubble
-                  key={message.id}
-                  message={message}
-                  previousRole={index > 0 ? sortedMessages[index - 1]?.role : undefined}
-                  isStreamingBubble={streamingAssistantId === message.id}
-                  isTranscribingBubble={
-                    isTranscribing && index === messages.length - 1 && message.role === "assistant" && !message.content
-                  }
-                  onOpenTranscript={onOpenTranscript}
-                />
-              ))
+            ? sortedMessages
+                .filter((message) => {
+                  // Отсекаем временные локальные ассистентские сообщения без контента (плейсхолдеры стрима),
+                  // чтобы не рендерить пустой bubble.
+                  const isEmptyAssistant =
+                    message.role === "assistant" &&
+                    (!message.content || message.content.trim().length === 0) &&
+                    message.id?.startsWith("local-assistant");
+                  return !isEmptyAssistant;
+                })
+                .map((message, index) => (
+                  <ChatBubble
+                    key={message.id}
+                    message={message}
+                    previousRole={index > 0 ? sortedMessages[index - 1]?.role : undefined}
+                    isStreamingBubble={streamingAssistantId === message.id}
+                    isTranscribingBubble={
+                      isTranscribing &&
+                      index === messages.length - 1 &&
+                      message.role === "assistant" &&
+                      !message.content
+                    }
+                    onOpenTranscript={onOpenTranscript}
+                  />
+                ))
             : null}
 
           {!isLoading && !errorMessage && messages.length === 0 && !isNewChat ? (

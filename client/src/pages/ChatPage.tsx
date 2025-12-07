@@ -180,11 +180,12 @@ export default function ChatPage({ params }: ChatPageProps) {
         return;
       }
       debugLog("[chat] streamMessage start", { chatId: targetChatId, workspaceId });
-      const userMessage = buildLocalMessage("user", targetChatId, content);
-      const assistantMessage = buildLocalMessage("assistant", targetChatId, "");
-      setLocalChatId(targetChatId);
-      setLocalMessages([userMessage, assistantMessage]);
-      setIsStreaming(true);
+    const userMessage = buildLocalMessage("user", targetChatId, content);
+    // Создаём временный ассистентский bubble только если будем реально стримить дельты.
+    const assistantMessage = buildLocalMessage("assistant", targetChatId, "");
+    setLocalChatId(targetChatId);
+    setLocalMessages([userMessage, assistantMessage]);
+    setIsStreaming(true);
 
       try {
         await sendChatMessageLLM({
@@ -200,18 +201,24 @@ export default function ChatPage({ params }: ChatPageProps) {
               );
             },
             onDone: async () => {
+              // После завершения стрима убираем локальный ассистентский placeholder,
+              // чтобы не осталось пустого bubble: сервер отдаст финальный ответ через refetch.
+              setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
               await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
               debugLog("[chat] streamMessage finished", { chatId: targetChatId });
             },
             onError: (error) => {
               debugLog("[chat] streamMessage error", error);
               setStreamError(error.message);
+              // При ошибке тоже удаляем placeholder, чтобы не было фантома.
+              setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
             },
           },
         });
       } catch (error) {
         debugLog("[chat] streamMessage failure", error);
         setStreamError(error instanceof Error ? error.message : String(error));
+        setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
       } finally {
         setIsStreaming(false);
       }

@@ -83,6 +83,28 @@ export function useDeleteCanvasDocument() {
   });
 }
 
+export function useDuplicateCanvasDocument() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, title }: { id: string; title?: string }) => {
+      const res = await fetch(`/api/canvas-documents/${id}/duplicate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ title }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message ?? "Не удалось дублировать документ");
+      }
+      return (await res.json()) as { document: CanvasDocument };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/canvas-documents"] });
+    },
+  });
+}
+
 export function useCanvasDocumentsByTranscript(transcriptId?: string) {
   return useQuery({
     queryKey: ["/api/canvas-documents", "transcript", transcriptId],

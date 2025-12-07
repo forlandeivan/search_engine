@@ -1524,7 +1524,11 @@ const createCanvasDocumentSchema = z.object({
   actionId: z.string().trim().min(1).optional().nullable().transform((v) => (v && v.length > 0 ? v : undefined)),
   type: canvasDocumentTypeEnum.default("derived"),
   title: z.string().trim().min(1, "Укажите заголовок"),
-  content: z.string().trim().default(""),
+  content: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((v) => (typeof v === "string" ? v : "")),
   isDefault: z.boolean().optional(),
 });
 const updateCanvasDocumentSchema = z.object({
@@ -9440,6 +9444,30 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
       await storage.softDeleteCanvasDocument(id);
       res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/canvas-documents/:id/duplicate", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+    try {
+      const { id } = req.params;
+      const { title } = (req.body ?? {}) as { title?: string };
+      const document = await storage.getCanvasDocument(id);
+      if (!document || document.deletedAt) {
+        return res.status(404).json({ message: "Документ не найден" });
+      }
+      const isMember = await storage.isWorkspaceMember(document.workspaceId, user.id);
+      if (!isMember) {
+        return res.status(403).json({ message: "Нет доступа к этому workspace" });
+      }
+      const duplicated = await storage.duplicateCanvasDocument(id, title);
+      if (!duplicated) {
+        return res.status(400).json({ message: "Не удалось дублировать документ" });
+      }
+      res.status(201).json({ document: duplicated });
     } catch (error) {
       next(error);
     }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { X, Save, RotateCcw, Loader2, MoreVertical, Circle } from "lucide-react";
+import { X, Save, RotateCcw, Loader2, Circle, MoreVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -23,6 +23,8 @@ import {
   useCreateCanvasDocument,
   useCanvasDocumentsByTranscript,
   useDeleteCanvasDocument,
+  useUpdateCanvasDocument,
+  useDuplicateCanvasDocument,
 } from "@/hooks/useCanvasDocuments";
 
 type CanvasTab = {
@@ -67,10 +69,13 @@ export function TranscriptCanvas({
   const { mutate: runAction } = useRunSkillAction(workspaceId);
   const { mutateAsync: createCanvasDocument } = useCreateCanvasDocument();
   const { mutateAsync: deleteCanvasDocument } = useDeleteCanvasDocument();
+  const { mutateAsync: updateCanvasDocument } = useUpdateCanvasDocument();
+  const { mutateAsync: duplicateCanvasDocument } = useDuplicateCanvasDocument();
 
   const [tabs, setTabs] = useState<CanvasTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>("original");
   const [initializedTab, setInitializedTab] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (!transcript) return;
@@ -188,44 +193,68 @@ export function TranscriptCanvas({
       return;
     }
 
-    updateTranscript(
-      { transcriptId, fullText: activeTab.content.trim() },
-      {
-        onSuccess: (updatedTranscript) => {
-          const newText = updatedTranscript.fullText || "";
-          setTabs((prev) =>
-            prev.map((tab) =>
-              tab.id === activeTab.id
-                ? {
-                    ...tab,
-                    content: newText,
-                    originalContent: newText,
-                    hasChanges: false,
-                  }
-                : tab.id === "original"
-                ? {
-                    ...tab,
-                    originalContent: newText,
-                    content: tab.hasChanges ? tab.content : newText,
-                  }
-                : tab
-            )
-          );
-          toast({
-            title: "Сохранено",
-            description: "Стенограмма успешно обновлена",
-          });
+    // Сохраняем оригинал в Transcript, остальные вкладки — в CanvasDocument
+    if (activeTab.id === "original") {
+      updateTranscript(
+        { transcriptId, fullText: activeTab.content.trim() },
+        {
+          onSuccess: (updatedTranscript) => {
+            const newText = updatedTranscript.fullText || "";
+            setTabs((prev) =>
+              prev.map((tab) =>
+                tab.id === activeTab.id
+                  ? {
+                      ...tab,
+                      content: newText,
+                      originalContent: newText,
+                      hasChanges: false,
+                    }
+                  : tab.id === "original"
+                  ? {
+                      ...tab,
+                      originalContent: newText,
+                      content: tab.hasChanges ? tab.content : newText,
+                    }
+                  : tab,
+              ),
+            );
+            toast({
+              title: "Сохранено",
+              description: "Стенограмма успешно обновлена",
+            });
+          },
+          onError: (error) => {
+            toast({
+              title: "Ошибка",
+              description:
+                error instanceof Error ? error.message : "Не удалось сохранить",
+              variant: "destructive",
+            });
+          },
         },
-        onError: (error) => {
-          toast({
-            title: "Ошибка",
-            description:
-              error instanceof Error ? error.message : "Не удалось сохранить",
-            variant: "destructive",
-          });
-        },
+      );
+    } else {
+      try {
+        await updateCanvasDocument({
+          id: activeTab.id,
+          content: activeTab.content.trim(),
+        });
+        setTabs((prev) =>
+          prev.map((tab) =>
+            tab.id === activeTab.id
+              ? { ...tab, originalContent: activeTab.content.trim(), hasChanges: false }
+              : tab,
+          ),
+        );
+        toast({ title: "Сохранено", description: "Документ холста обновлён" });
+      } catch (error) {
+        toast({
+          title: "Ошибка",
+          description: error instanceof Error ? error.message : "Не удалось сохранить документ",
+          variant: "destructive",
+        });
       }
-    );
+    }
   };
 
   const handleReset = () => {
@@ -486,6 +515,10 @@ export function TranscriptCanvas({
           <button
             key={tab.id}
             onClick={() => setActiveTabId(tab.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setContextMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
+            }}
             className={cn(
               "relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors",
               activeTabId === tab.id
@@ -498,27 +531,139 @@ export function TranscriptCanvas({
             {tab.hasChanges && (
               <Circle className="h-2 w-2 fill-amber-400 text-amber-400" />
             )}
-            {tab.isLoading && (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            )}
-            {tab.type === "action_result" && !tab.isLoading && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleCloseTab(tab.id);
-                }}
-                className="ml-1 rounded p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700"
-                aria-label="Закрыть таб"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
+            {tab.isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
             {activeTabId === tab.id && (
               <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
             )}
           </button>
         ))}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="ml-auto h-8 w-8"
+          onClick={async () => {
+            try {
+              const { document } = await createCanvasDocument({
+                chatId,
+                transcriptId,
+                type: "custom",
+                title: "Новый документ",
+                content: "",
+              });
+              const newTab: CanvasTab = {
+                id: document.id,
+                title: document.title,
+                content: document.content,
+                originalContent: document.content,
+                isLoading: false,
+                type: "action_result",
+                actionId: document.actionId ?? undefined,
+                hasChanges: false,
+              };
+              setTabs((prev) => [...prev, newTab]);
+              setActiveTabId(document.id);
+            } catch (error) {
+              toast({
+                title: "Ошибка",
+                description: error instanceof Error ? error.message : "Не удалось создать документ",
+                variant: "destructive",
+              });
+            }
+          }}
+        >
+          +
+        </Button>
       </div>
+      {contextMenu && (
+        <DropdownMenu open onOpenChange={(open) => !open && setContextMenu(null)}>
+          <DropdownMenuContent
+            className="w-48"
+            side="right"
+            align="start"
+            sideOffset={0}
+            alignOffset={0}
+            style={{ position: "fixed", top: contextMenu.y, left: contextMenu.x }}
+          >
+            <DropdownMenuItem
+              onClick={() => {
+                const tab = tabs.find((t) => t.id === contextMenu.tabId);
+                if (!tab || tab.id === "original") {
+                  setContextMenu(null);
+                  return;
+                }
+                const nextTitle = window.prompt("Название вкладки", tab.title);
+                if (!nextTitle || !nextTitle.trim()) {
+                  setContextMenu(null);
+                  return;
+                }
+                updateCanvasDocument(
+                  { id: tab.id, title: nextTitle.trim() },
+                  {
+                    onSuccess: ({ document }) => {
+                      setTabs((prev) => prev.map((t) => (t.id === tab.id ? { ...t, title: document.title } : t)));
+                    },
+                    onError: (error) => {
+                      toast({
+                        title: "Ошибка",
+                        description: error instanceof Error ? error.message : "Не удалось переименовать вкладку",
+                        variant: "destructive",
+                      });
+                    },
+                  },
+                );
+                setContextMenu(null);
+              }}
+            >
+              Переименовать
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={async () => {
+                const targetTab = tabs.find((t) => t.id === contextMenu.tabId);
+                if (!targetTab || targetTab.id === "original") {
+                  setContextMenu(null);
+                  return;
+                }
+                try {
+                  const { document } = await duplicateCanvasDocument({
+                    id: targetTab.id,
+                    title: `${targetTab.title}${targetTab.title.includes("копия") ? "" : " (копия)"}`,
+                  });
+                  const newTab: CanvasTab = {
+                    id: document.id,
+                    title: document.title,
+                    content: document.content,
+                    originalContent: document.content,
+                    isLoading: false,
+                    type: "action_result",
+                    actionId: document.actionId ?? undefined,
+                    hasChanges: false,
+                  };
+                  setTabs((prev) => [...prev, newTab]);
+                  setActiveTabId(document.id);
+                } catch (error) {
+                  toast({
+                    title: "Ошибка",
+                    description: error instanceof Error ? error.message : "Не удалось дублировать вкладку",
+                    variant: "destructive",
+                  });
+                } finally {
+                  setContextMenu(null);
+                }
+              }}
+            >
+              Дублировать
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                handleCloseTab(contextMenu.tabId);
+                setContextMenu(null);
+              }}
+            >
+              Удалить
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       {/* Tab content */}
       {activeTab && (
