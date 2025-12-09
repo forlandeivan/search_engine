@@ -10,6 +10,7 @@ type ChatMessagesAreaProps = {
   chatTitle: string | null;
   skillName: string | null;
   chatId?: string | null;
+  isReadOnly?: boolean;
   messages: ChatMessage[];
   isLoading: boolean;
   isNewChat: boolean;
@@ -27,6 +28,7 @@ export default function ChatMessagesArea({
   chatTitle,
   skillName,
   chatId,
+  isReadOnly = false,
   messages,
   isLoading,
   isNewChat,
@@ -55,6 +57,12 @@ export default function ChatMessagesArea({
     if (chatTitle && chatTitle.trim().length > 0) return chatTitle.trim();
     return "Новый разговор";
   }, [chatTitle, isNewChat]);
+
+  const readonlyBanner = isReadOnly ? (
+    <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      Навык или чат архивирован. Этот диалог доступен только для чтения.
+    </div>
+  ) : null;
 
   const streamingAssistantId = useMemo(() => {
     if (!isStreaming || messages.length === 0) return null;
@@ -166,6 +174,7 @@ export default function ChatMessagesArea({
 
       <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto py-6">
         <div className="mx-auto max-w-3xl px-4">
+          {readonlyBanner}
           <div className="flex h-full min-h-0 flex-col gap-3">
           {errorMessage ? (
             <div className="mx-auto mt-10 max-w-lg rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">

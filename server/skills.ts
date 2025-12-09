@@ -1,8 +1,8 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
-import { skills, skillKnowledgeBases, knowledgeBases, skillRagModes, skillTranscriptionModes } from "@shared/schema";
+import { skills, skillKnowledgeBases, knowledgeBases, skillRagModes, skillTranscriptionModes, chatSessions } from "@shared/schema";
 import type { SkillDto, SkillRagConfig, CreateSkillPayload } from "@shared/skills";
-import type { SkillRagMode, SkillTranscriptionMode } from "@shared/schema";
+import type { SkillRagMode, SkillTranscriptionMode, SkillStatus } from "@shared/schema";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -27,6 +27,7 @@ type EditableSkillColumns = Pick<
   | "llmProviderConfigId"
   | "collectionName"
   | "icon"
+  | "status"
   | "onTranscriptionMode"
   | "onTranscriptionAutoActionId"
 >;
@@ -218,6 +219,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     collectionName: row.collectionName ?? null,
     isSystem: Boolean(row.isSystem),
     systemKey: row.systemKey ?? null,
+    status: (row.status as SkillStatus) ?? "active",
     knowledgeBaseIds,
     ragConfig: {
       mode: normalizeRagModeFromValue(row.ragMode),
@@ -344,13 +346,17 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   return next;
 }
 
-export async function listSkills(workspaceId: string): Promise<SkillDto[]> {
-  const fetchSkillsForWorkspace = async (): Promise<SkillRow[]> =>
-    await db
-      .select()
-      .from(skills)
-      .where(eq(skills.workspaceId, workspaceId))
-      .orderBy(asc(skills.createdAt));
+export async function listSkills(
+  workspaceId: string,
+  options: { includeArchived?: boolean } = {},
+): Promise<SkillDto[]> {
+  const fetchSkillsForWorkspace = async (): Promise<SkillRow[]> => {
+    let condition = eq(skills.workspaceId, workspaceId);
+    if (!options.includeArchived) {
+      condition = and(condition, eq(skills.status, "active"));
+    }
+    return await db.select().from(skills).where(condition).orderBy(asc(skills.createdAt));
+  };
 
   let rows: SkillRow[] = await fetchSkillsForWorkspace();
 
@@ -548,42 +554,43 @@ export async function updateSkill(
   return mapSkillRow(updatedRow, knowledgeBaseIds);
 }
 
-export async function deleteSkill(workspaceId: string, skillId: string): Promise<boolean> {
-
+export async function archiveSkill(
+  workspaceId: string,
+  skillId: string,
+): Promise<{ skill: SkillDto; archivedChats: number }> {
   const existing = await db
-
-    .select({ id: skills.id, isSystem: skills.isSystem })
-
+    .select()
     .from(skills)
-
     .where(and(eq(skills.workspaceId, workspaceId), eq(skills.id, skillId)))
-
     .limit(1);
-
-
 
   const row = existing[0];
 
   if (!row) {
-
-    return false;
-
+    throw new SkillServiceError("Навык не найден", 404);
   }
-
-
 
   if (row.isSystem) {
-
     throw new SkillServiceError("Системные навыки нельзя удалять из рабочего пространства", 403);
-
   }
 
+  const [updatedSkill] = await db
+    .update(skills)
+    .set({ status: "archived", updatedAt: sql`CURRENT_TIMESTAMP` })
+    .where(and(eq(skills.id, skillId), eq(skills.workspaceId, workspaceId)))
+    .returning();
 
+  const archivedChatsResult = await db
+    .update(chatSessions)
+    .set({ status: "archived", updatedAt: sql`CURRENT_TIMESTAMP` })
+    .where(and(eq(chatSessions.workspaceId, workspaceId), eq(chatSessions.skillId, skillId)))
+    .returning({ id: chatSessions.id });
 
-  await db.delete(skills).where(and(eq(skills.workspaceId, workspaceId), eq(skills.id, skillId)));
-
-  return true;
-
+  const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
+  return {
+    skill: mapSkillRow(updatedSkill, knowledgeBaseIds),
+    archivedChats: archivedChatsResult.length,
+  };
 }
 
 

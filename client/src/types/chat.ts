@@ -3,7 +3,9 @@ export type ChatSummary = {
   workspaceId: string;
   userId: string;
   skillId: string;
+  status?: "active" | "archived";
   skillName?: string | null;
+  skillStatus?: "active" | "archived" | null;
   title: string;
   createdAt: string;
   updatedAt: string;

@@ -7,8 +7,9 @@ const SKILLS_QUERY_KEY = ["skills"] as const;
 type SkillResponse = { skill: Skill };
 type SkillListResponse = { skills: Skill[] };
 
-async function fetchSkills(): Promise<Skill[]> {
-  const response = await apiRequest("GET", "/api/skills");
+async function fetchSkills(includeArchived?: boolean): Promise<Skill[]> {
+  const params = includeArchived ? "?status=all" : "";
+  const response = await apiRequest("GET", `/api/skills${params}`);
   const payload = (await response.json()) as SkillListResponse;
   return payload.skills ?? [];
 }
@@ -25,11 +26,11 @@ async function updateSkill(skillId: string, payload: SkillPayload): Promise<Skil
   return data.skill;
 }
 
-export function useSkills(options: { enabled?: boolean } = {}) {
-  const { enabled = true } = options;
+export function useSkills(options: { enabled?: boolean; includeArchived?: boolean } = {}) {
+  const { enabled = true, includeArchived = false } = options;
   const query = useQuery<Skill[], Error>({
     queryKey: SKILLS_QUERY_KEY,
-    queryFn: fetchSkills,
+    queryFn: () => fetchSkills(includeArchived),
     enabled,
   });
 

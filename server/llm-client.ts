@@ -318,17 +318,71 @@ async function executeAitunnelCompletion(
 
       const rawEvents: Array<{ event: string; data: unknown }> = [];
       const contentType = response.headers.get("content-type") ?? "";
-      if (!response.ok) {
-        const text = await response.text();
-        streamController.fail(new Error(text || `AITunnel вернул ошибку ${response.status}`));
-        throw new Error(text || `AITunnel вернул ошибку ${response.status}`);
+    if (!response.ok) {
+      const text = await response.text();
+      streamController.fail(new Error(text || `AITunnel вернул ошибку ${response.status}`));
+      throw new Error(text || `AITunnel вернул ошибку ${response.status}`);
+    }
+
+    if (!contentType.toLowerCase().includes("text/event-stream")) {
+      const text = await response.text();
+      let parsed: unknown = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // ignore
       }
 
-      if (!contentType.toLowerCase().includes("text/event-stream")) {
-        const text = await response.text();
-        streamController.fail(new Error("AITunnel не вернул поток событий"));
-        throw new Error(text || "AITunnel не вернул поток событий");
+      let fallbackAnswer: string | null = null;
+      let usageTokens: number | null = null;
+
+      if (parsed && typeof parsed === "object") {
+        const choices = (parsed as Record<string, unknown>).choices;
+        const firstChoice = Array.isArray(choices) && choices.length > 0 ? choices[0] : null;
+        const message =
+          firstChoice && typeof firstChoice === "object" ? (firstChoice as Record<string, unknown>).message : null;
+        if (message && typeof message === "object" && typeof (message as Record<string, unknown>).content === "string") {
+          fallbackAnswer = (message as Record<string, unknown>).content as string;
+        }
+        const usage = (parsed as Record<string, unknown>).usage;
+        if (usage && typeof usage === "object" && typeof (usage as Record<string, unknown>).total_tokens === "number") {
+          usageTokens = (usage as Record<string, unknown>).total_tokens as number;
+        }
+        if (!fallbackAnswer && typeof (parsed as Record<string, unknown>).message === "string") {
+          fallbackAnswer = (parsed as Record<string, unknown>).message as string;
+        }
       }
+
+      if (!fallbackAnswer && text && text.trim().length > 0) {
+        fallbackAnswer = text.trim();
+      }
+
+      if (!fallbackAnswer) {
+        const err = new Error("AITunnel не вернул поток событий");
+        streamController.fail(err);
+        throw err;
+      }
+
+      const chunks = chunkText(fallbackAnswer, Math.max(24, Math.min(96, Math.floor(fallbackAnswer.length / 8) || 64)));
+      for (const chunk of chunks) {
+        streamController.push({ event: "delta", data: { text: chunk } });
+        if (chunks.length > 1) {
+          await delay(10);
+        }
+      }
+      streamController.finish();
+
+      return {
+        answer: fallbackAnswer,
+        usageTokens,
+        rawResponse: parsed ?? text,
+        request: {
+          url: provider.completionUrl,
+          headers: sanitizeHeadersForLog(headers),
+          body,
+        },
+      };
+    }
 
       const responseBody = response.body;
       if (!responseBody) {

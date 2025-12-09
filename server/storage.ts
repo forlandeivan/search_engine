@@ -4718,6 +4718,7 @@ export class DatabaseStorage implements IStorage {
     workspaceId: string,
     userId: string,
     searchQuery?: string,
+    options: { includeArchived?: boolean } = {},
   ): Promise<Array<ChatSession & { skillName: string | null; skillIsSystem: boolean }>> {
     await ensureChatTables();
 
@@ -4726,6 +4727,10 @@ export class DatabaseStorage implements IStorage {
       eq(chatSessions.userId, userId),
       isNull(chatSessions.deletedAt),
     );
+
+    if (!options.includeArchived) {
+      condition = and(condition, eq(chatSessions.status, "active"));
+    }
 
     const trimmedQuery = searchQuery?.trim();
     if (trimmedQuery) {
@@ -4737,6 +4742,7 @@ export class DatabaseStorage implements IStorage {
         chat: chatSessions,
         skillName: skills.name,
         skillIsSystem: skills.isSystem,
+        skillStatus: skills.status,
         skillSystemKey: skills.systemKey,
       })
       .from(chatSessions)
@@ -4754,11 +4760,13 @@ export class DatabaseStorage implements IStorage {
         chat: ChatSession;
         skillName: string | null;
         skillIsSystem: boolean | null;
+        skillStatus: string | null;
         skillSystemKey: string | null;
       }) => ({
         ...chat,
         skillName: skillName ?? null,
         skillIsSystem: Boolean(skillIsSystem),
+        skillStatus: skillStatus ?? null,
         skillSystemKey: skillSystemKey ?? null,
       }),
     );
@@ -4766,13 +4774,16 @@ export class DatabaseStorage implements IStorage {
 
   async getChatSessionById(
     chatId: string,
-  ): Promise<(ChatSession & { skillName: string | null; skillIsSystem: boolean; skillSystemKey: string | null }) | null> {
+  ): Promise<(
+    ChatSession & { skillName: string | null; skillIsSystem: boolean; skillSystemKey: string | null; skillStatus: string | null }
+  ) | null> {
     await ensureChatTables();
     const rows = await this.db
       .select({
         chat: chatSessions,
         skillName: skills.name,
         skillIsSystem: skills.isSystem,
+        skillStatus: skills.status,
         skillSystemKey: skills.systemKey,
       })
       .from(chatSessions)
@@ -4788,6 +4799,7 @@ export class DatabaseStorage implements IStorage {
       ...chat,
       skillName: skillName ?? null,
       skillIsSystem: Boolean(skillIsSystem),
+      skillStatus: skillStatus ?? null,
       skillSystemKey: skillSystemKey ?? null,
     };
   }

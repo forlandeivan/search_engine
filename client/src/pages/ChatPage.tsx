@@ -40,7 +40,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const { chats } = useChats(workspaceId);
   const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
 
-  const { skills } = useSkills({ enabled: Boolean(workspaceId) });
+  const { skills } = useSkills({ enabled: Boolean(workspaceId), includeArchived: true });
   const defaultSkill = useMemo(
     () => skills.find((skill) => skill.isSystem && skill.systemKey === "UNICA_CHAT") ?? null,
     [skills],
@@ -494,7 +494,8 @@ export default function ChatPage({ params }: ChatPageProps) {
   const isNewChat = !effectiveChatId;
   const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
   const chatTitle = activeChat?.title ?? null;
-  const disableInput = !workspaceId || isStreaming || Boolean(normalizedMessagesError && !isNewChat);
+  const isReadOnlyChat = activeChat?.status === "archived" || activeSkill?.status === "archived";
+  const disableInput = !workspaceId || isStreaming || Boolean(normalizedMessagesError && !isNewChat) || isReadOnlyChat;
   const isDefaultCreating = creatingSkillId !== null && creatingSkillId === (defaultSkill?.id ?? null);
 
   useEffect(() => {
@@ -525,6 +526,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           <ChatMessagesArea
               chatTitle={chatTitle}
               skillName={skillLabel}
+              isReadOnly={isReadOnlyChat}
               messages={visibleMessages}
               isLoading={isMessagesLoading && !isNewChat}
               isNewChat={isNewChat}
@@ -544,7 +546,13 @@ export default function ChatPage({ params }: ChatPageProps) {
               onTranscribe={handleTranscription}
               disabled={disableInput}
               chatId={effectiveChatId ?? null}
-              placeholder={isNewChat ? "Спросите что-нибудь..." : "Введите сообщение..."}
+              placeholder={
+                isReadOnlyChat
+                  ? "Чат архивирован и доступен только для чтения"
+                  : isNewChat
+                    ? "Спросите что-нибудь..."
+                    : "Введите сообщение..."
+              }
             />
           </div>
         </div>

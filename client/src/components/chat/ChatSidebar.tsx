@@ -119,7 +119,7 @@ export default function ChatSidebar({
 
   const customSkills = useMemo(() => {
     return workspaceSkills.filter(
-      (skill) => !(skill.isSystem && skill.systemKey === "UNICA_CHAT")
+      (skill) => !(skill.isSystem && skill.systemKey === "UNICA_CHAT") && skill.status !== "archived",
     );
   }, [workspaceSkills]);
 
@@ -176,6 +176,8 @@ export default function ChatSidebar({
     );
   }, [workspaceId, customSkills, isSkillsLoading, creatingSkillId, onCreateChatForSkill]);
 
+  const activeChats = useMemo(() => chats.filter((c) => c.status !== "archived"), [chats]);
+
   const sidebarContent = useMemo(() => {
     if (!workspaceId) {
       return (
@@ -194,7 +196,7 @@ export default function ChatSidebar({
       );
     }
 
-    if (chats.length === 0) {
+    if (activeChats.length === 0) {
       return (
         <div className="px-6 py-4 text-sm text-muted-foreground">
           Пока нет диалогов. Создайте новый чат, чтобы начать.
@@ -204,7 +206,7 @@ export default function ChatSidebar({
 
     return (
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {chats.map((chat) => (
+        {activeChats.map((chat) => (
           <ChatSidebarItem
             key={chat.id}
             chat={chat}
@@ -230,7 +232,7 @@ export default function ChatSidebar({
     );
   }, [
     workspaceId,
-    chats,
+    activeChats,
     isLoading,
     selectedChatId,
     editingChatId,

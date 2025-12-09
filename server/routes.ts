@@ -53,7 +53,8 @@ import {
   listSkills,
   createSkill,
   updateSkill,
-  deleteSkill,
+  archiveSkill,
+  getSkillById,
   SkillServiceError,
   getSkillById,
   UNICA_CHAT_SYSTEM_KEY,
@@ -8139,7 +8140,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.get("/api/skills", requireAuth, async (req, res, next) => {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
-      const skillsList = await listSkills(workspaceId);
+      const includeArchived = req.query?.status === "all" || req.query?.status === "archived";
+      const skillsList = await listSkills(workspaceId, { includeArchived });
       res.json({ skills: skillsList });
     } catch (error) {
       next(error);
@@ -8197,12 +8199,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "Не указан идентификатор навыка" });
       }
 
-      const deleted = await deleteSkill(workspaceId, skillId);
-      if (!deleted) {
-        return res.status(404).json({ message: "Навык не найден" });
-      }
-
-      res.status(204).send();
+      const result = await archiveSkill(workspaceId, skillId);
+      res.status(200).json({ skill: result.skill, archivedChats: result.archivedChats });
     } catch (error) {
       if (error instanceof SkillServiceError) {
         return res.status(error.status).json({ message: error.message });
@@ -8223,7 +8221,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
       const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
       const search = typeof req.query.q === "string" && req.query.q.trim().length > 0 ? req.query.q.trim() : undefined;
-      const chats = await listUserChats(workspaceId, user.id, search);
+      const includeArchived = req.query?.status === "all" || req.query?.status === "archived";
+      const chats = await listUserChats(workspaceId, user.id, search, { includeArchived });
       res.json({ chats });
     } catch (error) {
       if (error instanceof HttpError) {
@@ -8256,6 +8255,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       console.info(
         `[chat] create session user=${user.id} workspace=${workspaceId} skill=${resolvedSkillId}`,
       );
+      const skill = await getSkillById(workspaceId, resolvedSkillId);
+      if (!skill) {
+        return res.status(404).json({ message: "Навык не найден" });
+      }
+      if (skill.status === "archived") {
+        return res.status(403).json({ message: "Навык архивирован, новые чаты создавать нельзя" });
+      }
       const chat = await createChat({
         workspaceId,
         userId: user.id,
@@ -8330,13 +8336,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     let resolvedWorkspaceId: string | null = null;
 
     try {
-      const payload = createChatMessageSchema.parse(req.body ?? {});
+    const payload = createChatMessageSchema.parse(req.body ?? {});
       const workspaceCandidate = pickFirstString(
         payload.workspaceId,
         req.query.workspaceId,
         req.query.workspace_id,
       );
       const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      const chat = await getChatById(req.params.chatId, workspaceId, user.id);
+      if (chat.status === "archived") {
+        return res.status(403).json({ message: "Чат архивирован и доступен только для чтения" });
+      }
+      const skill = await getSkillById(workspaceId, chat.skillId);
+      if (skill && skill.status === "archived") {
+        return res.status(403).json({ message: "Навык архивирован, чат только для чтения" });
+      }
       const message = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
       scheduleChatTitleGenerationIfNeeded({
         chatId: req.params.chatId,
@@ -8498,9 +8512,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       );
       const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
       resolvedWorkspaceId = workspaceId;
-      const wantsStream = payload.stream === true || acceptHeader.includes("text/event-stream");
+      // Стрим по умолчанию; явный stream=false переводит в синхронный режим.
+      const wantsStream = payload.stream !== false;
 
       const chat = await getChatById(req.params.chatId, workspaceId, user.id);
+      if (chat.status === "archived") {
+        return res.status(403).json({ message: "Чат архивирован и доступен только для чтения" });
+      }
+      const skillForChat = await getSkillById(workspaceId, chat.skillId);
+      if (skillForChat && skillForChat.status === "archived") {
+        return res.status(403).json({ message: "Навык архивирован, чат доступен только для чтения" });
+      }
       await safeStartExecution({
         workspaceId,
         userId: user.id,

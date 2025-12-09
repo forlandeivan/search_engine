@@ -93,6 +93,7 @@ import {
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -136,6 +137,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { Separator } from "@/components/ui/separator";
 
 import { useSkills, useCreateSkill, useUpdateSkill } from "@/hooks/useSkills";
 import { apiRequest } from "@/lib/queryClient";
@@ -522,6 +524,8 @@ type SkillActionsPreviewProps = {
 
 function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewProps) {
   const { toast } = useToast();
+  const [archiveTarget, setArchiveTarget] = useState<Skill | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery<SkillActionConfigItem[]>({
     queryKey: ["skill-actions", skillId],
     queryFn: async () => {
@@ -1667,7 +1671,7 @@ async function fetchKnowledgeBases(): Promise<KnowledgeBaseSummary[]> {
 }
 
 export default function SkillsPage() {
-  const { skills, isLoading: isSkillsLoading, isError, error } = useSkills();
+  const { skills, isLoading: isSkillsLoading, isError, error, refetch: refetchSkills } = useSkills();
   const knowledgeBaseQuery = useQuery<KnowledgeBaseSummary[]>({
     queryKey: ["knowledge-bases"],
     queryFn: fetchKnowledgeBases,
@@ -1706,6 +1710,8 @@ export default function SkillsPage() {
   const embeddingProviders = embeddingProvidersResponse?.providers ?? [];
   const embeddingProvidersError = embeddingProvidersErrorRaw as Error | undefined;
   const { toast } = useToast();
+  const [archiveTarget, setArchiveTarget] = useState<Skill | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
 
@@ -1805,6 +1811,33 @@ export default function SkillsPage() {
 
     setEditingSkill(skill);
     setIsDialogOpen(true);
+  };
+
+  const handleArchiveSkill = async (skill: Skill) => {
+    setArchiveTarget(skill);
+  };
+
+  const confirmArchiveSkill = async () => {
+    if (!archiveTarget) return;
+    setIsArchiving(true);
+    try {
+      const response = await apiRequest("DELETE", `/api/skills/${archiveTarget.id}`);
+      const payload = await response.json().catch(() => ({}));
+      await refetchSkills();
+      toast({
+        title: "Навык архивирован",
+        description:
+          typeof payload?.archivedChats === "number"
+            ? `В архив переведено чатов: ${payload.archivedChats}`
+            : undefined,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Не удалось архивировать навык";
+      toast({ title: "Ошибка", description: message, variant: "destructive" });
+    } finally {
+      setIsArchiving(false);
+      setArchiveTarget(null);
+    }
   };
 
   const handleSubmit = async (values: SkillFormValues) => {
@@ -2062,25 +2095,36 @@ export default function SkillsPage() {
                       </p>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-
-                        variant="ghost"
-
-                        size="sm"
-
-                        onClick={() => handleEditClick(skill)}
-
-                        disabled={skill.isSystem}
-
-                        title={
-                          skill.isSystem
-                            ? "Системные навыки редактируются администратором инстанса"
-                            : undefined
-                        }
-                      >
-                        <Pencil className="mr-2 h-4 w-4" /> Редактировать
-
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEditClick(skill)}
+                          disabled={skill.isSystem}
+                          title={
+                            skill.isSystem
+                              ? "Системные навыки редактируются администратором инстанса"
+                              : undefined
+                          }
+                        >
+                          <Pencil className="mr-2 h-4 w-4" /> Редактировать
+                        </Button>
+                        {!skill.isSystem && skill.status !== "archived" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => handleArchiveSkill(skill)}
+                          >
+                            Архивировать
+                          </Button>
+                        )}
+                        {skill.status === "archived" && (
+                          <Badge variant="secondary" className="text-[10px] uppercase">
+                            Архив
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -2104,6 +2148,31 @@ export default function SkillsPage() {
         skill={editingSkill}
         getIconComponent={getIconComponent}
       />
+      <Dialog open={Boolean(archiveTarget)} onOpenChange={(open) => !open && setArchiveTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Архивировать навык?</DialogTitle>
+            <DialogDescription>
+              Навык будет помечен как архивный. Новые чаты с ним создать нельзя. Все связанные чаты перейдут в режим
+              только чтения.
+            </DialogDescription>
+          </DialogHeader>
+          <Separator />
+          <div className="space-y-2 text-sm">
+            <p className="font-semibold">{archiveTarget?.name ?? "Без названия"}</p>
+            <p className="text-muted-foreground">ID: {archiveTarget?.id}</p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="ghost" onClick={() => setArchiveTarget(null)} disabled={isArchiving}>
+              Отмена
+            </Button>
+            <Button type="button" variant="destructive" onClick={confirmArchiveSkill} disabled={isArchiving}>
+              {isArchiving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Архивировать
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

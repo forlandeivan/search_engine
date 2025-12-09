@@ -798,6 +798,7 @@ export const skills = pgTable(
       .notNull()
       .default("raw_only"),
     onTranscriptionAutoActionId: varchar("on_transcription_auto_action_id"),
+    status: text("status").$type<SkillStatus>().notNull().default("active"),
     icon: text("icon"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -883,6 +884,9 @@ export const skillActions = pgTable(
 export const chatMessageRoles = ["user", "assistant", "system"] as const;
 export type ChatMessageRole = (typeof chatMessageRoles)[number];
 
+export const chatStatuses = ["active", "archived"] as const;
+export type ChatStatus = (typeof chatStatuses)[number];
+
 export const chatSessions = pgTable(
   "chat_sessions",
   {
@@ -897,6 +901,7 @@ export const chatSessions = pgTable(
       .notNull()
       .references(() => skills.id, { onDelete: "cascade" }),
     title: text("title").notNull().default(""),
+    status: text("status").$type<ChatStatus>().notNull().default("active"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     deletedAt: timestamp("deleted_at"),
@@ -1021,6 +1026,9 @@ export const skillRagModes = ["all_collections", "selected_collections"] as cons
 export type SkillRagMode = (typeof skillRagModes)[number];
 export const skillTranscriptionModes = ["raw_only", "auto_action"] as const;
 export type SkillTranscriptionMode = (typeof skillTranscriptionModes)[number];
+
+export const skillStatuses = ["active", "archived"] as const;
+export type SkillStatus = (typeof skillStatuses)[number];
 
 export const skillKnowledgeBases = pgTable(
   "skill_knowledge_bases",

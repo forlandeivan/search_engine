@@ -90,8 +90,10 @@ const mapChatSummary = (
   workspaceId: session.workspaceId,
   userId: session.userId,
   skillId: session.skillId,
+  status: session.status,
   title: session.title,
   skillName: session.skillName,
+  skillStatus: (session as any).skillStatus ?? null,
   skillIsSystem: Boolean(session.skillIsSystem),
   skillSystemKey: session.skillSystemKey ?? null,
   createdAt: session.createdAt,
@@ -125,8 +127,9 @@ export async function listUserChats(
   workspaceId: string,
   userId: string,
   searchQuery?: string,
+  options: { includeArchived?: boolean } = {},
 ) {
-  const chats = await storage.listChatSessions(workspaceId, userId, searchQuery);
+  const chats = await storage.listChatSessions(workspaceId, userId, searchQuery, options);
   return chats.map(mapChatSummary);
 }
 

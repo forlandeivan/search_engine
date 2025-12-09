@@ -57,7 +57,25 @@ export default function ChatInput({
   const [pendingTranscribe, setPendingTranscribe] = useState<TranscribePayload | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
+  const MAX_ROWS = 10;
+
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const lineHeight = parseFloat(getComputedStyle(el).lineHeight || "24") || 24;
+    const maxHeight = lineHeight * MAX_ROWS;
+    const scrollHeight = el.scrollHeight;
+    if (scrollHeight <= maxHeight) {
+      el.style.height = `${scrollHeight}px`;
+      el.style.overflowY = "hidden";
+    } else {
+      el.style.height = `${maxHeight}px`;
+      el.style.overflowY = "auto";
+    }
+  }, []);
 
   useEffect(() => {
     if (!showAudioAttach) return;
@@ -239,6 +257,10 @@ export default function ChatInput({
     [handleUploadAudio],
   );
 
+  useEffect(() => {
+    autoResize();
+  }, [value, autoResize]);
+
   const isSendDisabled =
     disabled ||
     isUploading ||
@@ -286,13 +308,13 @@ export default function ChatInput({
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
-        className={`rounded-full border bg-white px-3 py-2 shadow-lg transition-colors dark:bg-slate-900 ${
+        className={`rounded-2xl border bg-white px-3 py-2 shadow-lg transition-colors dark:bg-slate-900 ${
           isDragOver
             ? "border-blue-400 bg-blue-50/50 dark:border-blue-500 dark:bg-blue-950/30"
             : "border-slate-300 dark:border-slate-700"
         }`}
       >
-        <div className="flex items-center gap-1">
+        <div className="flex items-end gap-1">
           {showAudioAttach && (
             <>
               <input
@@ -325,8 +347,12 @@ export default function ChatInput({
           )}
 
           <Textarea
+            ref={textareaRef}
             value={value}
-            onChange={(event) => setValue(event.target.value)}
+            onChange={(event) => {
+              setValue(event.target.value);
+              requestAnimationFrame(autoResize);
+            }}
             placeholder={placeholder ?? "Спросите что-нибудь..."}
             disabled={disabled}
             rows={1}
@@ -336,7 +362,8 @@ export default function ChatInput({
                 handleSend();
               }
             }}
-            className="h-10 !min-h-0 flex-1 resize-none border-none bg-transparent px-2 py-2 text-base leading-6 text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
+            style={{ maxHeight: "240px", overflowY: "hidden", borderRadius: "12px" }}
+            className="!min-h-0 flex-1 resize-none border-none bg-transparent px-2 py-2 text-base leading-6 text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
             data-testid="input-chat-message"
           />
 

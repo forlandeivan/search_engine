@@ -74,6 +74,7 @@ export type SkillDto = {
   collectionName?: string | null;
   isSystem: boolean;
   systemKey?: string | null;
+  status: "active" | "archived";
   knowledgeBaseIds?: string[];
   ragConfig: SkillRagConfig;
   onTranscriptionMode: SkillTranscriptionMode;

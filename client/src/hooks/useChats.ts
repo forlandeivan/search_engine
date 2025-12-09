@@ -12,11 +12,14 @@ const buildChatsQueryKey = (workspaceId?: string, search?: string) =>
 const buildChatMessagesKey = (workspaceId?: string, chatId?: string) =>
   ["chat-messages", workspaceId ?? "unknown", chatId ?? "none"] as const;
 
-async function fetchChats(workspaceId: string, searchQuery?: string): Promise<ChatSummary[]> {
+async function fetchChats(workspaceId: string, searchQuery?: string, includeArchived?: boolean): Promise<ChatSummary[]> {
   const params = new URLSearchParams();
   params.set("workspaceId", workspaceId);
   if (searchQuery && searchQuery.trim().length > 0) {
     params.set("q", searchQuery.trim());
+  }
+  if (includeArchived) {
+    params.set("status", "all");
   }
   const response = await apiRequest("GET", `/api/chat/sessions?${params.toString()}`);
   const data = (await response.json()) as ChatListResponse;
@@ -49,11 +52,12 @@ async function deleteChatRequest(chatId: string, workspaceId: string): Promise<v
   await apiRequest("DELETE", `/api/chat/sessions/${chatId}?${params.toString()}`);
 }
 
-export function useChats(workspaceId?: string, searchQuery?: string) {
+export function useChats(workspaceId?: string, searchQuery?: string, options: { includeArchived?: boolean } = {}) {
+  const { includeArchived = false } = options;
   const queryKey = buildChatsQueryKey(workspaceId, searchQuery);
   const query = useQuery<ChatSummary[], Error>({
     queryKey,
-    queryFn: () => fetchChats(workspaceId!, searchQuery),
+    queryFn: () => fetchChats(workspaceId!, searchQuery, includeArchived),
     enabled: Boolean(workspaceId),
   });
 
