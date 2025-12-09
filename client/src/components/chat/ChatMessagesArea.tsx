@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Loader2, Sparkles, Music, Search } from "lucide-react";
+import { Loader2, Sparkles, Music, Search, Archive } from "lucide-react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
 import { useTypewriter } from "@/hooks/useTypewriter";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type ChatMessagesAreaProps = {
   chatTitle: string | null;
@@ -100,18 +101,32 @@ export default function ChatMessagesArea({
       <header className="flex h-20 shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex-1">
           {headerTitle && !isEditingTitle ? (
-            <h1
-              className="text-2xl font-semibold tracking-tight text-slate-900 cursor-pointer hover:underline dark:text-slate-100"
-              title="Переименовать чат"
-              onClick={() => {
-                if (!chatId || !onRenameChat) return;
-                setDraftTitle(headerTitle);
-                setIsEditingTitle(true);
-              }}
-              data-testid="text-chat-title"
-            >
-              {headerTitle}
-            </h1>
+            <div className="flex items-center gap-2">
+              {isReadOnly ? (
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Archive className="h-5 w-5 text-amber-600" aria-label="Архивный чат" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      Чат архивирован, доступен только для чтения
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
+              <h1
+                className="text-2xl font-semibold tracking-tight text-slate-900 cursor-pointer hover:underline dark:text-slate-100"
+                title="Переименовать чат"
+                onClick={() => {
+                  if (!chatId || !onRenameChat) return;
+                  setDraftTitle(headerTitle);
+                  setIsEditingTitle(true);
+                }}
+                data-testid="text-chat-title"
+              >
+                {headerTitle}
+              </h1>
+            </div>
           ) : null}
           {isEditingTitle ? (
             <div className="flex items-center gap-2">

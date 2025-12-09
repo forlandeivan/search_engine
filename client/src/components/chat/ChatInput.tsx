@@ -4,6 +4,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
 
 export type TranscribePayload =
@@ -21,6 +22,7 @@ type ChatInputProps = {
   onTranscribe?: (payload: TranscribePayload) => void;
   onEnsureChat?: () => Promise<string | null> | string | null;
   disabled?: boolean;
+  readOnlyHint?: string;
   placeholder?: string;
   showAudioAttach?: boolean;
   chatId?: string | null;
@@ -44,6 +46,7 @@ export default function ChatInput({
   onTranscribe,
   onEnsureChat,
   disabled,
+  readOnlyHint,
   placeholder,
   showAudioAttach = true,
   chatId = null,
@@ -60,6 +63,7 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
   const MAX_ROWS = 10;
+  const disabledTooltip = disabled ? readOnlyHint ?? "Чат архивирован, ввод недоступен" : null;
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current;
@@ -180,7 +184,15 @@ export default function ChatInput({
   );
 
   const handleSend = useCallback(async () => {
-    if (disabled) return;
+    if (disabled) {
+      if (readOnlyHint) {
+        toast({
+          title: "Только чтение",
+          description: readOnlyHint,
+        });
+      }
+      return;
+    }
     setIsSending(true);
 
     if (attachedFile && pendingTranscribe) {
@@ -201,7 +213,7 @@ export default function ChatInput({
     setValue("");
     await onSend(trimmed);
     setIsSending(false);
-  }, [attachedFile, disabled, onSend, onTranscribe, pendingTranscribe, value]);
+  }, [attachedFile, disabled, onSend, onTranscribe, pendingTranscribe, readOnlyHint, toast, value]);
 
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -210,10 +222,11 @@ export default function ChatInput({
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    if (disabled) return;
     if (e.dataTransfer.items?.length > 0) {
       setIsDragOver(true);
     }
-  }, []);
+  }, [disabled]);
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -232,6 +245,7 @@ export default function ChatInput({
     (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
       e.stopPropagation();
+      if (disabled) return;
       setIsDragOver(false);
       const files = e.dataTransfer.files;
       if (!files || files.length === 0) return;
@@ -308,11 +322,13 @@ export default function ChatInput({
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
-        className={`rounded-2xl border bg-white px-3 py-2 shadow-lg transition-colors dark:bg-slate-900 ${
+        className={cn(
+          "rounded-2xl border bg-white px-3 py-2 shadow-lg transition-colors dark:bg-slate-900",
           isDragOver
             ? "border-blue-400 bg-blue-50/50 dark:border-blue-500 dark:bg-blue-950/30"
-            : "border-slate-300 dark:border-slate-700"
-        }`}
+            : "border-slate-300 dark:border-slate-700",
+          disabled ? "opacity-75 cursor-not-allowed" : ""
+        )}
       >
         <div className="flex items-end gap-1">
           {showAudioAttach && (
@@ -340,32 +356,46 @@ export default function ChatInput({
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
-                  <p>Прикрепите файл для транскрибации</p>
+                  <p>{disabledTooltip ?? "Прикрепите файл для транскрибации"}</p>
                 </TooltipContent>
               </Tooltip>
             </>
           )}
 
-          <Textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(event) => {
-              setValue(event.target.value);
-              requestAnimationFrame(autoResize);
-            }}
-            placeholder={placeholder ?? "Спросите что-нибудь..."}
-            disabled={disabled}
-            rows={1}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                handleSend();
-              }
-            }}
-            style={{ maxHeight: "240px", overflowY: "hidden", borderRadius: "12px" }}
-            className="!min-h-0 flex-1 resize-none border-none bg-transparent px-2 py-2 text-base leading-6 text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
-            data-testid="input-chat-message"
-          />
+          <Tooltip disabled={!disabledTooltip}>
+            <TooltipTrigger asChild>
+              <Textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(event) => {
+                  setValue(event.target.value);
+                  requestAnimationFrame(autoResize);
+                }}
+                placeholder={placeholder ?? "Спросите что-нибудь..."}
+                disabled={disabled}
+                rows={1}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    handleSend();
+                  }
+                }}
+                style={{ maxHeight: "240px", overflowY: "hidden", borderRadius: "12px" }}
+                className={cn(
+                  "!min-h-0 flex-1 resize-none border-none px-2 py-2 text-base leading-6",
+                  disabled
+                    ? "cursor-not-allowed bg-transparent text-slate-400 dark:text-slate-600"
+                    : "bg-transparent text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
+                )}
+                data-testid="input-chat-message"
+              />
+            </TooltipTrigger>
+            {disabledTooltip ? (
+              <TooltipContent side="top">
+                <p>{disabledTooltip}</p>
+              </TooltipContent>
+            ) : null}
+          </Tooltip>
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -375,12 +405,13 @@ export default function ChatInput({
                 size="icon"
                 className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
                 data-testid="button-voice-input"
+                disabled={disabled}
               >
                 <Mic className="h-6 w-6" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="top">
-              <p>Голосовой ввод</p>
+              <p>{disabledTooltip ?? "Голосовой ввод"}</p>
             </TooltipContent>
           </Tooltip>
 

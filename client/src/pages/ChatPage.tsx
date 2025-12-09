@@ -545,6 +545,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               onSend={handleSend}
               onTranscribe={handleTranscription}
               disabled={disableInput}
+              readOnlyHint={isReadOnlyChat ? "Чат архивирован, ввод недоступен" : undefined}
               chatId={effectiveChatId ?? null}
               placeholder={
                 isReadOnlyChat

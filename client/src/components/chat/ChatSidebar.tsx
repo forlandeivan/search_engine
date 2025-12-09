@@ -28,7 +28,9 @@ import {
   Mic,
   ChevronDown,
   Plus,
+  Archive,
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type ChatSidebarProps = {
   workspaceId?: string;
@@ -337,6 +339,8 @@ function ChatSidebarItem({
   onDelete: () => void;
   onSelect: () => void;
 }) {
+  const isArchived = chat.status === "archived" || chat.skillStatus === "archived";
+
   return (
     <div
       className={cn(
@@ -377,18 +381,33 @@ function ChatSidebarItem({
                 if (event.key === "Escape") {
                   onCancelRename();
                 }
-              }}
-              className="h-8"
-              data-testid="input-rename-chat"
-            />
-          </form>
-        ) : (
-          <p
-            className="truncate text-base font-medium text-slate-900 dark:text-slate-100"
-            data-testid={`text-chat-title-${chat.id}`}
-          >
-            {chat.title || "Без названия"}
-          </p>
+            }}
+            className="h-8"
+            data-testid="input-rename-chat"
+          />
+        </form>
+      ) : (
+          <div className="flex items-center gap-2">
+            {isArchived ? (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Archive className="h-4 w-4 text-amber-600" aria-label="Архивный чат" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top">Чат архивирован</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
+            <p
+              className={cn(
+                "truncate text-base font-medium",
+                isArchived ? "text-muted-foreground" : "text-slate-900 dark:text-slate-100"
+              )}
+              data-testid={`text-chat-title-${chat.id}`}
+            >
+              {chat.title || "Без названия"}
+            </p>
+          </div>
         )}
       </div>
       {!isEditing && (
