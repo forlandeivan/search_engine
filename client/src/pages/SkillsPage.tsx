@@ -93,7 +93,6 @@ import {
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -138,6 +137,13 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
+import { MoreVertical } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 import { useSkills, useCreateSkill, useUpdateSkill } from "@/hooks/useSkills";
 import { apiRequest } from "@/lib/queryClient";
@@ -2096,33 +2102,38 @@ export default function SkillsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEditClick(skill)}
-                          disabled={skill.isSystem}
-                          title={
-                            skill.isSystem
-                              ? "Системные навыки редактируются администратором инстанса"
-                              : undefined
-                          }
-                        >
-                          <Pencil className="mr-2 h-4 w-4" /> Редактировать
-                        </Button>
-                        {!skill.isSystem && skill.status !== "archived" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-red-600 hover:text-red-700"
-                            onClick={() => handleArchiveSkill(skill)}
-                          >
-                            Архивировать
-                          </Button>
-                        )}
                         {skill.status === "archived" && (
                           <Badge variant="secondary" className="text-[10px] uppercase">
                             Архив
                           </Badge>
+                        )}
+                        {!skill.isSystem && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                aria-label="Действия с навыком"
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleEditClick(skill)}>
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Редактировать
+                              </DropdownMenuItem>
+                              {skill.status !== "archived" && (
+                                <DropdownMenuItem
+                                  className="text-red-600 focus:text-red-700"
+                                  onClick={() => handleArchiveSkill(skill)}
+                                >
+                                  Архивировать
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         )}
                       </div>
                     </TableCell>

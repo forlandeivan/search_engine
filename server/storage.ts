@@ -4756,6 +4756,7 @@ export class DatabaseStorage implements IStorage {
         skillName,
         skillIsSystem,
         skillSystemKey,
+        skillStatus,
       }: {
         chat: ChatSession;
         skillName: string | null;
@@ -4794,7 +4795,7 @@ export class DatabaseStorage implements IStorage {
       return null;
     }
 
-    const { chat, skillName, skillIsSystem, skillSystemKey } = rows[0];
+    const { chat, skillName, skillIsSystem, skillSystemKey, skillStatus } = rows[0];
     return {
       ...chat,
       skillName: skillName ?? null,
