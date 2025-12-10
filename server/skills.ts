@@ -113,6 +113,25 @@ const normalizeActionId = (value: string | null | undefined): string | null => {
   return normalized;
 };
 
+function assertRagRequirements(
+  mode: SkillMode,
+  ragConfig: SkillRagConfig,
+  knowledgeBaseIds: readonly string[],
+): void {
+  if (mode !== "rag") {
+    return;
+  }
+  if (!knowledgeBaseIds || knowledgeBaseIds.length === 0) {
+    throw new SkillServiceError("Для RAG-навыка нужно выбрать хотя бы одну базу знаний", 400);
+  }
+  if (ragConfig.mode === "selected_collections" && (!ragConfig.collectionIds || ragConfig.collectionIds.length === 0)) {
+    throw new SkillServiceError("Для выбранного режима RAG укажите коллекции", 400);
+  }
+  if (!ragConfig.embeddingProviderId) {
+    throw new SkillServiceError("Для RAG-навыка нужно выбрать сервис эмбеддингов", 400);
+  }
+}
+
 function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig {
   if (!input) {
     return { ...DEFAULT_RAG_CONFIG };
@@ -427,6 +446,7 @@ export async function createSkill(
   const transcriptionMode = normalized.onTranscriptionMode ?? DEFAULT_TRANSCRIPTION_MODE;
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
   const mode = normalized.mode ?? DEFAULT_SKILL_MODE;
+  assertRagRequirements(mode, ragConfig, validKnowledgeBases);
 
   const [inserted] = await db
     .insert(skills)
@@ -456,14 +476,6 @@ export async function createSkill(
       ragLlmResponseFormat: ragConfig.llmResponseFormat,
       onTranscriptionMode: transcriptionMode,
       onTranscriptionAutoActionId: transcriptionAutoActionId,
-      ragBm25Weight: ragConfig.bm25Weight,
-      ragBm25Limit: ragConfig.bm25Limit,
-      ragVectorWeight: ragConfig.vectorWeight,
-      ragVectorLimit: ragConfig.vectorLimit,
-      ragEmbeddingProviderId: ragConfig.embeddingProviderId,
-      ragLlmTemperature: ragConfig.llmTemperature,
-      ragLlmMaxTokens: ragConfig.llmMaxTokens,
-      ragLlmResponseFormat: ragConfig.llmResponseFormat,
     })
     .returning();
 
@@ -511,9 +523,45 @@ export async function updateSkill(
     }
   });
 
-  let updatedRow = row;
+  const currentRagConfig: SkillRagConfig = {
+    mode: normalizeRagModeFromValue(row.ragMode),
+    collectionIds: row.ragCollectionIds ?? [],
+    topK: row.ragTopK ?? DEFAULT_RAG_CONFIG.topK,
+    minScore: row.ragMinScore ?? DEFAULT_RAG_CONFIG.minScore,
+    maxContextTokens: row.ragMaxContextTokens ?? DEFAULT_RAG_CONFIG.maxContextTokens,
+    showSources: row.ragShowSources ?? DEFAULT_RAG_CONFIG.showSources,
+    bm25Weight: row.ragBm25Weight ?? DEFAULT_RAG_CONFIG.bm25Weight,
+    bm25Limit: row.ragBm25Limit ?? DEFAULT_RAG_CONFIG.bm25Limit,
+    vectorWeight: row.ragVectorWeight ?? DEFAULT_RAG_CONFIG.vectorWeight,
+    vectorLimit: row.ragVectorLimit ?? DEFAULT_RAG_CONFIG.vectorLimit,
+    embeddingProviderId: row.ragEmbeddingProviderId ?? DEFAULT_RAG_CONFIG.embeddingProviderId,
+    llmTemperature: row.ragLlmTemperature ?? DEFAULT_RAG_CONFIG.llmTemperature,
+    llmMaxTokens: row.ragLlmMaxTokens ?? DEFAULT_RAG_CONFIG.llmMaxTokens,
+    llmResponseFormat: row.ragLlmResponseFormat ?? DEFAULT_RAG_CONFIG.llmResponseFormat,
+  };
   const ragUpdates = normalized.ragConfig;
   const hasRagUpdates = ragUpdates !== undefined;
+  const nextRagConfig = ragUpdates ?? currentRagConfig;
+  const effectiveMode = normalized.mode ?? normalizeSkillMode(row.mode);
+
+  let knowledgeBaseIdsForValidation: string[];
+  if (normalized.knowledgeBaseIds !== undefined) {
+    const validKnowledgeBases = await filterWorkspaceKnowledgeBases(
+      workspaceId,
+      normalized.knowledgeBaseIds,
+    );
+
+    if (validKnowledgeBases.length !== normalized.knowledgeBaseIds.length) {
+      throw new SkillServiceError("Некоторые базы знаний не найдены в рабочем пространстве", 400);
+    }
+    knowledgeBaseIdsForValidation = validKnowledgeBases;
+  } else {
+    knowledgeBaseIdsForValidation = await getSkillKnowledgeBaseIds(skillId, workspaceId);
+  }
+
+  assertRagRequirements(effectiveMode, nextRagConfig, knowledgeBaseIdsForValidation);
+
+  let updatedRow = row;
   if (Object.keys(updates).length > 0 || hasRagUpdates) {
     const [updated] = await db
       .update(skills)
@@ -549,18 +597,9 @@ export async function updateSkill(
 
   let knowledgeBaseIds: string[];
   if (normalized.knowledgeBaseIds !== undefined) {
-    const validKnowledgeBases = await filterWorkspaceKnowledgeBases(
-      workspaceId,
-      normalized.knowledgeBaseIds,
-    );
-
-    if (validKnowledgeBases.length !== normalized.knowledgeBaseIds.length) {
-      throw new SkillServiceError("Некоторые базы знаний не найдены в рабочем пространстве", 400);
-    }
-
-    knowledgeBaseIds = await replaceSkillKnowledgeBases(skillId, workspaceId, validKnowledgeBases);
+    knowledgeBaseIds = await replaceSkillKnowledgeBases(skillId, workspaceId, knowledgeBaseIdsForValidation);
   } else {
-    knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
+    knowledgeBaseIds = knowledgeBaseIdsForValidation;
   }
 
   return mapSkillRow(updatedRow, knowledgeBaseIds);

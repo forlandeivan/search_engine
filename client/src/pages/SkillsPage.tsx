@@ -236,6 +236,8 @@ const ICON_OPTIONS = [
   { value: "CupSoda" },
 ];
 
+const NO_EMBEDDING_PROVIDER_VALUE = "__none";
+
 const skillFormSchema = z.object({
   name: z.string().trim().min(1, "Название обязательно").max(200, "Не более 200 символов"),
   description: z
@@ -243,7 +245,8 @@ const skillFormSchema = z.object({
     .max(4000, "Не более 4000 символов")
     .optional()
     .or(z.literal("")),
-  knowledgeBaseIds: z.array(z.string()).min(1, "Выберите хотя бы одну базу знаний"),
+  mode: z.enum(["rag", "llm"]).default("rag"),
+  knowledgeBaseIds: z.array(z.string()).default([]),
   llmKey: z.string().min(1, "Выберите конфиг LLM"),
   systemPrompt: z
     .string()
@@ -252,14 +255,59 @@ const skillFormSchema = z.object({
     .or(z.literal("")),
   icon: z.string().optional().or(z.literal("")),
   ragMode: z.enum(["all_collections", "selected_collections"]),
-  ragCollectionIds: z.array(z.string()),
-  ragTopK: z.string().optional(),
-  ragMinScore: z.string().optional(),
-  ragMaxContextTokens: z.string().optional(),
+  ragCollectionIds: z.array(z.string()).default([]),
+  ragTopK: z.string().optional().or(z.literal("")),
+  ragMinScore: z.string().optional().or(z.literal("")),
+  ragMaxContextTokens: z.string().optional().or(z.literal("")),
   ragShowSources: z.boolean(),
   ragEmbeddingProviderId: z.string().optional().or(z.literal("")),
   onTranscriptionMode: z.enum(["raw_only", "auto_action"]),
   onTranscriptionAutoActionId: z.string().optional().or(z.literal("")),
+}).superRefine((val, ctx) => {
+  if (val.mode === "rag") {
+    if (!val.knowledgeBaseIds || val.knowledgeBaseIds.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["knowledgeBaseIds"],
+        message: "Выберите хотя бы одну базу знаний",
+      });
+    }
+    if (val.ragMode === "selected_collections" && (!val.ragCollectionIds || val.ragCollectionIds.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ragCollectionIds"],
+        message: "Укажите хотя бы одну коллекцию",
+      });
+    }
+    if (!val.ragEmbeddingProviderId || val.ragEmbeddingProviderId === NO_EMBEDDING_PROVIDER_VALUE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ragEmbeddingProviderId"],
+        message: "Выберите сервис эмбеддингов",
+      });
+    }
+    if (!val.ragTopK || val.ragTopK.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ragTopK"],
+        message: "Укажите количество документов",
+      });
+    }
+    if (!val.ragMinScore || val.ragMinScore.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ragMinScore"],
+        message: "Укажите минимальный порог релевантности",
+      });
+    }
+    if (!val.ragMaxContextTokens || val.ragMaxContextTokens.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ragMaxContextTokens"],
+        message: "Укажите лимит токенов контекста",
+      });
+    }
+  }
 });
 
 
@@ -267,11 +315,10 @@ const skillFormSchema = z.object({
 
 const buildLlmKey = (providerId: string, modelId: string) => `${providerId}::${modelId}`;
 
-const NO_EMBEDDING_PROVIDER_VALUE = "__none";
-
 const defaultFormValues = {
   name: "",
   description: "",
+  mode: "rag" as "rag" | "llm",
   knowledgeBaseIds: [] as string[],
   llmKey: "",
   systemPrompt: "",
@@ -1016,6 +1063,8 @@ function SkillFormDialog({
   });
   const isSystemSkill = Boolean(skill?.isSystem);
   const ragMode = form.watch("ragMode");
+  const skillMode = form.watch("mode") ?? "rag";
+  const isRagModeSelected = skillMode === "rag";
   const isManualRagMode = ragMode === "selected_collections";
   const transcriptionMode = form.watch("onTranscriptionMode");
   const isAutoActionMode = transcriptionMode === "auto_action";
@@ -1118,6 +1167,7 @@ function SkillFormDialog({
       form.reset({
         name: skill.name ?? "",
         description: skill.description ?? "",
+        mode: skill.mode ?? "rag",
         knowledgeBaseIds: skill.knowledgeBaseIds ?? [],
         llmKey:
           skill.llmProviderConfigId && skill.modelId
@@ -1251,25 +1301,70 @@ function SkillFormDialog({
             />
             <FormField
               control={form.control}
-              name="knowledgeBaseIds"
+              name="mode"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Базы знаний</FormLabel>
+                  <FormLabel>Тип навыка</FormLabel>
                   <FormControl>
-                    <KnowledgeBaseMultiSelect
+                    <RadioGroup
                       value={field.value}
-                      onChange={field.onChange}
-                      knowledgeBases={sortedKnowledgeBases}
-                      disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
-                    />
+                      onValueChange={controlsDisabled ? undefined : field.onChange}
+                      className="grid gap-3 md:grid-cols-2"
+                    >
+                      <div className="rounded-lg border p-3">
+                        <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                          <RadioGroupItem value="rag" id="skill-mode-rag" className="mt-1" disabled={controlsDisabled} />
+                          <span>
+                            RAG-навык
+                            <span className="block text-xs font-normal text-muted-foreground">
+                              Использует базу знаний и поиск перед генерацией ответа.
+                            </span>
+                          </span>
+                        </label>
+                      </div>
+                      <div className="rounded-lg border p-3">
+                        <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                          <RadioGroupItem value="llm" id="skill-mode-llm" className="mt-1" disabled={controlsDisabled} />
+                          <span>
+                            LLM-навык
+                            <span className="block text-xs font-normal text-muted-foreground">
+                              Обращается напрямую к модели LLM без RAG-поиска.
+                            </span>
+                          </span>
+                        </label>
+                      </div>
+                    </RadioGroup>
                   </FormControl>
                   <FormDescription>
-                    Навык будет искать ответы только в выбранных базах знаний.
+                    Определяет, нужен ли этому навыку RAG-пайплайн или только LLM.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
+            {isRagModeSelected && (
+              <FormField
+                control={form.control}
+                name="knowledgeBaseIds"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Базы знаний</FormLabel>
+                    <FormControl>
+                      <KnowledgeBaseMultiSelect
+                        value={field.value}
+                        onChange={field.onChange}
+                        knowledgeBases={sortedKnowledgeBases}
+                        disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Навык будет искать ответы только в выбранных базах знаний.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <FormField
               control={form.control}
               name="llmKey"
@@ -1300,6 +1395,7 @@ function SkillFormDialog({
                 </FormItem>
               )}
             />
+            {isRagModeSelected && (
             <div className="space-y-4 rounded-lg border p-4">
               <div className="space-y-1">
                 <h3 className="text-base font-semibold">RAG-настройки</h3>
@@ -1508,6 +1604,7 @@ function SkillFormDialog({
                 )}
               />
             </div>
+            )}
             <div className="space-y-4 rounded-lg border p-4">
               <div className="space-y-1">
                 <h3 className="text-base font-semibold">Поведение при транскрибировании аудио</h3>
