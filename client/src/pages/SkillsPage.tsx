@@ -392,6 +392,49 @@ type SkillActionRowState = {
   draftLabel: string;
 };
 
+function SkillActionsInline({ skillId }: { skillId: string }) {
+  const { data, isLoading, isError } = useQuery<SkillActionConfigItem[]>({
+    queryKey: ["skill-actions-inline", skillId],
+    queryFn: async () => {
+      const response = await apiRequest("GET", `/api/skills/${skillId}/actions`);
+      const json = await response.json();
+      return (json.items ?? []) as SkillActionConfigItem[];
+    },
+  });
+
+  if (isLoading) {
+    return <span className="text-xs text-muted-foreground">Загрузка...</span>;
+  }
+
+  if (isError || !data) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+
+  const enabledActions = data.filter((item) => item.skillAction?.enabled);
+  if (enabledActions.length === 0) {
+    return <span className="text-xs text-muted-foreground">Нет действий</span>;
+  }
+
+  const MAX_BADGES = 3;
+  const visible = enabledActions.slice(0, MAX_BADGES);
+  const extra = enabledActions.length - visible.length;
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {visible.map((item) => (
+        <Badge key={item.action.id} variant="secondary" className="text-[11px]">
+          {item.skillAction?.labelOverride ?? item.ui.effectiveLabel ?? item.action.label}
+        </Badge>
+      ))}
+      {extra > 0 && (
+        <Badge variant="outline" className="text-[11px] text-muted-foreground">
+          +{extra}
+        </Badge>
+      )}
+    </div>
+  );
+}
+
 function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }: KnowledgeBaseMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const selectedSet = useMemo(() => new Set(value), [value]);
@@ -2134,7 +2177,7 @@ export default function SkillsPage() {
       <Card>
         <CardHeader className="py-4">
           <CardTitle className="text-base">Список навыков</CardTitle>
-          <CardDescription>Название, описание, связанные базы и выбранная модель LLM.</CardDescription>
+          <CardDescription>Название, описание, тип, связанные базы, действия и выбранная модель LLM.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {showLoadingState ? (
@@ -2152,8 +2195,10 @@ export default function SkillsPage() {
                   <TableHead className="w-[60px] text-center">Иконка</TableHead>
                   <TableHead className="w-[220px]">Название</TableHead>
                   <TableHead>Описание</TableHead>
-                  <TableHead className="w-[240px]">Базы знаний</TableHead>
-                  <TableHead className="w-[240px]">LLM модель</TableHead>
+                  <TableHead className="w-[120px]">Тип</TableHead>
+                  <TableHead className="w-[200px]">Действия</TableHead>
+                  <TableHead className="w-[220px]">Базы знаний</TableHead>
+                  <TableHead className="w-[220px]">LLM модель</TableHead>
                   <TableHead className="w-[140px]">Обновлено</TableHead>
                   <TableHead className="w-[80px]" />
                 </TableRow>
@@ -2189,6 +2234,22 @@ export default function SkillsPage() {
                       ) : (
                         <span className="text-sm text-muted-foreground">Нет описания</span>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-[11px] uppercase",
+                          skill.mode === "llm"
+                            ? "border-green-200 bg-green-100 text-green-800"
+                            : "border-blue-200 bg-blue-100 text-blue-800",
+                        )}
+                      >
+                        {skill.mode === "llm" ? "LLM" : "RAG"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <SkillActionsInline skillId={skill.id} />
                     </TableCell>
                     <TableCell>{renderKnowledgeBases(skill)}</TableCell>
                     <TableCell>{renderLlmInfo(skill)}</TableCell>
