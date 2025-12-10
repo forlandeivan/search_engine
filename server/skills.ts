@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
 import { skills, skillKnowledgeBases, knowledgeBases, skillRagModes, skillTranscriptionModes, chatSessions } from "@shared/schema";
 import type { SkillDto, SkillRagConfig, CreateSkillPayload } from "@shared/skills";
-import type { SkillRagMode, SkillTranscriptionMode, SkillStatus } from "@shared/schema";
+import type { SkillMode, SkillRagMode, SkillTranscriptionMode, SkillStatus } from "@shared/schema";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -28,6 +28,7 @@ type EditableSkillColumns = Pick<
   | "collectionName"
   | "icon"
   | "status"
+  | "mode"
   | "onTranscriptionMode"
   | "onTranscriptionAutoActionId"
 >;
@@ -40,6 +41,7 @@ type SkillEditableInput = Partial<EditableSkillColumns> & {
 };
 
 type NormalizedSkillEditableInput = Omit<SkillEditableInput, "ragConfig"> & {
+  mode?: SkillMode;
   ragConfig?: SkillRagConfig;
 };
 
@@ -59,6 +61,7 @@ const DEFAULT_RAG_CONFIG: SkillRagConfig = {
   llmMaxTokens: null,
   llmResponseFormat: null,
 };
+const DEFAULT_SKILL_MODE: SkillMode = "rag";
 const DEFAULT_TRANSCRIPTION_MODE: SkillTranscriptionMode = "raw_only";
 
 function normalizeNullableString(value: string | null | undefined): string | null {
@@ -101,6 +104,9 @@ const isSkillTranscriptionMode = (value: unknown): value is SkillTranscriptionMo
 
 const normalizeTranscriptionMode = (value: unknown): SkillTranscriptionMode =>
   isSkillTranscriptionMode(value) ? value : DEFAULT_TRANSCRIPTION_MODE;
+
+const normalizeSkillMode = (value: unknown): SkillMode =>
+  value === "llm" ? "llm" : DEFAULT_SKILL_MODE;
 
 const normalizeActionId = (value: string | null | undefined): string | null => {
   const normalized = normalizeNullableString(value);
@@ -220,6 +226,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     isSystem: Boolean(row.isSystem),
     systemKey: row.systemKey ?? null,
     status: (row.status as SkillStatus) ?? "active",
+    mode: normalizeSkillMode(row.mode),
     knowledgeBaseIds,
     ragConfig: {
       mode: normalizeRagModeFromValue(row.ragMode),
@@ -324,6 +331,9 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   if (input.collectionName !== undefined) {
     next.collectionName = normalizeNullableString(input.collectionName);
   }
+  if (input.mode !== undefined) {
+    next.mode = normalizeSkillMode(input.mode);
+  }
   if (input.icon !== undefined) {
     next.icon = normalizeNullableString(input.icon);
   }
@@ -416,6 +426,7 @@ export async function createSkill(
   const ragConfig = normalized.ragConfig ?? { ...DEFAULT_RAG_CONFIG };
   const transcriptionMode = normalized.onTranscriptionMode ?? DEFAULT_TRANSCRIPTION_MODE;
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
+  const mode = normalized.mode ?? DEFAULT_SKILL_MODE;
 
   const [inserted] = await db
     .insert(skills)
@@ -427,6 +438,7 @@ export async function createSkill(
       modelId: normalized.modelId,
       llmProviderConfigId: normalized.llmProviderConfigId,
       collectionName: normalized.collectionName,
+      mode,
       icon: normalized.icon,
       ragMode: ragConfig.mode,
       ragCollectionIds: ragConfig.collectionIds,

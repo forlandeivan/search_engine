@@ -223,7 +223,7 @@ type ChatConversationMessage = {
   content: string;
 };
 
-export type ChatSkillType = "UNICA_CHAT" | "RAG_SKILL";
+export type ChatSkillType = "UNICA_CHAT" | "RAG_SKILL" | "LLM_SKILL";
 
 export type ChatSkillContext = {
   id: string;
@@ -233,6 +233,7 @@ export type ChatSkillContext = {
   type: ChatSkillType;
   isUnicaChat: boolean;
   isRagSkill: boolean;
+   mode: "rag" | "llm";
 };
 
 export type ChatLlmContext = {
@@ -285,7 +286,9 @@ export async function buildChatLlmContext(
   }
 
   const isUnica = isUnicaChatSkill(skill);
-  const skillType: ChatSkillType = isUnica ? "UNICA_CHAT" : "RAG_SKILL";
+  const isRag = isRagSkill(skill);
+  const isLlmMode = skill.mode === "llm";
+  const skillType: ChatSkillType = isUnica ? "UNICA_CHAT" : isLlmMode ? "LLM_SKILL" : "RAG_SKILL";
   const skillContext: ChatSkillContext = {
     id: skill.id,
     name: skill.name ?? null,
@@ -293,7 +296,8 @@ export async function buildChatLlmContext(
     systemKey: skill.systemKey ?? null,
     type: skillType,
     isUnicaChat: isUnica,
-    isRagSkill: isRagSkill(skill),
+    isRagSkill: isRag,
+    mode: isLlmMode ? "llm" : "rag",
   };
 
   await logExecutionStepForChat(executionId, "LOAD_SKILL_CONFIG", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
@@ -303,6 +307,7 @@ export async function buildChatLlmContext(
       isSystem: skillContext.isSystem,
       systemKey: skillContext.systemKey,
       skillType: skillContext.type,
+      mode: skillContext.mode,
       providerId: skill.llmProviderConfigId ?? null,
       modelId: skill.modelId ?? null,
       hasSystemPrompt: Boolean(skill.systemPrompt && skill.systemPrompt.trim()),

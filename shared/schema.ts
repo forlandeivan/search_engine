@@ -63,6 +63,7 @@ export const users = pgTable("users", {
 
 export const workspacePlans = ["free", "team"] as const;
 export type WorkspacePlan = (typeof workspacePlans)[number];
+export const workspacePlanEnum = pgEnum("workspace_plan", workspacePlans);
 
 export const workspaces = pgTable("workspaces", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -70,7 +71,7 @@ export const workspaces = pgTable("workspaces", {
   ownerId: varchar("owner_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  plan: text("plan").$type<WorkspacePlan>().notNull().default("free"),
+  plan: workspacePlanEnum("plan").$type<WorkspacePlan>().notNull().default("free"),
   settings: jsonb("settings")
     .$type<Record<string, unknown>>()
     .notNull()
@@ -81,6 +82,7 @@ export const workspaces = pgTable("workspaces", {
 
 export const workspaceMemberRoles = ["owner", "manager", "user"] as const;
 export type WorkspaceMemberRole = (typeof workspaceMemberRoles)[number];
+export const workspaceMemberRoleEnum = pgEnum("workspace_member_role", workspaceMemberRoles);
 
 export const workspaceMembers = pgTable(
   "workspace_members",
@@ -91,7 +93,7 @@ export const workspaceMembers = pgTable(
     userId: varchar("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    role: text("role").$type<WorkspaceMemberRole>().notNull().default("user"),
+    role: workspaceMemberRoleEnum("role").$type<WorkspaceMemberRole>().notNull().default("user"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
@@ -196,7 +198,7 @@ export const knowledgeBases = pgTable("knowledge_bases", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-const knowledgeNodeTypeEnum = pgEnum("knowledge_node_type", ["folder", "document"]);
+export const knowledgeNodeTypeEnum = pgEnum("knowledge_node_type", ["folder", "document"]);
 export const knowledgeNodes = pgTable(
   "knowledge_nodes",
   {
@@ -777,6 +779,7 @@ export const skills = pgTable(
       .references(() => workspaceVectorCollections.collectionName, { onDelete: "set null" }),
     isSystem: boolean("is_system").notNull().default(false),
     systemKey: text("system_key"),
+    mode: text("mode").$type<SkillMode>().notNull().default("rag"),
     ragMode: text("rag_mode").notNull().default("all_collections"),
     ragCollectionIds: jsonb("rag_collection_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     ragTopK: integer("rag_top_k").notNull().default(5),
@@ -994,7 +997,7 @@ export type CanvasDocumentType = (typeof canvasDocumentTypes)[number];
 export const canvasDocuments = pgTable(
   "canvas_documents",
   {
-    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: varchar("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
@@ -1026,6 +1029,8 @@ export const skillRagModes = ["all_collections", "selected_collections"] as cons
 export type SkillRagMode = (typeof skillRagModes)[number];
 export const skillTranscriptionModes = ["raw_only", "auto_action"] as const;
 export type SkillTranscriptionMode = (typeof skillTranscriptionModes)[number];
+export const skillModes = ["rag", "llm"] as const;
+export type SkillMode = (typeof skillModes)[number];
 
 export const skillStatuses = ["active", "archived"] as const;
 export type SkillStatus = (typeof skillStatuses)[number];
@@ -1395,6 +1400,55 @@ export const upsertAuthProviderSchema = z
     isEnabled: z.boolean(),
   })
   .strict();
+
+// Skill execution log tables
+export const skillExecutions = pgTable(
+  "skill_executions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: varchar("workspace_id").notNull(),
+    userId: varchar("user_id"),
+    skillId: varchar("skill_id").notNull(),
+    chatId: varchar("chat_id"),
+    userMessageId: varchar("user_message_id"),
+    source: text("source").notNull(),
+    status: text("status").notNull(),
+    hasStepErrors: boolean("has_step_errors").notNull().default(false),
+    startedAt: timestamp("started_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    finishedAt: timestamp("finished_at"),
+    metadata: jsonb("metadata"),
+  },
+  (table) => ({
+    startedAtIdx: index("skill_executions_started_at_idx").on(table.startedAt),
+    workspaceIdx: index("skill_executions_workspace_idx").on(table.workspaceId, table.startedAt),
+    skillIdx: index("skill_executions_skill_idx").on(table.skillId, table.startedAt),
+    chatIdx: index("skill_executions_chat_idx").on(table.chatId),
+    userIdx: index("skill_executions_user_idx").on(table.userId),
+  }),
+);
+
+export const skillExecutionSteps = pgTable(
+  "skill_execution_steps",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    executionId: uuid("execution_id")
+      .notNull()
+      .references(() => skillExecutions.id, { onDelete: "cascade" }),
+    order: integer("order").notNull(),
+    type: text("type").notNull(),
+    status: text("status").notNull(),
+    startedAt: timestamp("started_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    finishedAt: timestamp("finished_at"),
+    inputPayload: jsonb("input_payload"),
+    outputPayload: jsonb("output_payload"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    diagnosticInfo: text("diagnostic_info"),
+  },
+  (table) => ({
+    executionIdx: index("skill_execution_steps_execution_idx").on(table.executionId, table.order),
+  }),
+);
 
 // Types
 export type Site = typeof sites.$inferSelect;

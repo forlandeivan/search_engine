@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { skillRagModes, skillTranscriptionModes } from "./schema";
-import type { SkillRagMode, SkillTranscriptionMode } from "./schema";
+import { skillModes, skillRagModes, skillTranscriptionModes } from "./schema";
+import type { SkillMode, SkillRagMode, SkillTranscriptionMode } from "./schema";
 
 const optionalString = (limit: number) =>
   z
@@ -50,6 +50,7 @@ const skillEditableFieldsSchema = z.object({
   modelId: optionalString(200),
   llmProviderConfigId: optionalString(200),
   collectionName: optionalString(200),
+  mode: z.enum(skillModes).optional(),
   knowledgeBaseIds: z.array(knowledgeBaseIdSchema).optional(),
   ragConfig: ragConfigInputSchema.optional(),
   icon: optionalString(100),
@@ -75,6 +76,7 @@ export type SkillDto = {
   isSystem: boolean;
   systemKey?: string | null;
   status: "active" | "archived";
+  mode: SkillMode;
   knowledgeBaseIds?: string[];
   ragConfig: SkillRagConfig;
   onTranscriptionMode: SkillTranscriptionMode;
