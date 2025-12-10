@@ -181,6 +181,23 @@ export const authProviders = pgTable("auth_providers", {
   updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const smtpSettings = pgTable("smtp_settings", {
+  id: varchar("id").primaryKey().default("smtp_singleton"),
+  host: varchar("host", { length: 255 }).notNull(),
+  port: integer("port").notNull(),
+  useTls: boolean("use_tls").notNull().default(false),
+  useSsl: boolean("use_ssl").notNull().default(false),
+  username: varchar("username", { length: 255 }),
+  password: varchar("password", { length: 255 }),
+  fromEmail: varchar("from_email", { length: 255 }).notNull(),
+  fromName: varchar("from_name", { length: 255 }),
+  updatedByAdminId: varchar("updated_by_admin_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+export type SmtpSettings = typeof smtpSettings.$inferSelect;
+export type SmtpSettingsInsert = typeof smtpSettings.$inferInsert;
+
 export const knowledgeBaseNodeTypes = ["folder", "document"] as const;
 export type KnowledgeBaseNodeType = (typeof knowledgeBaseNodeTypes)[number];
 

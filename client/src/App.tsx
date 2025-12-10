@@ -31,6 +31,7 @@ import AuthPage from "@/pages/AuthPage";
 import ProfilePage from "@/pages/ProfilePage";
 import WorkspaceMembersPage from "@/pages/WorkspaceMembersPage";
 import WorkspaceActionsPage from "@/pages/WorkspaceActionsPage";
+import SmtpSettingsPage from "@/pages/SmtpSettingsPage";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -61,6 +62,7 @@ function AdminRouter() {
         {(params) => <SpeechProviderDetailsPage providerId={params.providerId} />}
       </Route>
       <Route path="/admin/tts-stt" component={TtsSttProvidersPage} />
+      <Route path="/admin/settings/smtp" component={SmtpSettingsPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />
       <Route path="/admin" component={AdminWorkspacesPage} />

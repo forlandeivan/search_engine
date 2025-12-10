@@ -190,6 +190,9 @@ import {
   resolveOptionalUser,
   WorkspaceContextError,
 } from "./auth";
+import { smtpSettingsService, SmtpSettingsError } from "./smtp-settings";
+import { updateSmtpSettingsSchema } from "@shared/smtp";
+import { smtpTestService } from "./smtp-test-service";
 import {
   speechProviderService,
   SpeechProviderServiceError,
@@ -6824,6 +6827,99 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     try {
       const config = await storage.getUnicaChatConfig();
       res.json({ config });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/settings/smtp", requireAdmin, async (_req, res, next) => {
+    try {
+      const settings = await smtpSettingsService.getSettings();
+      res.json(settings);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.put("/api/admin/settings/smtp", requireAdmin, async (req, res, next) => {
+    try {
+      const parsed = updateSmtpSettingsSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid SMTP settings", details: parsed.error.format() });
+      }
+
+      const admin = getSessionUser(req);
+      const dto = parsed.data;
+      const updated = await smtpSettingsService.updateSettings({
+        ...dto,
+        username: dto.username ?? null,
+        fromName: dto.fromName ?? null,
+        updatedByAdminId: admin?.id ?? null,
+      });
+      res.json(updated);
+    } catch (error: unknown) {
+      if (error instanceof SmtpSettingsError) {
+        return res.status(400).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
+  const smtpTestRateLimitBuckets = new Map<string, number>();
+
+  app.post("/api/admin/settings/smtp/test", requireAdmin, async (req, res, next) => {
+    try {
+      const admin = getSessionUser(req);
+      if (!admin) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const now = Date.now();
+      const last = smtpTestRateLimitBuckets.get(admin.id) ?? 0;
+      if (now - last < 10_000) {
+        return res.status(429).json({ message: "Test email is sent too often" });
+      }
+
+      const testEmailRaw = typeof req.body?.testEmail === "string" ? req.body.testEmail.trim() : "";
+      const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!testEmailRaw || testEmailRaw.length > 255 || !emailPattern.test(testEmailRaw)) {
+        return res.status(400).json({ message: "Invalid test email" });
+      }
+
+      const settings = await smtpSettingsService.getSettingsWithSecret();
+      if (!settings || !settings.host || !settings.port || !settings.fromEmail) {
+        return res.status(400).json({ message: "SMTP settings are not configured" });
+      }
+      if (!settings.password && settings.username) {
+        return res.status(400).json({ message: "SMTP settings are not configured" });
+      }
+
+      try {
+        await smtpTestService.sendTestEmail(testEmailRaw);
+        smtpTestRateLimitBuckets.set(admin.id, now);
+        return res.json({ success: true, message: "Test email sent successfully" });
+      } catch (error: unknown) {
+        if (error instanceof SmtpSettingsError) {
+          return res.status(400).json({ message: error.message });
+        }
+
+        const err = error as Error | undefined;
+        const message = err?.message?.toLowerCase() ?? "";
+        if (message.includes("timeout")) {
+          return res.status(504).json({ message: "SMTP connection timeout" });
+        }
+        if (message.includes("auth") || message.includes("invalid login")) {
+          return res.status(400).json({ message: "Invalid SMTP credentials" });
+        }
+        if (message.includes("getaddrinfo") || message.includes("enotfound")) {
+          return res.status(400).json({ message: "Invalid SMTP host" });
+        }
+        if (message.includes("certificate") || message.includes("tls")) {
+          return res.status(400).json({ message: "TLS/SSL error" });
+        }
+
+        return res.status(500).json({ message: "SMTP connection error" });
+      }
     } catch (error) {
       next(error);
     }

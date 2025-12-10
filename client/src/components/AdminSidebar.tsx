@@ -28,6 +28,7 @@ import {
   Bot,
   ScrollText,
   Mic,
+  Mail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -126,6 +127,12 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
     {
       label: "Аутентификация",
       items: [{ title: "Настройки входа", url: "/admin/auth", icon: ShieldCheck }],
+    },
+    {
+      label: "Настройки",
+      items: [
+        { title: "SMTP", url: "/admin/settings/smtp", icon: Mail },
+      ],
     },
     {
       label: "TTS&STT",
