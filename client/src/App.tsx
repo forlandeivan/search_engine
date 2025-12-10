@@ -159,7 +159,8 @@ function HeaderUserArea({ user }: { user: PublicUser }) {
 
 function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   const style = {
-    "--sidebar-width": "220px",
+    // Ширина сайдбара: на десктопе до ~330px, на средних экранах ужимается (clamp)
+    "--sidebar-width": "clamp(240px, 25vw, 330px)",
     "--sidebar-width-icon": "48px",
   } as CSSProperties;
 
@@ -167,7 +168,7 @@ function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: Works
     <SidebarProvider style={style}>
       <div className="flex h-screen w-full">
         <AdminSidebar user={user} />
-        <div className="flex flex-col flex-1">
+        <div className="flex min-w-0 flex-col flex-1">
           <header className="flex items-center justify-between p-2 border-b gap-2">
             <div className="flex items-center gap-2">
               <SidebarTrigger data-testid="button-sidebar-toggle" />
@@ -186,7 +187,8 @@ function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: Works
 
 function MainAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
   const style = {
-    "--sidebar-width": "220px",
+    // Ширина сайдбара: на десктопе до ~330px, на средних экранах ужимается (clamp)
+    "--sidebar-width": "clamp(240px, 25vw, 330px)",
     "--sidebar-width-icon": "48px",
   } as CSSProperties;
 
@@ -198,7 +200,7 @@ function MainAppShell({ user, workspace }: { user: PublicUser; workspace: Worksp
           user={user}
           workspaceId={workspace.active?.id}
         />
-        <div className="flex flex-col flex-1">
+        <div className="flex min-w-0 flex-col flex-1">
           <header className="flex items-center justify-between p-2 border-b gap-2">
             <div className="flex items-center gap-2">
               <SidebarTrigger data-testid="button-sidebar-toggle" />
