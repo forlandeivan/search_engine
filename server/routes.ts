@@ -71,6 +71,8 @@ import {
   listAdminAsrExecutions,
 } from "./admin-asr-executions";
 import { skillExecutionLogService } from "./skill-execution-log-context";
+import { emailConfirmationTokenService } from "./email-confirmation-token-service";
+import { registrationEmailService } from "./email-sender-registry";
 import {
   SKILL_EXECUTION_STATUS,
   SKILL_EXECUTION_STEP_STATUS,
@@ -6017,16 +6019,41 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   app.post("/api/auth/register", async (req, res, next) => {
     try {
-      const payload = registerUserSchema.parse(req.body);
-      const email = payload.email.trim().toLowerCase();
-      const fullName = payload.fullName.trim();
+      const neutralResponse = {
+        message: "If this email is not yet registered, a confirmation link has been sent.",
+      };
+
+      const emailRaw = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+      const passwordRaw = typeof req.body?.password === "string" ? req.body.password : "";
+      const fullNameRaw = typeof req.body?.fullName === "string" ? req.body.fullName.trim() : "";
+
+      if (!emailRaw || emailRaw.length > 255) {
+        return res.status(400).json({ message: "Email is too long" });
+      }
+      const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailPattern.test(emailRaw)) {
+        return res.status(400).json({ message: "Invalid email format" });
+      }
+      if (!passwordRaw || passwordRaw.length < 8) {
+        return res.status(400).json({ message: "Password is too short" });
+      }
+      if (passwordRaw.length > 100 || !(/[A-Za-z]/.test(passwordRaw) && /[0-9]/.test(passwordRaw))) {
+        return res.status(400).json({ message: "Invalid password format" });
+      }
+      if (fullNameRaw.length > 255) {
+        return res.status(400).json({ message: "Full name is too long" });
+      }
+
+      const email = emailRaw.toLowerCase();
+      const fullName = fullNameRaw || email;
 
       const existingUser = await storage.getUserByEmail(email);
       if (existingUser) {
-        return res.status(409).json({ message: "Пользователь с таким email уже зарегистрирован" });
+        // Не раскрываем наличие учётной записи
+        return res.status(201).json(neutralResponse);
       }
 
-      const passwordHash = await bcrypt.hash(payload.password, 12);
+      const passwordHash = await bcrypt.hash(passwordRaw, 12);
       const { firstName, lastName } = splitFullName(fullName);
       const user = await storage.createUser({
         email,
@@ -6035,29 +6062,147 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         lastName,
         phone: "",
         passwordHash,
+        isEmailConfirmed: false,
+        status: "pending_email_confirmation",
+        emailConfirmedAt: null,
       });
 
-      const updatedUser = await storage.recordUserActivity(user.id);
-      const safeUser = toPublicUser(updatedUser ?? user);
-      req.logIn(safeUser, (error) => {
-        if (error) {
-          return next(error);
-        }
-        void (async () => {
-          try {
-            const context = await ensureWorkspaceContext(req, safeUser);
-            res.status(201).json(buildSessionResponse(safeUser, context));
-          } catch (workspaceError) {
-            next(workspaceError as Error);
-          }
-        })();
-      });
+      // Создаём токен подтверждения
+      const token = await emailConfirmationTokenService.createToken(user.id, 24);
+
+      const baseUrl = process.env.FRONTEND_URL || process.env.PUBLIC_URL;
+      if (!baseUrl) {
+        throw new Error("FRONTEND_URL is not configured");
+      }
+      const confirmationUrl = new URL("/auth/verify-email", baseUrl);
+      confirmationUrl.searchParams.set("token", token);
+
+      await registrationEmailService.sendRegistrationConfirmationEmail(
+        email,
+        fullName,
+        confirmationUrl.toString(),
+      );
+
+      return res.status(201).json(neutralResponse);
     } catch (error) {
+      console.error("[auth/register] failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        return res.status(400).json({ message: "Invalid data", details: error.issues });
+      }
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/auth/verify-email", async (req, res) => {
+    try {
+      const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+      if (!token || token.length > 512) {
+        return res.status(400).json({ message: "Invalid or expired token" });
       }
 
-      next(error);
+      const activeToken = await emailConfirmationTokenService.getActiveToken(token);
+      if (!activeToken) {
+        return res.status(400).json({ message: "Invalid or expired token" });
+      }
+      if (activeToken.consumedAt) {
+        return res.status(400).json({ message: "Token already used" });
+      }
+
+      const user = await storage.getUserById(activeToken.userId);
+      if (!user) {
+        return res.status(400).json({ message: "Invalid token" });
+      }
+
+      await storage.updateUser(user.id, {
+        isEmailConfirmed: true,
+        status: "active",
+        emailConfirmedAt: new Date(),
+      });
+
+      await emailConfirmationTokenService.consumeToken(token);
+
+      console.info("[auth/verify-email] confirmed", {
+        userId: user.id,
+        email: user.email,
+      });
+
+      return res.json({ message: "Email has been successfully confirmed." });
+    } catch (err) {
+      console.error("[auth/verify-email] failed", err);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/auth/resend-confirmation", async (req, res) => {
+    try {
+      const neutralResponse = {
+        message: "If this email is registered and not yet confirmed, a new confirmation link has been sent.",
+      };
+
+      const emailRaw = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+      if (!emailRaw || emailRaw.length > 255) {
+        return res.status(400).json({ message: "Email is too long" });
+      }
+      const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailPattern.test(emailRaw)) {
+        return res.status(400).json({ message: "Invalid email format" });
+      }
+
+      const email = emailRaw.toLowerCase();
+      const user = await storage.getUserByEmail(email);
+
+      if (!user) {
+        return res.status(200).json(neutralResponse);
+      }
+
+      if (user.isEmailConfirmed) {
+        return res.status(200).json({ message: "Email is already confirmed." });
+      }
+
+      const lastCreated = await emailConfirmationTokenService.getLastCreatedAt(user.id);
+      if (lastCreated && Date.now() - lastCreated.getTime() < 60_000) {
+        return res.status(429).json({
+          message: "Please wait before requesting another confirmation email",
+        });
+      }
+
+      const tokensIn24h = await emailConfirmationTokenService.countTokensLastHours(user.id, 24);
+      if (tokensIn24h >= 5) {
+        return res.status(429).json({
+          message: "Too many confirmation emails requested",
+        });
+      }
+
+      const token = await emailConfirmationTokenService.createToken(user.id, 24);
+
+      const baseUrl = process.env.FRONTEND_URL || process.env.PUBLIC_URL;
+      if (!baseUrl) {
+        throw new Error("FRONTEND_URL is not configured");
+      }
+      const confirmationUrl = new URL("/auth/verify-email", baseUrl);
+      confirmationUrl.searchParams.set("token", token);
+
+      await registrationEmailService.sendRegistrationConfirmationEmail(
+        user.email,
+        user.fullName || user.email,
+        confirmationUrl.toString(),
+      );
+
+      console.info("[auth/resend-confirmation] link sent", {
+        userId: user.id,
+        email: user.email,
+      });
+
+      return res.status(200).json({
+        message: "A new confirmation link has been sent if the email is not yet confirmed.",
+      });
+    } catch (error) {
+      console.error("[auth/resend-confirmation] failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return res.status(500).json({ message: "Internal server error" });
     }
   });
 
@@ -6070,6 +6215,23 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       if (!user) {
         return res.status(401).json({ message: info?.message ?? "Неверный email или пароль" });
       }
+
+       const isPending =
+         user.status === "pending_email_confirmation" ||
+         user.status === "PendingEmailConfirmation" ||
+         user.isEmailConfirmed === false;
+
+       if (isPending) {
+         console.info("[auth/login] email not confirmed", {
+           userId: user.id,
+           email: user.email,
+           status: user.status,
+         });
+         return res.status(403).json({
+           error: "email_not_confirmed",
+           message: "Please confirm your email before logging in.",
+         });
+       }
 
       req.logIn(user, (loginError) => {
         if (loginError) {

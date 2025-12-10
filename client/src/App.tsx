@@ -28,6 +28,7 @@ import SkillsPage from "@/pages/SkillsPage";
 import ChatPage from "@/pages/ChatPage";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
+import VerifyEmailPage from "@/pages/VerifyEmailPage";
 import ProfilePage from "@/pages/ProfilePage";
 import WorkspaceMembersPage from "@/pages/WorkspaceMembersPage";
 import WorkspaceActionsPage from "@/pages/WorkspaceActionsPage";
@@ -233,7 +234,16 @@ function AppContent() {
   const session = sessionQuery.data;
 
   if (!session || !session.user) {
-    return <AuthPage />;
+    return (
+      <Switch>
+        <Route path="/auth/verify-email">
+          <VerifyEmailPage />
+        </Route>
+        <Route>
+          <AuthPage />
+        </Route>
+      </Switch>
+    );
   }
 
   const { user, workspace } = session;

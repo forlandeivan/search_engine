@@ -40,8 +40,8 @@ export type UserRole = (typeof userRoles)[number];
 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: text("email").notNull().unique(),
-  fullName: text("full_name").notNull(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  fullName: varchar("full_name", { length: 255 }).notNull(),
   firstName: text("first_name").notNull().default(""),
   lastName: text("last_name").notNull().default(""),
   phone: text("phone").notNull().default(""),
@@ -50,6 +50,9 @@ export const users = pgTable("users", {
   lastActiveAt: timestamp("last_active_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  isEmailConfirmed: boolean("is_email_confirmed").notNull().default(false),
+  emailConfirmedAt: timestamp("email_confirmed_at", { withTimezone: true }),
+  status: varchar("status", { length: 64 }).notNull().default("active"),
   personalApiTokenHash: text("personal_api_token_hash"),
   personalApiTokenLastFour: text("personal_api_token_last_four"),
   personalApiTokenGeneratedAt: timestamp("personal_api_token_generated_at"),
@@ -60,6 +63,20 @@ export const users = pgTable("users", {
   yandexAvatar: text("yandex_avatar").notNull().default(""),
   yandexEmailVerified: boolean("yandex_email_verified").notNull().default(false),
 });
+
+export const emailConfirmationTokens = pgTable("email_confirmation_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  token: varchar("token", { length: 255 }).notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => ({
+  userIdx: index("email_confirmation_tokens_user_idx").on(table.userId),
+  activeIdx: index("email_confirmation_tokens_active_idx").on(table.userId, table.expiresAt),
+}));
 
 export const workspacePlans = ["free", "team"] as const;
 export type WorkspacePlan = (typeof workspacePlans)[number];
@@ -409,6 +426,9 @@ export const insertUserSchema = createInsertSchema(users).omit({
   createdAt: true,
   updatedAt: true,
   lastActiveAt: true,
+  isEmailConfirmed: true,
+  emailConfirmedAt: true,
+  status: true,
   personalApiTokenHash: true,
   personalApiTokenLastFour: true,
   personalApiTokenGeneratedAt: true,
@@ -549,13 +569,21 @@ export const registerUserSchema = z
     fullName: z
       .string()
       .trim()
-      .min(1, "Введите имя")
-      .max(200, "Слишком длинное имя"),
-    email: z.string().trim().email("Некорректный email"),
+      .max(255, "Full name is too long")
+      .optional()
+      .default(""),
+    email: z
+      .string()
+      .trim()
+      .max(255, "Email is too long")
+      .email("Invalid email format"),
     password: z
       .string()
-      .min(8, "Минимальная длина пароля 8 символов")
-      .max(100, "Слишком длинный пароль"),
+      .min(8, "Password is too short")
+      .max(100, "Password is too long")
+      .refine((value) => /[A-Za-z]/.test(value) && /[0-9]/.test(value), {
+        message: "Invalid password format",
+      }),
   })
   .strict();
 
@@ -1477,6 +1505,8 @@ export type WorkspaceEmbedKeyInsert = typeof workspaceEmbedKeys.$inferInsert;
 export type WorkspaceEmbedKeyDomain = typeof workspaceEmbedKeyDomains.$inferSelect;
 export type WorkspaceEmbedKeyDomainInsert = typeof workspaceEmbedKeyDomains.$inferInsert;
 export type User = typeof users.$inferSelect;
+export type EmailConfirmationToken = typeof emailConfirmationTokens.$inferSelect;
+export type EmailConfirmationTokenInsert = typeof emailConfirmationTokens.$inferInsert;
 export type PublicUser = Omit<
   User,
   "passwordHash" | "personalApiTokenHash" | "personalApiTokenLastFour"

@@ -51,7 +51,11 @@ async function postJson<TInput extends Record<string, unknown>>(url: string, pay
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = typeof data?.message === "string" ? data.message : "Не удалось выполнить запрос";
-    throw new Error(message);
+    const error = new Error(message) as Error & { status?: number; code?: string; raw?: unknown };
+    error.status = response.status;
+    error.code = typeof data?.error === "string" ? data.error : undefined;
+    error.raw = data;
+    throw error;
   }
 
   return data as unknown;
@@ -59,6 +63,9 @@ async function postJson<TInput extends Record<string, unknown>>(url: string, pay
 
 export default function AuthPage() {
   const [mode, setMode] = useState<AuthMode>("login");
+  const [registerSuccess, setRegisterSuccess] = useState(false);
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -98,9 +105,19 @@ export default function AuthPage() {
     onSuccess: async () => {
       toast({ title: "Добро пожаловать!" });
       loginForm.reset();
+      setUnconfirmedEmail(null);
+      setResendMessage(null);
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] });
     },
-    onError: (error: Error) => {
+    onError: (error: Error & { status?: number; code?: string }) => {
+      if (error.status === 403 && error.code === "email_not_confirmed") {
+        const emailValue = loginForm.getValues("email")?.trim();
+        if (emailValue) {
+          setUnconfirmedEmail(emailValue);
+        }
+        setResendMessage("Ваш e-mail ещё не подтверждён. Отправьте письмо повторно и перейдите по ссылке из письма.");
+        return;
+      }
       toast({
         title: "Ошибка входа",
         description: error.message,
@@ -114,15 +131,70 @@ export default function AuthPage() {
       const { confirmPassword, ...payload } = values;
       return postJson("/api/auth/register", payload);
     },
-    onSuccess: async () => {
-      toast({ title: "Регистрация успешна", description: "Добро пожаловать в систему" });
+    onSuccess: () => {
+      setRegisterSuccess(true);
       registerForm.reset();
-      await queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] });
     },
     onError: (error: Error) => {
+      const msg = error.message;
+      if (msg === "Invalid email format" || msg === "Email is too long") {
+        registerForm.setError("email", { message: "Некорректный email" });
+        return;
+      }
+      if (msg === "Password is too short") {
+        registerForm.setError("password", { message: "Минимум 8 символов" });
+        return;
+      }
+      if (msg === "Invalid password format") {
+        registerForm.setError("password", { message: "Пароль должен содержать буквы и цифры" });
+        return;
+      }
+      if (msg === "Full name is too long") {
+        registerForm.setError("fullName", { message: "Слишком длинное имя" });
+        return;
+      }
       toast({
         title: "Ошибка регистрации",
-        description: error.message,
+        description:
+          msg === "Request body is too large"
+            ? "Слишком большой запрос. Попробуйте ещё раз."
+            : "Ошибка сервера при регистрации. Попробуйте позже.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const resendMutation = useMutation({
+    mutationFn: async (email: string) => postJson("/api/auth/resend-confirmation", { email }),
+    onSuccess: (data: unknown) => {
+      const message =
+        (data as { message?: string })?.message ??
+        "Если этот e-mail зарегистрирован и ещё не подтверждён, мы отправили новое письмо.";
+      setResendMessage(message);
+      toast({ title: "Письмо отправлено", description: message });
+    },
+    onError: (error: Error & { status?: number }) => {
+      const msg = error.message;
+      if (msg === "Email is too long" || msg === "Invalid email format") {
+        loginForm.setError("email", { message: "Некорректный email" });
+        setResendMessage(null);
+        return;
+      }
+      if (msg === "Too many confirmation emails requested") {
+        setResendMessage("Вы слишком часто запрашивали письмо. Попробуйте позже.");
+        return;
+      }
+      if (msg === "Please wait before requesting another confirmation email") {
+        setResendMessage("Пожалуйста, подождите немного перед повторным запросом письма.");
+        return;
+      }
+      setResendMessage("Не удалось отправить письмо. Попробуйте позже.");
+      toast({
+        title: "Ошибка отправки письма",
+        description:
+          error.status && error.status >= 500
+            ? "Не удалось отправить письмо. Попробуйте позже."
+            : error.message,
         variant: "destructive",
       });
     },
@@ -205,14 +277,19 @@ export default function AuthPage() {
           <CardDescription className="text-center text-base">
             {isLogin
               ? "Введите email и пароль, чтобы продолжить работу с платформой"
-              : "Зарегистрируйтесь, чтобы получить доступ к поисковой платформе"}
+              : registerSuccess
+                ? "Проверьте почту, чтобы завершить регистрацию"
+                : "Зарегистрируйтесь, чтобы получить доступ к поисковой платформе"}
           </CardDescription>
           <div className="flex gap-2 justify-center text-sm">
             <span>{isLogin ? "Нет аккаунта?" : "Уже зарегистрированы?"}</span>
             <button
               type="button"
               className="text-primary hover:underline"
-              onClick={() => setMode(isLogin ? "register" : "login")}
+              onClick={() => {
+                setRegisterSuccess(false);
+                setMode(isLogin ? "register" : "login");
+              }}
             >
               {isLogin ? "Создать аккаунт" : "Войти"}
             </button>
@@ -307,11 +384,44 @@ export default function AuthPage() {
                 >
                   {loginMutation.isPending ? "Входим..." : "Войти"}
                 </Button>
+                {unconfirmedEmail && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 space-y-2 text-sm text-amber-900">
+                    <p>Ваш e-mail ещё не подтверждён. Отправьте письмо повторно и перейдите по ссылке из письма.</p>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <span className="text-xs text-muted-foreground break-all">{unconfirmedEmail}</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={resendMutation.isPending}
+                        onClick={() => resendMutation.mutate(unconfirmedEmail)}
+                      >
+                        {resendMutation.isPending ? "Отправляем..." : "Отправить письмо повторно"}
+                      </Button>
+                    </div>
+                    {resendMessage && <p className="text-xs text-muted-foreground">{resendMessage}</p>}
+                  </div>
+                )}
               </form>
+            ) : registerSuccess ? (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Мы отправили письмо с подтверждением на указанный e-mail. Перейдите по ссылке в письме, чтобы
+                  завершить регистрацию. После подтверждения используйте форму входа.
+                </p>
+                <Button className="w-full" onClick={() => setMode("login")}>
+                  Перейти ко входу
+                </Button>
+              </div>
             ) : (
               <form
                 className="space-y-4"
-                onSubmit={registerForm.handleSubmit((values) => registerMutation.mutate(values))}
+                onSubmit={registerForm.handleSubmit((values) =>
+                  registerMutation.mutate({
+                    ...values,
+                    fullName: values.fullName?.trim() || "",
+                  }),
+                )}
               >
                 <div className="space-y-2">
                   <Label htmlFor="register-name">Имя и фамилия</Label>
