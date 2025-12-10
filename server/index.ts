@@ -10,6 +10,7 @@ import fs from "fs";
 import path from "path";
 import { configureAuth } from "./auth";
 import { startSkillExecutionLogRetentionJob } from "./skill-execution-log-retention";
+import { startSystemNotificationLogRetentionJob } from "./system-notification-log-retention";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -184,6 +185,7 @@ app.use((req, res, next) => {
 void configureAuth(app);
 
 const retentionJob = startSkillExecutionLogRetentionJob();
+const notificationRetentionJob = startSystemNotificationLogRetentionJob();
 
 app.use((req, res, next) => {
   const start = Date.now();

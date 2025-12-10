@@ -75,6 +75,7 @@ import { emailConfirmationTokenService, EmailConfirmationTokenError } from "./em
 import { registrationEmailService } from "./email-sender-registry";
 import { SmtpSendError } from "./smtp-email-sender";
 import { EmailValidationError } from "./email";
+import { systemNotificationLogService } from "./system-notification-log-service";
 import {
   SKILL_EXECUTION_STATUS,
   SKILL_EXECUTION_STEP_STATUS,
@@ -7078,7 +7079,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       try {
-        await smtpTestService.sendTestEmail(testEmailRaw);
+        await smtpTestService.sendTestEmail(testEmailRaw, { triggeredByUserId: admin.id });
         smtpTestRateLimitBuckets.set(admin.id, now);
         return res.json({ success: true, message: "Test email sent successfully" });
       } catch (error: unknown) {
@@ -7105,6 +7106,98 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     } catch (error) {
       next(error);
+    }
+  });
+
+  app.get("/api/admin/system-notifications/logs", requireAdmin, async (req, res) => {
+    try {
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const pageSizeRaw = Number(req.query.pageSize) || 20;
+      if (pageSizeRaw < 1 || pageSizeRaw > 100) {
+        return res.status(400).json({ message: "pageSize must be between 1 and 100" });
+      }
+      const pageSize = pageSizeRaw;
+
+      const email = typeof req.query.email === "string" ? req.query.email.trim() : undefined;
+      const type = typeof req.query.type === "string" ? req.query.type.trim() : undefined;
+      const status = typeof req.query.status === "string" ? req.query.status.trim() : undefined;
+
+      const parseDate = (value: unknown) => {
+        if (typeof value !== "string" || !value.trim()) return undefined;
+        const d = new Date(value);
+        return isNaN(d.getTime()) ? undefined : d;
+      };
+
+      const dateFrom = parseDate(req.query.dateFrom);
+      const dateTo = parseDate(req.query.dateTo);
+      if (req.query.dateFrom && !dateFrom) {
+        return res.status(400).json({ message: "Invalid dateFrom" });
+      }
+      if (req.query.dateTo && !dateTo) {
+        return res.status(400).json({ message: "Invalid dateTo" });
+      }
+
+      const { items, total } = await systemNotificationLogService.list({
+        email,
+        type,
+        status,
+        dateFrom,
+        dateTo,
+        page,
+        pageSize,
+      });
+
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      res.json({
+        items: items.map((item) => ({
+          id: item.id,
+          createdAt: item.createdAt,
+          sentAt: item.sentAt,
+          type: item.type,
+          toEmail: item.toEmail,
+          subject: item.subject,
+          status: item.status,
+          bodyPreview: item.bodyPreview,
+        })),
+        page,
+        pageSize,
+        totalItems: total,
+        totalPages,
+      });
+    } catch (err) {
+      console.error("[admin/system-notifications] list failed", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/admin/system-notifications/logs/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        return res.status(400).json({ message: "Invalid id" });
+      }
+      const log = await systemNotificationLogService.getById(id);
+      if (!log) {
+        return res.status(404).json({ message: "Log entry not found" });
+      }
+      res.json({
+        id: log.id,
+        createdAt: log.createdAt,
+        sentAt: log.sentAt,
+        type: log.type,
+        toEmail: log.toEmail,
+        subject: log.subject,
+        status: log.status,
+        bodyPreview: log.bodyPreview,
+        body: log.body,
+        errorMessage: log.errorMessage,
+        smtpResponse: log.smtpResponse,
+        triggeredByUserId: log.triggeredByUserId,
+        correlationId: log.correlationId,
+      });
+    } catch (err) {
+      console.error("[admin/system-notifications] detail failed", err);
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 

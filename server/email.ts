@@ -7,6 +7,8 @@ export type EmailMessage = {
   bodyText?: string | null;
   isSystemMessage?: boolean;
   type?: SystemEmailType;
+  triggeredByUserId?: string | null;
+  correlationId?: string | null;
 };
 
 export class EmailValidationError extends Error {

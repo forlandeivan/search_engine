@@ -2,6 +2,8 @@ import nodemailer from "nodemailer";
 
 import { EmailSender, EmailMessage, EmailValidationError, validateEmailMessage } from "./email";
 import { smtpSettingsService } from "./smtp-settings";
+import { systemNotificationLogService } from "./system-notification-log-service";
+import { SystemEmailType } from "./email";
 
 export class SmtpSendError extends Error {
   constructor(message: string) {
@@ -64,26 +66,75 @@ export class SmtpEmailSender implements EmailSender {
       throw new SmtpSendError("SMTP send timeout");
     }
 
+    const shouldLog = Boolean(message.isSystemMessage || message.type);
+    const type = normalizeType(message.type);
+    const toEmail = message.to[0];
+    const preview = buildPreview(message);
+    const bodyForLog = message.bodyHtml ?? message.bodyText ?? "";
+
+    let logId: string | null = null;
+    if (shouldLog) {
+      try {
+        const log = await systemNotificationLogService.createLog({
+          type,
+          toEmail,
+          subject: message.subject,
+          body: bodyForLog,
+          bodyPreview: preview,
+          status: "queued",
+          triggeredByUserId: message.triggeredByUserId ?? null,
+          correlationId: message.correlationId ?? null,
+        });
+        logId = log.id;
+      } catch (err) {
+        console.error("[email-log] create failed", {
+          error: err instanceof Error ? err.message : String(err),
+          type,
+          to: toEmail,
+        });
+      }
+    }
+
     try {
-      await transport.sendMail({
+      const info = await transport.sendMail({
         from,
         to: message.to,
         subject: message.subject,
         html: message.bodyHtml,
         text: message.bodyText ?? undefined,
       });
+      if (logId) {
+        await systemNotificationLogService.markSent(logId, {
+          sentAt: new Date(),
+          smtpResponse: typeof info?.response === "string" ? info.response : null,
+        });
+      }
       console.info("[email] sent", {
-        type: message.type ?? "Unknown",
+        type,
         system: Boolean(message.isSystemMessage),
         to: message.to,
+        logId,
       });
     } catch (err) {
       const safeMessage = normalizeSmtpError(err);
+      if (logId) {
+        try {
+          await systemNotificationLogService.markFailed(logId, {
+            errorMessage: safeMessage,
+            smtpResponse: err instanceof Error ? err.message : String(err),
+          });
+        } catch (logErr) {
+          console.error("[email-log] mark failed", {
+            error: logErr instanceof Error ? logErr.message : String(logErr),
+            logId,
+          });
+        }
+      }
       console.error("[smtp-email] send failed", {
         to: message.to,
         subject: message.subject,
         error: safeMessage,
-        type: message.type ?? "Unknown",
+        type,
         system: Boolean(message.isSystemMessage),
       });
       throw new SmtpSendError(safeMessage);
@@ -113,4 +164,33 @@ function normalizeSmtpError(err: unknown): string {
   }
 
   return "SMTP send failed";
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function buildPreview(message: EmailMessage): string | null {
+  if (message.bodyText && message.bodyText.trim().length > 0) {
+    return message.bodyText.trim();
+  }
+  if (message.bodyHtml) {
+    return stripHtml(message.bodyHtml);
+  }
+  return null;
+}
+
+function normalizeType(type?: SystemEmailType | string): string {
+  if (!type) return "system_email";
+  if (typeof type === "string") {
+    switch (type) {
+      case SystemEmailType.RegistrationConfirmation:
+        return "registration_confirmation";
+      case SystemEmailType.PasswordReset:
+        return "password_reset";
+      default:
+        return type;
+    }
+  }
+  return "system_email";
 }

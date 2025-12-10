@@ -78,6 +78,31 @@ export const emailConfirmationTokens = pgTable("email_confirmation_tokens", {
   activeIdx: index("email_confirmation_tokens_active_idx").on(table.userId, table.expiresAt),
 }));
 
+export const systemNotificationLogs = pgTable(
+  "system_notification_logs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    type: varchar("type", { length: 255 }).notNull(),
+    toEmail: varchar("to_email", { length: 255 }).notNull(),
+    subject: varchar("subject", { length: 255 }).notNull(),
+    bodyPreview: varchar("body_preview", { length: 500 }),
+    body: text("body"),
+    status: varchar("status", { length: 255 }).notNull().default("queued"),
+    errorMessage: text("error_message"),
+    smtpResponse: text("smtp_response"),
+    correlationId: varchar("correlation_id", { length: 255 }),
+    triggeredByUserId: varchar("triggered_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (table) => ({
+    createdAtIdx: index("system_notification_logs_created_at_idx").on(table.createdAt),
+    toEmailIdx: index("system_notification_logs_to_email_idx").on(table.toEmail),
+    typeIdx: index("system_notification_logs_type_idx").on(table.type),
+    statusIdx: index("system_notification_logs_status_idx").on(table.status),
+  }),
+);
+
 export const workspacePlans = ["free", "team"] as const;
 export type WorkspacePlan = (typeof workspacePlans)[number];
 export const workspacePlanEnum = pgEnum("workspace_plan", workspacePlans);
@@ -1524,6 +1549,8 @@ export type WorkspaceMemberInsert = typeof workspaceMembers.$inferInsert;
 export type WorkspaceVectorCollection = typeof workspaceVectorCollections.$inferSelect;
 export type AuthProvider = typeof authProviders.$inferSelect;
 export type AuthProviderInsert = typeof authProviders.$inferInsert;
+export type SystemNotificationLog = typeof systemNotificationLogs.$inferSelect;
+export type SystemNotificationLogInsert = typeof systemNotificationLogs.$inferInsert;
 export type EmbeddingProvider = typeof embeddingProviders.$inferSelect;
 export type EmbeddingProviderInsert = typeof embeddingProviders.$inferInsert;
 export type InsertEmbeddingProvider = z.infer<typeof insertEmbeddingProviderSchema>;

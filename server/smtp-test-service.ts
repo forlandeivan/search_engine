@@ -1,6 +1,7 @@
 import { smtpClient, type SmtpSendConfig } from "./smtp-client";
 import { smtpSettingsService, SmtpSettingsError } from "./smtp-settings";
 import { SmtpSettings } from "@shared/schema";
+import { systemNotificationLogService } from "./system-notification-log-service";
 
 function basicEmailValidate(email: string): boolean {
   const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -29,7 +30,7 @@ export class SmtpTestService {
     };
   }
 
-  async sendTestEmail(testEmail: string): Promise<void> {
+  async sendTestEmail(testEmail: string, opts?: { triggeredByUserId?: string | null; correlationId?: string | null }): Promise<void> {
     const email = testEmail?.trim();
     if (!email || !basicEmailValidate(email) || email.length > 255) {
       throw new SmtpSettingsError("Invalid test email");
@@ -45,7 +46,25 @@ export class SmtpTestService {
       throw new SmtpSettingsError("TLS and SSL cannot be enabled at the same time");
     }
 
-    await this.client.sendTestEmail(config, { to: email, timeoutMs: 30000 });
+    const log = await systemNotificationLogService.createLog({
+      type: "smtp_test",
+      toEmail: email,
+      subject: "SMTP test email",
+      body: "Тестовое письмо SMTP. Если вы это видите, настройки работают.",
+      status: "queued",
+      triggeredByUserId: opts?.triggeredByUserId ?? null,
+      correlationId: opts?.correlationId ?? null,
+    });
+
+    try {
+      await this.client.sendTestEmail(config, { to: email, timeoutMs: 30000 });
+      await systemNotificationLogService.markSent(log.id, { smtpResponse: null });
+    } catch (error) {
+      await systemNotificationLogService.markFailed(log.id, {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 }
 
