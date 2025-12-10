@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2, RefreshCw } from "lucide-react";
 
 import { apiRequest } from "@/lib/queryClient";
@@ -32,46 +30,16 @@ type SmtpSettingsResponse = {
   hasPassword: boolean;
 };
 
-const formSchema = z.object({
-  host: z.string().trim().min(1, "Укажите SMTP хост").max(255, "Слишком длинное значение"),
-  port: z
-    .preprocess((value) => Number(value))
-    .refine((value) => Number.isInteger(value) && value >= 1 && value <= 65535, {
-      message: "Порт должен быть от 1 до 65535",
-    })
-    .transform((value) => Number(value)),
-  useTls: z.boolean(),
-  useSsl: z.boolean(),
-  username: z
-    .string()
-    .max(255, "Слишком длинное значение")
-    .optional()
-    .transform((value) => (value ? value.trim() : "")),
-  password: z.string().max(255, "Слишком длинное значение").optional(),
-  fromEmail: z
-    .string()
-    .trim()
-    .min(1, "Укажите e-mail отправителя")
-    .max(255, "Слишком длинное значение")
-    .email("Введите корректный e-mail"),
-  fromName: z
-    .string()
-    .max(255, "Слишком длинное значение")
-    .optional()
-    .transform((value) => (value ? value.trim() : "")),
-}).refine((value) => !(value.useTls && value.useSsl), {
-  message: "Нельзя одновременно включать TLS и SSL",
-  path: ["useSsl"],
-});
-
-const testSchema = z.object({
-  testEmail: z
-    .string()
-    .trim()
-    .min(1, "Укажите e-mail")
-    .max(255, "Слишком длинное значение")
-    .email("Введите корректный e-mail"),
-});
+type FormValues = {
+  host: string;
+  port: number | string;
+  useTls: boolean;
+  useSsl: boolean;
+  username?: string;
+  password?: string;
+  fromEmail: string;
+  fromName?: string;
+};
 
 export default function SmtpSettingsPage() {
   const { toast } = useToast();
@@ -96,8 +64,7 @@ export default function SmtpSettingsPage() {
     },
   });
 
-  const form = useForm<z.infer<typeof formSchema>>({
-    resolver: zodResolver(formSchema),
+  const form = useForm<FormValues>({
     defaultValues: {
       host: "",
       port: 587,
@@ -127,10 +94,10 @@ export default function SmtpSettingsPage() {
   }, [data, form]);
 
   const updateMutation = useMutation({
-    mutationFn: async (payload: Partial<z.infer<typeof formSchema>>) => {
+    mutationFn: async (payload: Partial<FormValues>) => {
       const body: Record<string, unknown> = {
         host: payload.host,
-        port: payload.port,
+        port: Number(payload.port),
         useTls: payload.useTls,
         useSsl: payload.useSsl,
         username: payload.username?.trim() ? payload.username.trim() : undefined,
@@ -176,14 +143,13 @@ export default function SmtpSettingsPage() {
     },
   });
 
-  const testForm = useForm<z.infer<typeof testSchema>>({
-    resolver: zodResolver(testSchema),
+  const testForm = useForm<{ testEmail: string }>({
     defaultValues: { testEmail: "" },
     mode: "onChange",
   });
 
   const sendTestMutation = useMutation({
-    mutationFn: async (payload: z.infer<typeof testSchema>) => {
+    mutationFn: async (payload: { testEmail: string }) => {
       const res = await apiRequest("POST", "/api/admin/settings/smtp/test", payload);
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -242,8 +208,71 @@ export default function SmtpSettingsPage() {
     },
   });
 
-  const onSubmit = (values: z.infer<typeof formSchema>) => {
-    updateMutation.mutate(values);
+  // Дополнительная проверка TLS/SSL в рантайме
+  const useTls = form.watch("useTls");
+  const useSsl = form.watch("useSsl");
+  useEffect(() => {
+    if (useTls && useSsl) {
+      form.setError("useSsl", { message: "Нельзя одновременно включать TLS и SSL" });
+    } else {
+      form.clearErrors(["useSsl", "useTls"]);
+    }
+  }, [useTls, useSsl, form]);
+
+  const onSubmit = (values: FormValues) => {
+    // Клиентская валидация, чтобы не отправлять мусор
+    let hasError = false;
+
+    if (!values.host?.trim()) {
+      form.setError("host", { message: "Укажите SMTP хост" });
+      hasError = true;
+    } else if (values.host.trim().length > 255) {
+      form.setError("host", { message: "Слишком длинное значение" });
+      hasError = true;
+    }
+
+    const portNum = Number(values.port);
+    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+      form.setError("port", { message: "Порт должен быть от 1 до 65535" });
+      hasError = true;
+    }
+
+    if (!values.fromEmail?.trim()) {
+      form.setError("fromEmail", { message: "Укажите e-mail отправителя" });
+      hasError = true;
+    } else if (!/\S+@\S+\.\S+/.test(values.fromEmail.trim()) || values.fromEmail.trim().length > 255) {
+      form.setError("fromEmail", { message: "Введите корректный e-mail" });
+      hasError = true;
+    }
+
+    if (values.username && values.username.length > 255) {
+      form.setError("username", { message: "Слишком длинное значение" });
+      hasError = true;
+    }
+
+    if (values.password && values.password.length > 255) {
+      form.setError("password", { message: "Слишком длинное значение" });
+      hasError = true;
+    }
+
+    if (values.fromName && values.fromName.length > 255) {
+      form.setError("fromName", { message: "Слишком длинное значение" });
+      hasError = true;
+    }
+
+    if (values.useTls && values.useSsl) {
+      form.setError("useSsl", { message: "Нельзя одновременно включать TLS и SSL" });
+      hasError = true;
+    }
+
+    if (hasError) {
+      return;
+    }
+
+    updateMutation.mutate({
+      ...values,
+      port: portNum,
+    });
   };
 
   if (isLoading) {
@@ -292,6 +321,10 @@ export default function SmtpSettingsPage() {
                 <FormField
                   control={form.control}
                   name="host"
+                  rules={{
+                    required: "Укажите SMTP хост",
+                    maxLength: { value: 255, message: "Слишком длинное значение" },
+                  }}
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>SMTP хост</FormLabel>
@@ -306,6 +339,11 @@ export default function SmtpSettingsPage() {
                 <FormField
                   control={form.control}
                   name="port"
+                  rules={{
+                    required: "Укажите порт",
+                    min: { value: 1, message: "Порт должен быть от 1 до 65535" },
+                    max: { value: 65535, message: "Порт должен быть от 1 до 65535" },
+                  }}
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Порт</FormLabel>
@@ -356,6 +394,7 @@ export default function SmtpSettingsPage() {
                 <FormField
                   control={form.control}
                   name="username"
+                  rules={{ maxLength: { value: 255, message: "Слишком длинное значение" } }}
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Имя пользователя</FormLabel>
@@ -371,6 +410,7 @@ export default function SmtpSettingsPage() {
                 <FormField
                   control={form.control}
                   name="password"
+                  rules={{ maxLength: { value: 255, message: "Слишком длинное значение" } }}
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Пароль</FormLabel>
@@ -390,6 +430,11 @@ export default function SmtpSettingsPage() {
                 <FormField
                   control={form.control}
                   name="fromEmail"
+                  rules={{
+                    required: "Укажите e-mail отправителя",
+                    maxLength: { value: 255, message: "Слишком длинное значение" },
+                    pattern: { value: /\S+@\S+\.\S+/, message: "Введите корректный e-mail" },
+                  }}
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>E-mail отправителя</FormLabel>
@@ -404,6 +449,7 @@ export default function SmtpSettingsPage() {
                 <FormField
                   control={form.control}
                   name="fromName"
+                  rules={{ maxLength: { value: 255, message: "Слишком длинное значение" } }}
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Имя отправителя</FormLabel>
@@ -437,13 +483,13 @@ export default function SmtpSettingsPage() {
           <CardDescription>Отправьте тестовое письмо, чтобы убедиться, что SMTP работает корректно.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button
-            variant="outline"
-            onClick={() => setIsTestModalOpen(true)}
-            disabled={!form.formState.isValid}
-          >
-            Отправить тестовое письмо
-          </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setIsTestModalOpen(true)}
+                  disabled={!form.formState.isValid}
+                >
+                  Отправить тестовое письмо
+                </Button>
           {!form.formState.isValid && (
             <p className="text-sm text-muted-foreground mt-2">
               Сначала заполните и сохраните корректные настройки SMTP.
@@ -472,6 +518,11 @@ export default function SmtpSettingsPage() {
               <FormField
                 control={testForm.control}
                 name="testEmail"
+                rules={{
+                  required: "Укажите e-mail",
+                  maxLength: { value: 255, message: "Слишком длинное значение" },
+                  pattern: { value: /\S+@\S+\.\S+/, message: "Введите корректный e-mail" },
+                }}
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Получатель</FormLabel>
