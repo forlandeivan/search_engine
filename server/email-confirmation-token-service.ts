@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { and, eq, isNull, gt, gte, sql } from "drizzle-orm";
+import { and, eq, isNull, gt, gte, sql, desc } from "drizzle-orm";
 
 import { db } from "./db";
 import { emailConfirmationTokens, users, type EmailConfirmationToken } from "@shared/schema";
@@ -85,7 +85,7 @@ class DbEmailConfirmationTokenRepo implements Repo {
       .select({ createdAt: emailConfirmationTokens.createdAt })
       .from(emailConfirmationTokens)
       .where(eq(emailConfirmationTokens.userId, userId))
-      .orderBy(emailConfirmationTokens.createdAt.desc())
+      .orderBy(desc(emailConfirmationTokens.createdAt))
       .limit(1);
     return row?.createdAt ?? null;
   }

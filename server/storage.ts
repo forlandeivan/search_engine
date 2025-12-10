@@ -730,6 +730,7 @@ export interface IStorage {
 
   // User management (reserved for future admin features)
   getUser(id: string): Promise<User | undefined>;
+  getUserById(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByGoogleId(googleId: string): Promise<User | undefined>;
   getUserByYandexId(yandexId: string): Promise<User | undefined>;
@@ -739,6 +740,7 @@ export interface IStorage {
   listUsers(): Promise<User[]>;
   updateUserRole(userId: string, role: User["role"]): Promise<User | undefined>;
   recordUserActivity(userId: string): Promise<User | undefined>;
+  confirmUserEmail(userId: string): Promise<User | undefined>;
   updateUserProfile(
     userId: string,
     updates: { firstName: string; lastName: string; phone: string; fullName: string },
@@ -5154,6 +5156,10 @@ export class DatabaseStorage implements IStorage {
     return user ?? undefined;
   }
 
+  async getUserById(id: string): Promise<User | undefined> {
+    return this.getUser(id);
+  }
+
   async getUserByEmail(email: string): Promise<User | undefined> {
     await this.ensureUserAuthColumns();
     const [user] = await this.db.select().from(users).where(eq(users.email, email));
@@ -5418,6 +5424,21 @@ export class DatabaseStorage implements IStorage {
     if (updatedUser) {
       await this.ensurePersonalWorkspace(updatedUser);
     }
+    return updatedUser ?? undefined;
+  }
+
+  async confirmUserEmail(userId: string): Promise<User | undefined> {
+    await this.ensureUserAuthColumns();
+    const [updatedUser] = await this.db
+      .update(users)
+      .set({
+        isEmailConfirmed: true,
+        status: "active",
+        emailConfirmedAt: sql`CURRENT_TIMESTAMP`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(users.id, userId))
+      .returning();
     return updatedUser ?? undefined;
   }
 

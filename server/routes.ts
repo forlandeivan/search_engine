@@ -71,8 +71,10 @@ import {
   listAdminAsrExecutions,
 } from "./admin-asr-executions";
 import { skillExecutionLogService } from "./skill-execution-log-context";
-import { emailConfirmationTokenService } from "./email-confirmation-token-service";
+import { emailConfirmationTokenService, EmailConfirmationTokenError } from "./email-confirmation-token-service";
 import { registrationEmailService } from "./email-sender-registry";
+import { SmtpSendError } from "./smtp-email-sender";
+import { EmailValidationError } from "./email";
 import {
   SKILL_EXECUTION_STATUS,
   SKILL_EXECUTION_STEP_STATUS,
@@ -5716,8 +5718,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         google: { enabled: googleAuthEnabled },
         yandex: { enabled: yandexAuthEnabled },
       },
+    });
   });
-});
+
+  const resolveFrontendBaseUrl = (req: Request): string => {
+    const envBase = process.env.FRONTEND_URL || process.env.PUBLIC_URL;
+    if (envBase) return envBase;
+    const origin = req.headers.origin;
+    if (typeof origin === "string" && origin.startsWith("http")) return origin;
+    const host = req.headers.host;
+    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+    return host ? `${proto}://${host}` : "http://localhost:5000";
+  };
 
 type AutoActionRunPayload = {
   userId: string;
@@ -6070,10 +6082,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       // Создаём токен подтверждения
       const token = await emailConfirmationTokenService.createToken(user.id, 24);
 
-      const baseUrl = process.env.FRONTEND_URL || process.env.PUBLIC_URL;
-      if (!baseUrl) {
-        throw new Error("FRONTEND_URL is not configured");
-      }
+      const baseUrl = resolveFrontendBaseUrl(req);
       const confirmationUrl = new URL("/auth/verify-email", baseUrl);
       confirmationUrl.searchParams.set("token", token);
 
@@ -6115,11 +6124,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "Invalid token" });
       }
 
-      await storage.updateUser(user.id, {
-        isEmailConfirmed: true,
-        status: "active",
-        emailConfirmedAt: new Date(),
-      });
+      await storage.confirmUserEmail(user.id);
 
       await emailConfirmationTokenService.consumeToken(token);
 
@@ -6130,8 +6135,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       return res.json({ message: "Email has been successfully confirmed." });
     } catch (err) {
-      console.error("[auth/verify-email] failed", err);
-      return res.status(500).json({ message: "Internal server error" });
+      console.error("[auth/verify-email] failed", {
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      return res.status(500).json({ message: err instanceof Error ? err.message : "Internal server error" });
     }
   });
 
@@ -6177,10 +6185,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       const token = await emailConfirmationTokenService.createToken(user.id, 24);
 
-      const baseUrl = process.env.FRONTEND_URL || process.env.PUBLIC_URL;
-      if (!baseUrl) {
-        throw new Error("FRONTEND_URL is not configured");
-      }
+      const baseUrl = resolveFrontendBaseUrl(req);
       const confirmationUrl = new URL("/auth/verify-email", baseUrl);
       confirmationUrl.searchParams.set("token", token);
 
@@ -6199,10 +6204,26 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         message: "A new confirmation link has been sent if the email is not yet confirmed.",
       });
     } catch (error) {
+      if (error instanceof EmailValidationError || error instanceof SmtpSendError) {
+        console.error("[auth/resend-confirmation] smtp failed", {
+          error: error.message,
+          stack: error.stack,
+        });
+        return res.status(500).json({ message: error.message });
+      }
+      if (error instanceof EmailConfirmationTokenError) {
+        console.error("[auth/resend-confirmation] token failed", {
+          error: error.message,
+          stack: error.stack,
+        });
+        return res.status(400).json({ message: error.message });
+      }
       console.error("[auth/resend-confirmation] failed", {
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
-      return res.status(500).json({ message: "Internal server error" });
+      const message = error instanceof Error ? error.message : "Internal server error";
+      return res.status(500).json({ message });
     }
   });
 

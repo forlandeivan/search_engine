@@ -1,4 +1,5 @@
-import { Switch, Route, Link } from "wouter";
+import { Switch, Route, Link, useLocation } from "wouter";
+import { useEffect } from "react";
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -221,18 +222,27 @@ function MainAppShell({ user, workspace }: { user: PublicUser; workspace: Worksp
 }
 
 function AppContent() {
+  const [location, setLocation] = useLocation();
   const sessionQuery = useQuery({
     queryKey: ["/api/auth/session"],
     queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
     staleTime: 0,
   });
 
+  const session = sessionQuery.data;
+
+  // Если уже авторизованы, но находитесь на /auth/*, отправляем на главную.
+  useEffect(() => {
+    if (session?.user && location.startsWith("/auth")) {
+      setLocation("/");
+    }
+  }, [session?.user, location, setLocation]);
+
   if (sessionQuery.isLoading) {
     return <LoadingScreen />;
   }
 
-  const session = sessionQuery.data;
-
+  // Если уже авторизованы, но находитесь на /auth/*, отправляем на главную.
   if (!session || !session.user) {
     return (
       <Switch>
