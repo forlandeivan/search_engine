@@ -81,7 +81,8 @@ import {
   uploadWorkspaceIcon,
   workspaceIconUpload,
   WorkspaceIconError,
-} from "./workspace-icon-context";
+  getWorkspaceIcon,
+} from "./workspace-icon-service";
 import {
   SKILL_EXECUTION_STATUS,
   SKILL_EXECUTION_STEP_STATUS,

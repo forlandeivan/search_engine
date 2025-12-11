@@ -33,10 +33,9 @@ function resolveExtension(mime: string): string {
   return ".bin";
 }
 
-function buildPublicUrl(bucket: string, key: string): string {
-  const endpoint = (process.env.MINIO_PUBLIC_ENDPOINT || process.env.MINIO_ENDPOINT || "").replace(/\/$/, "");
-  if (!endpoint) return `${bucket}/${key}`;
-  return `${endpoint}/${bucket}/${key}`;
+function buildPublicUrl(workspaceId: string): string {
+  // Используем API-эндпоинт, чтобы избежать проблем с публичным доступом MinIO.
+  return `/api/workspaces/${workspaceId}/icon?ts=${Date.now()}`;
 }
 
 export async function uploadWorkspaceIcon(
@@ -53,12 +52,12 @@ export async function uploadWorkspaceIcon(
     throw new WorkspaceIconError("only PNG, JPEG or SVG image formats are allowed", 400);
   }
 
-  const bucket = await ensureWorkspaceBucketExists(workspaceId);
+  await ensureWorkspaceBucketExists(workspaceId);
   const ext = resolveExtension(file.mimetype.toLowerCase());
   const objectKey = `icons/icon${ext}`;
 
   await putObject(workspaceId, objectKey, file.buffer, file.mimetype);
-  const publicUrl = buildPublicUrl(bucket, objectKey);
+  const publicUrl = buildPublicUrl(workspaceId);
   await storage.updateWorkspaceIcon(workspaceId, publicUrl, objectKey);
 
   return { iconUrl: publicUrl, iconKey: objectKey };
