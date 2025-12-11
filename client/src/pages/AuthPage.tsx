@@ -202,30 +202,8 @@ export default function AuthPage() {
 
   const isLogin = mode === "login";
   const isGoogleEnabled = Boolean(providersQuery.data?.providers?.google?.enabled);
-  const googleStatus: "loading" | "enabled" | "disabled" = providersQuery.isLoading
-    ? "loading"
-    : isGoogleEnabled
-      ? "enabled"
-      : "disabled";
-  const googleHelperText =
-    googleStatus === "loading"
-      ? "Проверяем доступность входа через Google…"
-      : googleStatus === "disabled"
-        ? "Вход через Google пока не настроен. Обратитесь к администратору, чтобы активировать интеграцию."
-        : "";
-
   const isYandexEnabled = Boolean(providersQuery.data?.providers?.yandex?.enabled);
-  const yandexStatus: "loading" | "enabled" | "disabled" = providersQuery.isLoading
-    ? "loading"
-    : isYandexEnabled
-      ? "enabled"
-      : "disabled";
-  const yandexHelperText =
-    yandexStatus === "loading"
-      ? "Проверяем доступность входа через Yandex…"
-      : yandexStatus === "disabled"
-        ? "Вход через Yandex пока не настроен. Обратитесь к администратору, чтобы активировать интеграцию."
-        : "";
+  const showSocialLogin = isGoogleEnabled || isYandexEnabled;
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authError = params.get("authError");
@@ -246,10 +224,7 @@ export default function AuthPage() {
   }, [toast]);
 
   const handleGoogleLogin = () => {
-    if (googleStatus !== "enabled") {
-      return;
-    }
-
+    if (!isGoogleEnabled) return;
     const redirectTarget = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const params = new URLSearchParams();
     params.set("redirect", redirectTarget);
@@ -257,10 +232,7 @@ export default function AuthPage() {
   };
 
   const handleYandexLogin = () => {
-    if (yandexStatus !== "enabled") {
-      return;
-    }
-
+    if (!isYandexEnabled) return;
     const redirectTarget = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const params = new URLSearchParams();
     params.set("redirect", redirectTarget);
@@ -297,56 +269,46 @@ export default function AuthPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full flex items-center justify-center gap-2"
-                  onClick={handleGoogleLogin}
-                  disabled={googleStatus !== "enabled"}
-                  aria-disabled={googleStatus !== "enabled"}
-                >
-                  <FcGoogle className="h-5 w-5" />
-                  {googleStatus === "loading"
-                    ? "Проверяем Google..."
-                    : isLogin
-                      ? "Войти через Google"
-                      : "Продолжить через Google"}
-                </Button>
-                {googleHelperText && (
-                  <p className="text-xs text-muted-foreground text-center">{googleHelperText}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full flex items-center justify-center gap-2"
-                  onClick={handleYandexLogin}
-                  disabled={yandexStatus !== "enabled"}
-                  aria-disabled={yandexStatus !== "enabled"}
-                >
-                  <FaYandex className="h-5 w-5 text-red-500" />
-                  {yandexStatus === "loading"
-                    ? "Проверяем Yandex..."
-                    : isLogin
-                      ? "Войти через Yandex"
-                      : "Продолжить через Yandex"}
-                </Button>
-                {yandexHelperText && (
-                  <p className="text-xs text-muted-foreground text-center">{yandexHelperText}</p>
-                )}
-              </div>
-            </div>
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">или</span>
-              </div>
-            </div>
+            {showSocialLogin && (
+              <>
+                <div className="space-y-3">
+                  {isGoogleEnabled && (
+                    <div className="space-y-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full flex items-center justify-center gap-2"
+                        onClick={handleGoogleLogin}
+                      >
+                        <FcGoogle className="h-5 w-5" />
+                        {isLogin ? "Войти через Google" : "Продолжить через Google"}
+                      </Button>
+                    </div>
+                  )}
+                  {isYandexEnabled && (
+                    <div className="space-y-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full flex items-center justify-center gap-2"
+                        onClick={handleYandexLogin}
+                      >
+                        <FaYandex className="h-5 w-5 text-red-500" />
+                        {isLogin ? "Войти через Yandex" : "Продолжить через Yandex"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-card px-2 text-muted-foreground">или</span>
+                  </div>
+                </div>
+              </>
+            )}
             {isLogin ? (
               <form
                 className="space-y-4"
