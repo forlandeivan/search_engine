@@ -68,6 +68,7 @@ import {
   type SpeechProvider,
   type SpeechProviderInsert,
   type SpeechProviderSecret,
+  type WorkspaceMemberRole,
 } from "@shared/schema";
 import { db } from "./db";
 import { createUnicaChatSkillForWorkspace } from "./skills";
@@ -83,6 +84,14 @@ import type {
 let globalUserAuthSchemaReady = false;
 
 type KnowledgeBaseRow = typeof knowledgeBases.$inferSelect;
+
+export type WorkspaceMembershipStatus = "active" | "invited" | "removed" | "blocked";
+export type WorkspaceMembership = WorkspaceMember & { status: WorkspaceMembershipStatus };
+
+const WORKSPACE_MEMBERSHIP_CACHE_TTL_MS = Number.parseInt(
+  process.env.WORKSPACE_MEMBERSHIP_CACHE_TTL_MS ?? "15000",
+  10,
+);
 
 export type KnowledgeChunkSearchEntry = {
   chunkId: string;
@@ -777,6 +786,7 @@ export interface IStorage {
   ): Promise<Workspace | undefined>;
   setWorkspaceStorageBucket(workspaceId: string, bucketName: string): Promise<void>;
   isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean>;
+  getWorkspaceMember(userId: string, workspaceId: string): Promise<WorkspaceMembership | undefined>;
   ensurePersonalWorkspace(user: User): Promise<Workspace>;
   listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
   getOrCreateUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
@@ -2976,6 +2986,10 @@ async function ensureAuthProvidersTable(): Promise<void> {
 export class DatabaseStorage implements IStorage {
   private db = db;
   private userAuthColumnsEnsured = false;
+  private workspaceMembershipCache = new Map<
+    string,
+    { value: WorkspaceMembership | null; expiresAt: number }
+  >();
   private ensuringUserAuthColumns: Promise<void> | null = null;
 
   private async ensureUserAuthColumns(): Promise<void> {
@@ -4722,14 +4736,66 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(speechProviderSecrets.providerId, providerId), eq(speechProviderSecrets.secretKey, secretKey)));
   }
 
-  async getWorkspaceMember(userId: string, workspaceId: string): Promise<WorkspaceMember | undefined> {
-    await ensureWorkspaceMembersTable();
-    const [member] = await this.db
-      .select()
-      .from(workspaceMembers)
-      .where(and(eq(workspaceMembers.userId, userId), eq(workspaceMembers.workspaceId, workspaceId)))
-      .limit(1);
-    return member ?? undefined;
+  private buildWorkspaceMembershipCacheKey(userId: string, workspaceId: string): string {
+    return `${userId}::${workspaceId}`;
+  }
+
+  private normalizeWorkspaceMembership(member: WorkspaceMember | null | undefined): WorkspaceMembership | null {
+    if (!member) {
+      return null;
+    }
+    // Статусов в таблице пока нет — считаем активным по умолчанию.
+    return { ...member, status: "active" };
+  }
+
+  async getWorkspaceMembership(userId: string, workspaceId: string): Promise<WorkspaceMembership | null> {
+    const cacheKey = this.buildWorkspaceMembershipCacheKey(userId, workspaceId);
+    const now = Date.now();
+    const cached = this.workspaceMembershipCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    try {
+      await ensureWorkspaceMembersTable();
+      const [member] = await this.db
+        .select()
+        .from(workspaceMembers)
+        .where(and(eq(workspaceMembers.userId, userId), eq(workspaceMembers.workspaceId, workspaceId)))
+        .limit(1);
+
+      const normalized = this.normalizeWorkspaceMembership(member);
+      this.workspaceMembershipCache.set(cacheKey, {
+        value: normalized,
+        expiresAt: now + WORKSPACE_MEMBERSHIP_CACHE_TTL_MS,
+      });
+      return normalized;
+    } catch (error) {
+      console.warn(
+        `[storage] Failed to fetch workspace membership for user=${userId} workspace=${workspaceId}:`,
+        error,
+      );
+      return null;
+    }
+  }
+
+  async getWorkspaceMember(userId: string, workspaceId: string): Promise<WorkspaceMembership | undefined> {
+    const membership = await this.getWorkspaceMembership(userId, workspaceId);
+    return membership ?? undefined;
+  }
+
+  invalidateWorkspaceMembershipCache(userId?: string, workspaceId?: string): void {
+    if (!userId && !workspaceId) {
+      this.workspaceMembershipCache.clear();
+      return;
+    }
+
+    for (const key of this.workspaceMembershipCache.keys()) {
+      const [uid, wid] = key.split("::");
+      if ((userId ? uid === userId : true) && (workspaceId ? wid === workspaceId : true)) {
+        this.workspaceMembershipCache.delete(key);
+      }
+    }
   }
 
   async listChatSessions(
@@ -5678,6 +5744,7 @@ export class DatabaseStorage implements IStorage {
       .values({ workspaceId, userId, role: normalizedRole })
       .returning();
 
+    this.invalidateWorkspaceMembershipCache(userId, workspaceId);
     return member ?? undefined;
   }
 
@@ -5695,6 +5762,7 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
       .returning();
 
+    this.invalidateWorkspaceMembershipCache(userId, workspaceId);
     return updated ?? undefined;
   }
 
@@ -5773,6 +5841,9 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
       .returning({ userId: workspaceMembers.userId });
 
+    if (deleted.length > 0) {
+      this.invalidateWorkspaceMembershipCache(userId, workspaceId);
+    }
     return deleted.length > 0;
   }
 
