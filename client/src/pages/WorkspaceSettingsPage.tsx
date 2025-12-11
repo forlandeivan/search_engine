@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import WorkspaceMembersPage from "@/pages/WorkspaceMembersPage";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import type { SessionResponse } from "@/types/session";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { useToast } from "@/hooks/use-toast";
+import { Loader2 } from "lucide-react";
 
 function useWorkspaceInfo(workspaceId?: string | null) {
   return useQuery({
@@ -28,8 +29,9 @@ function useWorkspaceInfo(workspaceId?: string | null) {
 export default function WorkspaceSettingsPage({ params }: { params?: { workspaceId?: string } }) {
   const [location, navigate] = useLocation();
   const workspaceIdFromRoute = params?.workspaceId ?? undefined;
-  const sessionWorkspaceQuery = useWorkspaceInfo(workspaceId);
+  const sessionWorkspaceQuery = useWorkspaceInfo(workspaceIdFromRoute);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const workspaceName = useMemo(() => {
     const active = sessionWorkspaceQuery.data;
@@ -60,6 +62,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const [iconFile, setIconFile] = useState<File | null>(null);
   const [iconPreview, setIconPreview] = useState<string | null>(null);
   const [resetIcon, setResetIcon] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
 
   useEffect(() => {
@@ -106,6 +109,8 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
       return;
     }
 
+    setIsSaving(true);
+
     // Пока сервер не поддерживает изменение названия/описания, сохраняем только иконку.
     try {
       if (iconFile) {
@@ -123,6 +128,21 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         setIconPreview(data.iconUrl ?? null);
         setIconFile(null);
         setResetIcon(false);
+        queryClient.setQueryData(["/api/auth/session"], (prev: SessionResponse | null | undefined) => {
+          if (!prev) return prev;
+          const active = prev.workspace.active;
+          const memberships = prev.workspace.memberships.map((m) =>
+            m.id === active.id ? { ...m, iconUrl: data.iconUrl ?? null } : m
+          );
+          return {
+            ...prev,
+            workspace: {
+              ...prev.workspace,
+              active: { ...active, iconUrl: data.iconUrl ?? null },
+              memberships,
+            },
+          };
+        });
         toast({ title: "Иконка обновлена" });
       } else if (resetIcon) {
         const res = await apiRequest("DELETE", `/api/workspaces/${effectiveWorkspaceId}/icon`);
@@ -133,6 +153,21 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         const data = await res.json();
         setIconPreview(data.iconUrl ?? null);
         setResetIcon(false);
+        queryClient.setQueryData(["/api/auth/session"], (prev: SessionResponse | null | undefined) => {
+          if (!prev) return prev;
+          const active = prev.workspace.active;
+          const memberships = prev.workspace.memberships.map((m) =>
+            m.id === active.id ? { ...m, iconUrl: null } : m
+          );
+          return {
+            ...prev,
+            workspace: {
+              ...prev.workspace,
+              active: { ...active, iconUrl: null },
+              memberships,
+            },
+          };
+        });
         toast({ title: "Иконка сброшена" });
       } else {
         toast({ title: "Изменений нет" });
@@ -143,6 +178,8 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         description: error instanceof Error ? error.message : "Не удалось сохранить изменения",
         variant: "destructive",
       });
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -247,7 +284,10 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                 </div>
 
                 <div className="flex justify-end">
-                  <Button onClick={handleSave}>Сохранить</Button>
+                  <Button onClick={handleSave} disabled={isSaving || (!iconFile && !resetIcon)}>
+                    {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    {isSaving ? "Сохраняем..." : "Сохранить"}
+                  </Button>
                 </div>
               </div>
             </CardContent>
