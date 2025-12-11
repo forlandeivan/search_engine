@@ -12,7 +12,6 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
-    "nodemailer": "^6.9.14",
     "@aws-sdk/client-s3": "^3.940.0",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
@@ -86,6 +85,7 @@
     "multer": "^2.0.2",
     "next-themes": "^0.4.6",
     "node-fetch": "^3.3.2",
+    "nodemailer": "^6.9.14",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-local": "^1.0.0",
@@ -142,6 +142,7 @@
     "esbuild": "^0.25.0",
     "pg-mem": "^3.0.5",
     "postcss": "^8.4.47",
+    "supertest": "^7.1.4",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.1",
     "typescript": "5.6.3",

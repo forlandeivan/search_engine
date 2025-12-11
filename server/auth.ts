@@ -16,6 +16,7 @@ declare module "express-session" {
   interface SessionData {
     oauthRedirectTo?: string;
     workspaceId?: string;
+    activeWorkspaceId?: string;
   }
 }
 
@@ -531,7 +532,7 @@ export async function ensureWorkspaceContext(req: Request, user: PublicUser): Pr
 
   const requestedWorkspaceId = headerWorkspaceId && headerWorkspaceId.length > 0
     ? headerWorkspaceId
-    : req.session?.workspaceId;
+    : req.session?.activeWorkspaceId ?? req.session?.workspaceId;
 
   let active = requestedWorkspaceId
     ? memberships.find((workspace) => workspace.id === requestedWorkspaceId)
@@ -567,10 +568,6 @@ export async function ensureWorkspaceContext(req: Request, user: PublicUser): Pr
       `[auth] Рабочее пространство не найдено. Пользователь: ${user.id}, доступные рабочие пространства: ${memberships.map((workspace) => workspace.id).join(", ")}`,
     );
     throw new WorkspaceContextError();
-  }
-
-  if (req.session) {
-    req.session.workspaceId = active.id;
   }
 
   req.workspaceId = active.id;

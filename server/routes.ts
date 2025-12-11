@@ -5928,7 +5928,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         req.user = safeUser;
       }
       const context = await ensureWorkspaceContext(req, safeUser);
-      res.json(buildSessionResponse(safeUser, context));
+      const activeWorkspaceId = req.session?.activeWorkspaceId ?? req.session?.workspaceId ?? null;
+      res.json({ ...buildSessionResponse(safeUser, context), activeWorkspaceId });
     } catch (error) {
       next(error);
     }
@@ -6318,7 +6319,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   const switchWorkspaceSchema = z.object({
-    workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
+    workspaceId: z
+      .string({ required_error: "workspaceId is required" })
+      .trim()
+      .min(1, "workspaceId is required"),
   });
 
   const inviteWorkspaceMemberSchema = z.object({
@@ -6502,25 +6506,40 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
 
     try {
-      const payload = switchWorkspaceSchema.parse(req.body);
-      const memberships = getRequestWorkspaceMemberships(req);
-      const target = memberships.find((workspace) => workspace.id === payload.workspaceId);
-      if (!target) {
-        return res.status(404).json({ message: "Рабочее пространство не найдено" });
+      const payload = switchWorkspaceSchema.parse(req.body ?? {});
+      const workspaceId = payload.workspaceId.trim();
+
+      const workspace = await storage.getWorkspace(workspaceId);
+      if (!workspace) {
+        return res.status(404).json({ message: `Workspace '${workspaceId}' does not exist` });
+      }
+
+      const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+      if (!membership) {
+        return res.status(403).json({ message: "You do not have access to this workspace" });
       }
 
       if (req.session) {
-        req.session.workspaceId = target.id;
+        req.session.activeWorkspaceId = workspaceId;
+        req.session.workspaceId = workspaceId;
       }
 
-      req.workspaceId = target.id;
-      req.workspaceRole = target.role;
+      req.workspaceId = workspaceId;
+      req.workspaceRole = membership.role;
 
-      const context = await ensureWorkspaceContext(req, user);
-      res.json(buildSessionResponse(user, context));
+      res.json({
+        workspaceId,
+        status: "ok",
+        role: membership.role,
+        name: workspace.name ?? null,
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        const issue = error.issues.at(0);
+        return res.status(400).json({
+          message: issue?.message ?? "workspaceId is required",
+          details: error.issues,
+        });
       }
       next(error);
     }
