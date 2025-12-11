@@ -77,6 +77,12 @@ import { SmtpSendError } from "./smtp-email-sender";
 import { EmailValidationError } from "./email";
 import { systemNotificationLogService } from "./system-notification-log-service";
 import {
+  clearWorkspaceIcon,
+  uploadWorkspaceIcon,
+  workspaceIconUpload,
+  WorkspaceIconError,
+} from "./workspace-icon-context";
+import {
   SKILL_EXECUTION_STATUS,
   SKILL_EXECUTION_STEP_STATUS,
   type SkillExecutionStatus,
@@ -84,6 +90,7 @@ import {
   type SkillExecutionStepType,
 } from "./skill-execution-log";
 import type { SkillExecutionStartContext } from "./skill-execution-log-service";
+import type { ObjectStorageCredentials } from "./yandex-object-storage-service";
 import {
   listUserChats,
   createChat,
@@ -6389,7 +6396,94 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
     try {
       const context = await ensureWorkspaceContext(req, user);
-      res.json(buildSessionResponse(user, context).workspace);
+      const workspaceResponse = buildSessionResponse(user, context).workspace;
+      res.json(workspaceResponse);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  function isWorkspaceAdmin(role: WorkspaceMemberRole) {
+    return role === "owner" || role === "manager";
+  }
+
+  async function resolveObjectStorageCredentials(): Promise<ObjectStorageCredentials> {
+    const providerDetail = await speechProviderService.getActiveSttProviderOrThrow();
+    const secrets = await storage.getSpeechProviderSecrets(providerDetail.provider.id);
+    const getSecret = (key: string) =>
+      secrets.find((entry) => entry.secretKey === key)?.secretValue?.trim() || undefined;
+
+    const accessKeyId = getSecret("s3AccessKeyId");
+    const secretAccessKey = getSecret("s3SecretAccessKey");
+    const bucketName = getSecret("s3BucketName");
+
+    if (!accessKeyId || !secretAccessKey || !bucketName) {
+      throw new Error("Object Storage credentials are not configured");
+    }
+
+    return { accessKeyId, secretAccessKey, bucketName };
+  }
+
+  app.post(
+    "/api/workspaces/:workspaceId/icon",
+    requireAuth,
+    workspaceIconUpload.single("file"),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
+
+      const { workspaceId } = req.params;
+      try {
+        const workspace = await storage.getWorkspace(workspaceId);
+        if (!workspace) {
+          return res.status(404).json({ message: "workspace not found" });
+        }
+
+        const member = await storage.getWorkspaceMember(user.id, workspaceId);
+        if (!member || !isWorkspaceAdmin(member.role)) {
+          return res.status(403).json({ message: "forbidden" });
+        }
+
+        if (!req.file) {
+          return res.status(400).json({ message: "file is required" });
+        }
+
+        const creds = await resolveObjectStorageCredentials();
+        const iconUrl = await uploadWorkspaceIcon(workspaceId, req.file, creds);
+        res.json({ iconUrl });
+      } catch (error) {
+        if (error instanceof WorkspaceIconError) {
+          return res.status(error.status ?? 400).json({ message: error.message });
+        }
+        if (error instanceof ObjectStorageError) {
+          return res.status(500).json({ message: error.message });
+        }
+        if ((error as any)?.message === "Object Storage credentials are not configured") {
+          return res.status(500).json({ message: "Object Storage is not configured" });
+        }
+        next(error);
+      }
+    },
+  );
+
+  app.delete("/api/workspaces/:workspaceId/icon", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+
+    const { workspaceId } = req.params;
+    try {
+      const workspace = await storage.getWorkspace(workspaceId);
+      if (!workspace) {
+        return res.status(404).json({ message: "workspace not found" });
+      }
+
+      const member = await storage.getWorkspaceMember(user.id, workspaceId);
+      if (!member || !isWorkspaceAdmin(member.role)) {
+        return res.status(403).json({ message: "forbidden" });
+      }
+
+      await clearWorkspaceIcon(workspaceId);
+      res.json({ iconUrl: null });
     } catch (error) {
       next(error);
     }

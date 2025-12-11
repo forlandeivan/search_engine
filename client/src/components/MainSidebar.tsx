@@ -39,7 +39,38 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 import { UserAvatar } from "@/components/UserAvatar";
-import judicialEmblem from "@assets/judicial-emblem.png";
+import { WorkspaceIcon } from "@/components/WorkspaceIcon";
+
+function WorkspaceIcon({
+  iconUrl,
+  size,
+  testId,
+}: {
+  iconUrl?: string | null;
+  size: number;
+  testId?: string;
+}) {
+  const [src, setSrc] = useState(iconUrl || defaultWorkspaceIcon);
+
+  useEffect(() => {
+    setSrc(iconUrl || defaultWorkspaceIcon);
+  }, [iconUrl]);
+
+  return (
+    <div
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-[#0e4c7d]"
+      style={{ width: size, height: size }}
+      data-testid={testId}
+    >
+      <img
+        src={src}
+        alt="Иконка рабочего пространства"
+        className="h-full w-full object-cover"
+        onError={() => setSrc(defaultWorkspaceIcon)}
+      />
+    </div>
+  );
+}
 
 interface SidebarItem {
   title: string;
@@ -55,9 +86,10 @@ interface MainSidebarProps {
   showAdminLink?: boolean;
   user: PublicUser;
   workspaceId?: string;
+  iconUrl?: string | null;
 }
 
-export default function MainSidebar({ showAdminLink = false, user, workspaceId }: MainSidebarProps) {
+export default function MainSidebar({ showAdminLink = false, user, workspaceId, iconUrl }: MainSidebarProps) {
   const [location] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
@@ -297,28 +329,12 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId }
         {isCollapsed ? (
           <div
             className="flex h-[38px] w-[38px] items-center justify-center overflow-hidden rounded-[5px] border border-[#0e4c7d]"
-            data-testid="icon-judicial-emblem"
-          >
-            <img
-              src={judicialEmblem}
-              alt="Судебный департамент"
-              className="h-full w-full object-cover"
-            />
-          </div>
-        ) : (
-          <div className="flex w-full items-center gap-2 px-1">
-            <div
-              className="flex h-[38px] w-[38px] shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-[#0e4c7d]"
-              data-testid="icon-judicial-emblem-expanded"
-            >
-              <img
-                src={judicialEmblem}
-                alt="Судебный департамент"
-                className="h-full w-full object-cover"
-              />
-            </div>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-base font-bold text-slate-800 dark:text-slate-100">
+            <WorkspaceIcon iconUrl={iconUrl} size={48} testId="icon-judicial-emblem" />
+          ) : (
+            <div className="flex w-full items-center gap-2 px-1">
+              <WorkspaceIcon iconUrl={iconUrl} size={38} testId="icon-judicial-emblem-expanded" />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-base font-bold text-slate-800 dark:text-slate-100">
                 AI KMS
               </span>
               <span className="truncate text-[11px] font-light text-slate-500">

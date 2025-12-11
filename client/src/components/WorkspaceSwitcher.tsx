@@ -14,6 +14,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { WorkspaceState, SessionResponse } from "@/types/session";
 import type { WorkspaceMemberRole } from "@shared/schema";
+import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 
 const roleLabels: Record<WorkspaceMemberRole, string> = {
   owner: "Владелец",
@@ -97,6 +98,7 @@ export default function WorkspaceSwitcher({ workspace }: WorkspaceSwitcherProps)
                 <span className="text-xs text-muted-foreground">{membership.plan}</span>
               </div>
               <div className="flex items-center gap-2">
+                <WorkspaceIcon iconUrl={membership.iconUrl} size={24} />
                 <Badge variant={isActive ? "default" : "secondary"}>
                   {roleLabels[membership.role]}
                 </Badge>

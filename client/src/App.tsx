@@ -203,6 +203,7 @@ function MainAppShell({ user, workspace }: { user: PublicUser; workspace: Worksp
           showAdminLink={user.role === "admin"}
           user={user}
           workspaceId={workspace.active?.id}
+          iconUrl={workspace.active?.iconUrl}
         />
         <div className="flex min-w-0 flex-col flex-1">
           <header className="flex items-center justify-between p-2 border-b gap-2">

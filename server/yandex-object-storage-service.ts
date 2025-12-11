@@ -61,6 +61,43 @@ class YandexObjectStorageService {
     return this.s3Client;
   }
 
+  async uploadFile(
+    buffer: Buffer,
+    mimeType: string,
+    credentials: ObjectStorageCredentials,
+    objectKey?: string,
+  ): Promise<UploadResult> {
+    if (!credentials.accessKeyId || !credentials.secretAccessKey || !credentials.bucketName) {
+      throw new ObjectStorageError(
+        "Не настроены учетные данные Object Storage. Укажите accessKeyId, secretAccessKey и bucketName в настройках провайдера.",
+        "MISSING_CREDENTIALS"
+      );
+    }
+
+    const s3Client = this.getS3Client(credentials);
+    const key = objectKey ?? `uploads/${Date.now()}_${crypto.randomBytes(8).toString("hex")}`;
+
+    try {
+      const command = new PutObjectCommand({
+        Bucket: credentials.bucketName,
+        Key: key,
+        Body: buffer,
+        ContentType: mimeType,
+      });
+
+      await s3Client.send(command);
+
+      const uri = `https://storage.yandexcloud.net/${credentials.bucketName}/${key}`;
+      return { uri, objectKey: key, bucketName: credentials.bucketName };
+    } catch (error) {
+      console.error("[object-storage] Upload failed:", error);
+      throw new ObjectStorageError(
+        `Ошибка загрузки файла в Object Storage: ${error instanceof Error ? error.message : String(error)}`,
+        "UPLOAD_FAILED"
+      );
+    }
+  }
+
   async uploadAudioFile(
     audioBuffer: Buffer,
     mimeType: string,

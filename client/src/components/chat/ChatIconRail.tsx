@@ -2,7 +2,7 @@ import { Link, useLocation } from "wouter";
 import { Home, MessageSquare, Settings, BarChart3, Users, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import judicialEmblem from "@assets/judicial-emblem.png";
+import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 
 type NavItem = {
   icon: typeof Home;
@@ -21,9 +21,10 @@ const navItems: NavItem[] = [
 
 type ChatIconRailProps = {
   className?: string;
+  iconUrl?: string | null;
 };
 
-export default function ChatIconRail({ className }: ChatIconRailProps) {
+export default function ChatIconRail({ className, iconUrl }: ChatIconRailProps) {
   const [location] = useLocation();
 
   return (
@@ -35,16 +36,7 @@ export default function ChatIconRail({ className }: ChatIconRailProps) {
       data-testid="chat-icon-rail"
     >
       <div className="flex flex-1 flex-col items-center gap-8">
-        <div
-          className="flex h-12 w-12 items-center justify-center rounded-md border border-[#0e4c7d] overflow-hidden"
-          data-testid="icon-judicial-emblem"
-        >
-          <img
-            src={judicialEmblem}
-            alt="Судебный департамент"
-            className="h-full w-full object-cover"
-          />
-        </div>
+        <WorkspaceIcon iconUrl={iconUrl} size={48} testId="icon-judicial-emblem" />
 
         <nav className="flex flex-col items-center gap-4">
           {navItems.map((item) => {

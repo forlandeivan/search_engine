@@ -760,6 +760,8 @@ export interface IStorage {
 
   // Workspaces
   getWorkspace(id: string): Promise<Workspace | undefined>;
+  updateWorkspaceIcon(workspaceId: string, iconUrl: string | null): Promise<Workspace | undefined>;
+  updateWorkspaceIcon(workspaceId: string, iconUrl: string | null): Promise<Workspace | undefined>;
   isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean>;
   ensurePersonalWorkspace(user: User): Promise<Workspace>;
   listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
@@ -5465,6 +5467,26 @@ export class DatabaseStorage implements IStorage {
     await ensureWorkspacesTable();
     const [workspace] = await this.db.select().from(workspaces).where(eq(workspaces.id, id));
     return workspace ?? undefined;
+  }
+
+  async updateWorkspaceIcon(workspaceId: string, iconUrl: string | null): Promise<Workspace | undefined> {
+    await ensureWorkspacesTable();
+    const [updated] = await this.db
+      .update(workspaces)
+      .set({ iconUrl, updatedAt: new Date() })
+      .where(eq(workspaces.id, workspaceId))
+      .returning();
+    return updated ?? undefined;
+  }
+
+  async updateWorkspaceIcon(workspaceId: string, iconUrl: string | null): Promise<Workspace | undefined> {
+    await ensureWorkspacesTable();
+    const [updated] = await this.db
+      .update(workspaces)
+      .set({ iconUrl, updatedAt: new Date() })
+      .where(eq(workspaces.id, workspaceId))
+      .returning();
+    return updated ?? undefined;
   }
 
   async isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {

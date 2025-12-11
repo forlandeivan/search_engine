@@ -492,6 +492,7 @@ export interface PublicWorkspaceMembership {
   name: string;
   plan: WorkspaceWithRole["plan"];
   role: WorkspaceMemberRole;
+  iconUrl: string | null;
 }
 
 export function toPublicWorkspaceMembership(workspace: WorkspaceWithRole): PublicWorkspaceMembership {
@@ -500,6 +501,7 @@ export function toPublicWorkspaceMembership(workspace: WorkspaceWithRole): Publi
     name: workspace.name,
     plan: workspace.plan,
     role: workspace.role,
+    iconUrl: workspace.iconUrl ?? null,
   };
 }
 
