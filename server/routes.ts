@@ -6412,23 +6412,36 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     return role === "owner" || role === "manager";
   }
 
+  app.get(
+    "/api/workspaces/:workspaceId/me",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    (req, res) => {
+      const ctx = req.workspaceContext;
+      if (!ctx) {
+        return res.status(500).json({ message: "Internal server error" });
+      }
+      return res.json({
+        workspaceId: ctx.workspaceId,
+        userId: ctx.userId,
+        role: ctx.role,
+        status: ctx.status,
+      });
+    },
+  );
+
   app.post(
     "/api/workspaces/:workspaceId/icon",
     requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
     workspaceIconUpload.single("file"),
     async (req, res, next) => {
       const user = getAuthorizedUser(req, res);
       if (!user) return;
 
-      const { workspaceId } = req.params;
+      const workspaceId = req.workspaceContext?.workspaceId ?? req.params.workspaceId;
       try {
-        const workspace = await storage.getWorkspace(workspaceId);
-        if (!workspace) {
-          return res.status(404).json({ message: "workspace not found" });
-        }
-
-        const member = await storage.getWorkspaceMember(user.id, workspaceId);
-        if (!member || !isWorkspaceAdmin(member.role)) {
+        if (!req.workspaceContext || !isWorkspaceAdmin(req.workspaceContext.role)) {
           return res.status(403).json({ message: "forbidden" });
         }
 
@@ -6447,19 +6460,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
-  app.delete("/api/workspaces/:workspaceId/icon", requireAuth, async (req, res, next) => {
+  app.delete(
+    "/api/workspaces/:workspaceId/icon",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) return;
 
-    const { workspaceId } = req.params;
+    const workspaceId = req.workspaceContext?.workspaceId ?? req.params.workspaceId;
     try {
-      const workspace = await storage.getWorkspace(workspaceId);
-      if (!workspace) {
-        return res.status(404).json({ message: "workspace not found" });
-      }
-
-      const member = await storage.getWorkspaceMember(user.id, workspaceId);
-      if (!member || !isWorkspaceAdmin(member.role)) {
+      if (!req.workspaceContext || !isWorkspaceAdmin(req.workspaceContext.role)) {
         return res.status(403).json({ message: "forbidden" });
       }
 
@@ -6470,35 +6481,34 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  app.get("/api/workspaces/:workspaceId/icon", requireAuth, async (req, res, next) => {
-    const user = getAuthorizedUser(req, res);
-    if (!user) return;
+  app.get(
+    "/api/workspaces/:workspaceId/icon",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
 
-    const { workspaceId } = req.params;
-    try {
-      const workspace = await storage.getWorkspace(workspaceId);
-      if (!workspace) {
-        return res.status(404).json({ message: "workspace not found" });
-      }
+      const workspaceId = req.workspaceContext?.workspaceId ?? req.params.workspaceId;
+      try {
+        if (!req.workspaceContext || !isWorkspaceAdmin(req.workspaceContext.role)) {
+          return res.status(403).json({ message: "forbidden" });
+        }
 
-      const member = await storage.getWorkspaceMember(user.id, workspaceId);
-      if (!member || !isWorkspaceAdmin(member.role)) {
-        return res.status(403).json({ message: "forbidden" });
-      }
+        const icon = await getWorkspaceIcon(workspaceId);
+        if (!icon) {
+          return res.status(404).json({ message: "icon not found" });
+        }
 
-      const icon = await getWorkspaceIcon(workspaceId);
-      if (!icon) {
-        return res.status(404).json({ message: "icon not found" });
+        if (icon.contentType) {
+          res.setHeader("Content-Type", icon.contentType);
+        }
+        icon.body.pipe(res);
+      } catch (error) {
+        next(error);
       }
-
-      if (icon.contentType) {
-        res.setHeader("Content-Type", icon.contentType);
-      }
-      icon.body.pipe(res);
-    } catch (error) {
-      next(error);
-    }
-  });
+    },
+  );
 
   app.post("/api/workspaces/switch", async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
@@ -13252,9 +13262,3 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   return httpServer;
 }
-
-
-
-
-
-
