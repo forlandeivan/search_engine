@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import defaultWorkspaceIcon from "@assets/logo.png";
+import defaultWorkspaceIcon from "/branding/logo.svg";
 
 type WorkspaceIconProps = {
   iconUrl?: string | null;

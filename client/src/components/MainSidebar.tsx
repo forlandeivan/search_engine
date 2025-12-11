@@ -41,37 +41,6 @@ import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 import { UserAvatar } from "@/components/UserAvatar";
 import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 
-function WorkspaceIcon({
-  iconUrl,
-  size,
-  testId,
-}: {
-  iconUrl?: string | null;
-  size: number;
-  testId?: string;
-}) {
-  const [src, setSrc] = useState(iconUrl || defaultWorkspaceIcon);
-
-  useEffect(() => {
-    setSrc(iconUrl || defaultWorkspaceIcon);
-  }, [iconUrl]);
-
-  return (
-    <div
-      className="flex shrink-0 items-center justify-center overflow-hidden rounded-[5px] border border-[#0e4c7d]"
-      style={{ width: size, height: size }}
-      data-testid={testId}
-    >
-      <img
-        src={src}
-        alt="Иконка рабочего пространства"
-        className="h-full w-full object-cover"
-        onError={() => setSrc(defaultWorkspaceIcon)}
-      />
-    </div>
-  );
-}
-
 interface SidebarItem {
   title: string;
   url: string;
@@ -327,19 +296,12 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
         )}
       >
         {isCollapsed ? (
-          <div
-            className="flex h-[38px] w-[38px] items-center justify-center overflow-hidden rounded-[5px] border border-[#0e4c7d]"
-            <WorkspaceIcon iconUrl={iconUrl} size={48} testId="icon-judicial-emblem" />
-          ) : (
-            <div className="flex w-full items-center gap-2 px-1">
-              <WorkspaceIcon iconUrl={iconUrl} size={38} testId="icon-judicial-emblem-expanded" />
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-base font-bold text-slate-800 dark:text-slate-100">
-                AI KMS
-              </span>
-              <span className="truncate text-[11px] font-light text-slate-500">
-                gostuspace
-              </span>
+          <WorkspaceIcon iconUrl={iconUrl} size={38} testId="icon-judicial-emblem" />
+        ) : (
+          <div className="flex w-full items-center gap-2 px-1">
+            <WorkspaceIcon iconUrl={iconUrl} size={38} testId="icon-judicial-emblem-expanded" />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-base font-bold text-slate-800 dark:text-slate-100">AI KMS</span>
             </div>
           </div>
         )}
