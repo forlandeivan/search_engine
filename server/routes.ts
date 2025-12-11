@@ -1,4 +1,4 @@
-import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
+﻿import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import fetch, {
   Headers,
@@ -90,7 +90,6 @@ import {
   type SkillExecutionStepType,
 } from "./skill-execution-log";
 import type { SkillExecutionStartContext } from "./skill-execution-log-service";
-import type { ObjectStorageCredentials } from "./yandex-object-storage-service";
 import {
   listUserChats,
   createChat,
@@ -6407,23 +6406,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     return role === "owner" || role === "manager";
   }
 
-  async function resolveObjectStorageCredentials(): Promise<ObjectStorageCredentials> {
-    const providerDetail = await speechProviderService.getActiveSttProviderOrThrow();
-    const secrets = await storage.getSpeechProviderSecrets(providerDetail.provider.id);
-    const getSecret = (key: string) =>
-      secrets.find((entry) => entry.secretKey === key)?.secretValue?.trim() || undefined;
-
-    const accessKeyId = getSecret("s3AccessKeyId");
-    const secretAccessKey = getSecret("s3SecretAccessKey");
-    const bucketName = getSecret("s3BucketName");
-
-    if (!accessKeyId || !secretAccessKey || !bucketName) {
-      throw new Error("Object Storage credentials are not configured");
-    }
-
-    return { accessKeyId, secretAccessKey, bucketName };
-  }
-
   app.post(
     "/api/workspaces/:workspaceId/icon",
     requireAuth,
@@ -6448,18 +6430,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(400).json({ message: "file is required" });
         }
 
-        const creds = await resolveObjectStorageCredentials();
-        const iconUrl = await uploadWorkspaceIcon(workspaceId, req.file, creds);
-        res.json({ iconUrl });
+        const result = await uploadWorkspaceIcon(workspaceId, req.file);
+        res.json({ iconUrl: result.iconUrl, iconKey: result.iconKey });
       } catch (error) {
         if (error instanceof WorkspaceIconError) {
           return res.status(error.status ?? 400).json({ message: error.message });
-        }
-        if (error instanceof ObjectStorageError) {
-          return res.status(500).json({ message: error.message });
-        }
-        if ((error as any)?.message === "Object Storage credentials are not configured") {
-          return res.status(500).json({ message: "Object Storage is not configured" });
         }
         next(error);
       }
@@ -6484,6 +6459,36 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       await clearWorkspaceIcon(workspaceId);
       res.json({ iconUrl: null });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/workspaces/:workspaceId/icon", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) return;
+
+    const { workspaceId } = req.params;
+    try {
+      const workspace = await storage.getWorkspace(workspaceId);
+      if (!workspace) {
+        return res.status(404).json({ message: "workspace not found" });
+      }
+
+      const member = await storage.getWorkspaceMember(user.id, workspaceId);
+      if (!member || !isWorkspaceAdmin(member.role)) {
+        return res.status(403).json({ message: "forbidden" });
+      }
+
+      const icon = await getWorkspaceIcon(workspaceId);
+      if (!icon) {
+        return res.status(404).json({ message: "icon not found" });
+      }
+
+      if (icon.contentType) {
+        res.setHeader("Content-Type", icon.contentType);
+      }
+      icon.body.pipe(res);
     } catch (error) {
       next(error);
     }
@@ -13179,6 +13184,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   return httpServer;
 }
+
 
 
 

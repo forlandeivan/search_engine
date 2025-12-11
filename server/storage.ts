@@ -631,6 +631,12 @@ export type WorkspaceWithRole = Workspace & {
   ownerFullName?: string | null;
   ownerEmail?: string | null;
 };
+
+export type WorkspaceUpdatePayload = {
+  iconUrl?: string | null;
+  iconKey?: string | null;
+  storageBucket?: string | null;
+};
 export interface WorkspaceMemberWithUser {
   member: WorkspaceMember;
   user: User;
@@ -764,8 +770,12 @@ export interface IStorage {
 
   // Workspaces
   getWorkspace(id: string): Promise<Workspace | undefined>;
-  updateWorkspaceIcon(workspaceId: string, iconUrl: string | null): Promise<Workspace | undefined>;
-  updateWorkspaceIcon(workspaceId: string, iconUrl: string | null): Promise<Workspace | undefined>;
+  updateWorkspaceIcon(
+    workspaceId: string,
+    iconUrl: string | null,
+    iconKey?: string | null,
+  ): Promise<Workspace | undefined>;
+  setWorkspaceStorageBucket(workspaceId: string, bucketName: string): Promise<void>;
   isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean>;
   ensurePersonalWorkspace(user: User): Promise<Workspace>;
   listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
@@ -5473,24 +5483,26 @@ export class DatabaseStorage implements IStorage {
     return workspace ?? undefined;
   }
 
-  async updateWorkspaceIcon(workspaceId: string, iconUrl: string | null): Promise<Workspace | undefined> {
+  async updateWorkspaceIcon(
+    workspaceId: string,
+    iconUrl: string | null,
+    iconKey: string | null = null,
+  ): Promise<Workspace | undefined> {
     await ensureWorkspacesTable();
     const [updated] = await this.db
       .update(workspaces)
-      .set({ iconUrl, updatedAt: new Date() })
+      .set({ iconUrl, iconKey, updatedAt: new Date() })
       .where(eq(workspaces.id, workspaceId))
       .returning();
     return updated ?? undefined;
   }
 
-  async updateWorkspaceIcon(workspaceId: string, iconUrl: string | null): Promise<Workspace | undefined> {
+  async setWorkspaceStorageBucket(workspaceId: string, bucketName: string): Promise<void> {
     await ensureWorkspacesTable();
-    const [updated] = await this.db
+    await this.db
       .update(workspaces)
-      .set({ iconUrl, updatedAt: new Date() })
-      .where(eq(workspaces.id, workspaceId))
-      .returning();
-    return updated ?? undefined;
+      .set({ storageBucket: bucketName, updatedAt: new Date() })
+      .where(eq(workspaces.id, workspaceId));
   }
 
   async isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {

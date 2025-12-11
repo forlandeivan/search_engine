@@ -119,6 +119,8 @@ export const workspaces = pgTable("workspaces", {
     .notNull()
     .default(sql`'{}'::jsonb`),
   iconUrl: text("icon_url"),
+  iconKey: varchar("icon_key", { length: 255 }),
+  storageBucket: varchar("storage_bucket", { length: 255 }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
