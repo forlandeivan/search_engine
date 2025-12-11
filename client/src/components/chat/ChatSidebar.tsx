@@ -69,7 +69,7 @@ export default function ChatSidebar({
     skills: workspaceSkills,
     isLoading: isSkillsLoading,
     isFetching: isSkillsFetching,
-  } = useSkills({ enabled: Boolean(workspaceId) });
+  } = useSkills({ workspaceId: workspaceId ?? null, enabled: Boolean(workspaceId) });
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
 

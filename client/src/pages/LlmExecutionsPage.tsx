@@ -80,7 +80,8 @@ export default function LlmExecutionsPage({ selectedExecutionId }: LlmExecutions
     resetFilters,
   } = useLlmExecutionFiltersState();
   const { workspaces } = useAdminWorkspaces();
-  const { skills } = useSkills();
+  const workspaceId = filters.workspaceId?.trim() ? filters.workspaceId : null;
+  const { skills } = useSkills({ workspaceId, enabled: Boolean(workspaceId) });
   const unicaChatSkill = useMemo(
     () => skills.find((skill) => skill.isSystem && skill.systemKey === "UNICA_CHAT"),
     [skills],

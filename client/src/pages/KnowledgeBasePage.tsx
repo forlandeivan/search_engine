@@ -3548,6 +3548,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             setCreateBaseMode("blank");
           }
         }}
+        workspaceId={workspaceId}
         initialMode={createBaseMode}
         onCreated={handleBaseCreated}
       />

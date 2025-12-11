@@ -40,7 +40,11 @@ export default function ChatPage({ params }: ChatPageProps) {
   const { chats } = useChats(workspaceId);
   const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
 
-  const { skills } = useSkills({ enabled: Boolean(workspaceId), includeArchived: true });
+  const { skills } = useSkills({
+    workspaceId: workspaceId || null,
+    enabled: Boolean(workspaceId),
+    includeArchived: true,
+  });
   const defaultSkill = useMemo(
     () => skills.find((skill) => skill.isSystem && skill.systemKey === "UNICA_CHAT") ?? null,
     [skills],

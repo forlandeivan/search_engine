@@ -43,11 +43,27 @@ export type CreateKnowledgeBaseCrawlerConfig = {
   authHeaders?: Record<string, string>;
 };
 
-export function useCreateKnowledgeBase() {
+export function useCreateKnowledgeBase(workspaceId?: string | null) {
   const queryClient = useQueryClient();
+  const resolveWorkspaceId = (explicit?: string | null): string => {
+    if (explicit?.trim()) {
+      return explicit.trim();
+    }
+
+    const session = queryClient.getQueryData<{ workspace?: { active?: { id?: string } }; activeWorkspaceId?: string | null }>([
+      "/api/auth/session",
+    ]);
+    const cached = session?.workspace?.active?.id ?? session?.activeWorkspaceId;
+    if (cached && cached.trim().length > 0) {
+      return cached.trim();
+    }
+
+    throw new Error("Не выбрано рабочее пространство");
+  };
 
   return useMutation<CreateKnowledgeBaseResult, Error, CreateKnowledgeBaseInput>({
     mutationFn: async ({ name, description, mode, archiveFile, crawlerConfig }) => {
+      const resolvedWorkspaceId = resolveWorkspaceId(workspaceId);
       const trimmedName = name.trim();
       if (!trimmedName) {
         throw new Error("Укажите название базы знаний");
@@ -131,7 +147,7 @@ export function useCreateKnowledgeBase() {
           },
         };
 
-        const response = await apiRequest("POST", "/api/kb", payload);
+        const response = await apiRequest("POST", "/api/kb", payload, undefined, { workspaceId: resolvedWorkspaceId });
         const created = (await response.json()) as {
           kb_id: string;
           knowledge_base: CreateKnowledgeBaseResponse;
@@ -154,11 +170,18 @@ export function useCreateKnowledgeBase() {
           base = { ...base, crawlJob };
         }
       } else {
-        const response = await apiRequest("POST", "/api/knowledge/bases", {
-          id: base.id,
-          name: base.name,
-          description: base.description,
-        });
+        const response = await apiRequest(
+          "POST",
+          "/api/knowledge/bases",
+          {
+            id: base.id,
+            name: base.name,
+            description: base.description,
+            workspaceId: resolvedWorkspaceId,
+          },
+          undefined,
+          { workspaceId: resolvedWorkspaceId },
+        );
 
         const created = (await response.json()) as CreateKnowledgeBaseResponse;
         remoteSummary = created;

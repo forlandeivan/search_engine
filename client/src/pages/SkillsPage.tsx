@@ -153,6 +153,7 @@ import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 import type { ActionDto, SkillActionDto } from "@shared/skills";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { Skill, SkillPayload } from "@/types/skill";
+import type { SessionResponse } from "@/types/session";
 
 const ICON_OPTIONS = [
   { value: "Zap" },
@@ -1811,21 +1812,36 @@ function SkillFormDialog({
   );
 }
 
-async function fetchKnowledgeBases(): Promise<KnowledgeBaseSummary[]> {
-  const response = await apiRequest("GET", "/api/knowledge/bases");
+async function fetchKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSummary[]> {
+  const response = await apiRequest("GET", "/api/knowledge/bases", undefined, undefined, { workspaceId });
   return (await response.json()) as KnowledgeBaseSummary[];
 }
 
 export default function SkillsPage() {
-  const { skills, isLoading: isSkillsLoading, isError, error, refetch: refetchSkills } = useSkills();
+  const { data: session } = useQuery<SessionResponse>({
+    queryKey: ["/api/auth/session"],
+  });
+  const workspaceId = session?.workspace.active.id ?? session?.activeWorkspaceId ?? null;
+  const {
+    skills,
+    isLoading: isSkillsLoading,
+    isError,
+    error,
+    refetch: refetchSkills,
+  } = useSkills({ workspaceId, enabled: Boolean(workspaceId) });
   const knowledgeBaseQuery = useQuery<KnowledgeBaseSummary[]>({
-    queryKey: ["knowledge-bases"],
-    queryFn: fetchKnowledgeBases,
+    queryKey: ["knowledge-bases", workspaceId],
+    queryFn: () => fetchKnowledgeBases(workspaceId as string),
+    enabled: Boolean(workspaceId),
   });
   const vectorCollectionsQuery = useQuery<VectorCollectionsResponse>({
-    queryKey: ["/api/vector/collections"],
+    queryKey: ["/api/vector/collections", workspaceId],
+    enabled: Boolean(workspaceId),
     queryFn: async () => {
-      const response = await apiRequest("GET", "/api/vector/collections");
+      if (!workspaceId) {
+        throw new Error("Рабочее пространство не выбрано");
+      }
+      const response = await apiRequest("GET", "/api/vector/collections", undefined, undefined, { workspaceId });
       return (await response.json()) as VectorCollectionsResponse;
     },
   });
@@ -1862,11 +1878,13 @@ export default function SkillsPage() {
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
 
   const { createSkill, isCreating } = useCreateSkill({
+    workspaceId,
     onSuccess: () => {
       toast({ title: "Навык сохранён" });
     },
   });
   const { updateSkill, isUpdating } = useUpdateSkill({
+    workspaceId,
     onSuccess: () => {
       toast({ title: "Навык сохранён" });
     },

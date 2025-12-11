@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,19 +29,53 @@ interface WorkspaceSwitcherProps {
 
 export default function WorkspaceSwitcher({ workspace }: WorkspaceSwitcherProps) {
   const queryClient = useQueryClient();
+  const [location, navigate] = useLocation();
   const { toast } = useToast();
 
-  const switchWorkspaceMutation = useMutation<SessionResponse, Error, string>({
+  type SwitchWorkspaceResponse = {
+    workspaceId: string;
+    status: string;
+    role?: WorkspaceMemberRole;
+    name?: string | null;
+  };
+
+  const switchWorkspaceMutation = useMutation<SwitchWorkspaceResponse, Error, string>({
     mutationFn: async (workspaceId) => {
       const res = await apiRequest("POST", "/api/workspaces/switch", { workspaceId });
-      return (await res.json()) as SessionResponse;
+      return (await res.json()) as SwitchWorkspaceResponse;
     },
     onSuccess: (data) => {
-      queryClient.setQueryData(["/api/auth/session"], data);
+      const nextWorkspaceId = data.workspaceId;
+      queryClient.setQueryData(["/api/auth/session"], (prev: SessionResponse | null | undefined) => {
+        if (!prev) return prev;
+        const memberships = prev.workspace.memberships ?? [];
+        const nextActive = memberships.find((m) => m.id === nextWorkspaceId);
+        if (!nextActive) {
+          return {
+            ...prev,
+            activeWorkspaceId: nextWorkspaceId,
+          };
+        }
+        return {
+          ...prev,
+          activeWorkspaceId: nextWorkspaceId,
+          workspace: {
+            ...prev.workspace,
+            active: nextActive,
+          },
+        };
+      });
+      queryClient.invalidateQueries({
+        predicate: () => true,
+      });
       toast({
         title: "Рабочее пространство переключено",
-        description: `Текущее пространство — ${data.workspace.active.name}`,
+        description: `Текущее пространство — ${data.name ?? "" || nextWorkspaceId}`,
       });
+      const currentWorkspaceId = workspace.active.id;
+      if (currentWorkspaceId && location.includes(currentWorkspaceId)) {
+        navigate(location.replace(currentWorkspaceId, nextWorkspaceId));
+      }
     },
     onError: (error: Error) => {
       toast({

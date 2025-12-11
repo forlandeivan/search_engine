@@ -2,36 +2,56 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { Skill, SkillPayload } from "@/types/skill";
 
-const SKILLS_QUERY_KEY = ["skills"] as const;
+const buildSkillsQueryKey = (workspaceId: string | null, includeArchived: boolean) =>
+  ["skills", workspaceId ?? "none", includeArchived ? "all" : "active"] as const;
 
 type SkillResponse = { skill: Skill };
 type SkillListResponse = { skills: Skill[] };
 
-async function fetchSkills(includeArchived?: boolean): Promise<Skill[]> {
+async function fetchSkills(workspaceId: string, includeArchived?: boolean): Promise<Skill[]> {
   const params = includeArchived ? "?status=all" : "";
-  const response = await apiRequest("GET", `/api/skills${params}`);
+  const response = await apiRequest(
+    "GET",
+    `/api/skills${params}`,
+    undefined,
+    undefined,
+    { workspaceId },
+  );
   const payload = (await response.json()) as SkillListResponse;
   return payload.skills ?? [];
 }
 
-async function createSkill(payload: SkillPayload): Promise<Skill> {
-  const response = await apiRequest("POST", "/api/skills", payload);
+async function createSkill(workspaceId: string, payload: SkillPayload): Promise<Skill> {
+  const response = await apiRequest(
+    "POST",
+    "/api/skills",
+    { ...payload, workspaceId },
+    undefined,
+    { workspaceId },
+  );
   const data = (await response.json()) as SkillResponse;
   return data.skill;
 }
 
-async function updateSkill(skillId: string, payload: SkillPayload): Promise<Skill> {
-  const response = await apiRequest("PUT", `/api/skills/${skillId}`, payload);
+async function updateSkill(workspaceId: string, skillId: string, payload: SkillPayload): Promise<Skill> {
+  const response = await apiRequest(
+    "PUT",
+    `/api/skills/${skillId}`,
+    { ...payload, workspaceId },
+    undefined,
+    { workspaceId },
+  );
   const data = (await response.json()) as SkillResponse;
   return data.skill;
 }
 
-export function useSkills(options: { enabled?: boolean; includeArchived?: boolean } = {}) {
-  const { enabled = true, includeArchived = false } = options;
+export function useSkills(options: { workspaceId: string | null; enabled?: boolean; includeArchived?: boolean }) {
+  const { workspaceId, enabled = true, includeArchived = false } = options;
+  const shouldFetch = Boolean(enabled && workspaceId);
   const query = useQuery<Skill[], Error>({
-    queryKey: SKILLS_QUERY_KEY,
-    queryFn: () => fetchSkills(includeArchived),
-    enabled,
+    queryKey: buildSkillsQueryKey(workspaceId ?? null, includeArchived),
+    queryFn: () => fetchSkills(workspaceId as string, includeArchived),
+    enabled: shouldFetch,
   });
 
   return {
@@ -44,13 +64,24 @@ export function useSkills(options: { enabled?: boolean; includeArchived?: boolea
   };
 }
 
-export function useCreateSkill(options: { onSuccess?: (skill: Skill) => void } = {}) {
+export function useCreateSkill(options: { workspaceId: string | null; onSuccess?: (skill: Skill) => void }) {
+  const { workspaceId, onSuccess } = options;
   const queryClient = useQueryClient();
   const mutation = useMutation<Skill, Error, SkillPayload>({
-    mutationFn: async (payload) => await createSkill(payload),
+    mutationFn: async (payload) => {
+      if (!workspaceId) {
+        throw new Error("Не удалось определить рабочее пространство");
+      }
+      return await createSkill(workspaceId, payload);
+    },
     onSuccess: async (createdSkill) => {
-      await queryClient.invalidateQueries({ queryKey: SKILLS_QUERY_KEY });
-      options.onSuccess?.(createdSkill);
+      await queryClient.invalidateQueries({
+        predicate: (query) => {
+          const [key] = query.queryKey as [unknown, ...unknown[]];
+          return key === "skills";
+        },
+      });
+      onSuccess?.(createdSkill);
     },
   });
 
@@ -64,13 +95,24 @@ export function useCreateSkill(options: { onSuccess?: (skill: Skill) => void } =
 
 type UpdateSkillVariables = { skillId: string; payload: SkillPayload };
 
-export function useUpdateSkill(options: { onSuccess?: (skill: Skill) => void } = {}) {
+export function useUpdateSkill(options: { workspaceId: string | null; onSuccess?: (skill: Skill) => void }) {
+  const { workspaceId, onSuccess } = options;
   const queryClient = useQueryClient();
   const mutation = useMutation<Skill, Error, UpdateSkillVariables>({
-    mutationFn: async ({ skillId, payload }) => await updateSkill(skillId, payload),
+    mutationFn: async ({ skillId, payload }) => {
+      if (!workspaceId) {
+        throw new Error("Не удалось определить рабочее пространство");
+      }
+      return await updateSkill(workspaceId, skillId, payload);
+    },
     onSuccess: async (updatedSkill) => {
-      await queryClient.invalidateQueries({ queryKey: SKILLS_QUERY_KEY });
-      options.onSuccess?.(updatedSkill);
+      await queryClient.invalidateQueries({
+        predicate: (query) => {
+          const [key] = query.queryKey as [unknown, ...unknown[]];
+          return key === "skills";
+        },
+      });
+      onSuccess?.(updatedSkill);
     },
   });
 

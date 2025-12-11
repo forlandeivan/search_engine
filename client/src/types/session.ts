@@ -18,4 +18,5 @@ export type WorkspaceState = {
 export type SessionResponse = {
   user: PublicUser;
   workspace: WorkspaceState;
+  activeWorkspaceId?: string | null;
 };

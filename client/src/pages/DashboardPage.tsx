@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +27,7 @@ import {
   CreateKnowledgeBaseDialog,
   KNOWLEDGE_BASE_CREATION_OPTIONS,
 } from "@/components/knowledge-base/CreateKnowledgeBaseDialog";
+import type { SessionResponse } from "@/types/session";
 
 const getKnowledgeBasesFromStorage = () => readKnowledgeBaseStorage().knowledgeBases;
 
@@ -46,6 +48,8 @@ export default function DashboardPage() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>(() => getKnowledgeBasesFromStorage());
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [creationMode, setCreationMode] = useState<KnowledgeBaseSourceType>("blank");
+  const { data: session } = useQuery<SessionResponse>({ queryKey: ["/api/auth/session"] });
+  const workspaceId = session?.workspace.active.id ?? session?.activeWorkspaceId ?? null;
 
   useEffect(() => {
     const cleared = clearLegacyKnowledgeBaseStorageOnce();
@@ -244,6 +248,7 @@ export default function DashboardPage() {
         open={isDialogOpen}
         onOpenChange={setIsDialogOpen}
         initialMode={creationMode}
+        workspaceId={workspaceId}
         onCreated={handleBaseCreated}
       />
     </div>

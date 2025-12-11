@@ -1,4 +1,10 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import type { SessionResponse } from "@/types/session";
+
+function resolveWorkspaceIdFromCache(): string | null {
+  const session = queryClient.getQueryData<SessionResponse>(["/api/auth/session"]);
+  return session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
+}
 
 async function throwIfResNotOk(res: Response) {
   if (res.ok) {
@@ -45,14 +51,25 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
   headers?: Record<string, string>,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; workspaceId?: string },
 ): Promise<Response> {
+  const resolvedWorkspaceId = options?.workspaceId ?? resolveWorkspaceIdFromCache();
+  const resolvedHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...headers,
+  };
+
+  if (
+    resolvedWorkspaceId &&
+    !("X-Workspace-Id" in resolvedHeaders) &&
+    !("x-workspace-id" in resolvedHeaders)
+  ) {
+    resolvedHeaders["X-Workspace-Id"] = resolvedWorkspaceId;
+  }
+
   const res = await fetch(url, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      ...headers,
-    },
+    headers: resolvedHeaders,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
     signal: options?.signal,
@@ -68,8 +85,10 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
+    const workspaceId = resolveWorkspaceIdFromCache();
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
+      headers: workspaceId ? { "X-Workspace-Id": workspaceId } : undefined,
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {

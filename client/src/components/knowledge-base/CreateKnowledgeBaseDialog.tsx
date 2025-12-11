@@ -45,6 +45,7 @@ type CreateKnowledgeBaseDialogProps = {
   onOpenChange: (open: boolean) => void;
   initialMode?: KnowledgeBaseSourceType;
   onCreated?: (base: KnowledgeBase) => void;
+  workspaceId?: string | null;
 };
 
 type FieldLabelWithTooltipProps = {
@@ -78,6 +79,7 @@ export function CreateKnowledgeBaseDialog({
   onOpenChange,
   initialMode = "blank",
   onCreated,
+  workspaceId,
 }: CreateKnowledgeBaseDialogProps) {
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
   const [mode, setMode] = useState<KnowledgeBaseSourceType>(initialMode);
@@ -100,7 +102,7 @@ export function CreateKnowledgeBaseDialog({
   const [archiveFile, setArchiveFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCrawlerAdvanced, setShowCrawlerAdvanced] = useState(false);
-  const createBaseMutation = useCreateKnowledgeBase();
+  const createBaseMutation = useCreateKnowledgeBase(workspaceId);
 
   const parseListInput = (value: string): string[] =>
     value
