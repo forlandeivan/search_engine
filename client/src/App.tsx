@@ -9,7 +9,6 @@ import AdminSidebar from "@/components/AdminSidebar";
 import MainSidebar from "@/components/MainSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
-import SearchPage from "@/pages/SearchPage";
 import ApiDocsPage from "@/pages/ApiDocsPage";
 import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
 import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
@@ -31,9 +30,9 @@ import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
 import VerifyEmailPage from "@/pages/VerifyEmailPage";
 import ProfilePage from "@/pages/ProfilePage";
-import WorkspaceMembersPage from "@/pages/WorkspaceMembersPage";
 import WorkspaceActionsPage from "@/pages/WorkspaceActionsPage";
 import SmtpSettingsPage from "@/pages/SmtpSettingsPage";
+import WorkspaceSettingsPage from "@/pages/WorkspaceSettingsPage";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -74,6 +73,14 @@ function AdminRouter() {
 }
 
 function MainRouter() {
+  const Redirect = ({ to }: { to: string }) => {
+    const [, navigate] = useLocation();
+    useEffect(() => {
+      navigate(to);
+    }, [navigate, to]);
+    return null;
+  };
+
   return (
     <Switch>
       <Route path="/workspaces/:workspaceId/chat/:chatId" component={ChatPage} />
@@ -84,12 +91,18 @@ function MainRouter() {
       <Route path="/skills" component={SkillsPage} />
       <Route path="/workspaces/:workspaceId/actions" component={WorkspaceActionsPage} />
       <Route path="/workspaces/actions" component={WorkspaceActionsPage} />
+      <Route path="/workspaces/:workspaceId/settings" component={WorkspaceSettingsPage} />
+      <Route path="/workspaces/settings" component={WorkspaceSettingsPage} />
+      <Route path="/workspaces/:workspaceId/members">
+        {(params) => <Redirect to={`/workspaces/${params.workspaceId}/settings?tab=members`} />}
+      </Route>
+      <Route path="/workspaces/members">
+        <Redirect to="/workspaces/settings?tab=members" />
+      </Route>
       <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
       <Route path="/vector/collections" component={VectorCollectionsPage} />
       <Route path="/integrations/api" component={ApiDocsPage} />
-      <Route path="/workspaces/members" component={WorkspaceMembersPage} />
       <Route path="/profile" component={ProfilePage} />
-      <Route path="/search" component={SearchPage} />
       <Route path="/" component={DashboardPage} />
       <Route component={NotFound} />
     </Switch>

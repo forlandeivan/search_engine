@@ -17,7 +17,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
-  Search,
   BookOpen,
   Boxes,
   Brain,
@@ -26,7 +25,6 @@ import {
   LayoutDashboard,
   Sparkles,
   MessageCircle,
-  Waypoints,
   PanelLeft,
   PanelRight,
 } from "lucide-react";
@@ -110,7 +108,6 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
       .replace(/ё/g, "е")}`;
 
   const chatUrl = workspaceId ? `/workspaces/${workspaceId}/chat` : "/chat";
-  const actionsUrl = workspaceId ? `/workspaces/${workspaceId}/actions` : "/workspaces/actions";
 
   const sections: Array<{ label: string; items: SidebarItem[] }> = [
     {
@@ -120,11 +117,6 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
           title: "Дашборд",
           url: "/",
           icon: LayoutDashboard,
-        },
-        {
-          title: "Глобальный поиск",
-          url: "/search",
-          icon: Search,
         },
         {
           title: "Базы знаний",
@@ -160,25 +152,20 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
         },
       ],
     },
+  ];
+
+  const workspaceSettingsUrl = workspaceId ? `/workspaces/${workspaceId}/settings` : "/workspaces/settings";
+
+  const footerItems: SidebarItem[] = [
     {
-      label: "Рабочее пространство",
-      items: [
-        {
-          title: "Участники",
-          url: "/workspaces/members",
-          icon: Users,
-        },
-        {
-          title: "Действия",
-          url: actionsUrl,
-          icon: Waypoints,
-        },
-      ],
+      title: "Рабочее пространство",
+      url: workspaceSettingsUrl,
+      icon: Users,
     },
   ];
 
   if (showAdminLink) {
-    sections[sections.length - 1].items.push({
+    footerItems.push({
       title: "Администрирование",
       url: "/admin/workspaces",
       icon: Shield,
@@ -340,6 +327,15 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
 
       {/* Footer with User Profile */}
       <SidebarFooter className="mt-auto border-t border-black/[0.03] px-2 py-2 dark:border-white/[0.05]">
+        {/* Workspace & Admin shortcuts */}
+        <SidebarMenu className="mb-2 gap-0">
+          {footerItems.map((item) => (
+            <SidebarMenuItem key={item.title} className="p-1">
+              {renderMenuItem(item)}
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+
         {/* User Profile */}
         <SidebarMenu>
           <SidebarMenuItem className="p-1">
