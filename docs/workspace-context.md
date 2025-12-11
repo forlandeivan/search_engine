@@ -29,3 +29,40 @@
 ## Ключевые файлы
 - **Бэкенд:** `server/auth.ts` (ensureWorkspaceContext, getRequestWorkspace), `server/routes.ts` (switch endpoint, проверки membership/roles).
 - **Фронтенд:** `client/src/App.tsx` (загрузка сессии, маршруты), `client/src/types/session.ts` (WorkspaceState), страницы с `:workspaceId` (ChatPage, WorkspaceSettingsPage и др.). 
+
+## Текущее устройство сессий и контекста на бэкенде
+- **Сессии:** `express-session` + `connect-pg-simple`, в `SessionData` сохраняются `workspaceId` и `oauthRedirectTo`. Любая смена workspace (`/api/workspaces/switch`) кладёт id в сессию.
+- **Аутентификация:** `requireAuth/requireAdmin` вызывают `ensureWorkspaceContext`, который подставляет `req.workspaceId/req.workspaceRole/req.workspaceMemberships`. Либо токен в сессии, либо Bearer-персональный токен.
+- **Выбор workspace:** заголовок `X-Workspace-Id` имеет приоритет над сессией; fallback — первый membership (с приоритетом workspace с базами знаний). `resolveWorkspaceIdForRequest` (server/routes.ts) пробрасывает явный id из body/query, но отклоняет, если пользователя нет в `req.workspaceMemberships`.
+- **Публичные/встраиваемые запросы:** `resolvePublicCollectionRequest` умеет определять workspace по API-key/`workspaceId`/`kbId`; если API-key нет, пытается аутентифицировать пользователя и вызвать `ensureWorkspaceContext`.
+
+## Авторизация и роли
+- **Роли в workspace:** `owner`, `manager`, `user` (из @shared/schema). Локальный helper `isWorkspaceAdmin(role)` в routes считает owner/manager администраторами.
+- **Проверки:** единого middleware на права нет; проверки размазаны по хендлерам:
+  - для явных workspaceId используется `resolveWorkspaceIdForRequest` (403, если нет membership);
+  - для сущностей с `workspaceId` в БД часто вызывают `storage.isWorkspaceMember` / `storage.getWorkspaceMember` для валидации доступа (чаты, транскрипты, документы);
+  - операции на иконке и embed-key проверяют админскую роль (owner/manager).
+- **Кеш membership:** нет постоянного кеша; `ensureWorkspaceContext` каждый запрос читает memberships и кладёт их в `req.workspaceMemberships`. Вне `requireAuth` публичные маршруты дополнительно дергают `storage.isWorkspaceMember`.
+
+## Мутирующие эндпоинты и явный workspaceId
+- **С явным `workspaceId` в URL:** 
+  - `/api/workspaces/:workspaceId/icon` (GET/POST/DELETE) — иконка, проверка owner/manager.
+  - `/api/workspaces/:workspaceId/actions` и `/:actionId` — CRUD кастомных действий.
+  - `/api/workspaces/:workspaceId/transcripts/:transcriptId` (GET для owner/manager, PATCH для stat/metadata) — требуют совпадения workspaceId.
+- **Без явного workspaceId, но работают в активном workspace (`getRequestWorkspace` или `resolveWorkspaceIdForRequest`):**
+  - `/api/workspaces` (контекст), `/api/workspaces/switch`, `/api/workspaces/members*` — используют текущий workspace из сессии/заголовка, отдельной проверки роли нет.
+  - Skills: `/api/skills` CRUD по текущему workspace.
+  - Чаты: `/api/chat/sessions*`, `/api/chat/sessions/:chatId/messages*`, completions/stream — workspace берётся из query/body или из текущего.
+  - Embed keys & домены: `/api/embed/keys*` — текущий workspace, проверка принадлежности базы знаний.
+  - Knowledge Base: `/api/knowledge/bases*`, `/api/kb/:baseId/*`, Ask-AI, vectorization jobs — все завязаны на `getRequestWorkspace`, но `baseId` только в path.
+  - Канвасы/транскрипты, списки документов чатов, auto-actions по transcripts — workspace проверяется по сущности в storage.
+- **Глобальные/неworkspace:** auth/login/logout/oauth, `/api/auth/providers`, админские `/api/admin/*` (OAuth провайдеры, TTS/STT, SMTP, IAM-токены), реестр embedding/LLM провайдеров (`/api/embedding/services*`, `/api/llm/providers*`), сервисные debug/health роуты.
+
+## Паттерны middleware и ошибок
+- **Расширение Request:** в `express-serve-static-core` добавлены `workspaceId`, `workspaceRole`, `workspaceMemberships`.
+- **Ошибки:** Zod → 400 с details; `WorkspaceContextError` → 400/404/401; `HttpError` (локально в routes) используется для ручных 4xx; доменные ошибки (например, `KnowledgeBaseError`, `SkillServiceError`) возвращают свой status; общее отсутствие доступа чаще всего `403 { message: "Нет доступа к этому workspace" }`.
+- **Промежуточные функции:** `ensureWorkspaceContext` ставит текущий workspace и membership; `getAuthorizedUser` делает 401, если нет сессии; публичные обработчики сами вызывают `ensureWorkspaceContext`, если нет API-key.
+
+## Что дальше переводить на обязательный workspaceId и централизованный middleware
+- Чаты/skills/knowledge-base/embed-keys/мембершипы пока полагаются на `req.workspaceId` из сессии; нужно вводить обязательный `workspaceId` в запросах и единое middleware, чтобы не расползалась логика доступа.
+- Отдельно обратить внимание на публичные маршруты embed/RAG: сейчас они принимают `workspaceId`/`kbId` опционально и проверяют membership точечно.
