@@ -6,6 +6,8 @@ export type WorkspaceMembership = {
   plan: string;
   role: WorkspaceMemberRole;
   iconUrl: string | null;
+  ownerFullName: string | null;
+  ownerEmail: string | null;
 };
 
 export type WorkspaceState = {

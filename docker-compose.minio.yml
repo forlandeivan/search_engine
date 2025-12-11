@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 endpoint
+      - "9001:9001"   # Web-консоль MinIO
+    environment:
+      MINIO_ROOT_USER: admin              # поменяй
+      MINIO_ROOT_PASSWORD: q1w2e3r4 # поменяй, минимум 8 символов
+    volumes:
+      - ./minio-data:/data

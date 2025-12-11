@@ -7,7 +7,7 @@ import { workspaces } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 const ALLOWED_MIME = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml"];
-const MAX_SIZE_BYTES = 200 * 1024; // 200 KB
+const MAX_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB
 
 export const workspaceIconUpload = multer({
   storage: multer.memoryStorage(),
@@ -48,7 +48,7 @@ export async function uploadWorkspaceIcon(
     throw new WorkspaceIconError("file is required", 400);
   }
   if (file.size > MAX_SIZE_BYTES) {
-    throw new WorkspaceIconError("icon file size exceeds the allowed limit of 200 KB", 413);
+    throw new WorkspaceIconError("icon file size exceeds the allowed limit of 2 MB", 413);
   }
   if (!ALLOWED_MIME.includes(file.mimetype.toLowerCase())) {
     throw new WorkspaceIconError("only PNG, JPEG or SVG image formats are allowed", 400);

@@ -27,7 +27,7 @@ function useWorkspaceInfo(workspaceId?: string | null) {
 
 export default function WorkspaceSettingsPage({ params }: { params?: { workspaceId?: string } }) {
   const [location, navigate] = useLocation();
-  const workspaceId = params?.workspaceId ?? undefined;
+  const workspaceIdFromRoute = params?.workspaceId ?? undefined;
   const sessionWorkspaceQuery = useWorkspaceInfo(workspaceId);
   const { toast } = useToast();
 
@@ -60,11 +60,13 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const [iconFile, setIconFile] = useState<File | null>(null);
   const [iconPreview, setIconPreview] = useState<string | null>(null);
   const [resetIcon, setResetIcon] = useState(false);
+  const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
 
   useEffect(() => {
     setName(workspaceName);
     setIconPreview(sessionWorkspaceQuery.data?.iconUrl ?? null);
-  }, [workspaceName, sessionWorkspaceQuery.data?.iconUrl]);
+    setDescription(sessionWorkspaceQuery.data?.description ?? "");
+  }, [workspaceName, sessionWorkspaceQuery.data?.iconUrl, sessionWorkspaceQuery.data?.description]);
 
   const handleFileSelect = (file: File | null) => {
     if (!file) return;
@@ -77,10 +79,10 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
       });
       return;
     }
-    if (file.size > 200 * 1024) {
+    if (file.size > 2 * 1024 * 1024) {
       toast({
         title: "Слишком большой файл",
-        description: "Размер иконки не должен превышать 200 КБ",
+        description: "Размер иконки не должен превышать 2 МБ",
         variant: "destructive",
       });
       return;
@@ -99,7 +101,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   };
 
   const handleSave = async () => {
-    if (!workspaceId) {
+    if (!effectiveWorkspaceId) {
       toast({ title: "Нет рабочего пространства", variant: "destructive" });
       return;
     }
@@ -109,7 +111,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
       if (iconFile) {
         const formData = new FormData();
         formData.append("file", iconFile);
-        const res = await fetch(`/api/workspaces/${workspaceId}/icon`, {
+        const res = await fetch(`/api/workspaces/${effectiveWorkspaceId}/icon`, {
           method: "POST",
           body: formData,
         });
@@ -123,7 +125,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         setResetIcon(false);
         toast({ title: "Иконка обновлена" });
       } else if (resetIcon) {
-        const res = await apiRequest("DELETE", `/api/workspaces/${workspaceId}/icon`);
+        const res = await apiRequest("DELETE", `/api/workspaces/${effectiveWorkspaceId}/icon`);
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body.message || "Не удалось сбросить иконку");
@@ -181,7 +183,14 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                   </div>
                   <div className="space-y-2">
                     <Label>Владелец</Label>
-                    <Input value="Недоступно" disabled />
+                    <Input
+                      value={
+                        sessionWorkspaceQuery.data?.ownerFullName ||
+                        sessionWorkspaceQuery.data?.ownerEmail ||
+                        "—"
+                      }
+                      disabled
+                    />
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -224,7 +233,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                         </Button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Допустимые форматы: PNG, JPEG, SVG. Максимальный размер 200 КБ.
+                        Допустимые форматы: PNG, JPEG, SVG. Максимальный размер 2 МБ.
                       </p>
                       <input
                         id="workspace-icon-input"

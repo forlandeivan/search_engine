@@ -626,7 +626,11 @@ function generatePersonalWorkspaceName(user: User): string {
   return "Личное пространство";
 }
 
-export type WorkspaceWithRole = Workspace & { role: WorkspaceMember["role"] };
+export type WorkspaceWithRole = Workspace & {
+  role: WorkspaceMember["role"];
+  ownerFullName?: string | null;
+  ownerEmail?: string | null;
+};
 export interface WorkspaceMemberWithUser {
   member: WorkspaceMember;
   user: User;
@@ -5569,14 +5573,30 @@ export class DatabaseStorage implements IStorage {
 
   async listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]> {
     await ensureWorkspaceMembersTable();
-    const rows: Array<{ workspace: Workspace; role: WorkspaceMember["role"] }> = await this.db
-      .select({ workspace: workspaces, role: workspaceMembers.role })
+    const rows: Array<{
+      workspace: Workspace;
+      role: WorkspaceMember["role"];
+      ownerFullName: string | null;
+      ownerEmail: string | null;
+    }> = await this.db
+      .select({
+        workspace: workspaces,
+        role: workspaceMembers.role,
+        ownerFullName: users.fullName,
+        ownerEmail: users.email,
+      })
       .from(workspaceMembers)
       .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+      .leftJoin(users, eq(users.id, workspaces.ownerId))
       .where(eq(workspaceMembers.userId, userId))
       .orderBy(desc(workspaces.createdAt));
 
-    return rows.map(({ workspace, role }) => ({ ...workspace, role }));
+    return rows.map(({ workspace, role, ownerFullName, ownerEmail }) => ({
+      ...workspace,
+      role,
+      ownerFullName: ownerFullName ?? null,
+      ownerEmail: ownerEmail ?? null,
+    }));
   }
 
   async getOrCreateUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]> {
