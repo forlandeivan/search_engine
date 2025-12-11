@@ -8640,10 +8640,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  app.post("/api/skills", requireAuth, async (req, res, next) => {
+  app.post(
+    "/api/skills",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
+    async (req, res, next) => {
     try {
       const payload = createSkillSchema.parse(req.body);
-      const { id: workspaceId } = getRequestWorkspace(req);
+      // TODO: legacy fallback via allowSessionFallback. Требуем явный workspaceId в payload/params для новых клиентов.
+      const workspaceId = req.workspaceContext?.workspaceId ?? getRequestWorkspace(req).id;
       const skill = await createSkill(workspaceId, payload);
       res.status(201).json({ skill });
     } catch (error) {
@@ -8657,12 +8662,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       next(error);
     }
-  });
+    },
+  );
 
-  app.put("/api/skills/:skillId", requireAuth, async (req, res, next) => {
+  app.put(
+    "/api/skills/:skillId",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
+    async (req, res, next) => {
     try {
       const payload = updateSkillSchema.parse(req.body);
-      const { id: workspaceId } = getRequestWorkspace(req);
+      const workspaceId = req.workspaceContext?.workspaceId ?? getRequestWorkspace(req).id;
       const skillId = req.params.skillId;
       if (!skillId) {
         return res.status(400).json({ message: "Не указан идентификатор навыка" });
@@ -8681,11 +8691,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       next(error);
     }
-  });
+    },
+  );
 
-  app.delete("/api/skills/:skillId", requireAuth, async (req, res, next) => {
+  app.delete(
+    "/api/skills/:skillId",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
+    async (req, res, next) => {
     try {
-      const { id: workspaceId } = getRequestWorkspace(req);
+      const workspaceId = req.workspaceContext?.workspaceId ?? getRequestWorkspace(req).id;
       const skillId = req.params.skillId;
       if (!skillId) {
         return res.status(400).json({ message: "Не указан идентификатор навыка" });
@@ -8700,7 +8715,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       next(error);
     }
-  });
+    },
+  );
 
 
   app.get(
@@ -8740,6 +8756,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
     try {
       const payload = createChatSessionSchema.parse(req.body ?? {});
+      // TODO: legacy fallback на сессию. После перевода клиентов на явный workspaceId убрать allowSessionFallback.
       const workspaceId = resolveWorkspaceIdForRequest(req, payload.workspaceId ?? null);
       let resolvedSkillId = payload.skillId?.trim() ?? "";
       if (!resolvedSkillId) {
@@ -8824,7 +8841,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  app.post("/api/chat/sessions/:chatId/messages", requireAuth, async (req, res, next) => {
+  app.post(
+    "/api/chat/sessions/:chatId/messages",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
       return;
@@ -8833,13 +8854,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     let resolvedWorkspaceId: string | null = null;
 
     try {
-    const payload = createChatMessageSchema.parse(req.body ?? {});
+      const payload = createChatMessageSchema.parse(req.body ?? {});
+      // TODO: legacy fallback на сессию. После перевода клиентов на явный workspaceId убрать allowSessionFallback.
       const workspaceCandidate = pickFirstString(
         payload.workspaceId,
         req.query.workspaceId,
         req.query.workspace_id,
       );
-      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      const workspaceId = req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, workspaceCandidate);
       const chat = await getChatById(req.params.chatId, workspaceId, user.id);
       if (chat.status === "archived") {
         return res.status(403).json({ message: "Чат архивирован и доступен только для чтения" });
@@ -9388,7 +9410,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  app.get("/api/chat/sessions/:chatId/messages", requireAuth, async (req, res, next) => {
+  app.get(
+    "/api/chat/sessions/:chatId/messages",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
       return;
@@ -9396,7 +9422,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
     try {
       const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
-      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      const workspaceId = req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, workspaceCandidate);
       const messages = await getChatMessages(req.params.chatId, workspaceId, user.id);
       res.json({ messages });
     } catch (error) {
@@ -9408,7 +9434,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
       next(error);
     }
-  });
+    },
+  );
 
   // Available system actions (for preview before creating skill)
   app.get("/api/actions/available", requireAuth, async (req, res, next) => {
@@ -11685,10 +11712,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  app.post("/api/knowledge/bases", requireAuth, async (req, res) => {
+  app.post(
+    "/api/knowledge/bases",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
+    async (req, res) => {
     try {
       const payload = createKnowledgeBaseSchema.parse(req.body ?? {});
-      const { id: workspaceId } = getRequestWorkspace(req);
+      // TODO: legacy fallback разрешён, но ожидается явный workspaceId в теле для новых клиентов.
+      const workspaceId = req.workspaceContext?.workspaceId ?? getRequestWorkspace(req).id;
       const summary = await createKnowledgeBase(workspaceId, payload);
       return res.status(201).json(summary);
     } catch (error) {
