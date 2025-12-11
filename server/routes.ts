@@ -196,6 +196,7 @@ import {
   reloadGoogleAuth,
   reloadYandexAuth,
   ensureWorkspaceContext,
+  ensureWorkspaceContextMiddleware,
   buildSessionResponse,
   getRequestWorkspace,
   getRequestWorkspaceMemberships,
@@ -8702,29 +8703,34 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
 
-  app.get("/api/chat/sessions", requireAuth, async (req, res, next) => {
-    const user = getAuthorizedUser(req, res);
-    if (!user) {
-      return;
-    }
+  app.get(
+    "/api/chat/sessions",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
 
-    try {
-      const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
-      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
-      const search = typeof req.query.q === "string" && req.query.q.trim().length > 0 ? req.query.q.trim() : undefined;
-      const includeArchived = req.query?.status === "all" || req.query?.status === "archived";
-      const chats = await listUserChats(workspaceId, user.id, search, { includeArchived });
-      res.json({ chats });
-    } catch (error) {
-      if (error instanceof HttpError) {
-        return res.status(error.status).json({ message: error.message });
+      try {
+        const workspaceId =
+          req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, null);
+        const search = typeof req.query.q === "string" && req.query.q.trim().length > 0 ? req.query.q.trim() : undefined;
+        const includeArchived = req.query?.status === "all" || req.query?.status === "archived";
+        const chats = await listUserChats(workspaceId, user.id, search, { includeArchived });
+        res.json({ chats });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          return res.status(error.status).json({ message: error.message });
+        }
+        if (error instanceof ChatServiceError) {
+          return res.status(error.status).json({ message: error.message });
+        }
+        next(error);
       }
-      if (error instanceof ChatServiceError) {
-        return res.status(error.status).json({ message: error.message });
-      }
-      next(error);
-    }
-  });
+    },
+  );
 
   app.post("/api/chat/sessions", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
@@ -9418,71 +9424,81 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   // Actions (workspace library)
-  app.get("/api/workspaces/:workspaceId/actions", requireAuth, async (req, res, next) => {
-    const user = getAuthorizedUser(req, res);
-    if (!user) return;
+  app.get(
+    "/api/workspaces/:workspaceId/actions",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
 
-    try {
-      const { workspaceId } = req.params;
-      const actions = await actionsRepository.listForWorkspace(workspaceId, { includeSystem: true });
-      const payload = actions.map((action) => ({
-        ...action,
-        editable: action.scope === "workspace" && action.workspaceId === workspaceId,
-      }));
-      res.json({ actions: payload });
-    } catch (error) {
-      next(error);
-    }
-  });
+      try {
+        const workspaceId = req.workspaceContext?.workspaceId ?? req.params.workspaceId;
+        const actions = await actionsRepository.listForWorkspace(workspaceId, { includeSystem: true });
+        const payload = actions.map((action) => ({
+          ...action,
+          editable: action.scope === "workspace" && action.workspaceId === workspaceId,
+        }));
+        res.json({ actions: payload });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
-  app.post("/api/workspaces/:workspaceId/actions", requireAuth, async (req, res, next) => {
-    const user = getAuthorizedUser(req, res);
-    if (!user) return;
+  app.post(
+    "/api/workspaces/:workspaceId/actions",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
 
-    try {
-      const { workspaceId } = req.params;
-      const body = req.body ?? {};
+      try {
+        const workspaceId = req.workspaceContext?.workspaceId ?? req.params.workspaceId;
+        const body = req.body ?? {};
 
-      if (!body.label || typeof body.label !== "string") {
-        return res.status(400).json({ message: "label is required" });
-      }
-      if (!actionTargets.includes(body.target)) {
-        return res.status(400).json({ message: "invalid target" });
-      }
-      if (!Array.isArray(body.placements) || body.placements.some((p: unknown) => !actionPlacements.includes(p as string))) {
-        return res.status(400).json({ message: "invalid placements" });
-      }
-      if (!body.promptTemplate || typeof body.promptTemplate !== "string") {
-        return res.status(400).json({ message: "promptTemplate is required" });
-      }
-      if (!actionInputTypes.includes(body.inputType)) {
-        return res.status(400).json({ message: "invalid inputType" });
-      }
-      if (!actionOutputModes.includes(body.outputMode)) {
-        return res.status(400).json({ message: "invalid outputMode" });
-      }
+        if (!body.label || typeof body.label !== "string") {
+          return res.status(400).json({ message: "label is required" });
+        }
+        if (!actionTargets.includes(body.target)) {
+          return res.status(400).json({ message: "invalid target" });
+        }
+        if (!Array.isArray(body.placements) || body.placements.some((p: unknown) => !actionPlacements.includes(p as string))) {
+          return res.status(400).json({ message: "invalid placements" });
+        }
+        if (!body.promptTemplate || typeof body.promptTemplate !== "string") {
+          return res.status(400).json({ message: "promptTemplate is required" });
+        }
+        if (!actionInputTypes.includes(body.inputType)) {
+          return res.status(400).json({ message: "invalid inputType" });
+        }
+        if (!actionOutputModes.includes(body.outputMode)) {
+          return res.status(400).json({ message: "invalid outputMode" });
+        }
 
-      const created = await actionsRepository.createWorkspaceAction(workspaceId, {
-        label: body.label,
-        description: typeof body.description === "string" ? body.description : null,
-        target: body.target,
-        placements: body.placements,
-        promptTemplate: body.promptTemplate,
-        inputType: body.inputType,
-        outputMode: body.outputMode,
-        llmConfigId: null,
-      });
+        const created = await actionsRepository.createWorkspaceAction(workspaceId, {
+          label: body.label,
+          description: typeof body.description === "string" ? body.description : null,
+          target: body.target,
+          placements: body.placements,
+          promptTemplate: body.promptTemplate,
+          inputType: body.inputType,
+          outputMode: body.outputMode,
+          llmConfigId: null,
+        });
 
-      res.status(201).json({
-        action: {
-          ...created,
-          editable: true,
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  });
+        res.status(201).json({
+          action: {
+            ...created,
+            editable: true,
+          },
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   app.patch(
     "/api/workspaces/:workspaceId/actions/:actionId",

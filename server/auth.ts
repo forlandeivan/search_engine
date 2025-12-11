@@ -8,9 +8,10 @@ import { Strategy as YandexStrategy, type YandexProfile } from "passport-yandex"
 import bcrypt from "bcryptjs";
 import { pool } from "./db";
 import { storage } from "./storage";
-import type { PublicUser, User, WorkspaceMemberRole } from "@shared/schema";
+import type { PublicUser, User, WorkspaceMember, WorkspaceMemberRole, Workspace } from "@shared/schema";
 import type { WorkspaceWithRole } from "./storage";
 import { createHash } from "crypto";
+import type { RequestHandler } from "express";
 
 declare module "express-session" {
   interface SessionData {
@@ -25,6 +26,7 @@ declare module "express-serve-static-core" {
     workspaceId?: string;
     workspaceRole?: WorkspaceMemberRole;
     workspaceMemberships?: WorkspaceWithRole[];
+    workspaceContext?: WorkspaceRequestContext;
   }
 }
 
@@ -488,6 +490,13 @@ export interface WorkspaceContext {
   memberships: WorkspaceWithRole[];
 }
 
+export interface WorkspaceRequestContext {
+  workspaceId: string;
+  userRole: WorkspaceMemberRole;
+  workspace: Workspace;
+  membership: WorkspaceMember;
+}
+
 export interface PublicWorkspaceMembership {
   id: string;
   name: string;
@@ -639,4 +648,83 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
   } catch (error) {
     next(error);
   }
+}
+
+function extractWorkspaceId(req: Request): string | null {
+  const candidates: Array<unknown> = [
+    req.params?.workspaceId,
+    // allow snake_case for params/bodies if present
+    (req.params as Record<string, unknown> | undefined)?.workspace_id,
+    req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>).workspaceId : undefined,
+    req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>).workspace_id : undefined,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string") {
+      const trimmed = candidate.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
+    }
+  }
+
+  return null;
+}
+
+type WorkspaceContextOptions = {
+  requireExplicitWorkspaceId?: boolean;
+  allowSessionFallback?: boolean;
+};
+
+export function ensureWorkspaceContextMiddleware(options: WorkspaceContextOptions = {}): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const user = req.user as PublicUser | undefined;
+      if (!user?.id) {
+        res.status(401).json({ message: "Требуется авторизация" });
+        return;
+      }
+
+      let workspaceId = extractWorkspaceId(req);
+
+      if (!workspaceId && options.allowSessionFallback) {
+        workspaceId = req.session?.activeWorkspaceId ?? req.session?.workspaceId ?? null;
+      }
+
+      if (!workspaceId) {
+        const message = options.requireExplicitWorkspaceId
+          ? "workspaceId is required"
+          : "Cannot resolve workspace context";
+        res.status(400).json({ message });
+        return;
+      }
+
+      const workspace = await storage.getWorkspace(workspaceId);
+      if (!workspace) {
+        res.status(404).json({ message: `Workspace '${workspaceId}' does not exist` });
+        return;
+      }
+
+      const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+      if (!membership) {
+        res.status(403).json({ message: "You do not have access to this workspace" });
+        return;
+      }
+
+      req.workspaceContext = {
+        workspaceId,
+        userRole: membership.role,
+        workspace,
+        membership,
+      };
+
+      // Backward compatibility for legacy helpers
+      req.workspaceId = workspaceId;
+      req.workspaceRole = membership.role;
+
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
 }
