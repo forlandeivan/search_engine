@@ -9,6 +9,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "./db";
 import { storage } from "./storage";
 import type { PublicUser, User, WorkspaceMember, WorkspaceMemberRole, Workspace } from "@shared/schema";
+import type { WorkspaceMembership, WorkspaceMembershipStatus } from "./storage";
 import type { WorkspaceWithRole } from "./storage";
 import { createHash } from "crypto";
 import type { RequestHandler } from "express";
@@ -492,9 +493,12 @@ export interface WorkspaceContext {
 
 export interface WorkspaceRequestContext {
   workspaceId: string;
-  userRole: WorkspaceMemberRole;
+  userId: string;
+  role: WorkspaceMemberRole;
+  status: WorkspaceMembershipStatus;
+  membershipKey: string;
   workspace: Workspace;
-  membership: WorkspaceMember;
+  membership: WorkspaceMembership;
 }
 
 export interface PublicWorkspaceMembership {
@@ -681,8 +685,7 @@ export function ensureWorkspaceContextMiddleware(options: WorkspaceContextOption
     try {
       const user = req.user as PublicUser | undefined;
       if (!user?.id) {
-        res.status(401).json({ message: "Требуется авторизация" });
-        return;
+        return res.status(401).json({ message: "Authentication required" });
       }
 
       let workspaceId = extractWorkspaceId(req);
@@ -691,39 +694,44 @@ export function ensureWorkspaceContextMiddleware(options: WorkspaceContextOption
         workspaceId = req.session?.activeWorkspaceId ?? req.session?.workspaceId ?? null;
       }
 
-      if (!workspaceId) {
-        const message = options.requireExplicitWorkspaceId
-          ? "workspaceId is required"
-          : "Cannot resolve workspace context";
-        res.status(400).json({ message });
-        return;
+      if (!workspaceId || typeof workspaceId !== "string" || workspaceId.trim().length === 0) {
+        return res.status(400).json({ message: "Invalid workspaceId" });
       }
 
-      const workspace = await storage.getWorkspace(workspaceId);
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (normalizedWorkspaceId.length === 0 || normalizedWorkspaceId.length > 128) {
+        return res.status(400).json({ message: "Invalid workspaceId" });
+      }
+
+      const workspace = await storage.getWorkspace(normalizedWorkspaceId);
       if (!workspace) {
-        res.status(404).json({ message: `Workspace '${workspaceId}' does not exist` });
-        return;
+        return res.status(404).json({ message: `Workspace '${normalizedWorkspaceId}' does not exist` });
       }
 
-      const membership = await storage.getWorkspaceMember(user.id, workspaceId);
-      if (!membership) {
-        res.status(403).json({ message: "You do not have access to this workspace" });
-        return;
+      const membership = await storage.getWorkspaceMember(user.id, normalizedWorkspaceId);
+      if (!membership || membership.status !== "active") {
+        return res.status(403).json({ message: "You do not have access to this workspace" });
       }
 
-      req.workspaceContext = {
-        workspaceId,
-        userRole: membership.role,
+      const context: WorkspaceRequestContext = {
+        workspaceId: normalizedWorkspaceId,
+        userId: user.id,
+        role: membership.role,
+        status: membership.status,
+        membershipKey: `${normalizedWorkspaceId}:${user.id}`,
         workspace,
         membership,
       };
 
+      req.workspaceContext = context;
+
       // Backward compatibility for legacy helpers
-      req.workspaceId = workspaceId;
+      req.workspaceId = normalizedWorkspaceId;
       req.workspaceRole = membership.role;
 
       next();
     } catch (error) {
+      console.error("[workspaceContext] Failed to resolve workspace context", error);
       next(error);
     }
   };
