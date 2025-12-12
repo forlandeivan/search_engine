@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { WorkspaceIcon } from "@/components/WorkspaceIcon";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 function useWorkspaceInfo(workspaceId?: string | null) {
   return useQuery({
@@ -23,6 +25,53 @@ function useWorkspaceInfo(workspaceId?: string | null) {
       data?.workspace.active && workspaceId && data.workspace.active.id === workspaceId
         ? data.workspace.active
         : data?.workspace.active,
+  });
+}
+
+type WorkspaceUsageSummary = {
+  workspaceId: string;
+  period: { periodCode: string; periodYear: number; periodMonth: number; start: string; end: string };
+  totalTokens: number;
+  byModelTotal: Array<{ provider: string; model: string; tokens: number }>;
+  timeseries: Array<{ provider: string; model: string; points: Array<{ date: string; tokens: number }> }>;
+};
+
+function formatPeriodLabel(periodCode: string): string {
+  const [year, month] = periodCode.split("-");
+  return `${month}.${year}`;
+}
+
+function buildPeriods(): string[] {
+  const now = new Date();
+  const periods: string[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    const dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const year = dt.getUTCFullYear();
+    const month = `${dt.getUTCMonth() + 1}`.padStart(2, "0");
+    periods.push(`${year}-${month}`);
+  }
+  return periods;
+}
+
+function useWorkspaceLlmUsage(workspaceId: string | null, periodCode: string) {
+  return useQuery<WorkspaceUsageSummary, Error>({
+    queryKey: ["workspace-llm-usage", workspaceId, periodCode],
+    enabled: Boolean(workspaceId),
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/workspaces/${workspaceId}/usage/llm${periodCode ? `?period=${periodCode}` : ""}`,
+        undefined,
+        undefined,
+        { workspaceId: workspaceId ?? undefined },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить usage");
+      }
+      return (await res.json()) as WorkspaceUsageSummary;
+    },
+    staleTime: 30 * 1000,
   });
 }
 
@@ -39,19 +88,21 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   }, [sessionWorkspaceQuery.data]);
 
   const urlSearchParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-  const initialTab = (urlSearchParams.get("tab") ?? "general") as "general" | "members";
-  const [tab, setTab] = useState<"general" | "members">(initialTab === "members" ? "members" : "general");
+  const initialTab = (urlSearchParams.get("tab") ?? "general") as "general" | "members" | "usage";
+  const [tab, setTab] = useState<"general" | "members" | "usage">(
+    initialTab === "members" || initialTab === "usage" ? initialTab : "general",
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(location.split("?")[1] ?? "");
     const tabParam = params.get("tab");
-    if (tabParam === "members" || tabParam === "general") {
+    if (tabParam === "members" || tabParam === "general" || tabParam === "usage") {
       setTab(tabParam);
     }
   }, [location]);
 
   const handleTabChange = (value: string) => {
-    const next = value === "members" ? "members" : "general";
+    const next = value === "members" || value === "usage" ? value : "general";
     setTab(next);
     const base = location.split("?")[0];
     navigate(`${base}?tab=${next}`);
@@ -64,6 +115,9 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const [resetIcon, setResetIcon] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
+  const availablePeriods = useMemo(() => buildPeriods(), []);
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(availablePeriods[0]);
+  const usageQuery = useWorkspaceLlmUsage(effectiveWorkspaceId, selectedPeriod);
 
   useEffect(() => {
     setName(workspaceName);
@@ -194,6 +248,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         <TabsList className="w-full justify-start">
           <TabsTrigger value="general">Основное</TabsTrigger>
           <TabsTrigger value="members">Участники</TabsTrigger>
+          <TabsTrigger value="usage">Потребление</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-4">
@@ -296,6 +351,102 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
 
         <TabsContent value="members" className="mt-4">
           <WorkspaceMembersPage />
+        </TabsContent>
+
+        <TabsContent value="usage" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Потребление LLM токенов</CardTitle>
+              <CardDescription>
+                Итоги за выбранный месяц и разбивка по провайдерам/моделям. Источник: workspace usage ledger.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Месяц</p>
+                  <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
+                    <SelectTrigger className="w-40">
+                      <SelectValue placeholder="Период" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availablePeriods.map((period) => (
+                        <SelectItem key={period} value={period}>
+                          {formatPeriodLabel(period)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Итого токенов</p>
+                  {usageQuery.isLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Загрузка...
+                    </div>
+                  ) : (
+                    <p className="text-2xl font-semibold">{usageQuery.data?.totalTokens?.toLocaleString("ru-RU") ?? "—"}</p>
+                  )}
+                </div>
+              </div>
+
+              {usageQuery.isError && (
+                <div className="text-sm text-destructive">Не удалось загрузить usage: {usageQuery.error?.message}</div>
+              )}
+
+              {!usageQuery.isLoading && !usageQuery.isError && (usageQuery.data?.byModelTotal?.length ?? 0) === 0 && (
+                <p className="text-sm text-muted-foreground">За выбранный период данных нет.</p>
+              )}
+
+              {!usageQuery.isLoading && !usageQuery.isError && (usageQuery.data?.byModelTotal?.length ?? 0) > 0 && (
+                <>
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Разбивка по моделям</p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Провайдер</TableHead>
+                          <TableHead>Модель</TableHead>
+                          <TableHead className="text-right">Токены</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {usageQuery.data!.byModelTotal.map((row) => (
+                          <TableRow key={`${row.provider}-${row.model}`}>
+                            <TableCell className="font-medium">{row.provider}</TableCell>
+                            <TableCell>{row.model}</TableCell>
+                            <TableCell className="text-right">{row.tokens.toLocaleString("ru-RU")}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Помесячная серия по дням</p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {usageQuery.data!.timeseries.map((series) => (
+                        <div key={`${series.provider}-${series.model}`} className="rounded-md border p-3">
+                          <p className="text-sm font-medium">
+                            {series.provider} · {series.model}
+                          </p>
+                          <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+                            {series.points.length === 0 && <p>Нет точек за период</p>}
+                            {series.points.map((p) => (
+                              <div key={`${series.provider}-${series.model}-${p.date}`} className="flex justify-between">
+                                <span>{p.date}</span>
+                                <span>{p.tokens.toLocaleString("ru-RU")}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
