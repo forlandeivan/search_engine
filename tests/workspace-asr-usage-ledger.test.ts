@@ -2,8 +2,9 @@
 import bcrypt from "bcryptjs";
 import { and, eq } from "drizzle-orm";
 import { storage } from "../server/storage";
-import { workspaceAsrUsageLedger, workspaces } from "@shared/schema";
-import { formatUsagePeriodCode } from "../server/usage/usage-types";
+import { workspaceAsrUsageLedger, workspaceUsageMonth, workspaces } from "@shared/schema";
+import { formatUsagePeriodCode, getUsagePeriodForDate } from "../server/usage/usage-types";
+import { recordAsrUsageEvent } from "../server/usage/usage-service";
 
 async function ensureAsrLedgerTable() {
   await (storage as any).db.execute(`
@@ -97,21 +98,31 @@ describe("workspace_asr_usage_ledger", () => {
     expect(inserted.durationSeconds).toBe(120);
   });
 
-  it("rejects duplicate asr_job_id within workspace", async () => {
-    const insertDuplicate = () =>
-      (storage as any).db.insert(workspaceAsrUsageLedger).values({
-        workspaceId,
-        periodYear: now.getUTCFullYear(),
-        periodMonth: now.getUTCMonth() + 1,
-        periodCode,
-        asrJobId,
-        provider: "yandex_speechkit",
-        model: "default",
-        durationSeconds: 60,
-        occurredAt: now,
-      });
+  it("rejects duplicate asr_job_id within workspace and increments usage once", async () => {
+    const jobId = `asr-dup-${Date.now()}`;
+    const durationSeconds = 95; // should round to 2 minutes
+    const period = getUsagePeriodForDate(now);
 
-    await expect(insertDuplicate()).rejects.toThrow();
+    await recordAsrUsageEvent({
+      workspaceId,
+      asrJobId: jobId,
+      durationSeconds,
+      provider: "yandex_speechkit",
+      model: "default",
+      occurredAt: now,
+      period,
+    });
+
+    // duplicate should be ignored
+    await recordAsrUsageEvent({
+      workspaceId,
+      asrJobId: jobId,
+      durationSeconds: 30,
+      provider: "yandex_speechkit",
+      model: "default",
+      occurredAt: now,
+      period,
+    });
 
     const rows = await (storage as any).db
       .select()
@@ -119,9 +130,18 @@ describe("workspace_asr_usage_ledger", () => {
       .where(
         and(
           eq(workspaceAsrUsageLedger.workspaceId, workspaceId),
-          eq(workspaceAsrUsageLedger.asrJobId, asrJobId),
+          eq(workspaceAsrUsageLedger.asrJobId, jobId),
         ),
       );
     expect(rows).toHaveLength(1);
+    expect(Number(rows[0].durationSeconds)).toBe(durationSeconds);
+
+    const [usageRow] = await (storage as any).db
+      .select()
+      .from(workspaceUsageMonth)
+      .where(
+        and(eq(workspaceUsageMonth.workspaceId, workspaceId), eq(workspaceUsageMonth.periodCode, period.periodCode)),
+      );
+    expect(Number(usageRow.asrMinutesTotal)).toBe(2);
   });
 });

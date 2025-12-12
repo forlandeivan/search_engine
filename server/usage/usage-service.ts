@@ -4,6 +4,7 @@ import {
   workspaceUsageMonth,
   workspaceLlmUsageLedger,
   workspaceEmbeddingUsageLedger,
+  workspaceAsrUsageLedger,
   type WorkspaceUsageMonth,
   type WorkspaceUsageMonthInsert,
 } from "@shared/schema";
@@ -432,6 +433,77 @@ export async function getWorkspaceEmbeddingUsageSummary(
     })),
     timeseries: Array.from(timeseriesMap.values()),
   };
+}
+
+type AsrUsageRecord = {
+  workspaceId: string;
+  asrJobId: string;
+  durationSeconds: number;
+  provider?: string | null;
+  model?: string | null;
+  occurredAt?: Date;
+  period?: UsagePeriod;
+};
+
+export async function recordAsrUsageEvent(params: AsrUsageRecord): Promise<void> {
+  if (!params.workspaceId || !params.asrJobId) {
+    throw new Error("workspaceId and asrJobId are required to record ASR usage");
+  }
+  if (params.durationSeconds === null || params.durationSeconds === undefined) {
+    return;
+  }
+
+  const normalizedDurationSeconds = Math.max(0, Math.floor(params.durationSeconds));
+  if (!Number.isFinite(normalizedDurationSeconds) || normalizedDurationSeconds <= 0) {
+    return;
+  }
+
+  // Начатая минута считается: округляем вверх.
+  const minutes = Math.max(1, Math.ceil(normalizedDurationSeconds / 60));
+
+  const occurredAt = params.occurredAt ?? new Date();
+  const period = buildPeriod(params.period ?? getUsagePeriodForDate(occurredAt));
+
+  await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(workspaceAsrUsageLedger)
+      .values({
+        workspaceId: params.workspaceId,
+        periodYear: period.periodYear,
+        periodMonth: period.periodMonth,
+        periodCode: period.periodCode,
+        asrJobId: params.asrJobId,
+        provider: params.provider ?? null,
+        model: params.model ?? null,
+        durationSeconds: normalizedDurationSeconds,
+        occurredAt,
+      })
+      .onConflictDoNothing()
+      .returning({ id: workspaceAsrUsageLedger.id });
+
+    if (inserted.length === 0) {
+      // Duplicate job — уже учли.
+      return;
+    }
+
+    const usage = await ensureWorkspaceUsageWithClient(params.workspaceId, period, tx);
+    assertNotClosed(usage);
+
+    const [updated] = await tx
+      .update(workspaceUsageMonth)
+      .set({
+        ...buildDeltaUpdate({ asr_minutes_total: minutes }),
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(and(eq(workspaceUsageMonth.workspaceId, params.workspaceId), eq(workspaceUsageMonth.periodCode, period.periodCode)))
+      .returning();
+
+    if (!updated) {
+      throw new Error(
+        `Failed to update usage for workspace ${params.workspaceId} and period ${period.periodCode} (ASR ledger)`,
+      );
+    }
+  });
 }
 
 type EmbeddingUsageRecord = {
