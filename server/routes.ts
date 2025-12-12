@@ -111,6 +111,7 @@ import {
   type LlmCompletionResult,
   type LlmStreamEvent,
 } from "./llm-client";
+import { recordLlmUsageEvent } from "./usage/usage-service";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
@@ -9308,6 +9309,22 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               responsePreview: completion.answer.slice(0, 160),
             },
           });
+          if (executionId && completion.usageTokens !== null && completion.usageTokens !== undefined) {
+            try {
+              await recordLlmUsageEvent({
+                workspaceId,
+                executionId,
+                provider: context.provider.id ?? context.provider.providerType ?? "unknown",
+                model: context.model ?? context.provider.model ?? "unknown",
+                tokensTotal: completion.usageTokens,
+                occurredAt: new Date(),
+              });
+            } catch (usageError) {
+              console.error(
+                `[usage] Failed to record LLM tokens for execution ${executionId}: ${getErrorDetails(usageError)}`,
+              );
+            }
+          }
           if (forwarder) {
             await forwarder;
           }
@@ -9369,6 +9386,22 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             responsePreview: completion.answer.slice(0, 160),
           },
         });
+        if (executionId && completion.usageTokens !== null && completion.usageTokens !== undefined) {
+          try {
+            await recordLlmUsageEvent({
+              workspaceId,
+              executionId,
+              provider: context.provider.id ?? context.provider.providerType ?? "unknown",
+              model: context.model ?? context.provider.model ?? "unknown",
+              tokensTotal: completion.usageTokens,
+              occurredAt: new Date(),
+            });
+          } catch (usageError) {
+            console.error(
+              `[usage] Failed to record LLM tokens for execution ${executionId}: ${getErrorDetails(usageError)}`,
+            );
+          }
+        }
       } catch (error) {
         const info = describeErrorForLog(error);
         await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.ERROR, {

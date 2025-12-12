@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   workspaceUsageMonth,
+  workspaceLlmUsageLedger,
   type WorkspaceUsageMonth,
   type WorkspaceUsageMonthInsert,
 } from "@shared/schema";
@@ -13,6 +14,8 @@ import {
 } from "./usage-types";
 
 export type UsageCountersDelta = Partial<Record<WorkspaceUsageMetric, number>>;
+
+type DbClient = typeof db;
 
 const METRIC_COLUMNS: Record<WorkspaceUsageMetric, any> = {
   llm_tokens_total: workspaceUsageMonth.llmTokensTotal,
@@ -37,12 +40,18 @@ function buildPeriod(period?: UsagePeriod): UsagePeriod {
   return period ?? getUsagePeriodForDate();
 }
 
+function getClient(client?: DbClient): DbClient {
+  return client ?? db;
+}
+
 export async function getWorkspaceUsage(
   workspaceId: string,
   period: UsagePeriod = getUsagePeriodForDate(),
+  client?: DbClient,
 ): Promise<WorkspaceUsageMonth | undefined> {
+  const dbClient = getClient(client);
   const { periodCode } = period;
-  const rows = await db
+  const rows = await dbClient
     .select()
     .from(workspaceUsageMonth)
     .where(and(eq(workspaceUsageMonth.workspaceId, workspaceId), eq(workspaceUsageMonth.periodCode, periodCode)))
@@ -56,15 +65,24 @@ export async function ensureWorkspaceUsage(
   period?: UsagePeriod,
 ): Promise<WorkspaceUsageMonth> {
   const target = buildPeriod(period);
+  return ensureWorkspaceUsageWithClient(workspaceId, target);
+}
+
+async function ensureWorkspaceUsageWithClient(
+  workspaceId: string,
+  period: UsagePeriod,
+  client?: DbClient,
+): Promise<WorkspaceUsageMonth> {
+  const dbClient = getClient(client);
 
   const insertPayload: WorkspaceUsageMonthInsert = {
     workspaceId,
-    periodYear: target.periodYear,
-    periodMonth: target.periodMonth,
-    periodCode: target.periodCode,
+    periodYear: period.periodYear,
+    periodMonth: period.periodMonth,
+    periodCode: period.periodCode,
   };
 
-  const inserted = await db
+  const inserted = await dbClient
     .insert(workspaceUsageMonth)
     .values(insertPayload)
     .onConflictDoNothing()
@@ -74,12 +92,12 @@ export async function ensureWorkspaceUsage(
     return inserted[0];
   }
 
-  const existing = await getWorkspaceUsage(workspaceId, target);
+  const existing = await getWorkspaceUsage(workspaceId, period, dbClient);
   if (existing) {
     return existing;
   }
 
-  throw new Error(`Failed to ensure usage record for workspace ${workspaceId} and period ${target.periodCode}`);
+  throw new Error(`Failed to ensure usage record for workspace ${workspaceId} and period ${period.periodCode}`);
 }
 
 export async function closeWorkspaceUsage(
@@ -163,4 +181,82 @@ export async function incrementWorkspaceUsage(
   }
 
   return updated;
+}
+
+type LlmUsageRecord = {
+  workspaceId: string;
+  executionId: string;
+  provider: string;
+  model: string;
+  tokensTotal: number;
+  tokensPrompt?: number | null;
+  tokensCompletion?: number | null;
+  occurredAt?: Date;
+  period?: UsagePeriod;
+};
+
+export async function recordLlmUsageEvent(params: LlmUsageRecord): Promise<void> {
+  if (!params.workspaceId || !params.executionId) {
+    throw new Error("workspaceId and executionId are required to record LLM usage");
+  }
+  if (params.tokensTotal === null || params.tokensTotal === undefined) {
+    return;
+  }
+
+  const normalizedTokensTotal = Math.max(0, Math.floor(params.tokensTotal));
+  if (!Number.isFinite(normalizedTokensTotal) || normalizedTokensTotal <= 0) {
+    return;
+  }
+
+  const occurredAt = params.occurredAt ?? new Date();
+  const period = buildPeriod(params.period ?? getUsagePeriodForDate(occurredAt));
+
+  await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(workspaceLlmUsageLedger)
+      .values({
+        workspaceId: params.workspaceId,
+        periodYear: period.periodYear,
+        periodMonth: period.periodMonth,
+        periodCode: period.periodCode,
+        executionId: params.executionId,
+        provider: params.provider,
+        model: params.model,
+        tokensTotal: normalizedTokensTotal,
+        tokensPrompt:
+          params.tokensPrompt === undefined || params.tokensPrompt === null
+            ? null
+            : Math.max(0, Math.floor(params.tokensPrompt)),
+        tokensCompletion:
+          params.tokensCompletion === undefined || params.tokensCompletion === null
+            ? null
+            : Math.max(0, Math.floor(params.tokensCompletion)),
+        occurredAt,
+      })
+      .onConflictDoNothing()
+      .returning({ id: workspaceLlmUsageLedger.id });
+
+    if (inserted.length === 0) {
+      // Duplicate execution within workspace — already accounted.
+      return;
+    }
+
+    const usage = await ensureWorkspaceUsageWithClient(params.workspaceId, period, tx);
+    assertNotClosed(usage);
+
+    const [updated] = await tx
+      .update(workspaceUsageMonth)
+      .set({
+        ...buildDeltaUpdate({ llm_tokens_total: normalizedTokensTotal }),
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(and(eq(workspaceUsageMonth.workspaceId, params.workspaceId), eq(workspaceUsageMonth.periodCode, period.periodCode)))
+      .returning();
+
+    if (!updated) {
+      throw new Error(
+        `Failed to update usage for workspace ${params.workspaceId} and period ${period.periodCode} (LLM ledger)`,
+      );
+    }
+  });
 }
