@@ -1,5 +1,10 @@
 import multer from "multer";
-import { putObject, getObject, deleteObject, ensureWorkspaceBucketExists } from "./workspace-storage-service";
+import {
+  uploadWorkspaceFile,
+  getWorkspaceFile,
+  deleteWorkspaceFile,
+  ensureWorkspaceBucketExists,
+} from "./workspace-storage-service";
 import { storage } from "./storage";
 import type { Readable } from "stream";
 
@@ -56,7 +61,7 @@ export async function uploadWorkspaceIcon(
   const ext = resolveExtension(file.mimetype.toLowerCase());
   const objectKey = `icons/icon${ext}`;
 
-  await putObject(workspaceId, objectKey, file.buffer, file.mimetype);
+  await uploadWorkspaceFile(workspaceId, objectKey, file.buffer, file.mimetype, file.size);
   const publicUrl = buildPublicUrl(workspaceId);
   await storage.updateWorkspaceIcon(workspaceId, publicUrl, objectKey);
 
@@ -68,7 +73,7 @@ export async function clearWorkspaceIcon(workspaceId: string): Promise<void> {
   const key = workspace?.iconKey || null;
   if (workspace?.storageBucket && key) {
     try {
-      await deleteObject(workspaceId, key);
+      await deleteWorkspaceFile(workspaceId, key);
     } catch (error) {
       console.error("[workspace-icon] failed to delete object", { workspaceId, key, error });
     }
@@ -82,5 +87,5 @@ export async function getWorkspaceIcon(
   const workspace = await storage.getWorkspace(workspaceId);
   const key = workspace?.iconKey;
   if (!key) return null;
-  return await getObject(workspaceId, key);
+  return await getWorkspaceFile(workspaceId, key);
 }

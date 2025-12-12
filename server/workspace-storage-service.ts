@@ -4,10 +4,12 @@
   GetObjectCommand,
   DeleteObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import type { Readable } from "stream";
 import { minioClient } from "./minio-client";
 import { storage } from "./storage";
+import { adjustWorkspaceStorageUsageBytes } from "./usage/usage-service";
 
 const BUCKET_PREFIX = (process.env.WORKSPACE_BUCKET_PREFIX || "ws-").trim();
 
@@ -140,6 +142,26 @@ function ensureAllowedPrefix(relativePath: string): void {
   }
 }
 
+async function getWorkspaceObjectSize(workspaceId: string, relativePath: string): Promise<number | null> {
+  const bucket = await ensureWorkspaceBucketExists(workspaceId);
+  try {
+    const response = await minioClient.send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: relativePath,
+      }),
+    );
+    return typeof response.ContentLength === "number" ? response.ContentLength : null;
+  } catch (error: any) {
+    const code = error?.name || error?.Code || error?.code;
+    if (code === "NoSuchKey" || code === "NotFound") {
+      return null;
+    }
+    console.error("[workspace-storage] headObject failed", { bucket, key: relativePath, error });
+    throw error;
+  }
+}
+
 /**
  * Единый интерфейс для загрузки файлов рабочего пространства.
  * Все новые фичи должны использовать этот слой, прямой доступ к minioClient запрещён.
@@ -149,10 +171,31 @@ export async function uploadWorkspaceFile(
   relativePath: string,
   fileBuffer: Buffer | Readable,
   mimeType?: string,
+  explicitSizeBytes?: number | null,
 ): Promise<{ key: string }> {
   ensureAllowedPrefix(relativePath);
-  // TODO(storage-usage): после успешного upload фиксировать storage_bytes (размер есть в buffer/Readable).
+  const previousSize = await getWorkspaceObjectSize(workspaceId, relativePath);
+  const sizeBytes =
+    explicitSizeBytes !== undefined && explicitSizeBytes !== null
+      ? explicitSizeBytes
+      : fileBuffer instanceof Buffer
+        ? fileBuffer.length
+        : null;
+
   await putObject(workspaceId, relativePath, fileBuffer, mimeType);
+
+  if (sizeBytes !== null) {
+    const delta = sizeBytes - (previousSize ?? 0);
+    if (delta !== 0) {
+      await adjustWorkspaceStorageUsageBytes(workspaceId, delta);
+    }
+  } else {
+    console.warn("[storage-usage] uploadWorkspaceFile: size unknown, usage not adjusted", {
+      workspaceId,
+      relativePath,
+    });
+  }
+
   return { key: relativePath };
 }
 
@@ -166,6 +209,9 @@ export async function getWorkspaceFile(
 
 export async function deleteWorkspaceFile(workspaceId: string, relativePath: string): Promise<void> {
   ensureAllowedPrefix(relativePath);
-  // TODO(storage-usage): перед удалением получать размер объекта и уменьшать storage_bytes.
+  const previousSize = await getWorkspaceObjectSize(workspaceId, relativePath);
   await deleteObject(workspaceId, relativePath);
+  if (previousSize && previousSize > 0) {
+    await adjustWorkspaceStorageUsageBytes(workspaceId, -previousSize);
+  }
 }
