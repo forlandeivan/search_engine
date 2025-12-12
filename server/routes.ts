@@ -116,6 +116,7 @@ import {
   getWorkspaceLlmUsageSummary,
   recordEmbeddingUsageEvent,
   getWorkspaceEmbeddingUsageSummary,
+  getWorkspaceAsrUsageSummary,
 } from "./usage/usage-service";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
@@ -469,6 +470,26 @@ function buildSearchSettingsResponse(
       try {
         const period = typeof req.query.period === "string" ? req.query.period : undefined;
         const summary = await getWorkspaceLlmUsageSummary(req.params.workspaceId, period);
+        res.json(summary);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/workspaces/:workspaceId/usage/asr",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const period = typeof req.query.period === "string" ? req.query.period : undefined;
+        const summary = await getWorkspaceAsrUsageSummary(req.params.workspaceId, period);
         res.json(summary);
       } catch (error) {
         next(error);

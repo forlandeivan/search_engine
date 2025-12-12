@@ -435,6 +435,102 @@ export async function getWorkspaceEmbeddingUsageSummary(
   };
 }
 
+export type WorkspaceAsrUsageSummary = {
+  workspaceId: string;
+  period: UsagePeriod & { start: string; end: string };
+  totalMinutes: number;
+  byProviderModelTotal: Array<{ provider: string | null; model: string | null; minutes: number }>;
+  timeseries: Array<{ date: string; minutes: number }>;
+  timeseriesByProviderModel: Array<{ provider: string | null; model: string | null; points: Array<{ date: string; minutes: number }> }>;
+};
+
+function secondsToMinutesRoundedUp(totalSeconds: number): number {
+  return totalSeconds <= 0 ? 0 : Math.ceil(totalSeconds / 60);
+}
+
+export async function getWorkspaceAsrUsageSummary(
+  workspaceId: string,
+  periodCode?: string,
+): Promise<WorkspaceAsrUsageSummary> {
+  const period = parseUsagePeriodCode(periodCode ?? "") ?? getUsagePeriodForDate();
+  const { start, end } = getUsagePeriodBounds(period);
+
+  const totalsRows = await db
+    .select({
+      durationSeconds: sql<number>`coalesce(sum(${workspaceAsrUsageLedger.durationSeconds}), 0)`,
+    })
+    .from(workspaceAsrUsageLedger)
+    .where(and(eq(workspaceAsrUsageLedger.workspaceId, workspaceId), eq(workspaceAsrUsageLedger.periodCode, period.periodCode)));
+
+  const byProviderModelRows = await db
+    .select({
+      provider: workspaceAsrUsageLedger.provider,
+      model: workspaceAsrUsageLedger.model,
+      durationSeconds: sql<number>`coalesce(sum(${workspaceAsrUsageLedger.durationSeconds}), 0)`,
+    })
+    .from(workspaceAsrUsageLedger)
+    .where(and(eq(workspaceAsrUsageLedger.workspaceId, workspaceId), eq(workspaceAsrUsageLedger.periodCode, period.periodCode)))
+    .groupBy(workspaceAsrUsageLedger.provider, workspaceAsrUsageLedger.model);
+
+  const timeseriesRows = await db
+    .select({
+      day: sql<string>`date_trunc('day', ${workspaceAsrUsageLedger.occurredAt})`,
+      durationSeconds: sql<number>`coalesce(sum(${workspaceAsrUsageLedger.durationSeconds}), 0)`,
+    })
+    .from(workspaceAsrUsageLedger)
+    .where(and(eq(workspaceAsrUsageLedger.workspaceId, workspaceId), eq(workspaceAsrUsageLedger.periodCode, period.periodCode)))
+    .groupBy(sql`date_trunc('day', ${workspaceAsrUsageLedger.occurredAt})`);
+
+  const timeseriesByProviderRows = await db
+    .select({
+      provider: workspaceAsrUsageLedger.provider,
+      model: workspaceAsrUsageLedger.model,
+      day: sql<string>`date_trunc('day', ${workspaceAsrUsageLedger.occurredAt})`,
+      durationSeconds: sql<number>`coalesce(sum(${workspaceAsrUsageLedger.durationSeconds}), 0)`,
+    })
+    .from(workspaceAsrUsageLedger)
+    .where(and(eq(workspaceAsrUsageLedger.workspaceId, workspaceId), eq(workspaceAsrUsageLedger.periodCode, period.periodCode)))
+    .groupBy(
+      workspaceAsrUsageLedger.provider,
+      workspaceAsrUsageLedger.model,
+      sql`date_trunc('day', ${workspaceAsrUsageLedger.occurredAt})`,
+    );
+
+  const timeseriesByProviderModel = new Map<
+    string,
+    { provider: string | null; model: string | null; points: Array<{ date: string; minutes: number }> }
+  >();
+  for (const row of timeseriesByProviderRows) {
+    const key = `${row.provider ?? "null"}::${row.model ?? "null"}`;
+    if (!timeseriesByProviderModel.has(key)) {
+      timeseriesByProviderModel.set(key, { provider: row.provider ?? null, model: row.model ?? null, points: [] });
+    }
+    const entry = timeseriesByProviderModel.get(key)!;
+    const dateString = new Date(row.day).toISOString().slice(0, 10);
+    entry.points.push({ date: dateString, minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)) });
+  }
+
+  return {
+    workspaceId,
+    period: {
+      ...period,
+      start: start.toISOString(),
+      end: end.toISOString(),
+    },
+    totalMinutes: secondsToMinutesRoundedUp(Number(totalsRows[0]?.durationSeconds ?? 0)),
+    byProviderModelTotal: byProviderModelRows.map((row) => ({
+      provider: row.provider ?? null,
+      model: row.model ?? null,
+      minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)),
+    })),
+    timeseries: timeseriesRows.map((row) => ({
+      date: new Date(row.day).toISOString().slice(0, 10),
+      minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)),
+    })),
+    timeseriesByProviderModel: Array.from(timeseriesByProviderModel.values()),
+  };
+}
+
 type AsrUsageRecord = {
   workspaceId: string;
   asrJobId: string;
