@@ -523,8 +523,8 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                             if (bytes === null) return "—";
                             const gb = bytes / 1024 ** 3;
                             return `${gb.toLocaleString("ru-RU", {
-                              minimumFractionDigits: 1,
-                              maximumFractionDigits: 1,
+                              minimumFractionDigits: 3,
+                              maximumFractionDigits: 3,
                             })} ГБ`;
                           })()
                         : isAsr

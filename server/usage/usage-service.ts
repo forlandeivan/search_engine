@@ -594,7 +594,7 @@ export async function getWorkspaceStorageUsageSummary(
     .where(and(eq(workspaceUsageMonth.workspaceId, workspaceId), eq(workspaceUsageMonth.periodCode, period.periodCode)))
     .limit(1);
 
-  const storageBytes = rows.length > 0 ? Number(rows[0]?.storageBytesTotal ?? 0) : 0;
+  const storageBytes = rows.length > 0 ? Number(rows[0]?.storageBytes ?? 0) : 0;
 
   return {
     workspaceId,
