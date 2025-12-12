@@ -66,6 +66,9 @@ interface TranscriptionOperation {
 }
 
 const operationsCache = new Map<string, TranscriptionOperation>();
+// TODO(asr-usage): фактическая длительность аудио пока не сохраняется.
+// При учёте ASR usage нужно на этапе загрузки или завершения операции вычислять duration_ms
+// и прокидывать её в asrExecution + usage (workspaceId есть в чате/transcript, длительность в ответе Yandex не приходит).
 
 setInterval(() => {
   const now = Date.now();
