@@ -251,6 +251,36 @@ export const workspaceEmbeddingUsageLedger = pgTable(
   }),
 );
 
+export const workspaceAsrUsageLedger = pgTable(
+  "workspace_asr_usage_ledger",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    periodYear: integer("period_year").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodCode: varchar("period_code", { length: 7 }).notNull(),
+    asrJobId: varchar("asr_job_id").notNull(),
+    provider: text("provider"),
+    model: text("model"),
+    durationSeconds: integer("duration_seconds").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    uniqueJob: uniqueIndex("workspace_asr_usage_ledger_job_idx").on(table.workspaceId, table.asrJobId),
+    periodIdx: index("workspace_asr_usage_ledger_period_idx").on(table.workspaceId, table.periodCode),
+    occurredIdx: index("workspace_asr_usage_ledger_occurred_idx").on(table.workspaceId, table.occurredAt),
+    providerModelIdx: index("workspace_asr_usage_ledger_provider_model_idx").on(
+      table.workspaceId,
+      table.periodCode,
+      table.provider,
+      table.model,
+    ),
+  }),
+);
+
 export const workspaceVectorCollections = pgTable("workspace_vector_collections", {
   collectionName: text("collection_name").primaryKey(),
   workspaceId: varchar("workspace_id")
