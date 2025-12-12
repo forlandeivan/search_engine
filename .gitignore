@@ -13,6 +13,7 @@ kb_search_ts.sql
 text_tsv_output.txt
 suggest.json
 dev-server.log
+Releases/**
 
 # Attached assets (screenshots, pasted content from Replit Agent)
 attached_assets/image_*.png

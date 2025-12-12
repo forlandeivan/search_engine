@@ -107,6 +107,7 @@ export const workspacePlans = ["free", "team"] as const;
 export type WorkspacePlan = (typeof workspacePlans)[number];
 export const workspacePlanEnum = pgEnum("workspace_plan", workspacePlans);
 
+// TODO(usage): workspace_usage_month will become the single usage aggregate keyed by workspace_id + period_code (see docs/workspace-usage-foundation.md)
 export const workspaces = pgTable("workspaces", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -144,6 +145,40 @@ export const workspaceMembers = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.workspaceId, table.userId] }),
+  }),
+);
+
+export const workspaceUsageMonth = pgTable(
+  "workspace_usage_month",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    periodYear: integer("period_year").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodCode: varchar("period_code", { length: 7 }).notNull(),
+    llmTokensTotal: bigint("llm_tokens_total", { mode: "bigint" }).notNull().default(0),
+    embeddingsTokensTotal: bigint("embeddings_tokens_total", { mode: "bigint" }).notNull().default(0),
+    asrMinutesTotal: doublePrecision("asr_minutes_total").notNull().default(0),
+    storageBytesTotal: bigint("storage_bytes_total", { mode: "bigint" }).notNull().default(0),
+    skillsCount: integer("skills_count").notNull().default(0),
+    knowledgeBasesCount: integer("knowledge_bases_count").notNull().default(0),
+    membersCount: integer("members_count").notNull().default(0),
+    extraMetrics: jsonb("extra_metrics")
+      .$type<{ metric: string; value: number }[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    isClosed: boolean("is_closed").notNull().default(false),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    uniqueWorkspacePeriod: uniqueIndex("workspace_usage_month_workspace_period_idx").on(
+      table.workspaceId,
+      table.periodCode,
+    ),
   }),
 );
 
@@ -1549,6 +1584,8 @@ export type Workspace = typeof workspaces.$inferSelect;
 export type WorkspaceInsert = typeof workspaces.$inferInsert;
 export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type WorkspaceMemberInsert = typeof workspaceMembers.$inferInsert;
+export type WorkspaceUsageMonth = typeof workspaceUsageMonth.$inferSelect;
+export type WorkspaceUsageMonthInsert = typeof workspaceUsageMonth.$inferInsert;
 export type WorkspaceVectorCollection = typeof workspaceVectorCollections.$inferSelect;
 export type AuthProvider = typeof authProviders.$inferSelect;
 export type AuthProviderInsert = typeof authProviders.$inferInsert;
