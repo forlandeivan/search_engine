@@ -21,6 +21,7 @@ import {
   Boxes,
   Brain,
   Shield,
+  Zap,
   Users,
   LayoutDashboard,
   Sparkles,
@@ -108,6 +109,7 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
       .replace(/ё/g, "е")}`;
 
   const chatUrl = workspaceId ? `/workspaces/${workspaceId}/chat` : "/chat";
+  const actionsUrl = workspaceId ? `/workspaces/${workspaceId}/actions` : "/workspaces/actions";
 
   const sections: Array<{ label: string; items: SidebarItem[] }> = [
     {
@@ -129,6 +131,11 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
           title: "Навыки",
           url: "/skills",
           icon: Sparkles,
+        },
+        {
+          title: "Действия",
+          url: actionsUrl,
+          icon: Zap,
         },
         {
           title: "Чат",
