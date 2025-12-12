@@ -575,6 +575,38 @@ export async function getWorkspaceAsrUsageSummary(
   };
 }
 
+export type WorkspaceStorageUsageSummary = {
+  workspaceId: string;
+  period: UsagePeriod & { start: string; end: string };
+  storageBytes: number;
+};
+
+export async function getWorkspaceStorageUsageSummary(
+  workspaceId: string,
+  periodCode?: string,
+): Promise<WorkspaceStorageUsageSummary> {
+  const period = parseUsagePeriodCode(periodCode ?? "") ?? getUsagePeriodForDate();
+  const { start, end } = getUsagePeriodBounds(period);
+
+  const rows = await db
+    .select({ storageBytes: workspaceUsageMonth.storageBytesTotal })
+    .from(workspaceUsageMonth)
+    .where(and(eq(workspaceUsageMonth.workspaceId, workspaceId), eq(workspaceUsageMonth.periodCode, period.periodCode)))
+    .limit(1);
+
+  const storageBytes = rows.length > 0 ? Number(rows[0]?.storageBytesTotal ?? 0) : 0;
+
+  return {
+    workspaceId,
+    period: {
+      ...period,
+      start: start.toISOString(),
+      end: end.toISOString(),
+    },
+    storageBytes,
+  };
+}
+
 type AsrUsageRecord = {
   workspaceId: string;
   asrJobId: string;
