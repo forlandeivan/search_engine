@@ -3479,10 +3479,12 @@ async function runKnowledgeBaseRagPipeline(options: {
           throw error;
         }
 
+        const embeddingTokensForUsage =
+          embeddingUsageTokens ?? estimateTokens(normalizedQuery);
         await recordEmbeddingUsageSafe({
           workspaceId,
           provider: embeddingProvider,
-          tokensTotal: embeddingUsageTokens,
+          tokensTotal: embeddingTokensForUsage,
           contentBytes: Buffer.byteLength(normalizedQuery, "utf8"),
           operationId: `rag-query-${randomUUID()}`,
         });
@@ -4103,11 +4105,11 @@ async function runKnowledgeBaseRagPipeline(options: {
     if (!wantsLlmStream) {
       emitStreamEvent("delta", { text: response.answer });
     }
-    emitStreamStatus("done", "Готово");
-    emitStreamEvent("done", {
-      answer: response.answer,
-      query: response.query,
-      kb_id: response.knowledgeBaseId,
+      emitStreamStatus("done", "Готово");
+      emitStreamEvent("done", {
+        answer: response.answer,
+        query: response.query,
+        kb_id: response.knowledgeBaseId,
       normalized_query: response.normalizedQuery,
       citations: response.citations,
       chunks: response.chunks,
@@ -4116,6 +4118,21 @@ async function runKnowledgeBaseRagPipeline(options: {
       debug: response.debug,
       format: response.responseFormat,
     });
+
+    if (workspaceId) {
+      const llmTokensForUsage =
+        llmUsageTokens ?? estimateTokens(completion.answer);
+      if (llmTokensForUsage > 0) {
+        await recordLlmUsageEvent({
+          workspaceId,
+          executionId: `rag-llm-${randomUUID()}`,
+          provider: llmProviderId ?? "unknown",
+          model: llmModel ?? "unknown",
+          tokensTotal: llmTokensForUsage,
+          occurredAt: new Date(),
+        });
+      }
+    }
 
     await finalizeRunLog();
 
