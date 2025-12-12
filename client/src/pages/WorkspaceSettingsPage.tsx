@@ -35,6 +35,7 @@ type WorkspaceUsageSummary = {
   byModelTotal: Array<{ provider: string; model: string; tokens: number }>;
   timeseries: Array<{ provider: string; model: string; points: Array<{ date: string; tokens: number }> }>;
 };
+type UsageResourceType = "llm" | "embeddings";
 
 function formatPeriodLabel(periodCode: string): string {
   const [year, month] = periodCode.split("-");
@@ -61,6 +62,28 @@ function useWorkspaceLlmUsage(workspaceId: string | null, periodCode: string) {
       const res = await apiRequest(
         "GET",
         `/api/workspaces/${workspaceId}/usage/llm${periodCode ? `?period=${periodCode}` : ""}`,
+        undefined,
+        undefined,
+        { workspaceId: workspaceId ?? undefined },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить usage");
+      }
+      return (await res.json()) as WorkspaceUsageSummary;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
+function useWorkspaceEmbeddingUsage(workspaceId: string | null, periodCode: string) {
+  return useQuery<WorkspaceUsageSummary, Error>({
+    queryKey: ["workspace-embedding-usage", workspaceId, periodCode],
+    enabled: Boolean(workspaceId),
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/workspaces/${workspaceId}/usage/embeddings${periodCode ? `?period=${periodCode}` : ""}`,
         undefined,
         undefined,
         { workspaceId: workspaceId ?? undefined },
@@ -117,7 +140,20 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
   const availablePeriods = useMemo(() => buildPeriods(), []);
   const [selectedPeriod, setSelectedPeriod] = useState<string>(availablePeriods[0]);
-  const usageQuery = useWorkspaceLlmUsage(effectiveWorkspaceId, selectedPeriod);
+  const [usageType, setUsageType] = useState<UsageResourceType>("llm");
+  const llmUsageQuery = useWorkspaceLlmUsage(effectiveWorkspaceId, selectedPeriod);
+  const embeddingUsageQuery = useWorkspaceEmbeddingUsage(
+    usageType === "embeddings" ? effectiveWorkspaceId : null,
+    selectedPeriod,
+  );
+
+  const usageQuery = usageType === "llm" ? llmUsageQuery : embeddingUsageQuery;
+  const usageTitle =
+    usageType === "llm" ? "Потребление LLM токенов" : "Потребление Embeddings токенов";
+  const usageDescription =
+    usageType === "llm"
+      ? "Итоги за выбранный месяц и разбивка по провайдерам/моделям. Источник: workspace usage ledger."
+      : "Итоги за выбранный месяц и разбивка по провайдерам/моделям для эмбеддингов. Источник: workspace embedding usage ledger.";
 
   useEffect(() => {
     setName(workspaceName);
@@ -356,13 +392,23 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         <TabsContent value="usage" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Потребление LLM токенов</CardTitle>
-              <CardDescription>
-                Итоги за выбранный месяц и разбивка по провайдерам/моделям. Источник: workspace usage ledger.
-              </CardDescription>
+              <CardTitle>{usageTitle}</CardTitle>
+              <CardDescription>{usageDescription}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-wrap items-center gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Тип потребления</p>
+                  <Select value={usageType} onValueChange={(value) => setUsageType(value as UsageResourceType)}>
+                    <SelectTrigger className="w-40">
+                      <SelectValue placeholder="Тип" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="llm">LLM</SelectItem>
+                      <SelectItem value="embeddings">Embeddings</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Месяц</p>
                   <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
