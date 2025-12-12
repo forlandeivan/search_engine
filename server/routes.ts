@@ -457,66 +457,6 @@ function buildSearchSettingsResponse(
     bm25Weight: chunkSettings.bm25Weight,
   });
 
-  app.get(
-    "/api/workspaces/:workspaceId/usage/llm",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
-    async (req, res, next) => {
-      const user = getAuthorizedUser(req, res);
-      if (!user) {
-        return;
-      }
-
-      try {
-        const period = typeof req.query.period === "string" ? req.query.period : undefined;
-        const summary = await getWorkspaceLlmUsageSummary(req.params.workspaceId, period);
-        res.json(summary);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  app.get(
-    "/api/workspaces/:workspaceId/usage/asr",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
-    async (req, res, next) => {
-      const user = getAuthorizedUser(req, res);
-      if (!user) {
-        return;
-      }
-
-      try {
-        const period = typeof req.query.period === "string" ? req.query.period : undefined;
-        const summary = await getWorkspaceAsrUsageSummary(req.params.workspaceId, period);
-        res.json(summary);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  app.get(
-    "/api/workspaces/:workspaceId/usage/embeddings",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
-    async (req, res, next) => {
-      const user = getAuthorizedUser(req, res);
-      if (!user) {
-        return;
-      }
-
-      try {
-        const period = typeof req.query.period === "string" ? req.query.period : undefined;
-        const summary = await getWorkspaceEmbeddingUsageSummary(req.params.workspaceId, period);
-        res.json(summary);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
   return {
     chunkSettings,
     ragSettings,
@@ -4305,6 +4245,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
   const isGoogleAuthEnabled = () => Boolean(app.get("googleAuthConfigured"));
   const isYandexAuthEnabled = () => Boolean(app.get("yandexAuthConfigured"));
+
+  app.get(
+    "/api/workspaces/:workspaceId/usage/llm",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const period = typeof req.query.period === "string" ? req.query.period : undefined;
+        const summary = await getWorkspaceLlmUsageSummary(req.params.workspaceId, period);
+        res.json(summary);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/workspaces/:workspaceId/usage/asr",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const period = typeof req.query.period === "string" ? req.query.period : undefined;
+        const summary = await getWorkspaceAsrUsageSummary(req.params.workspaceId, period);
+        res.json(summary);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/workspaces/:workspaceId/usage/embeddings",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const period = typeof req.query.period === "string" ? req.query.period : undefined;
+        const summary = await getWorkspaceEmbeddingUsageSummary(req.params.workspaceId, period);
+        res.json(summary);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   app.get("/public/search/suggest", async (req, res) => {
     const parsed = knowledgeSuggestQuerySchema.safeParse({

@@ -573,7 +573,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       </div>
                     )}
 
-                  {(usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.timeseries?.length ?? 0 > 0 && (
+                  {(((usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.timeseries?.length ?? 0) > 0) && (
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Таймсерия по дням (все провайдеры)</p>
                       <div className="rounded-md border p-3">
@@ -589,7 +589,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                     </div>
                   )}
 
-                  {(usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.timeseriesByProviderModel?.length ?? 0 > 0 && (
+                  {(((usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.timeseriesByProviderModel?.length ?? 0) > 0) && (
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Таймсерия по дням и моделям</p>
                       <div className="grid gap-3 md:grid-cols-2">
