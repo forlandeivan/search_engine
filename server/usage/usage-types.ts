@@ -24,6 +24,21 @@ export function formatUsagePeriodCode(year: number, month: number): string {
   return `${year}-${paddedMonth}`;
 }
 
+export function parseUsagePeriodCode(code: string): UsagePeriod | null {
+  if (!code || typeof code !== "string") return null;
+  const match = /^(\d{4})-(\d{2})$/.exec(code.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || year < 1970 || year > 2100) return null;
+  if (!Number.isInteger(month) || month < 1 || month > 12) return null;
+  return {
+    periodYear: year,
+    periodMonth: month,
+    periodCode: formatUsagePeriodCode(year, month),
+  };
+}
+
 export function getUsagePeriodForDate(date: Date = new Date()): UsagePeriod {
   const periodYear = date.getUTCFullYear();
   const periodMonth = date.getUTCMonth() + 1;
@@ -32,4 +47,10 @@ export function getUsagePeriodForDate(date: Date = new Date()): UsagePeriod {
     periodMonth,
     periodCode: formatUsagePeriodCode(periodYear, periodMonth),
   };
+}
+
+export function getUsagePeriodBounds(period: UsagePeriod): { start: Date; end: Date } {
+  const start = new Date(Date.UTC(period.periodYear, period.periodMonth - 1, 1, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(period.periodYear, period.periodMonth, 1, 0, 0, 0, 0));
+  return { start, end };
 }

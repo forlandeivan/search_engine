@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { storage } from "../server/storage";
 import { workspaceLlmUsageLedger, workspaceUsageMonth, workspaces } from "@shared/schema";
 import { formatUsagePeriodCode } from "../server/usage/usage-types";
-import { recordLlmUsageEvent } from "../server/usage/usage-service";
+import { recordLlmUsageEvent, getWorkspaceLlmUsageSummary } from "../server/usage/usage-service";
 
 async function createUser(email: string) {
   const passwordHash = await bcrypt.hash("Password123!", 10);
@@ -132,5 +132,13 @@ describe("workspace_llm_usage_ledger", () => {
       .from(workspaceUsageMonth)
       .where(and(eq(workspaceUsageMonth.workspaceId, aggWorkspaceId), eq(workspaceUsageMonth.periodCode, periodCode)));
     expect(Number(rowAfterDuplicate.llmTokensTotal)).toBe(tokens);
+  });
+
+  it("returns summary with totals and timeseries", async () => {
+    const summary = await getWorkspaceLlmUsageSummary(workspaceId, periodCode);
+    expect(summary.workspaceId).toBe(workspaceId);
+    expect(summary.totalTokens).toBeGreaterThanOrEqual(123);
+    expect(summary.byModelTotal.length).toBeGreaterThan(0);
+    expect(summary.timeseries.length).toBeGreaterThan(0);
   });
 });

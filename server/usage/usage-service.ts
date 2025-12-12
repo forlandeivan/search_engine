@@ -11,6 +11,8 @@ import {
   type WorkspaceUsageMetric,
   type UsagePeriod,
   getUsagePeriodForDate,
+  parseUsagePeriodCode,
+  getUsagePeriodBounds,
 } from "./usage-types";
 
 export type UsageCountersDelta = Partial<Record<WorkspaceUsageMetric, number>>;
@@ -259,4 +261,81 @@ export async function recordLlmUsageEvent(params: LlmUsageRecord): Promise<void>
       );
     }
   });
+}
+
+export type WorkspaceLlmUsageSummary = {
+  workspaceId: string;
+  period: UsagePeriod & { start: string; end: string };
+  totalTokens: number;
+  byModelTotal: Array<{ provider: string; model: string; tokens: number }>;
+  timeseries: Array<{ provider: string; model: string; points: Array<{ date: string; tokens: number }> }>;
+};
+
+export async function getWorkspaceLlmUsageSummary(
+  workspaceId: string,
+  periodCode?: string,
+): Promise<WorkspaceLlmUsageSummary> {
+  const period = parseUsagePeriodCode(periodCode ?? "") ?? getUsagePeriodForDate();
+  const { start, end } = getUsagePeriodBounds(period);
+
+  const totalsRows = await db
+    .select({
+      tokens: sql<number>`coalesce(sum(${workspaceLlmUsageLedger.tokensTotal}), 0)`,
+    })
+    .from(workspaceLlmUsageLedger)
+    .where(
+      and(eq(workspaceLlmUsageLedger.workspaceId, workspaceId), eq(workspaceLlmUsageLedger.periodCode, period.periodCode)),
+    );
+
+  const byModelRows = await db
+    .select({
+      provider: workspaceLlmUsageLedger.provider,
+      model: workspaceLlmUsageLedger.model,
+      tokens: sql<number>`coalesce(sum(${workspaceLlmUsageLedger.tokensTotal}), 0)`,
+    })
+    .from(workspaceLlmUsageLedger)
+    .where(
+      and(eq(workspaceLlmUsageLedger.workspaceId, workspaceId), eq(workspaceLlmUsageLedger.periodCode, period.periodCode)),
+    )
+    .groupBy(workspaceLlmUsageLedger.provider, workspaceLlmUsageLedger.model);
+
+  const timeseriesRows = await db
+    .select({
+      provider: workspaceLlmUsageLedger.provider,
+      model: workspaceLlmUsageLedger.model,
+      day: sql<string>`date_trunc('day', ${workspaceLlmUsageLedger.occurredAt})`,
+      tokens: sql<number>`coalesce(sum(${workspaceLlmUsageLedger.tokensTotal}), 0)`,
+    })
+    .from(workspaceLlmUsageLedger)
+    .where(
+      and(eq(workspaceLlmUsageLedger.workspaceId, workspaceId), eq(workspaceLlmUsageLedger.periodCode, period.periodCode)),
+    )
+    .groupBy(workspaceLlmUsageLedger.provider, workspaceLlmUsageLedger.model, sql`date_trunc('day', ${workspaceLlmUsageLedger.occurredAt})`);
+
+  const timeseriesMap = new Map<string, { provider: string; model: string; points: Array<{ date: string; tokens: number }> }>();
+  for (const row of timeseriesRows) {
+    const key = `${row.provider}::${row.model}`;
+    if (!timeseriesMap.has(key)) {
+      timeseriesMap.set(key, { provider: row.provider, model: row.model, points: [] });
+    }
+    const entry = timeseriesMap.get(key)!;
+    const dateString = new Date(row.day).toISOString().slice(0, 10);
+    entry.points.push({ date: dateString, tokens: Number(row.tokens) });
+  }
+
+  return {
+    workspaceId,
+    period: {
+      ...period,
+      start: start.toISOString(),
+      end: end.toISOString(),
+    },
+    totalTokens: Number(totalsRows[0]?.tokens ?? 0),
+    byModelTotal: byModelRows.map((row) => ({
+      provider: row.provider,
+      model: row.model,
+      tokens: Number(row.tokens),
+    })),
+    timeseries: Array.from(timeseriesMap.values()),
+  };
 }
