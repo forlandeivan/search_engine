@@ -1,19 +1,49 @@
-import { adjustWorkspaceStorageUsageBytes, getWorkspaceUsage, ensureWorkspaceUsage } from "./usage-service";
+import { ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { minioClient } from "../minio-client";
+import { storage } from "../storage";
+import { getWorkspaceBucketName } from "../workspace-storage-service";
+import { adjustWorkspaceStorageUsageBytes, getWorkspaceUsage } from "./usage-service";
 import type { UsagePeriod } from "./usage-types";
 
 /**
- * Заготовка для пересчёта объёма хранилища по workspace.
- * TODO: реализовать listing объектов в MinIO (bucket-per-workspace или общий bucket+prefix) и вернуть фактический размер.
+ * Подсчёт суммарного размера объектов в бакете workspace.
+ * Используем пагинацию ListObjectsV2, не держим в памяти список ключей.
  */
-export async function calculateWorkspaceStorageBytes(_workspaceId: string): Promise<number> {
-  // План: использовать MinIO/S3 listObjects с пагинацией, суммировать contentLength.
-  // Пока не реализовано — вернём 0, чтобы не падать при случайном вызове.
-  return 0;
+export async function calculateWorkspaceStorageBytes(workspaceId: string): Promise<number> {
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace) {
+    throw new Error(`Workspace ${workspaceId} not found for storage reconcile`);
+  }
+
+  const bucket = workspace.storageBucket || getWorkspaceBucketName(workspaceId);
+  let continuationToken: string | undefined;
+  let totalBytes = 0;
+
+  do {
+    const response = await minioClient.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        ContinuationToken: continuationToken,
+      }),
+    );
+
+    if (response.Contents && Array.isArray(response.Contents)) {
+      for (const item of response.Contents) {
+        if (typeof item.Size === "number") {
+          totalBytes += item.Size;
+        }
+      }
+    }
+
+    continuationToken = response.IsTruncated ? response.NextContinuationToken ?? undefined : undefined;
+  } while (continuationToken);
+
+  return totalBytes;
 }
 
 /**
  * Обновление агрегата storage_bytes по факту пересчёта из MinIO.
- * TODO: интегрировать с планируемым cron/worker и заменить фиктивный пересчёт.
+ * Планируется запускаться из cron/worker пакетно по workspaces.
  */
 export async function reconcileWorkspaceStorageUsage(
   workspaceId: string,
