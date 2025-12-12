@@ -187,6 +187,50 @@ export async function incrementWorkspaceUsage(
   return updated;
 }
 
+/**
+ * Adjust storage usage (bytes) for a workspace. Supports положительные и отрицательные дельты.
+ * Значение не опускается ниже нуля, при попытке уйти в минус логируем предупреждение.
+ */
+export async function adjustWorkspaceStorageUsageBytes(
+  workspaceId: string,
+  deltaBytes: number,
+  period?: UsagePeriod,
+): Promise<WorkspaceUsageMonth> {
+  if (!Number.isFinite(deltaBytes) || deltaBytes === 0) {
+    return ensureWorkspaceUsage(workspaceId, period);
+  }
+
+  const target = buildPeriod(period);
+  const usage = await ensureWorkspaceUsage(workspaceId, target);
+  assertNotClosed(usage);
+
+  const currentBytes = Number(usage.storageBytesTotal ?? 0);
+  const nextBytes = currentBytes + deltaBytes;
+  const clampedBytes = nextBytes < 0 ? 0 : nextBytes;
+  if (nextBytes < 0) {
+    console.warn(
+      `[usage] storage bytes would become negative for workspace ${workspaceId} in period ${target.periodCode}; clamping to 0`,
+    );
+  }
+
+  const [updated] = await db
+    .update(workspaceUsageMonth)
+    .set({
+      storageBytesTotal: clampedBytes,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(and(eq(workspaceUsageMonth.workspaceId, workspaceId), eq(workspaceUsageMonth.periodCode, target.periodCode)))
+    .returning();
+
+  if (!updated) {
+    throw new Error(
+      `Failed to update storage usage for workspace ${workspaceId} and period ${target.periodCode}`,
+    );
+  }
+
+  return updated;
+}
+
 type LlmUsageRecord = {
   workspaceId: string;
   executionId: string;
