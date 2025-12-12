@@ -35,7 +35,15 @@ type WorkspaceUsageSummary = {
   byModelTotal: Array<{ provider: string; model: string; tokens: number }>;
   timeseries: Array<{ provider: string; model: string; points: Array<{ date: string; tokens: number }> }>;
 };
-type UsageResourceType = "llm" | "embeddings";
+type WorkspaceAsrUsageSummary = {
+  workspaceId: string;
+  period: { periodCode: string; periodYear: number; periodMonth: number; start: string; end: string };
+  totalMinutes: number;
+  byProviderModelTotal: Array<{ provider: string | null; model: string | null; minutes: number }>;
+  timeseries: Array<{ date: string; minutes: number }>;
+  timeseriesByProviderModel: Array<{ provider: string | null; model: string | null; points: Array<{ date: string; minutes: number }> }>;
+};
+type UsageResourceType = "llm" | "embeddings" | "asr";
 
 function formatPeriodLabel(periodCode: string): string {
   const [year, month] = periodCode.split("-");
@@ -98,6 +106,28 @@ function useWorkspaceEmbeddingUsage(workspaceId: string | null, periodCode: stri
   });
 }
 
+function useWorkspaceAsrUsage(workspaceId: string | null, periodCode: string) {
+  return useQuery<WorkspaceAsrUsageSummary, Error>({
+    queryKey: ["workspace-asr-usage", workspaceId, periodCode],
+    enabled: Boolean(workspaceId),
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/workspaces/${workspaceId}/usage/asr${periodCode ? `?period=${periodCode}` : ""}`,
+        undefined,
+        undefined,
+        { workspaceId: workspaceId ?? undefined },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить usage");
+      }
+      return (await res.json()) as WorkspaceAsrUsageSummary;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
 export default function WorkspaceSettingsPage({ params }: { params?: { workspaceId?: string } }) {
   const [location, navigate] = useLocation();
   const workspaceIdFromRoute = params?.workspaceId ?? undefined;
@@ -146,14 +176,23 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
     usageType === "embeddings" ? effectiveWorkspaceId : null,
     selectedPeriod,
   );
+  const asrUsageQuery = useWorkspaceAsrUsage(usageType === "asr" ? effectiveWorkspaceId : null, selectedPeriod);
 
-  const usageQuery = usageType === "llm" ? llmUsageQuery : embeddingUsageQuery;
+  const usageQuery =
+    usageType === "llm" ? llmUsageQuery : usageType === "embeddings" ? embeddingUsageQuery : asrUsageQuery;
+  const isAsr = usageType === "asr";
   const usageTitle =
-    usageType === "llm" ? "Потребление LLM токенов" : "Потребление Embeddings токенов";
+    usageType === "llm"
+      ? "Потребление LLM токенов"
+      : usageType === "embeddings"
+        ? "Потребление Embeddings токенов"
+        : "Потребление ASR (минуты)";
   const usageDescription =
     usageType === "llm"
       ? "Итоги за выбранный месяц и разбивка по провайдерам/моделям. Источник: workspace usage ledger."
-      : "Итоги за выбранный месяц и разбивка по провайдерам/моделям для эмбеддингов. Источник: workspace embedding usage ledger.";
+      : usageType === "embeddings"
+        ? "Итоги за выбранный месяц и разбивка по провайдерам/моделям для эмбеддингов. Источник: workspace embedding usage ledger."
+        : "Итоги за выбранный месяц по минутам транскрибации (ASR) и разбивка по провайдерам/моделям. Источник: workspace ASR usage ledger.";
 
   useEffect(() => {
     setName(workspaceName);
@@ -406,6 +445,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                     <SelectContent>
                       <SelectItem value="llm">LLM</SelectItem>
                       <SelectItem value="embeddings">Embeddings</SelectItem>
+                      <SelectItem value="asr">ASR</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -425,13 +465,17 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Итого токенов</p>
+                  <p className="text-sm text-muted-foreground">{isAsr ? "Итого минут" : "Итого токенов"}</p>
                   {usageQuery.isLoading ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" /> Загрузка...
                     </div>
                   ) : (
-                    <p className="text-2xl font-semibold">{usageQuery.data?.totalTokens?.toLocaleString("ru-RU") ?? "—"}</p>
+                    <p className="text-2xl font-semibold">
+                      {isAsr
+                        ? (usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.totalMinutes?.toLocaleString("ru-RU") ?? "—"
+                        : (usageQuery.data as WorkspaceUsageSummary | undefined)?.totalTokens?.toLocaleString("ru-RU") ?? "—"}
+                    </p>
                   )}
                 </div>
               </div>
@@ -440,55 +484,134 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                 <div className="text-sm text-destructive">Не удалось загрузить usage: {usageQuery.error?.message}</div>
               )}
 
-              {!usageQuery.isLoading && !usageQuery.isError && (usageQuery.data?.byModelTotal?.length ?? 0) === 0 && (
-                <p className="text-sm text-muted-foreground">За выбранный период данных нет.</p>
-              )}
-
-              {!usageQuery.isLoading && !usageQuery.isError && (usageQuery.data?.byModelTotal?.length ?? 0) > 0 && (
+              {!usageQuery.isLoading && !usageQuery.isError && !isAsr && (
                 <>
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">Разбивка по моделям</p>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Провайдер</TableHead>
-                          <TableHead>Модель</TableHead>
-                          <TableHead className="text-right">Токены</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {usageQuery.data!.byModelTotal.map((row) => (
-                          <TableRow key={`${row.provider}-${row.model}`}>
-                            <TableCell className="font-medium">{row.provider}</TableCell>
-                            <TableCell>{row.model}</TableCell>
-                            <TableCell className="text-right">{row.tokens.toLocaleString("ru-RU")}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                  {(usageQuery.data as WorkspaceUsageSummary | undefined)?.byModelTotal?.length === 0 && (
+                    <p className="text-sm text-muted-foreground">За выбранный период данных нет.</p>
+                  )}
 
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">Помесячная серия по дням</p>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      {usageQuery.data!.timeseries.map((series) => (
-                        <div key={`${series.provider}-${series.model}`} className="rounded-md border p-3">
-                          <p className="text-sm font-medium">
-                            {series.provider} · {series.model}
-                          </p>
-                          <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-                            {series.points.length === 0 && <p>Нет точек за период</p>}
-                            {series.points.map((p) => (
-                              <div key={`${series.provider}-${series.model}-${p.date}`} className="flex justify-between">
-                                <span>{p.date}</span>
-                                <span>{p.tokens.toLocaleString("ru-RU")}</span>
+                  {(usageQuery.data as WorkspaceUsageSummary | undefined)?.byModelTotal &&
+                    (usageQuery.data as WorkspaceUsageSummary).byModelTotal.length > 0 && (
+                      <>
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">Разбивка по моделям</p>
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Провайдер</TableHead>
+                                <TableHead>Модель</TableHead>
+                                <TableHead className="text-right">Токены</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {(usageQuery.data as WorkspaceUsageSummary).byModelTotal.map((row) => (
+                                <TableRow key={`${row.provider}-${row.model}`}>
+                                  <TableCell className="font-medium">{row.provider}</TableCell>
+                                  <TableCell>{row.model}</TableCell>
+                                  <TableCell className="text-right">{row.tokens.toLocaleString("ru-RU")}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">Помесячная серия по дням</p>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {(usageQuery.data as WorkspaceUsageSummary).timeseries.map((series) => (
+                              <div key={`${series.provider}-${series.model}`} className="rounded-md border p-3">
+                                <p className="text-sm font-medium">
+                                  {series.provider} · {series.model}
+                                </p>
+                                <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+                                  {series.points.length === 0 && <p>Нет точек за период</p>}
+                                  {series.points.map((p) => (
+                                    <div key={`${series.provider}-${series.model}-${p.date}`} className="flex justify-between">
+                                      <span>{p.date}</span>
+                                      <span>{p.tokens.toLocaleString("ru-RU")}</span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             ))}
                           </div>
                         </div>
-                      ))}
+                      </>
+                    )}
+                </>
+              )}
+
+              {!usageQuery.isLoading && !usageQuery.isError && isAsr && (
+                <>
+                  {(usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.byProviderModelTotal?.length === 0 &&
+                    (usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.timeseries?.length === 0 && (
+                      <p className="text-sm text-muted-foreground">За выбранный период данных нет.</p>
+                    )}
+
+                  {(usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.byProviderModelTotal &&
+                    (usageQuery.data as WorkspaceAsrUsageSummary).byProviderModelTotal.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium">Разбивка по провайдеру/модели</p>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Провайдер</TableHead>
+                              <TableHead>Модель</TableHead>
+                              <TableHead className="text-right">Минуты</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {(usageQuery.data as WorkspaceAsrUsageSummary).byProviderModelTotal.map((row, idx) => (
+                              <TableRow key={`${row.provider ?? "unknown"}-${row.model ?? "unknown"}-${idx}`}>
+                                <TableCell className="font-medium">{row.provider ?? "—"}</TableCell>
+                                <TableCell>{row.model ?? "—"}</TableCell>
+                                <TableCell className="text-right">{row.minutes.toLocaleString("ru-RU")}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+
+                  {(usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.timeseries?.length ?? 0 > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Таймсерия по дням (все провайдеры)</p>
+                      <div className="rounded-md border p-3">
+                        <div className="space-y-1 text-sm text-muted-foreground">
+                          {(usageQuery.data as WorkspaceAsrUsageSummary).timeseries.map((p) => (
+                            <div key={p.date} className="flex justify-between">
+                              <span>{p.date}</span>
+                              <span>{p.minutes.toLocaleString("ru-RU")}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
+
+                  {(usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.timeseriesByProviderModel?.length ?? 0 > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Таймсерия по дням и моделям</p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {(usageQuery.data as WorkspaceAsrUsageSummary).timeseriesByProviderModel.map((series, idx) => (
+                          <div key={`${series.provider ?? "unknown"}-${series.model ?? "unknown"}-${idx}`} className="rounded-md border p-3">
+                            <p className="text-sm font-medium">
+                              {series.provider ?? "—"} · {series.model ?? "—"}
+                            </p>
+                            <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+                              {series.points.length === 0 && <p>Нет точек за период</p>}
+                              {series.points.map((p) => (
+                                <div key={`${series.provider ?? "unknown"}-${series.model ?? "unknown"}-${p.date}`} className="flex justify-between">
+                                  <span>{p.date}</span>
+                                  <span>{p.minutes.toLocaleString("ru-RU")}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </CardContent>
