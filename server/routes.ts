@@ -111,7 +111,7 @@ import {
   type LlmCompletionResult,
   type LlmStreamEvent,
 } from "./llm-client";
-import { recordLlmUsageEvent, getWorkspaceLlmUsageSummary } from "./usage/usage-service";
+import { recordLlmUsageEvent, getWorkspaceLlmUsageSummary, recordEmbeddingUsageEvent } from "./usage/usage-service";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
@@ -298,6 +298,34 @@ function getErrorDetails(error: unknown): string {
     return JSON.stringify(error);
   } catch {
     return String(error);
+  }
+}
+
+async function recordEmbeddingUsageSafe(params: {
+  workspaceId?: string | null;
+  provider: EmbeddingProvider;
+  tokensTotal?: number | null;
+  contentBytes?: number | null;
+  operationId?: string;
+  occurredAt?: Date;
+}): Promise<void> {
+  if (!params.workspaceId) return;
+  if (params.tokensTotal === null || params.tokensTotal === undefined) return;
+
+  try {
+    await recordEmbeddingUsageEvent({
+      workspaceId: params.workspaceId,
+      operationId: params.operationId ?? `embed-${randomUUID()}`,
+      provider: params.provider.id ?? params.provider.providerType ?? "unknown",
+      model: params.provider.model ?? "unknown",
+      tokensTotal: params.tokensTotal,
+      contentBytes: params.contentBytes,
+      occurredAt: params.occurredAt,
+    });
+  } catch (error) {
+    console.error(
+      `[usage] Failed to record embedding usage for workspace ${params.workspaceId}: ${getErrorDetails(error)}`,
+    );
   }
 }
 
@@ -3465,6 +3493,14 @@ async function runKnowledgeBaseRagPipeline(options: {
           throw error;
         }
 
+        await recordEmbeddingUsageSafe({
+          workspaceId,
+          provider: embeddingProvider,
+          tokensTotal: embeddingUsageTokens,
+          contentBytes: Buffer.byteLength(normalizedQuery, "utf8"),
+          operationId: `rag-query-${randomUUID()}`,
+        });
+
         if (!workspaceId) {
           throw new Error("Не удалось определить workspaceId для запроса к публичному API коллекций");
         }
@@ -4721,6 +4757,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
 
+      await recordEmbeddingUsageSafe({
+        workspaceId,
+        provider,
+        tokensTotal: embeddingResult.usageTokens,
+        contentBytes: Buffer.byteLength(body.text, "utf8"),
+        operationId: `public-embed-${randomUUID()}`,
+      });
+
       res.json({
         vector: embeddingResult.vector,
         vectorLength: embeddingResult.vector.length,
@@ -5335,6 +5379,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
         );
       }
+
+      await recordEmbeddingUsageSafe({
+        workspaceId,
+        provider: embeddingProvider,
+        tokensTotal: embeddingResult.usageTokens,
+        contentBytes: Buffer.byteLength(body.query, "utf8"),
+        operationId: `collection-search-${randomUUID()}`,
+      });
 
       const searchPayload: Parameters<QdrantClient["search"]>[1] = {
         vector: buildVectorPayload(
@@ -10956,6 +11008,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         );
       }
 
+      await recordEmbeddingUsageSafe({
+        workspaceId,
+        provider,
+        tokensTotal: embeddingResult.usageTokens,
+        contentBytes: Buffer.byteLength(body.query, "utf8"),
+        operationId: `collection-search-${randomUUID()}`,
+      });
+
       const searchPayload: Parameters<QdrantClient["search"]>[1] = {
         vector: buildVectorPayload(
           embeddingResult.vector,
@@ -11182,6 +11242,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
         );
       }
+
+      await recordEmbeddingUsageSafe({
+        workspaceId,
+        provider: embeddingProvider,
+        tokensTotal: embeddingResult.usageTokens,
+        contentBytes: Buffer.byteLength(body.query, "utf8"),
+        operationId: `collection-search-${randomUUID()}`,
+      });
 
       const searchPayload: Parameters<QdrantClient["search"]>[1] = {
         vector: buildVectorPayload(
@@ -12744,6 +12812,24 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         try {
           const result = await fetchEmbeddingVector(provider, accessToken, chunk.content);
           embeddingResults.push({ ...result, chunk, index });
+          if (result.usageTokens !== null && result.usageTokens !== undefined) {
+            try {
+              await recordEmbeddingUsageEvent({
+                workspaceId,
+                operationId: chunk.id,
+                provider: provider.id ?? provider.providerType ?? "unknown",
+                model: provider.model ?? "unknown",
+                tokensTotal: result.usageTokens,
+                contentBytes: Buffer.byteLength(chunk.content, "utf8"),
+              });
+            } catch (usageError) {
+              console.error(
+                `[usage] Failed to record embedding tokens for chunk ${chunk.id} workspace ${workspaceId}: ${getErrorDetails(
+                  usageError,
+                )}`,
+              );
+            }
+          }
           if (jobId) {
             updateKnowledgeDocumentVectorizationJob(jobId, {
               status: "running",

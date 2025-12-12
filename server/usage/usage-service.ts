@@ -3,6 +3,7 @@ import { db } from "../db";
 import {
   workspaceUsageMonth,
   workspaceLlmUsageLedger,
+  workspaceEmbeddingUsageLedger,
   type WorkspaceUsageMonth,
   type WorkspaceUsageMonthInsert,
 } from "@shared/schema";
@@ -338,4 +339,79 @@ export async function getWorkspaceLlmUsageSummary(
     })),
     timeseries: Array.from(timeseriesMap.values()),
   };
+}
+
+type EmbeddingUsageRecord = {
+  workspaceId: string;
+  operationId: string;
+  provider: string;
+  model: string;
+  tokensTotal: number;
+  contentBytes?: number | null;
+  occurredAt?: Date;
+  period?: UsagePeriod;
+};
+
+export async function recordEmbeddingUsageEvent(params: EmbeddingUsageRecord): Promise<void> {
+  if (!params.workspaceId || !params.operationId) {
+    throw new Error("workspaceId and operationId are required to record embedding usage");
+  }
+  if (params.tokensTotal === null || params.tokensTotal === undefined) {
+    return;
+  }
+
+  const normalizedTokensTotal = Math.max(0, Math.floor(params.tokensTotal));
+  if (!Number.isFinite(normalizedTokensTotal) || normalizedTokensTotal <= 0) {
+    return;
+  }
+
+  const normalizedContentBytes =
+    params.contentBytes === undefined || params.contentBytes === null
+      ? null
+      : Math.max(0, Math.floor(params.contentBytes));
+
+  const occurredAt = params.occurredAt ?? new Date();
+  const period = buildPeriod(params.period ?? getUsagePeriodForDate(occurredAt));
+
+  await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(workspaceEmbeddingUsageLedger)
+      .values({
+        workspaceId: params.workspaceId,
+        periodYear: period.periodYear,
+        periodMonth: period.periodMonth,
+        periodCode: period.periodCode,
+        operationId: params.operationId,
+        provider: params.provider,
+        model: params.model,
+        tokensTotal: normalizedTokensTotal,
+        contentBytes: normalizedContentBytes,
+        occurredAt,
+      })
+      .onConflictDoNothing()
+      .returning({ id: workspaceEmbeddingUsageLedger.id });
+
+    if (inserted.length === 0) {
+      // Duplicate operation within workspace — already accounted.
+      return;
+    }
+
+    const usage = await ensureWorkspaceUsageWithClient(params.workspaceId, period, tx);
+    assertNotClosed(usage);
+
+    const [updated] = await tx
+      .update(workspaceUsageMonth)
+      .set({
+        ...buildDeltaUpdate({ embeddings_tokens_total: normalizedTokensTotal }),
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(and(eq(workspaceUsageMonth.workspaceId, params.workspaceId), eq(workspaceUsageMonth.periodCode, period.periodCode)))
+      .returning();
+
+    if (!updated) {
+      throw new Error(
+        `Failed to update usage for workspace ${params.workspaceId} and period ${period.periodCode} (Embedding ledger)`,
+      );
+    }
+  });
 }

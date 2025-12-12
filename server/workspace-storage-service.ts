@@ -151,6 +151,7 @@ export async function uploadWorkspaceFile(
   mimeType?: string,
 ): Promise<{ key: string }> {
   ensureAllowedPrefix(relativePath);
+  // TODO(storage-usage): после успешного upload фиксировать storage_bytes (размер есть в buffer/Readable).
   await putObject(workspaceId, relativePath, fileBuffer, mimeType);
   return { key: relativePath };
 }
@@ -165,5 +166,6 @@ export async function getWorkspaceFile(
 
 export async function deleteWorkspaceFile(workspaceId: string, relativePath: string): Promise<void> {
   ensureAllowedPrefix(relativePath);
+  // TODO(storage-usage): перед удалением получать размер объекта и уменьшать storage_bytes.
   await deleteObject(workspaceId, relativePath);
 }

@@ -2,8 +2,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import bcrypt from "bcryptjs";
 import { and, eq } from "drizzle-orm";
 import { storage } from "../server/storage";
-import { workspaceEmbeddingUsageLedger, workspaces } from "@shared/schema";
+import { workspaceEmbeddingUsageLedger, workspaceUsageMonth, workspaces } from "@shared/schema";
 import { formatUsagePeriodCode } from "../server/usage/usage-types";
+import { recordEmbeddingUsageEvent } from "../server/usage/usage-service";
 
 async function createUser(email: string) {
   const passwordHash = await bcrypt.hash("Password123!", 10);
@@ -97,5 +98,76 @@ describe("workspace_embedding_usage_ledger", () => {
         ),
       );
     expect(rows).toHaveLength(1);
+  });
+
+  it("increments aggregate only once per operation", async () => {
+    const user = await createUser(`embedding-ledger-agg-${Date.now()}@example.com`);
+    const aggWorkspaceId = `embedding-ledger-agg-ws-${Date.now()}`;
+    await createWorkspaceForUser(user.id, aggWorkspaceId);
+    const opId = `agg-embed-${Date.now()}`;
+    const tokens = 77;
+
+    await recordEmbeddingUsageEvent({
+      workspaceId: aggWorkspaceId,
+      operationId: opId,
+      provider: "gigachat",
+      model: "GigaChat-Embeddings",
+      tokensTotal: tokens,
+      contentBytes: 1024,
+      occurredAt: now,
+    });
+
+    const rows = await (storage as any).db
+      .select()
+      .from(workspaceEmbeddingUsageLedger)
+      .where(
+        and(
+          eq(workspaceEmbeddingUsageLedger.workspaceId, aggWorkspaceId),
+          eq(workspaceEmbeddingUsageLedger.operationId, opId),
+        ),
+      );
+    expect(rows).toHaveLength(1);
+
+    const [usageRow] = await (storage as any).db
+      .select()
+      .from(workspaceUsageMonth)
+      .where(
+        and(
+          eq(workspaceUsageMonth.workspaceId, aggWorkspaceId),
+          eq(workspaceUsageMonth.periodCode, periodCode),
+        ),
+      );
+    expect(Number(usageRow.embeddingsTokensTotal)).toBe(tokens);
+
+    await recordEmbeddingUsageEvent({
+      workspaceId: aggWorkspaceId,
+      operationId: opId,
+      provider: "gigachat",
+      model: "GigaChat-Embeddings",
+      tokensTotal: 10,
+      occurredAt: now,
+    });
+
+    const ledgerAfterDuplicate = await (storage as any).db
+      .select()
+      .from(workspaceEmbeddingUsageLedger)
+      .where(
+        and(
+          eq(workspaceEmbeddingUsageLedger.workspaceId, aggWorkspaceId),
+          eq(workspaceEmbeddingUsageLedger.operationId, opId),
+        ),
+      );
+    expect(ledgerAfterDuplicate).toHaveLength(1);
+
+    const [usageAfterDuplicate] = await (storage as any).db
+      .select()
+      .from(workspaceUsageMonth)
+      .where(
+        and(
+          eq(workspaceUsageMonth.workspaceId, aggWorkspaceId),
+          eq(workspaceUsageMonth.periodCode, periodCode),
+        ),
+      );
+    expect(Number(usageAfterDuplicate.embeddingsTokensTotal)).toBe(tokens);
   });
 });
