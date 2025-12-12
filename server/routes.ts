@@ -111,7 +111,12 @@ import {
   type LlmCompletionResult,
   type LlmStreamEvent,
 } from "./llm-client";
-import { recordLlmUsageEvent, getWorkspaceLlmUsageSummary, recordEmbeddingUsageEvent } from "./usage/usage-service";
+import {
+  recordLlmUsageEvent,
+  getWorkspaceLlmUsageSummary,
+  recordEmbeddingUsageEvent,
+  getWorkspaceEmbeddingUsageSummary,
+} from "./usage/usage-service";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
@@ -464,6 +469,26 @@ function buildSearchSettingsResponse(
       try {
         const period = typeof req.query.period === "string" ? req.query.period : undefined;
         const summary = await getWorkspaceLlmUsageSummary(req.params.workspaceId, period);
+        res.json(summary);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/workspaces/:workspaceId/usage/embeddings",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const period = typeof req.query.period === "string" ? req.query.period : undefined;
+        const summary = await getWorkspaceEmbeddingUsageSummary(req.params.workspaceId, period);
         res.json(summary);
       } catch (error) {
         next(error);
