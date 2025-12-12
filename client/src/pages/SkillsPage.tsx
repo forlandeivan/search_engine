@@ -2055,6 +2055,7 @@ export default function SkillsPage() {
       systemPrompt: values.systemPrompt?.trim() ? values.systemPrompt.trim() : null,
       icon: values.icon?.trim() ? values.icon.trim() : null,
       knowledgeBaseIds: values.knowledgeBaseIds,
+      mode: values.mode,
       llmProviderConfigId: providerId,
       modelId,
       ragConfig: {
@@ -2363,7 +2364,6 @@ export default function SkillsPage() {
     </div>
   );
 }
-
 
 
 

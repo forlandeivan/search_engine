@@ -70,7 +70,7 @@ export default function WorkspaceSwitcher({ workspace }: WorkspaceSwitcherProps)
       });
       toast({
         title: "Рабочее пространство переключено",
-        description: `Текущее пространство — ${data.name ?? "" || nextWorkspaceId}`,
+        description: `Текущее пространство — ${(data.name ?? "") || nextWorkspaceId}`,
       });
       const currentWorkspaceId = workspace.active.id;
       if (currentWorkspaceId && location.includes(currentWorkspaceId)) {
