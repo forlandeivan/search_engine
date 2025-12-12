@@ -43,7 +43,12 @@ type WorkspaceAsrUsageSummary = {
   timeseries: Array<{ date: string; minutes: number }>;
   timeseriesByProviderModel: Array<{ provider: string | null; model: string | null; points: Array<{ date: string; minutes: number }> }>;
 };
-type UsageResourceType = "llm" | "embeddings" | "asr";
+type WorkspaceStorageUsageSummary = {
+  workspaceId: string;
+  period: { periodCode: string; periodYear: number; periodMonth: number; start: string; end: string };
+  storageBytes: number;
+};
+type UsageResourceType = "llm" | "embeddings" | "asr" | "storage";
 
 function formatPeriodLabel(periodCode: string): string {
   const [year, month] = periodCode.split("-");
@@ -128,6 +133,28 @@ function useWorkspaceAsrUsage(workspaceId: string | null, periodCode: string) {
   });
 }
 
+function useWorkspaceStorageUsage(workspaceId: string | null, periodCode: string) {
+  return useQuery<WorkspaceStorageUsageSummary, Error>({
+    queryKey: ["workspace-storage-usage", workspaceId, periodCode],
+    enabled: Boolean(workspaceId),
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/workspaces/${workspaceId}/usage/storage${periodCode ? `?period=${periodCode}` : ""}`,
+        undefined,
+        undefined,
+        { workspaceId: workspaceId ?? undefined },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить usage");
+      }
+      return (await res.json()) as WorkspaceStorageUsageSummary;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
 export default function WorkspaceSettingsPage({ params }: { params?: { workspaceId?: string } }) {
   const [location, navigate] = useLocation();
   const workspaceIdFromRoute = params?.workspaceId ?? undefined;
@@ -177,22 +204,37 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
     selectedPeriod,
   );
   const asrUsageQuery = useWorkspaceAsrUsage(usageType === "asr" ? effectiveWorkspaceId : null, selectedPeriod);
+  const storageUsageQuery = useWorkspaceStorageUsage(
+    usageType === "storage" ? effectiveWorkspaceId : null,
+    selectedPeriod,
+  );
 
   const usageQuery =
-    usageType === "llm" ? llmUsageQuery : usageType === "embeddings" ? embeddingUsageQuery : asrUsageQuery;
+    usageType === "llm"
+      ? llmUsageQuery
+      : usageType === "embeddings"
+        ? embeddingUsageQuery
+        : usageType === "asr"
+          ? asrUsageQuery
+          : storageUsageQuery;
   const isAsr = usageType === "asr";
+  const isStorage = usageType === "storage";
   const usageTitle =
     usageType === "llm"
       ? "Потребление LLM токенов"
       : usageType === "embeddings"
         ? "Потребление Embeddings токенов"
-        : "Потребление ASR (минуты)";
+        : usageType === "asr"
+          ? "Потребление ASR (минуты)"
+          : "Потребление хранилища (Storage)";
   const usageDescription =
     usageType === "llm"
       ? "Итоги за выбранный месяц и разбивка по провайдерам/моделям. Источник: workspace usage ledger."
       : usageType === "embeddings"
         ? "Итоги за выбранный месяц и разбивка по провайдерам/моделям для эмбеддингов. Источник: workspace embedding usage ledger."
-        : "Итоги за выбранный месяц по минутам транскрибации (ASR) и разбивка по провайдерам/моделям. Источник: workspace ASR usage ledger.";
+        : usageType === "asr"
+          ? "Итоги за выбранный месяц по минутам транскрибации (ASR) и разбивка по провайдерам/моделям. Источник: workspace ASR usage ledger."
+          : "Итоги за выбранный месяц по объёму хранилища. Источник: workspace storage usage.";
 
   useEffect(() => {
     setName(workspaceName);
@@ -446,6 +488,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       <SelectItem value="llm">LLM</SelectItem>
                       <SelectItem value="embeddings">Embeddings</SelectItem>
                       <SelectItem value="asr">ASR</SelectItem>
+                      <SelectItem value="storage">Storage</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -465,16 +508,28 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">{isAsr ? "Итого минут" : "Итого токенов"}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {isStorage ? "Занято в хранилище" : isAsr ? "Итого минут" : "Итого токенов"}
+                  </p>
                   {usageQuery.isLoading ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" /> Загрузка...
                     </div>
                   ) : (
                     <p className="text-2xl font-semibold">
-                      {isAsr
-                        ? (usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.totalMinutes?.toLocaleString("ru-RU") ?? "—"
-                        : (usageQuery.data as WorkspaceUsageSummary | undefined)?.totalTokens?.toLocaleString("ru-RU") ?? "—"}
+                      {isStorage
+                        ? (() => {
+                            const bytes = (usageQuery.data as WorkspaceStorageUsageSummary | undefined)?.storageBytes ?? null;
+                            if (bytes === null) return "—";
+                            const gb = bytes / 1024 ** 3;
+                            return `${gb.toLocaleString("ru-RU", {
+                              minimumFractionDigits: 1,
+                              maximumFractionDigits: 1,
+                            })} ГБ`;
+                          })()
+                        : isAsr
+                          ? (usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.totalMinutes?.toLocaleString("ru-RU") ?? "—"
+                          : (usageQuery.data as WorkspaceUsageSummary | undefined)?.totalTokens?.toLocaleString("ru-RU") ?? "—"}
                     </p>
                   )}
                 </div>
@@ -484,7 +539,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                 <div className="text-sm text-destructive">Не удалось загрузить usage: {usageQuery.error?.message}</div>
               )}
 
-              {!usageQuery.isLoading && !usageQuery.isError && !isAsr && (
+              {!usageQuery.isLoading && !usageQuery.isError && !isAsr && !isStorage && (
                 <>
                   {(usageQuery.data as WorkspaceUsageSummary | undefined)?.byModelTotal?.length === 0 && (
                     <p className="text-sm text-muted-foreground">За выбранный период данных нет.</p>
@@ -613,6 +668,18 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                     </div>
                   )}
                 </>
+              )}
+
+              {!usageQuery.isLoading && !usageQuery.isError && isStorage && (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Значение берётся из текущего периода storage usage и обновляется при upload/delete, плюс периодический
+                    reconcile.
+                  </p>
+                  {((usageQuery.data as WorkspaceStorageUsageSummary | undefined)?.storageBytes ?? 0) === 0 && (
+                    <p className="text-sm text-muted-foreground">За выбранный период данных нет.</p>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>
