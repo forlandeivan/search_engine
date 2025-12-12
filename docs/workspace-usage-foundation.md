@@ -43,3 +43,4 @@ Scope: record the current data sources and fix decisions on where the single sou
 - Constraints: unique index on `(workspace_id, period_code)`; CHECKS for month 1–12, non-negative counters, `period_code` format `YYYY-MM`.
 - Period model is inlined on the aggregate; no separate `billing_periods` table yet.
 - Ledger for LLM breakdown: `workspace_llm_usage_ledger` (migration `0066_workspace_llm_usage_ledger.sql`) captures per-execution tokens with workspace, provider, model, period, occurred_at; unique on `(workspace_id, execution_id)` plus period/model indexes for analytics.
+- Ledger for embedding breakdown: `workspace_embedding_usage_ledger` (migration `0067_workspace_embedding_usage_ledger.sql`) captures per operation tokens/content with workspace, provider, model, period, occurred_at; unique on `(workspace_id, operation_id)` plus period/model indexes.

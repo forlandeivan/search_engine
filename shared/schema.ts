@@ -217,6 +217,40 @@ export const workspaceLlmUsageLedger = pgTable(
   }),
 );
 
+export const workspaceEmbeddingUsageLedger = pgTable(
+  "workspace_embedding_usage_ledger",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    periodYear: integer("period_year").notNull(),
+    periodMonth: integer("period_month").notNull(),
+    periodCode: varchar("period_code", { length: 7 }).notNull(),
+    operationId: varchar("operation_id").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    tokensTotal: integer("tokens_total").notNull().default(0),
+    contentBytes: bigint("content_bytes", { mode: "bigint" }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    uniqueOperation: uniqueIndex("workspace_embedding_usage_ledger_operation_idx").on(
+      table.workspaceId,
+      table.operationId,
+    ),
+    periodIdx: index("workspace_embedding_usage_ledger_period_idx").on(table.workspaceId, table.periodCode),
+    occurredIdx: index("workspace_embedding_usage_ledger_occurred_idx").on(table.workspaceId, table.occurredAt),
+    modelIdx: index("workspace_embedding_usage_ledger_model_idx").on(
+      table.workspaceId,
+      table.periodCode,
+      table.provider,
+      table.model,
+    ),
+  }),
+);
+
 export const workspaceVectorCollections = pgTable("workspace_vector_collections", {
   collectionName: text("collection_name").primaryKey(),
   workspaceId: varchar("workspace_id")
@@ -1623,6 +1657,8 @@ export type WorkspaceUsageMonth = typeof workspaceUsageMonth.$inferSelect;
 export type WorkspaceUsageMonthInsert = typeof workspaceUsageMonth.$inferInsert;
 export type WorkspaceLlmUsageLedger = typeof workspaceLlmUsageLedger.$inferSelect;
 export type WorkspaceLlmUsageLedgerInsert = typeof workspaceLlmUsageLedger.$inferInsert;
+export type WorkspaceEmbeddingUsageLedger = typeof workspaceEmbeddingUsageLedger.$inferSelect;
+export type WorkspaceEmbeddingUsageLedgerInsert = typeof workspaceEmbeddingUsageLedger.$inferInsert;
 export type WorkspaceVectorCollection = typeof workspaceVectorCollections.$inferSelect;
 export type AuthProvider = typeof authProviders.$inferSelect;
 export type AuthProviderInsert = typeof authProviders.$inferInsert;
