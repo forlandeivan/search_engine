@@ -3,6 +3,8 @@ import { db } from "./db";
 import { skills, skillKnowledgeBases, knowledgeBases, skillRagModes, skillTranscriptionModes, chatSessions } from "@shared/schema";
 import type { SkillDto, SkillRagConfig, CreateSkillPayload } from "@shared/skills";
 import type { SkillMode, SkillRagMode, SkillTranscriptionMode, SkillStatus } from "@shared/schema";
+import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
+import { getUsagePeriodForDate } from "./usage/usage-types";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -481,6 +483,11 @@ export async function createSkill(
 
   const knowledgeBaseIds = await replaceSkillKnowledgeBases(inserted.id, workspaceId, validKnowledgeBases);
 
+  if (!inserted.isSystem && inserted.status === "active") {
+    const period = getUsagePeriodForDate(inserted.createdAt ? new Date(inserted.createdAt) : new Date());
+    await adjustWorkspaceObjectCounters(workspaceId, { skillsDelta: 1 }, period);
+  }
+
   return mapSkillRow(inserted, knowledgeBaseIds);
 }
 
@@ -625,6 +632,11 @@ export async function archiveSkill(
     throw new SkillServiceError("Системные навыки нельзя удалять из рабочего пространства", 403);
   }
 
+  if (row.status === "archived") {
+    const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
+    return { skill: mapSkillRow(row, knowledgeBaseIds), archivedChats: 0 };
+  }
+
   const [updatedSkill] = await db
     .update(skills)
     .set({ status: "archived", updatedAt: sql`CURRENT_TIMESTAMP` })
@@ -638,6 +650,9 @@ export async function archiveSkill(
     .returning({ id: chatSessions.id });
 
   const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
+  const period = getUsagePeriodForDate(updatedSkill.updatedAt ? new Date(updatedSkill.updatedAt) : new Date());
+  await adjustWorkspaceObjectCounters(workspaceId, { skillsDelta: -1 }, period);
+
   return {
     skill: mapSkillRow(updatedSkill, knowledgeBaseIds),
     archivedChats: archivedChatsResult.length,
@@ -703,4 +718,3 @@ export async function createUnicaChatSkillForWorkspace(
 
   return mapSkillRow(inserted, []);
 }
-
