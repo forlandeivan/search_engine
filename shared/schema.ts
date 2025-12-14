@@ -163,6 +163,7 @@ export const workspaceUsageMonth = pgTable(
     asrMinutesTotal: doublePrecision("asr_minutes_total").notNull().default(0),
     storageBytesTotal: bigint("storage_bytes_total", { mode: "bigint" }).notNull().default(0),
     skillsCount: integer("skills_count").notNull().default(0),
+    actionsCount: integer("actions_count").notNull().default(0),
     knowledgeBasesCount: integer("knowledge_bases_count").notNull().default(0),
     membersCount: integer("members_count").notNull().default(0),
     extraMetrics: jsonb("extra_metrics")

@@ -5,6 +5,7 @@ export const WORKSPACE_USAGE_METRICS = [
   "asr_minutes_total",
   "storage_bytes_total",
   "skills_count",
+  "actions_count",
   "knowledge_bases_count",
   "members_count",
 ] as const;

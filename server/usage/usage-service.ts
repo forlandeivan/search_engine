@@ -27,6 +27,7 @@ const METRIC_COLUMNS: Record<WorkspaceUsageMetric, any> = {
   asr_minutes_total: workspaceUsageMonth.asrMinutesTotal,
   storage_bytes_total: workspaceUsageMonth.storageBytesTotal,
   skills_count: workspaceUsageMonth.skillsCount,
+  actions_count: workspaceUsageMonth.actionsCount,
   knowledge_bases_count: workspaceUsageMonth.knowledgeBasesCount,
   members_count: workspaceUsageMonth.membersCount,
 };
@@ -36,6 +37,7 @@ const METRIC_COLUMN_KEYS: Record<WorkspaceUsageMetric, keyof typeof workspaceUsa
   asr_minutes_total: "asrMinutesTotal",
   storage_bytes_total: "storageBytesTotal",
   skills_count: "skillsCount",
+  actions_count: "actionsCount",
   knowledge_bases_count: "knowledgeBasesCount",
   members_count: "membersCount",
 };
@@ -225,6 +227,91 @@ export async function adjustWorkspaceStorageUsageBytes(
   if (!updated) {
     throw new Error(
       `Failed to update storage usage for workspace ${workspaceId} and period ${target.periodCode}`,
+    );
+  }
+
+  return updated;
+}
+
+export type WorkspaceObjectCountersDelta = {
+  skillsDelta?: number;
+  actionsDelta?: number;
+  knowledgeBasesDelta?: number;
+  membersDelta?: number;
+};
+
+function clampCounter(current: number, delta: number, label: string, workspaceId: string, periodCode: string): number {
+  const next = current + delta;
+  if (next < 0) {
+    console.warn(
+      `[usage] ${label} would become negative for workspace ${workspaceId} in period ${periodCode}; clamping to 0`,
+    );
+    return 0;
+  }
+  return next;
+}
+
+export async function adjustWorkspaceObjectCounters(
+  workspaceId: string,
+  deltas: WorkspaceObjectCountersDelta,
+  period?: UsagePeriod,
+): Promise<WorkspaceUsageMonth> {
+  const target = buildPeriod(period);
+  const usage = await ensureWorkspaceUsage(workspaceId, target);
+  assertNotClosed(usage);
+
+  const {
+    skillsDelta = 0,
+    actionsDelta = 0,
+    knowledgeBasesDelta = 0,
+    membersDelta = 0,
+  } = deltas;
+
+  if (skillsDelta === 0 && actionsDelta === 0 && knowledgeBasesDelta === 0 && membersDelta === 0) {
+    return usage;
+  }
+
+  const updates: Partial<typeof workspaceUsageMonth> = {};
+
+  if (skillsDelta !== 0) {
+    const current = Number(usage.skillsCount ?? 0);
+    updates.skillsCount = clampCounter(current, skillsDelta, "skills_count", workspaceId, target.periodCode);
+  }
+  if (actionsDelta !== 0) {
+    const current = Number((usage as any).actionsCount ?? 0);
+    updates.actionsCount = clampCounter(current, actionsDelta, "actions_count", workspaceId, target.periodCode);
+  }
+  if (knowledgeBasesDelta !== 0) {
+    const current = Number(usage.knowledgeBasesCount ?? 0);
+    updates.knowledgeBasesCount = clampCounter(
+      current,
+      knowledgeBasesDelta,
+      "knowledge_bases_count",
+      workspaceId,
+      target.periodCode,
+    );
+  }
+  if (membersDelta !== 0) {
+    const current = Number(usage.membersCount ?? 0);
+    updates.membersCount = clampCounter(current, membersDelta, "members_count", workspaceId, target.periodCode);
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return usage;
+  }
+
+  const [updated] = await db
+    .update(workspaceUsageMonth)
+    .set({
+      ...updates,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(and(eq(workspaceUsageMonth.workspaceId, workspaceId), eq(workspaceUsageMonth.periodCode, target.periodCode)))
+    .returning();
+
+  if (!updated) {
+    throw new Error(
+      `Failed to update object counters for workspace ${workspaceId} and period ${target.periodCode}`,
     );
   }
 
