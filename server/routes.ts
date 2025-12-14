@@ -123,7 +123,7 @@ import {
   getWorkspaceQdrantUsage,
 } from "./usage/usage-service";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
-import { OperationBlockedError } from "./guards/errors";
+import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { buildEmbeddingsOperationContext, buildStorageUploadOperationContext, buildLlmOperationContext } from "./guards/helpers";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
@@ -6661,7 +6661,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           }),
         );
         if (!storageDecision.allowed) {
-          throw new OperationBlockedError(storageDecision);
+          throw new OperationBlockedError(
+            mapDecisionToPayload(storageDecision, {
+              workspaceId,
+              operationType: "STORAGE_UPLOAD",
+              meta: { storage: { mimeType: req.file.mimetype, category: "icon" } },
+            }),
+          );
         }
 
         const result = await uploadWorkspaceIcon(workspaceId, req.file);
@@ -9510,7 +9516,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }),
       );
       if (!llmGuardDecision.allowed) {
-        throw new OperationBlockedError(llmGuardDecision);
+        throw new OperationBlockedError(
+          mapDecisionToPayload(llmGuardDecision, {
+            workspaceId,
+            operationType: "LLM_REQUEST",
+            meta: { llm: { provider: context.provider.id, model: context.model ?? context.provider.model ?? null } },
+          }),
+        );
       }
 
       await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.RUNNING, { input: llmCallInput });
@@ -10656,6 +10668,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           mimeType: file.mimetype,
           lang,
           userId: user.id,
+          workspaceId,
           originalFileName: fileName,
           chatId,
           executionId: asrExecution.id,
@@ -10735,6 +10748,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
         if (error instanceof YandexSttError) {
           return res.status(error.status).json({ message: error.message, code: error.code });
+        }
+        if (error instanceof OperationBlockedError) {
+          return res.status(error.status).json(error.toJSON());
         }
         if (error instanceof SpeechProviderDisabledError) {
           return res.status(503).json({ message: error.message });
@@ -11088,6 +11104,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           collection: req.params.name,
         }),
       );
+      if (!decision.allowed) {
+        throw new OperationBlockedError(
+          mapDecisionToPayload(decision, {
+            workspaceId,
+            operationType: "EMBEDDINGS",
+          }),
+        );
+      }
       if (!decision.allowed) {
         throw new OperationBlockedError(decision);
       }

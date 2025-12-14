@@ -3,6 +3,8 @@ import { db } from "./db";
 import { actions, type Action } from "@shared/schema";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
+import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
+import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import type {
   ActionDto,
   ActionScope,
@@ -104,6 +106,22 @@ async function createWorkspaceAction(
   workspaceId: string,
   payload: CreateActionPayload,
 ): Promise<ActionDto> {
+  const decision = await workspaceOperationGuard.check({
+    workspaceId,
+    operationType: "CREATE_ACTION",
+    expectedCost: { objects: 1 },
+    meta: { objects: { entityType: "action" } },
+  });
+  if (!decision.allowed) {
+    throw new OperationBlockedError(
+      mapDecisionToPayload(decision, {
+        workspaceId,
+        operationType: "CREATE_ACTION",
+        meta: { objects: { entityType: "action" } },
+      }),
+    );
+  }
+
   const [row] = await db
     .insert(actions)
     .values({

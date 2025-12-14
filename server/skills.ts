@@ -5,6 +5,8 @@ import type { SkillDto, SkillRagConfig, CreateSkillPayload } from "@shared/skill
 import type { SkillMode, SkillRagMode, SkillTranscriptionMode, SkillStatus } from "@shared/schema";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
+import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
+import { mapDecisionToPayload, OperationBlockedError } from "./guards/errors";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -431,9 +433,21 @@ export async function createSkill(
   workspaceId: string,
   input: SkillEditableInput,
 ): Promise<SkillDto> {
-  
-
-
+  const decision = await workspaceOperationGuard.check({
+    workspaceId,
+    operationType: "CREATE_SKILL",
+    expectedCost: { objects: 1 },
+    meta: { objects: { entityType: "skill" } },
+  });
+  if (!decision.allowed) {
+    throw new OperationBlockedError(
+      mapDecisionToPayload(decision, {
+        workspaceId,
+        operationType: "CREATE_SKILL",
+        meta: { objects: { entityType: "skill" } },
+      }),
+    );
+  }
 
   const normalized = buildEditableColumns(input);
   const validKnowledgeBases = normalized.knowledgeBaseIds

@@ -38,6 +38,8 @@ import { load as loadHtml } from "cheerio";
 import { getLatestKnowledgeDocumentChunkSetForDocument } from "./knowledge-chunks";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
+import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
+import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 
 export class KnowledgeBaseError extends Error {
   public status: number;
@@ -504,6 +506,22 @@ export async function createKnowledgeBase(
   payload: CreateKnowledgeBasePayload,
 ): Promise<KnowledgeBaseSummary> {
   await ensureKnowledgeBaseTables();
+
+  const decision = await workspaceOperationGuard.check({
+    workspaceId,
+    operationType: "CREATE_KNOWLEDGE_BASE",
+    expectedCost: { objects: 1 },
+    meta: { objects: { entityType: "knowledge_base" } },
+  });
+  if (!decision.allowed) {
+    throw new OperationBlockedError(
+      mapDecisionToPayload(decision, {
+        workspaceId,
+        operationType: "CREATE_KNOWLEDGE_BASE",
+        meta: { objects: { entityType: "knowledge_base" } },
+      }),
+    );
+  }
 
   const name = payload.name?.trim();
   if (!name) {

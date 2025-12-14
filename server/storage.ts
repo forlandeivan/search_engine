@@ -77,6 +77,8 @@ import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
+import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
+import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import type {
   KnowledgeBaseAskAiRunDetail,
   KnowledgeBaseAskAiRunSummary,
@@ -5739,6 +5741,22 @@ export class DatabaseStorage implements IStorage {
 
     if (existing) {
       return existing;
+    }
+
+    const decision = await workspaceOperationGuard.check({
+      workspaceId,
+      operationType: "INVITE_WORKSPACE_MEMBER",
+      expectedCost: { objects: 1 },
+      meta: { objects: { entityType: "member" } },
+    });
+    if (!decision.allowed) {
+      throw new OperationBlockedError(
+        mapDecisionToPayload(decision, {
+          workspaceId,
+          operationType: "INVITE_WORKSPACE_MEMBER",
+          meta: { objects: { entityType: "member" } },
+        }),
+      );
     }
 
     const [member] = await this.db

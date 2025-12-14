@@ -22,6 +22,7 @@ describe("workspace operation guard integration", () => {
 
     expect(response.status).toBe(429);
     expect(response.body?.reasonCode).toBe("TEST_DENY");
+    expect(response.body?.resourceType).toBe("objects");
 
     checkSpy.mockRestore();
   });

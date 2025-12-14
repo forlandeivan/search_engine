@@ -9,6 +9,9 @@ import { join } from "path";
 import { randomBytes } from "crypto";
 import fetch from "node-fetch";
 import type { ChatMessageMetadata, TranscriptStatus } from "@shared/schema";
+import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
+import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
+import { buildAsrOperationContext } from "./guards/helpers";
 
 const createHttpProxyAgent = (url: string) => {
   try {
@@ -151,6 +154,7 @@ export interface AsyncTranscribeOptions {
   mimeType: string;
   lang?: string;
   userId: string;
+  workspaceId: string;
   originalFileName?: string;
   chatId?: string;
   transcriptId?: string;
@@ -184,7 +188,7 @@ interface SecretValues {
 
 class YandexSttAsyncService {
   async startAsyncTranscription(options: AsyncTranscribeOptions): Promise<AsyncTranscribeResponse> {
-    let { audioBuffer, mimeType, userId, originalFileName, chatId, transcriptId, executionId } = options;
+    let { audioBuffer, mimeType, userId, workspaceId, originalFileName, chatId, transcriptId, executionId } = options;
 
     const providerDetail = await speechProviderService.getActiveSttProviderOrThrow();
     const { provider, secrets } = providerDetail;
@@ -212,6 +216,25 @@ class YandexSttAsyncService {
 
     if (!s3AccessKeyId || !s3SecretAccessKey || !s3BucketName) {
       throw new YandexSttAsyncConfigError("Не все учетные данные Object Storage настроены.");
+    }
+
+    const guardDecision = await workspaceOperationGuard.check(
+      buildAsrOperationContext({
+        workspaceId,
+        providerId: provider.id,
+        model: provider.model ?? null,
+        mediaType: "audio",
+        durationSeconds: undefined,
+      }),
+    );
+    if (!guardDecision.allowed) {
+      throw new OperationBlockedError(
+        mapDecisionToPayload(guardDecision, {
+          workspaceId,
+          operationType: "ASR_TRANSCRIPTION",
+          meta: { asr: { provider: provider.id, model: provider.model ?? null } },
+        }),
+      );
     }
 
     let iamToken: string;

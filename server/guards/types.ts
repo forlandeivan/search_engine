@@ -13,6 +13,16 @@ export const OPERATION_TYPES = [
 
 export type OperationType = (typeof OPERATION_TYPES)[number];
 
+export type BlockReasonCode =
+  | "ALLOWED"
+  | "USAGE_LIMIT_REACHED"
+  | "OPERATION_NOT_ALLOWED"
+  | "PLAN_RESTRICTED"
+  | "WORKSPACE_SUSPENDED"
+  | "UNKNOWN";
+
+export type ResourceType = "tokens" | "embeddings" | "asr" | "storage" | "objects" | "other";
+
 export type ExpectedCost = {
   tokens?: number;
   bytes?: number;
@@ -58,9 +68,21 @@ export type OperationContext = {
 
 export type GuardDecision = {
   allowed: boolean;
-  reasonCode: string;
-  resourceType: string | null;
+  reasonCode: BlockReasonCode;
+  resourceType: ResourceType | null;
   message: string;
   upgradeAvailable: boolean;
   debug?: Record<string, unknown> | null;
+};
+
+export type OperationBlockedPayload = {
+  reasonCode: BlockReasonCode;
+  resourceType: ResourceType;
+  message: string;
+  upgradeAvailable: boolean;
+  operationType?: OperationType;
+  workspaceId?: string;
+  limitsHint?: { current?: number; limit?: number; unit?: string };
+  meta?: Record<string, unknown>;
+  correlationId?: string;
 };
