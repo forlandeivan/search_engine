@@ -75,6 +75,8 @@ import { createUnicaChatSkillForWorkspace } from "./skills";
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
+import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
+import { getUsagePeriodForDate } from "./usage/usage-types";
 import type {
   KnowledgeBaseAskAiRunDetail,
   KnowledgeBaseAskAiRunSummary,
@@ -5745,6 +5747,10 @@ export class DatabaseStorage implements IStorage {
       .returning();
 
     this.invalidateWorkspaceMembershipCache(userId, workspaceId);
+    if (member) {
+      const period = getUsagePeriodForDate(member.createdAt ?? new Date());
+      await adjustWorkspaceObjectCounters(workspaceId, { membersDelta: 1 }, period);
+    }
     return member ?? undefined;
   }
 
@@ -5843,6 +5849,8 @@ export class DatabaseStorage implements IStorage {
 
     if (deleted.length > 0) {
       this.invalidateWorkspaceMembershipCache(userId, workspaceId);
+      const period = getUsagePeriodForDate(new Date());
+      await adjustWorkspaceObjectCounters(workspaceId, { membersDelta: -1 }, period);
     }
     return deleted.length > 0;
   }

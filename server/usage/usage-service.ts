@@ -668,6 +668,15 @@ export type WorkspaceStorageUsageSummary = {
   storageBytes: number;
 };
 
+export type WorkspaceObjectsUsageSummary = {
+  workspaceId: string;
+  period: UsagePeriod & { start: string; end: string };
+  skillsCount: number;
+  actionsCount: number;
+  knowledgeBasesCount: number;
+  membersCount: number;
+};
+
 export async function getWorkspaceStorageUsageSummary(
   workspaceId: string,
   periodCode?: string,
@@ -691,6 +700,45 @@ export async function getWorkspaceStorageUsageSummary(
       end: end.toISOString(),
     },
     storageBytes,
+  };
+}
+
+export async function getWorkspaceObjectsUsageSummary(
+  workspaceId: string,
+  periodCode?: string,
+): Promise<WorkspaceObjectsUsageSummary> {
+  const period = parseUsagePeriodCode(periodCode ?? "") ?? getUsagePeriodForDate();
+  const { start, end } = getUsagePeriodBounds(period);
+
+  const rows = await db
+    .select({
+      skillsCount: workspaceUsageMonth.skillsCount,
+      actionsCount: workspaceUsageMonth.actionsCount,
+      knowledgeBasesCount: workspaceUsageMonth.knowledgeBasesCount,
+      membersCount: workspaceUsageMonth.membersCount,
+    })
+    .from(workspaceUsageMonth)
+    .where(and(eq(workspaceUsageMonth.workspaceId, workspaceId), eq(workspaceUsageMonth.periodCode, period.periodCode)))
+    .limit(1);
+
+  const counters = rows[0] ?? {
+    skillsCount: 0,
+    actionsCount: 0,
+    knowledgeBasesCount: 0,
+    membersCount: 0,
+  };
+
+  return {
+    workspaceId,
+    period: {
+      ...period,
+      start: start.toISOString(),
+      end: end.toISOString(),
+    },
+    skillsCount: Number(counters.skillsCount ?? 0),
+    actionsCount: Number((counters as any).actionsCount ?? 0),
+    knowledgeBasesCount: Number(counters.knowledgeBasesCount ?? 0),
+    membersCount: Number(counters.membersCount ?? 0),
   };
 }
 

@@ -36,6 +36,8 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
 import { load as loadHtml } from "cheerio";
 import { getLatestKnowledgeDocumentChunkSetForDocument } from "./knowledge-chunks";
+import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
+import { getUsagePeriodForDate } from "./usage/usage-types";
 
 export class KnowledgeBaseError extends Error {
   public status: number;
@@ -525,6 +527,9 @@ export async function createKnowledgeBase(
       throw new KnowledgeBaseError("Не удалось создать базу знаний", 500);
     }
 
+    const period = getUsagePeriodForDate(created.createdAt ? new Date(created.createdAt) : new Date());
+    await adjustWorkspaceObjectCounters(workspaceId, { knowledgeBasesDelta: 1 }, period);
+
     return {
       id: created.id,
       name: created.name,
@@ -590,6 +595,9 @@ export async function deleteKnowledgeBase(
       .delete(knowledgeBases)
       .where(and(eq(knowledgeBases.id, baseId), eq(knowledgeBases.workspaceId, workspaceId)));
   });
+
+  const period = getUsagePeriodForDate(new Date());
+  await adjustWorkspaceObjectCounters(workspaceId, { knowledgeBasesDelta: -1 }, period);
 
   return { deletedId: baseId } satisfies DeleteKnowledgeBaseResponse;
 }

@@ -48,7 +48,15 @@ type WorkspaceStorageUsageSummary = {
   period: { periodCode: string; periodYear: number; periodMonth: number; start: string; end: string };
   storageBytes: number;
 };
-type UsageResourceType = "llm" | "embeddings" | "asr" | "storage";
+type WorkspaceObjectUsageSummary = {
+  workspaceId: string;
+  period: { periodCode: string; periodYear: number; periodMonth: number; start: string; end: string };
+  skillsCount: number;
+  actionsCount: number;
+  knowledgeBasesCount: number;
+  membersCount: number;
+};
+type UsageResourceType = "llm" | "embeddings" | "asr" | "storage" | "objects";
 
 function formatPeriodLabel(periodCode: string): string {
   const [year, month] = periodCode.split("-");
@@ -155,6 +163,28 @@ function useWorkspaceStorageUsage(workspaceId: string | null, periodCode: string
   });
 }
 
+function useWorkspaceObjectsUsage(workspaceId: string | null, periodCode: string) {
+  return useQuery<WorkspaceObjectUsageSummary, Error>({
+    queryKey: ["workspace-objects-usage", workspaceId, periodCode],
+    enabled: Boolean(workspaceId),
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/workspaces/${workspaceId}/usage/objects${periodCode ? `?period=${periodCode}` : ""}`,
+        undefined,
+        undefined,
+        { workspaceId: workspaceId ?? undefined },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить usage");
+      }
+      return (await res.json()) as WorkspaceObjectUsageSummary;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
 export default function WorkspaceSettingsPage({ params }: { params?: { workspaceId?: string } }) {
   const [location, navigate] = useLocation();
   const workspaceIdFromRoute = params?.workspaceId ?? undefined;
@@ -208,6 +238,10 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
     usageType === "storage" ? effectiveWorkspaceId : null,
     selectedPeriod,
   );
+  const objectsUsageQuery = useWorkspaceObjectsUsage(
+    usageType === "objects" ? effectiveWorkspaceId : null,
+    selectedPeriod,
+  );
 
   const usageQuery =
     usageType === "llm"
@@ -216,9 +250,12 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         ? embeddingUsageQuery
         : usageType === "asr"
           ? asrUsageQuery
-          : storageUsageQuery;
+          : usageType === "storage"
+            ? storageUsageQuery
+            : objectsUsageQuery;
   const isAsr = usageType === "asr";
   const isStorage = usageType === "storage";
+  const isObjects = usageType === "objects";
   const usageTitle =
     usageType === "llm"
       ? "Потребление LLM токенов"
@@ -226,7 +263,9 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         ? "Потребление Embeddings токенов"
         : usageType === "asr"
           ? "Потребление ASR (минуты)"
-          : "Потребление хранилища (Storage)";
+          : usageType === "storage"
+            ? "Потребление хранилища (Storage)"
+            : "Потребление объектов (skills, actions, KB, участники)";
   const usageDescription =
     usageType === "llm"
       ? "Итоги за выбранный месяц и разбивка по провайдерам/моделям. Источник: workspace usage ledger."
@@ -234,7 +273,9 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
         ? "Итоги за выбранный месяц и разбивка по провайдерам/моделям для эмбеддингов. Источник: workspace embedding usage ledger."
         : usageType === "asr"
           ? "Итоги за выбранный месяц по минутам транскрибации (ASR) и разбивка по провайдерам/моделям. Источник: workspace ASR usage ledger."
-          : "Итоги за выбранный месяц по объёму хранилища. Источник: workspace storage usage.";
+          : usageType === "storage"
+            ? "Итоги за выбранный месяц по объёму хранилища. Источник: workspace storage usage."
+            : "Текущее количество объектов в рабочем пространстве за выбранный период: навыки, действия, базы знаний и участники.";
 
   useEffect(() => {
     setName(workspaceName);
@@ -489,6 +530,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       <SelectItem value="embeddings">Embeddings</SelectItem>
                       <SelectItem value="asr">ASR</SelectItem>
                       <SelectItem value="storage">Storage</SelectItem>
+                      <SelectItem value="objects">Объекты</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -509,7 +551,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">
-                    {isStorage ? "Занято в хранилище" : isAsr ? "Итого минут" : "Итого токенов"}
+                    {isStorage ? "Занято в хранилище" : isAsr ? "Итого минут" : isObjects ? "Итого объектов" : "Итого токенов"}
                   </p>
                   {usageQuery.isLoading ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -525,11 +567,22 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                             return `${gb.toLocaleString("ru-RU", {
                               minimumFractionDigits: 3,
                               maximumFractionDigits: 3,
-                            })} ГБ`;
+                            })} GB`;
                           })()
                         : isAsr
                           ? (usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.totalMinutes?.toLocaleString("ru-RU") ?? "—"
-                          : (usageQuery.data as WorkspaceUsageSummary | undefined)?.totalTokens?.toLocaleString("ru-RU") ?? "—"}
+                          : isObjects
+                            ? (() => {
+                                const data = usageQuery.data as WorkspaceObjectUsageSummary | undefined;
+                                if (!data) return "—";
+                                const total =
+                                  (data.skillsCount ?? 0) +
+                                  (data.actionsCount ?? 0) +
+                                  (data.knowledgeBasesCount ?? 0) +
+                                  (data.membersCount ?? 0);
+                                return total.toLocaleString("ru-RU");
+                              })()
+                            : (usageQuery.data as WorkspaceUsageSummary | undefined)?.totalTokens?.toLocaleString("ru-RU") ?? "—"}
                     </p>
                   )}
                 </div>
@@ -539,7 +592,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                 <div className="text-sm text-destructive">Не удалось загрузить usage: {usageQuery.error?.message}</div>
               )}
 
-              {!usageQuery.isLoading && !usageQuery.isError && !isAsr && !isStorage && (
+              {!usageQuery.isLoading && !usageQuery.isError && !isAsr && !isStorage && !isObjects && (
                 <>
                   {(usageQuery.data as WorkspaceUsageSummary | undefined)?.byModelTotal?.length === 0 && (
                     <p className="text-sm text-muted-foreground">За выбранный период данных нет.</p>
@@ -592,8 +645,32 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                           </div>
                         </div>
                       </>
-                    )}
+                  )}
                 </>
+              )}
+
+              {!usageQuery.isLoading && !usageQuery.isError && isObjects && (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Значения берутся из агрегата usage за выбранный период и обновляются при CRUD-операциях над объектами.
+                  </p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {[
+                      { label: "Навыки", value: (usageQuery.data as WorkspaceObjectUsageSummary | undefined)?.skillsCount ?? 0 },
+                      { label: "Действия", value: (usageQuery.data as WorkspaceObjectUsageSummary | undefined)?.actionsCount ?? 0 },
+                      {
+                        label: "Базы знаний",
+                        value: (usageQuery.data as WorkspaceObjectUsageSummary | undefined)?.knowledgeBasesCount ?? 0,
+                      },
+                      { label: "Участники", value: (usageQuery.data as WorkspaceObjectUsageSummary | undefined)?.membersCount ?? 0 },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-md border p-3">
+                        <p className="text-sm text-muted-foreground">{item.label}</p>
+                        <p className="text-2xl font-semibold">{item.value.toLocaleString("ru-RU")}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {!usageQuery.isLoading && !usageQuery.isError && isAsr && (

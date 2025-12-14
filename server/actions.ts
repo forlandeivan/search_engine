@@ -1,6 +1,8 @@
 import { eq, and, or, isNull, desc } from "drizzle-orm";
 import { db } from "./db";
 import { actions, type Action } from "@shared/schema";
+import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
+import { getUsagePeriodForDate } from "./usage/usage-types";
 import type {
   ActionDto,
   ActionScope,
@@ -121,6 +123,10 @@ async function createWorkspaceAction(
   if (!row) {
     throw new Error("Failed to create action");
   }
+
+  const period = getUsagePeriodForDate(row.createdAt ? new Date(row.createdAt) : new Date());
+  await adjustWorkspaceObjectCounters(workspaceId, { actionsDelta: 1 }, period);
+
   return mapActionToDto(row);
 }
 
@@ -172,7 +178,12 @@ async function updateWorkspaceAction(
 }
 
 async function softDeleteWorkspaceAction(workspaceId: string, actionId: string): Promise<void> {
-  const existing = await getById(actionId);
+  const [existing] = await db
+    .select()
+    .from(actions)
+    .where(and(eq(actions.id, actionId), eq(actions.scope, "workspace")))
+    .limit(1);
+
   if (!existing) {
     throw new Error("Action not found");
   }
@@ -182,20 +193,33 @@ async function softDeleteWorkspaceAction(workspaceId: string, actionId: string):
   if (existing.workspaceId !== workspaceId) {
     throw new Error("Cannot delete action from another workspace");
   }
+  if (existing.deletedAt) {
+    return;
+  }
 
-  await db
+  const deletedAt = new Date();
+  const [updated] = await db
     .update(actions)
     .set({
-      deletedAt: new Date(),
-      updatedAt: new Date(),
+      deletedAt,
+      updatedAt: deletedAt,
     })
     .where(
       and(
         eq(actions.id, actionId),
         eq(actions.scope, "workspace"),
-        eq(actions.workspaceId, workspaceId)
+        eq(actions.workspaceId, workspaceId),
+        isNull(actions.deletedAt)
       )
-    );
+    )
+    .returning();
+
+  if (!updated) {
+    return;
+  }
+
+  const period = getUsagePeriodForDate(updated.deletedAt ? new Date(updated.deletedAt) : new Date());
+  await adjustWorkspaceObjectCounters(workspaceId, { actionsDelta: -1 }, period);
 }
 
 async function listSystemActions(): Promise<ActionDto[]> {

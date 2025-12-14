@@ -118,6 +118,7 @@ import {
   getWorkspaceEmbeddingUsageSummary,
   getWorkspaceAsrUsageSummary,
   getWorkspaceStorageUsageSummary,
+  getWorkspaceObjectsUsageSummary,
 } from "./usage/usage-service";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
@@ -4337,6 +4338,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const period = typeof req.query.period === "string" ? req.query.period : undefined;
         const summary = await getWorkspaceStorageUsageSummary(req.params.workspaceId, period);
+        res.json(summary);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/workspaces/:workspaceId/usage/objects",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const period = typeof req.query.period === "string" ? req.query.period : undefined;
+        const summary = await getWorkspaceObjectsUsageSummary(req.params.workspaceId, period);
         res.json(summary);
       } catch (error) {
         next(error);
