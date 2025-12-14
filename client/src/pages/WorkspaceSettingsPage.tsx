@@ -56,7 +56,13 @@ type WorkspaceObjectUsageSummary = {
   knowledgeBasesCount: number;
   membersCount: number;
 };
-type UsageResourceType = "llm" | "embeddings" | "asr" | "storage" | "objects";
+type WorkspaceQdrantUsageSummary = {
+  workspaceId: string;
+  collectionsCount: number;
+  pointsCount: number;
+  storageBytes: number;
+};
+type UsageResourceType = "llm" | "embeddings" | "asr" | "storage" | "objects" | "qdrant";
 
 function formatPeriodLabel(periodCode: string): string {
   const [year, month] = periodCode.split("-");
@@ -185,6 +191,28 @@ function useWorkspaceObjectsUsage(workspaceId: string | null, periodCode: string
   });
 }
 
+function useWorkspaceQdrantUsage(workspaceId: string | null) {
+  return useQuery<WorkspaceQdrantUsageSummary, Error>({
+    queryKey: ["workspace-qdrant-usage", workspaceId],
+    enabled: Boolean(workspaceId),
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/workspaces/${workspaceId}/usage/qdrant`,
+        undefined,
+        undefined,
+        { workspaceId: workspaceId ?? undefined },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || body.error || "Не удалось загрузить usage");
+      }
+      return (await res.json()) as WorkspaceQdrantUsageSummary;
+    },
+    staleTime: 30 * 1000,
+  });
+}
+
 export default function WorkspaceSettingsPage({ params }: { params?: { workspaceId?: string } }) {
   const [location, navigate] = useLocation();
   const workspaceIdFromRoute = params?.workspaceId ?? undefined;
@@ -242,6 +270,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
     usageType === "objects" ? effectiveWorkspaceId : null,
     selectedPeriod,
   );
+  const qdrantUsageQuery = useWorkspaceQdrantUsage(usageType === "qdrant" ? effectiveWorkspaceId : null);
 
   const usageQuery =
     usageType === "llm"
@@ -252,10 +281,13 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
           ? asrUsageQuery
           : usageType === "storage"
             ? storageUsageQuery
-            : objectsUsageQuery;
+            : usageType === "objects"
+              ? objectsUsageQuery
+              : qdrantUsageQuery;
   const isAsr = usageType === "asr";
   const isStorage = usageType === "storage";
   const isObjects = usageType === "objects";
+  const isQdrant = usageType === "qdrant";
   const usageTitle =
     usageType === "llm"
       ? "Потребление LLM токенов"
@@ -265,7 +297,9 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
           ? "Потребление ASR (минуты)"
           : usageType === "storage"
             ? "Потребление хранилища (Storage)"
-            : "Потребление объектов (skills, actions, KB, участники)";
+            : usageType === "objects"
+              ? "Потребление объектов (skills, actions, KB, участники)"
+              : "Потребление Qdrant (коллекции/точки)";
   const usageDescription =
     usageType === "llm"
       ? "Итоги за выбранный месяц и разбивка по провайдерам/моделям. Источник: workspace usage ledger."
@@ -275,7 +309,9 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
           ? "Итоги за выбранный месяц по минутам транскрибации (ASR) и разбивка по провайдерам/моделям. Источник: workspace ASR usage ledger."
           : usageType === "storage"
             ? "Итоги за выбранный месяц по объёму хранилища. Источник: workspace storage usage."
-            : "Текущее количество объектов в рабочем пространстве за выбранный период: навыки, действия, базы знаний и участники.";
+            : usageType === "objects"
+              ? "Текущее количество объектов в рабочем пространстве за выбранный период: навыки, действия, базы знаний и участники."
+              : "Текущее состояние Qdrant по рабочему пространству: коллекции, точки, оценка занимаемого объёма.";
 
   useEffect(() => {
     setName(workspaceName);
@@ -526,14 +562,15 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       <SelectValue placeholder="Тип" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="llm">LLM</SelectItem>
-                      <SelectItem value="embeddings">Embeddings</SelectItem>
-                      <SelectItem value="asr">ASR</SelectItem>
-                      <SelectItem value="storage">Storage</SelectItem>
-                      <SelectItem value="objects">Объекты</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                    <SelectItem value="llm">LLM</SelectItem>
+                    <SelectItem value="embeddings">Embeddings</SelectItem>
+                    <SelectItem value="asr">ASR</SelectItem>
+                    <SelectItem value="storage">Storage</SelectItem>
+                    <SelectItem value="objects">Объекты</SelectItem>
+                    <SelectItem value="qdrant">Qdrant</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Месяц</p>
                   <Select value={selectedPeriod} onValueChange={setSelectedPeriod}>
@@ -551,7 +588,15 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">
-                    {isStorage ? "Занято в хранилище" : isAsr ? "Итого минут" : isObjects ? "Итого объектов" : "Итого токенов"}
+                    {isStorage
+                      ? "Занято в хранилище"
+                      : isAsr
+                        ? "Итого минут"
+                        : isObjects
+                          ? "Итого объектов"
+                          : isQdrant
+                            ? "Коллекции / точки"
+                            : "Итого токенов"}
                   </p>
                   {usageQuery.isLoading ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -582,6 +627,12 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                                   (data.membersCount ?? 0);
                                 return total.toLocaleString("ru-RU");
                               })()
+                            : isQdrant
+                              ? (() => {
+                                  const data = usageQuery.data as WorkspaceQdrantUsageSummary | undefined;
+                                  if (!data) return "—";
+                                  return `${data.collectionsCount.toLocaleString("ru-RU")} / ${data.pointsCount.toLocaleString("ru-RU")}`;
+                                })()
                             : (usageQuery.data as WorkspaceUsageSummary | undefined)?.totalTokens?.toLocaleString("ru-RU") ?? "—"}
                     </p>
                   )}
@@ -592,7 +643,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                 <div className="text-sm text-destructive">Не удалось загрузить usage: {usageQuery.error?.message}</div>
               )}
 
-              {!usageQuery.isLoading && !usageQuery.isError && !isAsr && !isStorage && !isObjects && (
+              {!usageQuery.isLoading && !usageQuery.isError && !isAsr && !isStorage && !isObjects && !isQdrant && (
                 <>
                   {(usageQuery.data as WorkspaceUsageSummary | undefined)?.byModelTotal?.length === 0 && (
                     <p className="text-sm text-muted-foreground">За выбранный период данных нет.</p>
@@ -667,6 +718,32 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       <div key={item.label} className="rounded-md border p-3">
                         <p className="text-sm text-muted-foreground">{item.label}</p>
                         <p className="text-2xl font-semibold">{item.value.toLocaleString("ru-RU")}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!usageQuery.isLoading && !usageQuery.isError && isQdrant && (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Значения хранятся персистентно (без месячного сброса) и отражают текущее состояние коллекций Qdrant по рабочему пространству.
+                  </p>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {[
+                      { label: "Коллекции", value: (usageQuery.data as WorkspaceQdrantUsageSummary | undefined)?.collectionsCount ?? 0 },
+                      { label: "Точки (points)", value: (usageQuery.data as WorkspaceQdrantUsageSummary | undefined)?.pointsCount ?? 0 },
+                      {
+                        label: "Объём (байт)",
+                        value: (usageQuery.data as WorkspaceQdrantUsageSummary | undefined)?.storageBytes ?? 0,
+                        format: (n: number) => n.toLocaleString("ru-RU"),
+                      },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-md border p-3">
+                        <p className="text-sm text-muted-foreground">{item.label}</p>
+                        <p className="text-2xl font-semibold">
+                          {item.format ? item.format(item.value) : item.value.toLocaleString("ru-RU")}
+                        </p>
                       </div>
                     ))}
                   </div>

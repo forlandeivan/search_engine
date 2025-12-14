@@ -119,6 +119,8 @@ import {
   getWorkspaceAsrUsageSummary,
   getWorkspaceStorageUsageSummary,
   getWorkspaceObjectsUsageSummary,
+  adjustWorkspaceQdrantUsage,
+  getWorkspaceQdrantUsage,
 } from "./usage/usage-service";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
@@ -4359,6 +4361,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const period = typeof req.query.period === "string" ? req.query.period : undefined;
         const summary = await getWorkspaceObjectsUsageSummary(req.params.workspaceId, period);
         res.json(summary);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/workspaces/:workspaceId/usage/qdrant",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const usage = await getWorkspaceQdrantUsage(req.params.workspaceId);
+        res.json(usage);
       } catch (error) {
         next(error);
       }
@@ -8735,6 +8756,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       const info = await client.getCollection(name);
       await storage.upsertCollectionWorkspace(name, workspaceId);
+      if (!existingWorkspaceId) {
+        await adjustWorkspaceQdrantUsage(workspaceId, { collectionsCount: 1 });
+      }
 
       res.status(201).json({
         operation: result,
@@ -8795,6 +8819,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const client = getQdrantClient();
       await client.deleteCollection(req.params.name);
       await storage.removeCollectionWorkspace(req.params.name);
+      await adjustWorkspaceQdrantUsage(workspaceId, { collectionsCount: -1 });
 
       res.json({
         message: "Коллекция удалена",
@@ -11024,6 +11049,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       };
 
       const result = await client.upsert(req.params.name, upsertPayload);
+      const pointsDelta = Array.isArray(body.points) ? body.points.length : 0;
+      if (pointsDelta > 0) {
+        await adjustWorkspaceQdrantUsage(workspaceId, { pointsCount: pointsDelta });
+      }
 
       res.status(202).json(result);
     } catch (error) {
@@ -13145,6 +13174,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         wait: true,
         points,
       });
+      const pointsDelta = Array.isArray(points) ? points.length : 0;
+      if (pointsDelta > 0) {
+        await adjustWorkspaceQdrantUsage(workspaceId, { pointsCount: pointsDelta });
+      }
 
       const totalUsageTokens = embeddingResults.reduce((sum, result) => {
         return sum + (result.usageTokens ?? 0);

@@ -788,6 +788,100 @@ export async function updateWorkspaceQdrantUsage(
   };
 }
 
+export async function adjustWorkspaceQdrantUsage(
+  workspaceId: string,
+  deltas: Partial<Pick<WorkspaceQdrantUsage, "collectionsCount" | "pointsCount" | "storageBytes">>,
+): Promise<WorkspaceQdrantUsage> {
+  const collectionsDelta = Number(deltas.collectionsCount ?? 0);
+  const pointsDelta = Number(deltas.pointsCount ?? 0);
+  const storageDelta = Number(deltas.storageBytes ?? 0);
+
+  if (collectionsDelta === 0 && pointsDelta === 0 && storageDelta === 0) {
+    const [row] = await db
+      .select({
+        workspaceId: workspaces.id,
+        collectionsCount: workspaces.qdrantCollectionsCount,
+        pointsCount: workspaces.qdrantPointsCount,
+        storageBytes: workspaces.qdrantStorageBytes,
+      })
+      .from(workspaces)
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1);
+
+    if (!row) {
+      throw new Error(`Workspace ${workspaceId} not found`);
+    }
+
+    return {
+      workspaceId: row.workspaceId,
+      collectionsCount: Number(row.collectionsCount ?? 0),
+      pointsCount: Number(row.pointsCount ?? 0),
+      storageBytes: Number(row.storageBytes ?? 0),
+    };
+  }
+
+  const updates: Partial<typeof workspaces> = {};
+
+  if (collectionsDelta !== 0) {
+    updates.qdrantCollectionsCount = sql`GREATEST(0, ${workspaces.qdrantCollectionsCount} + ${collectionsDelta})`;
+  }
+  if (pointsDelta !== 0) {
+    updates.qdrantPointsCount = sql`GREATEST(0, ${workspaces.qdrantPointsCount} + ${pointsDelta})`;
+  }
+  if (storageDelta !== 0) {
+    updates.qdrantStorageBytes = sql`GREATEST(0, ${workspaces.qdrantStorageBytes} + ${storageDelta})`;
+  }
+
+  const [updated] = await db
+    .update(workspaces)
+    .set({
+      ...updates,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(eq(workspaces.id, workspaceId))
+    .returning({
+      workspaceId: workspaces.id,
+      collectionsCount: workspaces.qdrantCollectionsCount,
+      pointsCount: workspaces.qdrantPointsCount,
+      storageBytes: workspaces.qdrantStorageBytes,
+    });
+
+  if (!updated) {
+    throw new Error(`Failed to adjust Qdrant usage for workspace ${workspaceId}`);
+  }
+
+  return {
+    workspaceId: updated.workspaceId,
+    collectionsCount: Number(updated.collectionsCount ?? 0),
+    pointsCount: Number(updated.pointsCount ?? 0),
+    storageBytes: Number(updated.storageBytes ?? 0),
+  };
+}
+
+export async function getWorkspaceQdrantUsage(workspaceId: string): Promise<WorkspaceQdrantUsage> {
+  const [row] = await db
+    .select({
+      workspaceId: workspaces.id,
+      collectionsCount: workspaces.qdrantCollectionsCount,
+      pointsCount: workspaces.qdrantPointsCount,
+      storageBytes: workspaces.qdrantStorageBytes,
+    })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId))
+    .limit(1);
+
+  if (!row) {
+    throw new Error(`Workspace ${workspaceId} not found`);
+  }
+
+  return {
+    workspaceId: row.workspaceId,
+    collectionsCount: Number(row.collectionsCount ?? 0),
+    pointsCount: Number(row.pointsCount ?? 0),
+    storageBytes: Number(row.storageBytes ?? 0),
+  };
+}
+
 type AsrUsageRecord = {
   workspaceId: string;
   asrJobId: string;

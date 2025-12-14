@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import bcrypt from "bcryptjs";
 import { storage } from "../server/storage";
 import { workspaces } from "@shared/schema";
-import { updateWorkspaceQdrantUsage } from "../server/usage/usage-service";
+import { adjustWorkspaceQdrantUsage, updateWorkspaceQdrantUsage } from "../server/usage/usage-service";
 
 async function createUser(email: string) {
   const passwordHash = await bcrypt.hash("Password123!", 10);
@@ -78,5 +78,25 @@ describe("workspace qdrant usage (persistent)", () => {
     expect(updated.collectionsCount).toBe(0);
     expect(updated.pointsCount).toBe(0);
     expect(updated.storageBytes).toBe(0);
+  });
+
+  it("applies delta updates with clamp", async () => {
+    const afterAdjust = await adjustWorkspaceQdrantUsage(workspaceId, {
+      collectionsCount: 2,
+      pointsCount: 5,
+      storageBytes: 100,
+    });
+    expect(afterAdjust.collectionsCount).toBeGreaterThanOrEqual(2);
+    expect(afterAdjust.pointsCount).toBeGreaterThanOrEqual(5);
+    expect(afterAdjust.storageBytes).toBeGreaterThanOrEqual(100);
+
+    const afterNegative = await adjustWorkspaceQdrantUsage(workspaceId, {
+      collectionsCount: -1000,
+      pointsCount: -10_000,
+      storageBytes: -50_000,
+    });
+    expect(afterNegative.collectionsCount).toBe(0);
+    expect(afterNegative.pointsCount).toBe(0);
+    expect(afterNegative.storageBytes).toBe(0);
   });
 });
