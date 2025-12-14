@@ -668,6 +668,13 @@ export type WorkspaceStorageUsageSummary = {
   storageBytes: number;
 };
 
+export type WorkspaceQdrantUsage = {
+  workspaceId: string;
+  collectionsCount: number;
+  pointsCount: number;
+  storageBytes: number;
+};
+
 export type WorkspaceObjectsUsageSummary = {
   workspaceId: string;
   period: UsagePeriod & { start: string; end: string };
@@ -739,6 +746,45 @@ export async function getWorkspaceObjectsUsageSummary(
     actionsCount: Number((counters as any).actionsCount ?? 0),
     knowledgeBasesCount: Number(counters.knowledgeBasesCount ?? 0),
     membersCount: Number(counters.membersCount ?? 0),
+  };
+}
+
+export async function updateWorkspaceQdrantUsage(
+  workspaceId: string,
+  values: Partial<Pick<WorkspaceQdrantUsage, "collectionsCount" | "pointsCount" | "storageBytes">>,
+): Promise<WorkspaceQdrantUsage> {
+  const normalized: WorkspaceQdrantUsage = {
+    workspaceId,
+    collectionsCount: Math.max(0, Number(values.collectionsCount ?? 0)),
+    pointsCount: Math.max(0, Number(values.pointsCount ?? 0)),
+    storageBytes: Math.max(0, Number(values.storageBytes ?? 0)),
+  };
+
+  const [updated] = await db
+    .update(workspaces)
+    .set({
+      qdrantCollectionsCount: normalized.collectionsCount,
+      qdrantPointsCount: normalized.pointsCount,
+      qdrantStorageBytes: normalized.storageBytes,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(eq(workspaces.id, workspaceId))
+    .returning({
+      workspaceId: workspaces.id,
+      collectionsCount: workspaces.qdrantCollectionsCount,
+      pointsCount: workspaces.qdrantPointsCount,
+      storageBytes: workspaces.qdrantStorageBytes,
+    });
+
+  if (!updated) {
+    throw new Error(`Failed to update Qdrant usage for workspace ${workspaceId}`);
+  }
+
+  return {
+    workspaceId: updated.workspaceId,
+    collectionsCount: Number(updated.collectionsCount ?? 0),
+    pointsCount: Number(updated.pointsCount ?? 0),
+    storageBytes: Number(updated.storageBytes ?? 0),
   };
 }
 

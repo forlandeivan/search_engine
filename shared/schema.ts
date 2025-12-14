@@ -122,6 +122,9 @@ export const workspaces = pgTable("workspaces", {
   iconUrl: text("icon_url"),
   iconKey: varchar("icon_key", { length: 255 }),
   storageBucket: varchar("storage_bucket", { length: 255 }),
+  qdrantCollectionsCount: integer("qdrant_collections_count").notNull().default(0),
+  qdrantPointsCount: bigint("qdrant_points_count", { mode: "bigint" }).notNull().default(0),
+  qdrantStorageBytes: bigint("qdrant_storage_bytes", { mode: "bigint" }).notNull().default(0),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
