@@ -122,6 +122,8 @@ import {
   adjustWorkspaceQdrantUsage,
   getWorkspaceQdrantUsage,
 } from "./usage/usage-service";
+import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
+import { OperationBlockedError } from "./guards/errors";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
@@ -11042,6 +11044,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const body = upsertPointsSchema.parse(req.body);
       const client = getQdrantClient();
 
+      const expectedPoints = Array.isArray(body.points) ? body.points.length : 0;
+      const decision = workspaceOperationGuard.check({
+        workspaceId,
+        operationType: "EMBEDDINGS",
+        expectedCost: expectedPoints > 0 ? { kind: "objects", value: expectedPoints } : undefined,
+        meta: { collection: req.params.name },
+      });
+      if (!decision.allowed) {
+        throw new OperationBlockedError(decision);
+      }
+
       const upsertPayload: Parameters<QdrantClient["upsert"]>[1] = {
         wait: body.wait,
         ordering: body.ordering,
@@ -11068,6 +11081,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           error: "Некорректные данные точек",
           details: error.errors,
         });
+      }
+      if (error instanceof OperationBlockedError) {
+        return res.status(error.status).json(error.toJSON());
       }
 
       const qdrantError = extractQdrantApiError(error);
