@@ -675,6 +675,22 @@ export type WorkspaceQdrantUsage = {
   storageBytes: number;
 };
 
+export type UsageSnapshot = {
+  workspaceId: string;
+  periodCode: string;
+  llmTokensTotal: number;
+  embeddingsTokensTotal: number;
+  asrMinutesTotal: number;
+  storageBytesTotal: number;
+  skillsCount: number;
+  actionsCount: number;
+  knowledgeBasesCount: number;
+  membersCount: number;
+  qdrantCollectionsCount: number;
+  qdrantPointsCount: number;
+  qdrantStorageBytes: number;
+};
+
 export type WorkspaceObjectsUsageSummary = {
   workspaceId: string;
   period: UsagePeriod & { start: string; end: string };
@@ -879,6 +895,37 @@ export async function getWorkspaceQdrantUsage(workspaceId: string): Promise<Work
     collectionsCount: Number(row.collectionsCount ?? 0),
     pointsCount: Number(row.pointsCount ?? 0),
     storageBytes: Number(row.storageBytes ?? 0),
+  };
+}
+
+export async function getWorkspaceUsageSnapshot(workspaceId: string): Promise<UsageSnapshot> {
+  const period = getUsagePeriodForDate();
+  const usage = await ensureWorkspaceUsage(workspaceId, period);
+
+  const [workspaceRow] = await db
+    .select({
+      qdrantCollectionsCount: workspaces.qdrantCollectionsCount,
+      qdrantPointsCount: workspaces.qdrantPointsCount,
+      qdrantStorageBytes: workspaces.qdrantStorageBytes,
+    })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId))
+    .limit(1);
+
+  return {
+    workspaceId,
+    periodCode: period.periodCode,
+    llmTokensTotal: Number(usage.llmTokensTotal ?? 0),
+    embeddingsTokensTotal: Number(usage.embeddingsTokensTotal ?? 0),
+    asrMinutesTotal: Number(usage.asrMinutesTotal ?? 0),
+    storageBytesTotal: Number(usage.storageBytesTotal ?? 0),
+    skillsCount: Number(usage.skillsCount ?? 0),
+    actionsCount: Number((usage as any).actionsCount ?? 0),
+    knowledgeBasesCount: Number(usage.knowledgeBasesCount ?? 0),
+    membersCount: Number(usage.membersCount ?? 0),
+    qdrantCollectionsCount: Number(workspaceRow?.qdrantCollectionsCount ?? 0),
+    qdrantPointsCount: Number(workspaceRow?.qdrantPointsCount ?? 0),
+    qdrantStorageBytes: Number(workspaceRow?.qdrantStorageBytes ?? 0),
   };
 }
 

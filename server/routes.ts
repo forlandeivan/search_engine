@@ -124,6 +124,7 @@ import {
 } from "./usage/usage-service";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError } from "./guards/errors";
+import { buildEmbeddingsOperationContext, buildStorageUploadOperationContext, buildLlmOperationContext } from "./guards/helpers";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
@@ -6650,11 +6651,27 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(400).json({ message: "file is required" });
         }
 
+        const storageDecision = await workspaceOperationGuard.check(
+          buildStorageUploadOperationContext({
+            workspaceId,
+            fileName: req.file.originalname,
+            mimeType: req.file.mimetype,
+            category: "icon",
+            sizeBytes: req.file.size,
+          }),
+        );
+        if (!storageDecision.allowed) {
+          throw new OperationBlockedError(storageDecision);
+        }
+
         const result = await uploadWorkspaceIcon(workspaceId, req.file);
         res.json({ iconUrl: result.iconUrl, iconKey: result.iconKey });
       } catch (error) {
         if (error instanceof WorkspaceIconError) {
           return res.status(error.status ?? 400).json({ message: error.message });
+        }
+        if (error instanceof OperationBlockedError) {
+          return res.status(error.status).json(error.toJSON());
         }
         next(error);
       }
@@ -9049,6 +9066,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       if (error instanceof ChatServiceError) {
         return res.status(error.status).json({ message: error.message });
       }
+      if (error instanceof OperationBlockedError) {
+        return res.status(error.status).json(error.toJSON());
+      }
       if (error instanceof HttpError) {
         return res.status(error.status).json({ message: error.message });
       }
@@ -9479,6 +9499,19 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         messageCount: context.messages.length,
         promptLength: totalPromptChars,
       };
+
+      const llmGuardDecision = await workspaceOperationGuard.check(
+        buildLlmOperationContext({
+          workspaceId,
+          providerId: context.provider.id ?? context.provider.providerType ?? "unknown",
+          model: context.model ?? context.provider.model ?? null,
+          scenario: context.skillConfig ? "skill" : "chat",
+          tokens: context.requestConfig.maxTokens,
+        }),
+      );
+      if (!llmGuardDecision.allowed) {
+        throw new OperationBlockedError(llmGuardDecision);
+      }
 
       await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.RUNNING, { input: llmCallInput });
       let llmCallCompleted = false;
@@ -11045,12 +11078,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const client = getQdrantClient();
 
       const expectedPoints = Array.isArray(body.points) ? body.points.length : 0;
-      const decision = workspaceOperationGuard.check({
-        workspaceId,
-        operationType: "EMBEDDINGS",
-        expectedCost: expectedPoints > 0 ? { kind: "objects", value: expectedPoints } : undefined,
-        meta: { collection: req.params.name },
-      });
+      const decision = await workspaceOperationGuard.check(
+        buildEmbeddingsOperationContext({
+          workspaceId,
+          providerId: null,
+          model: null,
+          scenario: "document_vectorization",
+          objects: expectedPoints > 0 ? expectedPoints : undefined,
+          collection: req.params.name,
+        }),
+      );
       if (!decision.allowed) {
         throw new OperationBlockedError(decision);
       }

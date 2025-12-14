@@ -6,7 +6,7 @@ import { OperationBlockedError } from "../server/guards/errors";
 
 describe("workspace operation guard integration", () => {
   it("blocks upsert points when guard denies", async () => {
-    const checkSpy = vi.spyOn(workspaceOperationGuard, "check").mockReturnValue({
+    const checkSpy = vi.spyOn(workspaceOperationGuard, "check").mockResolvedValue({
       allowed: false,
       reasonCode: "TEST_DENY",
       resourceType: "objects",
@@ -17,6 +17,7 @@ describe("workspace operation guard integration", () => {
 
     const response = await supertest(app)
       .post("/api/vector/collections/test-collection/points")
+      .set("x-workspace-id", "ws-test")
       .send({ points: [] });
 
     expect(response.status).toBe(429);
