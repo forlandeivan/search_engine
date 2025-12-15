@@ -23,12 +23,50 @@ export type BlockReasonCode =
 
 export type ResourceType = "tokens" | "embeddings" | "asr" | "storage" | "objects" | "other";
 
+export const LIMIT_KEYS = [
+  "TOKEN_LLM",
+  "TOKEN_EMBEDDINGS",
+  "ASR_MINUTES",
+  "STORAGE_BYTES",
+  "OBJECT_SKILLS",
+  "OBJECT_KNOWLEDGE_BASES",
+  "OBJECT_ACTIONS",
+  "OBJECT_MEMBERS",
+  "QDRANT_BYTES",
+] as const;
+
+export type LimitKey = (typeof LIMIT_KEYS)[number];
+
 export type ExpectedCost = {
   tokens?: number;
   bytes?: number;
   seconds?: number;
   objects?: number;
   custom?: { label: string; value: number };
+};
+
+export type LimitRule = {
+  limitKey: LimitKey;
+  resourceType: ResourceType;
+  unit: "tokens" | "bytes" | "minutes" | "count";
+  limitValue: number | null; // null => unlimited
+  scope: "workspace";
+  appliesTo?: {
+    operationType?: OperationType;
+    scenario?: string;
+    provider?: string;
+    model?: string;
+  };
+  upgradeAvailable?: boolean;
+};
+
+export type LimitCheckResult = {
+  exceeded: boolean;
+  current: number;
+  predicted: number;
+  limit: number | null;
+  limitKey: LimitKey;
+  unit: LimitRule["unit"];
 };
 
 export type OperationContext = {
@@ -72,6 +110,7 @@ export type GuardDecision = {
   resourceType: ResourceType | null;
   message: string;
   upgradeAvailable: boolean;
+  limitsHint?: { current?: number; limit?: number | null; unit?: string; limitKey?: LimitKey };
   debug?: Record<string, unknown> | null;
 };
 
@@ -82,7 +121,17 @@ export type OperationBlockedPayload = {
   upgradeAvailable: boolean;
   operationType?: OperationType;
   workspaceId?: string;
-  limitsHint?: { current?: number; limit?: number; unit?: string };
+  limitsHint?: { current?: number; limit?: number | null; unit?: string };
   meta?: Record<string, unknown>;
   correlationId?: string;
 };
+
+export type LimitRulesProvider = {
+  getRules: (workspaceId: string, context: OperationContext) => Promise<LimitRule[]>;
+};
+
+export type UsageSnapshotProvider<Snapshot = unknown> = {
+  getSnapshot: (workspaceId: string) => Promise<Snapshot>;
+};
+
+export type GuardBlockingMode = "DISABLED" | "SOFT" | "HARD";

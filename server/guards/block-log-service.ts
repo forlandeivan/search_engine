@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { guardBlockEvents, workspaces, type GuardBlockEvent } from "@shared/schema";
-import type { GuardDecision, OperationContext, UsageSnapshot } from "./types";
+import type { GuardDecision, OperationContext } from "./types";
+import type { UsageSnapshot } from "./usage-snapshot-provider";
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { mapDecisionToPayload } from "./errors";
 
@@ -15,12 +16,17 @@ export type BlockLogFilters = {
   offset?: number;
 };
 
+type BlockLogOptions = {
+  requestId?: string | null;
+  actor?: { actorType?: string | null; actorId?: string | null };
+  isSoft?: boolean;
+};
+
 export async function logGuardBlockEvent(
   decision: GuardDecision,
   context?: Partial<OperationContext>,
   snapshot?: UsageSnapshot | null,
-  requestId?: string | null,
-  actor?: { actorType?: string | null; actorId?: string | null },
+  options?: BlockLogOptions,
 ): Promise<GuardBlockEvent | null> {
   const payload = mapDecisionToPayload(decision, context);
   const workspaceId = context?.workspaceId;
@@ -43,9 +49,11 @@ export async function logGuardBlockEvent(
         expectedCost: context?.expectedCost ? (context.expectedCost as any) : null,
         usageSnapshot: snapshot ? (snapshot as any) : null,
         meta: context?.meta ? (context.meta as any) : null,
-        requestId: requestId ?? (context && "correlationId" in context ? (context as any).correlationId : null),
-        actorType: actor?.actorType ?? null,
-        actorId: actor?.actorId ?? null,
+        requestId:
+          options?.requestId ?? (context && "correlationId" in context ? (context as any).correlationId : null),
+        actorType: options?.actor?.actorType ?? null,
+        actorId: options?.actor?.actorId ?? null,
+        isSoft: Boolean(options?.isSoft),
       })
       .returning();
     return row ?? null;

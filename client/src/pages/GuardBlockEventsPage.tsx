@@ -27,6 +27,7 @@ type GuardBlockEventRow = {
   requestId?: string | null;
   actorType?: string | null;
   actorId?: string | null;
+  isSoft?: boolean;
   createdAt: string;
 };
 
@@ -291,6 +292,7 @@ export default function GuardBlockEventsPage() {
                       <TableHead>Operation</TableHead>
                       <TableHead>Resource</TableHead>
                       <TableHead>Reason</TableHead>
+                      <TableHead>Mode</TableHead>
                       <TableHead>Message</TableHead>
                       <TableHead>Upgrade</TableHead>
                       <TableHead />
@@ -324,6 +326,17 @@ export default function GuardBlockEventsPage() {
                           <Badge variant="destructive" className="font-mono text-xs">
                             {event.reasonCode}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {event.isSoft ? (
+                            <Badge variant="secondary" className="text-xs">
+                              SOFT
+                            </Badge>
+                          ) : (
+                            <Badge variant="destructive" className="text-xs">
+                              HARD
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell className="max-w-[260px]">
                           <span className="line-clamp-2 text-sm">{event.message}</span>
@@ -413,9 +426,13 @@ export default function GuardBlockEventsPage() {
                   <p className="text-muted-foreground">Upgrade</p>
                   <p>{selected.upgradeAvailable ? "Возможен" : "Нет"}</p>
                 </div>
-                <div className="col-span-2">
+                <div>
                   <p className="text-muted-foreground">Сообщение</p>
                   <p>{selected.message}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Режим</p>
+                  <p className="text-xs font-mono">{selected.isSoft ? "SOFT (would block)" : "HARD"}</p>
                 </div>
               </div>
 

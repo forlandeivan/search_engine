@@ -29,6 +29,14 @@ export function mapDecisionToPayload(
     resourceType: decision.resourceType ? normalizeResource(decision.resourceType) : "other",
     message: decision.message,
     upgradeAvailable: decision.upgradeAvailable ?? false,
+    limitsHint:
+      decision.limitsHint && (decision.limitsHint.current !== undefined || decision.limitsHint.limit !== undefined)
+        ? {
+            current: decision.limitsHint.current,
+            limit: decision.limitsHint.limit === null ? null : decision.limitsHint.limit ?? undefined,
+            unit: decision.limitsHint.unit,
+          }
+        : undefined,
     operationType: context?.operationType,
     workspaceId: context?.workspaceId,
     meta: context?.meta as Record<string, unknown> | undefined,

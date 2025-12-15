@@ -1,26 +1,35 @@
-import { OPERATION_TYPES, type GuardDecision, type OperationContext } from "./types";
-import { getWorkspaceUsageSnapshot } from "../usage/usage-service";
+import {
+  OPERATION_TYPES,
+  type GuardBlockingMode,
+  type GuardDecision,
+  type OperationContext,
+} from "./types";
 import { logGuardBlockEvent } from "./block-log-service";
+import { defaultLimitRulesProvider } from "./limit-rules-provider";
+import { defaultUsageSnapshotProvider } from "./usage-snapshot-provider";
+import { limitEvaluator } from "./limit-evaluator";
 
-const ALLOWED_DECISION: GuardDecision = {
-  allowed: true,
-  reasonCode: "ALLOWED",
-  resourceType: null,
-  message: "Operation allowed",
-  upgradeAvailable: false,
-  debug: null,
+const resolveBlockingMode = (): GuardBlockingMode => {
+  const raw = (process.env.GUARD_BLOCKING_MODE || "").toUpperCase().trim();
+  if (raw === "HARD" || raw === "SOFT" || raw === "DISABLED") {
+    return raw;
+  }
+  return "DISABLED";
 };
 
 export class WorkspaceOperationGuard {
+  private readonly rulesProvider = defaultLimitRulesProvider;
+  private readonly usageProvider = defaultUsageSnapshotProvider;
+  private readonly evaluator = limitEvaluator;
+  private readonly blockingMode: GuardBlockingMode = resolveBlockingMode();
+
   async check(context: OperationContext): Promise<GuardDecision> {
-    // simple allow-all guard; extend with real rules later
     const { workspaceId, operationType, expectedCost } = context;
     const isKnownOperation = OPERATION_TYPES.includes(operationType);
-    const decision = { ...ALLOWED_DECISION };
 
     let snapshot: unknown = null;
     try {
-      snapshot = await getWorkspaceUsageSnapshot(workspaceId);
+      snapshot = await this.usageProvider.getSnapshot(workspaceId);
     } catch (error) {
       console.warn(
         `[guard] failed to fetch usage snapshot for workspace ${workspaceId}:`,
@@ -28,30 +37,75 @@ export class WorkspaceOperationGuard {
       );
     }
 
+    let rules: unknown = [];
+    try {
+      rules = await this.rulesProvider.getRules(workspaceId, context);
+    } catch (error) {
+      console.warn(
+        `[guard] failed to fetch limit rules for workspace ${workspaceId}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      rules = [];
+    }
+
+    const evaluated = this.evaluator.evaluate({
+      context,
+      snapshot: (snapshot as any) ?? null,
+      rules: (rules as any) ?? [],
+    });
+
     const logPayload = {
       workspaceId,
       operationType,
       expectedCost: expectedCost ?? null,
-      allowed: decision.allowed,
-      reasonCode: decision.reasonCode,
+      allowed: evaluated.allowed,
+      reasonCode: evaluated.reasonCode,
       knownOperationType: isKnownOperation,
       usageSnapshot: snapshot,
+      rulesCount: Array.isArray(rules) ? rules.length : 0,
+      blockingMode: this.blockingMode,
     };
 
     // use console.debug to avoid noise in production logs
     console.debug("[guard] workspace operation decision", logPayload);
 
-    decision.debug = {
-      operationType,
-      expectedCost: expectedCost ?? null,
-      usageSnapshot: snapshot,
+    let finalDecision: GuardDecision = {
+      ...evaluated,
+      debug: {
+        ...(evaluated.debug ?? {}),
+        operationType,
+        expectedCost: expectedCost ?? null,
+        usageSnapshot: snapshot,
+        rulesCount: Array.isArray(rules) ? rules.length : 0,
+        blockingMode: this.blockingMode,
+      },
     };
 
-    if (!decision.allowed) {
-      await logGuardBlockEvent(decision, context, snapshot as any);
+    if (this.blockingMode === "DISABLED") {
+      finalDecision = {
+        ...finalDecision,
+        allowed: true,
+        reasonCode: "ALLOWED",
+        resourceType: evaluated.resourceType,
+        message: "Guard blocking disabled (mode=DISABLED)",
+      };
+    } else if (this.blockingMode === "SOFT" && !evaluated.allowed) {
+      await logGuardBlockEvent(evaluated, context, snapshot as any, { isSoft: true });
+      finalDecision = {
+        ...finalDecision,
+        allowed: true,
+        reasonCode: "ALLOWED",
+        message: "Guard in SOFT mode — operation allowed (would block)",
+        debug: {
+          ...(finalDecision.debug ?? {}),
+          softBlocked: true,
+        },
+      };
+    } else if (this.blockingMode === "HARD" && !evaluated.allowed) {
+      await logGuardBlockEvent(evaluated, context, snapshot as any, { isSoft: false });
     }
 
-    return decision;
+    return finalDecision;
   }
 }
 

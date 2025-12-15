@@ -81,16 +81,19 @@ describe("guard block log service", () => {
       membersCount: 1,
     };
 
-    const logged = await logGuardBlockEvent(decision, context, snapshot as any, "req-guard-log", {
-      actorType: "user",
-      actorId: userId,
-    });
+    const logged = await logGuardBlockEvent(
+      decision,
+      context,
+      snapshot as any,
+      { requestId: "req-guard-log", actor: { actorType: "user", actorId: userId }, isSoft: false },
+    );
 
     expect(logged?.workspaceId).toBe(workspaceId);
     expect(logged?.reasonCode).toBe(decision.reasonCode);
     expect(logged?.resourceType).toBe(decision.resourceType);
     expect(logged?.upgradeAvailable).toBe(true);
     expect(logged?.expectedCost).toMatchObject({ tokens: 256 });
+    expect(logged?.isSoft).toBe(false);
 
     const payload = mapDecisionToPayload(decision, context);
     const error = new OperationBlockedError(payload);
@@ -104,5 +107,24 @@ describe("guard block log service", () => {
     const found = items.find((item) => item.id === logged?.id);
     expect(found?.workspaceName).toContain("Guard");
     expect(found?.operationType).toBe(context.operationType);
+  });
+
+  it("marks soft events when provided", async () => {
+    const decision = {
+      allowed: false,
+      reasonCode: "USAGE_LIMIT_REACHED",
+      resourceType: "storage" as const,
+      message: "would block soft",
+      upgradeAvailable: false,
+    };
+
+    const context: OperationContext = {
+      workspaceId,
+      operationType: "STORAGE_UPLOAD",
+      expectedCost: { bytes: 1024 },
+    };
+
+    const logged = await logGuardBlockEvent(decision, context, null as any, { isSoft: true });
+    expect(logged?.isSoft).toBe(true);
   });
 });
