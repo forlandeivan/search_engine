@@ -79,6 +79,7 @@ import { isPgError, swallowPgError } from "./pg-utils";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
+import { tariffPlanService } from "./tariff-plan-service";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import type {
   KnowledgeBaseAskAiRunDetail,
@@ -5593,6 +5594,11 @@ export class DatabaseStorage implements IStorage {
   async ensurePersonalWorkspace(user: User): Promise<Workspace> {
     await ensureWorkspaceMembersTable();
 
+    const freePlan = await tariffPlanService.getPlanByCode("FREE");
+    if (!freePlan) {
+      throw new Error("[workspaces] Тариф FREE не найден. Запустите seed тарифов перед созданием рабочих пространств.");
+    }
+
     const existing = await this.db
       .select({ workspace: workspaces })
       .from(workspaceMembers)
@@ -5632,6 +5638,7 @@ export class DatabaseStorage implements IStorage {
         name: workspaceName,
         ownerId: user.id,
         plan: "free",
+        tariffPlanId: freePlan.id,
       })
       .returning();
 
