@@ -127,6 +127,8 @@ import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { listGuardBlockEvents } from "./guards/block-log-service";
 import { buildEmbeddingsOperationContext, buildStorageUploadOperationContext, buildLlmOperationContext } from "./guards/helpers";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
+import { tariffPlanService } from "./tariff-plan-service";
+import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
   applyTlsPreferences,
@@ -7519,6 +7521,99 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       console.error("[admin/guard-blocks] list failed", error);
       res.status(500).json({ message: "Internal server error" });
     }
+  });
+
+  app.get("/api/admin/billing/info", requireAdmin, async (_req, res) => {
+    res.json({ ok: true, tariffsEnabled: true });
+  });
+
+  app.get("/api/admin/tariffs", requireAdmin, async (_req, res) => {
+    const plans = await tariffPlanService.getAllPlans();
+    res.json({
+      tariffs: plans.map((p) => ({
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        description: p.description,
+        isActive: p.isActive,
+      })),
+    });
+  });
+
+  app.get("/api/admin/tariffs/:planId", requireAdmin, async (req, res) => {
+    const { planId } = req.params;
+    const plan = await tariffPlanService.getPlanWithLimitsById(planId);
+    if (!plan) {
+      return res.status(404).json({ message: "Tariff plan not found" });
+    }
+
+    res.json({
+      plan: {
+        id: plan.id,
+        code: plan.code,
+        name: plan.name,
+        description: plan.description,
+        isActive: plan.isActive,
+      },
+      limits: Object.entries(plan.limits).map(([limitKey, value]) => ({
+        limitKey,
+        unit: value.unit,
+        limitValue: value.value,
+        isEnabled: value.isEnabled,
+      })),
+    });
+  });
+
+  app.put("/api/admin/tariffs/:planId/limits", requireAdmin, async (req, res) => {
+    try {
+      const { planId } = req.params;
+      const limitsInput = Array.isArray(req.body?.limits) ? req.body.limits : [];
+      if (!planId) {
+        return res.status(400).json({ message: "planId is required" });
+      }
+      if (!Array.isArray(limitsInput) || limitsInput.length === 0) {
+        return res.status(400).json({ message: "limits must be a non-empty array" });
+      }
+
+      const normalized = limitsInput.map((item) => {
+        const limitKey = typeof item.limitKey === "string" ? item.limitKey : "";
+        if (!limitKey.trim()) {
+          throw new Error("limitKey is required");
+        }
+        const limitValue =
+          item.limitValue === null || item.limitValue === undefined ? null : Number(item.limitValue);
+        return {
+          limitKey,
+          unit: typeof item.unit === "string" ? item.unit : undefined,
+          limitValue,
+          isEnabled: item.isEnabled !== undefined ? Boolean(item.isEnabled) : undefined,
+        };
+      });
+
+      const updated = await tariffPlanService.upsertPlanLimits(planId, normalized);
+      res.json({
+        plan: {
+          id: updated.id,
+          code: updated.code,
+          name: updated.name,
+          description: updated.description,
+          isActive: updated.isActive,
+        },
+        limits: Object.entries(updated.limits).map(([limitKey, value]) => ({
+          limitKey,
+          unit: value.unit,
+          limitValue: value.value,
+          isEnabled: value.isEnabled,
+        })),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update limits";
+      return res.status(400).json({ message });
+    }
+  });
+
+  app.get("/api/admin/tariff-limit-catalog", requireAdmin, async (_req, res) => {
+    res.json({ catalog: TARIFF_LIMIT_CATALOG });
   });
 
   app.get("/api/admin/system-notifications/logs", requireAdmin, async (req, res) => {

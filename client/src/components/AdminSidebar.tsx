@@ -30,6 +30,7 @@ import {
   Mic,
   Mail,
   ShieldAlert,
+  CreditCard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -128,6 +129,10 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
     {
       label: "Guard и лимиты",
       items: [{ title: "Журнал блокировок", url: "/admin/guard-blocks", icon: ShieldAlert }],
+    },
+    {
+      label: "Биллинг",
+      items: [{ title: "Биллинг", url: "/admin/billing", icon: CreditCard }],
     },
     {
       label: "Аутентификация",

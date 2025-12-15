@@ -20,6 +20,7 @@ import AsrExecutionsPage from "@/pages/AsrExecutionsPage";
 import TtsSttProvidersPage from "@/pages/TtsSttProvidersPage";
 import SpeechProviderDetailsPage from "@/pages/SpeechProviderDetailsPage";
 import AuthSettingsPage from "@/pages/AuthSettingsPage";
+import AdminBillingPage from "@/pages/AdminBillingPage";
 import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import DashboardPage from "@/pages/DashboardPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
@@ -65,6 +66,7 @@ function AdminRouter() {
         {(params) => <SpeechProviderDetailsPage providerId={params.providerId} />}
       </Route>
       <Route path="/admin/tts-stt" component={TtsSttProvidersPage} />
+      <Route path="/admin/billing" component={AdminBillingPage} />
       <Route path="/admin/settings/smtp" component={SmtpSettingsPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />

@@ -1,10 +1,10 @@
 import { db } from "./db";
 import { tariffLimits, tariffPlans, type TariffLimit, type TariffPlan } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { LIMIT_KEYS, type LimitKey } from "./guards/types";
+import { LIMIT_KEYS } from "./guards/types";
 
 export type TariffPlanLimitsMap = Record<
-  LimitKey,
+  string,
   {
     unit: string;
     value: number | null;
@@ -13,17 +13,48 @@ export type TariffPlanLimitsMap = Record<
 >;
 
 export type TariffPlanWithLimits = TariffPlan & { limits: TariffPlanLimitsMap };
+export type TariffLimitInput = {
+  limitKey: string;
+  unit?: string | null;
+  limitValue: number | null;
+  isEnabled?: boolean;
+};
 
 function normalizeCode(code: string): string {
   return code.trim().toUpperCase();
 }
 
-const LIMIT_KEY_SET = new Set<LimitKey>(LIMIT_KEYS);
+const LIMIT_KEY_SET = new Set<string>(LIMIT_KEYS);
+const ALLOWED_UNITS = new Set(["tokens", "bytes", "minutes", "count"]);
 
-function normalizeLimitKey(limitKey: string): LimitKey | null {
+function defaultUnitForKey(limitKey: string): string {
+  switch (limitKey) {
+    case "TOKEN_LLM":
+    case "TOKEN_EMBEDDINGS":
+      return "tokens";
+    case "ASR_MINUTES":
+      return "minutes";
+    case "STORAGE_BYTES":
+    case "QDRANT_BYTES":
+      return "bytes";
+    default:
+      return "count";
+  }
+}
+
+function normalizeLimitKey(limitKey: string): string | null {
   const upper = limitKey.trim().toUpperCase();
-  if (LIMIT_KEY_SET.has(upper as LimitKey)) {
-    return upper as LimitKey;
+  if (upper.length === 0 || upper.length > 64) {
+    console.warn("[tariff-plan-service] limit_key length invalid, skipping", limitKey);
+    return null;
+  }
+  if (!/^[A-Z0-9_]+$/.test(upper)) {
+    console.warn("[tariff-plan-service] limit_key format invalid, skipping", limitKey);
+    return null;
+  }
+
+  if (LIMIT_KEY_SET.has(upper)) {
+    return upper;
   }
   console.warn("[tariff-plan-service] unknown limit_key, skipping", limitKey);
   return null;
@@ -44,9 +75,47 @@ function buildLimitsMap(limits: TariffLimit[]): TariffPlanLimitsMap {
 }
 
 export class TariffPlanService {
+  private resolveLimitKey(raw: string): string {
+    const normalized = raw.trim().toUpperCase();
+    if (!/^[A-Z0-9_]{1,64}$/.test(normalized)) {
+      throw new Error(`Invalid limitKey format: ${raw}`);
+    }
+    return normalized;
+  }
+
+  private resolveUnit(input: string | null | undefined, existingUnit?: string): string {
+    const unit = input ?? existingUnit ?? null;
+    const resolved = unit ?? undefined;
+    const fallback = unit ?? existingUnit ?? null;
+    const value = resolved ?? fallback ?? undefined;
+
+    if (value && ALLOWED_UNITS.has(value)) {
+      return value;
+    }
+
+    if (!value) {
+      return "count";
+    }
+
+    throw new Error(`Invalid unit: ${value}`);
+  }
+
+  private normalizeLimitValue(value: number | null): number | null {
+    if (value === null) return null;
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error("limitValue must be a non-negative number or null");
+    }
+    return value;
+  }
+
   async getPlanByCode(code: string): Promise<TariffPlan | null> {
     const normalized = normalizeCode(code);
     const [plan] = await db.select().from(tariffPlans).where(eq(tariffPlans.code, normalized)).limit(1);
+    return plan ?? null;
+  }
+
+  async getPlanById(id: string): Promise<TariffPlan | null> {
+    const [plan] = await db.select().from(tariffPlans).where(eq(tariffPlans.id, id)).limit(1);
     return plan ?? null;
   }
 
@@ -69,6 +138,74 @@ export class TariffPlanService {
       ...plan,
       limits: buildLimitsMap(limits),
     };
+  }
+
+  async getPlanWithLimitsById(planId: string): Promise<TariffPlanWithLimits | null> {
+    const plan = await this.getPlanById(planId);
+    if (!plan) return null;
+    const limits = await this.getPlanLimits(plan.id);
+    return {
+      ...plan,
+      limits: buildLimitsMap(limits),
+    };
+  }
+
+  async upsertPlanLimits(planId: string, limits: TariffLimitInput[], actorId?: string | null): Promise<TariffPlanWithLimits> {
+    const plan = await this.getPlanById(planId);
+    if (!plan) {
+      throw new Error("Tariff plan not found");
+    }
+
+    const now = new Date();
+
+    await db.transaction(async (tx) => {
+      const existing = await tx.select().from(tariffLimits).where(eq(tariffLimits.planId, planId));
+      const existingMap = new Map(existing.map((l) => [l.limitKey, l]));
+
+      for (const input of limits) {
+        const normalizedKey = this.resolveLimitKey(input.limitKey);
+        const previous = existingMap.get(normalizedKey);
+
+        const unit = this.resolveUnit(input.unit ?? null, previous?.unit ?? defaultUnitForKey(normalizedKey));
+        const limitValue = this.normalizeLimitValue(input.limitValue);
+        const isEnabled = input.isEnabled ?? previous?.isEnabled ?? true;
+
+        await tx
+          .insert(tariffLimits)
+          .values({
+            planId,
+            limitKey: normalizedKey,
+            unit,
+            limitValue,
+            isEnabled,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [tariffLimits.planId, tariffLimits.limitKey],
+            set: {
+              unit,
+              limitValue,
+              isEnabled,
+              updatedAt: now,
+            },
+          });
+
+        console.info("[tariff-plan-service] limit upsert", {
+          planId,
+          limitKey: normalizedKey,
+          unit,
+          limitValue,
+          isEnabled,
+          actorId: actorId ?? null,
+        });
+      }
+    });
+
+    const updated = await this.getPlanWithLimitsById(planId);
+    if (!updated) {
+      throw new Error("Failed to reload plan after update");
+    }
+    return updated;
   }
 }
 
