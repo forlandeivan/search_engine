@@ -1814,3 +1814,39 @@ export const guardBlockEvents = pgTable(
 
 export type GuardBlockEvent = typeof guardBlockEvents.$inferSelect;
 export type GuardBlockEventInsert = typeof guardBlockEvents.$inferInsert;
+
+export const tariffPlans = pgTable("tariff_plans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const tariffLimits = pgTable(
+  "tariff_limits",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    planId: varchar("plan_id")
+      .notNull()
+      .references(() => tariffPlans.id, { onDelete: "cascade" }),
+    limitKey: text("limit_key").notNull(),
+    unit: text("unit").notNull(),
+    limitValue: doublePrecision("limit_value"),
+    isEnabled: boolean("is_enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    planIdx: index("tariff_limits_plan_idx").on(table.planId),
+    planKeyIdx: index("tariff_limits_plan_key_idx").on(table.planId, table.limitKey),
+    planKeyUnique: uniqueIndex("tariff_limits_plan_key_unique").on(table.planId, table.limitKey),
+  }),
+);
+
+export type TariffPlan = typeof tariffPlans.$inferSelect;
+export type TariffPlanInsert = typeof tariffPlans.$inferInsert;
+export type TariffLimit = typeof tariffLimits.$inferSelect;
+export type TariffLimitInsert = typeof tariffLimits.$inferInsert;
