@@ -7127,6 +7127,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           usersCount: workspace.usersCount,
           managerFullName: workspace.managerFullName,
           createdAt: workspace.createdAt,
+          tariffPlanId: workspace.tariffPlanId,
+          tariffPlanCode: workspace.tariffPlanCode,
+          tariffPlanName: workspace.tariffPlanName,
         })),
       });
     } catch (error) {

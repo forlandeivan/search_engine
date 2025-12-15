@@ -19,6 +19,7 @@ import {
   workspaceEmbedKeyDomains,
   knowledgeBaseRagRequests,
   knowledgeBaseSearchSettings,
+  tariffPlans,
   knowledgeBaseAskAiRuns,
   unicaChatConfig,
   chatSessions,
@@ -661,6 +662,9 @@ export interface WorkspaceAdminSummary {
   createdAt: Date;
   usersCount: number;
   managerFullName: string | null;
+  tariffPlanId: string | null;
+  tariffPlanCode: string | null;
+  tariffPlanName: string | null;
 }
 
 export type KnowledgeBaseAskAiRunRecordInput = {
@@ -5813,10 +5817,14 @@ export class DatabaseStorage implements IStorage {
         name: workspaces.name,
         createdAt: workspaces.createdAt,
         usersCount: sql<number>`COUNT(${workspaceMembers.userId})`,
+        tariffPlanId: workspaces.tariffPlanId,
+        tariffPlanCode: tariffPlans.code,
+        tariffPlanName: tariffPlans.name,
       })
       .from(workspaces)
       .leftJoin(workspaceMembers, eq(workspaceMembers.workspaceId, workspaces.id))
-      .groupBy(workspaces.id)
+      .leftJoin(tariffPlans, eq(tariffPlans.id, workspaces.tariffPlanId))
+      .groupBy(workspaces.id, tariffPlans.id)
       .orderBy(desc(workspaces.createdAt));
 
     type WorkspaceRow = (typeof workspaceRows)[number];
@@ -5854,6 +5862,9 @@ export class DatabaseStorage implements IStorage {
         createdAt: row.createdAt,
         usersCount: Number(row.usersCount ?? 0),
         managerFullName: manager?.fullName ?? null,
+        tariffPlanId: row.tariffPlanId ?? null,
+        tariffPlanCode: row.tariffPlanCode ?? null,
+        tariffPlanName: row.tariffPlanName ?? null,
       };
     });
   }
