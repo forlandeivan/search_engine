@@ -7638,6 +7638,19 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  app.get("/api/workspaces/:workspaceId/plan", requireAuth, async (req, res) => {
+    const { workspaceId } = req.params;
+    const user = getSessionUser(req);
+    const memberships = getRequestWorkspaceMemberships(req);
+    const isAdmin = user?.role === "admin";
+    const isMember = memberships.some((m) => m.id === workspaceId);
+    if (!isAdmin && !isMember) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
+    res.json({ plan: { id: plan.id, code: plan.code, name: plan.name, description: plan.description } });
+  });
+
   app.get("/api/admin/system-notifications/logs", requireAdmin, async (req, res) => {
     try {
       const page = Math.max(1, Number(req.query.page) || 1);
