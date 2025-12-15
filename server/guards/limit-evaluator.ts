@@ -100,19 +100,16 @@ function getDelta(limitKey: LimitKey, expectedCost?: ExpectedCost | null): numbe
   }
 }
 
-function buildDecisionForLimit(
-  rule: LimitRule,
-  result: LimitCheckResult,
-  resourceType: ResourceType,
-): GuardDecision {
+function buildDecisionForLimit(rule: LimitRule, result: LimitCheckResult, resourceType: ResourceType): GuardDecision {
+  const attempted = result.predicted;
   return {
     allowed: false,
     reasonCode: "USAGE_LIMIT_REACHED",
     resourceType,
-    message: `Превышен лимит ${rule.limitKey.toLowerCase()}: ${result.current} / ${rule.limitValue}`,
+    message: `Превышен лимит ${rule.limitKey.toLowerCase()}: ${attempted} / ${rule.limitValue}`,
     upgradeAvailable: rule.upgradeAvailable ?? false,
     limitsHint: {
-      current: result.predicted,
+      current: attempted,
       limit: rule.limitValue,
       unit: rule.unit,
       limitKey: rule.limitKey,
@@ -120,7 +117,7 @@ function buildDecisionForLimit(
     debug: {
       limitKey: rule.limitKey,
       rule,
-      check: result,
+      check: { ...result, attempted },
     },
   };
 }
@@ -139,7 +136,7 @@ export class LimitEvaluator {
       const predicted = current + delta;
 
       const check: LimitCheckResult = {
-        exceeded: predicted > rule.limitValue,
+        exceeded: predicted >= rule.limitValue,
         current,
         predicted,
         limit: rule.limitValue,

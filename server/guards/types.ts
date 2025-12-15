@@ -119,9 +119,10 @@ export type OperationBlockedPayload = {
   resourceType: ResourceType;
   message: string;
   upgradeAvailable: boolean;
+  limitKey?: LimitKey;
   operationType?: OperationType;
   workspaceId?: string;
-  limitsHint?: { current?: number; limit?: number | null; unit?: string };
+  limitsHint?: { current?: number; limit?: number | null; unit?: string; limitKey?: LimitKey };
   meta?: Record<string, unknown>;
   correlationId?: string;
 };

@@ -5,7 +5,7 @@ import {
   type OperationContext,
 } from "./types";
 import { logGuardBlockEvent } from "./block-log-service";
-import { defaultLimitRulesProvider } from "./limit-rules-provider";
+import { tariffLimitRulesProvider } from "./limit-rules-provider";
 import { defaultUsageSnapshotProvider } from "./usage-snapshot-provider";
 import { limitEvaluator } from "./limit-evaluator";
 
@@ -14,11 +14,11 @@ const resolveBlockingMode = (): GuardBlockingMode => {
   if (raw === "HARD" || raw === "SOFT" || raw === "DISABLED") {
     return raw;
   }
-  return "DISABLED";
+  return "HARD";
 };
 
 export class WorkspaceOperationGuard {
-  private readonly rulesProvider = defaultLimitRulesProvider;
+  private readonly rulesProvider = tariffLimitRulesProvider;
   private readonly usageProvider = defaultUsageSnapshotProvider;
   private readonly evaluator = limitEvaluator;
   private readonly blockingMode: GuardBlockingMode = resolveBlockingMode();
