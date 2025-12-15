@@ -129,6 +129,7 @@ import { buildEmbeddingsOperationContext, buildStorageUploadOperationContext, bu
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
+import { workspacePlanService } from "./workspace-plan-service";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
   applyTlsPreferences,
@@ -7614,6 +7615,27 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   app.get("/api/admin/tariff-limit-catalog", requireAdmin, async (_req, res) => {
     res.json({ catalog: TARIFF_LIMIT_CATALOG });
+  });
+
+  app.get("/api/admin/workspaces/:workspaceId/plan", requireAdmin, async (req, res) => {
+    const { workspaceId } = req.params;
+    const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
+    res.json({ plan: { id: plan.id, code: plan.code, name: plan.name, description: plan.description } });
+  });
+
+  app.put("/api/admin/workspaces/:workspaceId/plan", requireAdmin, async (req, res) => {
+    try {
+      const { workspaceId } = req.params;
+      const planCode = typeof req.body?.planCode === "string" ? req.body.planCode.trim().toUpperCase() : "";
+      if (!workspaceId || !planCode) {
+        return res.status(400).json({ message: "workspaceId and planCode are required" });
+      }
+      const plan = await workspacePlanService.updateWorkspacePlan(workspaceId, planCode);
+      res.json({ plan: { id: plan.id, code: plan.code, name: plan.name, description: plan.description } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update workspace plan";
+      return res.status(400).json({ message });
+    }
   });
 
   app.get("/api/admin/system-notifications/logs", requireAdmin, async (req, res) => {

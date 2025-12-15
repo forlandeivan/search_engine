@@ -115,6 +115,8 @@ export const workspaces = pgTable("workspaces", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   plan: workspacePlanEnum("plan").$type<WorkspacePlan>().notNull().default("free"),
+  tariffPlanId: varchar("tariff_plan_id")
+    .references(() => tariffPlans.id),
   settings: jsonb("settings")
     .$type<Record<string, unknown>>()
     .notNull()
