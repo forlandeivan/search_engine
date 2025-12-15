@@ -1,5 +1,6 @@
 import { OPERATION_TYPES, type GuardDecision, type OperationContext } from "./types";
 import { getWorkspaceUsageSnapshot } from "../usage/usage-service";
+import { logGuardBlockEvent } from "./block-log-service";
 
 const ALLOWED_DECISION: GuardDecision = {
   allowed: true,
@@ -45,6 +46,10 @@ export class WorkspaceOperationGuard {
       expectedCost: expectedCost ?? null,
       usageSnapshot: snapshot,
     };
+
+    if (!decision.allowed) {
+      await logGuardBlockEvent(decision, context, snapshot as any);
+    }
 
     return decision;
   }

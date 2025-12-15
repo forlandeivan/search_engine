@@ -24,6 +24,7 @@ import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import DashboardPage from "@/pages/DashboardPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import AdminWorkspacesPage from "@/pages/AdminWorkspacesPage";
+import GuardBlockEventsPage from "@/pages/GuardBlockEventsPage";
 import SkillsPage from "@/pages/SkillsPage";
 import ChatPage from "@/pages/ChatPage";
 import NotFound from "@/pages/not-found";
@@ -59,6 +60,7 @@ function AdminRouter() {
         <AsrExecutionsPage />
       </Route>
       <Route path="/admin/llm" component={LlmProvidersPage} />
+      <Route path="/admin/guard-blocks" component={GuardBlockEventsPage} />
       <Route path="/admin/tts-stt/providers/:providerId">
         {(params) => <SpeechProviderDetailsPage providerId={params.providerId} />}
       </Route>

@@ -1,0 +1,112 @@
+import { db } from "../db";
+import { guardBlockEvents, workspaces, type GuardBlockEvent } from "@shared/schema";
+import type { GuardDecision, OperationContext, UsageSnapshot } from "./types";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { mapDecisionToPayload } from "./errors";
+
+export type BlockLogFilters = {
+  workspaceId?: string;
+  operationType?: string;
+  resourceType?: string;
+  reasonCode?: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+  limit?: number;
+  offset?: number;
+};
+
+export async function logGuardBlockEvent(
+  decision: GuardDecision,
+  context?: Partial<OperationContext>,
+  snapshot?: UsageSnapshot | null,
+  requestId?: string | null,
+  actor?: { actorType?: string | null; actorId?: string | null },
+): Promise<GuardBlockEvent | null> {
+  const payload = mapDecisionToPayload(decision, context);
+  const workspaceId = context?.workspaceId;
+  const operationType = context?.operationType;
+  if (!workspaceId || !operationType) {
+    console.error("[guard-block-log] cannot persist block event without workspace/operation type");
+    return null;
+  }
+
+  try {
+    const [row] = await db
+      .insert(guardBlockEvents)
+      .values({
+        workspaceId,
+        operationType,
+        resourceType: payload.resourceType ?? "other",
+        reasonCode: payload.reasonCode,
+        message: payload.message,
+        upgradeAvailable: payload.upgradeAvailable ?? false,
+        expectedCost: context?.expectedCost ? (context.expectedCost as any) : null,
+        usageSnapshot: snapshot ? (snapshot as any) : null,
+        meta: context?.meta ? (context.meta as any) : null,
+        requestId: requestId ?? (context && "correlationId" in context ? (context as any).correlationId : null),
+        actorType: actor?.actorType ?? null,
+        actorId: actor?.actorId ?? null,
+      })
+      .returning();
+    return row ?? null;
+  } catch (error) {
+    console.error("[guard-block-log] failed to persist block event:", error);
+    return null;
+  }
+}
+
+export type GuardBlockEventWithWorkspace = GuardBlockEvent & { workspaceName: string | null };
+
+export async function listGuardBlockEvents(
+  filters: BlockLogFilters,
+): Promise<{ items: GuardBlockEventWithWorkspace[]; total: number }> {
+  const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+  const offset = Math.max(filters.offset ?? 0, 0);
+
+  const conditions = [];
+  if (filters.workspaceId) {
+    conditions.push(eq(guardBlockEvents.workspaceId, filters.workspaceId));
+  }
+  if (filters.operationType) {
+    conditions.push(eq(guardBlockEvents.operationType, filters.operationType));
+  }
+  if (filters.resourceType) {
+    conditions.push(eq(guardBlockEvents.resourceType, filters.resourceType));
+  }
+  if (filters.reasonCode) {
+    conditions.push(eq(guardBlockEvents.reasonCode, filters.reasonCode));
+  }
+  if (filters.dateFrom) {
+    conditions.push(gte(guardBlockEvents.createdAt, filters.dateFrom));
+  }
+  if (filters.dateTo) {
+    conditions.push(lte(guardBlockEvents.createdAt, filters.dateTo));
+  }
+
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const [rows, countRows] = await Promise.all([
+    db
+      .select({
+        event: guardBlockEvents,
+        workspaceName: workspaces.name,
+      })
+      .from(guardBlockEvents)
+      .leftJoin(workspaces, eq(workspaces.id, guardBlockEvents.workspaceId))
+      .where(where)
+      .orderBy(desc(guardBlockEvents.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(guardBlockEvents)
+      .where(where),
+  ]);
+
+  const total = Number(countRows[0]?.count ?? 0);
+  const items: GuardBlockEventWithWorkspace[] = rows.map((row) => ({
+    ...row.event,
+    workspaceName: row.workspaceName ?? null,
+  }));
+  return { items, total };
+}

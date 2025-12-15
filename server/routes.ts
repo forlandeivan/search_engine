@@ -124,6 +124,7 @@ import {
 } from "./usage/usage-service";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
+import { listGuardBlockEvents } from "./guards/block-log-service";
 import { buildEmbeddingsOperationContext, buildStorageUploadOperationContext, buildLlmOperationContext } from "./guards/helpers";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
@@ -7460,6 +7461,63 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     } catch (error) {
       next(error);
+    }
+  });
+
+  app.get("/api/admin/guard-blocks", requireAdmin, async (req, res) => {
+    try {
+      const parseDate = (value: unknown) => {
+        if (typeof value !== "string" || !value.trim()) return undefined;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+      };
+
+      const limitRaw = Number(req.query.limit ?? 50);
+      const offsetRaw = Number(req.query.offset ?? 0);
+      const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 50, 1), 200);
+      const offset = Math.max(Number.isFinite(offsetRaw) ? offsetRaw : 0, 0);
+
+      const workspaceId =
+        typeof req.query.workspaceId === "string" && req.query.workspaceId.trim().length > 0
+          ? req.query.workspaceId.trim()
+          : undefined;
+      const operationType =
+        typeof req.query.operationType === "string" && req.query.operationType.trim().length > 0
+          ? req.query.operationType.trim()
+          : undefined;
+      const resourceType =
+        typeof req.query.resourceType === "string" && req.query.resourceType.trim().length > 0
+          ? req.query.resourceType.trim()
+          : undefined;
+      const reasonCode =
+        typeof req.query.reasonCode === "string" && req.query.reasonCode.trim().length > 0
+          ? req.query.reasonCode.trim()
+          : undefined;
+
+      const dateFrom = parseDate(req.query.dateFrom);
+      const dateTo = parseDate(req.query.dateTo);
+      if (req.query.dateFrom && !dateFrom) {
+        return res.status(400).json({ message: "Invalid dateFrom" });
+      }
+      if (req.query.dateTo && !dateTo) {
+        return res.status(400).json({ message: "Invalid dateTo" });
+      }
+
+      const { items, total } = await listGuardBlockEvents({
+        workspaceId,
+        operationType,
+        resourceType,
+        reasonCode,
+        dateFrom,
+        dateTo,
+        limit,
+        offset,
+      });
+
+      res.json({ items, totalCount: total, limit, offset });
+    } catch (error) {
+      console.error("[admin/guard-blocks] list failed", error);
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 

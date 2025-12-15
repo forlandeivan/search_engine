@@ -1784,3 +1784,32 @@ export type Action = typeof actions.$inferSelect;
 export type ActionInsert = typeof actions.$inferInsert;
 export type SkillAction = typeof skillActions.$inferSelect;
 export type SkillActionInsert = typeof skillActions.$inferInsert;
+
+export const guardBlockEvents = pgTable(
+  "guard_block_events",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    operationType: text("operation_type").notNull(),
+    resourceType: text("resource_type").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    message: text("message").notNull(),
+    upgradeAvailable: boolean("upgrade_available").notNull().default(false),
+    expectedCost: jsonb("expected_cost"),
+    usageSnapshot: jsonb("usage_snapshot"),
+    meta: jsonb("meta"),
+    requestId: text("request_id"),
+    actorType: text("actor_type"),
+    actorId: text("actor_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    workspaceIdx: index("guard_block_events_workspace_idx").on(table.workspaceId, table.createdAt),
+    createdIdx: index("guard_block_events_created_idx").on(table.createdAt),
+  }),
+);
+
+export type GuardBlockEvent = typeof guardBlockEvents.$inferSelect;
+export type GuardBlockEventInsert = typeof guardBlockEvents.$inferInsert;

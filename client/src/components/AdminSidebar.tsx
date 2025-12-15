@@ -29,6 +29,7 @@ import {
   ScrollText,
   Mic,
   Mail,
+  ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -122,7 +123,11 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
       items: [
         { title: "Провайдеры LLM", url: "/admin/llm", icon: Bot },
         { title: "Журнал запусков LLM", url: "/admin/llm-executions", icon: ScrollText },
-      ]
+      ],
+    },
+    {
+      label: "Guard и лимиты",
+      items: [{ title: "Журнал блокировок", url: "/admin/guard-blocks", icon: ShieldAlert }],
     },
     {
       label: "Аутентификация",
@@ -236,4 +241,3 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
     </Sidebar>
   );
 }
-
