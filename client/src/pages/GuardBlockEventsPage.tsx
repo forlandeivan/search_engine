@@ -174,7 +174,7 @@ export default function GuardBlockEventsPage() {
                   <SelectValue placeholder="Все пространства" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Все пространства</SelectItem>
+                  <SelectItem value="all">Все пространства</SelectItem>
                   {workspaces.map((ws) => (
                     <SelectItem key={ws.id} value={ws.id}>
                       {ws.name ?? ws.id}
