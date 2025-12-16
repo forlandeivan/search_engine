@@ -4604,7 +4604,10 @@ export class DatabaseStorage implements IStorage {
   async getLlmProvider(id: string, workspaceId?: string): Promise<LlmProvider | undefined> {
     await ensureLlmProvidersTable();
     const condition = workspaceId
-      ? and(eq(llmProviders.id, id), eq(llmProviders.workspaceId, workspaceId))
+      ? and(
+          eq(llmProviders.id, id),
+          or(eq(llmProviders.workspaceId, workspaceId), eq(llmProviders.isGlobal, true)),
+        )
       : eq(llmProviders.id, id);
     const [provider] = await this.db.select().from(llmProviders).where(condition);
     return provider ?? undefined;
