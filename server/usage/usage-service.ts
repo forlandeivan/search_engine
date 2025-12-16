@@ -5,6 +5,7 @@ import {
   workspaceLlmUsageLedger,
   workspaceEmbeddingUsageLedger,
   workspaceAsrUsageLedger,
+  workspaces,
   type WorkspaceUsageMonth,
   type WorkspaceUsageMonthInsert,
 } from "@shared/schema";
