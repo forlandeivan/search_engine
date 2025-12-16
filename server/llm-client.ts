@@ -345,8 +345,16 @@ async function executeAitunnelCompletion(
           fallbackAnswer = (message as Record<string, unknown>).content as string;
         }
         const usage = (parsed as Record<string, unknown>).usage;
-        if (usage && typeof usage === "object" && typeof (usage as Record<string, unknown>).total_tokens === "number") {
-          usageTokens = (usage as Record<string, unknown>).total_tokens as number;
+        if (usage && typeof usage === "object") {
+          const total = (usage as Record<string, unknown>).total_tokens;
+          if (typeof total === "number" && Number.isFinite(total)) {
+            usageTokens = total as number;
+          } else if (typeof total === "string" && total.trim().length > 0) {
+            const parsedTotal = Number.parseFloat(total);
+            if (!Number.isNaN(parsedTotal)) {
+              usageTokens = parsedTotal;
+            }
+          }
         }
         if (!fallbackAnswer && typeof (parsed as Record<string, unknown>).message === "string") {
           fallbackAnswer = (parsed as Record<string, unknown>).message as string;
@@ -419,8 +427,14 @@ async function executeAitunnelCompletion(
           if (choice?.finish_reason) {
             finishReason = choice.finish_reason;
           }
-          if (json.usage && typeof json.usage.total_tokens === "number") {
-            usageTokens = json.usage.total_tokens;
+          const totalTokens = json.usage?.total_tokens as unknown;
+          if (typeof totalTokens === "number" && Number.isFinite(totalTokens)) {
+            usageTokens = totalTokens;
+          } else if (typeof totalTokens === "string" && totalTokens.trim().length > 0) {
+            const parsedTotal = Number.parseFloat(totalTokens);
+            if (!Number.isNaN(parsedTotal)) {
+              usageTokens = parsedTotal;
+            }
           }
         } catch {
           // fallback: push raw text
@@ -663,20 +677,20 @@ export function executeLlmCompletion(
       throw new Error(message);
     }
 
-    if (wantsStream) {
-      const contentType = completionResponse.headers.get("Content-Type") ?? "";
-
+    if (wantsStream) {
+      const contentType = completionResponse.headers.get("Content-Type") ?? "";
+
       if (!contentType.toLowerCase().includes("text/event-stream")) {
         streamController?.fail(new Error("LLM не вернул поток событий"));
         throw new Error("LLM не вернул поток событий");
       }
-
-      const responseBody = completionResponse.body;
+
+      const responseBody = completionResponse.body;
       if (!responseBody) {
         streamController?.fail(new Error("Не удалось получить поток LLM"));
         throw new Error("Не удалось получить поток LLM");
       }
-
+
       const decoder = new TextDecoder();
       let buffer = "";
       let aggregatedAnswer = "";
@@ -773,23 +787,23 @@ export function executeLlmCompletion(
         buffer += decoder.decode(chunkValue, { stream: true });
         flushBuffer();
       };
-
-      try {
+
+      try {
         console.info(`[llm] provider=${provider.id} SSE stream started`);
-        const bodyAny = responseBody as unknown as {
-          getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
-          [Symbol.asyncIterator]?: () => AsyncIterator<Uint8Array | Buffer>;
-        };
-
-        if (typeof bodyAny?.getReader === "function") {
-          const reader = bodyAny.getReader();
-          while (true) {
-            const chunk = await reader.read();
-            if (chunk.done) {
-              break;
-            }
-            processChunk(chunk.value);
-          }
+        const bodyAny = responseBody as unknown as {
+          getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
+          [Symbol.asyncIterator]?: () => AsyncIterator<Uint8Array | Buffer>;
+        };
+
+        if (typeof bodyAny?.getReader === "function") {
+          const reader = bodyAny.getReader();
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) {
+              break;
+            }
+            processChunk(chunk.value);
+          }
         } else if (typeof bodyAny?.[Symbol.asyncIterator] === "function") {
           for await (const chunk of (responseBody as unknown as AsyncIterable<Uint8Array | Buffer>)) {
             processChunk(chunk);
@@ -802,26 +816,26 @@ export function executeLlmCompletion(
         const errorMessage = error instanceof Error ? error.message : String(error);
         throw new Error(`Ошибка чтения SSE от LLM: ${errorMessage}`);
       }
-
+
       if (!aggregatedAnswer) {
         streamController?.finish();
         throw new Error("LLM не вернул ответ");
       }
-
-      streamController?.finish();
+
+      streamController?.finish();
       console.info(`[llm] provider=${provider.id} SSE stream completed`);
-      return {
-        answer: aggregatedAnswer,
-        usageTokens,
-        rawResponse: rawEvents,
-        request: {
-          url: provider.completionUrl,
-          headers: sanitizeHeadersForLog(llmHeaders),
-          body,
-        },
-      };
-    }
-
+      return {
+        answer: aggregatedAnswer,
+        usageTokens,
+        rawResponse: rawEvents,
+        request: {
+          url: provider.completionUrl,
+          headers: sanitizeHeadersForLog(llmHeaders),
+          body,
+        },
+      };
+    }
+
     const rawBodyText = await completionResponse.text();
     const parsedBody = parseJson(rawBodyText);
 

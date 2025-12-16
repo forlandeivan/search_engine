@@ -327,7 +327,12 @@ async function recordEmbeddingUsageSafe(params: {
   occurredAt?: Date;
 }): Promise<void> {
   if (!params.workspaceId) return;
-  if (params.tokensTotal === null || params.tokensTotal === undefined) return;
+  const tokensTotal =
+    params.tokensTotal ??
+    (params.contentBytes !== null && params.contentBytes !== undefined
+      ? Math.max(1, Math.ceil(params.contentBytes / 4))
+      : null);
+  if (tokensTotal === null || tokensTotal === undefined) return;
 
   try {
     await recordEmbeddingUsageEvent({
@@ -335,7 +340,7 @@ async function recordEmbeddingUsageSafe(params: {
       operationId: params.operationId ?? `embed-${randomUUID()}`,
       provider: params.provider.id ?? params.provider.providerType ?? "unknown",
       model: params.provider.model ?? "unknown",
-      tokensTotal: params.tokensTotal,
+      tokensTotal,
       contentBytes: params.contentBytes,
       occurredAt: params.occurredAt,
     });
