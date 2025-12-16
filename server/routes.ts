@@ -9743,20 +9743,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         try {
           const completion = await completionPromise;
           llmCallCompleted = true;
+          const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
           await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
             output: {
-              usageTokens: completion.usageTokens ?? null,
+              usageTokens: tokensTotal ?? null,
               responsePreview: completion.answer.slice(0, 160),
             },
           });
-          if (executionId && completion.usageTokens !== null && completion.usageTokens !== undefined) {
+          if (executionId && tokensTotal !== null && tokensTotal !== undefined) {
             try {
               await recordLlmUsageEvent({
                 workspaceId,
                 executionId,
                 provider: context.provider.id ?? context.provider.providerType ?? "unknown",
                 model: context.model ?? context.provider.model ?? "unknown",
-                tokensTotal: completion.usageTokens,
+                tokensTotal,
                 occurredAt: new Date(),
               });
             } catch (usageError) {
@@ -9780,7 +9781,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           sendSseEvent(res, "done", {
             assistantMessageId: assistantMessage.id,
             userMessageId: userMessageRecord?.id ?? null,
-            usage: { llmTokens: completion.usageTokens ?? null },
+            usage: { llmTokens: tokensTotal ?? null },
           });
           await safeLogStep("STREAM_TO_CLIENT_FINISH", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
             output: { reason: "completed" },
@@ -9820,20 +9821,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       try {
         completion = await executeLlmCompletion(context.provider, accessToken, requestBody);
         llmCallCompleted = true;
+        const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
         await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
           output: {
-            usageTokens: completion.usageTokens ?? null,
+            usageTokens: tokensTotal ?? null,
             responsePreview: completion.answer.slice(0, 160),
           },
         });
-        if (executionId && completion.usageTokens !== null && completion.usageTokens !== undefined) {
+        if (executionId && tokensTotal !== null && tokensTotal !== undefined) {
           try {
             await recordLlmUsageEvent({
               workspaceId,
               executionId,
               provider: context.provider.id ?? context.provider.providerType ?? "unknown",
               model: context.model ?? context.provider.model ?? "unknown",
-              tokensTotal: completion.usageTokens,
+              tokensTotal,
               occurredAt: new Date(),
             });
           } catch (usageError) {
@@ -9865,7 +9867,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.json({
         message: assistantMessage,
         userMessage: userMessageRecord,
-        usage: { llmTokens: completion.usageTokens ?? null },
+        usage: { llmTokens: completion.usageTokens ?? Math.ceil(completion.answer.length / 4) },
       });
     } catch (error) {
       if (streamingResponseStarted) {

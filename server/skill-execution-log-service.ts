@@ -64,6 +64,7 @@ interface SanitizeOptions {
 }
 
 const SENSITIVE_KEY_PATTERN = /(token|secret|apikey|authorization|password)/i;
+const NON_SENSITIVE_KEYS = new Set(["usageTokens", "usage_tokens", "llmTokens", "tokensUsed"]);
 
 export class SkillExecutionLogService {
   private readonly repository: SkillExecutionLogRepository;
@@ -246,7 +247,7 @@ function sanitizeInternal(value: unknown, options: SanitizeOptions, depth: numbe
     const result: Record<string, JsonValue> = {};
     for (let i = 0; i < Math.min(entries.length, options.maxObjectKeys); i += 1) {
       const [key, entryValue] = entries[i];
-      if (SENSITIVE_KEY_PATTERN.test(key)) {
+      if (!NON_SENSITIVE_KEYS.has(key) && SENSITIVE_KEY_PATTERN.test(key)) {
         result[key] = "***MASKED***";
         continue;
       }
