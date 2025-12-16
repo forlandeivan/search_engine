@@ -11,8 +11,20 @@ import type { UsageSnapshot } from "./usage-snapshot-provider";
 
 type EvaluationInput = {
   context: OperationContext;
-  snapshot: UsageSnapshot;
+  snapshot: UsageSnapshot | null;
   rules: LimitRule[];
+};
+
+const EMPTY_SNAPSHOT: UsageSnapshot = {
+  llmTokensTotal: 0,
+  embeddingsTokensTotal: 0,
+  asrMinutesTotal: 0,
+  storageBytesTotal: 0,
+  skillsCount: 0,
+  actionsCount: 0,
+  knowledgeBasesCount: 0,
+  membersCount: 0,
+  qdrantStorageBytes: 0,
 };
 
 function matchesRule(rule: LimitRule, context: OperationContext): boolean {
@@ -124,6 +136,7 @@ function buildDecisionForLimit(rule: LimitRule, result: LimitCheckResult, resour
 
 export class LimitEvaluator {
   evaluate({ context, snapshot, rules }: EvaluationInput): GuardDecision {
+    const safeSnapshot = snapshot ?? EMPTY_SNAPSHOT;
     const applicable = rules.filter((rule) => matchesRule(rule, context));
 
     for (const rule of applicable) {
@@ -131,7 +144,7 @@ export class LimitEvaluator {
         continue; // unlimited
       }
 
-      const { current, unit } = getCurrentValue(rule.limitKey, snapshot);
+      const { current, unit } = getCurrentValue(rule.limitKey, safeSnapshot);
       const delta = getDelta(rule.limitKey, context.expectedCost);
       const predicted = current + delta;
 
