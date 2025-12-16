@@ -17,54 +17,61 @@ type TariffSeedConfig = {
 const ONE_MB = 1024 * 1024;
 const ONE_GB = ONE_MB * 1024;
 
+const LIMIT_UNITS: Record<LimitKey, TariffSeedConfig["limits"][number]["unit"]> = {
+  TOKEN_LLM: "tokens",
+  TOKEN_EMBEDDINGS: "tokens",
+  ASR_MINUTES: "minutes",
+  STORAGE_BYTES: "bytes",
+  OBJECT_SKILLS: "count",
+  OBJECT_ACTIONS: "count",
+  OBJECT_KNOWLEDGE_BASES: "count",
+  OBJECT_MEMBERS: "count",
+  QDRANT_BYTES: "bytes",
+};
+
+const FREE_LIMIT_VALUES: Record<LimitKey, number | null> = {
+  TOKEN_LLM: 100_000,
+  TOKEN_EMBEDDINGS: 200_000,
+  ASR_MINUTES: 60,
+  STORAGE_BYTES: 1 * ONE_GB,
+  OBJECT_SKILLS: 3,
+  OBJECT_ACTIONS: 20,
+  OBJECT_KNOWLEDGE_BASES: 2,
+  OBJECT_MEMBERS: 1,
+  QDRANT_BYTES: 1 * ONE_GB,
+};
+
+function makeLimits(values: Record<LimitKey, number | null>): TariffSeedConfig["limits"] {
+  return (Object.keys(values) as LimitKey[]).map((key) => ({
+    key,
+    unit: LIMIT_UNITS[key],
+    value: values[key],
+  }));
+}
+
+const ENTERPRISE_LIMIT_VALUES = (Object.keys(FREE_LIMIT_VALUES) as LimitKey[]).reduce(
+  (acc, key) => ({ ...acc, [key]: null }),
+  {} as Record<LimitKey, number | null>,
+);
+
 export const DEFAULT_TARIFFS: TariffSeedConfig[] = [
   {
     code: "FREE",
     name: "Free",
     description: "Базовый бесплатный тариф",
-    limits: [
-      { key: "TOKEN_LLM", unit: "tokens", value: 100_000 },
-      { key: "TOKEN_EMBEDDINGS", unit: "tokens", value: 200_000 },
-      { key: "ASR_MINUTES", unit: "minutes", value: 60 },
-      { key: "STORAGE_BYTES", unit: "bytes", value: ONE_GB },
-      { key: "OBJECT_SKILLS", unit: "count", value: 3 },
-      { key: "OBJECT_ACTIONS", unit: "count", value: 20 },
-      { key: "OBJECT_KNOWLEDGE_BASES", unit: "count", value: 2 },
-      { key: "OBJECT_MEMBERS", unit: "count", value: 1 },
-      { key: "QDRANT_BYTES", unit: "bytes", value: ONE_GB },
-    ],
+    limits: makeLimits(FREE_LIMIT_VALUES),
   },
   {
     code: "PRO",
     name: "Pro",
     description: "Расширенный тариф для активных команд",
-    limits: [
-      { key: "TOKEN_LLM", unit: "tokens", value: 1_000_000 },
-      { key: "TOKEN_EMBEDDINGS", unit: "tokens", value: 2_000_000 },
-      { key: "ASR_MINUTES", unit: "minutes", value: 600 },
-      { key: "STORAGE_BYTES", unit: "bytes", value: 50 * ONE_GB },
-      { key: "OBJECT_SKILLS", unit: "count", value: 50 },
-      { key: "OBJECT_ACTIONS", unit: "count", value: 500 },
-      { key: "OBJECT_KNOWLEDGE_BASES", unit: "count", value: 20 },
-      { key: "OBJECT_MEMBERS", unit: "count", value: 20 },
-      { key: "QDRANT_BYTES", unit: "bytes", value: 50 * ONE_GB },
-    ],
+    limits: makeLimits(FREE_LIMIT_VALUES), // значения настраивает админ; структура совпадает с Free
   },
   {
     code: "ENTERPRISE",
     name: "Enterprise",
     description: "Гибкий корпоративный тариф",
-    limits: [
-      { key: "TOKEN_LLM", unit: "tokens", value: null },
-      { key: "TOKEN_EMBEDDINGS", unit: "tokens", value: null },
-      { key: "ASR_MINUTES", unit: "minutes", value: null },
-      { key: "STORAGE_BYTES", unit: "bytes", value: null },
-      { key: "OBJECT_SKILLS", unit: "count", value: null },
-      { key: "OBJECT_ACTIONS", unit: "count", value: null },
-      { key: "OBJECT_KNOWLEDGE_BASES", unit: "count", value: null },
-      { key: "OBJECT_MEMBERS", unit: "count", value: null },
-      { key: "QDRANT_BYTES", unit: "bytes", value: null },
-    ],
+    limits: makeLimits(ENTERPRISE_LIMIT_VALUES),
   },
 ];
 

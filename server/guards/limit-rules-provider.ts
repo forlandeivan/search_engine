@@ -76,7 +76,6 @@ class TariffLimitRulesProvider implements LimitRulesProvider {
         limitValue: limit?.value ?? null,
         scope: "workspace",
         appliesTo: operationType ? { operationType } : undefined,
-        upgradeAvailable: planWithLimits.code === "FREE",
       });
     }
 
