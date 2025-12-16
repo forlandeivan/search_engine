@@ -4603,14 +4603,26 @@ export class DatabaseStorage implements IStorage {
 
   async getLlmProvider(id: string, workspaceId?: string): Promise<LlmProvider | undefined> {
     await ensureLlmProvidersTable();
-    const condition = workspaceId
-      ? and(
-          eq(llmProviders.id, id),
-          or(eq(llmProviders.workspaceId, workspaceId), eq(llmProviders.isGlobal, true)),
-        )
-      : eq(llmProviders.id, id);
-    const [provider] = await this.db.select().from(llmProviders).where(condition);
-    return provider ?? undefined;
+    const withWorkspace = workspaceId
+      ? await this.db
+          .select()
+          .from(llmProviders)
+          .where(
+            and(
+              eq(llmProviders.id, id),
+              or(eq(llmProviders.workspaceId, workspaceId), eq(llmProviders.isGlobal, true)),
+            ),
+          )
+          .limit(1)
+      : [];
+
+    if (withWorkspace.length > 0) {
+      return withWorkspace[0] ?? undefined;
+    }
+
+    // Fallback: попробуем найти провайдера по id без учёта workspace (например, если id выбран из глобального каталога)
+    const [any] = await this.db.select().from(llmProviders).where(eq(llmProviders.id, id)).limit(1);
+    return any ?? undefined;
   }
 
   async createLlmProvider(provider: LlmProviderInsert): Promise<LlmProvider> {
