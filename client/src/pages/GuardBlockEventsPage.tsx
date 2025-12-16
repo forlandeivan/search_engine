@@ -39,7 +39,7 @@ type GuardBlocksResponse = {
 };
 
 const OPERATION_OPTIONS = [
-  { value: "", label: "Все операции" },
+  { value: "all", label: "Все операции" },
   { value: "LLM_REQUEST", label: "LLM запрос" },
   { value: "EMBEDDINGS", label: "Embeddings" },
   { value: "ASR_TRANSCRIPTION", label: "ASR" },
@@ -51,7 +51,7 @@ const OPERATION_OPTIONS = [
 ];
 
 const RESOURCE_OPTIONS = [
-  { value: "", label: "Все ресурсы" },
+  { value: "all", label: "Все ресурсы" },
   { value: "tokens", label: "Tokens" },
   { value: "embeddings", label: "Embeddings" },
   { value: "asr", label: "ASR" },
@@ -61,7 +61,7 @@ const RESOURCE_OPTIONS = [
 ];
 
 const REASON_OPTIONS = [
-  { value: "", label: "Все причины" },
+  { value: "all", label: "Все причины" },
   { value: "USAGE_LIMIT_REACHED", label: "Лимит исчерпан" },
   { value: "OPERATION_NOT_ALLOWED", label: "Операция запрещена" },
   { value: "PLAN_RESTRICTED", label: "Ограничено планом" },
@@ -102,10 +102,10 @@ function formatJson(value?: Record<string, unknown> | null) {
 
 export default function GuardBlockEventsPage() {
   const { workspaces } = useAdminWorkspaces();
-  const [workspaceId, setWorkspaceId] = useState<string>("");
-  const [operationType, setOperationType] = useState<string>("");
-  const [resourceType, setResourceType] = useState<string>("");
-  const [reasonCode, setReasonCode] = useState<string>("");
+  const [workspaceId, setWorkspaceId] = useState<string>("all");
+  const [operationType, setOperationType] = useState<string>("all");
+  const [resourceType, setResourceType] = useState<string>("all");
+  const [reasonCode, setReasonCode] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
   const [page, setPage] = useState(1);
@@ -116,10 +116,10 @@ export default function GuardBlockEventsPage() {
 
   const filters = useMemo(
     () => ({
-      workspaceId: workspaceId || undefined,
-      operationType: operationType || undefined,
-      resourceType: resourceType || undefined,
-      reasonCode: reasonCode || undefined,
+      workspaceId: workspaceId === "all" ? undefined : workspaceId,
+      operationType: operationType === "all" ? undefined : operationType,
+      resourceType: resourceType === "all" ? undefined : resourceType,
+      reasonCode: reasonCode === "all" ? undefined : reasonCode,
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
       limit,
@@ -132,10 +132,10 @@ export default function GuardBlockEventsPage() {
   const totalPages = data ? Math.max(1, Math.ceil(data.totalCount / limit)) : 1;
 
   const resetFilters = () => {
-    setWorkspaceId("");
-    setOperationType("");
-    setResourceType("");
-    setReasonCode("");
+    setWorkspaceId("all");
+    setOperationType("all");
+    setResourceType("all");
+    setReasonCode("all");
     setDateFrom("");
     setDateTo("");
     setPage(1);
