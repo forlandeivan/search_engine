@@ -96,10 +96,10 @@ export class SystemNotificationLogService {
   }
 
   async cleanupOldLogs(retentionDays: number = DEFAULT_RETENTION_DAYS): Promise<number> {
-    const threshold = sql`now() - interval '${retentionDays} days'`;
+    const thresholdDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
     const result = await db
       .delete(systemNotificationLogs)
-      .where(lt(systemNotificationLogs.createdAt, threshold))
+      .where(lt(systemNotificationLogs.createdAt, thresholdDate))
       .returning({ id: systemNotificationLogs.id });
     return result.length;
   }
