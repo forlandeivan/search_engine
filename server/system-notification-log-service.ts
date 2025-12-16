@@ -97,11 +97,13 @@ export class SystemNotificationLogService {
 
   async cleanupOldLogs(retentionDays: number = DEFAULT_RETENTION_DAYS): Promise<number> {
     const thresholdDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-    const result = await db
-      .delete(systemNotificationLogs)
-      .where(lt(systemNotificationLogs.createdAt, thresholdDate))
-      .returning({ id: systemNotificationLogs.id });
-    return result.length;
+    // Для устранения ошибок биндинга в prepared statement (08P01) используем raw-запрос без параметров
+    // Значение рассчитывается в коде и подставляется явно.
+    const thresholdIso = thresholdDate.toISOString();
+    const { rows } = await db.execute<{ id: string }>(
+      sql.raw(`delete from "system_notification_logs" where "created_at" < '${thresholdIso}' returning "id"`),
+    );
+    return rows.length;
   }
 
   async getById(id: string): Promise<SystemNotificationLog | null> {
