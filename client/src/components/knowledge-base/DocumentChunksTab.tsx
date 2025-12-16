@@ -42,7 +42,7 @@ interface DocumentChunksTabProps {
 const COPY_TIMEOUT = 1500;
 const DEFAULT_CHUNK_SIZE = 800;
 const DEFAULT_CHUNK_OVERLAP = 200;
-const MIN_CHUNK_SIZE = 50;
+const MIN_CHUNK_SIZE = 1;
 const MAX_CHUNK_SIZE = 8000;
 const MAX_CHUNK_OVERLAP = 4000;
 

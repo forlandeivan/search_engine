@@ -581,11 +581,11 @@ export function VectorizeKnowledgeDocumentDialog({
   const configMaxTokens = pickPositiveInteger(chunkSetConfig?.maxTokens);
   const configOverlapChars = pickNonNegativeInteger(chunkSetConfig?.overlapChars);
   const configOverlapTokens = pickNonNegativeInteger(chunkSetConfig?.overlapTokens);
-  const vectorizationChunkSize =
-    typeof document.vectorization?.chunkSize === "number" &&
-    Number.isFinite(document.vectorization.chunkSize) &&
-    document.vectorization.chunkSize > 0
-      ? Math.max(50, Math.min(8000, Math.round(document.vectorization.chunkSize)))
+const vectorizationChunkSize =
+  typeof document.vectorization?.chunkSize === "number" &&
+  Number.isFinite(document.vectorization.chunkSize) &&
+  document.vectorization.chunkSize > 0
+      ? Math.max(1, Math.min(8000, Math.round(document.vectorization.chunkSize)))
       : null;
   const vectorizationChunkOverlap =
     typeof document.vectorization?.chunkOverlap === "number" &&
@@ -702,9 +702,9 @@ export function VectorizeKnowledgeDocumentDialog({
   const chunkOverlapNumber = chunkSettingsLocked
     ? defaultChunkOverlap
     : chunkOverlapNumberRaw;
-  const chunkSizeValid =
-    chunkSettingsLocked ||
-    (Number.isFinite(chunkSizeNumberRaw) && chunkSizeNumberRaw >= 50 && chunkSizeNumberRaw <= 8000);
+const chunkSizeValid =
+  chunkSettingsLocked ||
+    (Number.isFinite(chunkSizeNumberRaw) && chunkSizeNumberRaw >= 1 && chunkSizeNumberRaw <= 8000);
   const chunkOverlapValid =
     chunkSettingsLocked ||
     (Number.isFinite(chunkOverlapNumberRaw) &&
