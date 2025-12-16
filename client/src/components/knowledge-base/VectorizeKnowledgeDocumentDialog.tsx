@@ -585,7 +585,7 @@ export function VectorizeKnowledgeDocumentDialog({
     typeof document.vectorization?.chunkSize === "number" &&
     Number.isFinite(document.vectorization.chunkSize) &&
     document.vectorization.chunkSize > 0
-      ? Math.max(200, Math.min(8000, Math.round(document.vectorization.chunkSize)))
+      ? Math.max(50, Math.min(8000, Math.round(document.vectorization.chunkSize)))
       : null;
   const vectorizationChunkOverlap =
     typeof document.vectorization?.chunkOverlap === "number" &&
@@ -704,7 +704,7 @@ export function VectorizeKnowledgeDocumentDialog({
     : chunkOverlapNumberRaw;
   const chunkSizeValid =
     chunkSettingsLocked ||
-    (Number.isFinite(chunkSizeNumberRaw) && chunkSizeNumberRaw >= 200 && chunkSizeNumberRaw <= 8000);
+    (Number.isFinite(chunkSizeNumberRaw) && chunkSizeNumberRaw >= 50 && chunkSizeNumberRaw <= 8000);
   const chunkOverlapValid =
     chunkSettingsLocked ||
     (Number.isFinite(chunkOverlapNumberRaw) &&

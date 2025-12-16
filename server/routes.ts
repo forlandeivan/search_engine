@@ -2815,7 +2815,7 @@ const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
     })
     .optional()
     .nullable(),
-  chunkSize: z.coerce.number().int().min(200).max(8000).default(800),
+  chunkSize: z.coerce.number().int().min(50).max(8000).default(800),
   chunkOverlap: z.coerce.number().int().min(0).max(4000).default(0),
 });
 
