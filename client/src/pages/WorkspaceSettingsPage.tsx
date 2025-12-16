@@ -15,6 +15,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 
 function useWorkspaceInfo(workspaceId?: string | null) {
   return useQuery({
@@ -253,6 +255,25 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const [resetIcon, setResetIcon] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
+  const workspacePlanQuery = useQuery({
+    queryKey: ["workspace-plan", effectiveWorkspaceId],
+    enabled: Boolean(effectiveWorkspaceId),
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/workspaces/${effectiveWorkspaceId}/plan`,
+        undefined,
+        undefined,
+        { workspaceId: effectiveWorkspaceId ?? undefined },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить тариф");
+      }
+      return (await res.json()) as { plan: { id: string; code: string; name: string; description?: string | null } };
+    },
+    staleTime: 60 * 1000,
+  });
   const availablePeriods = useMemo(() => buildPeriods(), []);
   const [selectedPeriod, setSelectedPeriod] = useState<string>(availablePeriods[0]);
   const [usageType, setUsageType] = useState<UsageResourceType>("llm");
@@ -434,7 +455,18 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-6">
       <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Рабочее пространство</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Рабочее пространство</h1>
+          {workspacePlanQuery.isLoading ? (
+            <Skeleton className="h-6 w-28" />
+          ) : workspacePlanQuery.isError ? (
+            <Badge variant="outline">Тариф: неизвестно</Badge>
+          ) : workspacePlanQuery.data?.plan ? (
+            <Badge variant="secondary" className="text-sm font-medium">
+              Тариф: {workspacePlanQuery.data.plan.name || workspacePlanQuery.data.plan.code}
+            </Badge>
+          ) : null}
+        </div>
         <p className="text-sm text-muted-foreground">{workspaceName}</p>
       </div>
 

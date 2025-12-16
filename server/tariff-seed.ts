@@ -2,6 +2,7 @@ import { db } from "./db";
 import { tariffLimits, tariffPlans } from "@shared/schema";
 import { LIMIT_KEYS, type LimitKey } from "./guards/types";
 import { eq } from "drizzle-orm";
+import { fileURLToPath } from "url";
 
 type TariffSeedConfig = {
   code: string;
@@ -121,7 +122,9 @@ export async function seedDefaultTariffs(): Promise<void> {
   }
 }
 
-if (require.main === module) {
+// Allow standalone execution in ESM
+const isDirectRun = process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url);
+if (isDirectRun) {
   seedDefaultTariffs()
     .then(() => {
       console.log("[tariff-seed] completed");
