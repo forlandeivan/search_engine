@@ -4535,7 +4535,10 @@ export class DatabaseStorage implements IStorage {
   async getEmbeddingProvider(id: string, workspaceId?: string): Promise<EmbeddingProvider | undefined> {
     await ensureEmbeddingProvidersTable();
     const condition = workspaceId
-      ? and(eq(embeddingProviders.id, id), eq(embeddingProviders.workspaceId, workspaceId))
+      ? and(
+          eq(embeddingProviders.id, id),
+          or(eq(embeddingProviders.workspaceId, workspaceId), eq(embeddingProviders.isGlobal, true)),
+        )
       : eq(embeddingProviders.id, id);
     const [provider] = await this.db.select().from(embeddingProviders).where(condition);
     return provider ?? undefined;
