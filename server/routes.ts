@@ -13458,6 +13458,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return sum + (result.usageTokens ?? 0);
       }, 0);
 
+      // Записываем потребление эмбеддингов для workspace (с fallback по размеру текста)
+      await recordEmbeddingUsageSafe({
+        workspaceId,
+        provider,
+        tokensTotal: totalUsageTokens > 0 ? totalUsageTokens : null,
+        contentBytes: Buffer.byteLength(documentText, "utf8"),
+        operationId: `kb-vectorize-${vectorDocument.id}`,
+      });
+
       const recordIds = points.map((point) =>
         typeof point.id === "number" ? point.id.toString() : String(point.id),
       );
