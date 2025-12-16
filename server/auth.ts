@@ -657,8 +657,9 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
 function extractWorkspaceId(req: Request): string | null {
   const candidates: Array<unknown> = [
     req.params?.workspaceId,
-    // allow snake_case for params/bodies if present
     (req.params as Record<string, unknown> | undefined)?.workspace_id,
+    req.query?.workspaceId,
+    (req.query as Record<string, unknown> | undefined)?.workspace_id,
     req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>).workspaceId : undefined,
     req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>).workspace_id : undefined,
   ];
@@ -668,6 +669,16 @@ function extractWorkspaceId(req: Request): string | null {
       const trimmed = candidate.trim();
       if (trimmed.length > 0) {
         return trimmed;
+      }
+    }
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) {
+        if (typeof item === "string") {
+          const trimmed = item.trim();
+          if (trimmed.length > 0) {
+            return trimmed;
+          }
+        }
       }
     }
   }
