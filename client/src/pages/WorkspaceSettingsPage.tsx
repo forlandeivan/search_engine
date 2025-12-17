@@ -390,6 +390,14 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["workspace-plan", effectiveWorkspaceId] });
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          ((query.queryKey[0] === "workspace-plan" && query.queryKey[1] === effectiveWorkspaceId) ||
+            (query.queryKey[0] === "workspace-credits" && query.queryKey[1] === effectiveWorkspaceId) ||
+            (query.queryKey[0] === "workspace-usage" && query.queryKey[1] === effectiveWorkspaceId)),
+      });
+      creditsSummaryQuery.refetch();
       toast({ title: "Тариф применён", description: data.plan.name ?? data.plan.code });
     },
     onError: (error: unknown) => {
@@ -418,6 +426,13 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
     selectedPeriod,
   );
   const qdrantUsageQuery = useWorkspaceQdrantUsage(usageType === "qdrant" ? effectiveWorkspaceId : null);
+
+  useEffect(() => {
+    if (tab === "billing") {
+      creditsSummaryQuery.refetch();
+      workspacePlanQuery.refetch();
+    }
+  }, [tab]);
 
   const usageQuery =
     usageType === "llm"
