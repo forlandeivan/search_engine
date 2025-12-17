@@ -107,6 +107,39 @@ export const workspacePlans = ["free", "team"] as const;
 export type WorkspacePlan = (typeof workspacePlans)[number];
 export const workspacePlanEnum = pgEnum("workspace_plan", workspacePlans);
 
+export const modelTypes = ["LLM", "EMBEDDINGS", "ASR"] as const;
+export type ModelType = (typeof modelTypes)[number];
+export const modelTypeEnum = pgEnum("model_type", modelTypes);
+
+export const modelConsumptionUnits = ["TOKENS_1K", "MINUTES"] as const;
+export type ModelConsumptionUnit = (typeof modelConsumptionUnits)[number];
+export const modelConsumptionUnitEnum = pgEnum("model_consumption_unit", modelConsumptionUnits);
+
+export const modelCostLevels = ["FREE", "LOW", "MEDIUM", "HIGH", "VERY_HIGH"] as const;
+export type ModelCostLevel = (typeof modelCostLevels)[number];
+export const modelCostLevelEnum = pgEnum("model_cost_level", modelCostLevels);
+
+export const models = pgTable(
+  "models",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    modelKey: text("model_key").notNull().unique(),
+    displayName: text("display_name").notNull(),
+    description: text("description"),
+    modelType: modelTypeEnum("model_type").notNull(),
+    consumptionUnit: modelConsumptionUnitEnum("consumption_unit").notNull(),
+    costLevel: modelCostLevelEnum("cost_level").notNull().default("MEDIUM"),
+    isActive: boolean("is_active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    typeActiveIdx: index("models_type_active_idx").on(table.modelType, table.isActive, table.sortOrder),
+  }),
+);
+
 // TODO(usage): workspace_usage_month will become the single usage aggregate keyed by workspace_id + period_code (see docs/workspace-usage-foundation.md)
 export const workspaces = pgTable("workspaces", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
