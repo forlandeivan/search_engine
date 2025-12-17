@@ -3,35 +3,11 @@ export type TariffLimitCatalogEntry = {
   title: string;
   description?: string;
   defaultUnit: "tokens" | "bytes" | "minutes" | "count";
-  uiGroup: "Tokens" | "Storage" | "ASR" | "Objects" | "Other";
+  uiGroup: "Storage" | "Objects" | "Other";
   uiOrder: number;
 };
 
 export const TARIFF_LIMIT_CATALOG: TariffLimitCatalogEntry[] = [
-  {
-    limitKey: "TOKEN_LLM",
-    title: "LLM tokens",
-    description: "Суммарные токены LLM (вход + выход)",
-    defaultUnit: "tokens",
-    uiGroup: "Tokens",
-    uiOrder: 1,
-  },
-  {
-    limitKey: "TOKEN_EMBEDDINGS",
-    title: "Embeddings tokens",
-    description: "Токены на векторизацию и запросные embeddings",
-    defaultUnit: "tokens",
-    uiGroup: "Tokens",
-    uiOrder: 2,
-  },
-  {
-    limitKey: "ASR_MINUTES",
-    title: "ASR минуты",
-    description: "Минуты транскрибации аудио/видео",
-    defaultUnit: "minutes",
-    uiGroup: "ASR",
-    uiOrder: 3,
-  },
   {
     limitKey: "STORAGE_BYTES",
     title: "Хранилище",

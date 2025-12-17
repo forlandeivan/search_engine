@@ -34,11 +34,6 @@ const ALLOWED_UNITS = new Set(["tokens", "bytes", "minutes", "count"]);
 
 function defaultUnitForKey(limitKey: string): string {
   switch (limitKey) {
-    case "TOKEN_LLM":
-    case "TOKEN_EMBEDDINGS":
-      return "tokens";
-    case "ASR_MINUTES":
-      return "minutes";
     case "STORAGE_BYTES":
     case "QDRANT_BYTES":
       return "bytes";

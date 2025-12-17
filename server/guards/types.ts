@@ -24,9 +24,6 @@ export type BlockReasonCode =
 export type ResourceType = "tokens" | "embeddings" | "asr" | "storage" | "objects" | "other";
 
 export const LIMIT_KEYS = [
-  "TOKEN_LLM",
-  "TOKEN_EMBEDDINGS",
-  "ASR_MINUTES",
   "STORAGE_BYTES",
   "OBJECT_SKILLS",
   "OBJECT_KNOWLEDGE_BASES",
