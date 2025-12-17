@@ -287,6 +287,11 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
     return active?.name ?? "Рабочее пространство";
   }, [sessionWorkspaceQuery.data]);
 
+  const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
+  const isOwner = sessionWorkspaceQuery.data?.role === ("owner" as WorkspaceMemberRole);
+  const isAdmin = sessionWithUser.data?.user?.role === "admin";
+  const canManageBilling = Boolean(isOwner || isAdmin);
+
   const urlSearchParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
   const initialTab = (urlSearchParams.get("tab") ?? "general") as "general" | "members" | "usage" | "billing";
   const [tab, setTab] = useState<"general" | "members" | "usage" | "billing">(
@@ -323,10 +328,6 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const [iconPreview, setIconPreview] = useState<string | null>(null);
   const [resetIcon, setResetIcon] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
-  const isOwner = sessionWorkspaceQuery.data?.role === ("owner" as WorkspaceMemberRole);
-  const isAdmin = sessionWithUser.data?.user?.role === "admin";
-  const canManageBilling = Boolean(isOwner || isAdmin);
   const workspacePlanQuery = useWorkspacePlan(effectiveWorkspaceId);
   const tariffsCatalogQuery = useTariffsCatalog();
   const applyPlanMutation = useMutation({
