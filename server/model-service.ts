@@ -8,6 +8,7 @@ import {
   type LlmModelOption,
   type LlmProvider,
   type EmbeddingProvider,
+  type SpeechProvider,
 } from "@shared/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { sanitizeLlmModelOptions } from "./llm-utils";
@@ -369,5 +370,31 @@ export async function syncModelsWithEmbeddingProvider(
     modelType: "EMBEDDINGS",
     consumptionUnit: "TOKENS_1K",
     providerIsActive: provider.isActive,
+  });
+}
+
+export async function syncModelsWithSpeechProvider(opts: {
+  provider: Pick<SpeechProvider, "id" | "providerType" | "displayName" | "isEnabled" | "direction">;
+  config?: Record<string, unknown> | null;
+}) {
+  const { provider, config } = opts;
+  if (provider.direction !== "audio_to_text") {
+    return;
+  }
+
+  const configuredModel = typeof config?.model === "string" ? config.model.trim() : "";
+  const modelKey = configuredModel || provider.id;
+  if (!modelKey) return;
+
+  const displayName = configuredModel ? `${provider.displayName} · ${configuredModel}` : provider.displayName;
+
+  await upsertProviderModel({
+    providerId: provider.id,
+    providerType: provider.providerType?.toUpperCase() ?? provider.providerType,
+    modelKey,
+    displayName,
+    modelType: "ASR",
+    consumptionUnit: "MINUTES",
+    providerIsActive: provider.isEnabled,
   });
 }

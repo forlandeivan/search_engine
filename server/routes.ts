@@ -145,6 +145,7 @@ import {
   tryResolveModel,
   syncModelsWithLlmProvider,
   syncModelsWithEmbeddingProvider,
+  syncModelsWithSpeechProvider,
   ModelValidationError,
   ModelUnavailableError,
 } from "./model-service";
@@ -8689,6 +8690,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
 
       const payload = await buildSpeechProviderResponse(updatedDetail);
+      try {
+        await syncModelsWithSpeechProvider({ provider: updatedDetail.provider, config: updatedDetail.config });
+      } catch (syncError) {
+        console.error(
+          `[Models] Не удалось синхронизировать модель речевого провайдера ${updatedDetail.provider.id}`,
+          syncError,
+        );
+      }
       res.json({ provider: payload });
     } catch (error) {
       if (error instanceof SpeechProviderRateLimitError) {

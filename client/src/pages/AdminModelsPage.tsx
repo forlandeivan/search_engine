@@ -43,6 +43,14 @@ import { apiRequest } from "@/lib/queryClient";
 type ModelType = "LLM" | "EMBEDDINGS" | "ASR";
 type ConsumptionUnit = "TOKENS_1K" | "MINUTES";
 type CostLevel = "FREE" | "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH";
+type AdminProviderType = "LLM" | "EMBEDDINGS";
+
+type ProviderOption = {
+  id: string;
+  name: string;
+  kind: AdminProviderType;
+  providerType?: string | null;
+};
 
 type AdminModel = {
   id: string;
@@ -57,6 +65,9 @@ type AdminModel = {
   sortOrder: number;
   createdAt?: string;
   updatedAt?: string;
+  providerId?: string | null;
+  providerType?: string | null;
+  providerModelKey?: string | null;
 };
 
 const modelSchema = z.object({
@@ -106,11 +117,18 @@ const costLevelLabels: Record<CostLevel, string> = {
   VERY_HIGH: "Very high",
 };
 
-function useAdminModels() {
+function useAdminModels(filters: { providerId?: string; providerType?: string } = {}) {
+  const queryParams = new URLSearchParams();
+  if (filters.providerId) queryParams.set("providerId", filters.providerId);
+  if (filters.providerType) queryParams.set("providerType", filters.providerType);
+
   return useQuery<AdminModel[]>({
-    queryKey: ["/api/admin/models"],
+    queryKey: ["/api/admin/models", filters.providerId ?? "all", filters.providerType ?? "all"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/admin/models");
+      const res = await apiRequest(
+        "GET",
+        `/api/admin/models${queryParams.toString() ? `?${queryParams.toString()}` : ""}`,
+      );
       const data = (await res.json()) as { models: AdminModel[] };
       return data.models ?? [];
     },
@@ -122,8 +140,40 @@ export default function AdminModelsPage() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<AdminModel | null>(null);
+  const [selectedProviderKind, setSelectedProviderKind] = useState<AdminProviderType | "ALL" | "NONE">("ALL");
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
 
-  const modelsQuery = useAdminModels();
+  const modelsQuery = useAdminModels({
+    providerId: selectedProviderId ?? undefined,
+  });
+
+  const llmProvidersQuery = useQuery<ProviderOption[]>({
+    queryKey: ["/api/llm/providers"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/llm/providers");
+      const data = (await res.json()) as { providers: { id: string; name: string; providerType?: string | null }[] };
+      return (data.providers ?? []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        kind: "LLM" as const,
+        providerType: p.providerType,
+      }));
+    },
+  });
+
+  const embeddingProvidersQuery = useQuery<ProviderOption[]>({
+    queryKey: ["/api/embedding/services"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/embedding/services");
+      const data = (await res.json()) as { providers: { id: string; name: string; providerType?: string | null }[] };
+      return (data.providers ?? []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        kind: "EMBEDDINGS" as const,
+        providerType: p.providerType,
+      }));
+    },
+  });
 
   const form = useForm<ModelFormValues>({
     resolver: zodResolver(modelSchema),
@@ -187,7 +237,9 @@ export default function AdminModelsPage() {
     },
     onSuccess: () => {
       toast({ title: "Модель создана" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/models"] });
+      queryClient.invalidateQueries({
+        predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === "/api/admin/models",
+      });
       setDialogOpen(false);
       setEditingModel(null);
     },
@@ -213,7 +265,9 @@ export default function AdminModelsPage() {
     },
     onSuccess: () => {
       toast({ title: "Модель обновлена" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/models"] });
+      queryClient.invalidateQueries({
+        predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === "/api/admin/models",
+      });
       setDialogOpen(false);
       setEditingModel(null);
     },
@@ -246,13 +300,42 @@ export default function AdminModelsPage() {
   };
 
   const models = modelsQuery.data ?? [];
+  const providerOptions = useMemo(() => {
+    const llm = llmProvidersQuery.data ?? [];
+    const emb = embeddingProvidersQuery.data ?? [];
+    return [...llm, ...emb].sort((a, b) => a.name.localeCompare(b.name));
+  }, [llmProvidersQuery.data, embeddingProvidersQuery.data]);
+  const providerKindById = useMemo(() => {
+    const map = new Map<string, AdminProviderType>();
+    for (const option of providerOptions) {
+      map.set(option.id, option.kind);
+    }
+    return map;
+  }, [providerOptions]);
+
+  const filteredModels = useMemo(() => {
+    let result = [...models];
+    if (selectedProviderId) {
+      result = result.filter((m) => m.providerId === selectedProviderId);
+    } else if (selectedProviderKind === "NONE") {
+      result = result.filter((m) => !m.providerId);
+    } else if (selectedProviderKind === "LLM" || selectedProviderKind === "EMBEDDINGS") {
+      result = result.filter((m) => {
+        if (!m.providerId) return false;
+        const kind = providerKindById.get(m.providerId);
+        return kind === selectedProviderKind;
+      });
+    }
+    return result;
+  }, [models, selectedProviderId, selectedProviderKind, providerKindById]);
+
   const sortedModels = useMemo(
     () =>
-      [...models].sort((a, b) => {
+      [...filteredModels].sort((a, b) => {
         if (a.sortOrder === b.sortOrder) return a.displayName.localeCompare(b.displayName);
         return a.sortOrder - b.sortOrder;
       }),
-    [models],
+    [filteredModels],
   );
 
   return (
@@ -266,6 +349,58 @@ export default function AdminModelsPage() {
         </div>
         <Button onClick={openCreate} data-testid="button-model-create">Новая модель</Button>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Фильтры</CardTitle>
+          <CardDescription>Можно показать только модели конкретного провайдера.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <div className="space-y-1">
+            <Label>Тип провайдера</Label>
+            <Select
+              value={selectedProviderKind}
+              onValueChange={(value: AdminProviderType | "ALL" | "NONE") => {
+                setSelectedProviderKind(value);
+                setSelectedProviderId(null);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Тип" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Все</SelectItem>
+                <SelectItem value="LLM">LLM</SelectItem>
+                <SelectItem value="EMBEDDINGS">Embeddings</SelectItem>
+                <SelectItem value="NONE">Без провайдера</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Провайдер</Label>
+            <Select
+              value={selectedProviderId ?? ""}
+              onValueChange={(value) => setSelectedProviderId(value || null)}
+              disabled={selectedProviderKind === "NONE"}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Все провайдеры" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Все</SelectItem>
+                {providerOptions
+                  .filter((p) => selectedProviderKind === "ALL" || p.kind === selectedProviderKind)
+                  .map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {provider.name} · {provider.providerType ?? provider.kind}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">Фильтрует запрос к API моделей по providerId.</p>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -283,6 +418,7 @@ export default function AdminModelsPage() {
                   <TableHead>Unit</TableHead>
                   <TableHead>Credits/Unit</TableHead>
                   <TableHead>Cost</TableHead>
+                  <TableHead>Провайдер</TableHead>
                   <TableHead>Статус</TableHead>
                   <TableHead className="text-right">Действия</TableHead>
                 </TableRow>
@@ -302,6 +438,18 @@ export default function AdminModelsPage() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{costLevelLabels[model.costLevel]}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {model.providerId ? (
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs text-muted-foreground">{model.providerId}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {model.providerType ?? "—"} · {model.providerModelKey ?? "—"}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant={model.isActive ? "secondary" : "destructive"}>
@@ -454,6 +602,12 @@ export default function AdminModelsPage() {
                   <p className="text-xs text-muted-foreground">
                     При включении стоимость фиксируется в 0, операции попадут в журнал с credits=0.
                   </p>
+                  {editingModel?.providerId && (
+                    <p className="text-xs text-muted-foreground">
+                      Модель синхронизируется с провайдером {editingModel.providerId}; ключ и связка с провайдером не
+                      редактируются вручную.
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 items-center">
