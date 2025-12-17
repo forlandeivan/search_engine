@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { workspaces } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { tariffPlanService, type TariffPlanWithLimits } from "./tariff-plan-service";
 import { getWorkspaceUsageSnapshot, type UsageSnapshot } from "./usage/usage-service";
 import type { LimitKey } from "./guards/types";

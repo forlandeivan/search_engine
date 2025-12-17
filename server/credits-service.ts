@@ -108,7 +108,7 @@ export async function grantSubscriptionCreditsOnEvent(
             subscriptionId: payload.subscriptionId ?? null,
             period,
             occurredAt,
-            metadata: sql`jsonb_build_object('reset', true, 'period', ${period})`,
+            metadata: { reset: true, period },
           })
           .onConflictDoNothing();
       } catch (error: any) {
@@ -145,7 +145,7 @@ export async function grantSubscriptionCreditsOnEvent(
             period,
             expiresAt: nextTopUpAt,
             occurredAt,
-            metadata: sql`jsonb_build_object('period', ${period})`,
+            metadata: { period },
           })
           .returning();
         ledgerEntry = inserted[0];
