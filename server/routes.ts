@@ -129,7 +129,7 @@ import { buildEmbeddingsOperationContext, buildStorageUploadOperationContext, bu
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
-import { workspacePlanService } from "./workspace-plan-service";
+import { PlanDowngradeNotAllowedError, workspacePlanService } from "./workspace-plan-service";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
   applyTlsPreferences,
@@ -7721,6 +7721,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         },
       });
     } catch (error) {
+      if (error instanceof PlanDowngradeNotAllowedError) {
+        return res.status(409).json({
+          errorCode: error.code,
+          message: "Plan downgrade is not allowed",
+          violations: error.violations,
+        });
+      }
       const message = error instanceof Error ? error.message : "Failed to apply plan";
       return res.status(400).json({ message });
     }
