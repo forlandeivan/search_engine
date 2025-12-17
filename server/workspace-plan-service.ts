@@ -44,6 +44,7 @@ export class WorkspacePlanService {
   async updateWorkspacePlan(workspaceId: string, planCode: string) {
     const plan = await tariffPlanService.getPlanByCode(planCode);
     if (!plan) throw new Error("Tariff plan not found");
+    if (!plan.isActive) throw new Error("Tariff plan is inactive");
 
     const [updated] = await db
       .update(workspaces)

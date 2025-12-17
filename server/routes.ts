@@ -7692,6 +7692,40 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     });
   });
 
+  // Применить тариф к workspace (доступно админу или члену workspace; в идеале owner)
+  app.put("/api/workspaces/:workspaceId/plan", requireAuth, async (req, res) => {
+    const { workspaceId } = req.params;
+    const user = getSessionUser(req);
+    const memberships = getRequestWorkspaceMemberships(req);
+    const isAdmin = user?.role === "admin";
+    const isMember = memberships.some((m) => m.id === workspaceId && m.role === "owner");
+    if (!isAdmin && !isMember) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const planCode = typeof req.body?.planCode === "string" ? req.body.planCode.trim().toUpperCase() : "";
+    if (!planCode) {
+      return res.status(400).json({ message: "planCode is required" });
+    }
+
+    try {
+      const plan = await workspacePlanService.updateWorkspacePlan(workspaceId, planCode);
+      res.json({
+        plan: {
+          id: plan.id,
+          code: plan.code,
+          name: plan.name,
+          description: plan.description,
+          shortDescription: plan.shortDescription,
+          sortOrder: plan.sortOrder,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to apply plan";
+      return res.status(400).json({ message });
+    }
+  });
+
   // Каталог тарифов для UI (только активные, отсортированные)
   app.get("/api/tariffs", requireAuth, async (_req, res) => {
     const plans = await tariffPlanService.getActivePlans();

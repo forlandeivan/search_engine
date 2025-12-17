@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import WorkspaceMembersPage from "@/pages/WorkspaceMembersPage";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import type { SessionResponse } from "@/types/session";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 function useWorkspaceInfo(workspaceId?: string | null) {
   return useQuery({
@@ -65,6 +66,15 @@ type WorkspaceQdrantUsageSummary = {
   storageBytes: number;
 };
 type UsageResourceType = "llm" | "embeddings" | "asr" | "storage" | "objects" | "qdrant";
+
+type TariffSummary = {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  shortDescription?: string | null;
+  sortOrder?: number | null;
+};
 
 function formatPeriodLabel(periodCode: string): string {
   const [year, month] = periodCode.split("-");
@@ -215,6 +225,39 @@ function useWorkspaceQdrantUsage(workspaceId: string | null) {
   });
 }
 
+function useWorkspacePlan(workspaceId: string | null) {
+  return useQuery<TariffSummary, Error>({
+    queryKey: ["workspace-plan", workspaceId],
+    enabled: Boolean(workspaceId),
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/workspaces/${workspaceId}/plan`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить тариф");
+      }
+      const data = (await res.json()) as { plan: TariffSummary };
+      return data.plan;
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+function useTariffsCatalog() {
+  return useQuery<TariffSummary[], Error>({
+    queryKey: ["tariffs", "catalog"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/tariffs");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить тарифы");
+      }
+      const data = (await res.json()) as { tariffs?: TariffSummary[] };
+      return data.tariffs ?? [];
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
 export default function WorkspaceSettingsPage({ params }: { params?: { workspaceId?: string } }) {
   const [location, navigate] = useLocation();
   const workspaceIdFromRoute = params?.workspaceId ?? undefined;
@@ -228,21 +271,21 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   }, [sessionWorkspaceQuery.data]);
 
   const urlSearchParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-  const initialTab = (urlSearchParams.get("tab") ?? "general") as "general" | "members" | "usage";
-  const [tab, setTab] = useState<"general" | "members" | "usage">(
-    initialTab === "members" || initialTab === "usage" ? initialTab : "general",
+  const initialTab = (urlSearchParams.get("tab") ?? "general") as "general" | "members" | "usage" | "billing";
+  const [tab, setTab] = useState<"general" | "members" | "usage" | "billing">(
+    initialTab === "members" || initialTab === "usage" || initialTab === "billing" ? initialTab : "general",
   );
 
   useEffect(() => {
     const params = new URLSearchParams(location.split("?")[1] ?? "");
     const tabParam = params.get("tab");
-    if (tabParam === "members" || tabParam === "general" || tabParam === "usage") {
+    if (tabParam === "members" || tabParam === "general" || tabParam === "usage" || tabParam === "billing") {
       setTab(tabParam);
     }
   }, [location]);
 
   const handleTabChange = (value: string) => {
-    const next = value === "members" || value === "usage" ? value : "general";
+    const next = value === "members" || value === "usage" || value === "billing" ? value : "general";
     setTab(next);
     const base = location.split("?")[0];
     navigate(`${base}?tab=${next}`);
@@ -255,24 +298,29 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const [resetIcon, setResetIcon] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
-  const workspacePlanQuery = useQuery({
-    queryKey: ["workspace-plan", effectiveWorkspaceId],
-    enabled: Boolean(effectiveWorkspaceId),
-    queryFn: async () => {
-      const res = await apiRequest(
-        "GET",
-        `/api/workspaces/${effectiveWorkspaceId}/plan`,
-        undefined,
-        undefined,
-        { workspaceId: effectiveWorkspaceId ?? undefined },
-      );
+  const workspacePlanQuery = useWorkspacePlan(effectiveWorkspaceId);
+  const tariffsCatalogQuery = useTariffsCatalog();
+  const applyPlanMutation = useMutation({
+    mutationFn: async (planCode: string) => {
+      if (!effectiveWorkspaceId) throw new Error("Нет рабочего пространства");
+      const res = await apiRequest("PUT", `/api/workspaces/${effectiveWorkspaceId}/plan`, { planCode });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || "Не удалось загрузить тариф");
+        throw new Error(body.message || "Не удалось применить тариф");
       }
-      return (await res.json()) as { plan: { id: string; code: string; name: string; description?: string | null } };
+      return (await res.json()) as { plan: TariffSummary };
     },
-    staleTime: 60 * 1000,
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["workspace-plan", effectiveWorkspaceId] });
+      toast({ title: "Тариф применён", description: data.plan.name ?? data.plan.code });
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Не удалось применить тариф",
+        description: error instanceof Error ? error.message : "Попробуйте позже",
+        variant: "destructive",
+      });
+    },
   });
   const availablePeriods = useMemo(() => buildPeriods(), []);
   const [selectedPeriod, setSelectedPeriod] = useState<string>(availablePeriods[0]);
@@ -475,6 +523,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
           <TabsTrigger value="general">Основное</TabsTrigger>
           <TabsTrigger value="members">Участники</TabsTrigger>
           <TabsTrigger value="usage">Потребление</TabsTrigger>
+          <TabsTrigger value="billing">Тариф</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-4">
@@ -571,6 +620,98 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                   </Button>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="billing" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Тариф рабочего пространства</CardTitle>
+              <CardDescription>Выберите один из доступных тарифов. Смена тарифа применяется сразу.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {workspacePlanQuery.isError && (
+                <Alert variant="destructive">
+                  <AlertTitle>Не удалось загрузить текущий тариф</AlertTitle>
+                  <AlertDescription>{workspacePlanQuery.error?.message ?? "Попробуйте обновить страницу."}</AlertDescription>
+                </Alert>
+              )}
+              {tariffsCatalogQuery.isError && (
+                <Alert variant="destructive">
+                  <AlertTitle>Не удалось загрузить каталог тарифов</AlertTitle>
+                  <AlertDescription>{tariffsCatalogQuery.error?.message ?? "Попробуйте позже."}</AlertDescription>
+                </Alert>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">Текущий тариф:</span>
+                {workspacePlanQuery.isLoading ? (
+                  <Skeleton className="h-6 w-28" />
+                ) : workspacePlanQuery.data ? (
+                  <Badge variant="secondary">
+                    {workspacePlanQuery.data.name ?? workspacePlanQuery.data.code}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline">неизвестно</Badge>
+                )}
+                {workspacePlanQuery.data?.description && (
+                  <span className="text-xs text-muted-foreground">
+                    {workspacePlanQuery.data.description}
+                  </span>
+                )}
+              </div>
+
+              {tariffsCatalogQuery.isLoading && (
+                <div className="grid gap-3 md:grid-cols-3">
+                  {Array.from({ length: 3 }).map((_, idx) => (
+                    <Skeleton key={idx} className="h-28 w-full" />
+                  ))}
+                </div>
+              )}
+
+              {!tariffsCatalogQuery.isLoading && (tariffsCatalogQuery.data?.length ?? 0) === 0 && (
+                <p className="text-sm text-muted-foreground">Нет доступных тарифов.</p>
+              )}
+
+              {!tariffsCatalogQuery.isLoading && (tariffsCatalogQuery.data?.length ?? 0) > 0 && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {(tariffsCatalogQuery.data ?? []).map((plan) => {
+                    const isCurrent =
+                      workspacePlanQuery.data?.code?.toUpperCase() === plan.code?.toUpperCase();
+                    return (
+                      <div
+                        key={plan.id}
+                        className="flex flex-col gap-2 rounded-lg border p-4 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-base font-semibold">{plan.name ?? plan.code}</p>
+                            {plan.shortDescription && (
+                              <p className="text-sm text-muted-foreground">{plan.shortDescription}</p>
+                            )}
+                          </div>
+                          {isCurrent && <Badge variant="secondary">Текущий</Badge>}
+                        </div>
+                        {plan.description && (
+                          <p className="text-xs text-muted-foreground">{plan.description}</p>
+                        )}
+                        <div className="flex justify-end">
+                          <Button
+                            size="sm"
+                            variant={isCurrent ? "outline" : "default"}
+                            disabled={isCurrent || applyPlanMutation.isPending}
+                            onClick={() => applyPlanMutation.mutate(plan.code)}
+                          >
+                            {applyPlanMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            {isCurrent ? "Применён" : "Применить"}
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
