@@ -128,6 +128,15 @@ export class TariffPlanService {
     return rows;
   }
 
+  async getActivePlans(): Promise<TariffPlan[]> {
+    const rows = await db
+      .select()
+      .from(tariffPlans)
+      .where(eq(tariffPlans.isActive, true))
+      .orderBy(asc(tariffPlans.sortOrder), asc(tariffPlans.code));
+    return rows;
+  }
+
   async getPlanLimits(planId: string): Promise<TariffLimit[]> {
     return db.select().from(tariffLimits).where(eq(tariffLimits.planId, planId));
   }

@@ -7692,6 +7692,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     });
   });
 
+  // Каталог тарифов для UI (только активные, отсортированные)
+  app.get("/api/tariffs", requireAuth, async (_req, res) => {
+    const plans = await tariffPlanService.getActivePlans();
+    res.json({
+      tariffs: plans.map((p) => ({
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        description: p.description,
+        shortDescription: p.shortDescription,
+        sortOrder: p.sortOrder,
+      })),
+    });
+  });
+
   app.get("/api/admin/system-notifications/logs", requireAdmin, async (req, res) => {
     try {
       const page = Math.max(1, Number(req.query.page) || 1);
