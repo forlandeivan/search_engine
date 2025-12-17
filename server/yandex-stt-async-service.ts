@@ -15,6 +15,8 @@ import { buildAsrOperationContext } from "./guards/helpers";
 import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } from "./model-service";
 import { measureUsageForModel, type UsageMeasurement } from "./consumption-meter";
 import { calculatePriceForUsage } from "./price-calculator";
+import { estimateAsrPreflight } from "./preflight-estimator";
+import { assertSufficientWorkspaceCredits, InsufficientCreditsError } from "./credits-precheck";
 import { recordAsrUsageEvent } from "./usage/usage-service";
 
 const createHttpProxyAgent = (url: string) => {
@@ -297,6 +299,25 @@ class YandexSttAsyncService {
           meta: { asr: { provider: provider.id, model: asrModelKey, modelId: asrModelId, modelKey: asrModelKey } },
         }),
       );
+    }
+
+    // Preflight credits check
+    try {
+      const estimate = estimateAsrPreflight(
+        { consumptionUnit: "MINUTES", creditsPerUnit: asrCreditsPerUnit ?? 0 } as any,
+        { durationSeconds: audioDurationSeconds ?? 0 },
+      );
+      await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCredits, {
+        modelKey: asrModelKey,
+        modelId: asrModelId,
+        unit: estimate.unit,
+        estimatedUnits: estimate.estimatedUnits,
+      });
+    } catch (error) {
+      if (error instanceof InsufficientCreditsError) {
+        throw new YandexSttAsyncError(error.message, error.status, error.code);
+      }
+      throw error;
     }
 
     let iamToken: string;

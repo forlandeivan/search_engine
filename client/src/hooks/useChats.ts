@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, throwIfResNotOk } from "@/lib/queryClient";
 import type { ChatSummary, ChatPayload, ChatMessage } from "@/types/chat";
 
 type ChatListResponse = { chats: ChatSummary[] };
@@ -183,21 +183,7 @@ export async function sendChatMessageLLM({
     signal,
   });
 
-  if (!response.ok) {
-    const raw = await response.text();
-    let message = response.statusText || "Не удалось отправить сообщение";
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && parsed.message) {
-        message = String(parsed.message);
-      }
-    } catch {
-      if (raw.trim().length > 0) {
-        message = raw.trim();
-      }
-    }
-    throw new Error(message);
-  }
+  await throwIfResNotOk(response);
 
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.body || !contentType.includes("text/event-stream")) {

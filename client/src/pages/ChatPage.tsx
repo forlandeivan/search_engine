@@ -8,6 +8,7 @@ import ChatInput, { type TranscribePayload } from "@/components/chat/ChatInput";
 import { TranscriptCanvas } from "@/components/chat/TranscriptCanvas";
 import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { useSkills } from "@/hooks/useSkills";
+import { formatApiErrorMessage } from "@/lib/api-errors";
 import type { ChatMessage } from "@/types/chat";
 
 type ChatPageParams = {
@@ -213,7 +214,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             },
             onError: (error) => {
               debugLog("[chat] streamMessage error", error);
-              setStreamError(error.message);
+              setStreamError(formatApiErrorMessage(error));
               // При ошибке тоже удаляем placeholder, чтобы не было фантома.
               setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
             },
@@ -221,7 +222,7 @@ export default function ChatPage({ params }: ChatPageProps) {
         });
       } catch (error) {
         debugLog("[chat] streamMessage failure", error);
-        setStreamError(error instanceof Error ? error.message : String(error));
+        setStreamError(formatApiErrorMessage(error));
         setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
       } finally {
         setIsStreaming(false);
@@ -244,7 +245,7 @@ export default function ChatPage({ params }: ChatPageProps) {
         setOverrideChatId(newChat.id);
         handleSelectChat(newChat.id);
       } catch (error) {
-        setStreamError(error instanceof Error ? error.message : String(error));
+        setStreamError(formatApiErrorMessage(error));
       } finally {
         setCreatingSkillId((prev) => (prev === skillId ? null : prev));
       }
@@ -294,7 +295,7 @@ export default function ChatPage({ params }: ChatPageProps) {
         }
       } catch (error) {
         debugLog("[chat] failed to create chat", error);
-        setStreamError(error instanceof Error ? error.message : String(error));
+        setStreamError(formatApiErrorMessage(error));
       }
     },
     [
@@ -357,7 +358,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           setOverrideChatId(newChat.id);
           handleSelectChat(newChat.id);
         } catch (error) {
-          setStreamError(error instanceof Error ? error.message : String(error));
+          setStreamError(formatApiErrorMessage(error));
           setIsTranscribing(false);
           return;
         }

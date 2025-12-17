@@ -124,6 +124,8 @@ import {
 } from "./usage/usage-service";
 import { measureUsageForModel, tokensToUnits, UsageMeterError, type UsageMeasurement } from "./consumption-meter";
 import { calculatePriceForUsage } from "./price-calculator";
+import { estimateLlmPreflight, estimateEmbeddingsPreflight, estimateAsrPreflight } from "./preflight-estimator";
+import { assertSufficientWorkspaceCredits, InsufficientCreditsError } from "./credits-precheck";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { listGuardBlockEvents } from "./guards/block-log-service";
@@ -262,6 +264,8 @@ import {
   YandexSttAsyncError,
   YandexSttAsyncConfigError,
 } from "./yandex-stt-async-service";
+import { estimateEmbeddingsPreflight, estimateAsrPreflight } from "./preflight-estimator";
+import { assertSufficientWorkspaceCredits, InsufficientCreditsError } from "./credits-precheck";
 import { yandexIamTokenService } from "./yandex-iam-token-service";
 import multer from "multer";
 import { getLlmPromptDebugConfig, isLlmPromptDebugEnabled, setLlmPromptDebugEnabled } from "./llm-debug-config";
@@ -3512,6 +3516,21 @@ async function runKnowledgeBaseRagPipeline(options: {
 
         let embeddingResult: EmbeddingVectorResult;
         try {
+          const embeddingInputTokens = estimateTokens(normalizedQuery);
+          try {
+            await ensureCreditsForEmbeddingPreflight(workspaceId, {
+              consumptionUnit: "TOKENS_1K",
+              modelKey: embeddingProvider.model ?? null,
+              id: null,
+              creditsPerUnit: (embeddingProvider as any).creditsPerUnit ?? 0,
+            } as any, embeddingInputTokens);
+          } catch (error) {
+            if (error instanceof InsufficientCreditsError) {
+              throw new HttpError(error.status, error.message, error.details);
+            }
+            throw error;
+          }
+
           const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
           embeddingResult = await fetchEmbeddingVector(
             embeddingProvider,
@@ -4392,6 +4411,73 @@ function calculatePriceSnapshot(
     console.warn(`[pricing] failed to calculate price for model ${modelInfo.modelKey ?? modelInfo.id ?? "unknown"}`, error);
     return null;
   }
+}
+
+function handlePreflightError(res: Response, error: unknown): boolean {
+  if (error instanceof InsufficientCreditsError) {
+    res.status(error.status).json({
+      errorCode: error.code,
+      message: error.message,
+      details: error.details,
+    });
+    return true;
+  }
+  return false;
+}
+
+async function ensureCreditsForLlmPreflight(
+  workspaceId: string | null,
+  modelInfo: ModelInfoForUsage | null,
+  promptTokens: number,
+  maxOutputTokens: number | null | undefined,
+) {
+  if (!workspaceId || !modelInfo) return;
+  const estimate = estimateLlmPreflight(
+    { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
+    { promptTokens, maxOutputTokens },
+  );
+  await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCredits, {
+    modelId: modelInfo.id ?? null,
+    modelKey: modelInfo.modelKey ?? null,
+    unit: estimate.unit,
+    estimatedUnits: estimate.estimatedUnits,
+  });
+}
+
+async function ensureCreditsForEmbeddingPreflight(
+  workspaceId: string | null,
+  modelInfo: ModelInfoForUsage | null,
+  inputTokens: number,
+) {
+  if (!workspaceId || !modelInfo) return;
+  const estimate = estimateEmbeddingsPreflight(
+    { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
+    { inputTokens },
+  );
+  await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCredits, {
+    modelId: modelInfo.id ?? null,
+    modelKey: modelInfo.modelKey ?? null,
+    unit: estimate.unit,
+    estimatedUnits: estimate.estimatedUnits,
+  });
+}
+
+async function ensureCreditsForAsrPreflight(
+  workspaceId: string | null,
+  modelInfo: ModelInfoForUsage | null,
+  durationSeconds: number | null | undefined,
+) {
+  if (!workspaceId || !modelInfo) return;
+  const estimate = estimateAsrPreflight(
+    { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
+    { durationSeconds: durationSeconds ?? 0 },
+  );
+  await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCredits, {
+    modelId: modelInfo.id ?? null,
+    modelKey: modelInfo.modelKey ?? null,
+    unit: estimate.unit,
+    estimatedUnits: estimate.estimatedUnits,
+  });
 }
 
 function buildExcerpt(content: string | null | undefined, query: string, maxLength = 220): string | undefined {
@@ -10171,9 +10257,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const requestBody = buildChatCompletionRequestBody(context, { stream: wantsStream });
       const accessToken = await fetchAccessToken(context.provider);
 
-      const totalPromptChars = Array.isArray(requestBody[context.requestConfig.messagesField])
-        ? JSON.stringify(requestBody[context.requestConfig.messagesField]).length
-        : 0;
+    const totalPromptChars = Array.isArray(requestBody[context.requestConfig.messagesField])
+      ? JSON.stringify(requestBody[context.requestConfig.messagesField]).length
+      : 0;
       const resolvedModelKey = context.model ?? context.provider.model ?? null;
       const resolvedModelId = context.modelInfo?.id ?? null;
       const llmCallInput = {
@@ -10213,6 +10299,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             },
           }),
         );
+      }
+
+      // Preflight credits check
+      const promptTokensEstimate = Math.ceil(totalPromptChars / 4);
+      const maxOutputTokens = context.requestConfig.maxTokens ?? null;
+      try {
+        await ensureCreditsForLlmPreflight(workspaceId, context.modelInfo as any, promptTokensEstimate, maxOutputTokens);
+      } catch (error) {
+        if (handlePreflightError(res, error)) return;
+        throw error;
       }
 
       await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.RUNNING, { input: llmCallInput });

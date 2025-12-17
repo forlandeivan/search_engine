@@ -1,12 +1,25 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import type { SessionResponse } from "@/types/session";
 
+export class ApiError extends Error {
+  code?: string;
+  status?: number;
+  details?: unknown;
+  constructor(message: string, opts?: { code?: string; status?: number; details?: unknown }) {
+    super(message);
+    this.name = "ApiError";
+    this.code = opts?.code;
+    this.status = opts?.status;
+    this.details = opts?.details;
+  }
+}
+
 function resolveWorkspaceIdFromCache(): string | null {
   const session = queryClient.getQueryData<SessionResponse>(["/api/auth/session"]);
   return session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
 }
 
-async function throwIfResNotOk(res: Response) {
+export async function throwIfResNotOk(res: Response) {
   if (res.ok) {
     return;
   }
@@ -14,6 +27,8 @@ async function throwIfResNotOk(res: Response) {
   const rawText = await res.text();
   const text = rawText.trim();
   let errorMessage = text || res.statusText;
+  let errorCode: string | undefined;
+  let details: unknown;
 
   if (text.startsWith("{") || text.startsWith("[")) {
     try {
@@ -27,8 +42,20 @@ async function throwIfResNotOk(res: Response) {
           messageParts.push(asRecord.error.trim());
         }
 
+        if (typeof asRecord.message === "string" && asRecord.message.trim().length > 0) {
+          messageParts.push(asRecord.message.trim());
+        }
+
         if (typeof asRecord.details === "string" && asRecord.details.trim().length > 0) {
           messageParts.push(asRecord.details.trim());
+        }
+
+        if (typeof asRecord.errorCode === "string" && asRecord.errorCode.trim().length > 0) {
+          errorCode = asRecord.errorCode;
+        }
+
+        if (asRecord.details !== undefined) {
+          details = asRecord.details;
         }
 
         if (messageParts.length > 0) {
@@ -43,7 +70,11 @@ async function throwIfResNotOk(res: Response) {
     errorMessage = res.statusText || "Неизвестная ошибка";
   }
 
-  throw new Error(`${res.status}: ${errorMessage}`);
+  throw new ApiError(errorMessage ? `${errorMessage}` : `${res.status}: ${errorMessage}`, {
+    code: errorCode,
+    status: res.status,
+    details,
+  });
 }
 
 export async function apiRequest(

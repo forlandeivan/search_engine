@@ -4,6 +4,8 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import type { RagChunk } from "@/types/search";
+import { formatApiErrorMessage } from "@/lib/api-errors";
+import { throwIfResNotOk } from "@/lib/queryClient";
 
 const ASK_STATUS_PENDING = "Готовим ответ…";
 
@@ -307,41 +309,6 @@ const buildEndpoint = (baseUrl: string): string => {
   const hasApiSuffix = /\/api(?:\b|\/|\?|#)/.test(`${lowerNormalized}/`);
   const pathToAppend = hasApiSuffix ? defaultEndpoint.replace(/^\/api/, "") : defaultEndpoint;
   return `${normalized}${pathToAppend}`;
-};
-
-const extractErrorMessage = async (response: Response): Promise<string> => {
-  const rawText = await response.text();
-  const trimmed = rawText.trim();
-  if (!trimmed) {
-    return `Не удалось получить ответ (код ${response.status})`;
-  }
-
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(trimmed) as { error?: string; message?: string; details?: string };
-      const parts: string[] = [];
-      if (parsed.error) {
-        parts.push(parsed.error);
-      }
-      if (parsed.message) {
-        parts.push(parsed.message);
-      }
-      if (parsed.details) {
-        parts.push(parsed.details);
-      }
-      if (parts.length > 0) {
-        return parts.join(" — ");
-      }
-    } catch {
-      return `Не удалось получить ответ (код ${response.status})`;
-    }
-  }
-
-  if (trimmed.startsWith("<")) {
-    return response.statusText || `Не удалось получить ответ (код ${response.status})`;
-  }
-
-  return trimmed;
 };
 
 export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): UseKnowledgeBaseAskAiResult {
@@ -700,9 +667,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           signal: controller.signal,
         });
 
-        if (!response.ok) {
-          throw new Error(await extractErrorMessage(response));
-        }
+        await throwIfResNotOk(response);
 
         const contentType = response.headers.get("content-type") ?? "";
         if (contentType.includes("text/event-stream")) {
@@ -950,7 +915,7 @@ export function useKnowledgeBaseAskAi(options: UseKnowledgeBaseAskAiOptions): Us
           return;
         }
 
-        const message = error instanceof Error ? error.message : String(error);
+        const message = formatApiErrorMessage(error);
         setState((prev) => ({
           ...prev,
           statusMessage: null,

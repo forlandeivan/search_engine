@@ -4,6 +4,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { formatApiErrorMessage, isInsufficientCreditsError } from "@/lib/api-errors";
+import { throwIfResNotOk } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
 
@@ -143,9 +145,16 @@ export default function ChatInput({
           body: formData,
         });
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || `Ошибка отправки аудио: ${response.status}`);
+        try {
+          await throwIfResNotOk(response);
+        } catch (error) {
+          const friendlyMessage = formatApiErrorMessage(error);
+          toast({
+            title: isInsufficientCreditsError(error) ? "Недостаточно кредитов" : "Ошибка транскрибации",
+            description: friendlyMessage,
+            variant: "destructive",
+          });
+          throw error;
         }
 
         const result = await response.json();
@@ -172,7 +181,7 @@ export default function ChatInput({
         console.error("[ChatInput] Transcription error:", error);
         toast({
           title: "Ошибка транскрибации",
-          description: error instanceof Error ? error.message : "Не удалось отправить файл",
+          description: formatApiErrorMessage(error),
           variant: "destructive",
         });
         return null;
