@@ -32,6 +32,7 @@ import {
   ShieldAlert,
   CreditCard,
   Layers3,
+  Receipt,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -134,7 +135,10 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
     },
     {
       label: "Биллинг",
-      items: [{ title: "Биллинг", url: "/admin/billing", icon: CreditCard }],
+      items: [
+        { title: "Биллинг", url: "/admin/billing", icon: CreditCard },
+        { title: "Журнал списаний", url: "/admin/usage-charges", icon: Receipt },
+      ],
     },
     {
       label: "Аутентификация",

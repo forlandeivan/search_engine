@@ -25,6 +25,7 @@ import { z } from "zod";
 import { invalidateCorsCache } from "./cors-cache";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
+import { and, eq, inArray, desc, sql } from "drizzle-orm";
 import {
   buildLlmRequestBody,
   mergeLlmRequestConfig,
@@ -191,6 +192,8 @@ import {
   type KnowledgeBaseAskAiPipelineStepLog,
   type UnicaChatConfigInsert,
   type ChatMessageMetadata,
+  models,
+  workspaceCreditLedger,
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type { KnowledgeBaseSearchSettingsRow } from "@shared/schema";
@@ -8109,6 +8112,116 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     res.json({ models: modelsList });
   });
 
+  app.get("/api/admin/usage/charges", requireAdmin, async (req, res, next) => {
+    try {
+      const parsedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
+      const parsedOffset = Number.parseInt(String(req.query.offset ?? ""), 10);
+      const limit = Math.min(Number.isFinite(parsedLimit) ? parsedLimit : 50, 200);
+      const offset = Math.max(Number.isFinite(parsedOffset) ? parsedOffset : 0, 0);
+      const modelIdFilter = typeof req.query.modelId === "string" ? req.query.modelId.trim() : null;
+      const workspaceIdFilter = typeof req.query.workspaceId === "string" ? req.query.workspaceId.trim() : null;
+      const rawFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : "";
+      const rawTo = typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : "";
+      const parsedFrom = rawFrom ? new Date(rawFrom) : null;
+      const parsedTo = rawTo ? new Date(rawTo) : null;
+      const dateFrom = parsedFrom && !Number.isNaN(parsedFrom.getTime()) ? parsedFrom : null;
+      const dateTo = parsedTo && !Number.isNaN(parsedTo.getTime()) ? parsedTo : null;
+      const modelTypeFilter =
+        typeof req.query.modelType === "string" && req.query.modelType.trim().length > 0
+          ? req.query.modelType.trim().toUpperCase()
+          : null;
+
+      const conditions: any[] = [eq(workspaceCreditLedger.entryType, "usage_charge")];
+      if (workspaceIdFilter) {
+        conditions.push(eq(workspaceCreditLedger.workspaceId, workspaceIdFilter));
+      }
+      if (dateFrom) {
+        conditions.push(sql`${workspaceCreditLedger.occurredAt} >= ${dateFrom}`);
+      }
+      if (dateTo) {
+        conditions.push(sql`${workspaceCreditLedger.occurredAt} <= ${dateTo}`);
+      }
+      if (modelIdFilter) {
+        conditions.push(sql`${workspaceCreditLedger.metadata}->>'modelId' = ${modelIdFilter}`);
+      }
+
+      const rows = await db
+        .select()
+        .from(workspaceCreditLedger)
+        .where(and(...conditions))
+        .orderBy(desc(workspaceCreditLedger.occurredAt))
+        .limit(limit)
+        .offset(offset);
+
+      const modelIds = Array.from(
+        new Set(
+          rows
+            .map((row) => {
+              const meta = (row.metadata ?? {}) as Record<string, unknown>;
+              const mid = typeof meta.modelId === "string" ? meta.modelId : null;
+              return mid;
+            })
+            .filter((v): v is string => Boolean(v)),
+        ),
+      );
+      const modelsMap = new Map<string, any>();
+      if (modelIds.length > 0) {
+        const modelsList = await db.select().from(models).where(inArray(models.id, modelIds));
+        modelsList.forEach((m) => modelsMap.set(m.id, m));
+      }
+
+      const items = rows
+        .map((row) => {
+          const meta = (row.metadata ?? {}) as Record<string, unknown>;
+          const modelId = typeof meta.modelId === "string" ? meta.modelId : null;
+          const model = modelId ? modelsMap.get(modelId) ?? null : null;
+          if (modelTypeFilter && model && model.modelType !== modelTypeFilter) {
+            return null;
+          }
+          const quantityUnits =
+            typeof meta.quantityUnits === "number"
+              ? meta.quantityUnits
+              : typeof meta.estimatedUnits === "number"
+                ? meta.estimatedUnits
+                : null;
+          const quantityRaw =
+            typeof meta.quantityRaw === "number"
+              ? meta.quantityRaw
+              : typeof meta.estimatedRaw === "number"
+                ? meta.estimatedRaw
+                : null;
+
+          return {
+            id: row.id,
+            operationId: typeof meta.operationId === "string" ? meta.operationId : null,
+            workspaceId: row.workspaceId,
+            occurredAt: row.occurredAt,
+            model: model
+              ? {
+                  id: model.id,
+                  key: model.modelKey,
+                  displayName: model.displayName,
+                  modelType: model.modelType,
+                  consumptionUnit: model.consumptionUnit,
+                }
+              : modelId
+                ? { id: modelId, key: meta.modelKey ?? null, displayName: meta.modelName ?? null, modelType: meta.modelType ?? null, consumptionUnit: meta.unit ?? null }
+                : null,
+            unit: (meta.unit as string) ?? (meta.consumptionUnit as string) ?? null,
+            quantityUnits,
+            quantityRaw,
+            appliedCreditsPerUnit:
+              typeof meta.appliedCreditsPerUnit === "number" ? meta.appliedCreditsPerUnit : null,
+            creditsCharged: Math.abs(Number(row.amountDelta ?? 0)),
+          };
+        })
+        .filter((v): v is NonNullable<typeof v> => Boolean(v));
+
+      res.json({ items, total: items.length, limit, offset });
+    } catch (error) {
+      next(error);
+    }
+  });
   app.post("/api/admin/models", requireAdmin, async (req, res) => {
     try {
       const payload = {

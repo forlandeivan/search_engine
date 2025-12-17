@@ -56,6 +56,7 @@ import {
   type PublicEmbeddingProvider,
   type UpdateEmbeddingProvider,
 } from "@shared/schema";
+import { useModels, type PublicModel } from "@/hooks/useModels";
 
 const requestHeadersSchema = z.record(z.string());
 
@@ -102,6 +103,7 @@ type TestCredentialsError = Error & {
 };
 
 type ProvidersResponse = { providers: PublicEmbeddingProvider[] };
+type CatalogModel = PublicModel;
 
 type UpdateEmbeddingProviderVariables = {
   id: string;
@@ -254,9 +256,12 @@ export default function EmbeddingServicesPage() {
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/embedding/services"],
   });
+  const catalogQuery = useModels("EMBEDDINGS");
 
   const providers = useMemo(() => providersQuery.data?.providers ?? [], [providersQuery.data]);
   const providersLoaded = providersQuery.isSuccess;
+  const catalogEmbModels = catalogQuery.data ?? [];
+  const catalogByKey = useMemo(() => new Map(catalogEmbModels.map((m) => [m.key, m])), [catalogEmbModels]);
 
   const selectedProvider = useMemo(
     () =>
@@ -455,6 +460,19 @@ export default function EmbeddingServicesPage() {
 
     const trimmedAuthorizationKey = values.authorizationKey.trim();
     const trimmedMaxTokens = values.maxTokensPerVectorization.trim();
+    const trimmedModel = values.model.trim();
+
+    if (!trimmedModel) {
+      const message = "Укажите модель из каталога (ключ)";
+      form.setError("model", { type: "manual", message });
+      throw new Error(message);
+    }
+
+    if (!catalogByKey.has(trimmedModel)) {
+      const message = "Модель не найдена в каталоге";
+      form.setError("model", { type: "manual", message });
+      throw new Error(message);
+    }
 
     if (!trimmedMaxTokens) {
       const message = "Укажите максимальное количество токенов";
@@ -479,7 +497,7 @@ export default function EmbeddingServicesPage() {
       tokenUrl: values.tokenUrl.trim(),
       embeddingsUrl: values.embeddingsUrl.trim(),
       scope: values.scope.trim(),
-      model: values.model.trim(),
+      model: trimmedModel,
       maxTokensPerVectorization: parsedMaxTokens,
       allowSelfSignedCertificate: values.allowSelfSignedCertificate,
       requestHeaders,
@@ -1159,6 +1177,13 @@ export default function EmbeddingServicesPage() {
                         </div>
                         <div className="flex flex-col items-end gap-2 text-xs text-muted-foreground">
                           <span>Модель: {provider.model}</span>
+                          {provider.model && (
+                            <span className={cn("text-[11px]", catalogByKey.get(provider.model) ? "text-muted-foreground" : "text-destructive")}>
+                              {catalogByKey.get(provider.model)
+                                ? `${catalogByKey.get(provider.model)?.displayName} · ${catalogByKey.get(provider.model)?.costLevel}`
+                                : "Нет в каталоге"}
+                            </span>
+                          )}
                           <span>Token: {formatBoolean(provider.hasAuthorizationKey)}</span>
                           <span>SSL: {provider.allowSelfSignedCertificate ? "self-signed" : "строгая проверка"}</span>
                           <span>Макс. токенов: {formatNullableNumber(provider.maxTokensPerVectorization)}</span>

@@ -146,6 +146,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 import { useSkills, useCreateSkill, useUpdateSkill } from "@/hooks/useSkills";
+import { useModels, type PublicModel } from "@/hooks/useModels";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
@@ -315,6 +316,14 @@ const skillFormSchema = z.object({
 
 
 const buildLlmKey = (providerId: string, modelId: string) => `${providerId}::${modelId}`;
+const catalogModelMap = (models: PublicModel[]) => new Map(models.map((m) => [m.key, m]));
+const costLevelLabel: Record<PublicModel["costLevel"], string> = {
+  FREE: "Free",
+  LOW: "Low",
+  MEDIUM: "Medium",
+  HIGH: "High",
+  VERY_HIGH: "Very high",
+};
 
 const defaultFormValues = {
   name: "",
@@ -342,9 +351,10 @@ type LlmSelectionOption = {
   label: string;
   providerId: string;
   providerName: string;
-  modelId: string;
+  modelId: string; // provider's model key (must match catalog key)
   providerIsActive: boolean;
   disabled: boolean;
+  catalogModel?: PublicModel | null;
 };
 
 type KnowledgeBaseMultiSelectProps = {
@@ -1864,6 +1874,8 @@ export default function SkillsPage() {
     queryKey: ["/api/llm/providers"],
   });
 
+  const { data: catalogLlmModels = [], isLoading: isModelsLoading, error: modelsError } = useModels("LLM");
+
   const llmProviders = llmProvidersResponse?.providers ?? [];
 
   const knowledgeBases = knowledgeBaseQuery.data ?? [];
@@ -1906,6 +1918,7 @@ export default function SkillsPage() {
 
   const llmOptions = useMemo<LlmSelectionOption[]>(() => {
     const options: LlmSelectionOption[] = [];
+    const catalogByKey = catalogModelMap(catalogLlmModels);
 
     for (const provider of llmProviders) {
       const models = provider.availableModels && provider.availableModels.length > 0
@@ -1915,20 +1928,26 @@ export default function SkillsPage() {
           : [];
 
       for (const model of models) {
+        const catalogModel = catalogByKey.get(model.value) ?? null;
+        if (!catalogModel) {
+          continue; // пропускаем модели, отсутствующие в каталоге
+        }
+        const labelSuffix = ` · ${catalogModel.displayName} · ${costLevelLabel[catalogModel.costLevel]}`;
         options.push({
           key: buildLlmKey(provider.id, model.value),
-          label: `${provider.name} В· ${model.label}`,
+          label: `${provider.name} · ${model.label}${labelSuffix}`,
           providerId: provider.id,
           providerName: provider.name,
           modelId: model.value,
           providerIsActive: provider.isActive,
           disabled: !provider.isActive,
+          catalogModel,
         });
       }
     }
 
     return options.sort((a, b) => a.label.localeCompare(b.label, "ru"));
-  }, [llmProviders]);
+  }, [llmProviders, catalogLlmModels]);
 
   const llmOptionByKey = useMemo(() => {
     return new Map(llmOptions.map((option) => [option.key, option]));
@@ -1943,7 +1962,7 @@ export default function SkillsPage() {
       return "Сначала создайте хотя бы одну базу знаний.";
     }
     if (llmOptions.length === 0) {
-      return "Подключите активного провайдера LLM и модель.";
+      return "Подключите активного провайдера LLM с моделью из каталога.";
     }
     return null;
   })();
@@ -2006,6 +2025,12 @@ export default function SkillsPage() {
 
   const handleSubmit = async (values: SkillFormValues) => {
     const [providerId, modelId] = values.llmKey.split("::");
+    const catalogByKey = catalogModelMap(catalogLlmModels);
+    const resolvedModel = catalogByKey.get(modelId) ?? null;
+    if (!resolvedModel) {
+      form.setError("llmKey", { message: "Модель не найдена в каталоге или отключена" });
+      return;
+    }
     if (values.onTranscriptionMode === "auto_action") {
       const selectedAction = values.onTranscriptionAutoActionId?.trim();
       if (!selectedAction) {
@@ -2057,7 +2082,7 @@ export default function SkillsPage() {
       knowledgeBaseIds: values.knowledgeBaseIds,
       mode: values.mode,
       llmProviderConfigId: providerId,
-      modelId,
+      modelId: resolvedModel.key,
       ragConfig: {
         mode: values.ragMode,
         collectionIds: ragCollectionIds,
@@ -2141,7 +2166,8 @@ export default function SkillsPage() {
     knowledgeBaseQuery.isLoading ||
     isLlmLoading ||
     vectorCollectionsQuery.isLoading ||
-    isEmbeddingProvidersLoading;
+    isEmbeddingProvidersLoading ||
+    isModelsLoading;
 
   const getIconComponent = (iconName: string | null | undefined) => {
     if (!iconName) return null;
@@ -2184,11 +2210,15 @@ export default function SkillsPage() {
         </div>
       </div>
 
-      {(isError || knowledgeBaseQuery.error || llmError || vectorCollectionsError || embeddingProvidersError) && (
+      {(isError || knowledgeBaseQuery.error || llmError || modelsError || vectorCollectionsError || embeddingProvidersError) && (
         <Alert variant="destructive">
           <AlertTitle>Не удалось загрузить данные</AlertTitle>
           <AlertDescription>
-            {error?.message || (knowledgeBaseQuery.error as Error | undefined)?.message || (llmError as Error | undefined)?.message || vectorCollectionsError?.message}
+            {error?.message ||
+              (knowledgeBaseQuery.error as Error | undefined)?.message ||
+              (llmError as Error | undefined)?.message ||
+              (modelsError as Error | undefined)?.message ||
+              vectorCollectionsError?.message}
           </AlertDescription>
         </Alert>
       )}
@@ -2364,12 +2394,3 @@ export default function SkillsPage() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-

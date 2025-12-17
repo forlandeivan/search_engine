@@ -225,9 +225,9 @@ export default function AdminModelsPage() {
   const onSubmit = useCallback(
     (values: ModelFormValues) => {
       if (values.id) {
-        updateMutation.mutate(values);
+        updateMutation.mutate({ ...values, creditsPerUnit: values.creditsPerUnit <= 0 ? 0 : values.creditsPerUnit });
       } else {
-        createMutation.mutate(values);
+        createMutation.mutate({ ...values, creditsPerUnit: values.creditsPerUnit <= 0 ? 0 : values.creditsPerUnit });
       }
     },
     [createMutation, updateMutation],
@@ -407,6 +407,7 @@ export default function AdminModelsPage() {
                     type="number"
                     min={0}
                     step={1}
+                    disabled={form.watch("creditsPerUnit") === 0}
                     {...form.register("creditsPerUnit", { valueAsNumber: true })}
                   />
                   <p className="text-xs text-muted-foreground">
@@ -435,6 +436,24 @@ export default function AdminModelsPage() {
                       <SelectItem value="VERY_HIGH">Very high</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Бесплатная модель</Label>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="isFree"
+                      checked={form.watch("creditsPerUnit") === 0}
+                      onCheckedChange={(checked) =>
+                        form.setValue("creditsPerUnit", checked ? 0 : 1, { shouldDirty: true })
+                      }
+                    />
+                    <Label htmlFor="isFree">Не списывать кредиты (creditsPerUnit=0)</Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    При включении стоимость фиксируется в 0, операции попадут в журнал с credits=0.
+                  </p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 items-center">
