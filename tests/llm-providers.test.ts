@@ -22,6 +22,7 @@ function setupDbMock(): void {
 function setupAuthMock(): void {
   vi.doMock("../server/auth", () => {
     const requireAuth = (_req: any, _res: any, next: () => void) => next();
+    const ensureWorkspaceContextMiddleware = (_opts?: unknown) => (_req: any, _res: any, next: () => void) => next();
 
     return {
       requireAuth,
@@ -39,6 +40,7 @@ function setupAuthMock(): void {
       getRequestWorkspaceMemberships: () => [],
       resolveOptionalUser: () => ({ id: "user-1" }),
       WorkspaceContextError: class extends Error {},
+      ensureWorkspaceContextMiddleware,
     };
   });
 }

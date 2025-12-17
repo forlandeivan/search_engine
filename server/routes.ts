@@ -8914,7 +8914,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         qdrantConfig: normalizedQdrantConfig,
       });
 
-      await syncModelsWithEmbeddingProvider(provider);
+      try {
+        await syncModelsWithEmbeddingProvider(provider);
+      } catch (syncError) {
+        console.error(
+          `[Models] Не удалось синхронизировать модель эмбеддингов провайдера ${provider.id}`,
+          syncError,
+        );
+      }
 
       const rawCollectionName =
         typeof normalizedQdrantConfig?.collectionName === "string"
@@ -9274,7 +9281,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(404).json({ message: "Сервис не найден" });
       }
 
-      await syncModelsWithEmbeddingProvider(updated);
+      try {
+        await syncModelsWithEmbeddingProvider(updated);
+      } catch (syncError) {
+        console.error(
+          `[Models] Не удалось синхронизировать модель эмбеддингов провайдера ${providerId}`,
+          syncError,
+        );
+      }
 
       const rawCollectionName =
         typeof updated.qdrantConfig?.collectionName === "string"
@@ -9342,7 +9356,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         availableModels: payload.availableModels ?? [],
       });
 
-      await syncModelsWithLlmProvider(provider);
+      try {
+        await syncModelsWithLlmProvider(provider);
+      } catch (syncError) {
+        console.error(`[Models] Не удалось синхронизировать модели провайдера ${provider.id}`, syncError);
+      }
 
       res.status(201).json({ provider: toPublicLlmProvider(provider) });
     } catch (error) {
@@ -9399,7 +9417,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(404).json({ message: "Провайдер не найден" });
       }
 
-      await syncModelsWithLlmProvider(updated);
+      try {
+        await syncModelsWithLlmProvider(updated);
+      } catch (syncError) {
+        console.error(`[Models] Не удалось синхронизировать модели провайдера ${providerId}`, syncError);
+      }
 
       res.json({ provider: toPublicLlmProvider(updated) });
     } catch (error) {
