@@ -43,6 +43,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
+import { useModels, type PublicModel } from "@/hooks/useModels";
 
 interface VectorCollectionDetail {
   name: string;
@@ -599,6 +600,7 @@ export default function VectorCollectionDetailPage() {
   const { data: llmProvidersData } = useQuery<{ providers: PublicLlmProvider[] }>({
     queryKey: ["/api/llm/providers"],
   });
+  const catalogLlmModels = useModels("LLM").data ?? [];
 
   const {
     data: pointsData,
@@ -679,47 +681,28 @@ export default function VectorCollectionDetailPage() {
     return (llmProvidersData?.providers ?? []).filter((provider) => provider.isActive);
   }, [llmProvidersData]);
 
-  const llmModelGroups = useMemo(() => {
-    return activeLlmProviders.map((provider) => {
-      const seenValues = new Set<string>();
-      const models: Array<{ label: string; value: string }> = [];
-
-      for (const rawModel of provider.availableModels ?? []) {
-        const value = (rawModel?.value ?? "").trim();
-        if (!value || seenValues.has(value)) {
-          continue;
-        }
-
-        const label = (rawModel.label ?? "").trim() || value;
-        models.push({ label, value });
-        seenValues.add(value);
-      }
-
-      const defaultModel = (provider.model ?? "").trim();
-      if (defaultModel && !seenValues.has(defaultModel)) {
-        models.push({ label: defaultModel, value: defaultModel });
-        seenValues.add(defaultModel);
-      }
-
-      if (models.length === 0) {
-        models.push({ label: provider.model, value: provider.model });
-      }
-
-      return { provider, models };
-    });
-  }, [activeLlmProviders]);
-
   const llmModelOptions = useMemo<LlmModelSelectionOption[]>(() => {
-    return llmModelGroups.flatMap(({ provider, models }) =>
-      models
-        .filter((model) => model.value.trim().length > 0)
-        .map((model) => ({
-          key: `${provider.id}::${model.value}`,
+    const options: LlmModelSelectionOption[] = [];
+    const catalogByProvider = catalogLlmModels.reduce<Record<string, PublicModel[]>>((acc, model) => {
+      const providerId = model.providerId ?? "unbound";
+      acc[providerId] = acc[providerId] ?? [];
+      acc[providerId].push(model);
+      return acc;
+    }, {});
+
+    for (const provider of activeLlmProviders) {
+      const models = catalogByProvider[provider.id] ?? [];
+      for (const model of models) {
+        options.push({
+          key: `${provider.id}::${model.key}`,
           provider,
-          model,
-        })),
-    );
-  }, [llmModelGroups]);
+          model: { label: model.displayName, value: model.key },
+        });
+      }
+    }
+
+    return options.sort((a, b) => a.model.label.localeCompare(b.model.label, "ru"));
+  }, [activeLlmProviders, catalogLlmModels]);
 
   const collectionVectorSizeValue = collection?.vectorSize ?? null;
 

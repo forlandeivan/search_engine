@@ -18,6 +18,7 @@ import {
 } from "./search-settings";
 import type { SelectOption } from "./search-settings";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
+import { useModels, type PublicModel } from "@/hooks/useModels";
 import { Info } from "lucide-react";
 
 export type KnowledgeBaseSearchSettings = {
@@ -119,7 +120,6 @@ const KnowledgeBaseSearchSettingsForm = ({
     llmProviderValue !== "none"
       ? activeLlmProviders.find((provider) => provider.id === llmProviderValue) ?? null
       : null;
-  const availableLlmModels = selectedLlmProvider?.availableModels ?? [];
   const isCustomProvider =
     embeddingProviderValue !== "none" &&
     embeddingProviderValue.length > 0 &&
@@ -132,9 +132,6 @@ const KnowledgeBaseSearchSettingsForm = ({
     collectionValue.length > 0 &&
     vectorCollections.length > 0 &&
     !vectorCollections.some((collection) => collection.name === collectionValue);
-  const isCustomLlmModel =
-    llmModelValue.length > 0 &&
-    availableLlmModels.every((model) => model.value !== llmModelValue);
   const vectorWeightActive = (searchSettings.vectorWeight ?? 0) > 0;
   const collectionOptions = useMemo<SelectOption[]>(() => {
     const baseOptions = vectorCollections.map((collection) => ({
@@ -151,10 +148,27 @@ const KnowledgeBaseSearchSettingsForm = ({
     return items;
   }, [collectionValue, isCustomCollection, vectorCollections]);
 
+  const catalogModels = useModels("LLM").data ?? [];
+  const catalogByProvider = useMemo(() => {
+    const map = new Map<string, PublicModel[]>();
+    for (const model of catalogModels) {
+      const providerId = model.providerId;
+      if (!providerId) continue;
+      const existing = map.get(providerId) ?? [];
+      existing.push(model);
+      map.set(providerId, existing);
+    }
+    return map;
+  }, [catalogModels]);
+
+  const providerLlmModels = selectedLlmProvider ? catalogByProvider.get(selectedLlmProvider.id) ?? [] : [];
+  const isCustomLlmModel =
+    llmModelValue.length > 0 &&
+    providerLlmModels.every((model) => model.key !== llmModelValue);
   const llmModelOptions = useMemo<SelectOption[]>(() => {
-    const baseOptions = availableLlmModels.map((model) => ({
-      value: model.value,
-      label: model.label ?? model.value,
+    const baseOptions = providerLlmModels.map((model) => ({
+      value: model.key,
+      label: model.displayName ?? model.key,
     }));
 
     const items: SelectOption[] = [{ value: "", label: "Не выбрано" }, ...baseOptions];
@@ -164,7 +178,7 @@ const KnowledgeBaseSearchSettingsForm = ({
     }
 
     return items;
-  }, [availableLlmModels, isCustomLlmModel, llmModelValue]);
+  }, [providerLlmModels, isCustomLlmModel, llmModelValue]);
 
   const collectionPlaceholder = isVectorCollectionsLoading
     ? "Загрузка списка коллекций..."
@@ -173,7 +187,7 @@ const KnowledgeBaseSearchSettingsForm = ({
       : "Коллекции не найдены";
 
   const llmModelPlaceholder = selectedLlmProvider
-    ? availableLlmModels.length > 0
+    ? providerLlmModels.length > 0
       ? "Выберите модель"
       : "Нет доступных моделей"
     : "Сначала выберите LLM сервис";

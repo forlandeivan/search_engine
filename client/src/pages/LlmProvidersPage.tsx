@@ -7,6 +7,8 @@ import { Sparkles, Loader2, Trash2, Eye, EyeOff, Copy, SlidersHorizontal } from 
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useModels } from "@/hooks/useModels";
+import { useModels } from "@/hooks/useModels";
 
 import {
   Card,
@@ -226,6 +228,11 @@ const mapProviderToFormValues = (provider: PublicLlmProvider): FormValues => {
   const toStringOrEmpty = (value: number | null | undefined) =>
     typeof value === "number" && !Number.isNaN(value) ? String(value) : "";
 
+  const availableModels =
+    Array.isArray(provider.availableModels) && provider.availableModels.length >= 0
+      ? provider.availableModels
+      : provider.recommendedModels ?? [];
+
   return {
     providerType: provider.providerType,
     name: provider.name,
@@ -237,10 +244,7 @@ const mapProviderToFormValues = (provider: PublicLlmProvider): FormValues => {
     authorizationKey: "",
     scope: provider.scope ?? "",
     model: provider.model ?? "",
-    availableModels:
-      provider.availableModels?.length && provider.availableModels.length > 0
-        ? provider.availableModels
-        : provider.recommendedModels ?? [],
+    availableModels,
     allowSelfSignedCertificate: provider.allowSelfSignedCertificate ?? false,
     requestHeaders: formatJson(provider.requestHeaders ?? defaultRequestHeaders),
     systemPrompt:
@@ -281,6 +285,7 @@ export default function LlmProvidersPage() {
   const { toast } = useToast();
   const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
 
   const form = useForm<FormValues>({
     defaultValues: emptyFormValues,
@@ -299,6 +304,16 @@ export default function LlmProvidersPage() {
     [modelsArray.fields],
   );
   const isAitunnelProvider = providerTypeValue === "aitunnel";
+  const providerCatalogOptions = useMemo(() => {
+    if (!selectedProviderId) return [];
+    return catalogModels
+      .filter((model) => model.providerId === selectedProviderId)
+      .map((model) => ({
+        value: model.key,
+        label: `${model.displayName} (${model.key})`,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  }, [catalogModels, selectedProviderId]);
 
   const unicaForm = useForm<UnicaChatFormValues>({
     defaultValues: {
@@ -315,8 +330,7 @@ export default function LlmProvidersPage() {
   });
 
   const providers = useMemo(() => providersQuery.data?.providers ?? [], [providersQuery.data]);
-
-  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const catalogModels = useModels("LLM").data ?? [];
 
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
@@ -1252,7 +1266,31 @@ export default function LlmProvidersPage() {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Модель по умолчанию</FormLabel>
-                            {providerTypeValue === "aitunnel" && modelSelectOptions.length > 0 ? (
+                            {providerCatalogOptions.length > 0 ? (
+                              <>
+                                <FormControl>
+                                  <Select
+                                    value={field.value || providerCatalogOptions[0]?.value || ""}
+                                    onValueChange={(value) => field.onChange(value)}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Выберите модель из каталога" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {providerCatalogOptions.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </FormControl>
+                                <FormDescription className="text-xs">
+                                  Список моделей берётся из каталога для текущего провайдера. Измените каталог, чтобы
+                                  добавить новые варианты.
+                                </FormDescription>
+                              </>
+                            ) : providerTypeValue === "aitunnel" && modelSelectOptions.length > 0 ? (
                               <>
                                 <FormControl>
                                   <Select

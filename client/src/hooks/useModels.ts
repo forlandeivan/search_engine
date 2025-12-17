@@ -9,6 +9,9 @@ export type PublicModel = {
   modelType: "LLM" | "EMBEDDINGS" | "ASR";
   consumptionUnit: "TOKENS_1K" | "MINUTES";
   costLevel: "FREE" | "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH";
+  providerId?: string | null;
+  providerType?: string | null;
+  providerModelKey?: string | null;
 };
 
 type ModelsResponse = {

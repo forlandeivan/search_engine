@@ -1918,30 +1918,26 @@ export default function SkillsPage() {
 
   const llmOptions = useMemo<LlmSelectionOption[]>(() => {
     const options: LlmSelectionOption[] = [];
-    const catalogByKey = catalogModelMap(catalogLlmModels);
+    const byProvider = catalogLlmModels.reduce<Record<string, typeof catalogLlmModels>>((acc, model) => {
+      if (!model.providerId) return acc;
+      acc[model.providerId] = acc[model.providerId] ?? [];
+      acc[model.providerId].push(model);
+      return acc;
+    }, {});
 
     for (const provider of llmProviders) {
-      const models = provider.availableModels && provider.availableModels.length > 0
-        ? provider.availableModels
-        : provider.model
-          ? [{ label: provider.model, value: provider.model }]
-          : [];
-
+      const models = byProvider[provider.id] ?? [];
       for (const model of models) {
-        const catalogModel = catalogByKey.get(model.value) ?? null;
-        if (!catalogModel) {
-          continue; // пропускаем модели, отсутствующие в каталоге
-        }
-        const labelSuffix = ` · ${catalogModel.displayName} · ${costLevelLabel[catalogModel.costLevel]}`;
+        const labelSuffix = ` · ${model.displayName} · ${costLevelLabel[model.costLevel]}`;
         options.push({
-          key: buildLlmKey(provider.id, model.value),
-          label: `${provider.name} · ${model.label}${labelSuffix}`,
+          key: buildLlmKey(provider.id, model.key),
+          label: `${provider.name} · ${model.displayName}${labelSuffix}`,
           providerId: provider.id,
           providerName: provider.name,
-          modelId: model.value,
+          modelId: model.key,
           providerIsActive: provider.isActive,
           disabled: !provider.isActive,
-          catalogModel,
+          catalogModel: model,
         });
       }
     }

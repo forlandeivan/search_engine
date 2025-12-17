@@ -94,6 +94,8 @@ const modelSchema = z.object({
     .transform((value) => Math.floor(value)),
   isActive: z.boolean().default(true),
   sortOrder: z.coerce.number().default(0),
+  providerId: z.string().optional(),
+  providerModelKey: z.string().optional(),
 });
 
 type ModelFormValues = z.infer<typeof modelSchema>;
@@ -184,6 +186,8 @@ export default function AdminModelsPage() {
       creditsPerUnit: 0,
       isActive: true,
       sortOrder: 0,
+      providerId: undefined,
+      providerModelKey: "",
     },
   });
 
@@ -214,6 +218,8 @@ export default function AdminModelsPage() {
         creditsPerUnit: model.creditsPerUnit ?? 0,
         isActive: model.isActive,
         sortOrder: model.sortOrder ?? 0,
+        providerId: model.providerId ?? undefined,
+        providerModelKey: model.providerModelKey ?? "",
       });
     },
     [form],
@@ -221,6 +227,8 @@ export default function AdminModelsPage() {
 
   const createMutation = useMutation({
     mutationFn: async (values: ModelFormValues) => {
+      const providerOption = providerOptions.find((p) => p.id === values.providerId);
+      const providerTypeForPayload = providerOption?.providerType ?? providerOption?.kind;
       const payload = {
         modelKey: values.modelKey.trim(),
         displayName: values.displayName.trim(),
@@ -231,6 +239,9 @@ export default function AdminModelsPage() {
         creditsPerUnit: values.creditsPerUnit,
         isActive: values.isActive,
         sortOrder: values.sortOrder,
+        providerId: values.providerId || undefined,
+        providerType: values.providerId ? providerTypeForPayload : undefined,
+        providerModelKey: values.providerId ? values.providerModelKey?.trim() || undefined : undefined,
       };
       const res = await apiRequest("POST", "/api/admin/models", payload);
       return await res.json();
@@ -250,6 +261,8 @@ export default function AdminModelsPage() {
 
   const updateMutation = useMutation({
     mutationFn: async (values: ModelFormValues) => {
+      const providerOption = providerOptions.find((p) => p.id === values.providerId);
+      const providerTypeForPayload = providerOption?.providerType ?? providerOption?.kind;
       const payload = {
         displayName: values.displayName.trim(),
         description: values.description?.trim() || undefined,
@@ -259,6 +272,9 @@ export default function AdminModelsPage() {
         creditsPerUnit: values.creditsPerUnit,
         isActive: values.isActive,
         sortOrder: values.sortOrder,
+        providerId: values.providerId || undefined,
+        providerType: values.providerId ? providerTypeForPayload : undefined,
+        providerModelKey: values.providerId ? values.providerModelKey?.trim() || undefined : undefined,
       };
       const res = await apiRequest("PUT", `/api/admin/models/${values.id}`, payload);
       return await res.json();
@@ -278,13 +294,17 @@ export default function AdminModelsPage() {
 
   const onSubmit = useCallback(
     (values: ModelFormValues) => {
+      if (values.providerId && !values.providerModelKey?.trim()) {
+        form.setError("providerModelKey", { message: "Укажите ключ модели у провайдера" });
+        return;
+      }
       if (values.id) {
         updateMutation.mutate({ ...values, creditsPerUnit: values.creditsPerUnit <= 0 ? 0 : values.creditsPerUnit });
       } else {
         createMutation.mutate({ ...values, creditsPerUnit: values.creditsPerUnit <= 0 ? 0 : values.creditsPerUnit });
       }
     },
-    [createMutation, updateMutation],
+    [createMutation, updateMutation, form],
   );
 
   const openCreate = () => {
@@ -379,15 +399,15 @@ export default function AdminModelsPage() {
           <div className="space-y-1">
             <Label>Провайдер</Label>
             <Select
-              value={selectedProviderId ?? ""}
-              onValueChange={(value) => setSelectedProviderId(value || null)}
+              value={selectedProviderId ?? "ALL"}
+              onValueChange={(value) => setSelectedProviderId(value === "ALL" ? null : value)}
               disabled={selectedProviderKind === "NONE"}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Все провайдеры" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Все</SelectItem>
+                <SelectItem value="ALL">Все</SelectItem>
                 {providerOptions
                   .filter((p) => selectedProviderKind === "ALL" || p.kind === selectedProviderKind)
                   .map((provider) => (
@@ -546,6 +566,47 @@ export default function AdminModelsPage() {
                       <SelectItem value="MINUTES">MINUTES</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Провайдер (опционально)</Label>
+                  <Select
+                    value={form.watch("providerId") || "NONE"}
+                    onValueChange={(value) => {
+                      const next = value === "NONE" ? undefined : value;
+                      form.setValue("providerId", next, { shouldDirty: true });
+                      if (!next) {
+                        form.setValue("providerModelKey", "", { shouldDirty: true });
+                      }
+                    }}
+                    disabled={Boolean(editingModel?.providerId)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Без привязки" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NONE">Без привязки</SelectItem>
+                      {providerOptions.map((provider) => (
+                        <SelectItem key={provider.id} value={provider.id}>
+                          {provider.name} · {provider.providerType ?? provider.kind}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Привяжите модель к провайдеру LLM/Embeddings/ASR для синхронизации.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="providerModelKey">Ключ модели у провайдера</Label>
+                  <Input
+                    id="providerModelKey"
+                    placeholder="Напр. gpt-4o-mini"
+                    disabled={!form.watch("providerId") || Boolean(editingModel?.providerId)}
+                    {...form.register("providerModelKey")}
+                  />
+                  <p className="text-xs text-muted-foreground">Обязателен при выборе провайдера.</p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
