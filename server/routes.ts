@@ -122,6 +122,7 @@ import {
   adjustWorkspaceQdrantUsage,
   getWorkspaceQdrantUsage,
 } from "./usage/usage-service";
+import { measureUsageForModel, tokensToUnits, UsageMeterError } from "./consumption-meter";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { listGuardBlockEvents } from "./guards/block-log-service";
@@ -4163,6 +4164,9 @@ async function runKnowledgeBaseRagPipeline(options: {
         }))
       : [];
 
+    const llmTokensForUsage = llmUsageTokens ?? estimateTokens(completion.answer);
+    const llmUsageMeasurement = measureLlmTokens(llmTokensForUsage, llmModelInfo);
+
     const response = {
       query,
       knowledgeBaseId,
@@ -4172,7 +4176,9 @@ async function runKnowledgeBaseRagPipeline(options: {
       chunks: responseChunks,
       usage: {
         embeddingTokens: embeddingUsageTokens,
-        llmTokens: llmUsageTokens,
+        llmTokens: llmUsageMeasurement?.quantityRaw ?? llmUsageTokens,
+        llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
+        llmUnit: llmUsageMeasurement?.unit ?? null,
       },
       timings: {
         total_ms: Number((totalDuration ?? 0).toFixed(2)),
@@ -4205,8 +4211,6 @@ async function runKnowledgeBaseRagPipeline(options: {
     });
 
     if (workspaceId) {
-      const llmTokensForUsage =
-        llmUsageTokens ?? estimateTokens(completion.answer);
       if (llmTokensForUsage > 0) {
         await recordLlmUsageEvent({
           workspaceId,
@@ -4214,7 +4218,7 @@ async function runKnowledgeBaseRagPipeline(options: {
           provider: llmProviderId ?? "unknown",
           model: llmModel ?? llmModelInfo?.modelKey ?? "unknown",
           modelId: llmModelInfo?.id ?? null,
-          tokensTotal: llmTokensForUsage,
+          tokensTotal: llmUsageMeasurement?.quantityRaw ?? llmTokensForUsage,
           occurredAt: new Date(),
         });
       }
@@ -4310,6 +4314,43 @@ function highlightQuery(text: string, query: string): { value: string; matchLeve
   });
 
   return { value: highlighted, matchLevel: hasMatch ? "partial" : "none" };
+}
+
+type LlmModelInfoForUsage = {
+  consumptionUnit: "TOKENS_1K" | "MINUTES";
+  id?: string | null;
+  modelKey?: string | null;
+};
+
+function measureLlmTokens(
+  tokens: number | null | undefined,
+  modelInfo?: LlmModelInfoForUsage | null,
+) {
+  const normalizedTokens = Math.max(0, Math.floor(tokens ?? 0));
+  if (!Number.isFinite(normalizedTokens) || normalizedTokens <= 0) {
+    return null;
+  }
+
+  if (modelInfo) {
+    try {
+      return measureUsageForModel(modelInfo, { kind: "TOKENS", tokens: normalizedTokens });
+    } catch (error) {
+      const modelLabel = modelInfo.modelKey ?? modelInfo.id ?? "unknown";
+      if (error instanceof UsageMeterError) {
+        console.warn(`[usage] модель ${modelLabel}: несовпадение unit/usage (${error.message})`);
+      } else {
+        console.error(`[usage] не удалось измерить LLM usage для модели ${modelLabel}:`, error);
+      }
+    }
+  }
+
+  const fallback = tokensToUnits(normalizedTokens);
+  return {
+    unit: "TOKENS_1K" as const,
+    quantityRaw: fallback.raw,
+    quantityUnits: fallback.units,
+    metadata: { modelResolved: false },
+  };
 }
 
 function buildExcerpt(content: string | null | undefined, query: string, maxLength = 220): string | undefined {
@@ -10136,9 +10177,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           const completion = await completionPromise;
           llmCallCompleted = true;
           const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
+          const llmUsageMeasurement = measureLlmTokens(tokensTotal, context.modelInfo);
           await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
             output: {
               usageTokens: tokensTotal ?? null,
+              usageUnits: llmUsageMeasurement?.quantityUnits ?? null,
+              usageUnit: llmUsageMeasurement?.unit ?? null,
               responsePreview: completion.answer.slice(0, 160),
             },
           });
@@ -10150,7 +10194,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 provider: context.provider.id ?? context.provider.providerType ?? "unknown",
                 model: resolvedModelKey ?? "unknown",
                 modelId: resolvedModelId ?? null,
-                tokensTotal,
+                tokensTotal: llmUsageMeasurement?.quantityRaw ?? tokensTotal,
                 occurredAt: new Date(),
               });
             } catch (usageError) {
@@ -10174,7 +10218,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           sendSseEvent(res, "done", {
             assistantMessageId: assistantMessage.id,
             userMessageId: userMessageRecord?.id ?? null,
-            usage: { llmTokens: tokensTotal ?? null },
+            usage: {
+              llmTokens: llmUsageMeasurement?.quantityRaw ?? tokensTotal ?? null,
+              llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
+              llmUnit: llmUsageMeasurement?.unit ?? null,
+            },
           });
           await safeLogStep("STREAM_TO_CLIENT_FINISH", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
             output: { reason: "completed" },
@@ -10211,13 +10259,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       let completion;
+      let llmUsageMeasurement: ReturnType<typeof measureLlmTokens> | null = null;
       try {
         completion = await executeLlmCompletion(context.provider, accessToken, requestBody);
         llmCallCompleted = true;
         const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
+        llmUsageMeasurement = measureLlmTokens(tokensTotal, context.modelInfo);
         await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
           output: {
             usageTokens: tokensTotal ?? null,
+            usageUnits: llmUsageMeasurement?.quantityUnits ?? null,
+            usageUnit: llmUsageMeasurement?.unit ?? null,
             responsePreview: completion.answer.slice(0, 160),
           },
         });
@@ -10229,7 +10281,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               provider: context.provider.id ?? context.provider.providerType ?? "unknown",
               model: resolvedModelKey ?? "unknown",
               modelId: resolvedModelId ?? null,
-              tokensTotal,
+              tokensTotal: llmUsageMeasurement?.quantityRaw ?? tokensTotal,
               occurredAt: new Date(),
             });
           } catch (usageError) {
@@ -10261,7 +10313,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.json({
         message: assistantMessage,
         userMessage: userMessageRecord,
-        usage: { llmTokens: completion.usageTokens ?? Math.ceil(completion.answer.length / 4) },
+        usage: {
+          llmTokens: completion.usageTokens ?? Math.ceil(completion.answer.length / 4),
+          llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
+          llmUnit: llmUsageMeasurement?.unit ?? null,
+        },
       });
     } catch (error) {
       if (streamingResponseStarted) {
