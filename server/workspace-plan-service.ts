@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { tariffPlanService, type TariffPlanWithLimits } from "./tariff-plan-service";
 import { getWorkspaceUsageSnapshot, type UsageSnapshot } from "./usage/usage-service";
 import type { LimitKey } from "./guards/types";
+import { grantSubscriptionCreditsOnEvent } from "./credits-service";
 
 type DowngradeViolation = {
   key: LimitKey;
@@ -148,6 +149,17 @@ export class WorkspacePlanService {
       .returning();
 
     if (!updated) throw new Error("Workspace not found");
+    // Начисляем подписочные кредиты при смене плана (активация/реню)
+    const amount = Number(targetPlan.includedCreditsAmount ?? 0);
+    const sourceRef = `plan-change:${workspaceId}:${targetPlan.id}:${updated.updatedAt?.toISOString?.() ?? Date.now()}`;
+    await grantSubscriptionCreditsOnEvent({
+      workspaceId,
+      planId: targetPlan.id,
+      planCode: targetPlan.code,
+      amount,
+      sourceRef,
+      period: "monthly",
+    });
     return targetPlan;
   }
 }

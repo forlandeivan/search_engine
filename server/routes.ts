@@ -130,6 +130,7 @@ import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
 import { PlanDowngradeNotAllowedError, workspacePlanService } from "./workspace-plan-service";
+import { ensureWorkspaceCreditAccount, getWorkspaceCreditAccount } from "./credits-service";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
   applyTlsPreferences,
@@ -7740,6 +7741,32 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         sortOrder: plan.sortOrder,
         includedCreditsAmount: Number(plan.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
+      },
+    });
+  });
+
+  app.get("/api/workspaces/:workspaceId/credits", requireAuth, async (req, res) => {
+    const { workspaceId } = req.params;
+    const user = getSessionUser(req);
+    const memberships = getRequestWorkspaceMemberships(req);
+    const isAdmin = user?.role === "admin";
+    const isMember = memberships.some((m) => m.id === workspaceId);
+    if (!isAdmin && !isMember) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const account = await ensureWorkspaceCreditAccount(workspaceId);
+    const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
+
+    res.json({
+      workspaceId,
+      balance: {
+        currentBalance: Number(account.currentBalance ?? 0),
+        nextTopUpAt: account.nextTopUpAt,
+      },
+      planIncludedCredits: {
+        amount: Number(plan.includedCreditsAmount ?? 0),
+        period: (plan.includedCreditsPeriod as string) ?? "monthly",
       },
     });
   });

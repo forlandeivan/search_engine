@@ -1860,3 +1860,43 @@ export type TariffPlan = typeof tariffPlans.$inferSelect;
 export type TariffPlanInsert = typeof tariffPlans.$inferInsert;
 export type TariffLimit = typeof tariffLimits.$inferSelect;
 export type TariffLimitInsert = typeof tariffLimits.$inferInsert;
+
+export const workspaceCreditAccounts = pgTable("workspace_credit_accounts", {
+  workspaceId: varchar("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  currentBalance: bigint("current_balance", { mode: "number" }).notNull().default(0),
+  nextTopUpAt: timestamp("next_top_up_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const workspaceCreditLedger = pgTable(
+  "workspace_credit_ledger",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    amountDelta: bigint("amount_delta", { mode: "number" }).notNull(),
+    entryType: text("entry_type").notNull(),
+    reason: text("reason"),
+    sourceRef: text("source_ref").notNull(),
+    planId: varchar("plan_id"),
+    planCode: text("plan_code"),
+    subscriptionId: text("subscription_id"),
+    period: text("period"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    sourceUnique: uniqueIndex("workspace_credit_ledger_source_uq").on(table.workspaceId, table.entryType, table.sourceRef),
+    workspaceIdx: index("workspace_credit_ledger_workspace_idx").on(table.workspaceId, table.occurredAt),
+  }),
+);
+
+export type WorkspaceCreditAccount = typeof workspaceCreditAccounts.$inferSelect;
+export type WorkspaceCreditAccountInsert = typeof workspaceCreditAccounts.$inferInsert;
+export type WorkspaceCreditLedgerEntry = typeof workspaceCreditLedger.$inferSelect;
+export type WorkspaceCreditLedgerInsert = typeof workspaceCreditLedger.$inferInsert;
