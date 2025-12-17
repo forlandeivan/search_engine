@@ -7547,8 +7547,54 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         shortDescription: p.shortDescription,
         sortOrder: p.sortOrder,
         isActive: p.isActive,
+        includedCreditsAmount: Number(p.includedCreditsAmount ?? 0),
+        includedCreditsPeriod: (p.includedCreditsPeriod as string) ?? "monthly",
       })),
     });
+  });
+
+  app.put("/api/admin/tariffs/:planId", requireAdmin, async (req, res) => {
+    const { planId } = req.params;
+    const rawAmount = req.body?.includedCreditsAmount;
+    const rawPeriod = req.body?.includedCreditsPeriod;
+
+    if (!planId) {
+      return res.status(400).json({ message: "planId is required" });
+    }
+
+    const parsedAmount =
+      rawAmount === null || rawAmount === undefined ? undefined : Number.isFinite(Number(rawAmount)) ? Number(rawAmount) : NaN;
+    if (parsedAmount !== undefined && (Number.isNaN(parsedAmount) || parsedAmount < 0)) {
+      return res.status(400).json({ message: "includedCreditsAmount must be a non-negative number" });
+    }
+
+    const period = typeof rawPeriod === "string" && rawPeriod.trim() ? rawPeriod.trim() : "monthly";
+    if (period.toLowerCase() !== "monthly") {
+      return res.status(400).json({ message: "includedCreditsPeriod must be 'monthly'" });
+    }
+
+    try {
+      const updated = await tariffPlanService.updatePlanCredits(planId, {
+        amount: parsedAmount,
+        period,
+      });
+      res.json({
+        plan: {
+          id: updated.id,
+          code: updated.code,
+          name: updated.name,
+          description: updated.description,
+          shortDescription: updated.shortDescription,
+          sortOrder: updated.sortOrder,
+          isActive: updated.isActive,
+          includedCreditsAmount: Number(updated.includedCreditsAmount ?? 0),
+          includedCreditsPeriod: (updated.includedCreditsPeriod as string) ?? "monthly",
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update tariff";
+      res.status(400).json({ message });
+    }
   });
 
   app.get("/api/admin/tariffs/:planId", requireAdmin, async (req, res) => {
@@ -7567,6 +7613,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         shortDescription: plan.shortDescription,
         sortOrder: plan.sortOrder,
         isActive: plan.isActive,
+        includedCreditsAmount: Number(plan.includedCreditsAmount ?? 0),
+        includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
       },
       limits: Object.entries(plan.limits).map(([limitKey, value]) => ({
         limitKey,
@@ -7642,6 +7690,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         description: plan.description,
         shortDescription: plan.shortDescription,
         sortOrder: plan.sortOrder,
+        includedCreditsAmount: Number(plan.includedCreditsAmount ?? 0),
+        includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
       },
     });
   });
@@ -7688,6 +7738,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         description: plan.description,
         shortDescription: plan.shortDescription,
         sortOrder: plan.sortOrder,
+        includedCreditsAmount: Number(plan.includedCreditsAmount ?? 0),
+        includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
       },
     });
   });
@@ -7744,6 +7796,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         description: p.description,
         shortDescription: p.shortDescription,
         sortOrder: p.sortOrder,
+        includedCreditsAmount: Number(p.includedCreditsAmount ?? 0),
+        includedCreditsPeriod: (p.includedCreditsPeriod as string) ?? "monthly",
       })),
     });
   });

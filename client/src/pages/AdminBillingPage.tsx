@@ -20,6 +20,8 @@ type TariffSummary = {
   name: string;
   description?: string | null;
   isActive: boolean;
+  includedCreditsAmount?: number;
+  includedCreditsPeriod?: string;
 };
 
 type TariffLimit = {
@@ -90,6 +92,7 @@ export default function AdminBillingPage() {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [formLimits, setFormLimits] = useState<LimitFormState>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [creditsAmount, setCreditsAmount] = useState<number>(0);
 
   const tariffsQuery = useQuery({
     queryKey: ["admin", "tariffs"],
@@ -118,6 +121,10 @@ export default function AdminBillingPage() {
         };
       });
       setFormLimits(next);
+    }
+    if (detailQuery.data?.plan) {
+      const amount = detailQuery.data.plan.includedCreditsAmount ?? 0;
+      setCreditsAmount(Math.max(0, Math.floor(amount)));
     }
   }, [detailQuery.data]);
 
@@ -177,6 +184,10 @@ export default function AdminBillingPage() {
     if (!selectedPlanId) return;
     setIsSaving(true);
     try {
+      await apiRequest("PUT", `/api/admin/tariffs/${selectedPlanId}`, {
+        includedCreditsAmount: creditsAmount,
+        includedCreditsPeriod: "monthly",
+      });
       const limitsPayload = Object.entries(formLimits).map(([limitKey, data]) => ({
         limitKey,
         unit: data.unit,
@@ -294,6 +305,34 @@ export default function AdminBillingPage() {
               <div>
                 <p className="text-sm font-medium">{detailQuery.data.plan.name}</p>
                 <p className="text-xs text-muted-foreground">{detailQuery.data.plan.code}</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border p-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Кредиты по подписке (в месяц)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={creditsAmount}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      if (Number.isNaN(next) || next < 0) {
+                        setCreditsAmount(0);
+                      } else {
+                        setCreditsAmount(Math.floor(next));
+                      }
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Пользователь увидит это как ежемесячный бюджет кредитов по тарифу.
+                  </p>
+                </div>
+                <div className="flex flex-col justify-center rounded-md border bg-muted/50 p-3 text-sm">
+                  <p className="font-medium">Превью для пользователя</p>
+                  <p className="text-muted-foreground">
+                    Включено в план: {creditsAmount.toLocaleString()} кредит(ов) / месяц
+                  </p>
+                  <p className="text-xs text-muted-foreground">Период: ежемесячно</p>
+                </div>
               </div>
               <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
                 {Array.from(groupedLimits.entries()).map(([group, limits]) => (

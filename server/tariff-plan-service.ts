@@ -14,6 +14,10 @@ export type TariffPlanLimitsMap = Record<
 >;
 
 export type TariffPlanWithLimits = TariffPlan & { limits: TariffPlanLimitsMap };
+export type TariffCreditsConfig = {
+  amount: number;
+  period: "monthly";
+};
 export type TariffLimitInput = {
   limitKey: string;
   unit?: string | null;
@@ -107,6 +111,19 @@ export class TariffPlanService {
       throw new Error("limitValue must be a non-negative number or null");
     }
     return value;
+  }
+
+  private normalizeCreditsAmount(value: number | null | undefined): number {
+    if (value === null || value === undefined) return 0;
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error("includedCreditsAmount must be a non-negative number");
+    }
+    return Math.floor(value);
+  }
+
+  private normalizeCreditsPeriod(value: string | null | undefined): "monthly" {
+    if (!value || value.toLowerCase() === "monthly") return "monthly";
+    throw new Error("includedCreditsPeriod must be 'monthly' in MVP");
   }
 
   async getPlanByCode(code: string): Promise<TariffPlan | null> {
@@ -217,6 +234,31 @@ export class TariffPlanService {
     const updated = await this.getPlanWithLimitsById(planId);
     if (!updated) {
       throw new Error("Failed to reload plan after update");
+    }
+    return updated;
+  }
+
+  async updatePlanCredits(planId: string, payload: { amount?: number | null; period?: string | null }) {
+    const plan = await this.getPlanById(planId);
+    if (!plan) {
+      throw new Error("Tariff plan not found");
+    }
+
+    const amount = this.normalizeCreditsAmount(payload.amount);
+    const period = this.normalizeCreditsPeriod(payload.period ?? plan.includedCreditsPeriod ?? "monthly");
+
+    const [updated] = await db
+      .update(tariffPlans)
+      .set({
+        includedCreditsAmount: amount,
+        includedCreditsPeriod: period,
+        updatedAt: new Date(),
+      })
+      .where(eq(tariffPlans.id, planId))
+      .returning();
+
+    if (!updated) {
+      throw new Error("Failed to update tariff plan credits");
     }
     return updated;
   }

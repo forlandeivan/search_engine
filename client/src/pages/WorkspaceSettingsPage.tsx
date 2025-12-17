@@ -75,6 +75,8 @@ type TariffSummary = {
   description?: string | null;
   shortDescription?: string | null;
   sortOrder?: number | null;
+  includedCreditsAmount?: number;
+  includedCreditsPeriod?: string;
 };
 
 function useSessionWorkspaceWithUser(workspaceId?: string | null) {
@@ -726,6 +728,9 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                           {plan.description && (
                             <p className="text-xs text-muted-foreground">{plan.description}</p>
                           )}
+                          <p className="text-sm text-muted-foreground">
+                            Включено: {(plan.includedCreditsAmount ?? 0).toLocaleString()} кредит(ов) / месяц
+                          </p>
                           <div className="flex justify-end">
                             <Button
                               size="sm"
