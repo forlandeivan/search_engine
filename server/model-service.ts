@@ -5,8 +5,12 @@ import {
   type ModelConsumptionUnit,
   type ModelCostLevel,
   type InferInsertModel,
+  type LlmModelOption,
+  type LlmProvider,
+  type EmbeddingProvider,
 } from "@shared/schema";
 import { and, eq, sql } from "drizzle-orm";
+import { sanitizeLlmModelOptions } from "./llm-utils";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -212,4 +216,158 @@ export async function tryResolveModel(
     }
     return null;
   }
+}
+
+type ProviderModelSpec = {
+  providerId: string;
+  providerType?: string | null;
+  modelKey: string;
+  displayName: string;
+  modelType: ModelType;
+  consumptionUnit: ModelConsumptionUnit;
+  providerIsActive?: boolean;
+};
+
+async function upsertProviderModel(spec: ProviderModelSpec) {
+  const normalizedKey = spec.modelKey.trim();
+  const normalizedDisplayName = spec.displayName.trim() || normalizedKey;
+  const normalizedType = spec.providerType?.trim() || null;
+
+  const [existingByProvider] = await db
+    .select()
+    .from(models)
+    .where(and(eq(models.providerId, spec.providerId), eq(models.providerModelKey, normalizedKey)))
+    .limit(1);
+
+  const [existingByKey] =
+    existingByProvider === undefined
+      ? await db.select().from(models).where(eq(models.modelKey, normalizedKey)).limit(1)
+      : [undefined];
+
+  const existing = existingByProvider ?? existingByKey ?? null;
+
+  if (existing) {
+    if (existing.providerId && existing.providerId !== spec.providerId) {
+      console.warn(
+        `[ModelSync] Модель ${normalizedKey} уже привязана к другому провайдеру (${existing.providerId}), пропускаем`,
+      );
+      return existing;
+    }
+
+    const shouldUpdateDisplayName =
+      existing.providerId === spec.providerId || existing.displayName === existing.modelKey;
+
+    const updates: Partial<InferInsertModel<typeof models>> = {};
+    if (shouldUpdateDisplayName && existing.displayName !== normalizedDisplayName) {
+      updates.displayName = normalizedDisplayName;
+    }
+    if (existing.modelType !== spec.modelType) updates.modelType = spec.modelType;
+    if (existing.consumptionUnit !== spec.consumptionUnit) updates.consumptionUnit = spec.consumptionUnit;
+    if (existing.providerId !== spec.providerId) updates.providerId = spec.providerId;
+    if (existing.providerType !== normalizedType) updates.providerType = normalizedType;
+    if (existing.providerModelKey !== normalizedKey) updates.providerModelKey = normalizedKey;
+
+    if (Object.keys(updates).length === 0) {
+      return existing;
+    }
+
+    const [updated] = await db
+      .update(models)
+      .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(models.id, existing.id))
+      .returning();
+
+    return updated ?? existing;
+  }
+
+  const [created] = await db
+    .insert(models)
+    .values({
+      modelKey: normalizedKey,
+      displayName: normalizedDisplayName,
+      description: null,
+      modelType: spec.modelType,
+      consumptionUnit: spec.consumptionUnit,
+      costLevel: "MEDIUM",
+      creditsPerUnit: 0,
+      isActive: spec.providerIsActive ?? true,
+      sortOrder: 0,
+      metadata: {} as Record<string, unknown>,
+      providerId: spec.providerId,
+      providerType: normalizedType,
+      providerModelKey: normalizedKey,
+    })
+    .returning();
+
+  return created;
+}
+
+export async function syncModelsWithLlmProvider(
+  provider: Pick<LlmProvider, "id" | "providerType" | "availableModels" | "model" | "name" | "isActive">,
+) {
+  const availableModels: LlmModelOption[] = sanitizeLlmModelOptions(provider.availableModels);
+  const modelsToSync = new Map<string, string>();
+
+  for (const option of availableModels) {
+    const key = option.value.trim();
+    if (!key) continue;
+    modelsToSync.set(key, option.label?.trim() || key);
+  }
+
+  const defaultModel = provider.model?.trim();
+  if (defaultModel && !modelsToSync.has(defaultModel)) {
+    modelsToSync.set(defaultModel, defaultModel);
+  }
+
+  if (modelsToSync.size === 0) {
+    console.warn(
+      `[ModelSync] У провайдера LLM ${provider.name} (${provider.id}) нет моделей для синхронизации. Добавьте availableModels или model.`,
+    );
+    return;
+  }
+
+  const syncedKeys = new Set<string>();
+  for (const [modelKey, displayName] of modelsToSync.entries()) {
+    await upsertProviderModel({
+      providerId: provider.id,
+      providerType: provider.providerType?.toUpperCase() ?? provider.providerType,
+      modelKey,
+      displayName,
+      modelType: "LLM",
+      consumptionUnit: "TOKENS_1K",
+      providerIsActive: provider.isActive,
+    });
+    syncedKeys.add(modelKey);
+  }
+
+  const existingProviderModels = await db.select().from(models).where(eq(models.providerId, provider.id));
+  for (const existing of existingProviderModels) {
+    const key = existing.providerModelKey ?? "";
+    if (!syncedKeys.has(key) && existing.isActive) {
+      await db
+        .update(models)
+        .set({ isActive: false, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(eq(models.id, existing.id));
+    }
+  }
+}
+
+export async function syncModelsWithEmbeddingProvider(
+  provider: Pick<EmbeddingProvider, "id" | "providerType" | "model" | "name" | "isActive">,
+) {
+  const key = provider.model?.trim();
+  if (!key) {
+    console.warn(`[ModelSync] У провайдера эмбеддингов ${provider.name} (${provider.id}) не указана модель`);
+    return;
+  }
+
+  await upsertProviderModel({
+    providerId: provider.id,
+    providerType: provider.providerType?.toUpperCase() ?? provider.providerType,
+    modelKey: key,
+    displayName: key,
+    modelType: "EMBEDDINGS",
+    consumptionUnit: "TOKENS_1K",
+    providerIsActive: provider.isActive,
+  });
 }

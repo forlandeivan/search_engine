@@ -143,6 +143,8 @@ import {
   updateModel,
   ensureModelAvailable,
   tryResolveModel,
+  syncModelsWithLlmProvider,
+  syncModelsWithEmbeddingProvider,
   ModelValidationError,
   ModelUnavailableError,
 } from "./model-service";
@@ -8912,6 +8914,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         qdrantConfig: normalizedQdrantConfig,
       });
 
+      await syncModelsWithEmbeddingProvider(provider);
+
       const rawCollectionName =
         typeof normalizedQdrantConfig?.collectionName === "string"
           ? normalizedQdrantConfig.collectionName.trim()
@@ -9270,6 +9274,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(404).json({ message: "Сервис не найден" });
       }
 
+      await syncModelsWithEmbeddingProvider(updated);
+
       const rawCollectionName =
         typeof updated.qdrantConfig?.collectionName === "string"
           ? updated.qdrantConfig.collectionName.trim()
@@ -9336,6 +9342,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         availableModels: payload.availableModels ?? [],
       });
 
+      await syncModelsWithLlmProvider(provider);
+
       res.status(201).json({ provider: toPublicLlmProvider(provider) });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -9390,6 +9398,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       if (!updated) {
         return res.status(404).json({ message: "Провайдер не найден" });
       }
+
+      await syncModelsWithLlmProvider(updated);
 
       res.json({ provider: toPublicLlmProvider(updated) });
     } catch (error) {
