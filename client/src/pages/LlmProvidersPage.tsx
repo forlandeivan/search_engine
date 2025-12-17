@@ -8,7 +8,6 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useModels } from "@/hooks/useModels";
-import { useModels } from "@/hooks/useModels";
 
 import {
   Card,
@@ -304,6 +303,7 @@ export default function LlmProvidersPage() {
     [modelsArray.fields],
   );
   const isAitunnelProvider = providerTypeValue === "aitunnel";
+  const catalogModels = useModels("LLM").data ?? [];
   const providerCatalogOptions = useMemo(() => {
     if (!selectedProviderId) return [];
     return catalogModels
@@ -330,7 +330,6 @@ export default function LlmProvidersPage() {
   });
 
   const providers = useMemo(() => providersQuery.data?.providers ?? [], [providersQuery.data]);
-  const catalogModels = useModels("LLM").data ?? [];
 
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
@@ -348,10 +347,32 @@ export default function LlmProvidersPage() {
     [providers, selectedUnicaProviderId],
   );
 
-  const unicaProviderModelOptions = useMemo(
-    () => getProviderModelOptions(selectedUnicaProvider),
-    [selectedUnicaProvider],
-  );
+  const catalogOptionsByProvider = useMemo(() => {
+    const map = new Map<string, { label: string; value: string }[]>();
+    for (const model of catalogModels) {
+      if (!model.providerId) continue;
+      const arr = map.get(model.providerId) ?? [];
+      arr.push({ label: `${model.displayName} (${model.key})`, value: model.key });
+      map.set(model.providerId, arr);
+    }
+    for (const [providerId, list] of map.entries()) {
+      map.set(
+        providerId,
+        list.sort((a, b) => a.label.localeCompare(b.label, "ru")),
+      );
+    }
+    return map;
+  }, [catalogModels]);
+
+  const unicaProviderModelOptions = useMemo(() => {
+    if (selectedUnicaProviderId) {
+      const fromCatalog = catalogOptionsByProvider.get(selectedUnicaProviderId) ?? [];
+      if (fromCatalog.length > 0) {
+        return fromCatalog;
+      }
+    }
+    return getProviderModelOptions(selectedUnicaProvider);
+  }, [selectedUnicaProvider, selectedUnicaProviderId, catalogOptionsByProvider]);
 
   const handleSelectProvider = (providerId: string) => {
     setIsCreating(false);

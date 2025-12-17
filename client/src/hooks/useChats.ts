@@ -163,6 +163,7 @@ export async function sendChatMessageLLM({
   chatId,
   workspaceId,
   content,
+  operationId,
   signal,
   handlers,
 }: {

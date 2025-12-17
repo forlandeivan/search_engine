@@ -76,6 +76,15 @@ function buildLimitsMap(limits: TariffLimit[]): TariffPlanLimitsMap {
       isEnabled: Boolean(limit.isEnabled),
     };
   }
+  // добавить отсутствующие ключи с дефолтными единицами и null-значением
+  for (const key of LIMIT_KEYS) {
+    if (result[key]) continue;
+    result[key] = {
+      unit: defaultUnitForKey(key),
+      value: null,
+      isEnabled: true,
+    };
+  }
   return result;
 }
 

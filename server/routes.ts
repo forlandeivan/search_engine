@@ -7953,24 +7953,52 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       if (!planId) {
         return res.status(400).json({ message: "planId is required" });
       }
-      if (!Array.isArray(limitsInput) || limitsInput.length === 0) {
-        return res.status(400).json({ message: "limits must be a non-empty array" });
+
+      if (!Array.isArray(limitsInput)) {
+        return res.status(400).json({ message: "limits must be an array" });
       }
 
-      const normalized = limitsInput.map((item) => {
-        const limitKey = typeof item.limitKey === "string" ? item.limitKey : "";
-        if (!limitKey.trim()) {
-          throw new Error("limitKey is required");
-        }
-        const limitValue =
-          item.limitValue === null || item.limitValue === undefined ? null : Number(item.limitValue);
-        return {
-          limitKey,
-          unit: typeof item.unit === "string" ? item.unit : undefined,
-          limitValue,
-          isEnabled: item.isEnabled !== undefined ? Boolean(item.isEnabled) : undefined,
-        };
-      });
+      const normalized = limitsInput
+        .filter((item) => item)
+        .map((item) => {
+          const limitKey = typeof item.limitKey === "string" ? item.limitKey : "";
+          if (!limitKey.trim()) {
+            throw new Error("limitKey is required");
+          }
+          const limitValue =
+            item.limitValue === null || item.limitValue === undefined ? null : Number(item.limitValue);
+          return {
+            limitKey,
+            unit: typeof item.unit === "string" ? item.unit : undefined,
+            limitValue,
+            isEnabled: item.isEnabled !== undefined ? Boolean(item.isEnabled) : undefined,
+          };
+        });
+
+      if (normalized.length === 0) {
+        const current = await tariffPlanService.getPlanWithLimitsById(planId);
+        return res.json({
+          plan: current
+            ? {
+                id: current.id,
+                code: current.code,
+                name: current.name,
+                description: current.description,
+                shortDescription: current.shortDescription,
+                sortOrder: current.sortOrder,
+                isActive: current.isActive,
+              }
+            : null,
+          limits: current
+            ? Object.entries(current.limits).map(([limitKey, value]) => ({
+                limitKey,
+                unit: value.unit,
+                limitValue: value.value,
+                isEnabled: value.isEnabled,
+              }))
+            : [],
+        });
+      }
 
       const updated = await tariffPlanService.upsertPlanLimits(planId, normalized);
       res.json({

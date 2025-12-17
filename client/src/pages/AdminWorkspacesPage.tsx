@@ -118,6 +118,12 @@ export default function AdminWorkspacesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/workspaces"] });
+      queryClient.invalidateQueries({
+        predicate: (query) =>
+          Array.isArray(query.queryKey) &&
+          ((query.queryKey[0] === "workspace-plan" && query.queryKey[1]) ||
+            (query.queryKey[0] === "workspace-credits" && query.queryKey[1])),
+      });
       toast({ title: "Тариф обновлён", description: "Тариф рабочего пространства успешно изменён" });
     },
     onError: (err) => {

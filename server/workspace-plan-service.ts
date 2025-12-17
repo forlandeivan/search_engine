@@ -133,10 +133,6 @@ export class WorkspacePlanService {
     if (!targetPlan.isActive) throw new Error("Tariff plan is inactive");
 
     const currentPlan = await this.getWorkspacePlanWithLimits(workspaceId);
-    if (currentPlan.id === targetPlan.id) {
-      return currentPlan;
-    }
-
     const isDowngrade = this.isDowngrade(currentPlan, targetPlan);
     if (isDowngrade) {
       await this.validateDowngrade(workspaceId, currentPlan, targetPlan);
@@ -144,7 +140,7 @@ export class WorkspacePlanService {
 
     const [updated] = await db
       .update(workspaces)
-      .set({ tariffPlanId: targetPlan.id })
+      .set({ tariffPlanId: targetPlan.id, updatedAt: sql`CURRENT_TIMESTAMP` })
       .where(eq(workspaces.id, workspaceId))
       .returning();
 
