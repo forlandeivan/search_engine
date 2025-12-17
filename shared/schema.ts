@@ -234,6 +234,7 @@ export const workspaceLlmUsageLedger = pgTable(
     executionId: varchar("execution_id").notNull(),
     provider: text("provider").notNull(),
     model: text("model").notNull(),
+    modelId: varchar("model_id").references(() => models.id, { onDelete: "set null" }),
     tokensTotal: integer("tokens_total").notNull().default(0),
     tokensPrompt: integer("tokens_prompt"),
     tokensCompletion: integer("tokens_completion"),
@@ -253,6 +254,11 @@ export const workspaceLlmUsageLedger = pgTable(
       table.provider,
       table.model,
     ),
+    modelIdIdx: index("workspace_llm_usage_ledger_model_id_idx").on(
+      table.workspaceId,
+      table.periodCode,
+      table.modelId,
+    ),
   }),
 );
 
@@ -269,6 +275,7 @@ export const workspaceEmbeddingUsageLedger = pgTable(
     operationId: varchar("operation_id").notNull(),
     provider: text("provider").notNull(),
     model: text("model").notNull(),
+    modelId: varchar("model_id").references(() => models.id, { onDelete: "set null" }),
     tokensTotal: integer("tokens_total").notNull().default(0),
     contentBytes: bigint("content_bytes", { mode: "bigint" }),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
@@ -287,6 +294,11 @@ export const workspaceEmbeddingUsageLedger = pgTable(
       table.provider,
       table.model,
     ),
+    modelIdIdx: index("workspace_embedding_usage_ledger_model_id_idx").on(
+      table.workspaceId,
+      table.periodCode,
+      table.modelId,
+    ),
   }),
 );
 
@@ -303,6 +315,7 @@ export const workspaceAsrUsageLedger = pgTable(
     asrJobId: varchar("asr_job_id").notNull(),
     provider: text("provider"),
     model: text("model"),
+    modelId: varchar("model_id").references(() => models.id, { onDelete: "set null" }),
     durationSeconds: integer("duration_seconds").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -316,6 +329,11 @@ export const workspaceAsrUsageLedger = pgTable(
       table.periodCode,
       table.provider,
       table.model,
+    ),
+    modelIdIdx: index("workspace_asr_usage_ledger_model_id_idx").on(
+      table.workspaceId,
+      table.periodCode,
+      table.modelId,
     ),
   }),
 );
@@ -1718,6 +1736,8 @@ export type PublicUser = Omit<
 export type PersonalApiToken = typeof personalApiTokens.$inferSelect;
 export type InsertPersonalApiToken = typeof personalApiTokens.$inferInsert;
 export type PublicPersonalApiToken = Omit<PersonalApiToken, "tokenHash" | "userId">;
+export type Model = typeof models.$inferSelect;
+export type ModelInsert = typeof models.$inferInsert;
 export type Workspace = typeof workspaces.$inferSelect;
 export type WorkspaceInsert = typeof workspaces.$inferInsert;
 export type WorkspaceMember = typeof workspaceMembers.$inferSelect;

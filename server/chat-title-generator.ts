@@ -5,6 +5,7 @@ import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
 import { fetchAccessToken } from "./llm-access-token";
 import { executeLlmCompletion } from "./llm-client";
+import { ensureModelAvailable, tryResolveModel, ModelValidationError, ModelUnavailableError } from "./model-service";
 
 const FALLBACK_CHAT_TITLE = process.env.CHAT_TITLE_FALLBACK ?? "Новый чат";
 const CHAT_TITLE_MAX_WORDS = Number(process.env.CHAT_TITLE_MAX_WORDS ?? 5);
@@ -84,16 +85,39 @@ async function resolveUnicaChatProvider(workspaceId: string) {
   }
 
   const sanitizedModels = sanitizeLlmModelOptions(provider.availableModels);
-  let resolvedModel: string | null = null;
+  const preferredModel = modelOverride?.trim() ?? null;
+  let modelKey: string | null = null;
 
-  if (modelOverride && modelOverride.trim()) {
-    const candidate = modelOverride.trim();
-    resolvedModel =
-      sanitizedModels.find((model) => model.value === candidate)?.value ??
-      sanitizedModels.find((model) => model.label === candidate)?.value ??
-      candidate;
-  } else if (provider.model && provider.model.trim()) {
-    resolvedModel = provider.model.trim();
+  if (preferredModel) {
+    try {
+      const model = await ensureModelAvailable(preferredModel, { expectedType: "LLM" });
+      modelKey = model.modelKey;
+    } catch (error) {
+      if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+        throw new Error(error.message);
+      }
+      throw error;
+    }
+  }
+
+  const normalizeModel = (value: string | null) =>
+    value
+      ? sanitizedModels.find((model) => model.value === value)?.value ??
+        sanitizedModels.find((model) => model.label === value)?.value ??
+        value
+      : null;
+  const resolvedModel = normalizeModel(modelKey ?? preferredModel) ?? normalizeModel(provider.model?.trim() ?? null);
+
+  if (!modelKey && resolvedModel) {
+    try {
+      const resolved = await tryResolveModel(resolvedModel, { expectedType: "LLM" });
+      modelKey = resolved?.modelKey ?? null;
+    } catch (error) {
+      if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+        throw new Error(error.message);
+      }
+      throw error;
+    }
   }
 
   return { provider, requestConfig, model: resolvedModel };

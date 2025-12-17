@@ -7,6 +7,7 @@ import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { mapDecisionToPayload, OperationBlockedError } from "./guards/errors";
+import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } from "./model-service";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -463,6 +464,18 @@ export async function createSkill(
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
   const mode = normalized.mode ?? DEFAULT_SKILL_MODE;
   assertRagRequirements(mode, ragConfig, validKnowledgeBases);
+  let resolvedModelId: string | null = normalized.modelId ?? null;
+  if (normalized.modelId) {
+    try {
+      const model = await ensureModelAvailable(normalized.modelId, { expectedType: "LLM" });
+      resolvedModelId = model.modelKey;
+    } catch (error) {
+      if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+        throw new SkillServiceError(error.message, (error as any)?.status ?? 400);
+      }
+      throw error;
+    }
+  }
 
   const [inserted] = await db
     .insert(skills)
@@ -471,7 +484,7 @@ export async function createSkill(
       name: normalized.name,
       description: normalized.description,
       systemPrompt: normalized.systemPrompt,
-      modelId: normalized.modelId,
+      modelId: resolvedModelId,
       llmProviderConfigId: normalized.llmProviderConfigId,
       collectionName: normalized.collectionName,
       mode,
@@ -581,6 +594,22 @@ export async function updateSkill(
   }
 
   assertRagRequirements(effectiveMode, nextRagConfig, knowledgeBaseIdsForValidation);
+
+  if (normalized.modelId !== undefined) {
+    if (normalized.modelId === null) {
+      updates.modelId = null;
+    } else {
+      try {
+        const model = await ensureModelAvailable(normalized.modelId, { expectedType: "LLM" });
+        updates.modelId = model.modelKey;
+      } catch (error) {
+        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+          throw new SkillServiceError(error.message, (error as any)?.status ?? 400);
+        }
+        throw error;
+      }
+    }
+  }
 
   let updatedRow = row;
   if (Object.keys(updates).length > 0 || hasRagUpdates) {

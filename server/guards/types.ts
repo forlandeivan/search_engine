@@ -56,6 +56,8 @@ export type LimitRule = {
     scenario?: string;
     provider?: string;
     model?: string;
+    modelId?: string;
+    modelKey?: string;
   };
   upgradeAvailable?: boolean;
 };
@@ -77,16 +79,22 @@ export type OperationContext = {
     llm?: {
       provider?: string | null;
       model?: string | null;
+      modelId?: string | null;
+      modelKey?: string | null;
       scenario?: "chat" | "skill" | "pipeline" | "generation" | string;
     };
     embeddings?: {
       provider?: string | null;
       model?: string | null;
+      modelId?: string | null;
+      modelKey?: string | null;
       scenario?: "document_vectorization" | "query_embedding" | string;
     };
     asr?: {
       provider?: string | null;
       model?: string | null;
+      modelId?: string | null;
+      modelKey?: string | null;
       mediaType?: "audio" | "video" | string;
       durationSeconds?: number;
     };

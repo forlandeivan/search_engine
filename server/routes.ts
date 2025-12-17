@@ -130,7 +130,15 @@ import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
 import { PlanDowngradeNotAllowedError, workspacePlanService } from "./workspace-plan-service";
-import { listModels, createModel, updateModel } from "./model-service";
+import {
+  listModels,
+  createModel,
+  updateModel,
+  ensureModelAvailable,
+  tryResolveModel,
+  ModelValidationError,
+  ModelUnavailableError,
+} from "./model-service";
 import {
   ensureWorkspaceCreditAccount,
   getWorkspaceCreditAccount,
@@ -329,6 +337,8 @@ function getErrorDetails(error: unknown): string {
 async function recordEmbeddingUsageSafe(params: {
   workspaceId?: string | null;
   provider: EmbeddingProvider;
+  modelKey?: string | null;
+  modelId?: string | null;
   tokensTotal?: number | null;
   contentBytes?: number | null;
   operationId?: string;
@@ -342,12 +352,30 @@ async function recordEmbeddingUsageSafe(params: {
       : null);
   if (tokensTotal === null || tokensTotal === undefined) return;
 
+  let modelId: string | null = params.modelId ?? null;
+  const modelKey = params.modelKey ?? params.provider.model ?? null;
+  if (!modelId && modelKey) {
+    try {
+      const resolvedModel = await tryResolveModel(modelKey, { expectedType: "EMBEDDINGS" });
+      modelId = resolvedModel?.id ?? null;
+    } catch (error) {
+      if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+        console.warn(
+          `[usage] embedding model resolve failed for workspace ${params.workspaceId}: ${error.message}`,
+        );
+      } else {
+        throw error;
+      }
+    }
+  }
+
   try {
     await recordEmbeddingUsageEvent({
       workspaceId: params.workspaceId,
       operationId: params.operationId ?? `embed-${randomUUID()}`,
       provider: params.provider.id ?? params.provider.providerType ?? "unknown",
-      model: params.provider.model ?? "unknown",
+      model: params.modelKey ?? params.provider.model ?? "unknown",
+      modelId,
       tokensTotal,
       contentBytes: params.contentBytes,
       occurredAt: params.occurredAt,
@@ -3194,6 +3222,7 @@ async function runKnowledgeBaseRagPipeline(options: {
   let llmProviderId = body.llm.provider?.trim() || null;
   let llmModel = body.llm.model?.trim() || null;
   let llmModelLabel: string | null = null;
+  let llmModelInfo: { id: string; modelKey: string } | null = null;
 
   let selectedEmbeddingProvider: EmbeddingProvider | null = null;
   let embeddingResultForMetadata: EmbeddingVectorResult | null = null;
@@ -3508,6 +3537,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         await recordEmbeddingUsageSafe({
           workspaceId,
           provider: embeddingProvider,
+          modelKey: embeddingProvider.model ?? null,
           tokensTotal: embeddingTokensForUsage,
           contentBytes: Buffer.byteLength(normalizedQuery, "utf8"),
           operationId: `rag-query-${randomUUID()}`,
@@ -3995,6 +4025,37 @@ async function runKnowledgeBaseRagPipeline(options: {
       sanitizedModels.find((model) => model.value === selectedModelValue) ?? null;
     llmModel = selectedModelValue ?? null;
     llmModelLabel = selectedModelMeta?.label ?? selectedModelValue ?? null;
+    if (requestedModel.length > 0) {
+      try {
+        const model = await ensureModelAvailable(selectedModelValue ?? requestedModel, { expectedType: "LLM" });
+        llmModelInfo = { id: model.id, modelKey: model.modelKey };
+        llmModel = model.modelKey;
+      } catch (error) {
+        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+          runStatus = "error";
+          runErrorMessage = error.message;
+          await finalizeRunLog();
+          throw new HttpError((error as any)?.status ?? 400, error.message);
+        }
+        throw error;
+      }
+    } else if (selectedModelValue) {
+      try {
+        const model = await tryResolveModel(selectedModelValue, { expectedType: "LLM" });
+        if (model) {
+          llmModelInfo = { id: model.id, modelKey: model.modelKey };
+          llmModel = model.modelKey;
+        }
+      } catch (error) {
+        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+          runStatus = "error";
+          runErrorMessage = error.message;
+          await finalizeRunLog();
+          throw new HttpError((error as any)?.status ?? 400, error.message);
+        }
+        throw error;
+      }
+    }
 
     emitStreamStatus("answering", "Формулирую ответ…");
     const llmAccessToken = await fetchAccessToken(configuredProvider);
@@ -4151,7 +4212,8 @@ async function runKnowledgeBaseRagPipeline(options: {
           workspaceId,
           executionId: `rag-llm-${randomUUID()}`,
           provider: llmProviderId ?? "unknown",
-          model: llmModel ?? "unknown",
+          model: llmModel ?? llmModelInfo?.modelKey ?? "unknown",
+          modelId: llmModelInfo?.id ?? null,
           tokensTotal: llmTokensForUsage,
           occurredAt: new Date(),
         });
@@ -4906,6 +4968,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await recordEmbeddingUsageSafe({
         workspaceId,
         provider,
+        modelKey: provider.model ?? null,
         tokensTotal: embeddingResult.usageTokens,
         contentBytes: Buffer.byteLength(body.text, "utf8"),
         operationId: `public-embed-${randomUUID()}`,
@@ -5529,6 +5592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await recordEmbeddingUsageSafe({
         workspaceId,
         provider: embeddingProvider,
+        modelKey: selectedModelValue ?? embeddingProvider.model ?? null,
         tokensTotal: embeddingResult.usageTokens,
         contentBytes: Buffer.byteLength(body.query, "utf8"),
         operationId: `collection-search-${randomUUID()}`,
@@ -8067,7 +8131,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       };
 
       if (payload.modelId !== undefined) {
-        updates.modelId = payload.modelId;
+        try {
+          const model = await ensureModelAvailable(payload.modelId, { expectedType: "LLM" });
+          updates.modelId = model.modelKey;
+        } catch (error) {
+          if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+            return res.status((error as any)?.status ?? 400).json({ message: error.message });
+          }
+          throw error;
+        }
       }
 
       if (payload.systemPrompt !== undefined) {
@@ -9995,10 +10067,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const totalPromptChars = Array.isArray(requestBody[context.requestConfig.messagesField])
         ? JSON.stringify(requestBody[context.requestConfig.messagesField]).length
         : 0;
+      const resolvedModelKey = context.model ?? context.provider.model ?? null;
+      const resolvedModelId = context.modelInfo?.id ?? null;
       const llmCallInput = {
         providerId: context.provider.id,
         endpoint: context.provider.completionUrl ?? null,
-        model: context.model ?? context.provider.model ?? null,
+        model: resolvedModelKey,
+        modelId: resolvedModelId,
         stream: wantsStream,
         temperature: context.requestConfig.temperature ?? null,
         messageCount: context.messages.length,
@@ -10009,7 +10084,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         buildLlmOperationContext({
           workspaceId,
           providerId: context.provider.id ?? context.provider.providerType ?? "unknown",
-          model: context.model ?? context.provider.model ?? null,
+          model: resolvedModelKey,
+          modelId: resolvedModelId,
+          modelKey: context.modelInfo?.modelKey ?? resolvedModelKey,
           scenario: context.skillConfig ? "skill" : "chat",
           tokens: context.requestConfig.maxTokens,
         }),
@@ -10019,7 +10096,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           mapDecisionToPayload(llmGuardDecision, {
             workspaceId,
             operationType: "LLM_REQUEST",
-            meta: { llm: { provider: context.provider.id, model: context.model ?? context.provider.model ?? null } },
+            meta: {
+              llm: {
+                provider: context.provider.id,
+                model: resolvedModelKey,
+                modelId: resolvedModelId,
+                modelKey: context.modelInfo?.modelKey ?? resolvedModelKey,
+              },
+            },
           }),
         );
       }
@@ -10064,7 +10148,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 workspaceId,
                 executionId,
                 provider: context.provider.id ?? context.provider.providerType ?? "unknown",
-                model: context.model ?? context.provider.model ?? "unknown",
+                model: resolvedModelKey ?? "unknown",
+                modelId: resolvedModelId ?? null,
                 tokensTotal,
                 occurredAt: new Date(),
               });
@@ -10142,7 +10227,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               workspaceId,
               executionId,
               provider: context.provider.id ?? context.provider.providerType ?? "unknown",
-              model: context.model ?? context.provider.model ?? "unknown",
+              model: resolvedModelKey ?? "unknown",
+              modelId: resolvedModelId ?? null,
               tokensTotal,
               occurredAt: new Date(),
             });
@@ -11723,6 +11809,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       await recordEmbeddingUsageSafe({
         workspaceId,
         provider,
+        modelKey: provider.model ?? null,
         tokensTotal: embeddingResult.usageTokens,
         contentBytes: Buffer.byteLength(body.query, "utf8"),
         operationId: `collection-search-${randomUUID()}`,
@@ -11958,6 +12045,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       await recordEmbeddingUsageSafe({
         workspaceId,
         provider: embeddingProvider,
+        modelKey: selectedModelValue ?? embeddingProvider.model ?? null,
         tokensTotal: embeddingResult.usageTokens,
         contentBytes: Buffer.byteLength(body.query, "utf8"),
         operationId: `collection-search-${randomUUID()}`,
@@ -13514,6 +13602,19 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       if (jobId) {
         updateKnowledgeDocumentVectorizationJob(jobId, { status: "running" });
       }
+      let embeddingModelId: string | null = null;
+      try {
+        const resolved = await tryResolveModel(provider.model ?? null, { expectedType: "EMBEDDINGS" });
+        embeddingModelId = resolved?.id ?? null;
+      } catch (error) {
+        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+          console.warn(
+            `[usage] embedding model resolve failed for provider ${provider.id ?? provider.providerType}: ${error.message}`,
+          );
+        } else {
+          throw error;
+        }
+      }
       const embeddingResults: Array<
         EmbeddingVectorResult & { chunk: KnowledgeDocumentChunk; index: number }
       > = [];
@@ -13531,6 +13632,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 operationId: chunk.id,
                 provider: provider.id ?? provider.providerType ?? "unknown",
                 model: provider.model ?? "unknown",
+                modelId: embeddingModelId,
                 tokensTotal: result.usageTokens,
                 contentBytes: Buffer.byteLength(chunk.content, "utf8"),
               });
@@ -13765,6 +13867,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       await recordEmbeddingUsageSafe({
         workspaceId,
         provider,
+        modelKey: provider.model ?? null,
         tokensTotal: totalUsageTokens > 0 ? totalUsageTokens : null,
         contentBytes: Buffer.byteLength(documentText, "utf8"),
         operationId: `kb-vectorize-${vectorDocument.id}`,

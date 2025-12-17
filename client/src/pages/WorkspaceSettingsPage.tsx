@@ -36,16 +36,26 @@ type WorkspaceUsageSummary = {
   workspaceId: string;
   period: { periodCode: string; periodYear: number; periodMonth: number; start: string; end: string };
   totalTokens: number;
-  byModelTotal: Array<{ provider: string; model: string; tokens: number }>;
-  timeseries: Array<{ provider: string; model: string; points: Array<{ date: string; tokens: number }> }>;
+  byModelTotal: Array<{ provider: string; model: string; modelId: string | null; tokens: number }>;
+  timeseries: Array<{
+    provider: string;
+    model: string;
+    modelId: string | null;
+    points: Array<{ date: string; tokens: number }>;
+  }>;
 };
 type WorkspaceAsrUsageSummary = {
   workspaceId: string;
   period: { periodCode: string; periodYear: number; periodMonth: number; start: string; end: string };
   totalMinutes: number;
-  byProviderModelTotal: Array<{ provider: string | null; model: string | null; minutes: number }>;
+  byProviderModelTotal: Array<{ provider: string | null; model: string | null; modelId: string | null; minutes: number }>;
   timeseries: Array<{ date: string; minutes: number }>;
-  timeseriesByProviderModel: Array<{ provider: string | null; model: string | null; points: Array<{ date: string; minutes: number }> }>;
+  timeseriesByProviderModel: Array<{
+    provider: string | null;
+    model: string | null;
+    modelId: string | null;
+    points: Array<{ date: string; minutes: number }>;
+  }>;
 };
 type WorkspaceStorageUsageSummary = {
   workspaceId: string;

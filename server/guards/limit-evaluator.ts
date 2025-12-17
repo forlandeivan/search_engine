@@ -61,6 +61,20 @@ function matchesRule(rule: LimitRule, context: OperationContext): boolean {
     }
   }
 
+  if (applies.modelId) {
+    const modelId = context.meta?.llm?.modelId ?? context.meta?.embeddings?.modelId ?? context.meta?.asr?.modelId;
+    if (modelId && modelId !== applies.modelId) {
+      return false;
+    }
+  }
+
+  if (applies.modelKey) {
+    const modelKey = context.meta?.llm?.modelKey ?? context.meta?.embeddings?.modelKey ?? context.meta?.asr?.modelKey;
+    if (modelKey && modelKey !== applies.modelKey) {
+      return false;
+    }
+  }
+
   return true;
 }
 

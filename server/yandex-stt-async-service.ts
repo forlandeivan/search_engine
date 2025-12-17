@@ -12,6 +12,7 @@ import type { ChatMessageMetadata, TranscriptStatus } from "@shared/schema";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { buildAsrOperationContext } from "./guards/helpers";
+import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } from "./model-service";
 
 const createHttpProxyAgent = (url: string) => {
   try {
@@ -218,11 +219,27 @@ class YandexSttAsyncService {
       throw new YandexSttAsyncConfigError("Не все учетные данные Object Storage настроены.");
     }
 
+    const asrModelKey = provider.model ?? null;
+    let asrModelId: string | null = null;
+    if (asrModelKey) {
+      try {
+        const model = await ensureModelAvailable(asrModelKey, { expectedType: "ASR" });
+        asrModelId = model.id;
+      } catch (error) {
+        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+          throw new YandexSttAsyncConfigError(error.message);
+        }
+        throw error;
+      }
+    }
+
     const guardDecision = await workspaceOperationGuard.check(
       buildAsrOperationContext({
         workspaceId,
         providerId: provider.id,
-        model: provider.model ?? null,
+        model: asrModelKey,
+        modelId: asrModelId,
+        modelKey: asrModelKey,
         mediaType: "audio",
         durationSeconds: undefined,
       }),
@@ -232,7 +249,7 @@ class YandexSttAsyncService {
         mapDecisionToPayload(guardDecision, {
           workspaceId,
           operationType: "ASR_TRANSCRIPTION",
-          meta: { asr: { provider: provider.id, model: provider.model ?? null } },
+          meta: { asr: { provider: provider.id, model: asrModelKey, modelId: asrModelId, modelKey: asrModelKey } },
         }),
       );
     }

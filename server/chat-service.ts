@@ -2,7 +2,7 @@ import { storage } from "./storage";
 import type { SkillDto } from "@shared/skills";
 import { getSkillById, UNICA_CHAT_SYSTEM_KEY } from "./skills";
 import { isRagSkill, isUnicaChatSkill } from "./skill-type";
-import type { ChatSession, ChatMessage, ChatMessageRole, LlmProvider, LlmRequestConfig } from "@shared/schema";
+import type { ChatSession, ChatMessage, ChatMessageRole, LlmProvider, LlmRequestConfig, Model } from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
 import { skillExecutionLogService } from "./skill-execution-log-context";
@@ -11,6 +11,7 @@ import {
   type SkillExecutionStepStatus,
   type SkillExecutionStepType,
 } from "./skill-execution-log";
+import { ensureModelAvailable, tryResolveModel, ModelValidationError, ModelUnavailableError } from "./model-service";
 
 export class ChatServiceError extends Error {
   public status: number;
@@ -81,6 +82,14 @@ const describeError = (error: unknown) => {
     message: typeof error === "string" ? error : "Unknown error",
     diagnosticInfo: undefined as string | undefined,
   };
+};
+
+const mapModelErrorToChatError = (error: unknown): ChatServiceError | null => {
+  if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+    const status = (error as any)?.status ?? (error instanceof ModelUnavailableError ? 404 : 400);
+    return new ChatServiceError(error.message, status);
+  }
+  return null;
 };
 
 const mapChatSummary = (
@@ -243,6 +252,7 @@ export type ChatLlmContext = {
   provider: LlmProvider;
   requestConfig: LlmRequestConfig;
   model: string | null;
+  modelInfo: Model | null;
   messages: ChatConversationMessage[];
 };
 
@@ -316,6 +326,7 @@ export async function buildChatLlmContext(
 
   let providerId = skill.llmProviderConfigId ?? null;
   let modelOverride = skill.modelId ?? null;
+  let modelInfo: Model | null = null;
   let systemPromptOverride = skill.systemPrompt ?? null;
   const requestOverrides: Partial<LlmRequestConfig> = {};
   let providerSource: "skill" | "global_unica_chat" = "skill";
@@ -420,17 +431,41 @@ export async function buildChatLlmContext(
     requestConfig,
   };
 
-  const sanitizedModels = sanitizeLlmModelOptions(provider.availableModels);
-  let resolvedModel: string | null = null;
+  const preferredModel = modelOverride?.trim() ?? null;
+  const modelLogInput = { ...providerLogInput, providerId, modelOverride: preferredModel ?? null };
+  if (preferredModel) {
+    try {
+      modelInfo = await ensureModelAvailable(preferredModel, { expectedType: "LLM" });
+    } catch (error) {
+      const mapped = mapModelErrorToChatError(error);
+      const info = describeError(mapped ?? error);
+      await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+        input: modelLogInput,
+        errorCode: info.code,
+        errorMessage: info.message,
+        diagnosticInfo: info.diagnosticInfo,
+      });
+      throw mapped ?? error;
+    }
+  }
 
-  if (modelOverride && modelOverride.trim().length > 0) {
-    const trimmed = modelOverride.trim();
-    resolvedModel =
-      sanitizedModels.find((candidate) => candidate.value === trimmed)?.value ??
-      sanitizedModels.find((candidate) => candidate.label === trimmed)?.value ??
-      trimmed;
-  } else if (provider.model && provider.model.trim().length > 0) {
-    resolvedModel = provider.model.trim();
+  const sanitizedModels = sanitizeLlmModelOptions(provider.availableModels);
+  const normalizeModel = (value: string | null) =>
+    value
+      ? sanitizedModels.find((candidate) => candidate.value === value)?.value ??
+        sanitizedModels.find((candidate) => candidate.label === value)?.value ??
+        value
+      : null;
+  const resolvedModelKey =
+    normalizeModel(modelInfo?.modelKey ?? preferredModel) ?? normalizeModel(provider.model?.trim() ?? null);
+
+  if (!modelInfo && resolvedModelKey) {
+    try {
+      modelInfo = await tryResolveModel(resolvedModelKey, { expectedType: "LLM" });
+    } catch (error) {
+      const mapped = mapModelErrorToChatError(error);
+      throw mapped ?? error;
+    }
   }
 
   await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
@@ -438,7 +473,9 @@ export async function buildChatLlmContext(
     output: {
       providerId,
       providerSource,
-      modelId: resolvedModel ?? provider.model ?? null,
+      modelKey: resolvedModelKey ?? provider.model ?? null,
+      modelId: modelInfo?.id ?? null,
+      modelDisplayName: modelInfo?.displayName ?? null,
       overrides: {
         hasSystemPromptOverride: Boolean(systemPromptOverride && systemPromptOverride.trim()),
         temperature: requestOverrides.temperature ?? null,
@@ -462,7 +499,8 @@ export async function buildChatLlmContext(
     skillConfig: skill,
     provider: configuredProvider,
     requestConfig,
-    model: resolvedModel ?? null,
+    model: resolvedModelKey ?? null,
+    modelInfo,
     messages: conversation,
   };
 }

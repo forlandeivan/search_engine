@@ -324,6 +324,7 @@ type LlmUsageRecord = {
   executionId: string;
   provider: string;
   model: string;
+  modelId?: string | null;
   tokensTotal: number;
   tokensPrompt?: number | null;
   tokensCompletion?: number | null;
@@ -358,6 +359,7 @@ export async function recordLlmUsageEvent(params: LlmUsageRecord): Promise<void>
         executionId: params.executionId,
         provider: params.provider,
         model: params.model,
+        modelId: params.modelId ?? null,
         tokensTotal: normalizedTokensTotal,
         tokensPrompt:
           params.tokensPrompt === undefined || params.tokensPrompt === null
@@ -401,8 +403,13 @@ export type WorkspaceLlmUsageSummary = {
   workspaceId: string;
   period: UsagePeriod & { start: string; end: string };
   totalTokens: number;
-  byModelTotal: Array<{ provider: string; model: string; tokens: number }>;
-  timeseries: Array<{ provider: string; model: string; points: Array<{ date: string; tokens: number }> }>;
+  byModelTotal: Array<{ provider: string; model: string; modelId: string | null; tokens: number }>;
+  timeseries: Array<{
+    provider: string;
+    model: string;
+    modelId: string | null;
+    points: Array<{ date: string; tokens: number }>;
+  }>;
 };
 
 export async function getWorkspaceLlmUsageSummary(
@@ -425,18 +432,20 @@ export async function getWorkspaceLlmUsageSummary(
     .select({
       provider: workspaceLlmUsageLedger.provider,
       model: workspaceLlmUsageLedger.model,
+      modelId: workspaceLlmUsageLedger.modelId,
       tokens: sql<number>`coalesce(sum(${workspaceLlmUsageLedger.tokensTotal}), 0)`,
     })
     .from(workspaceLlmUsageLedger)
     .where(
       and(eq(workspaceLlmUsageLedger.workspaceId, workspaceId), eq(workspaceLlmUsageLedger.periodCode, period.periodCode)),
     )
-    .groupBy(workspaceLlmUsageLedger.provider, workspaceLlmUsageLedger.model);
+    .groupBy(workspaceLlmUsageLedger.provider, workspaceLlmUsageLedger.model, workspaceLlmUsageLedger.modelId);
 
   const timeseriesRows = await db
     .select({
       provider: workspaceLlmUsageLedger.provider,
       model: workspaceLlmUsageLedger.model,
+      modelId: workspaceLlmUsageLedger.modelId,
       day: sql<string>`date_trunc('day', ${workspaceLlmUsageLedger.occurredAt})`,
       tokens: sql<number>`coalesce(sum(${workspaceLlmUsageLedger.tokensTotal}), 0)`,
     })
@@ -444,13 +453,21 @@ export async function getWorkspaceLlmUsageSummary(
     .where(
       and(eq(workspaceLlmUsageLedger.workspaceId, workspaceId), eq(workspaceLlmUsageLedger.periodCode, period.periodCode)),
     )
-    .groupBy(workspaceLlmUsageLedger.provider, workspaceLlmUsageLedger.model, sql`date_trunc('day', ${workspaceLlmUsageLedger.occurredAt})`);
+    .groupBy(
+      workspaceLlmUsageLedger.provider,
+      workspaceLlmUsageLedger.model,
+      workspaceLlmUsageLedger.modelId,
+      sql`date_trunc('day', ${workspaceLlmUsageLedger.occurredAt})`,
+    );
 
-  const timeseriesMap = new Map<string, { provider: string; model: string; points: Array<{ date: string; tokens: number }> }>();
+  const timeseriesMap = new Map<
+    string,
+    { provider: string; model: string; modelId: string | null; points: Array<{ date: string; tokens: number }> }
+  >();
   for (const row of timeseriesRows) {
-    const key = `${row.provider}::${row.model}`;
+    const key = `${row.provider}::${row.modelId ?? row.model}`;
     if (!timeseriesMap.has(key)) {
-      timeseriesMap.set(key, { provider: row.provider, model: row.model, points: [] });
+      timeseriesMap.set(key, { provider: row.provider, model: row.model, modelId: row.modelId ?? null, points: [] });
     }
     const entry = timeseriesMap.get(key)!;
     const dateString = new Date(row.day).toISOString().slice(0, 10);
@@ -468,6 +485,7 @@ export async function getWorkspaceLlmUsageSummary(
     byModelTotal: byModelRows.map((row) => ({
       provider: row.provider,
       model: row.model,
+      modelId: row.modelId ?? null,
       tokens: Number(row.tokens),
     })),
     timeseries: Array.from(timeseriesMap.values()),
@@ -478,8 +496,13 @@ export type WorkspaceEmbeddingUsageSummary = {
   workspaceId: string;
   period: UsagePeriod & { start: string; end: string };
   totalTokens: number;
-  byModelTotal: Array<{ provider: string; model: string; tokens: number }>;
-  timeseries: Array<{ provider: string; model: string; points: Array<{ date: string; tokens: number }> }>;
+  byModelTotal: Array<{ provider: string; model: string; modelId: string | null; tokens: number }>;
+  timeseries: Array<{
+    provider: string;
+    model: string;
+    modelId: string | null;
+    points: Array<{ date: string; tokens: number }>;
+  }>;
 };
 
 export async function getWorkspaceEmbeddingUsageSummary(
@@ -505,6 +528,7 @@ export async function getWorkspaceEmbeddingUsageSummary(
     .select({
       provider: workspaceEmbeddingUsageLedger.provider,
       model: workspaceEmbeddingUsageLedger.model,
+      modelId: workspaceEmbeddingUsageLedger.modelId,
       tokens: sql<number>`coalesce(sum(${workspaceEmbeddingUsageLedger.tokensTotal}), 0)`,
     })
     .from(workspaceEmbeddingUsageLedger)
@@ -514,12 +538,17 @@ export async function getWorkspaceEmbeddingUsageSummary(
         eq(workspaceEmbeddingUsageLedger.periodCode, period.periodCode),
       ),
     )
-    .groupBy(workspaceEmbeddingUsageLedger.provider, workspaceEmbeddingUsageLedger.model);
+    .groupBy(
+      workspaceEmbeddingUsageLedger.provider,
+      workspaceEmbeddingUsageLedger.model,
+      workspaceEmbeddingUsageLedger.modelId,
+    );
 
   const timeseriesRows = await db
     .select({
       provider: workspaceEmbeddingUsageLedger.provider,
       model: workspaceEmbeddingUsageLedger.model,
+      modelId: workspaceEmbeddingUsageLedger.modelId,
       day: sql<string>`date_trunc('day', ${workspaceEmbeddingUsageLedger.occurredAt})`,
       tokens: sql<number>`coalesce(sum(${workspaceEmbeddingUsageLedger.tokensTotal}), 0)`,
     })
@@ -533,17 +562,23 @@ export async function getWorkspaceEmbeddingUsageSummary(
     .groupBy(
       workspaceEmbeddingUsageLedger.provider,
       workspaceEmbeddingUsageLedger.model,
+      workspaceEmbeddingUsageLedger.modelId,
       sql`date_trunc('day', ${workspaceEmbeddingUsageLedger.occurredAt})`,
     );
 
   const timeseriesMap = new Map<
     string,
-    { provider: string; model: string; points: Array<{ date: string; tokens: number }> }
+    { provider: string; model: string; modelId: string | null; points: Array<{ date: string; tokens: number }> }
   >();
   for (const row of timeseriesRows) {
-    const key = `${row.provider}::${row.model}`;
+    const key = `${row.provider}::${row.modelId ?? row.model}`;
     if (!timeseriesMap.has(key)) {
-      timeseriesMap.set(key, { provider: row.provider, model: row.model, points: [] });
+      timeseriesMap.set(key, {
+        provider: row.provider,
+        model: row.model,
+        modelId: row.modelId ?? null,
+        points: [],
+      });
     }
     const entry = timeseriesMap.get(key)!;
     const dateString = new Date(row.day).toISOString().slice(0, 10);
@@ -561,6 +596,7 @@ export async function getWorkspaceEmbeddingUsageSummary(
     byModelTotal: byModelRows.map((row) => ({
       provider: row.provider,
       model: row.model,
+      modelId: row.modelId ?? null,
       tokens: Number(row.tokens),
     })),
     timeseries: Array.from(timeseriesMap.values()),
@@ -571,9 +607,14 @@ export type WorkspaceAsrUsageSummary = {
   workspaceId: string;
   period: UsagePeriod & { start: string; end: string };
   totalMinutes: number;
-  byProviderModelTotal: Array<{ provider: string | null; model: string | null; minutes: number }>;
+  byProviderModelTotal: Array<{ provider: string | null; model: string | null; modelId: string | null; minutes: number }>;
   timeseries: Array<{ date: string; minutes: number }>;
-  timeseriesByProviderModel: Array<{ provider: string | null; model: string | null; points: Array<{ date: string; minutes: number }> }>;
+  timeseriesByProviderModel: Array<{
+    provider: string | null;
+    model: string | null;
+    modelId: string | null;
+    points: Array<{ date: string; minutes: number }>;
+  }>;
 };
 
 function secondsToMinutesRoundedUp(totalSeconds: number): number {
@@ -598,11 +639,12 @@ export async function getWorkspaceAsrUsageSummary(
     .select({
       provider: workspaceAsrUsageLedger.provider,
       model: workspaceAsrUsageLedger.model,
+      modelId: workspaceAsrUsageLedger.modelId,
       durationSeconds: sql<number>`coalesce(sum(${workspaceAsrUsageLedger.durationSeconds}), 0)`,
     })
     .from(workspaceAsrUsageLedger)
     .where(and(eq(workspaceAsrUsageLedger.workspaceId, workspaceId), eq(workspaceAsrUsageLedger.periodCode, period.periodCode)))
-    .groupBy(workspaceAsrUsageLedger.provider, workspaceAsrUsageLedger.model);
+    .groupBy(workspaceAsrUsageLedger.provider, workspaceAsrUsageLedger.model, workspaceAsrUsageLedger.modelId);
 
   const timeseriesRows = await db
     .select({
@@ -617,6 +659,7 @@ export async function getWorkspaceAsrUsageSummary(
     .select({
       provider: workspaceAsrUsageLedger.provider,
       model: workspaceAsrUsageLedger.model,
+      modelId: workspaceAsrUsageLedger.modelId,
       day: sql<string>`date_trunc('day', ${workspaceAsrUsageLedger.occurredAt})`,
       durationSeconds: sql<number>`coalesce(sum(${workspaceAsrUsageLedger.durationSeconds}), 0)`,
     })
@@ -625,17 +668,23 @@ export async function getWorkspaceAsrUsageSummary(
     .groupBy(
       workspaceAsrUsageLedger.provider,
       workspaceAsrUsageLedger.model,
+      workspaceAsrUsageLedger.modelId,
       sql`date_trunc('day', ${workspaceAsrUsageLedger.occurredAt})`,
     );
 
   const timeseriesByProviderModel = new Map<
     string,
-    { provider: string | null; model: string | null; points: Array<{ date: string; minutes: number }> }
+    { provider: string | null; model: string | null; modelId: string | null; points: Array<{ date: string; minutes: number }> }
   >();
   for (const row of timeseriesByProviderRows) {
-    const key = `${row.provider ?? "null"}::${row.model ?? "null"}`;
+    const key = `${row.provider ?? "null"}::${row.modelId ?? row.model ?? "null"}`;
     if (!timeseriesByProviderModel.has(key)) {
-      timeseriesByProviderModel.set(key, { provider: row.provider ?? null, model: row.model ?? null, points: [] });
+      timeseriesByProviderModel.set(key, {
+        provider: row.provider ?? null,
+        model: row.model ?? null,
+        modelId: row.modelId ?? null,
+        points: [],
+      });
     }
     const entry = timeseriesByProviderModel.get(key)!;
     const dateString = new Date(row.day).toISOString().slice(0, 10);
@@ -653,6 +702,7 @@ export async function getWorkspaceAsrUsageSummary(
     byProviderModelTotal: byProviderModelRows.map((row) => ({
       provider: row.provider ?? null,
       model: row.model ?? null,
+      modelId: row.modelId ?? null,
       minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)),
     })),
     timeseries: timeseriesRows.map((row) => ({
@@ -936,6 +986,7 @@ type AsrUsageRecord = {
   durationSeconds: number;
   provider?: string | null;
   model?: string | null;
+  modelId?: string | null;
   occurredAt?: Date;
   period?: UsagePeriod;
 };
@@ -970,6 +1021,7 @@ export async function recordAsrUsageEvent(params: AsrUsageRecord): Promise<void>
         asrJobId: params.asrJobId,
         provider: params.provider ?? null,
         model: params.model ?? null,
+        modelId: params.modelId ?? null,
         durationSeconds: normalizedDurationSeconds,
         occurredAt,
       })
@@ -1006,6 +1058,7 @@ type EmbeddingUsageRecord = {
   operationId: string;
   provider: string;
   model: string;
+  modelId?: string | null;
   tokensTotal: number;
   contentBytes?: number | null;
   occurredAt?: Date;
@@ -1044,6 +1097,7 @@ export async function recordEmbeddingUsageEvent(params: EmbeddingUsageRecord): P
         operationId: params.operationId,
         provider: params.provider,
         model: params.model,
+        modelId: params.modelId ?? null,
         tokensTotal: normalizedTokensTotal,
         contentBytes: normalizedContentBytes,
         occurredAt,

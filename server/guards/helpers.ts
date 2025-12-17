@@ -4,6 +4,8 @@ type LlmContextInput = {
   workspaceId: string;
   providerId: string;
   model?: string | null;
+  modelId?: string | null;
+  modelKey?: string | null;
   stream?: boolean;
   scenario?: "chat" | "skill" | "pipeline" | "generation" | string;
   tokens?: number;
@@ -18,6 +20,8 @@ export function buildLlmOperationContext(input: LlmContextInput): OperationConte
       llm: {
         provider: input.providerId,
         model: input.model ?? null,
+        modelId: input.modelId ?? null,
+        modelKey: input.modelKey ?? null,
         scenario: input.scenario ?? "chat",
       },
     },
@@ -28,6 +32,8 @@ type EmbeddingsContextInput = {
   workspaceId: string;
   providerId?: string | null;
   model?: string | null;
+  modelId?: string | null;
+  modelKey?: string | null;
   scenario?: "document_vectorization" | "query_embedding" | string;
   tokens?: number;
   bytes?: number;
@@ -51,6 +57,8 @@ export function buildEmbeddingsOperationContext(input: EmbeddingsContextInput): 
       embeddings: {
         provider: input.providerId ?? null,
         model: input.model ?? null,
+        modelId: input.modelId ?? null,
+        modelKey: input.modelKey ?? null,
         scenario: input.scenario ?? "document_vectorization",
       },
       objects: input.collection ? { entityType: "collection", parentId: input.collection } : undefined,
@@ -62,6 +70,8 @@ type AsrContextInput = {
   workspaceId: string;
   providerId?: string | null;
   model?: string | null;
+  modelId?: string | null;
+  modelKey?: string | null;
   mediaType?: "audio" | "video" | string;
   durationSeconds?: number;
 };
@@ -76,6 +86,8 @@ export function buildAsrOperationContext(input: AsrContextInput): OperationConte
       asr: {
         provider: input.providerId ?? null,
         model: input.model ?? null,
+        modelId: input.modelId ?? null,
+        modelKey: input.modelKey ?? null,
         mediaType: input.mediaType ?? "audio",
         durationSeconds: input.durationSeconds,
       },

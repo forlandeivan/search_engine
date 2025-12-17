@@ -3281,7 +3281,7 @@ export class DatabaseStorage implements IStorage {
             ON "personal_api_tokens" ("user_id")
         `);
       } catch (error) {
-        swallowPgError(error, ["42P07", "42710"]);
+        swallowPgError(error, ["42P07", "42710", "23505"]);
       }
 
       try {
@@ -3291,7 +3291,7 @@ export class DatabaseStorage implements IStorage {
             WHERE "revoked_at" IS NULL
         `);
       } catch (error) {
-        swallowPgError(error, ["42P07", "42710"]);
+        swallowPgError(error, ["42P07", "42710", "23505"]);
       }
 
       globalUserAuthSchemaReady = true;
