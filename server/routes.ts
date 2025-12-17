@@ -130,6 +130,7 @@ import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
 import { PlanDowngradeNotAllowedError, workspacePlanService } from "./workspace-plan-service";
+import { listModels, createModel, updateModel } from "./model-service";
 import {
   ensureWorkspaceCreditAccount,
   getWorkspaceCreditAccount,
@@ -7774,6 +7775,78 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       },
       policy: summary.policy,
     });
+  });
+
+  app.get("/api/models", requireAuth, async (req, res) => {
+    const typeParam = typeof req.query?.type === "string" ? (req.query.type.toUpperCase() as any) : undefined;
+    const modelsList = await listModels({
+      includeInactive: false,
+      type: typeParam,
+    });
+    res.json({
+      models: modelsList.map((m) => ({
+        id: m.id,
+        key: m.modelKey,
+        displayName: m.displayName,
+        description: m.description,
+        modelType: m.modelType,
+        consumptionUnit: m.consumptionUnit,
+        costLevel: m.costLevel,
+        isActive: m.isActive,
+        sortOrder: m.sortOrder,
+      })),
+    });
+  });
+
+  app.get("/api/admin/models", requireAdmin, async (_req, res) => {
+    const modelsList = await listModels({ includeInactive: true });
+    res.json({ models: modelsList });
+  });
+
+  app.post("/api/admin/models", requireAdmin, async (req, res) => {
+    try {
+      const payload = {
+        modelKey: String(req.body?.modelKey ?? "").trim(),
+        displayName: String(req.body?.displayName ?? "").trim(),
+        description: typeof req.body?.description === "string" ? req.body.description : null,
+        modelType: String(req.body?.modelType ?? "").toUpperCase() as any,
+        consumptionUnit: String(req.body?.consumptionUnit ?? "").toUpperCase() as any,
+        costLevel: String(req.body?.costLevel ?? "MEDIUM").toUpperCase() as any,
+        isActive: req.body?.isActive !== undefined ? Boolean(req.body.isActive) : true,
+        sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : 0,
+      };
+      if (!payload.modelKey || !payload.displayName) {
+        return res.status(400).json({ message: "modelKey and displayName are required" });
+      }
+      const created = await createModel(payload);
+      res.json({ model: created });
+    } catch (error: any) {
+      const message = typeof error?.message === "string" ? error.message : "Failed to create model";
+      res.status(400).json({ message });
+    }
+  });
+
+  app.put("/api/admin/models/:id", requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const payload = {
+        displayName: req.body?.displayName,
+        description: req.body?.description,
+        modelType: req.body?.modelType ? String(req.body.modelType).toUpperCase() : undefined,
+        consumptionUnit: req.body?.consumptionUnit ? String(req.body.consumptionUnit).toUpperCase() : undefined,
+        costLevel: req.body?.costLevel ? String(req.body.costLevel).toUpperCase() : undefined,
+        isActive: req.body?.isActive,
+        sortOrder: req.body?.sortOrder,
+      };
+      const updated = await updateModel(id, payload as any);
+      if (!updated) {
+        return res.status(404).json({ message: "Model not found" });
+      }
+      res.json({ model: updated });
+    } catch (error: any) {
+      const message = typeof error?.message === "string" ? error.message : "Failed to update model";
+      res.status(400).json({ message });
+    }
   });
 
   app.post("/api/admin/workspaces/:workspaceId/credits/adjust", requireAdmin, async (req, res) => {
