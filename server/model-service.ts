@@ -39,6 +39,7 @@ export type ModelInput = {
   modelType: ModelType;
   consumptionUnit: ModelConsumptionUnit;
   costLevel?: ModelCostLevel;
+  creditsPerUnit?: number;
   isActive?: boolean;
   sortOrder?: number;
   metadata?: Record<string, unknown> | null;
@@ -73,6 +74,7 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
   const modelKey = input.modelKey.trim();
   if (!modelKey) throw new Error("modelKey is required");
   validateUnit(input.modelType, input.consumptionUnit);
+  const creditsPerUnit = Math.max(0, Math.floor(input.creditsPerUnit ?? 0));
 
   const [row] = await db
     .insert(models)
@@ -83,6 +85,7 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
       modelType: input.modelType,
       consumptionUnit: input.consumptionUnit,
       costLevel: input.costLevel ?? "MEDIUM",
+      creditsPerUnit,
       isActive: input.isActive ?? true,
       sortOrder: input.sortOrder ?? 0,
       metadata: (input.metadata as any) ?? {},
@@ -101,6 +104,7 @@ export async function updateModel(
   if (input.modelType !== undefined) values.modelType = input.modelType;
   if (input.consumptionUnit !== undefined) values.consumptionUnit = input.consumptionUnit;
   if (input.costLevel !== undefined) values.costLevel = input.costLevel;
+  if (input.creditsPerUnit !== undefined) values.creditsPerUnit = Math.max(0, Math.floor(input.creditsPerUnit ?? 0));
   if (input.isActive !== undefined) values.isActive = input.isActive;
   if (input.sortOrder !== undefined) values.sortOrder = input.sortOrder;
   if (input.metadata !== undefined) values.metadata = (input.metadata as any) ?? {};

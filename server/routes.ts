@@ -122,7 +122,8 @@ import {
   adjustWorkspaceQdrantUsage,
   getWorkspaceQdrantUsage,
 } from "./usage/usage-service";
-import { measureUsageForModel, tokensToUnits, UsageMeterError } from "./consumption-meter";
+import { measureUsageForModel, tokensToUnits, UsageMeterError, type UsageMeasurement } from "./consumption-meter";
+import { calculatePriceForUsage } from "./price-calculator";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { listGuardBlockEvents } from "./guards/block-log-service";
@@ -354,11 +355,13 @@ async function recordEmbeddingUsageSafe(params: {
   if (tokensTotal === null || tokensTotal === undefined) return;
 
   let modelId: string | null = params.modelId ?? null;
+  let modelCreditsPerUnit: number | null = null;
   const modelKey = params.modelKey ?? params.provider.model ?? null;
   if (!modelId && modelKey) {
     try {
       const resolvedModel = await tryResolveModel(modelKey, { expectedType: "EMBEDDINGS" });
       modelId = resolvedModel?.id ?? null;
+      modelCreditsPerUnit = resolvedModel?.creditsPerUnit ?? null;
     } catch (error) {
       if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
         console.warn(
@@ -371,6 +374,10 @@ async function recordEmbeddingUsageSafe(params: {
   }
 
   try {
+    const pricingUnits = tokensToUnits(tokensTotal);
+    const appliedCreditsPerUnit = Math.max(0, Math.floor(modelCreditsPerUnit ?? 0));
+    const creditsCharged = pricingUnits.units * appliedCreditsPerUnit;
+
     await recordEmbeddingUsageEvent({
       workspaceId: params.workspaceId,
       operationId: params.operationId ?? `embed-${randomUUID()}`,
@@ -379,6 +386,8 @@ async function recordEmbeddingUsageSafe(params: {
       modelId,
       tokensTotal,
       contentBytes: params.contentBytes,
+      appliedCreditsPerUnit,
+      creditsCharged,
       occurredAt: params.occurredAt,
     });
   } catch (error) {
@@ -4172,6 +4181,7 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     const llmTokensForUsage = llmUsageTokens ?? estimateTokens(completion.answer);
     const llmUsageMeasurement = measureTokensForModel(llmTokensForUsage, llmModelInfo);
+    const llmPrice = calculatePriceSnapshot(llmModelInfo, llmUsageMeasurement);
 
     const response = {
       query,
@@ -4187,6 +4197,8 @@ async function runKnowledgeBaseRagPipeline(options: {
         llmTokens: llmUsageMeasurement?.quantityRaw ?? llmUsageTokens,
         llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
         llmUnit: llmUsageMeasurement?.unit ?? null,
+        llmCredits: llmPrice?.creditsCharged ?? null,
+        llmCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
       },
       timings: {
         total_ms: Number((totalDuration ?? 0).toFixed(2)),
@@ -4227,6 +4239,8 @@ async function runKnowledgeBaseRagPipeline(options: {
           model: llmModel ?? llmModelInfo?.modelKey ?? "unknown",
           modelId: llmModelInfo?.id ?? null,
           tokensTotal: llmUsageMeasurement?.quantityRaw ?? llmTokensForUsage,
+          appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
+          creditsCharged: llmPrice?.creditsCharged ?? null,
           occurredAt: new Date(),
         });
       }
@@ -4328,6 +4342,7 @@ type ModelInfoForUsage = {
   consumptionUnit: "TOKENS_1K" | "MINUTES";
   id?: string | null;
   modelKey?: string | null;
+  creditsPerUnit?: number | null;
 };
 
 function measureTokensForModel(
@@ -4360,6 +4375,23 @@ function measureTokensForModel(
     quantityUnits: fallback.units,
     metadata: { modelResolved: false },
   };
+}
+
+function calculatePriceSnapshot(
+  modelInfo: ModelInfoForUsage | null | undefined,
+  measurement: UsageMeasurement | null,
+) {
+  if (!modelInfo || !measurement) return null;
+  try {
+    const price = calculatePriceForUsage(
+      { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
+      measurement,
+    );
+    return price;
+  } catch (error) {
+    console.warn(`[pricing] failed to calculate price for model ${modelInfo.modelKey ?? modelInfo.id ?? "unknown"}`, error);
+    return null;
+  }
 }
 
 function buildExcerpt(content: string | null | undefined, query: string, maxLength = 220): string | undefined {
@@ -7943,6 +7975,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         modelType: String(req.body?.modelType ?? "").toUpperCase() as any,
         consumptionUnit: String(req.body?.consumptionUnit ?? "").toUpperCase() as any,
         costLevel: String(req.body?.costLevel ?? "MEDIUM").toUpperCase() as any,
+        creditsPerUnit:
+          req.body?.creditsPerUnit !== undefined && req.body.creditsPerUnit !== null
+            ? Number(req.body.creditsPerUnit)
+            : 0,
         isActive: req.body?.isActive !== undefined ? Boolean(req.body.isActive) : true,
         sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : 0,
       };
@@ -7966,6 +8002,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         modelType: req.body?.modelType ? String(req.body.modelType).toUpperCase() : undefined,
         consumptionUnit: req.body?.consumptionUnit ? String(req.body.consumptionUnit).toUpperCase() : undefined,
         costLevel: req.body?.costLevel ? String(req.body.costLevel).toUpperCase() : undefined,
+        creditsPerUnit:
+          req.body?.creditsPerUnit !== undefined && req.body.creditsPerUnit !== null
+            ? Number(req.body.creditsPerUnit)
+            : undefined,
         isActive: req.body?.isActive,
         sortOrder: req.body?.sortOrder,
       };
@@ -10204,11 +10244,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           llmCallCompleted = true;
           const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
           const llmUsageMeasurement = measureTokensForModel(tokensTotal, context.modelInfo);
+          const llmPrice = calculatePriceSnapshot(context.modelInfo, llmUsageMeasurement);
           await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
             output: {
               usageTokens: tokensTotal ?? null,
               usageUnits: llmUsageMeasurement?.quantityUnits ?? null,
               usageUnit: llmUsageMeasurement?.unit ?? null,
+              creditsCharged: llmPrice?.creditsCharged ?? null,
+              creditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
               responsePreview: completion.answer.slice(0, 160),
             },
           });
@@ -10221,6 +10264,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 model: resolvedModelKey ?? "unknown",
                 modelId: resolvedModelId ?? null,
                 tokensTotal: llmUsageMeasurement?.quantityRaw ?? tokensTotal,
+                appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
+                creditsCharged: llmPrice?.creditsCharged ?? null,
                 occurredAt: new Date(),
               });
             } catch (usageError) {
@@ -10248,6 +10293,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               llmTokens: llmUsageMeasurement?.quantityRaw ?? tokensTotal ?? null,
               llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
               llmUnit: llmUsageMeasurement?.unit ?? null,
+              llmCredits: llmPrice?.creditsCharged ?? null,
+              llmCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
             },
           });
           await safeLogStep("STREAM_TO_CLIENT_FINISH", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
@@ -10286,16 +10333,20 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       let completion;
       let llmUsageMeasurement: ReturnType<typeof measureTokensForModel> | null = null;
+      let llmPrice = null as ReturnType<typeof calculatePriceSnapshot>;
       try {
         completion = await executeLlmCompletion(context.provider, accessToken, requestBody);
         llmCallCompleted = true;
         const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
         llmUsageMeasurement = measureTokensForModel(tokensTotal, context.modelInfo);
+        llmPrice = calculatePriceSnapshot(context.modelInfo, llmUsageMeasurement ?? null);
         await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
           output: {
             usageTokens: tokensTotal ?? null,
             usageUnits: llmUsageMeasurement?.quantityUnits ?? null,
             usageUnit: llmUsageMeasurement?.unit ?? null,
+            creditsCharged: llmPrice?.creditsCharged ?? null,
+            creditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
             responsePreview: completion.answer.slice(0, 160),
           },
         });
@@ -10308,6 +10359,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               model: resolvedModelKey ?? "unknown",
               modelId: resolvedModelId ?? null,
               tokensTotal: llmUsageMeasurement?.quantityRaw ?? tokensTotal,
+              appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
+              creditsCharged: llmPrice?.creditsCharged ?? null,
               occurredAt: new Date(),
             });
           } catch (usageError) {
@@ -10343,6 +10396,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           llmTokens: completion.usageTokens ?? Math.ceil(completion.answer.length / 4),
           llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
           llmUnit: llmUsageMeasurement?.unit ?? null,
+          llmCredits: llmPrice?.creditsCharged ?? null,
+          llmCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
         },
       });
     } catch (error) {

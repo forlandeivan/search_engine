@@ -14,6 +14,7 @@ import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { buildAsrOperationContext } from "./guards/helpers";
 import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } from "./model-service";
 import { measureUsageForModel, type UsageMeasurement } from "./consumption-meter";
+import { calculatePriceForUsage } from "./price-calculator";
 import { recordAsrUsageEvent } from "./usage/usage-service";
 
 const createHttpProxyAgent = (url: string) => {
@@ -74,6 +75,7 @@ interface TranscriptionOperation {
   modelId?: string | null;
   durationSeconds?: number | null;
   usageRecorded?: boolean;
+  creditsPerUnit?: number | null;
 }
 
 const operationsCache = new Map<string, TranscriptionOperation>();
@@ -260,10 +262,12 @@ class YandexSttAsyncService {
 
     const asrModelKey = provider.model ?? null;
     let asrModelId: string | null = null;
+    let asrCreditsPerUnit: number | null = null;
     if (asrModelKey) {
       try {
         const model = await ensureModelAvailable(asrModelKey, { expectedType: "ASR" });
         asrModelId = model.id;
+        asrCreditsPerUnit = model.creditsPerUnit ?? null;
       } catch (error) {
         if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
           throw new YandexSttAsyncConfigError(error.message);
@@ -427,15 +431,16 @@ class YandexSttAsyncService {
         userId,
         operationId,
         objectKey: uploadResult.objectKey,
-        bucketName: uploadResult.bucketName,
-        createdAt: new Date(),
-        status: "pending",
-        workspaceId,
-        modelKey: asrModelKey,
-        modelId: asrModelId,
-        durationSeconds: audioDurationSeconds ?? null,
-        usageRecorded: false,
-        chatId,
+      bucketName: uploadResult.bucketName,
+      createdAt: new Date(),
+      status: "pending",
+      workspaceId,
+      modelKey: asrModelKey,
+      modelId: asrModelId,
+      creditsPerUnit: asrCreditsPerUnit,
+      durationSeconds: audioDurationSeconds ?? null,
+      usageRecorded: false,
+      chatId,
         transcriptId,
         executionId,
       });
@@ -662,6 +667,10 @@ class YandexSttAsyncService {
                   operationId,
                 },
               );
+              const price = calculatePriceForUsage(
+                { consumptionUnit: "MINUTES", creditsPerUnit: cached.creditsPerUnit ?? 0 } as any,
+                measurement,
+              );
               await recordAsrUsageEvent({
                 workspaceId: cached.workspaceId,
                 asrJobId: cached.executionId ?? operationId,
@@ -669,6 +678,8 @@ class YandexSttAsyncService {
                 provider: "yandex_speechkit",
                 model: cached.modelKey ?? null,
                 modelId: cached.modelId ?? null,
+                appliedCreditsPerUnit: price.appliedCreditsPerUnit,
+                creditsCharged: price.creditsCharged,
                 occurredAt: new Date(),
               });
               cached.usageRecorded = true;
