@@ -4,6 +4,10 @@ import { Loader2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -28,6 +32,23 @@ interface TariffSummary {
   name: string;
 }
 
+type CreditsSummary = {
+  workspaceId: string;
+  balance: {
+    currentBalance: number;
+    nextTopUpAt: string | null;
+  };
+};
+
+type ManualAdjustment = {
+  id: string;
+  amountDelta: number;
+  reason: string | null;
+  actorUserId: string | null;
+  actorFullName: string | null;
+  occurredAt: string;
+};
+
 async function fetchTariffs(): Promise<TariffSummary[]> {
   const res = await apiRequest("GET", "/api/admin/tariffs");
   const data = (await res.json()) as { tariffs?: TariffSummary[] };
@@ -50,11 +71,41 @@ export default function AdminWorkspacesPage() {
   const { toast } = useToast();
   const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>({});
   const [updatingWorkspaceId, setUpdatingWorkspaceId] = useState<string | null>(null);
+  const [adjustTarget, setAdjustTarget] = useState<{ id: string; name: string } | null>(null);
+  const [adjustAmount, setAdjustAmount] = useState<string>("0");
+  const [adjustReason, setAdjustReason] = useState<string>("");
 
   const tariffsQuery = useQuery<TariffSummary[]>({
     queryKey: ["admin", "tariffs"],
     queryFn: fetchTariffs,
     staleTime: 5 * 60 * 1000,
+  });
+
+  const creditsSummaryQuery = useQuery<CreditsSummary>({
+    queryKey: ["admin", "workspace-credits", adjustTarget?.id],
+    enabled: Boolean(adjustTarget?.id),
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/workspaces/${adjustTarget?.id}/credits`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить баланс");
+      }
+      return (await res.json()) as CreditsSummary;
+    },
+  });
+
+  const recentAdjustmentsQuery = useQuery<{ items: ManualAdjustment[] }>({
+    queryKey: ["admin", "workspace-credits-adjustments", adjustTarget?.id],
+    enabled: Boolean(adjustTarget?.id),
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/workspaces/${adjustTarget?.id}/credits/adjustments/recent`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить корректировки");
+      }
+      return (await res.json()) as { items: ManualAdjustment[] };
+    },
+    staleTime: 10 * 1000,
   });
 
   const { data, isLoading, error } = useQuery<WorkspacesResponse>({
@@ -75,6 +126,30 @@ export default function AdminWorkspacesPage() {
     },
     onSettled: () => {
       setUpdatingWorkspaceId(null);
+    },
+  });
+
+  const adjustCreditsMutation = useMutation({
+    mutationFn: async () => {
+      if (!adjustTarget?.id) throw new Error("Рабочее пространство не выбрано");
+      const res = await apiRequest("POST", `/api/admin/workspaces/${adjustTarget.id}/credits/adjust`, {
+        amountDelta: Number(adjustAmount),
+        reason: adjustReason,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось применить корректировку");
+      }
+      return (await res.json()) as CreditsSummary;
+    },
+    onSuccess: () => {
+      toast({ title: "Баланс скорректирован" });
+      queryClient.invalidateQueries({ queryKey: ["admin", "workspace-credits", adjustTarget?.id] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "workspace-credits-adjustments", adjustTarget?.id] });
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Не удалось скорректировать баланс";
+      toast({ variant: "destructive", title: "Ошибка", description: message });
     },
   });
 
@@ -128,6 +203,7 @@ export default function AdminWorkspacesPage() {
               <TableHead className="w-[220px]">Менеджер РП</TableHead>
               <TableHead className="w-[180px]">Дата создания</TableHead>
               <TableHead className="w-[260px]">Тариф</TableHead>
+              <TableHead className="w-[200px]">Кредиты</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -206,11 +282,26 @@ export default function AdminWorkspacesPage() {
                     </div>
                   </div>
                 </TableCell>
+                <TableCell>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setAdjustTarget({ id: workspace.id, name: workspace.name });
+                        setAdjustAmount("0");
+                        setAdjustReason("");
+                      }}
+                    >
+                      Скорректировать баланс
+                    </Button>
+                  </div>
+                </TableCell>
               </TableRow>
             ))}
             {sortedWorkspaces.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                   Рабочие пространства не найдены.
                 </TableCell>
               </TableRow>
@@ -218,6 +309,122 @@ export default function AdminWorkspacesPage() {
           </TableBody>
         </Table>
       </div>
+
+      <Dialog
+        open={Boolean(adjustTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAdjustTarget(null);
+            setAdjustAmount("0");
+            setAdjustReason("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Скорректировать баланс</DialogTitle>
+          </DialogHeader>
+          {adjustTarget && (
+            <div className="space-y-4">
+              <div className="text-sm text-muted-foreground">
+                Рабочее пространство: <span className="font-medium text-foreground">{adjustTarget.name}</span>
+              </div>
+              <div className="grid gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="adjust-amount">Изменение баланса</Label>
+                  <Input
+                    id="adjust-amount"
+                    type="number"
+                    value={adjustAmount}
+                    onChange={(e) => setAdjustAmount(e.target.value)}
+                    placeholder="Например, 500 или -200"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Положительное значение — начислить бонус, отрицательное — списать.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="adjust-reason">Причина</Label>
+                  <Textarea
+                    id="adjust-reason"
+                    rows={3}
+                    value={adjustReason}
+                    onChange={(e) => setAdjustReason(e.target.value)}
+                    placeholder="Причина корректировки (обязательно)"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Текущий баланс</p>
+                  {creditsSummaryQuery.isLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Загрузка...
+                    </div>
+                  ) : creditsSummaryQuery.isError ? (
+                    <p className="text-sm text-destructive">Не удалось загрузить</p>
+                  ) : (
+                    <p className="text-lg font-semibold">
+                      {creditsSummaryQuery.data?.balance.currentBalance.toLocaleString("ru-RU")}
+                    </p>
+                  )}
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Следующее пополнение</p>
+                  {creditsSummaryQuery.isLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Загрузка...
+                    </div>
+                  ) : creditsSummaryQuery.isError ? (
+                    <p className="text-sm text-destructive">Не удалось загрузить</p>
+                  ) : (
+                    <p className="text-lg font-semibold">
+                      {creditsSummaryQuery.data?.balance.nextTopUpAt
+                        ? new Date(creditsSummaryQuery.data.balance.nextTopUpAt).toLocaleString("ru-RU")
+                        : "—"}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {recentAdjustmentsQuery.data?.items?.[0] && (
+                <div className="rounded-md border p-3 space-y-1">
+                  <p className="text-xs text-muted-foreground">Последняя корректировка</p>
+                  <p className="text-sm">
+                    {recentAdjustmentsQuery.data.items[0].amountDelta > 0 ? "+" : ""}
+                    {recentAdjustmentsQuery.data.items[0].amountDelta.toLocaleString("ru-RU")} •{" "}
+                    {recentAdjustmentsQuery.data.items[0].reason || "без причины"} •{" "}
+                    {new Date(recentAdjustmentsQuery.data.items[0].occurredAt).toLocaleString("ru-RU")}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setAdjustTarget(null);
+                setAdjustAmount("0");
+                setAdjustReason("");
+              }}
+              disabled={adjustCreditsMutation.isPending}
+            >
+              Отмена
+            </Button>
+            <Button
+              onClick={() => adjustCreditsMutation.mutate()}
+              disabled={adjustCreditsMutation.isPending || !adjustReason.trim() || !adjustAmount}
+            >
+              {adjustCreditsMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Сохранить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

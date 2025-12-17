@@ -1888,6 +1888,7 @@ export const workspaceCreditLedger = pgTable(
     subscriptionId: text("subscription_id"),
     period: text("period"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
+    actorUserId: varchar("actor_user_id").references(() => users.id, { onDelete: "set null" }),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
     metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),

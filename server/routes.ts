@@ -130,7 +130,12 @@ import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
 import { PlanDowngradeNotAllowedError, workspacePlanService } from "./workspace-plan-service";
-import { ensureWorkspaceCreditAccount, getWorkspaceCreditAccount } from "./credits-service";
+import {
+  ensureWorkspaceCreditAccount,
+  getWorkspaceCreditAccount,
+  applyManualCreditAdjustment,
+  getRecentManualAdjustments,
+} from "./credits-service";
 import { getWorkspaceCreditSummary } from "./credit-summary-service";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
@@ -7769,6 +7774,61 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       },
       policy: summary.policy,
     });
+  });
+
+  app.post("/api/admin/workspaces/:workspaceId/credits/adjust", requireAdmin, async (req, res) => {
+    const { workspaceId } = req.params;
+    const amountDelta = Number(req.body?.amountDelta);
+    const reasonRaw = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+
+    if (!workspaceId) {
+      return res.status(400).json({ message: "workspaceId is required" });
+    }
+    if (!Number.isFinite(amountDelta) || amountDelta === 0) {
+      return res.status(400).json({ message: "amountDelta must be a non-zero number" });
+    }
+    if (!reasonRaw) {
+      return res.status(400).json({ message: "reason is required" });
+    }
+    if (reasonRaw.length > 500) {
+      return res.status(400).json({ message: "reason is too long" });
+    }
+
+    try {
+      const admin = getSessionUser(req);
+      await applyManualCreditAdjustment({
+        workspaceId,
+        amountDelta: Math.trunc(amountDelta),
+        reason: reasonRaw,
+        actorUserId: admin?.id ?? null,
+      });
+      const summary = await getWorkspaceCreditSummary(workspaceId);
+      res.json({
+        workspaceId: summary.workspaceId,
+        balance: {
+          currentBalance: summary.currentBalance,
+          nextTopUpAt: summary.nextRefreshAt,
+        },
+        planIncludedCredits: {
+          amount: summary.planLimit.amount,
+          period: summary.planLimit.period,
+        },
+        policy: summary.policy,
+      });
+    } catch (error: any) {
+      const message = typeof error?.message === "string" ? error.message : "Failed to adjust credits";
+      if (message === "balance_cannot_be_negative") {
+        return res.status(409).json({ message: "Корректировка приведёт к отрицательному балансу" });
+      }
+      return res.status(400).json({ message });
+    }
+  });
+
+  app.get("/api/admin/workspaces/:workspaceId/credits/adjustments/recent", requireAdmin, async (req, res) => {
+    const { workspaceId } = req.params;
+    const limit = Math.min(50, Math.max(1, Number(req.query?.limit) || 10));
+    const items = await getRecentManualAdjustments(workspaceId, limit);
+    res.json({ items });
   });
 
   // Применить тариф к workspace (доступно админу или члену workspace; в идеале owner)

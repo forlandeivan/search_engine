@@ -3,13 +3,15 @@ import {
   workspaceCreditAccounts,
   workspaceCreditLedger,
   workspaces,
+  users,
   type WorkspaceCreditAccount,
   type WorkspaceCreditLedgerEntry,
 } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
+import { randomUUID } from "crypto";
 
-export type CreditEntryType = "subscription_grant";
+export type CreditEntryType = "subscription_grant" | "manual_adjustment";
 export type CreditType = "subscription" | "bonus" | "purchased";
 
 export type SubscriptionCreditGrantPayload = {
@@ -22,6 +24,15 @@ export type SubscriptionCreditGrantPayload = {
   period?: "monthly";
   occurredAt?: Date;
   nextTopUpAt?: Date | null;
+};
+
+type ManualAdjustmentPayload = {
+  workspaceId: string;
+  amountDelta: number;
+  reason: string;
+  actorUserId: string | null;
+  sourceRef?: string | null;
+  occurredAt?: Date;
 };
 
 export async function ensureWorkspaceCreditAccount(workspaceId: string): Promise<WorkspaceCreditAccount> {
@@ -174,4 +185,111 @@ export async function grantSubscriptionCreditsOnEvent(
   const account = accountAfter ?? (await ensureWorkspaceCreditAccount(payload.workspaceId));
 
   return { account, ledger: ledgerEntry };
+}
+
+export type ManualAdjustmentView = {
+  id: string;
+  amountDelta: number;
+  reason: string | null;
+  actorUserId: string | null;
+  actorFullName: string | null;
+  occurredAt: Date;
+};
+
+export async function getRecentManualAdjustments(
+  workspaceId: string,
+  limit = 10,
+): Promise<ManualAdjustmentView[]> {
+  const rows = await db
+    .select({
+      id: workspaceCreditLedger.id,
+      amountDelta: workspaceCreditLedger.amountDelta,
+      reason: workspaceCreditLedger.reason,
+      actorUserId: workspaceCreditLedger.actorUserId,
+      actorFullName: users.fullName,
+      occurredAt: workspaceCreditLedger.occurredAt,
+    })
+    .from(workspaceCreditLedger)
+    .leftJoin(users, eq(users.id, workspaceCreditLedger.actorUserId))
+    .where(
+      and(eq(workspaceCreditLedger.workspaceId, workspaceId), eq(workspaceCreditLedger.entryType, "manual_adjustment")),
+    )
+    .orderBy(sql`${workspaceCreditLedger.occurredAt} desc`)
+    .limit(limit);
+
+  return rows.map((row) => ({
+    id: row.id,
+    amountDelta: Number(row.amountDelta ?? 0),
+    reason: row.reason ?? null,
+    actorUserId: row.actorUserId ?? null,
+    actorFullName: row.actorFullName ?? null,
+    occurredAt: row.occurredAt ?? new Date(0),
+  }));
+}
+
+export async function applyManualCreditAdjustment(payload: ManualAdjustmentPayload): Promise<WorkspaceCreditAccount> {
+  const workspaceId = payload.workspaceId;
+  if (!workspaceId) {
+    throw new Error("workspaceId is required");
+  }
+  const reason = (payload.reason ?? "").trim();
+  if (!reason) {
+    throw new Error("reason is required");
+  }
+  const amountDelta = Math.trunc(Number(payload.amountDelta ?? 0));
+  if (amountDelta === 0) {
+    throw new Error("amountDelta must be non-zero");
+  }
+  const sourceRef = (payload.sourceRef ?? randomUUID()).trim();
+  const occurredAt = payload.occurredAt ?? new Date();
+
+  let accountAfter: WorkspaceCreditAccount | null = null;
+
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(workspaceCreditAccounts)
+      .values({ workspaceId })
+      .onConflictDoNothing();
+    const [account] = await tx
+      .select()
+      .from(workspaceCreditAccounts)
+      .where(eq(workspaceCreditAccounts.workspaceId, workspaceId))
+      .for("update");
+    const current = Number(account?.currentBalance ?? 0);
+    const next = current + amountDelta;
+    if (next < 0) {
+      throw new Error("balance_cannot_be_negative");
+    }
+
+    await tx.insert(workspaceCreditLedger).values({
+      workspaceId,
+      amountDelta,
+      entryType: "manual_adjustment",
+      creditType: amountDelta > 0 ? "bonus" : "subscription",
+      sourceRef,
+      reason,
+      actorUserId: payload.actorUserId ?? null,
+      occurredAt,
+      metadata: sql`jsonb_build_object('reason', ${reason})`,
+    });
+
+    await tx
+      .update(workspaceCreditAccounts)
+      .set({
+        currentBalance: next,
+        updatedAt: new Date(),
+      })
+      .where(eq(workspaceCreditAccounts.workspaceId, workspaceId));
+
+    const [after] = await tx
+      .select()
+      .from(workspaceCreditAccounts)
+      .where(eq(workspaceCreditAccounts.workspaceId, workspaceId));
+    accountAfter = after ?? null;
+  });
+
+  if (!accountAfter) {
+    throw new Error("Failed to update balance");
+  }
+  return accountAfter;
 }
