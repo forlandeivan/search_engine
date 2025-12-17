@@ -43,6 +43,9 @@ export type ModelInput = {
   isActive?: boolean;
   sortOrder?: number;
   metadata?: Record<string, unknown> | null;
+  providerId?: string | null;
+  providerType?: string | null;
+  providerModelKey?: string | null;
 };
 
 function validateUnit(modelType: ModelType, unit: ModelConsumptionUnit) {
@@ -54,13 +57,37 @@ function validateUnit(modelType: ModelType, unit: ModelConsumptionUnit) {
   }
 }
 
-export async function listModels(opts?: { includeInactive?: boolean; type?: ModelType }): Promise<InferInsertModel<typeof models>[]> {
+function normalizeProvider(input: ModelInput | Partial<ModelInput>) {
+  const providerId = input.providerId?.trim() || null;
+  const providerType = input.providerType?.trim() || null;
+  const providerModelKey = input.providerModelKey?.trim() || null;
+  if (providerId && !providerModelKey) {
+    throw new ModelValidationError("providerModelKey обязателен при указании providerId");
+  }
+  if (providerId && !providerType) {
+    throw new ModelValidationError("providerType обязателен при указании providerId");
+  }
+  return { providerId, providerType, providerModelKey };
+}
+
+export async function listModels(opts?: {
+  includeInactive?: boolean;
+  type?: ModelType;
+  providerId?: string | null;
+  providerType?: string | null;
+}): Promise<InferInsertModel<typeof models>[]> {
   const clauses = [];
   if (!opts?.includeInactive) {
     clauses.push(eq(models.isActive, true));
   }
   if (opts?.type) {
     clauses.push(eq(models.modelType, opts.type));
+  }
+  if (opts?.providerId) {
+    clauses.push(eq(models.providerId, opts.providerId));
+  }
+  if (opts?.providerType) {
+    clauses.push(eq(models.providerType, opts.providerType));
   }
   const where = clauses.length > 0 ? and(...clauses) : undefined;
   return db
@@ -75,6 +102,7 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
   if (!modelKey) throw new Error("modelKey is required");
   validateUnit(input.modelType, input.consumptionUnit);
   const creditsPerUnit = Math.max(0, Math.floor(input.creditsPerUnit ?? 0));
+  const provider = normalizeProvider(input);
 
   const [row] = await db
     .insert(models)
@@ -89,6 +117,9 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
       isActive: input.isActive ?? true,
       sortOrder: input.sortOrder ?? 0,
       metadata: (input.metadata as any) ?? {},
+      providerId: provider.providerId,
+      providerType: provider.providerType,
+      providerModelKey: provider.providerModelKey,
     })
     .returning();
   return row;
@@ -98,6 +129,7 @@ export async function updateModel(
   id: string,
   input: Partial<Omit<ModelInput, "modelKey">>,
 ): Promise<InferInsertModel<typeof models> | null> {
+  const provider = normalizeProvider(input as ModelInput);
   const values: Partial<InferInsertModel<typeof models>> = {};
   if (input.displayName !== undefined) values.displayName = input.displayName.trim();
   if (input.description !== undefined) values.description = input.description?.trim() ?? null;
@@ -108,6 +140,11 @@ export async function updateModel(
   if (input.isActive !== undefined) values.isActive = input.isActive;
   if (input.sortOrder !== undefined) values.sortOrder = input.sortOrder;
   if (input.metadata !== undefined) values.metadata = (input.metadata as any) ?? {};
+  if (input.providerId !== undefined || input.providerModelKey !== undefined || input.providerType !== undefined) {
+    values.providerId = provider.providerId;
+    values.providerType = provider.providerType;
+    values.providerModelKey = provider.providerModelKey;
+  }
 
   if (values.modelType || values.consumptionUnit) {
     const type = (values.modelType as ModelType | undefined) ?? undefined;

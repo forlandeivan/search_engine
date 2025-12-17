@@ -133,11 +133,15 @@ export const models = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
     metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    providerId: text("provider_id"),
+    providerType: text("provider_type"),
+    providerModelKey: text("provider_model_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => ({
     typeActiveIdx: index("models_type_active_idx").on(table.modelType, table.isActive, table.sortOrder),
+    providerUniqueIdx: uniqueIndex("models_provider_unique_idx").on(table.providerId, table.providerModelKey),
   }),
 );
 

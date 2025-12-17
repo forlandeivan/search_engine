@@ -26,6 +26,7 @@ import { invalidateCorsCache } from "./cors-cache";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 import type { QdrantClient, Schemas } from "@qdrant/js-client-rest";
 import { and, eq, inArray, desc, sql } from "drizzle-orm";
+import { db } from "./db";
 import {
   buildLlmRequestBody,
   mergeLlmRequestConfig,
@@ -8108,7 +8109,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   app.get("/api/admin/models", requireAdmin, async (_req, res) => {
-    const modelsList = await listModels({ includeInactive: true });
+    const providerId =
+      typeof _req.query?.providerId === "string" && _req.query.providerId.trim().length > 0
+        ? _req.query.providerId.trim()
+        : undefined;
+    const providerType =
+      typeof _req.query?.providerType === "string" && _req.query.providerType.trim().length > 0
+        ? _req.query.providerType.trim().toUpperCase()
+        : undefined;
+    const modelsList = await listModels({ includeInactive: true, providerId, providerType: providerType as any });
     res.json({ models: modelsList });
   });
 
@@ -8237,6 +8246,18 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             : 0,
         isActive: req.body?.isActive !== undefined ? Boolean(req.body.isActive) : true,
         sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : 0,
+        providerId:
+          typeof req.body?.providerId === "string" && req.body.providerId.trim().length > 0
+            ? req.body.providerId.trim()
+            : null,
+        providerType:
+          typeof req.body?.providerType === "string" && req.body.providerType.trim().length > 0
+            ? String(req.body.providerType).trim().toUpperCase()
+            : null,
+        providerModelKey:
+          typeof req.body?.providerModelKey === "string" && req.body.providerModelKey.trim().length > 0
+            ? req.body.providerModelKey.trim()
+            : null,
       };
       if (!payload.modelKey || !payload.displayName) {
         return res.status(400).json({ message: "modelKey and displayName are required" });
@@ -8264,6 +8285,24 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             : undefined,
         isActive: req.body?.isActive,
         sortOrder: req.body?.sortOrder,
+        providerId:
+          typeof req.body?.providerId === "string" && req.body.providerId.trim().length > 0
+            ? req.body.providerId.trim()
+            : req.body?.providerId === null
+              ? null
+              : undefined,
+        providerType:
+          typeof req.body?.providerType === "string" && req.body.providerType.trim().length > 0
+            ? String(req.body.providerType).trim().toUpperCase()
+            : req.body?.providerType === null
+              ? null
+              : undefined,
+        providerModelKey:
+          typeof req.body?.providerModelKey === "string" && req.body.providerModelKey.trim().length > 0
+            ? req.body.providerModelKey.trim()
+            : req.body?.providerModelKey === null
+              ? null
+              : undefined,
       };
       const updated = await updateModel(id, payload as any);
       if (!updated) {
