@@ -131,6 +131,7 @@ import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
 import { PlanDowngradeNotAllowedError, workspacePlanService } from "./workspace-plan-service";
 import { ensureWorkspaceCreditAccount, getWorkspaceCreditAccount } from "./credits-service";
+import { getWorkspaceCreditSummary } from "./credit-summary-service";
 import { scheduleChatTitleGenerationIfNeeded } from "./chat-title-jobs";
 import {
   applyTlsPreferences,
@@ -7755,23 +7756,18 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return res.status(403).json({ message: "Access denied" });
     }
 
-    const account = await ensureWorkspaceCreditAccount(workspaceId);
-    const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
-
+    const summary = await getWorkspaceCreditSummary(workspaceId);
     res.json({
-      workspaceId,
+      workspaceId: summary.workspaceId,
       balance: {
-        currentBalance: Number(account.currentBalance ?? 0),
-        nextTopUpAt: account.nextTopUpAt,
+        currentBalance: summary.currentBalance,
+        nextTopUpAt: summary.nextRefreshAt,
       },
       planIncludedCredits: {
-        amount: Number(plan.includedCreditsAmount ?? 0),
-        period: (plan.includedCreditsPeriod as string) ?? "monthly",
+        amount: summary.planLimit.amount,
+        period: summary.planLimit.period,
       },
-      policy: {
-        period: "monthly",
-        rollover: "no_carryover",
-      },
+      policy: summary.policy,
     });
   });
 

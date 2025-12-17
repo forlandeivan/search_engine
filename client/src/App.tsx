@@ -35,6 +35,7 @@ import ProfilePage from "@/pages/ProfilePage";
 import WorkspaceActionsPage from "@/pages/WorkspaceActionsPage";
 import SmtpSettingsPage from "@/pages/SmtpSettingsPage";
 import WorkspaceSettingsPage from "@/pages/WorkspaceSettingsPage";
+import WorkspaceCreditsHistoryPage from "@/pages/WorkspaceCreditsHistoryPage";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -95,6 +96,8 @@ function MainRouter() {
       <Route path="/skills" component={SkillsPage} />
       <Route path="/workspaces/:workspaceId/actions" component={WorkspaceActionsPage} />
       <Route path="/workspaces/actions" component={WorkspaceActionsPage} />
+      <Route path="/workspaces/:workspaceId/credits/history" component={WorkspaceCreditsHistoryPage} />
+      <Route path="/workspaces/credits/history" component={WorkspaceCreditsHistoryPage} />
       <Route path="/workspaces/:workspaceId/settings" component={WorkspaceSettingsPage} />
       <Route path="/workspaces/settings" component={WorkspaceSettingsPage} />
       <Route path="/workspaces/:workspaceId/members">

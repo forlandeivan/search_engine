@@ -79,6 +79,39 @@ type TariffSummary = {
   includedCreditsPeriod?: string;
 };
 
+type CreditsSummary = {
+  workspaceId: string;
+  balance: {
+    currentBalance: number;
+    nextTopUpAt: string | null;
+  };
+  planIncludedCredits: {
+    amount: number;
+    period: string;
+  };
+  policy?: {
+    period: string;
+    rollover: string;
+  };
+};
+
+function useWorkspaceCreditsSummary(workspaceId: string | null) {
+  return useQuery<CreditsSummary, Error>({
+    queryKey: ["workspace-credits-summary", workspaceId],
+    enabled: Boolean(workspaceId),
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/workspaces/${workspaceId}/credits`, undefined, undefined, {
+        workspaceId: workspaceId ?? undefined,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Не удалось загрузить кредиты");
+      }
+      return (await res.json()) as CreditsSummary;
+    },
+  });
+}
+
 function useSessionWorkspaceWithUser(workspaceId?: string | null) {
   return useQuery({
     queryKey: ["/api/auth/session"],
@@ -328,8 +361,13 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const [iconPreview, setIconPreview] = useState<string | null>(null);
   const [resetIcon, setResetIcon] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const creditsHistoryUrl = useMemo(
+    () => (effectiveWorkspaceId ? `/workspaces/${effectiveWorkspaceId}/credits/history` : "/workspaces/credits/history"),
+    [effectiveWorkspaceId],
+  );
   const workspacePlanQuery = useWorkspacePlan(effectiveWorkspaceId);
   const tariffsCatalogQuery = useTariffsCatalog();
+  const creditsSummaryQuery = useWorkspaceCreditsSummary(effectiveWorkspaceId);
   const applyPlanMutation = useMutation({
     mutationFn: async (planCode: string) => {
       if (!effectiveWorkspaceId) throw new Error("Нет рабочего пространства");
@@ -676,6 +714,58 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                     <AlertDescription>{tariffsCatalogQuery.error?.message ?? "Попробуйте позже."}</AlertDescription>
                   </Alert>
                 )}
+
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">Кредиты</p>
+                      <p className="text-xs text-muted-foreground">
+                        Остаток, включённый объём по плану и дата следующего пополнения.
+                      </p>
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => navigate(creditsHistoryUrl)}>
+                      История
+                    </Button>
+                  </div>
+                  {creditsSummaryQuery.isLoading ? (
+                    <div className="grid gap-3 md:grid-cols-3">
+                      {Array.from({ length: 3 }).map((_, idx) => (
+                        <Skeleton key={idx} className="h-14 w-full" />
+                      ))}
+                    </div>
+                  ) : creditsSummaryQuery.isError ? (
+                    <Alert variant="destructive">
+                      <AlertTitle>Не удалось загрузить кредиты</AlertTitle>
+                      <AlertDescription>
+                        {creditsSummaryQuery.error?.message ?? "Попробуйте обновить страницу."}
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Остаток</p>
+                        <p className="text-xl font-semibold">
+                          {creditsSummaryQuery.data?.balance.currentBalance.toLocaleString("ru-RU")}
+                        </p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Положено по плану</p>
+                        <p className="text-xl font-semibold">
+                          {(creditsSummaryQuery.data?.planIncludedCredits.amount ?? 0).toLocaleString("ru-RU")}{" "}
+                          кредит(ов) / месяц
+                        </p>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <p className="text-xs text-muted-foreground">Следующее пополнение</p>
+                        <p className="text-xl font-semibold">
+                          {creditsSummaryQuery.data?.balance.nextTopUpAt
+                            ? new Date(creditsSummaryQuery.data.balance.nextTopUpAt).toLocaleString("ru-RU")
+                            : "—"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm text-muted-foreground">Текущий тариф:</span>
