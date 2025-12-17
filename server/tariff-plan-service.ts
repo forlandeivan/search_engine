@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { tariffLimits, tariffPlans, type TariffLimit, type TariffPlan } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { LIMIT_KEYS } from "./guards/types";
 
 export type TariffPlanLimitsMap = Record<
@@ -120,7 +121,10 @@ export class TariffPlanService {
   }
 
   async getAllPlans(): Promise<TariffPlan[]> {
-    const rows = await db.select().from(tariffPlans).orderBy(tariffPlans.code);
+    const rows = await db
+      .select()
+      .from(tariffPlans)
+      .orderBy(asc(tariffPlans.sortOrder), asc(tariffPlans.code));
     return rows;
   }
 

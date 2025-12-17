@@ -8,6 +8,8 @@ type TariffSeedConfig = {
   code: string;
   name: string;
   description?: string | null;
+  shortDescription?: string | null;
+  sortOrder?: number;
   limits: Array<{
     key: LimitKey;
     unit: "tokens" | "bytes" | "minutes" | "count";
@@ -60,31 +62,54 @@ export const DEFAULT_TARIFFS: TariffSeedConfig[] = [
     code: "FREE",
     name: "Free",
     description: "Базовый бесплатный тариф",
+    shortDescription: "Бесплатно для тестов и малого использования",
+    sortOrder: 1,
     limits: makeLimits(FREE_LIMIT_VALUES),
   },
   {
     code: "PRO",
     name: "Pro",
     description: "Расширенный тариф для активных команд",
+    shortDescription: "Больше лимитов для рабочих команд",
+    sortOrder: 2,
     limits: makeLimits(FREE_LIMIT_VALUES), // значения настраивает админ; структура совпадает с Free
   },
   {
     code: "ENTERPRISE",
     name: "Enterprise",
     description: "Гибкий корпоративный тариф",
+    shortDescription: "Индивидуальные лимиты и условия",
+    sortOrder: 3,
     limits: makeLimits(ENTERPRISE_LIMIT_VALUES),
   },
 ];
 
-async function upsertPlan(code: string, name: string, description?: string | null): Promise<string> {
+async function upsertPlan(
+  code: string,
+  name: string,
+  description?: string | null,
+  shortDescription?: string | null,
+  sortOrder?: number,
+): Promise<string> {
   const [existing] = await db.select().from(tariffPlans).where(eq(tariffPlans.code, code)).limit(1);
   if (existing) {
+    // keep existing, do not overwrite admin edits except optional sort order
+    if (typeof sortOrder === "number") {
+      await db.update(tariffPlans).set({ sortOrder }).where(eq(tariffPlans.id, existing.id));
+    }
     return existing.id;
   }
 
   const [created] = await db
     .insert(tariffPlans)
-    .values({ code, name, description: description ?? null, isActive: true })
+    .values({
+      code,
+      name,
+      description: description ?? null,
+      shortDescription: shortDescription ?? description ?? null,
+      sortOrder: sortOrder ?? 0,
+      isActive: true,
+    })
     .returning({ id: tariffPlans.id });
 
   console.log(`[tariff-seed] created plan ${code}`);
@@ -115,7 +140,7 @@ async function upsertLimit(planId: string, key: LimitKey, unit: string, value: n
 
 export async function seedDefaultTariffs(): Promise<void> {
   for (const plan of DEFAULT_TARIFFS) {
-    const planId = await upsertPlan(plan.code, plan.name, plan.description);
+    const planId = await upsertPlan(plan.code, plan.name, plan.description, plan.shortDescription, plan.sortOrder);
     for (const limit of plan.limits) {
       await upsertLimit(planId, limit.key, limit.unit, limit.value);
     }

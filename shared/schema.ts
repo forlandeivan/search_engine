@@ -1826,6 +1826,8 @@ export const tariffPlans = pgTable("tariff_plans", {
   code: text("code").notNull().unique(),
   name: text("name").notNull(),
   description: text("description"),
+  shortDescription: text("short_description"),
+  sortOrder: integer("sort_order").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`CURRENT_TIMESTAMP`),

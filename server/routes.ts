@@ -7544,6 +7544,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         code: p.code,
         name: p.name,
         description: p.description,
+        shortDescription: p.shortDescription,
+        sortOrder: p.sortOrder,
         isActive: p.isActive,
       })),
     });
@@ -7562,6 +7564,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         code: plan.code,
         name: plan.name,
         description: plan.description,
+        shortDescription: plan.shortDescription,
+        sortOrder: plan.sortOrder,
         isActive: plan.isActive,
       },
       limits: Object.entries(plan.limits).map(([limitKey, value]) => ({
@@ -7606,6 +7610,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           code: updated.code,
           name: updated.name,
           description: updated.description,
+          shortDescription: updated.shortDescription,
+          sortOrder: updated.sortOrder,
           isActive: updated.isActive,
         },
         limits: Object.entries(updated.limits).map(([limitKey, value]) => ({
@@ -7628,7 +7634,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.get("/api/admin/workspaces/:workspaceId/plan", requireAdmin, async (req, res) => {
     const { workspaceId } = req.params;
     const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
-    res.json({ plan: { id: plan.id, code: plan.code, name: plan.name, description: plan.description } });
+    res.json({
+      plan: {
+        id: plan.id,
+        code: plan.code,
+        name: plan.name,
+        description: plan.description,
+        shortDescription: plan.shortDescription,
+        sortOrder: plan.sortOrder,
+      },
+    });
   });
 
   app.put("/api/admin/workspaces/:workspaceId/plan", requireAdmin, async (req, res) => {
@@ -7639,7 +7654,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "workspaceId and planCode are required" });
       }
       const plan = await workspacePlanService.updateWorkspacePlan(workspaceId, planCode);
-      res.json({ plan: { id: plan.id, code: plan.code, name: plan.name, description: plan.description } });
+      res.json({
+        plan: {
+          id: plan.id,
+          code: plan.code,
+          name: plan.name,
+          description: plan.description,
+          shortDescription: plan.shortDescription,
+          sortOrder: plan.sortOrder,
+        },
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to update workspace plan";
       return res.status(400).json({ message });
@@ -7656,7 +7680,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return res.status(403).json({ message: "Access denied" });
     }
     const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
-    res.json({ plan: { id: plan.id, code: plan.code, name: plan.name, description: plan.description } });
+    res.json({
+      plan: {
+        id: plan.id,
+        code: plan.code,
+        name: plan.name,
+        description: plan.description,
+        shortDescription: plan.shortDescription,
+        sortOrder: plan.sortOrder,
+      },
+    });
   });
 
   app.get("/api/admin/system-notifications/logs", requireAdmin, async (req, res) => {
