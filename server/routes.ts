@@ -3201,6 +3201,7 @@ async function runKnowledgeBaseRagPipeline(options: {
   let totalDuration: number | null = null;
 
   let embeddingUsageTokens: number | null = null;
+  let embeddingUsageMeasurement: ReturnType<typeof measureTokensForModel> | null = null;
   let llmUsageTokens: number | null = null;
 
   let bm25ResultCount: number | null = null;
@@ -3519,9 +3520,16 @@ async function runKnowledgeBaseRagPipeline(options: {
             },
           );
           embeddingUsageTokens = embeddingResult.usageTokens ?? null;
+          const embeddingTokensForUsage = embeddingUsageTokens ?? estimateTokens(normalizedQuery);
+          embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
+            consumptionUnit: "TOKENS_1K",
+            modelKey: embeddingProvider.model ?? null,
+          });
           embeddingResultForMetadata = embeddingResult;
           embeddingStep.finish({
             usageTokens: embeddingUsageTokens,
+            usageUnits: embeddingUsageMeasurement?.quantityUnits ?? null,
+            usageUnit: embeddingUsageMeasurement?.unit ?? null,
             embeddingId: embeddingResult.embeddingId ?? null,
             vectorDimensions: embeddingResult.vector.length,
             response: embeddingResult.rawResponse,
@@ -3533,13 +3541,11 @@ async function runKnowledgeBaseRagPipeline(options: {
           throw error;
         }
 
-        const embeddingTokensForUsage =
-          embeddingUsageTokens ?? estimateTokens(normalizedQuery);
         await recordEmbeddingUsageSafe({
           workspaceId,
           provider: embeddingProvider,
           modelKey: embeddingProvider.model ?? null,
-          tokensTotal: embeddingTokensForUsage,
+          tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingUsageTokens ?? estimateTokens(normalizedQuery),
           contentBytes: Buffer.byteLength(normalizedQuery, "utf8"),
           operationId: `rag-query-${randomUUID()}`,
         });
@@ -4165,7 +4171,7 @@ async function runKnowledgeBaseRagPipeline(options: {
       : [];
 
     const llmTokensForUsage = llmUsageTokens ?? estimateTokens(completion.answer);
-    const llmUsageMeasurement = measureLlmTokens(llmTokensForUsage, llmModelInfo);
+    const llmUsageMeasurement = measureTokensForModel(llmTokensForUsage, llmModelInfo);
 
     const response = {
       query,
@@ -4175,7 +4181,9 @@ async function runKnowledgeBaseRagPipeline(options: {
       citations,
       chunks: responseChunks,
       usage: {
-        embeddingTokens: embeddingUsageTokens,
+        embeddingTokens: embeddingUsageMeasurement?.quantityRaw ?? embeddingUsageTokens,
+        embeddingUnits: embeddingUsageMeasurement?.quantityUnits ?? null,
+        embeddingUnit: embeddingUsageMeasurement?.unit ?? null,
         llmTokens: llmUsageMeasurement?.quantityRaw ?? llmUsageTokens,
         llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
         llmUnit: llmUsageMeasurement?.unit ?? null,
@@ -4316,15 +4324,16 @@ function highlightQuery(text: string, query: string): { value: string; matchLeve
   return { value: highlighted, matchLevel: hasMatch ? "partial" : "none" };
 }
 
-type LlmModelInfoForUsage = {
+type ModelInfoForUsage = {
   consumptionUnit: "TOKENS_1K" | "MINUTES";
   id?: string | null;
   modelKey?: string | null;
 };
 
-function measureLlmTokens(
+function measureTokensForModel(
   tokens: number | null | undefined,
-  modelInfo?: LlmModelInfoForUsage | null,
+  modelInfo?: ModelInfoForUsage | null,
+  fallbackUnit: "TOKENS_1K" | "MINUTES" = "TOKENS_1K",
 ) {
   const normalizedTokens = Math.max(0, Math.floor(tokens ?? 0));
   if (!Number.isFinite(normalizedTokens) || normalizedTokens <= 0) {
@@ -4346,7 +4355,7 @@ function measureLlmTokens(
 
   const fallback = tokensToUnits(normalizedTokens);
   return {
-    unit: "TOKENS_1K" as const,
+    unit: fallbackUnit,
     quantityRaw: fallback.raw,
     quantityUnits: fallback.units,
     metadata: { modelResolved: false },
@@ -4998,6 +5007,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const accessToken = await fetchAccessToken(provider);
       const embeddingResult = await fetchEmbeddingVector(provider, accessToken, body.text);
+      const embeddingTokensForUsage =
+        embeddingResult.usageTokens ?? Math.max(1, Math.ceil(Buffer.byteLength(body.text, "utf8") / 4));
+      const embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
+        consumptionUnit: "TOKENS_1K",
+        modelKey: provider.model ?? null,
+      });
 
       if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
         throw new HttpError(
@@ -5010,7 +5025,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         workspaceId,
         provider,
         modelKey: provider.model ?? null,
-        tokensTotal: embeddingResult.usageTokens,
+        tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingTokensForUsage,
         contentBytes: Buffer.byteLength(body.text, "utf8"),
         operationId: `public-embed-${randomUUID()}`,
       });
@@ -5019,7 +5034,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vector: embeddingResult.vector,
         vectorLength: embeddingResult.vector.length,
         embeddingId: embeddingResult.embeddingId ?? null,
-        usage: { embeddingTokens: embeddingResult.usageTokens ?? null },
+        usage: {
+          embeddingTokens: embeddingUsageMeasurement?.quantityRaw ?? embeddingResult.usageTokens ?? null,
+          embeddingUnits: embeddingUsageMeasurement?.quantityUnits ?? null,
+          embeddingUnit: embeddingUsageMeasurement?.unit ?? null,
+        },
         embeddingProvider: {
           id: provider.id,
           name: provider.name,
@@ -5630,11 +5649,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
 
+      const embeddingTokensForUsage =
+        embeddingResult.usageTokens ?? Math.max(1, Math.ceil(Buffer.byteLength(body.query, "utf8") / 4));
+      const embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
+        consumptionUnit: "TOKENS_1K",
+        modelKey: selectedModelValue ?? embeddingProvider.model ?? null,
+      });
+
       await recordEmbeddingUsageSafe({
         workspaceId,
         provider: embeddingProvider,
         modelKey: selectedModelValue ?? embeddingProvider.model ?? null,
-        tokensTotal: embeddingResult.usageTokens,
+        tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingTokensForUsage,
         contentBytes: Buffer.byteLength(body.query, "utf8"),
         operationId: `collection-search-${randomUUID()}`,
       });
@@ -10177,7 +10203,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           const completion = await completionPromise;
           llmCallCompleted = true;
           const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
-          const llmUsageMeasurement = measureLlmTokens(tokensTotal, context.modelInfo);
+          const llmUsageMeasurement = measureTokensForModel(tokensTotal, context.modelInfo);
           await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
             output: {
               usageTokens: tokensTotal ?? null,
@@ -10259,12 +10285,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       let completion;
-      let llmUsageMeasurement: ReturnType<typeof measureLlmTokens> | null = null;
+      let llmUsageMeasurement: ReturnType<typeof measureTokensForModel> | null = null;
       try {
         completion = await executeLlmCompletion(context.provider, accessToken, requestBody);
         llmCallCompleted = true;
         const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
-        llmUsageMeasurement = measureLlmTokens(tokensTotal, context.modelInfo);
+        llmUsageMeasurement = measureTokensForModel(tokensTotal, context.modelInfo);
         await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
           output: {
             usageTokens: tokensTotal ?? null,
@@ -11862,11 +11888,18 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         );
       }
 
+      const embeddingTokensForUsage =
+        embeddingResult.usageTokens ?? Math.max(1, Math.ceil(Buffer.byteLength(body.query, "utf8") / 4));
+      const embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
+        consumptionUnit: "TOKENS_1K",
+        modelKey: provider.model ?? null,
+      });
+
       await recordEmbeddingUsageSafe({
         workspaceId,
         provider,
         modelKey: provider.model ?? null,
-        tokensTotal: embeddingResult.usageTokens,
+        tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingTokensForUsage,
         contentBytes: Buffer.byteLength(body.query, "utf8"),
         operationId: `collection-search-${randomUUID()}`,
       });
@@ -12098,11 +12131,18 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         );
       }
 
+      const embeddingTokensForUsage =
+        embeddingResult.usageTokens ?? Math.max(1, Math.ceil(Buffer.byteLength(body.query, "utf8") / 4));
+      const embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
+        consumptionUnit: "TOKENS_1K",
+        modelKey: selectedModelValue ?? embeddingProvider.model ?? null,
+      });
+
       await recordEmbeddingUsageSafe({
         workspaceId,
         provider: embeddingProvider,
         modelKey: selectedModelValue ?? embeddingProvider.model ?? null,
-        tokensTotal: embeddingResult.usageTokens,
+        tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingTokensForUsage,
         contentBytes: Buffer.byteLength(body.query, "utf8"),
         operationId: `collection-search-${randomUUID()}`,
       });
@@ -13918,13 +13958,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const totalUsageTokens = embeddingResults.reduce((sum, result) => {
         return sum + (result.usageTokens ?? 0);
       }, 0);
+      const embeddingUsageMeasurement = measureTokensForModel(
+        totalUsageTokens > 0 ? totalUsageTokens : Math.ceil(Buffer.byteLength(documentText, "utf8") / 4),
+        {
+          consumptionUnit: "TOKENS_1K",
+          modelKey: provider.model ?? null,
+        },
+      );
 
       // Записываем потребление эмбеддингов для workspace (с fallback по размеру текста)
       await recordEmbeddingUsageSafe({
         workspaceId,
         provider,
         modelKey: provider.model ?? null,
-        tokensTotal: totalUsageTokens > 0 ? totalUsageTokens : null,
+        tokensTotal:
+          embeddingUsageMeasurement?.quantityRaw ?? (totalUsageTokens > 0 ? totalUsageTokens : null),
         contentBytes: Buffer.byteLength(documentText, "utf8"),
         operationId: `kb-vectorize-${vectorDocument.id}`,
       });

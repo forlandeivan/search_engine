@@ -13,6 +13,8 @@ import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { buildAsrOperationContext } from "./guards/helpers";
 import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } from "./model-service";
+import { measureUsageForModel, type UsageMeasurement } from "./consumption-meter";
+import { recordAsrUsageEvent } from "./usage/usage-service";
 
 const createHttpProxyAgent = (url: string) => {
   try {
@@ -67,6 +69,11 @@ interface TranscriptionOperation {
   chatId?: string;
   transcriptId?: string;
   executionId?: string;
+  workspaceId?: string;
+  modelKey?: string | null;
+  modelId?: string | null;
+  durationSeconds?: number | null;
+  usageRecorded?: boolean;
 }
 
 const operationsCache = new Map<string, TranscriptionOperation>();
@@ -87,6 +94,36 @@ function needsConversion(mimeType: string): boolean {
   const baseMimeType = mimeType.split(";")[0].trim().toLowerCase();
   // Конвертируем всё, что не OGG/OPUS, в OGG для совместимости с async STT.
   return baseMimeType !== "audio/ogg" && baseMimeType !== "audio/opus";
+}
+
+async function probeAudioDurationSeconds(audioBuffer: Buffer): Promise<number | null> {
+  const executable = ffmpegPath || "ffmpeg";
+  return new Promise<number | null>((resolve) => {
+    try {
+      const ffmpeg = spawn(executable, ["-i", "pipe:0", "-f", "null", "-"]);
+      let stderr = "";
+      ffmpeg.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+      ffmpeg.on("close", () => {
+        const match = /Duration:\s*(\d{2}):(\d{2}):(\d{2}\.\d{2})/.exec(stderr);
+        if (!match) {
+          resolve(null);
+          return;
+        }
+        const hours = Number(match[1]);
+        const minutes = Number(match[2]);
+        const seconds = Number(match[3]);
+        const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+        resolve(Number.isFinite(totalSeconds) ? Math.max(0, Math.round(totalSeconds)) : null);
+      });
+      ffmpeg.on("error", () => resolve(null));
+      ffmpeg.stdin.write(audioBuffer);
+      ffmpeg.stdin.end();
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 function getMimeTypeExtension(mimeType: string): string {
@@ -176,6 +213,8 @@ export interface TranscribeOperationStatus {
   chatId?: string;
   transcriptId?: string;
   executionId?: string;
+  durationSeconds?: number | null;
+  usageMinutes?: number | null;
 }
 
 interface SecretValues {
@@ -233,6 +272,8 @@ class YandexSttAsyncService {
       }
     }
 
+    const audioDurationSeconds = await probeAudioDurationSeconds(audioBuffer);
+
     const guardDecision = await workspaceOperationGuard.check(
       buildAsrOperationContext({
         workspaceId,
@@ -241,7 +282,7 @@ class YandexSttAsyncService {
         modelId: asrModelId,
         modelKey: asrModelKey,
         mediaType: "audio",
-        durationSeconds: undefined,
+        durationSeconds: audioDurationSeconds ?? undefined,
       }),
     );
     if (!guardDecision.allowed) {
@@ -389,6 +430,11 @@ class YandexSttAsyncService {
         bucketName: uploadResult.bucketName,
         createdAt: new Date(),
         status: "pending",
+        workspaceId,
+        modelKey: asrModelKey,
+        modelId: asrModelId,
+        durationSeconds: audioDurationSeconds ?? null,
+        usageRecorded: false,
         chatId,
         transcriptId,
         executionId,
@@ -603,6 +649,38 @@ class YandexSttAsyncService {
           });
         }
 
+        // Учёт usage (MINUTES) — используем измеренную длительность, если доступна.
+        if (!cached.usageRecorded && cached.workspaceId) {
+          const durationSeconds = cached.durationSeconds ?? null;
+          if (durationSeconds !== null && durationSeconds !== undefined && durationSeconds > 0) {
+            try {
+              const measurement: UsageMeasurement = measureUsageForModel(
+                { consumptionUnit: "MINUTES" },
+                { kind: "SECONDS", seconds: durationSeconds },
+                {
+                  provider: "yandex_speechkit",
+                  operationId,
+                },
+              );
+              await recordAsrUsageEvent({
+                workspaceId: cached.workspaceId,
+                asrJobId: cached.executionId ?? operationId,
+                durationSeconds: measurement.quantityRaw,
+                provider: "yandex_speechkit",
+                model: cached.modelKey ?? null,
+                modelId: cached.modelId ?? null,
+                occurredAt: new Date(),
+              });
+              cached.usageRecorded = true;
+              operationsCache.set(cacheId, cached);
+            } catch (error) {
+              console.error("[usage][asr] Failed to record ASR usage:", error);
+            }
+          } else {
+            console.warn("[usage][asr] durationSeconds is unavailable; skipping usage record");
+          }
+        }
+
         // Авто-действие (если настроено)
         if (autoActionEnabled && transcriptForContext && chatForContext && skillForContext) {
           await this.applyAutoActionForTranscript({
@@ -654,6 +732,9 @@ class YandexSttAsyncService {
           chatId: cached.chatId,
           transcriptId: transcriptForContext?.id ?? cached.transcriptId,
           executionId: cached.executionId,
+          durationSeconds: cached.durationSeconds ?? null,
+          usageMinutes:
+            cached.durationSeconds && cached.durationSeconds > 0 ? Math.ceil(cached.durationSeconds / 60) : null,
         };
       }
 
@@ -663,6 +744,9 @@ class YandexSttAsyncService {
         chatId: cached.chatId,
         transcriptId: cached.transcriptId,
         executionId: cached.executionId,
+        durationSeconds: cached.durationSeconds ?? null,
+        usageMinutes:
+          cached.durationSeconds && cached.durationSeconds > 0 ? Math.ceil(cached.durationSeconds / 60) : null,
       };
     } catch (error) {
       if (error instanceof YandexSttAsyncError) {

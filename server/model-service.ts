@@ -16,6 +16,7 @@ function isValidUuid(value: string): boolean {
 
 export class ModelValidationError extends Error {
   status = 400;
+  code = "MODEL_INVALID";
   constructor(message: string) {
     super(message);
     this.name = "ModelValidationError";
@@ -24,6 +25,7 @@ export class ModelValidationError extends Error {
 
 export class ModelUnavailableError extends Error {
   status = 404;
+  code = "MODEL_NOT_FOUND";
   constructor(message: string) {
     super(message);
     this.name = "ModelUnavailableError";

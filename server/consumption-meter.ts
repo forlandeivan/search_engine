@@ -26,6 +26,20 @@ export class UsageMeterError extends Error {
   }
 }
 
+export class UsageUnavailableError extends Error {
+  code: "USAGE_UNAVAILABLE";
+  status: number;
+  details?: Record<string, unknown>;
+
+  constructor(message: string, details?: Record<string, unknown>, status = 400) {
+    super(message);
+    this.name = "UsageUnavailableError";
+    this.code = "USAGE_UNAVAILABLE";
+    this.status = status;
+    this.details = details;
+  }
+}
+
 function normalizeNonNegativeInteger(value: number): number {
   const numeric = Number(value ?? 0);
   if (!Number.isFinite(numeric) || numeric <= 0) return 0;
