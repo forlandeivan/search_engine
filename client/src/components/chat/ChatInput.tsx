@@ -135,14 +135,21 @@ export default function ChatInput({
 
       setIsUploading(true);
       try {
+        const operationId =
+          (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" && crypto.randomUUID()) ||
+          `asr-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const formData = new FormData();
         formData.append("audio", file);
         formData.append("chatId", targetChatId);
+        formData.append("operationId", operationId);
 
         const response = await fetch("/api/chat/transcribe", {
           method: "POST",
           credentials: "include",
           body: formData,
+          headers: {
+            "Idempotency-Key": operationId,
+          },
         });
 
         try {

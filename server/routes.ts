@@ -126,6 +126,7 @@ import { measureUsageForModel, tokensToUnits, UsageMeterError, type UsageMeasure
 import { calculatePriceForUsage } from "./price-calculator";
 import { estimateLlmPreflight, estimateEmbeddingsPreflight, estimateAsrPreflight } from "./preflight-estimator";
 import { assertSufficientWorkspaceCredits, InsufficientCreditsError } from "./credits-precheck";
+import { applyIdempotentUsageCharge, IdempotencyKeyReusedError } from "./idempotent-charge-service";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { listGuardBlockEvents } from "./guards/block-log-service";
@@ -381,10 +382,17 @@ async function recordEmbeddingUsageSafe(params: {
     const pricingUnits = tokensToUnits(tokensTotal);
     const appliedCreditsPerUnit = Math.max(0, Math.floor(modelCreditsPerUnit ?? 0));
     const creditsCharged = pricingUnits.units * appliedCreditsPerUnit;
+    const operationId = params.operationId ?? `embed-${randomUUID()}`;
+    const measurement = {
+      unit: pricingUnits.unit,
+      quantityRaw: pricingUnits.raw,
+      quantityUnits: pricingUnits.units,
+      metadata: { provider: params.provider.id ?? params.provider.providerType ?? "unknown" },
+    } satisfies UsageMeasurement;
 
     await recordEmbeddingUsageEvent({
       workspaceId: params.workspaceId,
-      operationId: params.operationId ?? `embed-${randomUUID()}`,
+      operationId,
       provider: params.provider.id ?? params.provider.providerType ?? "unknown",
       model: params.modelKey ?? params.provider.model ?? "unknown",
       modelId,
@@ -394,6 +402,31 @@ async function recordEmbeddingUsageSafe(params: {
       creditsCharged,
       occurredAt: params.occurredAt,
     });
+
+    if (creditsCharged > 0) {
+      await applyIdempotentUsageCharge({
+        workspaceId: params.workspaceId,
+        operationId,
+        model: {
+          id: modelId,
+          key: params.modelKey ?? params.provider.model ?? null,
+          consumptionUnit: measurement.unit,
+        },
+        measurement,
+        price: {
+          creditsCharged,
+          appliedCreditsPerUnit,
+          unit: measurement.unit,
+          quantityUnits: measurement.quantityUnits,
+          quantityRaw: measurement.quantityRaw,
+        },
+        occurredAt: params.occurredAt,
+        metadata: {
+          source: "embedding",
+          provider: params.provider.id ?? params.provider.providerType ?? "unknown",
+        },
+      });
+    }
   } catch (error) {
     console.error(
       `[usage] Failed to record embedding usage for workspace ${params.workspaceId}: ${getErrorDetails(error)}`,
@@ -4422,7 +4455,30 @@ function handlePreflightError(res: Response, error: unknown): boolean {
     });
     return true;
   }
+  if (error instanceof IdempotencyKeyReusedError) {
+    res.status(error.status).json({
+      errorCode: error.code,
+      message: error.message,
+      details: error.details,
+    });
+    return true;
+  }
   return false;
+}
+
+function resolveOperationId(req: Request): string | null {
+  const headerKey =
+    typeof req.headers["idempotency-key"] === "string"
+      ? req.headers["idempotency-key"]
+      : typeof req.headers["Idempotency-Key" as keyof typeof req.headers] === "string"
+        ? (req.headers as any)["Idempotency-Key"]
+        : null;
+  const bodyKey =
+    req.body && typeof (req.body as any).operationId === "string" && (req.body as any).operationId.trim().length > 0
+      ? (req.body as any).operationId.trim()
+      : null;
+  const resolved = (headerKey || bodyKey || "").trim();
+  return resolved || null;
 }
 
 async function ensureCreditsForLlmPreflight(
@@ -6841,6 +6897,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       .min(1, "Сообщение не может быть пустым")
       .max(20000, "Сообщение слишком длинное"),
     stream: z.boolean().optional(),
+    operationId: z.string().trim().max(200).optional(),
   });
 
 
@@ -9910,6 +9967,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     let resolvedWorkspaceId: string | null = null;
     let executionId: string | null = null;
     let userMessageRecord: { id: string } | null = null;
+    const operationId = resolveOperationId(req);
 
     type StepLogMeta = {
       input?: unknown;
@@ -10341,6 +10399,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
           const llmUsageMeasurement = measureTokensForModel(tokensTotal, context.modelInfo);
           const llmPrice = calculatePriceSnapshot(context.modelInfo, llmUsageMeasurement);
+          const usageOperationId = operationId ?? executionId ?? randomUUID();
           await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
             output: {
               usageTokens: tokensTotal ?? null,
@@ -10351,11 +10410,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               responsePreview: completion.answer.slice(0, 160),
             },
           });
-          if (executionId && tokensTotal !== null && tokensTotal !== undefined) {
+          if (tokensTotal !== null && tokensTotal !== undefined) {
             try {
               await recordLlmUsageEvent({
                 workspaceId,
-                executionId,
+                executionId: usageOperationId,
                 provider: context.provider.id ?? context.provider.providerType ?? "unknown",
                 model: resolvedModelKey ?? "unknown",
                 modelId: resolvedModelId ?? null,
@@ -10364,9 +10423,28 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 creditsCharged: llmPrice?.creditsCharged ?? null,
                 occurredAt: new Date(),
               });
+              if (workspaceId && llmUsageMeasurement && llmPrice) {
+                await applyIdempotentUsageCharge({
+                  workspaceId,
+                  operationId: usageOperationId,
+                  model: {
+                    id: resolvedModelId ?? null,
+                    key: resolvedModelKey ?? null,
+                    name: context.modelInfo?.displayName ?? null,
+                    consumptionUnit: llmUsageMeasurement.unit,
+                  },
+                  measurement: llmUsageMeasurement,
+                  price: llmPrice,
+                  metadata: {
+                    source: "chat_llm",
+                    chatId: req.params.chatId,
+                    executionId,
+                  },
+                });
+              }
             } catch (usageError) {
               console.error(
-                `[usage] Failed to record LLM tokens for execution ${executionId}: ${getErrorDetails(usageError)}`,
+                `[usage] Failed to record LLM tokens for operation ${usageOperationId}: ${getErrorDetails(usageError)}`,
               );
             }
           }
@@ -10436,6 +10514,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const tokensTotal = completion.usageTokens ?? Math.ceil(completion.answer.length / 4);
         llmUsageMeasurement = measureTokensForModel(tokensTotal, context.modelInfo);
         llmPrice = calculatePriceSnapshot(context.modelInfo, llmUsageMeasurement ?? null);
+        const usageOperationId = operationId ?? executionId ?? randomUUID();
         await safeLogStep("CALL_LLM", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
           output: {
             usageTokens: tokensTotal ?? null,
@@ -10446,11 +10525,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             responsePreview: completion.answer.slice(0, 160),
           },
         });
-        if (executionId && tokensTotal !== null && tokensTotal !== undefined) {
+        if (tokensTotal !== null && tokensTotal !== undefined) {
           try {
             await recordLlmUsageEvent({
               workspaceId,
-              executionId,
+              executionId: usageOperationId,
               provider: context.provider.id ?? context.provider.providerType ?? "unknown",
               model: resolvedModelKey ?? "unknown",
               modelId: resolvedModelId ?? null,
@@ -10459,9 +10538,28 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               creditsCharged: llmPrice?.creditsCharged ?? null,
               occurredAt: new Date(),
             });
+            if (workspaceId && llmUsageMeasurement && llmPrice) {
+              await applyIdempotentUsageCharge({
+                workspaceId,
+                operationId: usageOperationId,
+                model: {
+                  id: resolvedModelId ?? null,
+                  key: resolvedModelKey ?? null,
+                  name: context.modelInfo?.displayName ?? null,
+                  consumptionUnit: llmUsageMeasurement.unit,
+                },
+                measurement: llmUsageMeasurement,
+                price: llmPrice,
+                metadata: {
+                  source: "chat_llm",
+                  chatId: req.params.chatId,
+                  executionId,
+                },
+              });
+            }
           } catch (usageError) {
             console.error(
-              `[usage] Failed to record LLM tokens for execution ${executionId}: ${getErrorDetails(usageError)}`,
+              `[usage] Failed to record LLM tokens for operation ${usageOperationId}: ${getErrorDetails(usageError)}`,
             );
           }
         }
@@ -13862,6 +13960,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           throw error;
         }
       }
+      let embeddingCreditsPerUnit: number | null = null;
+      try {
+        const resolved = await tryResolveModel(provider.model ?? "", { expectedType: "EMBEDDINGS" });
+        embeddingModelId = resolved?.id ?? embeddingModelId;
+        embeddingCreditsPerUnit = resolved?.creditsPerUnit ?? null;
+      } catch {
+        // ignore resolution errors here; charging will use 0 credits
+      }
       const embeddingResults: Array<
         EmbeddingVectorResult & { chunk: KnowledgeDocumentChunk; index: number }
       > = [];
@@ -13874,6 +13980,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           embeddingResults.push({ ...result, chunk, index });
           if (result.usageTokens !== null && result.usageTokens !== undefined) {
             try {
+              const pricingUnits = tokensToUnits(result.usageTokens);
+              const appliedCreditsPerUnit = Math.max(0, Math.floor(embeddingCreditsPerUnit ?? 0));
+              const creditsCharged = pricingUnits.units * appliedCreditsPerUnit;
               await recordEmbeddingUsageEvent({
                 workspaceId,
                 operationId: chunk.id,
@@ -13882,7 +13991,38 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 modelId: embeddingModelId,
                 tokensTotal: result.usageTokens,
                 contentBytes: Buffer.byteLength(chunk.content, "utf8"),
+                appliedCreditsPerUnit,
+                creditsCharged,
               });
+              if (creditsCharged > 0) {
+                await applyIdempotentUsageCharge({
+                  workspaceId,
+                  operationId: chunk.id,
+                  model: {
+                    id: embeddingModelId,
+                    key: provider.model ?? null,
+                    consumptionUnit: pricingUnits.unit,
+                  },
+                  measurement: {
+                    unit: pricingUnits.unit,
+                    quantityRaw: pricingUnits.raw,
+                    quantityUnits: pricingUnits.units,
+                    metadata: { provider: provider.id ?? provider.providerType ?? "unknown" },
+                  },
+                  price: {
+                    creditsCharged,
+                    appliedCreditsPerUnit,
+                    unit: pricingUnits.unit,
+                    quantityUnits: pricingUnits.units,
+                    quantityRaw: pricingUnits.raw,
+                  },
+                  metadata: {
+                    source: "knowledge_chunk_embedding",
+                    chunkId: chunk.id,
+                    vectorizationJobId: jobId ?? null,
+                  },
+                });
+              }
             } catch (usageError) {
               console.error(
                 `[usage] Failed to record embedding tokens for chunk ${chunk.id} workspace ${workspaceId}: ${getErrorDetails(

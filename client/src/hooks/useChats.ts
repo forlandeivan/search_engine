@@ -169,16 +169,21 @@ export async function sendChatMessageLLM({
   chatId: string;
   workspaceId: string;
   content: string;
+  operationId?: string;
   signal?: AbortSignal;
   handlers?: ChatStreamHandlers;
 }): Promise<void> {
+  const resolvedOperationId =
+    (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" && crypto.randomUUID()) ||
+    `op-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const response = await fetch(`/api/chat/sessions/${chatId}/messages/llm`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Accept: "text/event-stream, application/json",
+      "Idempotency-Key": operationId ?? resolvedOperationId,
     },
-    body: JSON.stringify({ workspaceId, content }),
+    body: JSON.stringify({ workspaceId, content, operationId: operationId ?? resolvedOperationId }),
     credentials: "include",
     signal,
   });

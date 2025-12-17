@@ -31,6 +31,7 @@ import {
   Mail,
   ShieldAlert,
   CreditCard,
+  Layers3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -123,6 +124,7 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
       label: "Управление LLM",
       items: [
         { title: "Провайдеры LLM", url: "/admin/llm", icon: Bot },
+        { title: "Каталог моделей", url: "/admin/models", icon: Layers3 },
         { title: "Журнал запусков LLM", url: "/admin/llm-executions", icon: ScrollText },
       ],
     },

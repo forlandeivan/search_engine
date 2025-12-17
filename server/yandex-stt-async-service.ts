@@ -18,6 +18,7 @@ import { calculatePriceForUsage } from "./price-calculator";
 import { estimateAsrPreflight } from "./preflight-estimator";
 import { assertSufficientWorkspaceCredits, InsufficientCreditsError } from "./credits-precheck";
 import { recordAsrUsageEvent } from "./usage/usage-service";
+import { applyIdempotentUsageCharge } from "./idempotent-charge-service";
 
 const createHttpProxyAgent = (url: string) => {
   try {
@@ -692,6 +693,29 @@ class YandexSttAsyncService {
                 { consumptionUnit: "MINUTES", creditsPerUnit: cached.creditsPerUnit ?? 0 } as any,
                 measurement,
               );
+              const chargeOperationId = cached.executionId ?? operationId;
+              if (chargeOperationId) {
+                try {
+                  await applyIdempotentUsageCharge({
+                    workspaceId: cached.workspaceId,
+                    operationId: chargeOperationId,
+                    model: {
+                      id: cached.modelId ?? null,
+                      key: cached.modelKey ?? null,
+                      consumptionUnit: "MINUTES",
+                    },
+                    measurement,
+                    price,
+                    metadata: {
+                      source: "asr_transcription",
+                      fileName: cached.fileName ?? null,
+                      provider: "yandex_speechkit",
+                    },
+                  });
+                } catch (chargeError) {
+                  console.error("[billing] Failed to apply idempotent ASR charge:", chargeError);
+                }
+              }
               await recordAsrUsageEvent({
                 workspaceId: cached.workspaceId,
                 asrJobId: cached.executionId ?? operationId,

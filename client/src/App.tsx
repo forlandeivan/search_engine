@@ -25,6 +25,7 @@ import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
 import DashboardPage from "@/pages/DashboardPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import AdminWorkspacesPage from "@/pages/AdminWorkspacesPage";
+import AdminModelsPage from "@/pages/AdminModelsPage";
 import GuardBlockEventsPage from "@/pages/GuardBlockEventsPage";
 import SkillsPage from "@/pages/SkillsPage";
 import ChatPage from "@/pages/ChatPage";
@@ -67,6 +68,7 @@ function AdminRouter() {
         {(params) => <SpeechProviderDetailsPage providerId={params.providerId} />}
       </Route>
       <Route path="/admin/tts-stt" component={TtsSttProvidersPage} />
+      <Route path="/admin/models" component={AdminModelsPage} />
       <Route path="/admin/billing" component={AdminBillingPage} />
       <Route path="/admin/settings/smtp" component={SmtpSettingsPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
