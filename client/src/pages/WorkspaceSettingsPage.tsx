@@ -18,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import type { WorkspaceMemberRole } from "@shared/schema";
 
 function useWorkspaceInfo(workspaceId?: string | null) {
   return useQuery({
@@ -75,6 +76,19 @@ type TariffSummary = {
   shortDescription?: string | null;
   sortOrder?: number | null;
 };
+
+function useSessionWorkspaceWithUser(workspaceId?: string | null) {
+  return useQuery({
+    queryKey: ["/api/auth/session"],
+    queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
+    staleTime: 60 * 1000,
+    select: (data) => {
+      if (!data) return null;
+      const active = workspaceId && data.workspace.active?.id === workspaceId ? data.workspace.active : data.workspace.active;
+      return { user: data.user, workspace: active };
+    },
+  });
+}
 
 function formatPeriodLabel(periodCode: string): string {
   const [year, month] = periodCode.split("-");
@@ -262,6 +276,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const [location, navigate] = useLocation();
   const workspaceIdFromRoute = params?.workspaceId ?? undefined;
   const sessionWorkspaceQuery = useWorkspaceInfo(workspaceIdFromRoute);
+  const sessionWithUser = useSessionWorkspaceWithUser(workspaceIdFromRoute);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -280,12 +295,21 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
     const params = new URLSearchParams(location.split("?")[1] ?? "");
     const tabParam = params.get("tab");
     if (tabParam === "members" || tabParam === "general" || tabParam === "usage" || tabParam === "billing") {
-      setTab(tabParam);
+      if (tabParam === "billing" && !canManageBilling) {
+        setTab("general");
+      } else {
+        setTab(tabParam);
+      }
     }
-  }, [location]);
+  }, [location, canManageBilling]);
 
   const handleTabChange = (value: string) => {
-    const next = value === "members" || value === "usage" || value === "billing" ? value : "general";
+    const next =
+      value === "members" || value === "usage" || value === "billing"
+        ? value === "billing" && !canManageBilling
+          ? "general"
+          : value
+        : "general";
     setTab(next);
     const base = location.split("?")[0];
     navigate(`${base}?tab=${next}`);
@@ -298,6 +322,9 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   const [resetIcon, setResetIcon] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
+  const isOwner = sessionWorkspaceQuery.data?.role === ("owner" as WorkspaceMemberRole);
+  const isAdmin = sessionWithUser.data?.user?.role === "admin";
+  const canManageBilling = Boolean(isOwner || isAdmin);
   const workspacePlanQuery = useWorkspacePlan(effectiveWorkspaceId);
   const tariffsCatalogQuery = useTariffsCatalog();
   const applyPlanMutation = useMutation({
@@ -523,7 +550,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
           <TabsTrigger value="general">Основное</TabsTrigger>
           <TabsTrigger value="members">Участники</TabsTrigger>
           <TabsTrigger value="usage">Потребление</TabsTrigger>
-          <TabsTrigger value="billing">Тариф</TabsTrigger>
+          {canManageBilling && <TabsTrigger value="billing">Тариф</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="general" className="mt-4">
@@ -624,97 +651,108 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
           </Card>
         </TabsContent>
 
-        <TabsContent value="billing" className="mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Тариф рабочего пространства</CardTitle>
-              <CardDescription>Выберите один из доступных тарифов. Смена тарифа применяется сразу.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {workspacePlanQuery.isError && (
-                <Alert variant="destructive">
-                  <AlertTitle>Не удалось загрузить текущий тариф</AlertTitle>
-                  <AlertDescription>{workspacePlanQuery.error?.message ?? "Попробуйте обновить страницу."}</AlertDescription>
-                </Alert>
-              )}
-              {tariffsCatalogQuery.isError && (
-                <Alert variant="destructive">
-                  <AlertTitle>Не удалось загрузить каталог тарифов</AlertTitle>
-                  <AlertDescription>{tariffsCatalogQuery.error?.message ?? "Попробуйте позже."}</AlertDescription>
-                </Alert>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm text-muted-foreground">Текущий тариф:</span>
-                {workspacePlanQuery.isLoading ? (
-                  <Skeleton className="h-6 w-28" />
-                ) : workspacePlanQuery.data ? (
-                  <Badge variant="secondary">
-                    {workspacePlanQuery.data.name ?? workspacePlanQuery.data.code}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline">неизвестно</Badge>
+        {canManageBilling ? (
+          <TabsContent value="billing" className="mt-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Тариф рабочего пространства</CardTitle>
+                <CardDescription>Выберите один из доступных тарифов. Смена тарифа применяется сразу.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {workspacePlanQuery.isError && (
+                  <Alert variant="destructive">
+                    <AlertTitle>Не удалось загрузить текущий тариф</AlertTitle>
+                    <AlertDescription>
+                      {workspacePlanQuery.error?.message ?? "Попробуйте обновить страницу."}
+                    </AlertDescription>
+                  </Alert>
                 )}
-                {workspacePlanQuery.data?.description && (
-                  <span className="text-xs text-muted-foreground">
-                    {workspacePlanQuery.data.description}
-                  </span>
+                {tariffsCatalogQuery.isError && (
+                  <Alert variant="destructive">
+                    <AlertTitle>Не удалось загрузить каталог тарифов</AlertTitle>
+                    <AlertDescription>{tariffsCatalogQuery.error?.message ?? "Попробуйте позже."}</AlertDescription>
+                  </Alert>
                 )}
-              </div>
 
-              {tariffsCatalogQuery.isLoading && (
-                <div className="grid gap-3 md:grid-cols-3">
-                  {Array.from({ length: 3 }).map((_, idx) => (
-                    <Skeleton key={idx} className="h-28 w-full" />
-                  ))}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Текущий тариф:</span>
+                  {workspacePlanQuery.isLoading ? (
+                    <Skeleton className="h-6 w-28" />
+                  ) : workspacePlanQuery.data ? (
+                    <Badge variant="secondary">
+                      {workspacePlanQuery.data.name ?? workspacePlanQuery.data.code}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline">неизвестно</Badge>
+                  )}
+                  {workspacePlanQuery.data?.description && (
+                    <span className="text-xs text-muted-foreground">
+                      {workspacePlanQuery.data.description}
+                    </span>
+                  )}
                 </div>
-              )}
 
-              {!tariffsCatalogQuery.isLoading && (tariffsCatalogQuery.data?.length ?? 0) === 0 && (
-                <p className="text-sm text-muted-foreground">Нет доступных тарифов.</p>
-              )}
+                {tariffsCatalogQuery.isLoading && (
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {Array.from({ length: 3 }).map((_, idx) => (
+                      <Skeleton key={idx} className="h-28 w-full" />
+                    ))}
+                  </div>
+                )}
 
-              {!tariffsCatalogQuery.isLoading && (tariffsCatalogQuery.data?.length ?? 0) > 0 && (
-                <div className="grid gap-4 md:grid-cols-2">
-                  {(tariffsCatalogQuery.data ?? []).map((plan) => {
-                    const isCurrent =
-                      workspacePlanQuery.data?.code?.toUpperCase() === plan.code?.toUpperCase();
-                    return (
-                      <div
-                        key={plan.id}
-                        className="flex flex-col gap-2 rounded-lg border p-4 shadow-sm"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="text-base font-semibold">{plan.name ?? plan.code}</p>
-                            {plan.shortDescription && (
-                              <p className="text-sm text-muted-foreground">{plan.shortDescription}</p>
-                            )}
+                {!tariffsCatalogQuery.isLoading && (tariffsCatalogQuery.data?.length ?? 0) === 0 && (
+                  <p className="text-sm text-muted-foreground">Нет доступных тарифов.</p>
+                )}
+
+                {!tariffsCatalogQuery.isLoading && (tariffsCatalogQuery.data?.length ?? 0) > 0 && (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {(tariffsCatalogQuery.data ?? []).map((plan) => {
+                      const isCurrent =
+                        workspacePlanQuery.data?.code?.toUpperCase() === plan.code?.toUpperCase();
+                      return (
+                        <div
+                          key={plan.id}
+                          className="flex flex-col gap-2 rounded-lg border p-4 shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-base font-semibold">{plan.name ?? plan.code}</p>
+                              {plan.shortDescription && (
+                                <p className="text-sm text-muted-foreground">{plan.shortDescription}</p>
+                              )}
+                            </div>
+                            {isCurrent && <Badge variant="secondary">Текущий</Badge>}
                           </div>
-                          {isCurrent && <Badge variant="secondary">Текущий</Badge>}
+                          {plan.description && (
+                            <p className="text-xs text-muted-foreground">{plan.description}</p>
+                          )}
+                          <div className="flex justify-end">
+                            <Button
+                              size="sm"
+                              variant={isCurrent ? "outline" : "default"}
+                              disabled={isCurrent || applyPlanMutation.isPending}
+                              onClick={() => applyPlanMutation.mutate(plan.code)}
+                            >
+                              {applyPlanMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              {isCurrent ? "Применён" : "Применить"}
+                            </Button>
+                          </div>
                         </div>
-                        {plan.description && (
-                          <p className="text-xs text-muted-foreground">{plan.description}</p>
-                        )}
-                        <div className="flex justify-end">
-                          <Button
-                            size="sm"
-                            variant={isCurrent ? "outline" : "default"}
-                            disabled={isCurrent || applyPlanMutation.isPending}
-                            onClick={() => applyPlanMutation.mutate(plan.code)}
-                          >
-                            {applyPlanMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            {isCurrent ? "Применён" : "Применить"}
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        ) : (
+          <TabsContent value="billing" className="mt-4">
+            <Alert variant="destructive">
+              <AlertTitle>Недостаточно прав</AlertTitle>
+              <AlertDescription>Тарифы может менять только владелец рабочего пространства.</AlertDescription>
+            </Alert>
+          </TabsContent>
+        )}
 
         <TabsContent value="members" className="mt-4">
           <WorkspaceMembersPage />
