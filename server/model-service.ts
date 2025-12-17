@@ -344,6 +344,7 @@ export async function syncModelsWithLlmProvider(
   const existingProviderModels = await db.select().from(models).where(eq(models.providerId, provider.id));
   for (const existing of existingProviderModels) {
     const key = existing.providerModelKey ?? "";
+    if (!key) continue; // не трогаем старые записи без связки по ключу
     if (!syncedKeys.has(key) && existing.isActive) {
       await db
         .update(models)
@@ -383,7 +384,8 @@ export async function syncModelsWithSpeechProvider(opts: {
   }
 
   const configuredModel = typeof config?.model === "string" ? config.model.trim() : "";
-  const modelKey = configuredModel || provider.id;
+  const fallbackKey = `asr-${provider.id}`;
+  const modelKey = configuredModel || fallbackKey;
   if (!modelKey) return;
 
   const displayName = configuredModel ? `${provider.displayName} · ${configuredModel}` : provider.displayName;
