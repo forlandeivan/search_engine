@@ -80,7 +80,6 @@ import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { tariffPlanService } from "./tariff-plan-service";
-import { seedDefaultTariffs } from "./tariff-seed";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import type {
   KnowledgeBaseAskAiRunDetail,
@@ -5613,14 +5612,11 @@ export class DatabaseStorage implements IStorage {
   async ensurePersonalWorkspace(user: User): Promise<Workspace> {
     await ensureWorkspaceMembersTable();
 
-    let freePlan = await tariffPlanService.getPlanByCode("FREE");
+    const freePlan = await tariffPlanService.getPlanByCode("FREE");
     if (!freePlan) {
-      // Автосоздаём базовые тарифы, если не прогнаны сиды
-      await seedDefaultTariffs();
-      freePlan = await tariffPlanService.getPlanByCode("FREE");
-    }
-    if (!freePlan) {
-      throw new Error("[workspaces] Тариф FREE не найден. Запустите seed тарифов перед созданием рабочих пространств.");
+      throw new Error(
+        "[workspaces] Тариф FREE не найден. Выполните seed тарифов (npm run seed:tariffs или node server/tariff-seed.ts) до создания рабочих пространств.",
+      );
     }
 
     const existing = await this.db
