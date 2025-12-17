@@ -7768,6 +7768,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         amount: Number(plan.includedCreditsAmount ?? 0),
         period: (plan.includedCreditsPeriod as string) ?? "monthly",
       },
+      policy: {
+        period: "monthly",
+        rollover: "no_carryover",
+      },
     });
   });
 
