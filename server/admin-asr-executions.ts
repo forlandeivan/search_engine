@@ -4,6 +4,9 @@ import { storage } from "./storage";
 import { getSkillById } from "./skills";
 import { asrExecutionLogService } from "./asr-execution-log-context";
 import type { AsrExecutionRecord, AsrExecutionStatus } from "./asr-execution-log";
+import { workspaceCreditLedger } from "@shared/schema";
+import { db } from "./db";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -40,6 +43,7 @@ export interface AdminAsrExecutionSummary {
   startedAt: string | null;
   finishedAt: string | null;
   durationMs: number | null;
+  creditsChargedCents: number | null;
   errorCode: string | null;
   errorMessage: string | null;
   createdAt: string;
@@ -115,8 +119,10 @@ async function enrichExecutions(executions: AsrExecutionRecord[]): Promise<Admin
   const workspaceIds = new Set<string>();
   const skillPairs = new Set<string>();
   const messageIds = new Set<string>();
+  const executionIds = new Set<string>();
 
   for (const ex of executions) {
+    executionIds.add(ex.id);
     if (ex.workspaceId) workspaceIds.add(ex.workspaceId);
     if (ex.skillId && ex.workspaceId) skillPairs.add(`${ex.workspaceId}:${ex.skillId}`);
     if (ex.userMessageId) messageIds.add(ex.userMessageId);
@@ -128,6 +134,7 @@ async function enrichExecutions(executions: AsrExecutionRecord[]): Promise<Admin
     fetchSkills(skillPairs),
     fetchMessages(messageIds),
   ]);
+  const creditsByExecution = await fetchCreditsByExecution(executionIds);
 
   return executions.map((ex) => {
     const workspace = ex.workspaceId ? workspaces.get(ex.workspaceId) : null;
@@ -135,6 +142,7 @@ async function enrichExecutions(executions: AsrExecutionRecord[]): Promise<Admin
     const start = ex.startedAt ? ex.startedAt.getTime() : null;
     const finish = ex.finishedAt ? ex.finishedAt.getTime() : null;
     const duration = start && finish ? finish - start : ex.durationMs ?? null;
+    const creditsCharged = creditsByExecution.get(ex.id) ?? null;
 
     return {
       id: ex.id,
@@ -154,6 +162,7 @@ async function enrichExecutions(executions: AsrExecutionRecord[]): Promise<Admin
       startedAt: ex.startedAt ? ex.startedAt.toISOString() : null,
       finishedAt: ex.finishedAt ? ex.finishedAt.toISOString() : null,
       durationMs: duration,
+      creditsChargedCents: creditsCharged,
       errorCode: ex.errorCode,
       errorMessage: ex.errorMessage,
       createdAt: ex.createdAt.toISOString(),
@@ -203,4 +212,32 @@ async function fetchMessages(keys: Set<string>) {
     }),
   );
   return new Map(entries);
+}
+
+async function fetchCreditsByExecution(ids: Set<string>): Promise<Map<string, number>> {
+  if (ids.size === 0) return new Map();
+  const rows = await db
+    .select({
+      sourceRef: workspaceCreditLedger.sourceRef,
+      total: sql<number>`coalesce(sum(${workspaceCreditLedger.amountDelta}), 0)`,
+    })
+    .from(workspaceCreditLedger)
+    .where(
+      and(
+        eq(workspaceCreditLedger.entryType, "usage_charge"),
+        inArray(workspaceCreditLedger.sourceRef, Array.from(ids)),
+      ),
+    )
+    .groupBy(workspaceCreditLedger.sourceRef);
+
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const debited = -Number(row.total ?? 0);
+    if (debited > 0) {
+      map.set(row.sourceRef, debited);
+    } else {
+      map.set(row.sourceRef, 0);
+    }
+  }
+  return map;
 }

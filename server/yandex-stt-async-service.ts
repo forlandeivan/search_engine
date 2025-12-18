@@ -772,10 +772,15 @@ class YandexSttAsyncService {
                   operationId,
                 },
               );
-              const price = calculatePriceForUsage(
-                { consumptionUnit: "MINUTES", creditsPerUnit } as any,
-                measurement,
-              );
+              const appliedCreditsPerUnitCents = Math.max(0, Math.trunc(creditsPerUnit ?? 0));
+              const creditsChargedCents = Math.max(0, Math.round((appliedCreditsPerUnitCents * durationSeconds) / 60));
+              const price = {
+                creditsChargedCents,
+                appliedCreditsPerUnitCents,
+                unit: measurement.unit,
+                quantityUnits: measurement.quantityUnits,
+                quantityRaw: measurement.quantityRaw,
+              };
               const chargeOperationId = cached.executionId ?? operationId;
               if (chargeOperationId) {
                 try {

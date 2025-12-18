@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useAdminWorkspaces } from "@/hooks/useAdminWorkspaces";
 import { useAsrExecutionDetail, useAsrExecutionsList } from "@/hooks/useAsrExecutions";
 import type { AsrExecutionEvent, AsrExecutionStatus } from "@/types/asr-execution";
+import { centsToCredits } from "@shared/credits";
 
 const STATUS_BADGES: Record<AsrExecutionStatus, string> = {
   pending: "bg-slate-200 text-slate-800",
@@ -57,6 +58,12 @@ function formatSize(bytes?: number | null) {
     unit += 1;
   }
   return `${size.toFixed(1)} ${units[unit]}`;
+}
+
+function formatCreditsCents(cents?: number | null) {
+  if (cents === null || cents === undefined) return "—";
+  const credits = centsToCredits(cents);
+  return credits.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 const STAGE_LABELS: Record<string, string> = {
@@ -218,6 +225,7 @@ export default function AsrExecutionsPage() {
                       <TableHead>Файл</TableHead>
                       <TableHead>Размер</TableHead>
                       <TableHead>Длительность аудио</TableHead>
+                      <TableHead>Кредиты</TableHead>
                       <TableHead>Auto</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -243,6 +251,7 @@ export default function AsrExecutionsPage() {
                         <TableCell className="max-w-[180px] truncate">{ex.fileName ?? "—"}</TableCell>
                         <TableCell>{formatSize(ex.fileSizeBytes)}</TableCell>
                         <TableCell>{formatDuration(ex.durationMs)}</TableCell>
+                        <TableCell>{formatCreditsCents(ex.creditsChargedCents)}</TableCell>
                         <TableCell>{autoActionUsed(ex as any) ? "✓" : "—"}</TableCell>
                       </TableRow>
                     ))}
@@ -294,6 +303,7 @@ export default function AsrExecutionsPage() {
                     <DetailRow label="File name" value={detail.execution.fileName} />
                     <DetailRow label="File size" value={formatSize(detail.execution.fileSizeBytes)} />
                     <DetailRow label="Длительность аудио" value={formatDuration(detail.execution.durationMs)} />
+                    <DetailRow label="Списано кредитов" value={formatCreditsCents(detail.execution.creditsChargedCents)} />
                     <DetailRow label="Auto action" value={autoActionUsed(detail.execution.pipelineEvents) ? "Да" : "Нет"} />
                   </div>
                   <div className="pt-2">

@@ -38,6 +38,7 @@ export interface AsrExecutionSummary {
   startedAt: string | null;
   finishedAt: string | null;
   durationMs: number | null;
+  creditsChargedCents: number | null;
   errorCode: string | null;
   errorMessage: string | null;
   createdAt: string;
