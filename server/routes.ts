@@ -280,6 +280,7 @@ import { yandexIamTokenService } from "./yandex-iam-token-service";
 import multer from "multer";
 import { getLlmPromptDebugConfig, isLlmPromptDebugEnabled, setLlmPromptDebugEnabled } from "./llm-debug-config";
 import { getRecommendedAitunnelModels } from "./llm-providers/aitunnel-models";
+import { parseBuffer as parseAudioBuffer } from "music-metadata";
 
 // Глобальная страховка: не валим процесс на write EOF и подобные сетевые ошибки.
 process.on("uncaughtException", (err: any) => {
@@ -11884,6 +11885,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const skillIdForChat = chat.skillId ?? null;
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
+
+        let audioDurationSeconds: number | null = null;
+        try {
+          const meta = await parseAudioBuffer(file.buffer, undefined, { duration: true });
+          const d = meta.format.duration;
+          if (d && Number.isFinite(d) && d > 0) {
+            audioDurationSeconds = Math.round(d);
+          }
+        } catch (err) {
+          console.warn("[transcribe] failed to parse audio duration via music-metadata:", err);
+        }
 
         // Create audio message (user-sent audio file)
         const fileName = decodeUploadFileName(file.originalname);
