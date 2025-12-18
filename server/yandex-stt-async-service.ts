@@ -287,6 +287,7 @@ export interface AsyncTranscribeResponse {
   operationId: string;
   message: string;
   uploadResult?: UploadResult;
+  durationSeconds?: number | null;
 }
 
 export interface TranscribeOperationStatus {
@@ -564,6 +565,7 @@ class YandexSttAsyncService {
         operationId,
         message: "Транскрибация началась. Пожалуйста, дождитесь завершения.",
         uploadResult,
+        durationSeconds: audioDurationSeconds ?? null,
       };
     } catch (error) {
       if (error instanceof YandexSttAsyncError || error instanceof SpeechProviderDisabledError) {
