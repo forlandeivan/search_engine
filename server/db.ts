@@ -38,12 +38,8 @@ function createUnavailableDbProxy(message: string) {
 }
 
 function hasCustomPostgresConfig(): boolean {
-  return Boolean(
-    process.env.PG_HOST &&
-    process.env.PG_USER &&
-    process.env.PG_PASSWORD &&
-    process.env.PG_DATABASE
-  );
+  // Отключаем использование внешнего PostgreSQL, используем только Neon
+  return false;
 }
 
 function tryConnectCustomPostgres(): void {
