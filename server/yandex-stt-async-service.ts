@@ -678,8 +678,16 @@ class YandexSttAsyncService {
 
         // Учёт usage (MINUTES) — используем измеренную длительность, если доступна.
         if (!cached.usageRecorded && cached.workspaceId) {
-          const durationSeconds = cached.durationSeconds ?? null;
-          if (durationSeconds !== null && durationSeconds !== undefined && durationSeconds > 0) {
+        let durationSeconds = cached.durationSeconds ?? null;
+        if ((!durationSeconds || durationSeconds <= 0) && cached.createdAt) {
+          const fallbackSeconds = Math.round((Date.now() - cached.createdAt.getTime()) / 1000);
+          if (fallbackSeconds > 0) {
+            durationSeconds = fallbackSeconds;
+            cached.durationSeconds = fallbackSeconds;
+            operationsCache.set(cacheId, cached);
+          }
+        }
+        if (durationSeconds !== null && durationSeconds !== undefined && durationSeconds > 0) {
             try {
               const measurement: UsageMeasurement = measureUsageForModel(
                 { consumptionUnit: "MINUTES" },
@@ -731,6 +739,12 @@ class YandexSttAsyncService {
               });
               cached.usageRecorded = true;
               operationsCache.set(cacheId, cached);
+              if (cached.executionId) {
+                const { asrExecutionLogService } = await import("./asr-execution-log-context");
+                await asrExecutionLogService.updateExecution(cached.executionId, {
+                  durationMs: measurement.quantityRaw * 1000,
+                });
+              }
             } catch (error) {
               console.error("[usage][asr] Failed to record ASR usage:", error);
             }
