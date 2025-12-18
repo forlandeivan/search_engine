@@ -76,14 +76,15 @@ export default function AdminUsageChargesPage() {
                 <TableRow>
                   <TableHead>Дата</TableHead>
                   <TableHead>Workspace</TableHead>
-                  <TableHead>Модель</TableHead>
-                  <TableHead>Тип</TableHead>
-                  <TableHead>Unit</TableHead>
-                  <TableHead>Количество</TableHead>
-                  <TableHead>Credits</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+                <TableHead>Модель</TableHead>
+                <TableHead>Тип</TableHead>
+                <TableHead>Unit</TableHead>
+                <TableHead>Credits/Unit</TableHead>
+                <TableHead>Количество</TableHead>
+                <TableHead>Credits</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
                 {items.map((item) => (
                   <TableRow key={item.id}>
                     <TableCell className="whitespace-nowrap">
@@ -100,6 +101,7 @@ export default function AdminUsageChargesPage() {
                     </TableCell>
                     <TableCell>{item.model?.modelType ?? "—"}</TableCell>
                     <TableCell>{item.unit ?? item.model?.consumptionUnit ?? "—"}</TableCell>
+                    <TableCell>{item.appliedCreditsPerUnit ?? "—"}</TableCell>
                     <TableCell>
                       <div className="flex flex-col text-sm">
                         <span>{item.quantityUnits ?? "—"}</span>

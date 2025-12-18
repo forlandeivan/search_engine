@@ -367,12 +367,14 @@ async function recordEmbeddingUsageSafe(params: {
   if (tokensTotal === null || tokensTotal === undefined) return;
 
   let modelId: string | null = params.modelId ?? null;
+  let modelName: string | null = null;
   let modelCreditsPerUnit: number | null = null;
   const modelKey = params.modelKey ?? params.provider.model ?? null;
   if (!modelId && modelKey) {
     try {
       const resolvedModel = await tryResolveModel(modelKey, { expectedType: "EMBEDDINGS" });
       modelId = resolvedModel?.id ?? null;
+      modelName = resolvedModel?.displayName ?? null;
       modelCreditsPerUnit = resolvedModel?.creditsPerUnit ?? null;
     } catch (error) {
       if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
@@ -410,30 +412,30 @@ async function recordEmbeddingUsageSafe(params: {
       occurredAt: params.occurredAt,
     });
 
-    if (creditsCharged > 0) {
-      await applyIdempotentUsageCharge({
-        workspaceId: params.workspaceId,
-        operationId,
-        model: {
-          id: modelId,
-          key: params.modelKey ?? params.provider.model ?? null,
-          consumptionUnit: measurement.unit,
-        },
-        measurement,
-        price: {
-          creditsCharged,
-          appliedCreditsPerUnit,
-          unit: measurement.unit,
-          quantityUnits: measurement.quantityUnits,
-          quantityRaw: measurement.quantityRaw,
-        },
-        occurredAt: params.occurredAt,
-        metadata: {
-          source: "embedding",
-          provider: params.provider.id ?? params.provider.providerType ?? "unknown",
-        },
-      });
-    }
+    await applyIdempotentUsageCharge({
+      workspaceId: params.workspaceId,
+      operationId,
+      model: {
+        id: modelId,
+        key: params.modelKey ?? params.provider.model ?? null,
+        name: modelName,
+        type: "EMBEDDINGS",
+        consumptionUnit: measurement.unit,
+      },
+      measurement,
+      price: {
+        creditsCharged,
+        appliedCreditsPerUnit,
+        unit: measurement.unit,
+        quantityUnits: measurement.quantityUnits,
+        quantityRaw: measurement.quantityRaw,
+      },
+      occurredAt: params.occurredAt,
+      metadata: {
+        source: "embedding",
+        provider: params.provider.id ?? params.provider.providerType ?? "unknown",
+      },
+    });
   } catch (error) {
     console.error(
       `[usage] Failed to record embedding usage for workspace ${params.workspaceId}: ${getErrorDetails(error)}`,
@@ -8188,6 +8190,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         conditions.push(sql`${workspaceCreditLedger.metadata}->>'modelId' = ${modelIdFilter}`);
       }
 
+      const [totalRow] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(workspaceCreditLedger)
+        .where(and(...conditions));
+      const total = Number(totalRow?.count ?? 0);
+
       const rows = await db
         .select()
         .from(workspaceCreditLedger)
@@ -8218,9 +8226,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           const meta = (row.metadata ?? {}) as Record<string, unknown>;
           const modelId = typeof meta.modelId === "string" ? meta.modelId : null;
           const model = modelId ? modelsMap.get(modelId) ?? null : null;
-          if (modelTypeFilter && model && model.modelType !== modelTypeFilter) {
-            return null;
-          }
+          const metaModelType = typeof meta.modelType === "string" ? meta.modelType : null;
+          const resolvedModelType = model?.modelType ?? metaModelType;
+          if (modelTypeFilter && resolvedModelType !== modelTypeFilter) return null;
           const quantityUnits =
             typeof meta.quantityUnits === "number"
               ? meta.quantityUnits
@@ -8248,7 +8256,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                   consumptionUnit: model.consumptionUnit,
                 }
               : modelId
-                ? { id: modelId, key: meta.modelKey ?? null, displayName: meta.modelName ?? null, modelType: meta.modelType ?? null, consumptionUnit: meta.unit ?? null }
+                ? {
+                    id: modelId,
+                    key: (meta.modelKey as string) ?? null,
+                    displayName: (meta.modelName as string) ?? null,
+                    modelType: metaModelType,
+                    consumptionUnit:
+                      (meta.consumptionUnit as string) ??
+                      (meta.unit as string) ??
+                      null,
+                  }
                 : null,
             unit: (meta.unit as string) ?? (meta.consumptionUnit as string) ?? null,
             quantityUnits,
@@ -8260,7 +8277,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         })
         .filter((v): v is NonNullable<typeof v> => Boolean(v));
 
-      res.json({ items, total: items.length, limit, offset });
+      res.json({ items, total, limit, offset });
     } catch (error) {
       next(error);
     }
@@ -10655,6 +10672,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                     id: resolvedModelId ?? null,
                     key: resolvedModelKey ?? null,
                     name: context.modelInfo?.displayName ?? null,
+                    type: context.modelInfo?.modelType ?? "LLM",
                     consumptionUnit: llmUsageMeasurement.unit,
                   },
                   measurement: llmUsageMeasurement,
@@ -10770,6 +10788,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                   id: resolvedModelId ?? null,
                   key: resolvedModelKey ?? null,
                   name: context.modelInfo?.displayName ?? null,
+                  type: context.modelInfo?.modelType ?? "LLM",
                   consumptionUnit: llmUsageMeasurement.unit,
                 },
                 measurement: llmUsageMeasurement,
@@ -14185,9 +14204,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
       }
       let embeddingCreditsPerUnit: number | null = null;
+      let embeddingModelName: string | null = null;
       try {
         const resolved = await tryResolveModel(provider.model ?? "", { expectedType: "EMBEDDINGS" });
         embeddingModelId = resolved?.id ?? embeddingModelId;
+        embeddingModelName = resolved?.displayName ?? null;
         embeddingCreditsPerUnit = resolved?.creditsPerUnit ?? null;
       } catch {
         // ignore resolution errors here; charging will use 0 credits
@@ -14218,35 +14239,35 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 appliedCreditsPerUnit,
                 creditsCharged,
               });
-              if (creditsCharged > 0) {
-                await applyIdempotentUsageCharge({
-                  workspaceId,
-                  operationId: chunk.id,
-                  model: {
-                    id: embeddingModelId,
-                    key: provider.model ?? null,
-                    consumptionUnit: pricingUnits.unit,
-                  },
-                  measurement: {
-                    unit: pricingUnits.unit,
-                    quantityRaw: pricingUnits.raw,
-                    quantityUnits: pricingUnits.units,
-                    metadata: { provider: provider.id ?? provider.providerType ?? "unknown" },
-                  },
-                  price: {
-                    creditsCharged,
-                    appliedCreditsPerUnit,
-                    unit: pricingUnits.unit,
-                    quantityUnits: pricingUnits.units,
-                    quantityRaw: pricingUnits.raw,
-                  },
-                  metadata: {
-                    source: "knowledge_chunk_embedding",
-                    chunkId: chunk.id,
-                    vectorizationJobId: jobId ?? null,
-                  },
-                });
-              }
+              await applyIdempotentUsageCharge({
+                workspaceId,
+                operationId: chunk.id,
+                model: {
+                  id: embeddingModelId,
+                  key: provider.model ?? null,
+                  name: embeddingModelName,
+                  type: "EMBEDDINGS",
+                  consumptionUnit: pricingUnits.unit,
+                },
+                measurement: {
+                  unit: pricingUnits.unit,
+                  quantityRaw: pricingUnits.raw,
+                  quantityUnits: pricingUnits.units,
+                  metadata: { provider: provider.id ?? provider.providerType ?? "unknown" },
+                },
+                price: {
+                  creditsCharged,
+                  appliedCreditsPerUnit,
+                  unit: pricingUnits.unit,
+                  quantityUnits: pricingUnits.units,
+                  quantityRaw: pricingUnits.raw,
+                },
+                metadata: {
+                  source: "knowledge_chunk_embedding",
+                  chunkId: chunk.id,
+                  vectorizationJobId: jobId ?? null,
+                },
+              });
             } catch (usageError) {
               console.error(
                 `[usage] Failed to record embedding tokens for chunk ${chunk.id} workspace ${workspaceId}: ${getErrorDetails(

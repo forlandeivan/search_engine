@@ -702,6 +702,7 @@ class YandexSttAsyncService {
                     model: {
                       id: cached.modelId ?? null,
                       key: cached.modelKey ?? null,
+                      type: "ASR",
                       consumptionUnit: "MINUTES",
                     },
                     measurement,

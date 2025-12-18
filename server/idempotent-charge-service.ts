@@ -1,6 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "./db";
-import { workspaceCreditAccounts, workspaceCreditLedger, type ModelConsumptionUnit } from "@shared/schema";
+import {
+  workspaceCreditAccounts,
+  workspaceCreditLedger,
+  type ModelConsumptionUnit,
+  type ModelType,
+} from "@shared/schema";
 import type { UsageMeasurement } from "./consumption-meter";
 import type { PriceCalculationResult } from "./price-calculator";
 import { InsufficientCreditsError } from "./credits-precheck";
@@ -27,6 +32,7 @@ export type IdempotentChargeInput = {
     key?: string | null;
     name?: string | null;
     consumptionUnit?: ModelConsumptionUnit | null;
+    type?: ModelType | null;
   };
   measurement: UsageMeasurement;
   price: PriceCalculationResult;
@@ -50,6 +56,7 @@ function buildMetadata(input: IdempotentChargeInput): Record<string, unknown> {
     modelId: input.model?.id ?? null,
     modelKey: input.model?.key ?? null,
     modelName: input.model?.name ?? null,
+    modelType: input.model?.type ?? null,
     consumptionUnit: input.model?.consumptionUnit ?? input.measurement.unit ?? null,
     quantityRaw: input.measurement.quantityRaw,
     quantityUnits: input.measurement.quantityUnits,
@@ -67,6 +74,7 @@ function isSameCharge(existing: { amountDelta: number; metadata: unknown }, inpu
   const sameModel =
     (metadata.modelId ?? null) === (input.model?.id ?? null) &&
     (metadata.modelKey ?? null) === (input.model?.key ?? null) &&
+    (metadata.modelType ?? null) === (input.model?.type ?? null) &&
     (metadata.consumptionUnit ?? null) === (input.model?.consumptionUnit ?? input.measurement.unit ?? null);
 
   const sameMeasurement =
@@ -85,9 +93,6 @@ export async function applyIdempotentUsageCharge(input: IdempotentChargeInput): 
   }
 
   const creditsToCharge = Math.max(0, Math.floor(input.price.creditsCharged ?? 0));
-  if (creditsToCharge === 0) {
-    return { charged: false, ledgerEntryId: "", balanceAfter: undefined };
-  }
 
   const occurredAt = input.occurredAt ?? new Date();
   const metadata = buildMetadata(input);
