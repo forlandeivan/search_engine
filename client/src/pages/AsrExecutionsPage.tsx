@@ -217,7 +217,7 @@ export default function AsrExecutionsPage() {
                       <TableHead>Provider</TableHead>
                       <TableHead>Файл</TableHead>
                       <TableHead>Размер</TableHead>
-                      <TableHead>Длительность</TableHead>
+                      <TableHead>Длительность аудио</TableHead>
                       <TableHead>Auto</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -293,7 +293,7 @@ export default function AsrExecutionsPage() {
                     <DetailRow label="Language" value={detail.execution.language} />
                     <DetailRow label="File name" value={detail.execution.fileName} />
                     <DetailRow label="File size" value={formatSize(detail.execution.fileSizeBytes)} />
-                    <DetailRow label="Duration" value={formatDuration(detail.execution.durationMs)} />
+                    <DetailRow label="Длительность аудио" value={formatDuration(detail.execution.durationMs)} />
                     <DetailRow label="Auto action" value={autoActionUsed(detail.execution.pipelineEvents) ? "Да" : "Нет"} />
                   </div>
                   <div className="pt-2">
