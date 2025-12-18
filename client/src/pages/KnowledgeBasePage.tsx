@@ -1866,6 +1866,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return (await response.json()) as { job: KnowledgeDocumentVectorizationJobStatus };
     },
   });
+  const vectorizationSuccessToastRef = useRef<string | null>(null);
+  const vectorizationFailureToastRef = useRef<string | null>(null);
+  useEffect(() => {
+    vectorizationSuccessToastRef.current = null;
+    vectorizationFailureToastRef.current = null;
+  }, [documentVectorizationProgress?.jobId]);
 
   useEffect(() => {
     if (!documentDetail) {
@@ -1963,8 +1969,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       return;
     }
 
-    if (job.status === "completed" && job.result) {
-      setVectorizeDialogState(null);
+      if (job.status === "completed" && job.result) {
+        setVectorizeDialogState(null);
       setDocumentVectorizationProgress((current) => {
         if (!current || current.jobId !== job.id) {
           return current;
@@ -1985,22 +1991,26 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       });
       setShouldPollVectorizationJob(false);
 
-      const processed = job.result?.pointsCount ?? job.processedChunks ?? 0;
-      const collectionName = job.result?.collectionName ?? "коллекцию";
-      const completionMessage = job.result?.message?.trim().length
-        ? job.result?.message
-        : `Добавлено ${processed.toLocaleString("ru-RU")} записей в коллекцию ${collectionName}.`;
-      toast({
-        title: "Документ отправлен",
-        description: completionMessage ?? undefined,
-      });
+        if (vectorizationSuccessToastRef.current !== job.id) {
+          const processed = job.result?.pointsCount ?? job.processedChunks ?? 0;
+          const collectionName = job.result?.collectionName ?? "коллекцию";
+          const completionDescription =
+            processed > 0
+              ? `Добавлено ${processed.toLocaleString("ru-RU")} записей в коллекцию ${collectionName}.`
+              : "Векторизация завершена.";
+          toast({
+            title: "Векторизация завершена",
+            description: completionDescription,
+          });
+          vectorizationSuccessToastRef.current = job.id;
+        }
 
-      void nodeDetailQuery.refetch();
-      return;
+        void nodeDetailQuery.refetch();
+        return;
     }
 
-    if (job.status === "failed" && job.error) {
-      setShouldPollVectorizationJob(false);
+      if (job.status === "failed" && job.error) {
+        setShouldPollVectorizationJob(false);
       setDocumentVectorizationProgress((current) => {
         if (!current || current.jobId !== job.id) {
           return current;
@@ -2017,12 +2027,15 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         };
       });
 
-      toast({
-        title: "Не удалось завершить векторизацию",
-        description: job.error ?? "Не удалось завершить векторизацию",
-        variant: "destructive",
-      });
-    }
+        if (vectorizationFailureToastRef.current !== job.id) {
+          toast({
+            title: "Не удалось завершить векторизацию",
+            description: job.error ?? "Не удалось завершить векторизацию",
+            variant: "destructive",
+          });
+          vectorizationFailureToastRef.current = job.id;
+        }
+      }
   }, [
     documentVectorizationProgress?.jobId,
     nodeDetailQuery,
