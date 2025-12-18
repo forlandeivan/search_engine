@@ -352,6 +352,8 @@ type LlmSelectionOption = {
   providerId: string;
   providerName: string;
   modelId: string; // provider's model key (must match catalog key)
+  modelDisplayName: string;
+  costLevel: PublicModel["costLevel"];
   providerIsActive: boolean;
   disabled: boolean;
   catalogModel?: PublicModel | null;
@@ -1434,7 +1436,12 @@ function SkillFormDialog({
                         {effectiveLlmOptions.map((option) => (
                           <SelectItem key={option.key} value={option.key} disabled={option.disabled}>
                             <div className="flex flex-col gap-0.5">
-                              <span>{option.label}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{option.label}</span>
+                                <Badge variant="outline" className="uppercase tracking-wide">
+                                  {costLevelLabel[option.costLevel]}
+                                </Badge>
+                              </div>
                               {!option.providerIsActive && (
                                 <span className="text-xs text-muted-foreground">Провайдер отключён</span>
                               )}
@@ -1928,13 +1935,15 @@ export default function SkillsPage() {
     for (const provider of llmProviders) {
       const models = byProvider[provider.id] ?? [];
       for (const model of models) {
-        const labelSuffix = ` · ${model.displayName} · ${costLevelLabel[model.costLevel]}`;
+        const labelText = `${provider.name} · ${model.displayName}`;
         options.push({
           key: buildLlmKey(provider.id, model.key),
-          label: `${provider.name} · ${model.displayName}${labelSuffix}`,
+          label: labelText,
           providerId: provider.id,
           providerName: provider.name,
           modelId: model.key,
+          modelDisplayName: model.displayName,
+          costLevel: model.costLevel,
           providerIsActive: provider.isActive,
           disabled: !provider.isActive,
           catalogModel: model,
@@ -2147,11 +2156,18 @@ export default function SkillsPage() {
     const key = buildLlmKey(skill.llmProviderConfigId, skill.modelId);
     const option = llmOptionByKey.get(key);
     const isActive = option ? option.providerIsActive : true;
-    const label = option ? option.label : `${skill.llmProviderConfigId} В· ${skill.modelId}`;
+    const label = option ? option.label : `${skill.llmProviderConfigId} · ${skill.modelId}`;
 
     return (
       <div className="space-y-1">
-        <p className="text-sm font-medium leading-tight">{label}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium leading-tight">{label}</p>
+          {option && (
+            <Badge variant="outline" className="uppercase tracking-wide">
+              {costLevelLabel[option.costLevel]}
+            </Badge>
+          )}
+        </div>
         {!isActive && <p className="text-xs text-muted-foreground">Провайдер отключён</p>}
       </div>
     );
