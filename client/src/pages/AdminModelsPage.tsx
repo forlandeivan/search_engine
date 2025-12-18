@@ -52,7 +52,7 @@ import { ArrowUpDown, ChevronDown, ChevronUp, MoreHorizontal } from "lucide-reac
 type ModelType = "LLM" | "EMBEDDINGS" | "ASR";
 type ConsumptionUnit = "TOKENS_1K" | "MINUTES";
 type CostLevel = "FREE" | "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH";
-type AdminProviderType = "LLM" | "EMBEDDINGS";
+type AdminProviderType = "LLM" | "EMBEDDINGS" | "ASR";
 
 type ProviderOption = {
   id: string;
@@ -194,6 +194,23 @@ export default function AdminModelsPage() {
         name: p.name,
         kind: "EMBEDDINGS" as const,
         providerType: p.providerType,
+      }));
+    },
+  });
+
+  const speechProvidersQuery = useQuery<ProviderOption[]>({
+    queryKey: ["/api/admin/tts-stt/providers"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/tts-stt/providers");
+      const data =
+        (await res.json()) as {
+          providers: { id: string; name: string; type?: string | null }[];
+        };
+      return (data.providers ?? []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        kind: "ASR" as const,
+        providerType: p.type ?? null,
       }));
     },
   });
@@ -364,10 +381,11 @@ export default function AdminModelsPage() {
     const [sortField, setSortField] = useState<SortField>("order");
     const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
     const providerOptions = useMemo(() => {
-      const llm = Array.isArray(llmProvidersQuery.data) ? llmProvidersQuery.data : [];
-      const emb = Array.isArray(embeddingProvidersQuery.data) ? embeddingProvidersQuery.data : [];
-      return [...llm, ...emb].sort((a, b) => a.name.localeCompare(b.name));
-    }, [llmProvidersQuery.data, embeddingProvidersQuery.data]);
+    const llm = Array.isArray(llmProvidersQuery.data) ? llmProvidersQuery.data : [];
+    const emb = Array.isArray(embeddingProvidersQuery.data) ? embeddingProvidersQuery.data : [];
+    const speech = Array.isArray(speechProvidersQuery.data) ? speechProvidersQuery.data : [];
+    return [...llm, ...emb, ...speech].sort((a, b) => a.name.localeCompare(b.name));
+  }, [llmProvidersQuery.data, embeddingProvidersQuery.data, speechProvidersQuery.data]);
     const providerKindById = useMemo(() => {
       const map = new Map<string, AdminProviderType>();
       for (const option of providerOptions) {
@@ -389,7 +407,11 @@ export default function AdminModelsPage() {
         result = result.filter((m) => m.providerId === selectedProviderId);
     } else if (selectedProviderKind === "NONE") {
       result = result.filter((m) => !m.providerId);
-    } else if (selectedProviderKind === "LLM" || selectedProviderKind === "EMBEDDINGS") {
+    } else if (
+      selectedProviderKind === "LLM" ||
+      selectedProviderKind === "EMBEDDINGS" ||
+      selectedProviderKind === "ASR"
+    ) {
       result = result.filter((m) => m.modelType === selectedProviderKind);
     }
       if (!showArchived) {
@@ -539,13 +561,14 @@ export default function AdminModelsPage() {
               <SelectTrigger>
                 <SelectValue placeholder="Тип" />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">Все</SelectItem>
-                <SelectItem value="LLM">LLM</SelectItem>
-                <SelectItem value="EMBEDDINGS">Embeddings</SelectItem>
-                <SelectItem value="NONE">Без провайдера</SelectItem>
-              </SelectContent>
-            </Select>
+            <SelectContent>
+              <SelectItem value="ALL">Все</SelectItem>
+              <SelectItem value="LLM">LLM</SelectItem>
+              <SelectItem value="EMBEDDINGS">Embeddings</SelectItem>
+              <SelectItem value="ASR">ASR</SelectItem>
+              <SelectItem value="NONE">Без провайдера</SelectItem>
+            </SelectContent>
+          </Select>
           </div>
           <div className="space-y-1">
             <Label>Провайдер</Label>
