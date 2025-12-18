@@ -3263,6 +3263,30 @@ export class DatabaseStorage implements IStorage {
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "created_at" SET NOT NULL`);
       await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "updated_at" SET NOT NULL`);
 
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "is_email_confirmed" boolean DEFAULT FALSE`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+      await this.db.execute(sql`UPDATE "users" SET "is_email_confirmed" = COALESCE("is_email_confirmed", FALSE)`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "is_email_confirmed" SET DEFAULT FALSE`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "is_email_confirmed" SET NOT NULL`);
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "email_confirmed_at" timestamp with time zone`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+
+      try {
+        await this.db.execute(sql`ALTER TABLE "users" ADD COLUMN "status" varchar(64) DEFAULT 'active'`);
+      } catch (error) {
+        swallowPgError(error, ["42701"]);
+      }
+      await this.db.execute(sql`UPDATE "users" SET "status" = COALESCE("status", 'active')`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "status" SET NOT NULL`);
+      await this.db.execute(sql`ALTER TABLE "users" ALTER COLUMN "status" SET DEFAULT 'active'`);
+
       const uuidExpression = await getUuidGenerationExpression();
       await this.db.execute(sql`
         CREATE TABLE IF NOT EXISTS "personal_api_tokens" (
