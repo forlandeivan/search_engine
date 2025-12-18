@@ -47,9 +47,9 @@ function hasCustomPostgresConfig(): boolean {
 }
 
 function tryConnectCustomPostgres(): void {
-  // Skip custom PostgreSQL if DATABASE_URL is already set (prefer Neon in dev, but allow override in production)
+  // Prioritize DATABASE_URL (Neon) over custom PostgreSQL config
   if (resolveDatabaseUrl()) {
-    console.log(`[db] Skipping custom PostgreSQL - DATABASE_URL is configured (using Neon/primary database)`);
+    console.log(`[db] DATABASE_URL is configured - will use it instead of custom PostgreSQL`);
     return;
   }
 
@@ -175,8 +175,8 @@ function connectUsingPgPool(databaseUrl: string): void {
 }
 
 function tryConnectDatabaseUrl(): void {
-  if (hasCustomPostgresConfig()) {
-    console.log(`[db] Skipping DATABASE_URL connection - custom PostgreSQL config is present`);
+  if (pool || db) {
+    console.log(`[db] Database already connected - skipping DATABASE_URL connection`);
     return;
   }
 
