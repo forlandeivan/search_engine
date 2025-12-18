@@ -14922,6 +14922,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   const httpServer = createServer(app);
+  // Гасим сетевые ошибки, чтобы процесс не падал на обрыве соединения (write EOF и пр.)
+  httpServer.on("clientError", (err, socket) => {
+    console.error("[http] clientError:", err?.message ?? err);
+    try {
+      socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    } catch {}
+  });
+  httpServer.on("error", (err) => {
+    console.error("[http] server error:", err);
+  });
 
   return httpServer;
 }
