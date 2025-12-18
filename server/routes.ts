@@ -8356,6 +8356,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       const payload = {
+        modelKey: typeof req.body?.modelKey === "string" ? req.body.modelKey.trim() : undefined,
         displayName: req.body?.displayName,
         description: req.body?.description,
         modelType: req.body?.modelType ? String(req.body.modelType).toUpperCase() : undefined,

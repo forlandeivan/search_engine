@@ -206,6 +206,8 @@ export default function AdminModelsPage() {
           creditsPerUnit: 0,
           isActive: true,
           sortOrder: 0,
+          providerId: undefined,
+          providerModelKey: "",
         });
         return;
       }
@@ -266,6 +268,7 @@ export default function AdminModelsPage() {
       const providerOption = providerOptions.find((p) => p.id === values.providerId);
       const providerTypeForPayload = providerOption?.providerType ?? providerOption?.kind;
       const payload = {
+        modelKey: values.modelKey.trim(),
         displayName: values.displayName.trim(),
         description: values.description?.trim() || undefined,
         modelType: values.modelType,
@@ -274,9 +277,9 @@ export default function AdminModelsPage() {
         creditsPerUnit: values.creditsPerUnit,
         isActive: values.isActive,
         sortOrder: values.sortOrder,
-        providerId: values.providerId || undefined,
-        providerType: values.providerId ? providerTypeForPayload : undefined,
-        providerModelKey: values.providerId ? values.providerModelKey?.trim() || undefined : undefined,
+        providerId: values.providerId || null,
+        providerType: values.providerId ? providerTypeForPayload : null,
+        providerModelKey: values.providerId ? values.providerModelKey?.trim() || null : null,
       };
       const res = await apiRequest("PUT", `/api/admin/models/${values.id}`, payload);
       return await res.json();
@@ -571,7 +574,6 @@ export default function AdminModelsPage() {
                 <Input
                   id="modelKey"
                   placeholder="Уникальный ключ"
-                  disabled={Boolean(editingModel)}
                   {...form.register("modelKey")}
                 />
                 {form.formState.errors.modelKey && (
@@ -632,7 +634,6 @@ export default function AdminModelsPage() {
                         form.setValue("providerModelKey", "", { shouldDirty: true });
                       }
                     }}
-                    disabled={Boolean(editingModel?.providerId)}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Без привязки" />
@@ -655,7 +656,7 @@ export default function AdminModelsPage() {
                   <Input
                     id="providerModelKey"
                     placeholder="Напр. gpt-4o-mini"
-                    disabled={!form.watch("providerId") || Boolean(editingModel?.providerId)}
+                    disabled={!form.watch("providerId")}
                     {...form.register("providerModelKey")}
                   />
                   <p className="text-xs text-muted-foreground">Обязателен при выборе провайдера.</p>
@@ -723,8 +724,8 @@ export default function AdminModelsPage() {
                   </p>
                   {editingModel?.providerId && (
                     <p className="text-xs text-muted-foreground">
-                      Модель синхронизируется с провайдером {editingModel.providerId}; ключ и связка с провайдером не
-                      редактируются вручную.
+                      Модель привязана к провайдеру {editingModel.providerId}. Если у вас включена синхронизация моделей
+                      провайдера, изменения ключей/привязки могут быть перезаписаны при следующей синхронизации.
                     </p>
                   )}
                 </div>

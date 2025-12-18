@@ -143,10 +143,17 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
 
 export async function updateModel(
   id: string,
-  input: Partial<Omit<ModelInput, "modelKey">>,
+  input: Partial<ModelInput>,
 ): Promise<InferInsertModel<typeof models> | null> {
   const provider = normalizeProvider(input as ModelInput);
   const values: Partial<InferInsertModel<typeof models>> = {};
+  if (input.modelKey !== undefined) {
+    const nextKey = input.modelKey.trim();
+    if (!nextKey) {
+      throw new ModelValidationError("modelKey is required");
+    }
+    values.modelKey = nextKey;
+  }
   if (input.displayName !== undefined) values.displayName = input.displayName.trim();
   if (input.description !== undefined) values.description = input.description?.trim() ?? null;
   if (input.modelType !== undefined) values.modelType = input.modelType;
