@@ -3318,6 +3318,66 @@ export class DatabaseStorage implements IStorage {
         swallowPgError(error, ["42P07", "42710", "23505"]);
       }
 
+      try {
+        await this.db.execute(sql`
+          CREATE TABLE IF NOT EXISTS "tariff_plans" (
+            "id" varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            "code" text NOT NULL UNIQUE,
+            "name" text NOT NULL,
+            "description" text,
+            "short_description" text,
+            "sort_order" integer NOT NULL DEFAULT 0,
+            "included_credits_amount" integer NOT NULL DEFAULT 0,
+            "included_credits_period" text NOT NULL DEFAULT 'monthly',
+            "is_active" boolean NOT NULL DEFAULT true,
+            "created_at" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updated_at" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      } catch (error) {
+        swallowPgError(error, ["42P07", "42710"]);
+      }
+
+      try {
+        await this.db.execute(sql`
+          CREATE TABLE IF NOT EXISTS "tariff_limits" (
+            "id" varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            "plan_id" varchar NOT NULL REFERENCES "tariff_plans"("id") ON DELETE CASCADE,
+            "limit_key" text NOT NULL,
+            "unit" text NOT NULL,
+            "limit_value" double precision,
+            "is_enabled" boolean NOT NULL DEFAULT true,
+            "created_at" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updated_at" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      } catch (error) {
+        swallowPgError(error, ["42P07", "42710"]);
+      }
+
+      try {
+        await this.db.execute(sql`
+          CREATE INDEX "tariff_limits_plan_idx"
+            ON "tariff_limits" ("plan_id")
+        `);
+        await this.db.execute(sql`
+          CREATE INDEX "tariff_limits_plan_key_idx"
+            ON "tariff_limits" ("plan_id", "limit_key")
+        `);
+      } catch (error) {
+        swallowPgError(error, ["42P07", "42710", "23505"]);
+      }
+
+      try {
+        await this.db.execute(sql`
+          INSERT INTO "tariff_plans" ("code", "name", "description", "is_active")
+          VALUES ('FREE', 'Бесплатный план', 'Бесплатный тарифный план', true)
+          ON CONFLICT ("code") DO NOTHING
+        `);
+      } catch (error) {
+        swallowPgError(error, ["23505"]);
+      }
+
       globalUserAuthSchemaReady = true;
       this.userAuthColumnsEnsured = true;
     })();
