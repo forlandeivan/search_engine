@@ -20,6 +20,9 @@ import { estimateAsrPreflight } from "./preflight-estimator";
 import { assertSufficientWorkspaceCredits, InsufficientCreditsError } from "./credits-precheck";
 import { recordAsrUsageEvent } from "./usage/usage-service";
 import { applyIdempotentUsageCharge } from "./idempotent-charge-service";
+import { db } from "./db";
+import { models } from "@shared/schema";
+import { and, eq } from "drizzle-orm";
 
 const createHttpProxyAgent = (url: string) => {
   try {
@@ -75,6 +78,7 @@ interface TranscriptionOperation {
   transcriptId?: string;
   executionId?: string;
   workspaceId?: string;
+  providerId?: string;
   modelKey?: string | null;
   modelId?: string | null;
   durationSeconds?: number | null;
@@ -100,6 +104,25 @@ function needsConversion(mimeType: string): boolean {
   const baseMimeType = mimeType.split(";")[0].trim().toLowerCase();
   // Конвертируем всё, что не OGG/OPUS, в OGG для совместимости с async STT.
   return baseMimeType !== "audio/ogg" && baseMimeType !== "audio/opus";
+}
+
+async function findAsrModelForProvider(providerId: string): Promise<{ id: string; key: string; creditsPerUnit: number } | null> {
+  const rows = await db
+    .select({
+      id: models.id,
+      key: models.modelKey,
+      creditsPerUnit: models.creditsPerUnit,
+    })
+    .from(models)
+    .where(and(eq(models.providerId, providerId), eq(models.modelType, "ASR"), eq(models.isActive, true)))
+    .limit(1);
+
+  if (!rows[0]) return null;
+  return {
+    id: rows[0].id,
+    key: rows[0].key,
+    creditsPerUnit: rows[0].creditsPerUnit ?? 0,
+  };
 }
 
 async function probeAudioDurationSeconds(audioBuffer: Buffer): Promise<number | null> {
@@ -319,7 +342,7 @@ class YandexSttAsyncService {
       throw new YandexSttAsyncConfigError("Не все учетные данные Object Storage настроены.");
     }
 
-    const asrModelKey = provider.model ?? null;
+    let asrModelKey = provider.model ?? null;
     let asrModelId: string | null = null;
     let asrCreditsPerUnit: number | null = null;
     if (asrModelKey) {
@@ -332,6 +355,14 @@ class YandexSttAsyncService {
           throw new YandexSttAsyncConfigError(error.message);
         }
         throw error;
+      }
+    } else {
+      // fallback: берём активную ASR модель провайдера
+      const found = await findAsrModelForProvider(provider.id);
+      if (found) {
+        asrModelKey = found.key;
+        asrModelId = found.id;
+        asrCreditsPerUnit = found.creditsPerUnit;
       }
     }
 
@@ -516,6 +547,7 @@ class YandexSttAsyncService {
         createdAt: new Date(),
         status: "pending",
         workspaceId,
+        providerId: provider.id,
         modelKey: asrModelKey,
         modelId: asrModelId,
         creditsPerUnit: asrCreditsPerUnit,
@@ -761,6 +793,15 @@ class YandexSttAsyncService {
                   operationsCache.set(cacheId, cached);
                 } catch (resolveErr) {
                   console.warn("[usage][asr] unable to resolve model creditsPerUnit", resolveErr);
+                }
+              } else if ((!creditsPerUnit || creditsPerUnit <= 0) && cached.providerId) {
+                const found = await findAsrModelForProvider(cached.providerId);
+                if (found) {
+                  creditsPerUnit = found.creditsPerUnit ?? 0;
+                  cached.creditsPerUnit = creditsPerUnit;
+                  cached.modelId = cached.modelId ?? found.id;
+                  cached.modelKey = cached.modelKey ?? found.key;
+                  operationsCache.set(cacheId, cached);
                 }
               }
 
