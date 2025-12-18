@@ -33,19 +33,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  RefreshCcw,
-  DatabaseZap,
-  MoreVertical,
-  CheckCircle2,
-  AlertTriangle,
-  CircleSlash,
-  Loader2,
-  Copy,
-} from "lucide-react";
+import { RefreshCcw, DatabaseZap, MoreVertical, Loader2, Copy } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface VectorCollection {
   name: string;
@@ -301,6 +292,81 @@ export default function VectorCollectionsPage() {
   };
 
   const vectorHealthErrorDetails = vectorHealth ? formatErrorDetails(vectorHealth.errorDetails) : null;
+  const vectorHealthIndicatorClass =
+    vectorHealth?.status === "ok" ? "bg-emerald-500" : "bg-destructive-500";
+  const vectorHealthTooltipContent = (() => {
+    if (isVectorHealthLoading) {
+      return <p className="text-xs text-muted-foreground">Проверяем подключение к Qdrant...</p>;
+    }
+    if (vectorHealth) {
+      const statusLabel =
+        vectorHealth.status === "ok"
+          ? "OK"
+          : vectorHealth.status === "not_configured"
+            ? "Не настроен"
+            : vectorHealth.status === "error"
+              ? "Ошибка"
+              : "Неизвестен";
+      const lastCheck =
+        vectorHealth.timestamp && !Number.isNaN(Date.parse(vectorHealth.timestamp))
+          ? new Date(vectorHealth.timestamp).toLocaleString()
+          : "—";
+      return (
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p className="text-[11px] font-semibold text-foreground">
+            Статус: {statusLabel}
+          </p>
+          <p>
+            <span className="font-medium">URL:</span>{" "}
+            {vectorHealth.url ? <code>{vectorHealth.url}</code> : "не задан"}
+          </p>
+          <p>
+            <span className="font-medium">API ключ:</span>{" "}
+            {vectorHealth.apiKeyConfigured ? "задан" : "не задан"}
+          </p>
+          <p>
+            <span className="font-medium">Количество коллекций:</span>{" "}
+            {typeof vectorHealth.collectionsCount === "number" ? vectorHealth.collectionsCount : "—"}
+          </p>
+          <p>
+            <span className="font-medium">Задержка ответа:</span>{" "}
+            {typeof vectorHealth.latencyMs === "number" ? `${vectorHealth.latencyMs} мс` : "—"}
+          </p>
+          <p>
+            <span className="font-medium">Статус подключения:</span>{" "}
+            {vectorHealth.connected ? "подключено" : "отключено"}
+          </p>
+          {vectorHealth.error && (
+            <p className="text-[11px] text-destructive">Ошибка: {vectorHealth.error}</p>
+          )}
+          {vectorHealth.errorCode && (
+            <p className="text-[11px]">
+              <span className="font-medium">Код ошибки:</span> <code>{vectorHealth.errorCode}</code>
+            </p>
+          )}
+          {vectorHealth.errorName && (
+            <p className="text-[11px]">
+              <span className="font-medium">Тип ошибки:</span> {vectorHealth.errorName}
+            </p>
+          )}
+          {vectorHealthErrorDetails && (
+            <pre className="max-h-32 overflow-auto rounded-md bg-muted p-2 text-[10px]">
+              {vectorHealthErrorDetails}
+            </pre>
+          )}
+          <p className="text-[10px] text-muted-foreground">Последняя проверка: {lastCheck}</p>
+        </div>
+      );
+    }
+    if (vectorHealthError) {
+      return (
+        <p className="text-xs text-destructive">
+          {vectorHealthError.message || "Не удалось проверить подключение к Qdrant."}
+        </p>
+      );
+    }
+    return <p className="text-xs text-muted-foreground">Статус Qdrant недоступен.</p>;
+  })();
 
   return (
     <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
@@ -309,10 +375,23 @@ export default function VectorCollectionsPage() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">Коллекции</h1>
-            <Badge variant="secondary" className="flex items-center gap-1">
-              <DatabaseZap className="h-4 w-4" />
-              Qdrant
-            </Badge>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-2 cursor-pointer">
+                    <Badge variant="secondary" className="flex items-center gap-1">
+                      <DatabaseZap className="h-4 w-4" />
+                      Qdrant
+                    </Badge>
+                    <span
+                      className={`h-2 w-2 rounded-full ${vectorHealthIndicatorClass}`}
+                      aria-hidden="true"
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">{vectorHealthTooltipContent}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
           <p className="text-muted-foreground">
             Управляйте векторными коллекциями и отслеживайте их состояние в Qdrant
@@ -322,94 +401,6 @@ export default function VectorCollectionsPage() {
               Не удалось загрузить данные: {error instanceof Error ? error.message : "неизвестная ошибка"}
             </p>
           )}
-          <div className="mt-4 space-y-3">
-            {isVectorHealthLoading && (
-              <Alert className="max-w-3xl">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <AlertTitle>Проверяем подключение к Qdrant...</AlertTitle>
-                <AlertDescription>
-                  Выполняем запрос к Qdrant, чтобы убедиться, что соединение доступно.
-                </AlertDescription>
-              </Alert>
-            )}
-            {!isVectorHealthLoading && vectorHealth && (
-              <Alert
-                className="max-w-3xl"
-                variant={vectorHealth.status === "ok" ? "default" : "destructive"}
-              >
-                {vectorHealth.status === "ok" ? (
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                ) : vectorHealth.status === "not_configured" ? (
-                  <CircleSlash className="h-4 w-4" />
-                ) : (
-                  <AlertTriangle className="h-4 w-4" />
-                )}
-                <AlertTitle>
-                  {vectorHealth.status === "ok"
-                    ? "Подключение к Qdrant установлено"
-                    : vectorHealth.status === "not_configured"
-                      ? "Qdrant не настроен"
-                      : "Не удалось подключиться к Qdrant"}
-                </AlertTitle>
-                <AlertDescription className="space-y-1">
-                  <p>
-                    <span className="font-medium">URL:</span>{" "}
-                    {vectorHealth.url ? <code>{vectorHealth.url}</code> : "не задан"}
-                  </p>
-                  <p>
-                    <span className="font-medium">API ключ:</span>{" "}
-                    {vectorHealth.apiKeyConfigured ? "задан" : "не задан"}
-                  </p>
-                  <p>
-                    <span className="font-medium">Количество коллекций:</span>{" "}
-                    {typeof vectorHealth.collectionsCount === "number"
-                      ? vectorHealth.collectionsCount
-                      : "—"}
-                  </p>
-                  <p>
-                    <span className="font-medium">Задержка ответа:</span>{" "}
-                    {typeof vectorHealth.latencyMs === "number"
-                      ? `${vectorHealth.latencyMs} мс`
-                      : "—"}
-                  </p>
-                  {vectorHealth.error && (
-                    <p className="font-medium text-destructive">
-                      Ошибка: {vectorHealth.error}
-                    </p>
-                  )}
-                  {vectorHealth.errorCode && (
-                    <p>
-                      <span className="font-medium">Код ошибки:</span>{" "}
-                      <code>{vectorHealth.errorCode}</code>
-                    </p>
-                  )}
-                  {vectorHealth.errorName && (
-                    <p>
-                      <span className="font-medium">Тип ошибки:</span>{" "}
-                      {vectorHealth.errorName}
-                    </p>
-                  )}
-                  {vectorHealthErrorDetails && (
-                    <pre className="whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
-                      {vectorHealthErrorDetails}
-                    </pre>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Последняя проверка: {new Date(vectorHealth.timestamp).toLocaleString()}
-                  </p>
-                </AlertDescription>
-              </Alert>
-            )}
-            {!isVectorHealthLoading && vectorHealthError && !vectorHealth && (
-              <Alert className="max-w-3xl" variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Не удалось проверить подключение к Qdrant</AlertTitle>
-                <AlertDescription>
-                  {vectorHealthError.message || "Попробуйте обновить страницу чуть позже."}
-                </AlertDescription>
-              </Alert>
-            )}
-          </div>
         </div>
         <div className="flex items-center gap-2">
           <DialogTrigger asChild>
