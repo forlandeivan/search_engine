@@ -14929,6 +14929,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
     } catch {}
   });
+  // Ловим ошибки на отдельных соединениях, чтобы падения сокета не валили процесс (write EOF и т.п.).
+  httpServer.on("connection", (socket) => {
+    socket.on("error", (err) => {
+      console.error("[http] socket error:", err?.message ?? err);
+    });
+  });
   httpServer.on("error", (err) => {
     console.error("[http] server error:", err);
   });
