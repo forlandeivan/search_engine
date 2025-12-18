@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { formatCredits } from "@shared/credits";
 
 interface WorkspaceSummary {
   id: string;
@@ -139,7 +140,7 @@ export default function AdminWorkspacesPage() {
     mutationFn: async () => {
       if (!adjustTarget?.id) throw new Error("Рабочее пространство не выбрано");
       const res = await apiRequest("POST", `/api/admin/workspaces/${adjustTarget.id}/credits/adjust`, {
-        amountDelta: Number(adjustAmount),
+        amountDelta: adjustAmount,
         reason: adjustReason,
       });
       if (!res.ok) {
@@ -340,10 +341,11 @@ export default function AdminWorkspacesPage() {
                   <Label htmlFor="adjust-amount">Изменение баланса</Label>
                   <Input
                     id="adjust-amount"
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={adjustAmount}
                     onChange={(e) => setAdjustAmount(e.target.value)}
-                    placeholder="Например, 500 или -200"
+                    placeholder="Например, 500 или -2,25"
                   />
                   <p className="text-xs text-muted-foreground">
                     Положительное значение — начислить бонус, отрицательное — списать.
@@ -373,7 +375,7 @@ export default function AdminWorkspacesPage() {
                     <p className="text-sm text-destructive">Не удалось загрузить</p>
                   ) : (
                     <p className="text-lg font-semibold">
-                      {creditsSummaryQuery.data?.balance.currentBalance.toLocaleString("ru-RU")}
+                      {formatCredits(creditsSummaryQuery.data?.balance.currentBalance)}
                     </p>
                   )}
                 </div>
@@ -401,7 +403,7 @@ export default function AdminWorkspacesPage() {
                   <p className="text-xs text-muted-foreground">Последняя корректировка</p>
                   <p className="text-sm">
                     {recentAdjustmentsQuery.data.items[0].amountDelta > 0 ? "+" : ""}
-                    {recentAdjustmentsQuery.data.items[0].amountDelta.toLocaleString("ru-RU")} •{" "}
+                    {formatCredits(recentAdjustmentsQuery.data.items[0].amountDelta)} •{" "}
                     {recentAdjustmentsQuery.data.items[0].reason || "без причины"} •{" "}
                     {new Date(recentAdjustmentsQuery.data.items[0].occurredAt).toLocaleString("ru-RU")}
                   </p>

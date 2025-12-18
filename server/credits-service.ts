@@ -10,6 +10,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { centsToCredits } from "@shared/credits";
 
 export type CreditEntryType = "subscription_grant" | "manual_adjustment";
 export type CreditType = "subscription" | "bonus" | "purchased";
@@ -62,7 +63,7 @@ function addMonth(date: Date): Date {
 export async function grantSubscriptionCreditsOnEvent(
   payload: SubscriptionCreditGrantPayload,
 ): Promise<{ account: WorkspaceCreditAccount; ledger?: WorkspaceCreditLedgerEntry }> {
-  const amount = Math.max(0, Math.floor(payload.amount ?? 0));
+  const amount = Math.max(0, Math.trunc(payload.amount ?? 0));
   const period = (payload.period ?? "monthly") as "monthly";
   const sourceRef = payload.sourceRef?.trim();
   if (!sourceRef) {
@@ -219,7 +220,7 @@ export async function getRecentManualAdjustments(
 
   return rows.map((row) => ({
     id: row.id,
-    amountDelta: Number(row.amountDelta ?? 0),
+    amountDelta: centsToCredits(row.amountDelta ?? 0),
     reason: row.reason ?? null,
     actorUserId: row.actorUserId ?? null,
     actorFullName: row.actorFullName ?? null,

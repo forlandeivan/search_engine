@@ -115,7 +115,7 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
   const modelKey = input.modelKey.trim();
   if (!modelKey) throw new Error("modelKey is required");
   validateUnit(input.modelType, input.consumptionUnit);
-  const creditsPerUnit = Math.max(0, Math.floor(input.creditsPerUnit ?? 0));
+  const creditsPerUnitCents = Math.max(0, Math.trunc(input.creditsPerUnit ?? 0));
   const provider = normalizeProvider(input);
   const isActive = input.isActive ?? true;
 
@@ -128,7 +128,7 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
       modelType: input.modelType,
       consumptionUnit: input.consumptionUnit,
       costLevel: input.costLevel ?? "MEDIUM",
-      creditsPerUnit,
+      creditsPerUnit: creditsPerUnitCents,
       isActive,
       deletedAt: isActive ? null : sql`CURRENT_TIMESTAMP`,
       sortOrder: input.sortOrder ?? 0,
@@ -152,7 +152,7 @@ export async function updateModel(
   if (input.modelType !== undefined) values.modelType = input.modelType;
   if (input.consumptionUnit !== undefined) values.consumptionUnit = input.consumptionUnit;
   if (input.costLevel !== undefined) values.costLevel = input.costLevel;
-  if (input.creditsPerUnit !== undefined) values.creditsPerUnit = Math.max(0, Math.floor(input.creditsPerUnit ?? 0));
+  if (input.creditsPerUnit !== undefined) values.creditsPerUnit = Math.max(0, Math.trunc(input.creditsPerUnit ?? 0));
   if (input.isActive !== undefined) {
     values.isActive = input.isActive;
     values.deletedAt = input.isActive ? null : sql`CURRENT_TIMESTAMP`;

@@ -202,6 +202,7 @@ import {
 } from "@shared/schema";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import type { KnowledgeBaseSearchSettingsRow } from "@shared/schema";
+import { centsToCredits, tryParseCreditsToCents } from "@shared/credits";
 import { createSkillSchema, updateSkillSchema } from "@shared/skills";
 import {
   actionInputTypes,
@@ -390,11 +391,11 @@ async function recordEmbeddingUsageSafe(params: {
 
   try {
     const pricingUnits = tokensToUnits(tokensTotal);
-    const appliedCreditsPerUnit = Math.max(0, Math.floor(modelCreditsPerUnit ?? 0));
-    const creditsCharged = pricingUnits.units * appliedCreditsPerUnit;
+    const appliedCreditsPerUnitCents = Math.max(0, Math.trunc(modelCreditsPerUnit ?? 0));
+    const creditsChargedCents = pricingUnits.units * appliedCreditsPerUnitCents;
     const operationId = params.operationId ?? `embed-${randomUUID()}`;
     const measurement = {
-      unit: pricingUnits.unit,
+      unit: "TOKENS_1K",
       quantityRaw: pricingUnits.raw,
       quantityUnits: pricingUnits.units,
       metadata: { provider: params.provider.id ?? params.provider.providerType ?? "unknown" },
@@ -408,8 +409,8 @@ async function recordEmbeddingUsageSafe(params: {
       modelId,
       tokensTotal,
       contentBytes: params.contentBytes,
-      appliedCreditsPerUnit,
-      creditsCharged,
+      appliedCreditsPerUnit: appliedCreditsPerUnitCents,
+      creditsCharged: creditsChargedCents,
       occurredAt: params.occurredAt,
     });
 
@@ -425,8 +426,8 @@ async function recordEmbeddingUsageSafe(params: {
       },
       measurement,
       price: {
-        creditsCharged,
-        appliedCreditsPerUnit,
+        creditsChargedCents,
+        appliedCreditsPerUnitCents,
         unit: measurement.unit,
         quantityUnits: measurement.quantityUnits,
         quantityRaw: measurement.quantityRaw,
@@ -4261,8 +4262,8 @@ async function runKnowledgeBaseRagPipeline(options: {
         llmTokens: llmUsageMeasurement?.quantityRaw ?? llmUsageTokens,
         llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
         llmUnit: llmUsageMeasurement?.unit ?? null,
-        llmCredits: llmPrice?.creditsCharged ?? null,
-        llmCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
+        llmCredits: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null,
+        llmCreditsPerUnit: llmPrice ? centsToCredits(llmPrice.appliedCreditsPerUnitCents) : null,
       },
       timings: {
         total_ms: Number((totalDuration ?? 0).toFixed(2)),
@@ -4303,8 +4304,8 @@ async function runKnowledgeBaseRagPipeline(options: {
           model: llmModel ?? llmModelInfo?.modelKey ?? "unknown",
           modelId: llmModelInfo?.id ?? null,
           tokensTotal: llmUsageMeasurement?.quantityRaw ?? llmTokensForUsage,
-          appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
-          creditsCharged: llmPrice?.creditsCharged ?? null,
+          appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnitCents ?? null,
+          creditsCharged: llmPrice?.creditsChargedCents ?? null,
           occurredAt: new Date(),
         });
       }
@@ -4504,7 +4505,7 @@ async function ensureCreditsForLlmPreflight(
     { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
     { promptTokens, maxOutputTokens },
   );
-  await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCredits, {
+  await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCreditsCents, {
     modelId: modelInfo.id ?? null,
     modelKey: modelInfo.modelKey ?? null,
     unit: estimate.unit,
@@ -4522,7 +4523,7 @@ async function ensureCreditsForEmbeddingPreflight(
     { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
     { inputTokens },
   );
-  await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCredits, {
+  await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCreditsCents, {
     modelId: modelInfo.id ?? null,
     modelKey: modelInfo.modelKey ?? null,
     unit: estimate.unit,
@@ -4540,7 +4541,7 @@ async function ensureCreditsForAsrPreflight(
     { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
     { durationSeconds: durationSeconds ?? 0 },
   );
-  await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCredits, {
+  await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCreditsCents, {
     modelId: modelInfo.id ?? null,
     modelKey: modelInfo.modelKey ?? null,
     unit: estimate.unit,
@@ -7873,7 +7874,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         shortDescription: p.shortDescription,
         sortOrder: p.sortOrder,
         isActive: p.isActive,
-        includedCreditsAmount: Number(p.includedCreditsAmount ?? 0),
+        includedCreditsAmount: centsToCredits(p.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (p.includedCreditsPeriod as string) ?? "monthly",
       })),
     });
@@ -7888,9 +7889,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return res.status(400).json({ message: "planId is required" });
     }
 
-    const parsedAmount =
-      rawAmount === null || rawAmount === undefined ? undefined : Number.isFinite(Number(rawAmount)) ? Number(rawAmount) : NaN;
-    if (parsedAmount !== undefined && (Number.isNaN(parsedAmount) || parsedAmount < 0)) {
+    const parsedAmountCents =
+      rawAmount === null || rawAmount === undefined ? undefined : tryParseCreditsToCents(rawAmount);
+    if (parsedAmountCents !== undefined && (parsedAmountCents === null || parsedAmountCents < 0)) {
       return res.status(400).json({ message: "includedCreditsAmount must be a non-negative number" });
     }
 
@@ -7901,7 +7902,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
     try {
       const updated = await tariffPlanService.updatePlanCredits(planId, {
-        amount: parsedAmount,
+        amountCents: parsedAmountCents,
         period,
       });
       res.json({
@@ -7913,7 +7914,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           shortDescription: updated.shortDescription,
           sortOrder: updated.sortOrder,
           isActive: updated.isActive,
-          includedCreditsAmount: Number(updated.includedCreditsAmount ?? 0),
+          includedCreditsAmount: centsToCredits(updated.includedCreditsAmount ?? 0),
           includedCreditsPeriod: (updated.includedCreditsPeriod as string) ?? "monthly",
         },
       });
@@ -7939,7 +7940,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         shortDescription: plan.shortDescription,
         sortOrder: plan.sortOrder,
         isActive: plan.isActive,
-        includedCreditsAmount: Number(plan.includedCreditsAmount ?? 0),
+        includedCreditsAmount: centsToCredits(plan.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
       },
       limits: Object.entries(plan.limits).map(([limitKey, value]) => ({
@@ -8044,7 +8045,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         description: plan.description,
         shortDescription: plan.shortDescription,
         sortOrder: plan.sortOrder,
-        includedCreditsAmount: Number(plan.includedCreditsAmount ?? 0),
+        includedCreditsAmount: centsToCredits(plan.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
       },
     });
@@ -8092,7 +8093,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         description: plan.description,
         shortDescription: plan.shortDescription,
         sortOrder: plan.sortOrder,
-        includedCreditsAmount: Number(plan.includedCreditsAmount ?? 0),
+        includedCreditsAmount: centsToCredits(plan.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
       },
     });
@@ -8157,7 +8158,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         ? _req.query.providerType.trim().toUpperCase()
         : undefined;
     const modelsList = await listModels({ includeInactive: true, providerId, providerType: providerType as any });
-    res.json({ models: modelsList });
+    res.json({
+      models: modelsList.map((m) => ({
+        ...m,
+        creditsPerUnit: centsToCredits(m.creditsPerUnit ?? 0),
+      })),
+    });
   });
 
   app.get("/api/admin/usage/charges", requireAdmin, async (req, res, next) => {
@@ -8277,8 +8283,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             quantityUnits,
             quantityRaw,
             appliedCreditsPerUnit:
-              typeof meta.appliedCreditsPerUnit === "number" ? meta.appliedCreditsPerUnit : null,
-            creditsCharged: Math.abs(Number(row.amountDelta ?? 0)),
+              typeof (meta as any).appliedCreditsPerUnitCents === "number"
+                ? centsToCredits((meta as any).appliedCreditsPerUnitCents)
+                : typeof meta.appliedCreditsPerUnit === "number"
+                  ? meta.appliedCreditsPerUnit
+                  : null,
+            creditsCharged: centsToCredits(Math.abs(Number(row.amountDelta ?? 0))),
           };
         })
         .filter((v): v is NonNullable<typeof v> => Boolean(v));
@@ -8290,6 +8300,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   app.post("/api/admin/models", requireAdmin, async (req, res) => {
     try {
+      const creditsPerUnitCents = tryParseCreditsToCents(req.body?.creditsPerUnit);
+      if (creditsPerUnitCents === null || creditsPerUnitCents < 0) {
+        return res.status(400).json({ message: "creditsPerUnit must be a non-negative number" });
+      }
+
       const payload = {
         modelKey: String(req.body?.modelKey ?? "").trim(),
         displayName: String(req.body?.displayName ?? "").trim(),
@@ -8297,10 +8312,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         modelType: String(req.body?.modelType ?? "").toUpperCase() as any,
         consumptionUnit: String(req.body?.consumptionUnit ?? "").toUpperCase() as any,
         costLevel: String(req.body?.costLevel ?? "MEDIUM").toUpperCase() as any,
-        creditsPerUnit:
-          req.body?.creditsPerUnit !== undefined && req.body.creditsPerUnit !== null
-            ? Number(req.body.creditsPerUnit)
-            : 0,
+        creditsPerUnit: creditsPerUnitCents,
         isActive: req.body?.isActive !== undefined ? Boolean(req.body.isActive) : true,
         sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : 0,
         providerId:
@@ -8320,7 +8332,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "modelKey and displayName are required" });
       }
       const created = await createModel(payload);
-      res.json({ model: created });
+      res.json({
+        model: {
+          ...created,
+          creditsPerUnit: centsToCredits(created.creditsPerUnit ?? 0),
+        },
+      });
     } catch (error: any) {
       const message = typeof error?.message === "string" ? error.message : "Failed to create model";
       res.status(400).json({ message });
@@ -8330,16 +8347,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.put("/api/admin/models/:id", requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
+      const creditsPerUnitCents =
+        req.body?.creditsPerUnit !== undefined && req.body.creditsPerUnit !== null
+          ? tryParseCreditsToCents(req.body.creditsPerUnit)
+          : undefined;
+      if (creditsPerUnitCents !== undefined && (creditsPerUnitCents === null || creditsPerUnitCents < 0)) {
+        return res.status(400).json({ message: "creditsPerUnit must be a non-negative number" });
+      }
+
       const payload = {
         displayName: req.body?.displayName,
         description: req.body?.description,
         modelType: req.body?.modelType ? String(req.body.modelType).toUpperCase() : undefined,
         consumptionUnit: req.body?.consumptionUnit ? String(req.body.consumptionUnit).toUpperCase() : undefined,
         costLevel: req.body?.costLevel ? String(req.body.costLevel).toUpperCase() : undefined,
-        creditsPerUnit:
-          req.body?.creditsPerUnit !== undefined && req.body.creditsPerUnit !== null
-            ? Number(req.body.creditsPerUnit)
-            : undefined,
+        creditsPerUnit: creditsPerUnitCents,
         isActive: req.body?.isActive,
         sortOrder: req.body?.sortOrder,
         providerId:
@@ -8365,7 +8387,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       if (!updated) {
         return res.status(404).json({ message: "Model not found" });
       }
-      res.json({ model: updated });
+      res.json({
+        model: {
+          ...updated,
+          creditsPerUnit: centsToCredits(updated.creditsPerUnit ?? 0),
+        },
+      });
     } catch (error: any) {
       const message = typeof error?.message === "string" ? error.message : "Failed to update model";
       res.status(400).json({ message });
@@ -8374,13 +8401,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   app.post("/api/admin/workspaces/:workspaceId/credits/adjust", requireAdmin, async (req, res) => {
     const { workspaceId } = req.params;
-    const amountDelta = Number(req.body?.amountDelta);
+    const rawAmountDelta = req.body?.amountDelta;
+    const amountDeltaCents =
+      rawAmountDelta === undefined || rawAmountDelta === null ? null : tryParseCreditsToCents(rawAmountDelta);
     const reasonRaw = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
 
     if (!workspaceId) {
       return res.status(400).json({ message: "workspaceId is required" });
     }
-    if (!Number.isFinite(amountDelta) || amountDelta === 0) {
+    if (amountDeltaCents === null || amountDeltaCents === 0) {
       return res.status(400).json({ message: "amountDelta must be a non-zero number" });
     }
     if (!reasonRaw) {
@@ -8394,7 +8423,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const admin = getSessionUser(req);
       await applyManualCreditAdjustment({
         workspaceId,
-        amountDelta: Math.trunc(amountDelta),
+        amountDelta: Math.trunc(amountDeltaCents),
         reason: reasonRaw,
         actorUserId: admin?.id ?? null,
       });
@@ -8479,7 +8508,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         description: p.description,
         shortDescription: p.shortDescription,
         sortOrder: p.sortOrder,
-        includedCreditsAmount: Number(p.includedCreditsAmount ?? 0),
+        includedCreditsAmount: centsToCredits(p.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (p.includedCreditsPeriod as string) ?? "monthly",
       })),
     });
@@ -10652,8 +10681,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               usageTokens: tokensTotal ?? null,
               usageUnits: llmUsageMeasurement?.quantityUnits ?? null,
               usageUnit: llmUsageMeasurement?.unit ?? null,
-              creditsCharged: llmPrice?.creditsCharged ?? null,
-              creditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
+              creditsCharged: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null,
+              creditsPerUnit: llmPrice ? centsToCredits(llmPrice.appliedCreditsPerUnitCents) : null,
               responsePreview: completion.answer.slice(0, 160),
             },
           });
@@ -10666,8 +10695,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 model: resolvedModelKey ?? "unknown",
                 modelId: resolvedModelId ?? null,
                 tokensTotal: llmUsageMeasurement?.quantityRaw ?? tokensTotal,
-                appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
-                creditsCharged: llmPrice?.creditsCharged ?? null,
+                appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnitCents ?? null,
+                creditsCharged: llmPrice?.creditsChargedCents ?? null,
                 occurredAt: new Date(),
               });
               if (workspaceId && llmUsageMeasurement && llmPrice) {
@@ -10715,8 +10744,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               llmTokens: llmUsageMeasurement?.quantityRaw ?? tokensTotal ?? null,
               llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
               llmUnit: llmUsageMeasurement?.unit ?? null,
-              llmCredits: llmPrice?.creditsCharged ?? null,
-              llmCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
+              llmCredits: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null,
+              llmCreditsPerUnit: llmPrice ? centsToCredits(llmPrice.appliedCreditsPerUnitCents) : null,
             },
           });
           await safeLogStep("STREAM_TO_CLIENT_FINISH", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
@@ -10768,8 +10797,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             usageTokens: tokensTotal ?? null,
             usageUnits: llmUsageMeasurement?.quantityUnits ?? null,
             usageUnit: llmUsageMeasurement?.unit ?? null,
-            creditsCharged: llmPrice?.creditsCharged ?? null,
-            creditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
+            creditsCharged: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null,
+            creditsPerUnit: llmPrice ? centsToCredits(llmPrice.appliedCreditsPerUnitCents) : null,
             responsePreview: completion.answer.slice(0, 160),
           },
         });
@@ -10782,8 +10811,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               model: resolvedModelKey ?? "unknown",
               modelId: resolvedModelId ?? null,
               tokensTotal: llmUsageMeasurement?.quantityRaw ?? tokensTotal,
-              appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
-              creditsCharged: llmPrice?.creditsCharged ?? null,
+              appliedCreditsPerUnit: llmPrice?.appliedCreditsPerUnitCents ?? null,
+              creditsCharged: llmPrice?.creditsChargedCents ?? null,
               occurredAt: new Date(),
             });
             if (workspaceId && llmUsageMeasurement && llmPrice) {
@@ -10839,8 +10868,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           llmTokens: completion.usageTokens ?? Math.ceil(completion.answer.length / 4),
           llmUnits: llmUsageMeasurement?.quantityUnits ?? null,
           llmUnit: llmUsageMeasurement?.unit ?? null,
-          llmCredits: llmPrice?.creditsCharged ?? null,
-          llmCreditsPerUnit: llmPrice?.appliedCreditsPerUnit ?? null,
+          llmCredits: llmPrice ? centsToCredits(llmPrice.creditsChargedCents) : null,
+          llmCreditsPerUnit: llmPrice ? centsToCredits(llmPrice.appliedCreditsPerUnitCents) : null,
         },
       });
     } catch (error) {
@@ -14232,8 +14261,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           if (result.usageTokens !== null && result.usageTokens !== undefined) {
             try {
               const pricingUnits = tokensToUnits(result.usageTokens);
-              const appliedCreditsPerUnit = Math.max(0, Math.floor(embeddingCreditsPerUnit ?? 0));
-              const creditsCharged = pricingUnits.units * appliedCreditsPerUnit;
+              const appliedCreditsPerUnitCents = Math.max(0, Math.trunc(embeddingCreditsPerUnit ?? 0));
+              const creditsChargedCents = pricingUnits.units * appliedCreditsPerUnitCents;
               await recordEmbeddingUsageEvent({
                 workspaceId,
                 operationId: chunk.id,
@@ -14242,8 +14271,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 modelId: embeddingModelId,
                 tokensTotal: result.usageTokens,
                 contentBytes: Buffer.byteLength(chunk.content, "utf8"),
-                appliedCreditsPerUnit,
-                creditsCharged,
+                appliedCreditsPerUnit: appliedCreditsPerUnitCents,
+                creditsCharged: creditsChargedCents,
               });
               await applyIdempotentUsageCharge({
                 workspaceId,
@@ -14253,18 +14282,18 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                   key: provider.model ?? null,
                   name: embeddingModelName,
                   type: "EMBEDDINGS",
-                  consumptionUnit: pricingUnits.unit,
+                  consumptionUnit: "TOKENS_1K",
                 },
                 measurement: {
-                  unit: pricingUnits.unit,
+                  unit: "TOKENS_1K",
                   quantityRaw: pricingUnits.raw,
                   quantityUnits: pricingUnits.units,
                   metadata: { provider: provider.id ?? provider.providerType ?? "unknown" },
                 },
                 price: {
-                  creditsCharged,
-                  appliedCreditsPerUnit,
-                  unit: pricingUnits.unit,
+                  creditsChargedCents,
+                  appliedCreditsPerUnitCents,
+                  unit: "TOKENS_1K",
                   quantityUnits: pricingUnits.units,
                   quantityRaw: pricingUnits.raw,
                 },

@@ -1,4 +1,5 @@
 import { ensureWorkspaceCreditAccount } from "./credits-service";
+import { centsToCredits } from "@shared/credits";
 
 export class InsufficientCreditsError extends Error {
   code = "INSUFFICIENT_CREDITS";
@@ -14,17 +15,19 @@ export class InsufficientCreditsError extends Error {
 
 export async function assertSufficientWorkspaceCredits(
   workspaceId: string,
-  requiredCredits: number,
+  requiredCreditsCents: number,
   context?: Record<string, unknown>,
 ): Promise<void> {
-  const needed = Math.max(0, Math.floor(requiredCredits ?? 0));
+  const needed = Math.max(0, Math.trunc(requiredCreditsCents ?? 0));
   if (needed === 0) return;
   const account = await ensureWorkspaceCreditAccount(workspaceId);
   const available = Math.max(0, Number(account.currentBalance ?? 0));
   if (available < needed) {
     throw new InsufficientCreditsError("Недостаточно кредитов", {
-      availableCredits: available,
-      requiredCredits: needed,
+      availableCredits: centsToCredits(available),
+      requiredCredits: centsToCredits(needed),
+      availableCreditsCents: available,
+      requiredCreditsCents: needed,
       ...context,
     });
   }

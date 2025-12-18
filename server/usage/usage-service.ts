@@ -371,8 +371,8 @@ export async function recordLlmUsageEvent(params: LlmUsageRecord): Promise<void>
           params.tokensCompletion === undefined || params.tokensCompletion === null
             ? null
             : Math.max(0, Math.floor(params.tokensCompletion)),
-        appliedCreditsPerUnit: Math.max(0, Math.floor(params.appliedCreditsPerUnit ?? 0)),
-        creditsCharged: Math.max(0, Math.floor(params.creditsCharged ?? 0)),
+        appliedCreditsPerUnit: Math.max(0, Math.trunc(params.appliedCreditsPerUnit ?? 0)),
+        creditsCharged: Math.max(0, Math.trunc(params.creditsCharged ?? 0)),
         occurredAt,
       })
       .onConflictDoNothing()
@@ -1029,8 +1029,8 @@ export async function recordAsrUsageEvent(params: AsrUsageRecord): Promise<void>
         model: params.model ?? null,
         modelId: params.modelId ?? null,
         durationSeconds: normalizedDurationSeconds,
-        appliedCreditsPerUnit: Math.max(0, Math.floor(params.appliedCreditsPerUnit ?? 0)),
-        creditsCharged: Math.max(0, Math.floor(params.creditsCharged ?? 0)),
+        appliedCreditsPerUnit: Math.max(0, Math.trunc(params.appliedCreditsPerUnit ?? 0)),
+        creditsCharged: Math.max(0, Math.trunc(params.creditsCharged ?? 0)),
         occurredAt,
       })
       .onConflictDoNothing()
@@ -1110,8 +1110,8 @@ export async function recordEmbeddingUsageEvent(params: EmbeddingUsageRecord): P
         modelId: params.modelId ?? null,
         tokensTotal: normalizedTokensTotal,
         contentBytes: normalizedContentBytes,
-        appliedCreditsPerUnit: Math.max(0, Math.floor(params.appliedCreditsPerUnit ?? 0)),
-        creditsCharged: Math.max(0, Math.floor(params.creditsCharged ?? 0)),
+        appliedCreditsPerUnit: Math.max(0, Math.trunc(params.appliedCreditsPerUnit ?? 0)),
+        creditsCharged: Math.max(0, Math.trunc(params.creditsCharged ?? 0)),
         occurredAt,
       })
       .onConflictDoNothing()

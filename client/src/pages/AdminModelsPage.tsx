@@ -39,6 +39,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { formatCredits } from "@shared/credits";
 
 type ModelType = "LLM" | "EMBEDDINGS" | "ASR";
 type ConsumptionUnit = "TOKENS_1K" | "MINUTES";
@@ -91,7 +92,7 @@ const modelSchema = z.object({
   creditsPerUnit: z.coerce
     .number()
     .min(0, "Не может быть отрицательным")
-    .transform((value) => Math.floor(value)),
+    .transform((value) => Math.round(value * 100) / 100),
   isActive: z.boolean().default(true),
   sortOrder: z.coerce.number().default(0),
   providerId: z.string().optional(),
@@ -479,7 +480,7 @@ export default function AdminModelsPage() {
                     <TableCell>{typeLabels[model.modelType]}</TableCell>
                     <TableCell>{model.consumptionUnit}</TableCell>
                     <TableCell>
-                      {model.creditsPerUnit}{" "}
+                      {formatCredits(model.creditsPerUnit)}{" "}
                       <span className="text-muted-foreground text-xs">
                         {unitLabels[model.consumptionUnit]}
                       </span>
@@ -664,11 +665,17 @@ export default function AdminModelsPage() {
                 <div className="space-y-1">
                   <Label>CreditsPerUnit</Label>
                   <Input
-                    type="number"
-                    min={0}
-                    step={1}
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="1.00"
                     disabled={form.watch("creditsPerUnit") === 0}
-                    {...form.register("creditsPerUnit", { valueAsNumber: true })}
+                    {...form.register("creditsPerUnit", {
+                      setValueAs: (value) => {
+                        if (value === "" || value === null || value === undefined) return 0;
+                        const normalized = String(value).trim().replace(",", ".");
+                        return Number(normalized);
+                      },
+                    })}
                   />
                   <p className="text-xs text-muted-foreground">
                     {unitLabels[form.watch("consumptionUnit")]}

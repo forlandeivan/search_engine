@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Loader2 } from "lucide-react";
+import { formatCredits } from "@shared/credits";
 
 type UsageChargeItem = {
   id: string;
@@ -101,7 +102,7 @@ export default function AdminUsageChargesPage() {
                     </TableCell>
                     <TableCell>{item.model?.modelType ?? "—"}</TableCell>
                     <TableCell>{item.unit ?? item.model?.consumptionUnit ?? "—"}</TableCell>
-                    <TableCell>{item.appliedCreditsPerUnit ?? "—"}</TableCell>
+                    <TableCell>{item.appliedCreditsPerUnit === null ? "—" : formatCredits(item.appliedCreditsPerUnit)}</TableCell>
                     <TableCell>
                       <div className="flex flex-col text-sm">
                         <span>{item.quantityUnits ?? "—"}</span>
@@ -112,7 +113,7 @@ export default function AdminUsageChargesPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <span>{item.creditsCharged}</span>
+                        <span>{formatCredits(item.creditsCharged)}</span>
                         {item.creditsCharged === 0 && <Badge variant="outline">Бесплатная</Badge>}
                       </div>
                     </TableCell>

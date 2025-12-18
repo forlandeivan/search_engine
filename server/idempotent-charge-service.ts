@@ -9,6 +9,7 @@ import {
 import type { UsageMeasurement } from "./consumption-meter";
 import type { PriceCalculationResult } from "./price-calculator";
 import { InsufficientCreditsError } from "./credits-precheck";
+import { centsToCredits } from "@shared/credits";
 
 const USAGE_ENTRY_TYPE = "usage_charge";
 
@@ -60,15 +61,15 @@ function buildMetadata(input: IdempotentChargeInput): Record<string, unknown> {
     consumptionUnit: input.model?.consumptionUnit ?? input.measurement.unit ?? null,
     quantityRaw: input.measurement.quantityRaw,
     quantityUnits: input.measurement.quantityUnits,
-    appliedCreditsPerUnit: input.price.appliedCreditsPerUnit,
-    creditsCharged: input.price.creditsCharged,
+    appliedCreditsPerUnitCents: input.price.appliedCreditsPerUnitCents,
+    creditsChargedCents: input.price.creditsChargedCents,
     ...input.metadata,
   };
 }
 
 function isSameCharge(existing: { amountDelta: number; metadata: unknown }, input: IdempotentChargeInput): boolean {
   const metadata = (existing.metadata ?? {}) as Record<string, unknown>;
-  const normalizedAmount = Math.max(0, Math.floor(input.price.creditsCharged ?? 0));
+  const normalizedAmount = Math.max(0, Math.trunc(input.price.creditsChargedCents ?? 0));
   if (existing.amountDelta !== -normalizedAmount) return false;
 
   const sameModel =
@@ -81,7 +82,15 @@ function isSameCharge(existing: { amountDelta: number; metadata: unknown }, inpu
     metadata.quantityRaw === input.measurement.quantityRaw &&
     metadata.quantityUnits === input.measurement.quantityUnits;
 
-  const samePricing = metadata.appliedCreditsPerUnit === input.price.appliedCreditsPerUnit;
+  const legacyAppliedCreditsPerUnit = typeof metadata.appliedCreditsPerUnit === "number" ? metadata.appliedCreditsPerUnit : null;
+  const appliedCreditsPerUnitCents =
+    typeof metadata.appliedCreditsPerUnitCents === "number"
+      ? metadata.appliedCreditsPerUnitCents
+      : legacyAppliedCreditsPerUnit !== null
+        ? legacyAppliedCreditsPerUnit * 100
+        : null;
+
+  const samePricing = appliedCreditsPerUnitCents === input.price.appliedCreditsPerUnitCents;
 
   return sameModel && sameMeasurement && samePricing;
 }
@@ -92,7 +101,7 @@ export async function applyIdempotentUsageCharge(input: IdempotentChargeInput): 
     throw new Error("operationId is required for idempotent charge");
   }
 
-  const creditsToCharge = Math.max(0, Math.floor(input.price.creditsCharged ?? 0));
+  const creditsToChargeCents = Math.max(0, Math.trunc(input.price.creditsChargedCents ?? 0));
 
   const occurredAt = input.occurredAt ?? new Date();
   const metadata = buildMetadata(input);
@@ -110,10 +119,12 @@ export async function applyIdempotentUsageCharge(input: IdempotentChargeInput): 
       .for("update");
 
     const available = Math.max(0, Number(account?.currentBalance ?? 0));
-    if (available < creditsToCharge) {
+    if (available < creditsToChargeCents) {
       throw new InsufficientCreditsError("Недостаточно кредитов", {
-        availableCredits: available,
-        requiredCredits: creditsToCharge,
+        availableCredits: centsToCredits(available),
+        requiredCredits: centsToCredits(creditsToChargeCents),
+        availableCreditsCents: available,
+        requiredCreditsCents: creditsToChargeCents,
         operationId,
         modelId: input.model?.id ?? null,
         modelKey: input.model?.key ?? null,
@@ -128,7 +139,7 @@ export async function applyIdempotentUsageCharge(input: IdempotentChargeInput): 
       .insert(workspaceCreditLedger)
       .values({
         workspaceId: input.workspaceId,
-        amountDelta: -creditsToCharge,
+        amountDelta: -creditsToChargeCents,
         entryType: USAGE_ENTRY_TYPE,
         creditType: "subscription",
         sourceRef: operationId,
@@ -165,7 +176,7 @@ export async function applyIdempotentUsageCharge(input: IdempotentChargeInput): 
           operationId,
           existing,
           requested: {
-            amountDelta: -creditsToCharge,
+            amountDelta: -creditsToChargeCents,
             metadata,
           },
         });
@@ -177,7 +188,7 @@ export async function applyIdempotentUsageCharge(input: IdempotentChargeInput): 
     const [updatedAccount] = await tx
       .update(workspaceCreditAccounts)
       .set({
-        currentBalance: Math.max(0, available - creditsToCharge),
+        currentBalance: Math.max(0, available - creditsToChargeCents),
         updatedAt: new Date(),
       })
       .where(eq(workspaceCreditAccounts.workspaceId, input.workspaceId))

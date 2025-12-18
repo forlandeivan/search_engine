@@ -308,7 +308,7 @@ class YandexSttAsyncService {
         { consumptionUnit: "MINUTES", creditsPerUnit: asrCreditsPerUnit ?? 0 } as any,
         { durationSeconds: audioDurationSeconds ?? 0 },
       );
-      await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCredits, {
+      await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCreditsCents, {
         modelKey: asrModelKey,
         modelId: asrModelId,
         unit: estimate.unit,
@@ -725,8 +725,8 @@ class YandexSttAsyncService {
                 provider: "yandex_speechkit",
                 model: cached.modelKey ?? null,
                 modelId: cached.modelId ?? null,
-                appliedCreditsPerUnit: price.appliedCreditsPerUnit,
-                creditsCharged: price.creditsCharged,
+                appliedCreditsPerUnit: price.appliedCreditsPerUnitCents,
+                creditsCharged: price.creditsChargedCents,
                 occurredAt: new Date(),
               });
               cached.usageRecorded = true;

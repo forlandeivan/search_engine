@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { WorkspaceMemberRole } from "@shared/schema";
+import { formatCredits } from "@shared/credits";
 
 function useWorkspaceInfo(workspaceId?: string | null) {
   return useQuery({
@@ -770,13 +771,13 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       <div className="rounded-md border p-3">
                         <p className="text-xs text-muted-foreground">Остаток</p>
                         <p className="text-xl font-semibold">
-                          {creditsSummaryQuery.data?.balance.currentBalance.toLocaleString("ru-RU")}
+                          {formatCredits(creditsSummaryQuery.data?.balance.currentBalance)}
                         </p>
                       </div>
                       <div className="rounded-md border p-3">
                         <p className="text-xs text-muted-foreground">Положено по плану</p>
                         <p className="text-xl font-semibold">
-                          {(creditsSummaryQuery.data?.planIncludedCredits.amount ?? 0).toLocaleString("ru-RU")}{" "}
+                          {formatCredits(creditsSummaryQuery.data?.planIncludedCredits.amount ?? 0)}{" "}
                           кредит(ов) / месяц
                         </p>
                       </div>
@@ -845,7 +846,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                             <p className="text-xs text-muted-foreground">{plan.description}</p>
                           )}
                           <p className="text-sm text-muted-foreground">
-                            Включено: {(plan.includedCreditsAmount ?? 0).toLocaleString()} кредит(ов) / месяц
+                            Включено: {formatCredits(plan.includedCreditsAmount ?? 0)} кредит(ов) / месяц
                           </p>
                           <div className="flex justify-end">
                             <Button

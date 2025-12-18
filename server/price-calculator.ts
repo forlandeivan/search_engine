@@ -26,8 +26,8 @@ function assertUnitMatches(modelUnit: ModelConsumptionUnit, measurementUnit: Mod
 }
 
 export type PriceCalculationResult = {
-  creditsCharged: number;
-  appliedCreditsPerUnit: number;
+  creditsChargedCents: number;
+  appliedCreditsPerUnitCents: number;
   unit: ModelConsumptionUnit;
   quantityUnits: number;
   quantityRaw: number;
@@ -38,12 +38,14 @@ export function calculatePriceForUsage(model: Pick<Model, "consumptionUnit" | "c
   if (measurement.quantityUnits < 0) {
     throw new UsageMeterError("quantityUnits не может быть отрицательным", { quantityUnits: measurement.quantityUnits });
   }
-  const appliedCreditsPerUnit = Math.max(0, Math.floor(model.creditsPerUnit ?? 0));
-  const creditsCharged = Math.max(0, Math.floor(measurement.quantityUnits)) * appliedCreditsPerUnit;
+  // Все кредиты внутри сервера считаем как integer cents (2 знака точности).
+  const appliedCreditsPerUnitCents = Math.max(0, Math.trunc(model.creditsPerUnit ?? 0));
+  const quantityUnits = Math.max(0, Math.floor(measurement.quantityUnits));
+  const creditsChargedCents = quantityUnits * appliedCreditsPerUnitCents;
 
   return {
-    creditsCharged,
-    appliedCreditsPerUnit,
+    creditsChargedCents,
+    appliedCreditsPerUnitCents,
     unit: measurement.unit,
     quantityUnits: measurement.quantityUnits,
     quantityRaw: measurement.quantityRaw,

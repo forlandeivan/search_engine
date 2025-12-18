@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { centsToCredits, formatCredits, tryParseCreditsToCents } from "@shared/credits";
 
 type TariffSummary = {
   id: string;
@@ -92,7 +93,7 @@ export default function AdminBillingPage() {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [formLimits, setFormLimits] = useState<LimitFormState>({});
   const [isSaving, setIsSaving] = useState(false);
-  const [creditsAmount, setCreditsAmount] = useState<number>(0);
+  const [creditsAmount, setCreditsAmount] = useState<string>("0.00");
 
   const tariffsQuery = useQuery({
     queryKey: ["admin", "tariffs"],
@@ -124,7 +125,7 @@ export default function AdminBillingPage() {
     }
     if (detailQuery.data?.plan) {
       const amount = detailQuery.data.plan.includedCreditsAmount ?? 0;
-      setCreditsAmount(Math.max(0, Math.floor(amount)));
+      setCreditsAmount(formatCredits(amount));
     }
   }, [detailQuery.data]);
 
@@ -184,6 +185,12 @@ export default function AdminBillingPage() {
     if (!selectedPlanId) return;
     setIsSaving(true);
     try {
+      const creditsAmountCents = tryParseCreditsToCents(creditsAmount);
+      if (creditsAmountCents === null || creditsAmountCents < 0) {
+        toast({ variant: "destructive", title: "Ошибка", description: "Укажите корректное число кредитов (>= 0)" });
+        return;
+      }
+
       await apiRequest("PUT", `/api/admin/tariffs/${selectedPlanId}`, {
         includedCreditsAmount: creditsAmount,
         includedCreditsPeriod: "monthly",
@@ -310,17 +317,10 @@ export default function AdminBillingPage() {
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Кредиты по подписке (в месяц)</Label>
                   <Input
-                    type="number"
-                    min={0}
+                    type="text"
+                    inputMode="decimal"
                     value={creditsAmount}
-                    onChange={(e) => {
-                      const next = Number(e.target.value);
-                      if (Number.isNaN(next) || next < 0) {
-                        setCreditsAmount(0);
-                      } else {
-                        setCreditsAmount(Math.floor(next));
-                      }
-                    }}
+                    onChange={(e) => setCreditsAmount(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
                     Пользователь увидит это как ежемесячный бюджет кредитов по тарифу.
@@ -329,7 +329,12 @@ export default function AdminBillingPage() {
                 <div className="flex flex-col justify-center rounded-md border bg-muted/50 p-3 text-sm">
                   <p className="font-medium">Превью для пользователя</p>
                   <p className="text-muted-foreground">
-                    Включено в план: {creditsAmount.toLocaleString()} кредит(ов) / месяц
+                    Включено в план:{" "}
+                    {(() => {
+                      const cents = tryParseCreditsToCents(creditsAmount);
+                      return cents === null ? "—" : formatCredits(centsToCredits(cents));
+                    })()}{" "}
+                    кредит(ов) / месяц
                   </p>
                   <p className="text-xs text-muted-foreground">Период: ежемесячно</p>
                 </div>

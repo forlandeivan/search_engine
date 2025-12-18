@@ -117,12 +117,12 @@ export class TariffPlanService {
     return value;
   }
 
-  private normalizeCreditsAmount(value: number | null | undefined): number {
+  private normalizeCreditsAmountCents(value: number | null | undefined): number {
     if (value === null || value === undefined) return 0;
     if (!Number.isFinite(value) || value < 0) {
       throw new Error("includedCreditsAmount must be a non-negative number");
     }
-    return Math.floor(value);
+    return Math.trunc(value);
   }
 
   private normalizeCreditsPeriod(value: string | null | undefined): "monthly" {
@@ -242,13 +242,13 @@ export class TariffPlanService {
     return updated;
   }
 
-  async updatePlanCredits(planId: string, payload: { amount?: number | null; period?: string | null }) {
+  async updatePlanCredits(planId: string, payload: { amountCents?: number | null; period?: string | null }) {
     const plan = await this.getPlanById(planId);
     if (!plan) {
       throw new Error("Tariff plan not found");
     }
 
-    const amount = this.normalizeCreditsAmount(payload.amount);
+    const amount = this.normalizeCreditsAmountCents(payload.amountCents);
     const period = this.normalizeCreditsPeriod(payload.period ?? plan.includedCreditsPeriod ?? "monthly");
 
     const [updated] = await db

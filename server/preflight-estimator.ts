@@ -19,8 +19,8 @@ export type PreflightEstimate = {
   unit: UsageMeasurement["unit"];
   estimatedRaw: number;
   estimatedUnits: number;
-  estimatedCredits: number;
-  appliedCreditsPerUnit: number;
+  estimatedCreditsCents: number;
+  appliedCreditsPerUnitCents: number;
   assumptions?: Record<string, unknown>;
 };
 
@@ -43,8 +43,8 @@ export function estimateLlmPreflight(model: Pick<Model, "consumptionUnit" | "cre
     unit: "TOKENS_1K",
     estimatedRaw: units.raw,
     estimatedUnits: units.units,
-    estimatedCredits: price.creditsCharged,
-    appliedCreditsPerUnit: price.appliedCreditsPerUnit,
+    estimatedCreditsCents: price.creditsChargedCents,
+    appliedCreditsPerUnitCents: price.appliedCreditsPerUnitCents,
     assumptions: { promptTokens, maxOutputTokens },
   };
 }
@@ -64,8 +64,8 @@ export function estimateEmbeddingsPreflight(
     unit: "TOKENS_1K",
     estimatedRaw: units.raw,
     estimatedUnits: units.units,
-    estimatedCredits: price.creditsCharged,
-    appliedCreditsPerUnit: price.appliedCreditsPerUnit,
+    estimatedCreditsCents: price.creditsChargedCents,
+    appliedCreditsPerUnitCents: price.appliedCreditsPerUnitCents,
     assumptions: { inputTokens },
   };
 }
@@ -85,8 +85,8 @@ export function estimateAsrPreflight(
     unit: "MINUTES",
     estimatedRaw: units.raw,
     estimatedUnits: units.units,
-    estimatedCredits: price.creditsCharged,
-    appliedCreditsPerUnit: price.appliedCreditsPerUnit,
+    estimatedCreditsCents: price.creditsChargedCents,
+    appliedCreditsPerUnitCents: price.appliedCreditsPerUnitCents,
     assumptions: { durationSeconds: duration },
   };
 }
