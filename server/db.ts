@@ -47,12 +47,6 @@ function hasCustomPostgresConfig(): boolean {
 }
 
 function tryConnectCustomPostgres(): void {
-  // Prioritize DATABASE_URL (Neon) over custom PostgreSQL config
-  if (resolveDatabaseUrl()) {
-    console.log(`[db] DATABASE_URL is configured - will use it instead of custom PostgreSQL`);
-    return;
-  }
-
   if (!hasCustomPostgresConfig()) {
     console.log(`[db] Custom PostgreSQL config not found (PG_HOST, PG_USER, PG_PASSWORD, PG_DATABASE required)`);
     return;
