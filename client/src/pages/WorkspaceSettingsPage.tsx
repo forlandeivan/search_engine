@@ -21,6 +21,17 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { WorkspaceMemberRole } from "@shared/schema";
 import { formatCredits } from "@shared/credits";
 
+function formatDurationSeconds(seconds?: number | null): string {
+  if (seconds === null || seconds === undefined) return "—";
+  const total = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+  if (minutes > 0) {
+    return `${minutes.toLocaleString("ru-RU")} мин ${secs.toString().padStart(2, "0")} с`;
+  }
+  return `${secs.toLocaleString("ru-RU")} с`;
+}
+
 function useWorkspaceInfo(workspaceId?: string | null) {
   return useQuery({
     queryKey: ["/api/auth/session"],
@@ -49,13 +60,14 @@ type WorkspaceAsrUsageSummary = {
   workspaceId: string;
   period: { periodCode: string; periodYear: number; periodMonth: number; start: string; end: string };
   totalMinutes: number;
-  byProviderModelTotal: Array<{ provider: string | null; model: string | null; modelId: string | null; minutes: number }>;
-  timeseries: Array<{ date: string; minutes: number }>;
+  totalSeconds: number;
+  byProviderModelTotal: Array<{ provider: string | null; model: string | null; modelId: string | null; minutes: number; seconds: number }>;
+  timeseries: Array<{ date: string; minutes: number; seconds: number }>;
   timeseriesByProviderModel: Array<{
     provider: string | null;
     model: string | null;
     modelId: string | null;
-    points: Array<{ date: string; minutes: number }>;
+    points: Array<{ date: string; minutes: number; seconds: number }>;
   }>;
 };
 type WorkspaceStorageUsageSummary = {
@@ -457,7 +469,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
       : usageType === "embeddings"
         ? "Потребление Embeddings токенов"
         : usageType === "asr"
-          ? "Потребление ASR (минуты)"
+          ? "Потребление ASR (минуты/секунды)"
           : usageType === "storage"
             ? "Потребление хранилища (Storage)"
             : usageType === "objects"
@@ -469,7 +481,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
       : usageType === "embeddings"
         ? "Итоги за выбранный месяц и разбивка по провайдерам/моделям для эмбеддингов. Источник: workspace embedding usage ledger."
         : usageType === "asr"
-          ? "Итоги за выбранный месяц по минутам транскрибации (ASR) и разбивка по провайдерам/моделям. Источник: workspace ASR usage ledger."
+          ? "Итоги за выбранный месяц по длительности транскрибации (ASR) и разбивка по провайдерам/моделям. Источник: workspace ASR usage ledger."
           : usageType === "storage"
             ? "Итоги за выбранный месяц по объёму хранилища. Источник: workspace storage usage."
             : usageType === "objects"
@@ -924,7 +936,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                     {isStorage
                       ? "Занято в хранилище"
                       : isAsr
-                        ? "Итого минут"
+                        ? "Итого время"
                         : isObjects
                           ? "Итого объектов"
                           : isQdrant
@@ -948,7 +960,9 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                             })} GB`;
                           })()
                         : isAsr
-                          ? (usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.totalMinutes?.toLocaleString("ru-RU") ?? "—"
+                          ? formatDurationSeconds(
+                              (usageQuery.data as WorkspaceAsrUsageSummary | undefined)?.totalSeconds,
+                            )
                           : isObjects
                             ? (() => {
                                 const data = usageQuery.data as WorkspaceObjectUsageSummary | undefined;
@@ -1099,7 +1113,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                             <TableRow>
                               <TableHead>Провайдер</TableHead>
                               <TableHead>Модель</TableHead>
-                              <TableHead className="text-right">Минуты</TableHead>
+                              <TableHead className="text-right">Время</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -1107,7 +1121,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                               <TableRow key={`${row.provider ?? "unknown"}-${row.model ?? "unknown"}-${idx}`}>
                                 <TableCell className="font-medium">{row.provider ?? "—"}</TableCell>
                                 <TableCell>{row.model ?? "—"}</TableCell>
-                                <TableCell className="text-right">{row.minutes.toLocaleString("ru-RU")}</TableCell>
+                                <TableCell className="text-right">{formatDurationSeconds(row.seconds)}</TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
@@ -1123,7 +1137,7 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                           {(usageQuery.data as WorkspaceAsrUsageSummary).timeseries.map((p) => (
                             <div key={p.date} className="flex justify-between">
                               <span>{p.date}</span>
-                              <span>{p.minutes.toLocaleString("ru-RU")}</span>
+                              <span>{formatDurationSeconds(p.seconds)}</span>
                             </div>
                           ))}
                         </div>
@@ -1136,21 +1150,21 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
                       <p className="text-sm font-medium">Таймсерия по дням и моделям</p>
                       <div className="grid gap-3 md:grid-cols-2">
                         {(usageQuery.data as WorkspaceAsrUsageSummary).timeseriesByProviderModel.map((series, idx) => (
-                          <div key={`${series.provider ?? "unknown"}-${series.model ?? "unknown"}-${idx}`} className="rounded-md border p-3">
-                            <p className="text-sm font-medium">
-                              {series.provider ?? "—"} · {series.model ?? "—"}
-                            </p>
-                            <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-                              {series.points.length === 0 && <p>Нет точек за период</p>}
-                              {series.points.map((p) => (
-                                <div key={`${series.provider ?? "unknown"}-${series.model ?? "unknown"}-${p.date}`} className="flex justify-between">
-                                  <span>{p.date}</span>
-                                  <span>{p.minutes.toLocaleString("ru-RU")}</span>
-                                </div>
-                              ))}
+                            <div key={`${series.provider ?? "unknown"}-${series.model ?? "unknown"}-${idx}`} className="rounded-md border p-3">
+                              <p className="text-sm font-medium">
+                                {series.provider ?? "—"} · {series.model ?? "—"}
+                              </p>
+                              <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+                                {series.points.length === 0 && <p>Нет точек за период</p>}
+                                {series.points.map((p) => (
+                                  <div key={`${series.provider ?? "unknown"}-${series.model ?? "unknown"}-${p.date}`} className="flex justify-between">
+                                    <span>{p.date}</span>
+                                    <span>{formatDurationSeconds(p.seconds)}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
                       </div>
                     </div>
                   )}

@@ -103,32 +103,76 @@ function needsConversion(mimeType: string): boolean {
 
 async function probeAudioDurationSeconds(audioBuffer: Buffer): Promise<number | null> {
   const executable = ffmpegPath || "ffmpeg";
-  return new Promise<number | null>((resolve) => {
-    try {
-      const ffmpeg = spawn(executable, ["-i", "pipe:0", "-f", "null", "-"]);
-      let stderr = "";
-      ffmpeg.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-      ffmpeg.on("close", () => {
-        const match = /Duration:\s*(\d{2}):(\d{2}):(\d{2}\.\d{2})/.exec(stderr);
-        if (!match) {
-          resolve(null);
-          return;
-        }
-        const hours = Number(match[1]);
-        const minutes = Number(match[2]);
-        const seconds = Number(match[3]);
-        const totalSeconds = hours * 3600 + minutes * 60 + seconds;
-        resolve(Number.isFinite(totalSeconds) ? Math.max(0, Math.round(totalSeconds)) : null);
-      });
-      ffmpeg.on("error", () => resolve(null));
-      ffmpeg.stdin.write(audioBuffer);
-      ffmpeg.stdin.end();
-    } catch {
-      resolve(null);
-    }
-  });
+
+  // 1) Пытаемся через ffprobe (корректнее и быстрее).
+  const tryFfprobe = async (): Promise<number | null> => {
+    return new Promise<number | null>((resolve) => {
+      try {
+        const ffprobe = spawn(executable.replace(/ffmpeg$/i, "ffprobe"), [
+          "-v",
+          "error",
+          "-show_entries",
+          "format=duration",
+          "-of",
+          "default=noprint_wrappers=1:nokey=1",
+          "-i",
+          "pipe:0",
+        ]);
+        let stdout = "";
+        ffprobe.stdout.on("data", (data) => {
+          stdout += data.toString();
+        });
+        ffprobe.on("close", () => {
+          const duration = Number(stdout.trim());
+          if (!Number.isFinite(duration) || duration <= 0) {
+            resolve(null);
+            return;
+          }
+          resolve(Math.max(0, Math.round(duration)));
+        });
+        ffprobe.on("error", () => resolve(null));
+        ffprobe.stdin.write(audioBuffer);
+        ffprobe.stdin.end();
+      } catch {
+        resolve(null);
+      }
+    });
+  };
+
+  // 2) Fallback через ffmpeg stderr (как было раньше).
+  const tryFfmpeg = async (): Promise<number | null> =>
+    new Promise<number | null>((resolve) => {
+      try {
+        const ffmpeg = spawn(executable, ["-i", "pipe:0", "-f", "null", "-"]);
+        let stderr = "";
+        ffmpeg.stderr.on("data", (data) => {
+          stderr += data.toString();
+        });
+        ffmpeg.on("close", () => {
+          const match = /Duration:\s*(\d{2}):(\d{2}):(\d{2}\.\d{2})/.exec(stderr);
+          if (!match) {
+            resolve(null);
+            return;
+          }
+          const hours = Number(match[1]);
+          const minutes = Number(match[2]);
+          const seconds = Number(match[3]);
+          const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+          resolve(Number.isFinite(totalSeconds) ? Math.max(0, Math.round(totalSeconds)) : null);
+        });
+        ffmpeg.on("error", () => resolve(null));
+        ffmpeg.stdin.write(audioBuffer);
+        ffmpeg.stdin.end();
+      } catch {
+        resolve(null);
+      }
+    });
+
+  const viaFfprobe = await tryFfprobe();
+  if (viaFfprobe && viaFfprobe > 0) {
+    return viaFfprobe;
+  }
+  return await tryFfmpeg();
 }
 
 function getMimeTypeExtension(mimeType: string): string {
@@ -280,6 +324,9 @@ class YandexSttAsyncService {
     }
 
     const audioDurationSeconds = await probeAudioDurationSeconds(audioBuffer);
+    if (!audioDurationSeconds || audioDurationSeconds <= 0) {
+      console.warn("[yandex-stt-async] audio duration probe returned empty result; will rely on fallback timing");
+    }
 
     const guardDecision = await workspaceOperationGuard.check(
       buildAsrOperationContext({
@@ -453,16 +500,16 @@ class YandexSttAsyncService {
         userId,
         operationId,
         objectKey: uploadResult.objectKey,
-      bucketName: uploadResult.bucketName,
-      createdAt: new Date(),
-      status: "pending",
-      workspaceId,
-      modelKey: asrModelKey,
-      modelId: asrModelId,
-      creditsPerUnit: asrCreditsPerUnit,
-      durationSeconds: audioDurationSeconds ?? null,
-      usageRecorded: false,
-      chatId,
+        bucketName: uploadResult.bucketName,
+        createdAt: new Date(),
+        status: "pending",
+        workspaceId,
+        modelKey: asrModelKey,
+        modelId: asrModelId,
+        creditsPerUnit: asrCreditsPerUnit,
+        durationSeconds: audioDurationSeconds ?? null,
+        usageRecorded: false,
+        chatId,
         transcriptId,
         executionId,
       });
@@ -722,6 +769,9 @@ class YandexSttAsyncService {
                       provider: "yandex_speechkit",
                     },
                   });
+                  console.info(
+                    `[usage][asr] charged ${price.creditsChargedCents} cents for ${measurement.quantityUnits} minute(s) (${measurement.quantityRaw}s)`,
+                  );
                 } catch (chargeError) {
                   console.error("[billing] Failed to apply idempotent ASR charge:", chargeError);
                 }
@@ -749,7 +799,10 @@ class YandexSttAsyncService {
               console.error("[usage][asr] Failed to record ASR usage:", error);
             }
           } else {
-            console.warn("[usage][asr] durationSeconds is unavailable; skipping usage record");
+            console.warn("[usage][asr] durationSeconds is unavailable; skipping usage record", {
+              operationId,
+              workspaceId: cached.workspaceId,
+            });
           }
         }
 

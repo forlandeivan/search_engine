@@ -611,13 +611,14 @@ export type WorkspaceAsrUsageSummary = {
   workspaceId: string;
   period: UsagePeriod & { start: string; end: string };
   totalMinutes: number;
-  byProviderModelTotal: Array<{ provider: string | null; model: string | null; modelId: string | null; minutes: number }>;
-  timeseries: Array<{ date: string; minutes: number }>;
+  totalSeconds: number;
+  byProviderModelTotal: Array<{ provider: string | null; model: string | null; modelId: string | null; minutes: number; seconds: number }>;
+  timeseries: Array<{ date: string; minutes: number; seconds: number }>;
   timeseriesByProviderModel: Array<{
     provider: string | null;
     model: string | null;
     modelId: string | null;
-    points: Array<{ date: string; minutes: number }>;
+    points: Array<{ date: string; minutes: number; seconds: number }>;
   }>;
 };
 
@@ -638,6 +639,8 @@ export async function getWorkspaceAsrUsageSummary(
     })
     .from(workspaceAsrUsageLedger)
     .where(and(eq(workspaceAsrUsageLedger.workspaceId, workspaceId), eq(workspaceAsrUsageLedger.periodCode, period.periodCode)));
+
+  const totalSeconds = Number(totalsRows[0]?.durationSeconds ?? 0);
 
   const byProviderModelRows = await db
     .select({
@@ -678,7 +681,7 @@ export async function getWorkspaceAsrUsageSummary(
 
   const timeseriesByProviderModel = new Map<
     string,
-    { provider: string | null; model: string | null; modelId: string | null; points: Array<{ date: string; minutes: number }> }
+    { provider: string | null; model: string | null; modelId: string | null; points: Array<{ date: string; minutes: number; seconds: number }> }
   >();
   for (const row of timeseriesByProviderRows) {
     const key = `${row.provider ?? "null"}::${row.modelId ?? row.model ?? "null"}`;
@@ -692,7 +695,12 @@ export async function getWorkspaceAsrUsageSummary(
     }
     const entry = timeseriesByProviderModel.get(key)!;
     const dateString = new Date(row.day).toISOString().slice(0, 10);
-    entry.points.push({ date: dateString, minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)) });
+    const seconds = Number(row.durationSeconds);
+    entry.points.push({
+      date: dateString,
+      minutes: secondsToMinutesRoundedUp(seconds),
+      seconds,
+    });
   }
 
   return {
@@ -702,15 +710,18 @@ export async function getWorkspaceAsrUsageSummary(
       start: start.toISOString(),
       end: end.toISOString(),
     },
-    totalMinutes: secondsToMinutesRoundedUp(Number(totalsRows[0]?.durationSeconds ?? 0)),
+    totalMinutes: secondsToMinutesRoundedUp(totalSeconds),
+    totalSeconds,
     byProviderModelTotal: byProviderModelRows.map((row) => ({
       provider: row.provider ?? null,
       model: row.model ?? null,
       modelId: row.modelId ?? null,
+      seconds: Number(row.durationSeconds),
       minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)),
     })),
     timeseries: timeseriesRows.map((row) => ({
       date: new Date(row.day).toISOString().slice(0, 10),
+      seconds: Number(row.durationSeconds),
       minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)),
     })),
     timeseriesByProviderModel: Array.from(timeseriesByProviderModel.values()),
