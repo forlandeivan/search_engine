@@ -10,6 +10,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
@@ -55,6 +56,25 @@ type LimitFormState = Record<
   }
 >;
 
+type ByteDisplayUnit = "bytes" | "megabytes" | "gigabytes";
+
+const BYTE_LIMIT_KEYS = new Set(["STORAGE_BYTES", "QDRANT_BYTES"]);
+
+const BYTE_UNIT_OPTIONS: { value: ByteDisplayUnit; label: string; factor: number }[] = [
+  { value: "bytes", label: "bytes", factor: 1 },
+  { value: "megabytes", label: "MB", factor: 1024 * 1024 },
+  { value: "gigabytes", label: "GB", factor: 1024 * 1024 * 1024 },
+];
+
+const formatDecimal = (value: number, decimals: number) => {
+  const fixed = value.toFixed(decimals);
+  return fixed.replace(/\.?0+$/, "");
+};
+
+const getByteUnitFactor = (unit: ByteDisplayUnit) =>
+  BYTE_UNIT_OPTIONS.find((option) => option.value === unit)?.factor ?? 1;
+
+
 async function fetchTariffs(): Promise<TariffSummary[]> {
   const res = await apiRequest("GET", "/api/admin/tariffs");
   const data = await res.json();
@@ -87,6 +107,14 @@ function getLimitGroup(limitKey: string, catalog: LimitCatalogEntry[]): string {
   return entry?.uiGroup ?? "Other";
 }
 
+const getStorageDisplayValue = (bytes: number | null, unit: ByteDisplayUnit) => {
+  if (bytes === null) return "";
+  const factor = getByteUnitFactor(unit);
+  const decimals = unit === "bytes" ? 0 : 2;
+  const result = bytes / factor;
+  return formatDecimal(result, decimals);
+};
+
 export default function AdminBillingPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -94,6 +122,7 @@ export default function AdminBillingPage() {
   const [formLimits, setFormLimits] = useState<LimitFormState>({});
   const [isSaving, setIsSaving] = useState(false);
   const [creditsAmount, setCreditsAmount] = useState<string>("0.00");
+  const [storageDisplayUnits, setStorageDisplayUnits] = useState<Record<string, ByteDisplayUnit>>({});
 
   const tariffsQuery = useQuery({
     queryKey: ["admin", "tariffs"],
@@ -126,6 +155,15 @@ export default function AdminBillingPage() {
     if (detailQuery.data?.plan) {
       const amount = detailQuery.data.plan.includedCreditsAmount ?? 0;
       setCreditsAmount(formatCredits(amount));
+    }
+    if (detailQuery.data?.limits) {
+      const nextUnits: Record<string, ByteDisplayUnit> = {};
+      detailQuery.data.limits.forEach((lim) => {
+        if (BYTE_LIMIT_KEYS.has(lim.limitKey)) {
+          nextUnits[lim.limitKey] = "bytes";
+        }
+      });
+      setStorageDisplayUnits(nextUnits);
     }
   }, [detailQuery.data]);
 
@@ -171,14 +209,23 @@ export default function AdminBillingPage() {
     }));
   };
 
-  const handleLimitUnit = (limitKey: string, unit: string) => {
-    setFormLimits((prev) => ({
+  const handleStorageDisplayUnitChange = (limitKey: string, unit: ByteDisplayUnit) => {
+    setStorageDisplayUnits((prev) => ({
       ...prev,
-      [limitKey]: {
-        ...(prev[limitKey] ?? { value: null, isEnabled: true }),
-        unit,
-      },
+      [limitKey]: unit,
     }));
+  };
+
+  const handleStorageLimitValueChange = (limitKey: string, rawValue: string, unit: ByteDisplayUnit) => {
+    if (!rawValue) {
+      handleLimitValueChange(limitKey, null);
+      return;
+    }
+    const parsed = Number(rawValue);
+    if (Number.isNaN(parsed) || parsed < 0) {
+      return;
+    }
+    handleLimitValueChange(limitKey, Math.round(parsed * getByteUnitFactor(unit)));
   };
 
   const saveLimits = async () => {
@@ -353,6 +400,11 @@ export default function AdminBillingPage() {
                           isEnabled: limit.isEnabled,
                         };
                         const isUnlimited = current.value === null;
+                        const isStorageLimit = BYTE_LIMIT_KEYS.has(limit.limitKey);
+                        const displayUnit = storageDisplayUnits[limit.limitKey] ?? "bytes";
+                        const storageDisplayValue = isStorageLimit
+                          ? getStorageDisplayValue(current.value, displayUnit)
+                          : "";
                         return (
                           <div key={limit.limitKey} className="rounded-lg border p-3 space-y-2">
                             <div className="flex items-center justify-between gap-2">
@@ -375,22 +427,60 @@ export default function AdminBillingPage() {
                                 <Label className="text-xs text-muted-foreground">Значение</Label>
                                 <Input
                                   type="number"
+                                  inputMode="decimal"
                                   min={0}
+                                  step={isStorageLimit ? "0.01" : undefined}
                                   disabled={!current.isEnabled || isUnlimited}
-                                  value={current.value === null ? "" : current.value}
-                                  onChange={(e) =>
+                                  value={
+                                    isStorageLimit
+                                      ? storageDisplayValue
+                                      : current.value === null
+                                      ? ""
+                                      : current.value
+                                  }
+                                  onChange={(e) => {
+                                    if (isStorageLimit) {
+                                      handleStorageLimitValueChange(limit.limitKey, e.target.value, displayUnit);
+                                      return;
+                                    }
                                     handleLimitValueChange(
                                       limit.limitKey,
                                       e.target.value === "" ? null : Math.max(0, Number(e.target.value)),
-                                    )
-                                  }
+                                    );
+                                  }}
                                 />
                               </div>
-                              <div className="space-y-1">
+                              <div className="space-y-1 flex-1 max-w-[160px]">
                                 <Label className="text-xs text-muted-foreground">Единицы</Label>
-                                <Badge variant="outline" className="font-mono">
-                                  {current.unit}
-                                </Badge>
+                                {isStorageLimit ? (
+                                  <>
+                                    <Select
+                                      value={displayUnit}
+                                      onValueChange={(value) =>
+                                        handleStorageDisplayUnitChange(limit.limitKey, value as ByteDisplayUnit)
+                                      }
+                                      disabled={!current.isEnabled}
+                                    >
+                                      <SelectTrigger className="text-sm">
+                                        <SelectValue placeholder="bytes" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {BYTE_UNIT_OPTIONS.map((option) => (
+                                          <SelectItem key={option.value} value={option.value}>
+                                            {option.label}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    <p className="text-[11px] text-muted-foreground">
+                                      Значение переводится в байты при сохранении.
+                                    </p>
+                                  </>
+                                ) : (
+                                  <Badge variant="outline" className="font-mono">
+                                    {current.unit}
+                                  </Badge>
+                                )}
                               </div>
                               <div className="flex items-center gap-2">
                                 <Checkbox
