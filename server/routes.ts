@@ -11787,6 +11787,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   });
 
+  // Страховка на случай обрыва соединения в процессе загрузки аудио.
+  app.use((req, _res, next) => {
+    req.on("error", (err) => {
+      console.error("[upload] request stream error:", err?.message ?? err);
+    });
+    next();
+  });
+
   const decodeUploadFileName = (name?: string | null): string => {
     if (!name) return "Аудиозапись";
     try {
