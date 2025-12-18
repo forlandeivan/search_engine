@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { Loader2, CheckCircle2 } from "lucide-react";
+import { Loader2, CheckCircle2, Eye, EyeOff } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { useSpeechProviderDetails, updateSpeechProvider, testIamToken, UpdateSpeechProviderPayload } from "@/hooks/useSpeechProviders";
 import type { SpeechProviderDetail, SpeechProviderStatus } from "@/types/speech-providers";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -68,6 +69,33 @@ const DEFAULT_S3_SECRETS = {
   s3BucketName: "",
 };
 
+type SecretFieldKey = keyof (typeof DEFAULT_SECRETS & typeof DEFAULT_S3_SECRETS);
+type SecretFieldConfig<T extends SecretFieldKey> = {
+  key: T;
+  label: string;
+  description: string;
+  isTextarea?: boolean;
+  rows?: number;
+};
+
+const SPEECHKIT_SECRET_FIELDS: SecretFieldConfig<keyof typeof DEFAULT_SECRETS>[] = [
+  { key: "apiKey", label: SECRET_LABELS.apiKey, description: SECRET_DESCRIPTIONS.apiKey },
+  { key: "folderId", label: SECRET_LABELS.folderId, description: SECRET_DESCRIPTIONS.folderId },
+  {
+    key: "serviceAccountKey",
+    label: SECRET_LABELS.serviceAccountKey,
+    description: SECRET_DESCRIPTIONS.serviceAccountKey,
+    isTextarea: true,
+    rows: 4,
+  },
+];
+
+const S3_SECRET_FIELDS: SecretFieldConfig<keyof typeof DEFAULT_S3_SECRETS>[] = [
+  { key: "s3AccessKeyId", label: S3_SECRET_LABELS.s3AccessKeyId, description: S3_SECRET_DESCRIPTIONS.s3AccessKeyId },
+  { key: "s3SecretAccessKey", label: S3_SECRET_LABELS.s3SecretAccessKey, description: S3_SECRET_DESCRIPTIONS.s3SecretAccessKey },
+  { key: "s3BucketName", label: S3_SECRET_LABELS.s3BucketName, description: S3_SECRET_DESCRIPTIONS.s3BucketName },
+];
+
 interface SpeechProviderDetailsPageProps {
   providerId: string;
 }
@@ -81,6 +109,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
   const [configState, setConfigState] = useState(DEFAULT_CONFIG);
   const [secretInputs, setSecretInputs] = useState(DEFAULT_SECRETS);
   const [s3SecretInputs, setS3SecretInputs] = useState(DEFAULT_S3_SECRETS);
+  const [secretVisibility, setSecretVisibility] = useState<Record<string, boolean>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [generalError, setGeneralError] = useState<string | null>(null);
 
@@ -101,6 +130,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     setS3SecretInputs(DEFAULT_S3_SECRETS);
     setFieldErrors({});
     setGeneralError(null);
+    setSecretVisibility({});
   }, [provider]);
 
   const mutation = useMutation({
@@ -158,6 +188,84 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
 
   const handleS3SecretChange = (key: keyof typeof s3SecretInputs, value: string) => {
     setS3SecretInputs((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const toggleSecretVisibility = (key: string) => {
+    setSecretVisibility((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const getSecretMask = (maskValue: string, isSet: boolean) => {
+    if (maskValue.length > 0) {
+      const length = Math.max(6, Math.min(24, maskValue.length));
+      return "•".repeat(length);
+    }
+    if (isSet) {
+      return "•".repeat(10);
+    }
+    return "";
+  };
+
+  const renderSecretField = (options: {
+    key: SecretFieldKey;
+    label: string;
+    description: string;
+    value: string;
+    onChange: (value: string) => void;
+    rows?: number;
+    isTextarea?: boolean;
+  }) => {
+    const { key, label, description, value, onChange, rows, isTextarea } = options;
+    const stored = provider?.secrets[key]?.isSet ?? false;
+    const maskLabel = getSecretMask(value, stored);
+    const isVisible = Boolean(secretVisibility[key]);
+    const showMaskOverlay = maskLabel.length > 0 && !isVisible;
+    const errorMessage = fieldErrors[`secrets.${key}`];
+    return (
+      <div key={key} className="space-y-2">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <Label className="text-sm font-medium">{label}</Label>
+            <p className="text-xs text-muted-foreground">{description}</p>
+          </div>
+          {maskLabel && (
+            <button
+              type="button"
+              className="rounded-full border border-input bg-background p-1.5 text-muted-foreground transition hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+              onClick={() => toggleSecretVisibility(key)}
+              aria-label={isVisible ? "Скрыть значение секрета" : "Показать значение секрета"}
+            >
+              {isVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          )}
+        </div>
+        <div className="relative">
+          {isTextarea ? (
+            <Textarea
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              rows={rows ?? 4}
+              className={cn("min-h-[110px]", showMaskOverlay ? "text-transparent" : "text-foreground")}
+              readOnly={showMaskOverlay}
+              placeholder=""
+            />
+          ) : (
+            <Input
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              className={showMaskOverlay ? "text-transparent" : "text-foreground"}
+              readOnly={showMaskOverlay}
+              placeholder=""
+            />
+          )}
+          {showMaskOverlay && (
+            <div className="absolute inset-0 flex items-center px-3 text-sm tracking-[0.45em] text-muted-foreground pointer-events-none">
+              {maskLabel}
+            </div>
+          )}
+        </div>
+        {errorMessage && <p className="text-sm text-destructive">{errorMessage}</p>}
+      </div>
+    );
   };
 
   const handleConfigChange = (key: keyof typeof configState, value: string | boolean) => {
@@ -493,32 +601,20 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
             </p>
           </div>
           <div className="space-y-4">
-            {Object.entries(SECRET_LABELS).map(([key, label]) => {
-              const secretKey = key as keyof typeof secretInputs;
-              const isSet = provider.secrets[secretKey]?.isSet ?? false;
-              const fieldKey = `secrets.${secretKey}`;
-              return (
-                <div key={secretKey} className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div>
-                      <Label>{label}</Label>
-                      <p className="text-xs text-muted-foreground">{SECRET_DESCRIPTIONS[secretKey]}</p>
-                    </div>
-                    <Badge variant={isSet ? "default" : "secondary"}>{isSet ? "Задан" : "Не задан"}</Badge>
-                  </div>
-                  <Textarea
-                    value={secretInputs[secretKey]}
-                    onChange={(event) => handleSecretChange(secretKey, event.target.value)}
-                    placeholder={isSet ? "Оставьте пустым, чтобы не менять значение" : "Введите значение"}
-                    rows={2}
-                  />
-                  {fieldErrors[fieldKey] && <p className="text-sm text-destructive">{fieldErrors[fieldKey]}</p>}
-                </div>
-              );
-            })}
-            <Button 
-              variant="outline" 
-              onClick={() => testTokenMutation.mutate()} 
+            {SPEECHKIT_SECRET_FIELDS.map((field) =>
+              renderSecretField({
+                key: field.key,
+                label: field.label,
+                description: field.description,
+                value: secretInputs[field.key],
+                onChange: (value) => handleSecretChange(field.key, value),
+                isTextarea: field.isTextarea,
+                rows: field.rows,
+              }),
+            )}
+            <Button
+              variant="outline"
+              onClick={() => testTokenMutation.mutate()}
               disabled={testTokenMutation.isPending || !provider.secrets.serviceAccountKey?.isSet}
               data-testid="button-test-iam-token"
             >
@@ -536,29 +632,15 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
             </p>
           </div>
           <div className="space-y-4">
-            {Object.entries(S3_SECRET_LABELS).map(([key, label]) => {
-              const secretKey = key as keyof typeof s3SecretInputs;
-              const isSet = provider.secrets[secretKey]?.isSet ?? false;
-              const fieldKey = `secrets.${secretKey}`;
-              return (
-                <div key={secretKey} className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div>
-                      <Label>{label}</Label>
-                      <p className="text-xs text-muted-foreground">{S3_SECRET_DESCRIPTIONS[secretKey]}</p>
-                    </div>
-                    <Badge variant={isSet ? "default" : "secondary"}>{isSet ? "Задан" : "Не задан"}</Badge>
-                  </div>
-                  <Input
-                    type={secretKey === "s3SecretAccessKey" ? "password" : "text"}
-                    value={s3SecretInputs[secretKey]}
-                    onChange={(event) => handleS3SecretChange(secretKey, event.target.value)}
-                    placeholder={isSet ? "Оставьте пустым, чтобы не менять значение" : "Введите значение"}
-                  />
-                  {fieldErrors[fieldKey] && <p className="text-sm text-destructive">{fieldErrors[fieldKey]}</p>}
-                </div>
-              );
-            })}
+            {S3_SECRET_FIELDS.map((field) =>
+              renderSecretField({
+                key: field.key,
+                label: field.label,
+                description: field.description,
+                value: s3SecretInputs[field.key],
+                onChange: (value) => handleS3SecretChange(field.key, value),
+              }),
+            )}
           </div>
         </section>
       </div>
