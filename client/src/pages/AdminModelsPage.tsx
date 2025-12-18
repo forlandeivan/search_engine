@@ -387,15 +387,11 @@ export default function AdminModelsPage() {
       let result = [...models];
       if (selectedProviderId) {
         result = result.filter((m) => m.providerId === selectedProviderId);
-      } else if (selectedProviderKind === "NONE") {
-        result = result.filter((m) => !m.providerId);
-      } else if (selectedProviderKind === "LLM" || selectedProviderKind === "EMBEDDINGS") {
-        result = result.filter((m) => {
-          if (!m.providerId) return false;
-          const kind = providerKindById.get(m.providerId);
-          return kind === selectedProviderKind;
-        });
-      }
+    } else if (selectedProviderKind === "NONE") {
+      result = result.filter((m) => !m.providerId);
+    } else if (selectedProviderKind === "LLM" || selectedProviderKind === "EMBEDDINGS") {
+      result = result.filter((m) => m.modelType === selectedProviderKind);
+    }
       if (!showArchived) {
         result = result.filter((m) => m.isActive);
       }
