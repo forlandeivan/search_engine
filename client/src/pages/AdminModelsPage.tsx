@@ -37,9 +37,17 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { formatCredits } from "@shared/credits";
+import { cn } from "@/lib/utils";
+import { ArrowUpDown, ChevronDown, ChevronUp, MoreHorizontal } from "lucide-react";
 
 type ModelType = "LLM" | "EMBEDDINGS" | "ASR";
 type ConsumptionUnit = "TOKENS_1K" | "MINUTES";
@@ -100,6 +108,17 @@ const modelSchema = z.object({
 });
 
 type ModelFormValues = z.infer<typeof modelSchema>;
+
+type SortField =
+  | "order"
+  | "name"
+  | "key"
+  | "type"
+  | "unit"
+  | "credits"
+  | "cost"
+  | "provider"
+  | "status";
 
 const typeLabels: Record<ModelType, string> = {
   LLM: "LLM",
@@ -340,74 +359,159 @@ export default function AdminModelsPage() {
     setDialogOpen(true);
   };
 
-  const models = modelsQuery.data ?? [];
-  const archivedModelsCount = useMemo(() => models.filter((m) => !m.isActive).length, [models]);
-  const [sortField, setSortField] = useState<"default" | "name" | "cost" | "credits">("default");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const providerOptions = useMemo(() => {
-    const llm = llmProvidersQuery.data ?? [];
-    const emb = embeddingProvidersQuery.data ?? [];
-    return [...llm, ...emb].sort((a, b) => a.name.localeCompare(b.name));
-  }, [llmProvidersQuery.data, embeddingProvidersQuery.data]);
-  const providerKindById = useMemo(() => {
-    const map = new Map<string, AdminProviderType>();
-    for (const option of providerOptions) {
-      map.set(option.id, option.kind);
-    }
-    return map;
-  }, [providerOptions]);
+    const models = modelsQuery.data ?? [];
+    const archivedModelsCount = useMemo(() => models.filter((m) => !m.isActive).length, [models]);
+    const [sortField, setSortField] = useState<SortField>("order");
+    const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+    const providerOptions = useMemo(() => {
+      const llm = Array.isArray(llmProvidersQuery.data) ? llmProvidersQuery.data : [];
+      const emb = Array.isArray(embeddingProvidersQuery.data) ? embeddingProvidersQuery.data : [];
+      return [...llm, ...emb].sort((a, b) => a.name.localeCompare(b.name));
+    }, [llmProvidersQuery.data, embeddingProvidersQuery.data]);
+    const providerKindById = useMemo(() => {
+      const map = new Map<string, AdminProviderType>();
+      for (const option of providerOptions) {
+        map.set(option.id, option.kind);
+      }
+      return map;
+    }, [providerOptions]);
+    const providerNameById = useMemo(() => {
+      const map = new Map<string, string>();
+      for (const option of providerOptions) {
+        map.set(option.id, option.name);
+      }
+      return map;
+    }, [providerOptions]);
 
-  const filteredModels = useMemo(() => {
-    let result = [...models];
-    if (selectedProviderId) {
-      result = result.filter((m) => m.providerId === selectedProviderId);
-    } else if (selectedProviderKind === "NONE") {
-      result = result.filter((m) => !m.providerId);
-    } else if (selectedProviderKind === "LLM" || selectedProviderKind === "EMBEDDINGS") {
-      result = result.filter((m) => {
-        if (!m.providerId) return false;
-        const kind = providerKindById.get(m.providerId);
-        return kind === selectedProviderKind;
+    const filteredModels = useMemo(() => {
+      let result = [...models];
+      if (selectedProviderId) {
+        result = result.filter((m) => m.providerId === selectedProviderId);
+      } else if (selectedProviderKind === "NONE") {
+        result = result.filter((m) => !m.providerId);
+      } else if (selectedProviderKind === "LLM" || selectedProviderKind === "EMBEDDINGS") {
+        result = result.filter((m) => {
+          if (!m.providerId) return false;
+          const kind = providerKindById.get(m.providerId);
+          return kind === selectedProviderKind;
+        });
+      }
+      if (!showArchived) {
+        result = result.filter((m) => m.isActive);
+      }
+      return result;
+    }, [models, selectedProviderId, selectedProviderKind, providerKindById, showArchived]);
+
+    const sortedModels = useMemo(() => {
+      const costPriority: Record<CostLevel, number> = {
+        FREE: 0,
+        LOW: 1,
+        MEDIUM: 2,
+        HIGH: 3,
+        VERY_HIGH: 4,
+      };
+      const direction = sortDirection === "asc" ? 1 : -1;
+      const base = [...filteredModels];
+      if (sortField === "name") {
+        return base.sort((a, b) => direction * a.displayName.localeCompare(b.displayName));
+      }
+      if (sortField === "key") {
+        return base.sort((a, b) => direction * a.modelKey.localeCompare(b.modelKey));
+      }
+      if (sortField === "type") {
+        return base.sort((a, b) => {
+          const diff = typeLabels[a.modelType].localeCompare(typeLabels[b.modelType]);
+          if (diff !== 0) return direction * diff;
+          return direction * a.displayName.localeCompare(b.displayName);
+        });
+      }
+      if (sortField === "unit") {
+        return base.sort((a, b) => {
+          const diff = unitLabels[a.consumptionUnit].localeCompare(unitLabels[b.consumptionUnit]);
+          if (diff !== 0) return direction * diff;
+          return direction * a.displayName.localeCompare(b.displayName);
+        });
+      }
+      if (sortField === "cost") {
+        return base.sort((a, b) => {
+          const diff = costPriority[a.costLevel] - costPriority[b.costLevel];
+          if (diff !== 0) return direction * diff;
+          return direction * a.displayName.localeCompare(b.displayName);
+        });
+      }
+      if (sortField === "credits") {
+        return base.sort((a, b) => {
+          const diff = (a.creditsPerUnit ?? 0) - (b.creditsPerUnit ?? 0);
+          if (diff !== 0) return direction * diff;
+          return direction * a.displayName.localeCompare(b.displayName);
+        });
+      }
+      if (sortField === "provider") {
+        return base.sort((a, b) => {
+          const nameA = providerNameById.get(a.providerId ?? "") ?? a.providerId ?? "";
+          const nameB = providerNameById.get(b.providerId ?? "") ?? b.providerId ?? "";
+          const diff = nameA.localeCompare(nameB);
+          if (diff !== 0) return direction * diff;
+          return direction * a.displayName.localeCompare(b.displayName);
+        });
+      }
+      if (sortField === "status") {
+        return base.sort((a, b) => {
+          const statusA = a.isActive ? 0 : 1;
+          const statusB = b.isActive ? 0 : 1;
+          const diff = statusA - statusB;
+          if (diff !== 0) return direction * diff;
+          return direction * a.displayName.localeCompare(b.displayName);
+        });
+      }
+      return base.sort((a, b) => {
+        const orderA = a.sortOrder ?? 0;
+        const orderB = b.sortOrder ?? 0;
+        if (orderA === orderB) return direction * a.displayName.localeCompare(b.displayName);
+        return direction * (orderA - orderB);
       });
-    }
-    if (!showArchived) {
-      result = result.filter((m) => m.isActive);
-    }
-    return result;
-  }, [models, selectedProviderId, selectedProviderKind, providerKindById, showArchived]);
+    }, [filteredModels, sortField, sortDirection, providerNameById]);
 
-  const sortedModels = useMemo(() => {
-    const costPriority: Record<CostLevel, number> = {
-      FREE: 0,
-      LOW: 1,
-      MEDIUM: 2,
-      HIGH: 3,
-      VERY_HIGH: 4,
+    const handleSort = (field: SortField) => {
+      setSortDirection((prevDirection) =>
+        sortField === field ? (prevDirection === "asc" ? "desc" : "asc") : "asc",
+      );
+      setSortField(field);
     };
-    const direction = sortDirection === "asc" ? 1 : -1;
-    const base = [...filteredModels];
-    if (sortField === "cost") {
-      return base.sort((a, b) => {
-        const diff = costPriority[a.costLevel] - costPriority[b.costLevel];
-        if (diff !== 0) return direction * diff;
-        return a.displayName.localeCompare(b.displayName);
-      });
-    }
-    if (sortField === "credits") {
-      return base.sort((a, b) => {
-        const diff = (a.creditsPerUnit ?? 0) - (b.creditsPerUnit ?? 0);
-        if (diff !== 0) return direction * diff;
-        return a.displayName.localeCompare(b.displayName);
-      });
-    }
-    if (sortField === "name") {
-      return base.sort((a, b) => direction * a.displayName.localeCompare(b.displayName));
-    }
-    return base.sort((a, b) => {
-      if (a.sortOrder === b.sortOrder) return a.displayName.localeCompare(b.displayName);
-      return a.sortOrder - b.sortOrder;
-    });
-  }, [filteredModels, sortField, sortDirection]);
+
+    const renderSortableHeader = (field: SortField, label: string, className?: string) => {
+      const isActive = sortField === field;
+      const IconComponent = isActive
+        ? sortDirection === "asc"
+          ? ChevronUp
+          : ChevronDown
+        : ArrowUpDown;
+      const description = isActive
+        ? `${label}: ${sortDirection === "asc" ? "по возрастанию" : "по убыванию"}`
+        : `Сортировать по ${label}`;
+      return (
+        <TableHead className={className}>
+          <button
+            type="button"
+            className={cn(
+              "flex w-full items-center justify-between gap-1 rounded px-1 text-left text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring hover:text-foreground",
+              isActive ? "text-foreground" : "text-muted-foreground/80",
+            )}
+            aria-label={description}
+            aria-pressed={isActive}
+            onClick={() => handleSort(field)}
+          >
+            <span>{label}</span>
+            <IconComponent
+              className={cn(
+                "h-4 w-4 transition-colors",
+                isActive ? "text-primary" : "text-muted-foreground/70",
+              )}
+            />
+          </button>
+        </TableHead>
+      );
+    };
 
   return (
     <div className="p-4 space-y-4">
@@ -486,53 +590,31 @@ export default function AdminModelsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Модели</CardTitle>
-          <CardDescription>
-            creditsPerUnit показывается для админов, хранится на уровне модели.
-            {!showArchived && archivedModelsCount > 0
-              ? ` Скрыто архивных моделей: ${archivedModelsCount}. Включите «Показывать архивные», чтобы увидеть их.`
-              : ""}
+          <CardDescription className="space-y-1">
+            <p>creditsPerUnit показывается для админов, хранится на уровне модели.</p>
+            <p className="text-xs text-muted-foreground">
+              Наведите на заголовок столбца и нажмите на стрелку, чтобы отсортировать список.
+            </p>
+            {!showArchived && archivedModelsCount > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Скрыто архивных моделей: {archivedModelsCount}. Включите «Показывать архивные», чтобы увидеть их.
+              </p>
+            )}
           </CardDescription>
         </CardHeader>
-        <div className="flex flex-wrap items-center gap-3 px-4 text-sm text-muted-foreground">
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">
-            Сортировать
-          </span>
-          <Select
-            value={sortField}
-            onValueChange={(value) => setSortField(value as "default" | "name" | "cost" | "credits")}
-            className="w-44 text-sm"
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="По умолчанию" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="default">По приоритету (sortOrder)</SelectItem>
-              <SelectItem value="name">По названию</SelectItem>
-              <SelectItem value="cost">По Cost level</SelectItem>
-              <SelectItem value="credits">По Credits/Unit</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))}
-          >
-            {sortDirection === "asc" ? "↑ По возрастанию" : "↓ По убыванию"}
-          </Button>
-        </div>
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Название</TableHead>
-                  <TableHead>Ключ</TableHead>
-                  <TableHead>Тип</TableHead>
-                  <TableHead>Unit</TableHead>
-                  <TableHead>Credits/Unit</TableHead>
-                  <TableHead>Cost</TableHead>
-                  <TableHead>Провайдер</TableHead>
-                  <TableHead>Статус</TableHead>
+                  {renderSortableHeader("name", "Название")}
+                  {renderSortableHeader("key", "Ключ")}
+                  {renderSortableHeader("type", "Тип")}
+                  {renderSortableHeader("unit", "Unit")}
+                  {renderSortableHeader("credits", "Credits/Unit")}
+                  {renderSortableHeader("cost", "Cost")}
+                  {renderSortableHeader("provider", "Провайдер")}
+                  {renderSortableHeader("status", "Статус")}
                   <TableHead className="text-right">Действия</TableHead>
                 </TableRow>
               </TableHeader>
@@ -572,36 +654,32 @@ export default function AdminModelsPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="outline" size="sm" onClick={() => openEdit(model)}>
-                          Редактировать
-                        </Button>
-                        {model.isActive ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => toggleArchiveMutation.mutate({ modelId: model.id, isActive: false })}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" aria-label="Меню действий модели">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => openEdit(model)}>
+                            Редактировать
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() =>
+                              toggleArchiveMutation.mutate({ modelId: model.id, isActive: !model.isActive })
+                            }
                             disabled={toggleArchiveMutation.isPending}
                           >
-                            Архивировать
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => toggleArchiveMutation.mutate({ modelId: model.id, isActive: true })}
-                            disabled={toggleArchiveMutation.isPending}
-                          >
-                            Восстановить
-                          </Button>
-                        )}
-                      </div>
+                            {model.isActive ? "Архивировать" : "Восстановить"}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}
                 {sortedModels.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center text-muted-foreground">
                       Модели не найдены
                     </TableCell>
                   </TableRow>
