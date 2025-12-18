@@ -160,7 +160,7 @@ export const workspaces = pgTable("workspaces", {
     .$type<Record<string, unknown>>()
     .notNull()
     .default(sql`'{}'::jsonb`),
-  iconUrl: text("icon_url"),
+  iconUrl: text("icon_url").default(""),
   iconKey: varchar("icon_key", { length: 255 }),
   storageBucket: varchar("storage_bucket", { length: 255 }),
   qdrantCollectionsCount: integer("qdrant_collections_count").notNull().default(0),
