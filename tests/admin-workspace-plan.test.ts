@@ -1,8 +1,9 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "net";
 import supertest from "supertest";
 import { db } from "../server/db";
-import { tariffLimits, tariffPlans, workspaces } from "@shared/schema";
+import { sql } from "drizzle-orm";
+import { tariffPlans, users, workspaces } from "@shared/schema";
 
 vi.doMock("../server/auth", () => {
   const allow = (_req: any, _res: any, next: () => void) => next();
@@ -37,30 +38,62 @@ async function createTestServer() {
 describe("admin workspace plan API", () => {
   let planFreeId: string;
   let planProId: string;
+  let planFreeCode: string;
+  let planProCode: string;
   let workspaceId: string;
+  let ownerEmail: string;
+
+  const TEST_PLAN_PREFIX = "TEST_WSPLAN_";
+  const TEST_USER_EMAIL_PREFIX = "admin-ws-plan-";
+
+  const cleanup = async () => {
+    await db.execute(sql`DELETE FROM ${users} WHERE ${users.email} LIKE ${`${TEST_USER_EMAIL_PREFIX}%`}`);
+    await db.execute(sql`DELETE FROM ${tariffPlans} WHERE ${tariffPlans.code} LIKE ${`${TEST_PLAN_PREFIX}%`}`);
+  };
 
   beforeAll(async () => {
-    await db.delete(tariffLimits);
-    await db.delete(tariffPlans);
-    await db.delete(workspaces);
+    await cleanup();
+
+    const runId = Date.now();
+    ownerEmail = `${TEST_USER_EMAIL_PREFIX}${runId}@example.com`;
+    planFreeCode = `${TEST_PLAN_PREFIX}FREE_${runId}`;
+    planProCode = `${TEST_PLAN_PREFIX}PRO_${runId}`;
+
+    const [owner] = await db
+      .insert(users)
+      .values({
+        email: ownerEmail,
+        passwordHash: "hash",
+        isEmailConfirmed: true,
+        firstName: "Admin",
+        lastName: "Plan",
+        fullName: "Admin Plan",
+      })
+      .returning({ id: users.id });
 
     const [free] = await db
       .insert(tariffPlans)
-      .values({ code: "FREE", name: "Free" })
-      .returning({ id: tariffPlans.id });
+      .values({ code: planFreeCode, name: "Free", isActive: true })
+      .returning({ id: tariffPlans.id, code: tariffPlans.code });
     planFreeId = free.id;
+    planFreeCode = free.code;
 
     const [pro] = await db
       .insert(tariffPlans)
-      .values({ code: "PRO", name: "Pro" })
-      .returning({ id: tariffPlans.id });
+      .values({ code: planProCode, name: "Pro", isActive: true })
+      .returning({ id: tariffPlans.id, code: tariffPlans.code });
     planProId = pro.id;
+    planProCode = pro.code;
 
     const [ws] = await db
       .insert(workspaces)
-      .values({ id: "ws-test", name: "Test WS", ownerId: "owner-1", tariffPlanId: planFreeId })
+      .values({ id: `ws-plan-${runId}`, name: "Test WS", ownerId: owner.id, tariffPlanId: planFreeId })
       .returning({ id: workspaces.id });
     workspaceId = ws.id;
+  });
+
+  afterAll(async () => {
+    await cleanup();
   });
 
   it("returns workspace plan", async () => {
@@ -68,7 +101,7 @@ describe("admin workspace plan API", () => {
     const address = httpServer.address() as AddressInfo;
     const res = await supertest(`http://127.0.0.1:${address.port}`).get(`/api/admin/workspaces/${workspaceId}/plan`);
     expect(res.status).toBe(200);
-    expect(res.body?.plan?.code).toBe("FREE");
+    expect(res.body?.plan?.code).toBe(planFreeCode);
     httpServer.close();
   });
 
@@ -77,12 +110,12 @@ describe("admin workspace plan API", () => {
     const address = httpServer.address() as AddressInfo;
     const res = await supertest(`http://127.0.0.1:${address.port}`)
       .put(`/api/admin/workspaces/${workspaceId}/plan`)
-      .send({ planCode: "PRO" });
+      .send({ planCode: planProCode });
     expect(res.status).toBe(200);
-    expect(res.body?.plan?.code).toBe("PRO");
+    expect(res.body?.plan?.code).toBe(planProCode);
 
     const getRes = await supertest(`http://127.0.0.1:${address.port}`).get(`/api/admin/workspaces/${workspaceId}/plan`);
-    expect(getRes.body?.plan?.code).toBe("PRO");
+    expect(getRes.body?.plan?.code).toBe(planProCode);
     httpServer.close();
   });
 

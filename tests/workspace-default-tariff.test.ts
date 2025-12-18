@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { storage } from "../server/storage";
-import { tariffPlans, users, workspaces, workspaceMembers } from "@shared/schema";
+import { tariffPlans, users } from "@shared/schema";
 import { tariffPlanService } from "../server/tariff-plan-service";
 
 async function ensureFreePlan() {
@@ -38,8 +38,6 @@ async function createUser() {
 }
 
 beforeEach(async () => {
-  await storage.db.execute(sql`DELETE FROM ${workspaceMembers}`);
-  await storage.db.execute(sql`DELETE FROM ${workspaces}`);
   await storage.db.execute(sql`DELETE FROM ${users} WHERE email LIKE 'tariff-free-%'`);
 });
 

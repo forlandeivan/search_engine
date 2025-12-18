@@ -56,10 +56,7 @@ async function createWorkspace(planId: string) {
 }
 
 beforeEach(async () => {
-  await db.execute(sql`DELETE FROM guard_block_events`);
-  await db.execute(sql`DELETE FROM workspaces`);
   await db.execute(sql`DELETE FROM users WHERE email LIKE 'tariff-provider-%'`);
-  await db.execute(sql`DELETE FROM tariff_limits`);
   await db.execute(sql`DELETE FROM tariff_plans WHERE code LIKE 'PLAN-%'`);
 });
 
