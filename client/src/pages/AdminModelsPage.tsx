@@ -341,6 +341,7 @@ export default function AdminModelsPage() {
   };
 
   const models = modelsQuery.data ?? [];
+  const archivedModelsCount = useMemo(() => models.filter((m) => !m.isActive).length, [models]);
   const providerOptions = useMemo(() => {
     const llm = llmProvidersQuery.data ?? [];
     const emb = embeddingProvidersQuery.data ?? [];
@@ -449,7 +450,9 @@ export default function AdminModelsPage() {
               checked={showArchived}
               onCheckedChange={(checked) => setShowArchived(Boolean(checked))}
             />
-            <Label htmlFor="showArchived">Показывать архивные</Label>
+            <Label htmlFor="showArchived">
+              Показывать архивные{archivedModelsCount > 0 ? ` (${archivedModelsCount})` : ""}
+            </Label>
           </div>
         </CardContent>
       </Card>
@@ -457,7 +460,12 @@ export default function AdminModelsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Модели</CardTitle>
-          <CardDescription>creditsPerUnit показывается для админов, хранится на уровне модели.</CardDescription>
+          <CardDescription>
+            creditsPerUnit показывается для админов, хранится на уровне модели.
+            {!showArchived && archivedModelsCount > 0
+              ? ` Скрыто архивных моделей: ${archivedModelsCount}. Включите «Показывать архивные», чтобы увидеть их.`
+              : ""}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
