@@ -3,7 +3,7 @@ import type { SkillDto } from "@shared/skills";
 import { mergeRagSearchSettings } from "@shared/knowledge-base-search";
 import { storage } from "./storage";
 import { isRagSkill } from "./skill-type";
-import { ensureModelAvailable, ModelUnavailableError, ModelValidationError } from "./model-service";
+import { ensureModelAvailable, ModelInactiveError, ModelUnavailableError, ModelValidationError } from "./model-service";
 
 export type RagPipelineStream = {
   onEvent: (eventName: string, payload?: unknown) => void;
@@ -143,7 +143,7 @@ export async function buildSkillRagRequestPayload(options: {
     const model = await ensureModelAvailable(llmModelInput, { expectedType: "LLM" });
     llmModel = model.modelKey;
   } catch (error) {
-    if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+    if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
       throw new SkillRagConfigurationError(error.message);
     }
     throw error;

@@ -11,15 +11,23 @@ import {
   type SkillExecutionStepStatus,
   type SkillExecutionStepType,
 } from "./skill-execution-log";
-import { ensureModelAvailable, tryResolveModel, ModelValidationError, ModelUnavailableError } from "./model-service";
+import {
+  ensureModelAvailable,
+  ModelInactiveError,
+  ModelUnavailableError,
+  ModelValidationError,
+  tryResolveModel,
+} from "./model-service";
 
 export class ChatServiceError extends Error {
   public status: number;
+  public code?: string;
 
-  constructor(message: string, status = 400) {
+  constructor(message: string, status = 400, code?: string) {
     super(message);
     this.name = "ChatServiceError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -72,7 +80,7 @@ async function logExecutionStepForChat(
 
 const describeError = (error: unknown) => {
   if (error instanceof ChatServiceError) {
-    return { code: `${error.status}`, message: error.message, diagnosticInfo: undefined as string | undefined };
+    return { code: error.code ?? `${error.status}`, message: error.message, diagnosticInfo: undefined as string | undefined };
   }
   if (error instanceof Error) {
     return { code: undefined, message: error.message, diagnosticInfo: error.stack };
@@ -85,9 +93,11 @@ const describeError = (error: unknown) => {
 };
 
 const mapModelErrorToChatError = (error: unknown): ChatServiceError | null => {
-  if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
-    const status = (error as any)?.status ?? (error instanceof ModelUnavailableError ? 404 : 400);
-    return new ChatServiceError(error.message, status);
+  if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
+    const status =
+      (error as any)?.status ??
+      (error instanceof ModelUnavailableError ? 404 : 400);
+    return new ChatServiceError(error.message, status, (error as any)?.code);
   }
   return null;
 };
@@ -461,9 +471,16 @@ export async function buildChatLlmContext(
 
   if (!modelInfo && resolvedModelKey) {
     try {
-      modelInfo = await tryResolveModel(resolvedModelKey, { expectedType: "LLM" });
+      modelInfo = await ensureModelAvailable(resolvedModelKey, { expectedType: "LLM" });
     } catch (error) {
       const mapped = mapModelErrorToChatError(error);
+      const info = describeError(mapped ?? error);
+      await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+        input: { ...providerLogInput, providerId, resolvedModelKey },
+        errorCode: info.code,
+        errorMessage: info.message,
+        diagnosticInfo: info.diagnosticInfo,
+      });
       throw mapped ?? error;
     }
   }

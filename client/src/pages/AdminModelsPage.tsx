@@ -144,6 +144,7 @@ export default function AdminModelsPage() {
   const [editingModel, setEditingModel] = useState<AdminModel | null>(null);
   const [selectedProviderKind, setSelectedProviderKind] = useState<AdminProviderType | "ALL" | "NONE">("ALL");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   const modelsQuery = useAdminModels({
     providerId: selectedProviderId ?? undefined,
@@ -292,6 +293,22 @@ export default function AdminModelsPage() {
     },
   });
 
+  const toggleArchiveMutation = useMutation({
+    mutationFn: async (options: { modelId: string; isActive: boolean }) => {
+      const res = await apiRequest("PUT", `/api/admin/models/${options.modelId}`, { isActive: options.isActive });
+      return await res.json();
+    },
+    onSuccess: (_data, variables) => {
+      toast({ title: variables.isActive ? "Модель восстановлена" : "Модель архивирована" });
+      queryClient.invalidateQueries({
+        predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === "/api/admin/models",
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Не удалось обновить модель", description: error.message, variant: "destructive" });
+    },
+  });
+
   const onSubmit = useCallback(
     (values: ModelFormValues) => {
       if (values.providerId && !values.providerModelKey?.trim()) {
@@ -346,8 +363,11 @@ export default function AdminModelsPage() {
         return kind === selectedProviderKind;
       });
     }
+    if (!showArchived) {
+      result = result.filter((m) => m.isActive);
+    }
     return result;
-  }, [models, selectedProviderId, selectedProviderKind, providerKindById]);
+  }, [models, selectedProviderId, selectedProviderKind, providerKindById, showArchived]);
 
   const sortedModels = useMemo(
     () =>
@@ -419,6 +439,14 @@ export default function AdminModelsPage() {
             </Select>
             <p className="text-xs text-muted-foreground">Фильтрует запрос к API моделей по providerId.</p>
           </div>
+          <div className="flex items-center gap-2 pt-6">
+            <Checkbox
+              id="showArchived"
+              checked={showArchived}
+              onCheckedChange={(checked) => setShowArchived(Boolean(checked))}
+            />
+            <Label htmlFor="showArchived">Показывать архивные</Label>
+          </div>
         </CardContent>
       </Card>
 
@@ -472,14 +500,37 @@ export default function AdminModelsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={model.isActive ? "secondary" : "destructive"}>
-                        {model.isActive ? "Активна" : "Выключена"}
-                      </Badge>
+                      {model.isActive ? (
+                        <Badge variant="secondary">Активна</Badge>
+                      ) : (
+                        <Badge variant="outline">Архив</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" onClick={() => openEdit(model)}>
-                        Редактировать
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => openEdit(model)}>
+                          Редактировать
+                        </Button>
+                        {model.isActive ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => toggleArchiveMutation.mutate({ modelId: model.id, isActive: false })}
+                            disabled={toggleArchiveMutation.isPending}
+                          >
+                            Архивировать
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => toggleArchiveMutation.mutate({ modelId: model.id, isActive: true })}
+                            disabled={toggleArchiveMutation.isPending}
+                          >
+                            Восстановить
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

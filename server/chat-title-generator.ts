@@ -5,7 +5,7 @@ import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
 import { fetchAccessToken } from "./llm-access-token";
 import { executeLlmCompletion } from "./llm-client";
-import { ensureModelAvailable, tryResolveModel, ModelValidationError, ModelUnavailableError } from "./model-service";
+import { ensureModelAvailable, ModelInactiveError, ModelValidationError, ModelUnavailableError } from "./model-service";
 
 const FALLBACK_CHAT_TITLE = process.env.CHAT_TITLE_FALLBACK ?? "Новый чат";
 const CHAT_TITLE_MAX_WORDS = Number(process.env.CHAT_TITLE_MAX_WORDS ?? 5);
@@ -93,7 +93,7 @@ async function resolveUnicaChatProvider(workspaceId: string) {
       const model = await ensureModelAvailable(preferredModel, { expectedType: "LLM" });
       modelKey = model.modelKey;
     } catch (error) {
-      if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+      if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
         throw new Error(error.message);
       }
       throw error;
@@ -110,10 +110,10 @@ async function resolveUnicaChatProvider(workspaceId: string) {
 
   if (!modelKey && resolvedModel) {
     try {
-      const resolved = await tryResolveModel(resolvedModel, { expectedType: "LLM" });
-      modelKey = resolved?.modelKey ?? null;
+      const resolved = await ensureModelAvailable(resolvedModel, { expectedType: "LLM" });
+      modelKey = resolved.modelKey;
     } catch (error) {
-      if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+      if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
         throw new Error(error.message);
       }
       throw error;

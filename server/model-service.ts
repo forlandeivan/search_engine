@@ -37,6 +37,15 @@ export class ModelUnavailableError extends Error {
   }
 }
 
+export class ModelInactiveError extends Error {
+  status = 409;
+  code = "MODEL_INACTIVE";
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelInactiveError";
+  }
+}
+
 export type ModelInput = {
   modelKey: string;
   displayName: string;
@@ -108,6 +117,7 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
   validateUnit(input.modelType, input.consumptionUnit);
   const creditsPerUnit = Math.max(0, Math.floor(input.creditsPerUnit ?? 0));
   const provider = normalizeProvider(input);
+  const isActive = input.isActive ?? true;
 
   const [row] = await db
     .insert(models)
@@ -119,7 +129,8 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
       consumptionUnit: input.consumptionUnit,
       costLevel: input.costLevel ?? "MEDIUM",
       creditsPerUnit,
-      isActive: input.isActive ?? true,
+      isActive,
+      deletedAt: isActive ? null : sql`CURRENT_TIMESTAMP`,
       sortOrder: input.sortOrder ?? 0,
       metadata: (input.metadata as any) ?? {},
       providerId: provider.providerId,
@@ -142,7 +153,10 @@ export async function updateModel(
   if (input.consumptionUnit !== undefined) values.consumptionUnit = input.consumptionUnit;
   if (input.costLevel !== undefined) values.costLevel = input.costLevel;
   if (input.creditsPerUnit !== undefined) values.creditsPerUnit = Math.max(0, Math.floor(input.creditsPerUnit ?? 0));
-  if (input.isActive !== undefined) values.isActive = input.isActive;
+  if (input.isActive !== undefined) {
+    values.isActive = input.isActive;
+    values.deletedAt = input.isActive ? null : sql`CURRENT_TIMESTAMP`;
+  }
   if (input.sortOrder !== undefined) values.sortOrder = input.sortOrder;
   if (input.metadata !== undefined) values.metadata = (input.metadata as any) ?? {};
   if (input.providerId !== undefined || input.providerModelKey !== undefined || input.providerType !== undefined) {
@@ -194,11 +208,15 @@ export async function ensureModelAvailable(
   if (!trimmed) {
     throw new ModelValidationError("Не указан идентификатор модели");
   }
-  const model = await getModelByKeyOrId(trimmed, { requireActive: opts.requireActive !== false });
+
+  const model = await getModelByKeyOrId(trimmed, { requireActive: false });
   if (!model) {
-    const message = opts.requireActive === false ? "Модель не найдена" : "Модель не найдена или отключена";
-    throw new ModelUnavailableError(message);
+    throw new ModelUnavailableError("Модель не найдена");
   }
+  if (opts.requireActive !== false && !model.isActive) {
+    throw new ModelInactiveError("Модель отключена");
+  }
+
   assertModelType(model, opts.expectedType);
   return model;
 }
@@ -348,7 +366,7 @@ export async function syncModelsWithLlmProvider(
     if (!syncedKeys.has(key) && existing.isActive) {
       await db
         .update(models)
-        .set({ isActive: false, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .set({ isActive: false, deletedAt: sql`CURRENT_TIMESTAMP`, updatedAt: sql`CURRENT_TIMESTAMP` })
         .where(eq(models.id, existing.id));
     }
   }

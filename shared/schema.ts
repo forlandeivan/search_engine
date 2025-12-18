@@ -131,6 +131,7 @@ export const models = pgTable(
     costLevel: modelCostLevelEnum("cost_level").notNull().default("MEDIUM"),
     creditsPerUnit: integer("credits_per_unit").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     sortOrder: integer("sort_order").notNull().default(0),
     metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
     providerId: text("provider_id"),

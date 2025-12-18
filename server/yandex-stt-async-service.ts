@@ -12,7 +12,7 @@ import type { ChatMessageMetadata, TranscriptStatus } from "@shared/schema";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { buildAsrOperationContext } from "./guards/helpers";
-import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } from "./model-service";
+import { ensureModelAvailable, ModelInactiveError, ModelValidationError, ModelUnavailableError } from "./model-service";
 import { measureUsageForModel, type UsageMeasurement } from "./consumption-meter";
 import { calculatePriceForUsage } from "./price-calculator";
 import { estimateAsrPreflight } from "./preflight-estimator";
@@ -272,7 +272,7 @@ class YandexSttAsyncService {
         asrModelId = model.id;
         asrCreditsPerUnit = model.creditsPerUnit ?? null;
       } catch (error) {
-        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
           throw new YandexSttAsyncConfigError(error.message);
         }
         throw error;
@@ -702,6 +702,7 @@ class YandexSttAsyncService {
                     model: {
                       id: cached.modelId ?? null,
                       key: cached.modelKey ?? null,
+                      name: cached.modelKey ?? null,
                       type: "ASR",
                       consumptionUnit: "MINUTES",
                     },

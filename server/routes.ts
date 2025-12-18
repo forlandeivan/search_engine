@@ -146,6 +146,7 @@ import {
   syncModelsWithLlmProvider,
   syncModelsWithEmbeddingProvider,
   syncModelsWithSpeechProvider,
+  ModelInactiveError,
   ModelValidationError,
   ModelUnavailableError,
 } from "./model-service";
@@ -4108,27 +4109,29 @@ async function runKnowledgeBaseRagPipeline(options: {
         llmModelInfo = { id: model.id, modelKey: model.modelKey };
         llmModel = model.modelKey;
       } catch (error) {
-        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
           runStatus = "error";
           runErrorMessage = error.message;
           await finalizeRunLog();
-          throw new HttpError((error as any)?.status ?? 400, error.message);
+          const httpError = new HttpError((error as any)?.status ?? 400, error.message);
+          (httpError as any).code = (error as any)?.code;
+          throw httpError;
         }
         throw error;
       }
     } else if (selectedModelValue) {
       try {
-        const model = await tryResolveModel(selectedModelValue, { expectedType: "LLM" });
-        if (model) {
-          llmModelInfo = { id: model.id, modelKey: model.modelKey };
-          llmModel = model.modelKey;
-        }
+        const model = await ensureModelAvailable(selectedModelValue, { expectedType: "LLM" });
+        llmModelInfo = { id: model.id, modelKey: model.modelKey };
+        llmModel = model.modelKey;
       } catch (error) {
-        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
+        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
           runStatus = "error";
           runErrorMessage = error.message;
           await finalizeRunLog();
-          throw new HttpError((error as any)?.status ?? 400, error.message);
+          const httpError = new HttpError((error as any)?.status ?? 400, error.message);
+          (httpError as any).code = (error as any)?.code;
+          throw httpError;
         }
         throw error;
       }
@@ -8227,8 +8230,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           const modelId = typeof meta.modelId === "string" ? meta.modelId : null;
           const model = modelId ? modelsMap.get(modelId) ?? null : null;
           const metaModelType = typeof meta.modelType === "string" ? meta.modelType : null;
-          const resolvedModelType = model?.modelType ?? metaModelType;
+          const resolvedModelType = metaModelType ?? model?.modelType ?? null;
           if (modelTypeFilter && resolvedModelType !== modelTypeFilter) return null;
+
+          const metaModelKey = typeof meta.modelKey === "string" ? meta.modelKey : null;
+          const metaModelName = typeof meta.modelName === "string" ? meta.modelName : null;
+          const metaConsumptionUnit =
+            typeof meta.consumptionUnit === "string"
+              ? meta.consumptionUnit
+              : typeof meta.unit === "string"
+                ? meta.unit
+                : null;
+
+          const resolvedModelKey = metaModelKey ?? model?.modelKey ?? null;
+          const resolvedModelName = metaModelName ?? model?.displayName ?? resolvedModelKey;
+          const resolvedConsumptionUnit = metaConsumptionUnit ?? model?.consumptionUnit ?? null;
           const quantityUnits =
             typeof meta.quantityUnits === "number"
               ? meta.quantityUnits
@@ -8247,27 +8263,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             operationId: typeof meta.operationId === "string" ? meta.operationId : null,
             workspaceId: row.workspaceId,
             occurredAt: row.occurredAt,
-            model: model
-              ? {
-                  id: model.id,
-                  key: model.modelKey,
-                  displayName: model.displayName,
-                  modelType: model.modelType,
-                  consumptionUnit: model.consumptionUnit,
-                }
-              : modelId
+            model:
+              modelId || resolvedModelKey || resolvedModelName || resolvedModelType || resolvedConsumptionUnit
                 ? {
                     id: modelId,
-                    key: (meta.modelKey as string) ?? null,
-                    displayName: (meta.modelName as string) ?? null,
-                    modelType: metaModelType,
-                    consumptionUnit:
-                      (meta.consumptionUnit as string) ??
-                      (meta.unit as string) ??
-                      null,
+                    key: resolvedModelKey,
+                    displayName: resolvedModelName,
+                    modelType: resolvedModelType,
+                    consumptionUnit: resolvedConsumptionUnit,
                   }
                 : null,
-            unit: (meta.unit as string) ?? (meta.consumptionUnit as string) ?? null,
+            unit: metaConsumptionUnit ?? null,
             quantityUnits,
             quantityRaw,
             appliedCreditsPerUnit:
@@ -8588,8 +8594,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           const model = await ensureModelAvailable(payload.modelId, { expectedType: "LLM" });
           updates.modelId = model.modelKey;
         } catch (error) {
-          if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
-            return res.status((error as any)?.status ?? 400).json({ message: error.message });
+          if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
+            return res.status((error as any)?.status ?? 400).json({ message: error.message, errorCode: (error as any)?.code });
           }
           throw error;
         }
@@ -10188,10 +10194,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "Некорректные параметры запроса", details: error.issues });
       }
       if (error instanceof ChatServiceError) {
-        return res.status(error.status).json({ message: error.message });
+        return res.status(error.status).json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
       }
       if (error instanceof HttpError) {
-        return res.status(error.status).json({ message: error.message });
+        return res.status(error.status).json({ message: error.message, ...(error as any)?.code ? { errorCode: (error as any).code } : {} });
       }
       next(error);
     }
@@ -10880,10 +10886,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.json({ messages });
     } catch (error) {
       if (error instanceof ChatServiceError) {
-        return res.status(error.status).json({ message: error.message });
+        return res.status(error.status).json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
       }
       if (error instanceof HttpError) {
-        return res.status(error.status).json({ message: error.message });
+        return res.status(error.status).json({ message: error.message, ...(error as any)?.code ? { errorCode: (error as any).code } : {} });
       }
       next(error);
     }
@@ -14186,32 +14192,32 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
       }
 
-      const accessToken = await fetchAccessToken(provider);
-      if (jobId) {
-        updateKnowledgeDocumentVectorizationJob(jobId, { status: "running" });
+      const embeddingModelKey = typeof provider.model === "string" ? provider.model.trim() : "";
+      if (!embeddingModelKey) {
+        markImmediateFailure("Для сервиса эмбеддингов не указана модель", 400);
+        return res.status(400).json({ message: "Для сервиса эмбеддингов не указана модель" });
       }
+
       let embeddingModelId: string | null = null;
-      try {
-        const resolved = await tryResolveModel(provider.model ?? null, { expectedType: "EMBEDDINGS" });
-        embeddingModelId = resolved?.id ?? null;
-      } catch (error) {
-        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
-          console.warn(
-            `[usage] embedding model resolve failed for provider ${provider.id ?? provider.providerType}: ${error.message}`,
-          );
-        } else {
-          throw error;
-        }
-      }
       let embeddingCreditsPerUnit: number | null = null;
       let embeddingModelName: string | null = null;
       try {
-        const resolved = await tryResolveModel(provider.model ?? "", { expectedType: "EMBEDDINGS" });
-        embeddingModelId = resolved?.id ?? embeddingModelId;
-        embeddingModelName = resolved?.displayName ?? null;
-        embeddingCreditsPerUnit = resolved?.creditsPerUnit ?? null;
-      } catch {
-        // ignore resolution errors here; charging will use 0 credits
+        const resolved = await ensureModelAvailable(embeddingModelKey, { expectedType: "EMBEDDINGS" });
+        embeddingModelId = resolved.id;
+        embeddingModelName = resolved.displayName;
+        embeddingCreditsPerUnit = resolved.creditsPerUnit ?? null;
+      } catch (error) {
+        if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
+          const status = (error as any)?.status ?? 400;
+          markImmediateFailure(error.message, status);
+          return res.status(status).json({ message: error.message, errorCode: (error as any)?.code });
+        }
+        throw error;
+      }
+
+      const accessToken = await fetchAccessToken(provider);
+      if (jobId) {
+        updateKnowledgeDocumentVectorizationJob(jobId, { status: "running" });
       }
       const embeddingResults: Array<
         EmbeddingVectorResult & { chunk: KnowledgeDocumentChunk; index: number }
