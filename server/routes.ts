@@ -11919,6 +11919,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           status: "processing",
           fileName,
           fileSizeBytes: file.size,
+          durationMs: audioDurationSeconds ? audioDurationSeconds * 1000 : null,
           language: lang ?? null,
           startedAt: new Date(),
         });
