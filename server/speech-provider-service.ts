@@ -128,6 +128,27 @@ class SpeechProviderService {
     };
   }
 
+  async getProviderSecretValues(providerId: string): Promise<Record<string, string>> {
+    const provider = await storage.getSpeechProvider(providerId);
+    if (!provider) {
+      throw new SpeechProviderNotFoundError();
+    }
+    if (!provider.isBuiltIn) {
+      throw new SpeechProviderServiceError("Only built-in provider 'Yandex SpeechKit' secrets can be exposed", 400);
+    }
+
+    const secrets = await storage.getSpeechProviderSecrets(providerId);
+    const values: Record<string, string> = {};
+    for (const entry of secrets) {
+      if (!BUILT_IN_SECRET_KEYS.includes(entry.secretKey)) {
+        continue;
+      }
+      values[entry.secretKey] = entry.secretValue;
+    }
+
+    return values;
+  }
+
   async updateProviderConfig(opts: {
     providerId: string;
     actorAdminId: string;

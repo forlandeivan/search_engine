@@ -8700,6 +8700,26 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  app.get("/api/admin/tts-stt/providers/:id/secrets", requireAdmin, async (req, res, next) => {
+    try {
+      const secrets = await runWithAdminTimeout(() =>
+        speechProviderService.getProviderSecretValues(req.params.id),
+      );
+      res.json({ secrets });
+    } catch (error) {
+      if (error instanceof SpeechProviderNotFoundError) {
+        return res.status(404).json({ message: "Provider not found" });
+      }
+      if (error instanceof SpeechProviderServiceError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      if (error instanceof Error && error.message === "Request timeout") {
+        return res.status(504).json({ message: "Request timeout" });
+      }
+      next(error);
+    }
+  });
+
   app.patch("/api/admin/tts-stt/providers/:id", requireAdmin, async (req, res, next) => {
     try {
       const adminUser = getSessionUser(req);

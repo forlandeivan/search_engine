@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { apiRequest } from "@/lib/queryClient";
 import { useSpeechProviderDetails, updateSpeechProvider, testIamToken, UpdateSpeechProviderPayload } from "@/hooks/useSpeechProviders";
 import type { SpeechProviderDetail, SpeechProviderStatus } from "@/types/speech-providers";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -112,6 +113,8 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
   const [secretVisibility, setSecretVisibility] = useState<Record<string, boolean>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [generalError, setGeneralError] = useState<string | null>(null);
+  const [secretValues, setSecretValues] = useState<Record<string, string>>({});
+  const [secretsLoading, setSecretsLoading] = useState(false);
 
   useEffect(() => {
     if (!provider) {
@@ -131,6 +134,8 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     setFieldErrors({});
     setGeneralError(null);
     setSecretVisibility({});
+    setSecretValues({});
+    setSecretsLoading(false);
   }, [provider]);
 
   const mutation = useMutation({
@@ -190,8 +195,29 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     setS3SecretInputs((prev) => ({ ...prev, [key]: value }));
   };
 
+  const loadSecrets = async () => {
+    if (!providerId || secretsLoading || Object.keys(secretValues).length > 0) {
+      return;
+    }
+    setSecretsLoading(true);
+    try {
+      const response = await apiRequest("GET", `/api/admin/tts-stt/providers/${providerId}/secrets`);
+      const payload = await response.json();
+      setSecretValues(payload.secrets ?? {});
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось загрузить секреты";
+      toast({ title: "Ошибка", description: message, variant: "destructive" });
+    } finally {
+      setSecretsLoading(false);
+    }
+  };
+
   const toggleSecretVisibility = (key: string) => {
-    setSecretVisibility((prev) => ({ ...prev, [key]: !prev[key] }));
+    const shouldShow = !secretVisibility[key];
+    if (shouldShow && provider?.secrets[key]?.isSet) {
+      loadSecrets();
+    }
+    setSecretVisibility((prev) => ({ ...prev, [key]: shouldShow }));
   };
 
   const getSecretMask = (maskValue: string, isSet: boolean) => {
@@ -220,6 +246,8 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
     const isVisible = Boolean(secretVisibility[key]);
     const showMaskOverlay = maskLabel.length > 0 && !isVisible;
     const errorMessage = fieldErrors[`secrets.${key}`];
+    const actualSecretValue = secretValues[key] ?? "";
+    const renderedValue = isVisible ? (value || actualSecretValue) : value;
     return (
       <div key={key} className="space-y-2">
         <div className="flex items-center justify-between gap-4">
@@ -241,7 +269,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
         <div className="relative">
           {isTextarea ? (
             <Textarea
-              value={value}
+              value={renderedValue}
               onChange={(event) => onChange(event.target.value)}
               rows={rows ?? 4}
               className={cn("min-h-[110px]", showMaskOverlay ? "text-transparent" : "text-foreground")}
@@ -250,7 +278,7 @@ export default function SpeechProviderDetailsPage({ providerId }: SpeechProvider
             />
           ) : (
             <Input
-              value={value}
+              value={renderedValue}
               onChange={(event) => onChange(event.target.value)}
               className={showMaskOverlay ? "text-transparent" : "text-foreground"}
               readOnly={showMaskOverlay}
