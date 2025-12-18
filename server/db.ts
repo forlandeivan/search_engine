@@ -38,11 +38,21 @@ function createUnavailableDbProxy(message: string) {
 }
 
 function hasCustomPostgresConfig(): boolean {
-  // Отключаем использование внешнего PostgreSQL, используем только Neon
-  return false;
+  return Boolean(
+    process.env.PG_HOST &&
+    process.env.PG_USER &&
+    process.env.PG_PASSWORD &&
+    process.env.PG_DATABASE
+  );
 }
 
 function tryConnectCustomPostgres(): void {
+  // Skip custom PostgreSQL if DATABASE_URL is already set (prefer Neon in dev, but allow override in production)
+  if (resolveDatabaseUrl()) {
+    console.log(`[db] Skipping custom PostgreSQL - DATABASE_URL is configured (using Neon/primary database)`);
+    return;
+  }
+
   if (!hasCustomPostgresConfig()) {
     console.log(`[db] Custom PostgreSQL config not found (PG_HOST, PG_USER, PG_PASSWORD, PG_DATABASE required)`);
     return;
