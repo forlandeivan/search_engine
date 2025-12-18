@@ -281,6 +281,22 @@ import multer from "multer";
 import { getLlmPromptDebugConfig, isLlmPromptDebugEnabled, setLlmPromptDebugEnabled } from "./llm-debug-config";
 import { getRecommendedAitunnelModels } from "./llm-providers/aitunnel-models";
 
+// Глобальная страховка: не валим процесс на write EOF и подобные сетевые ошибки.
+process.on("uncaughtException", (err: any) => {
+  if (err?.code === "EOF" && err?.syscall === "write") {
+    console.warn("[process] swallowed write EOF:", err);
+    return;
+  }
+  throw err;
+});
+process.on("unhandledRejection", (reason: any) => {
+  if (reason?.code === "EOF" && reason?.syscall === "write") {
+    console.warn("[process] swallowed write EOF (promise):", reason);
+    return;
+  }
+  throw reason;
+});
+
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
     const segments: string[] = [];
@@ -4583,6 +4599,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next();
     });
   }
+  // Глобально отслеживаем ошибки стримов, чтобы write EOF и обрывы не валили процесс.
+  app.use((req, res, next) => {
+    req.on("error", (err) => {
+      console.error("[http] req error:", err?.message ?? err);
+    });
+    req.on("aborted", () => {
+      console.warn("[http] request aborted");
+    });
+    res.on("error", (err) => {
+      console.error("[http] res error:", err?.message ?? err);
+    });
+    next();
+  });
   const isGoogleAuthEnabled = () => Boolean(app.get("googleAuthConfigured"));
   const isYandexAuthEnabled = () => Boolean(app.get("yandexAuthConfigured"));
 

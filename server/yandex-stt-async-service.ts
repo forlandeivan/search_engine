@@ -3,6 +3,7 @@ import { yandexIamTokenService } from "./yandex-iam-token-service";
 import { yandexObjectStorageService, ObjectStorageError, ObjectStorageCredentials } from "./yandex-object-storage-service";
 import { spawn } from "child_process";
 import ffmpegPath from "ffmpeg-static";
+import { parseBuffer } from "music-metadata";
 import { tmpdir } from "os";
 import { writeFile, unlink, readFile } from "fs/promises";
 import { join } from "path";
@@ -103,6 +104,17 @@ function needsConversion(mimeType: string): boolean {
 
 async function probeAudioDurationSeconds(audioBuffer: Buffer): Promise<number | null> {
   const executable = ffmpegPath || "ffmpeg";
+
+  // 0) Попробуем распарсить контейнер без внешних бинарников.
+  try {
+    const meta = await parseBuffer(audioBuffer, undefined, { duration: true });
+    const mmDuration = meta.format.duration;
+    if (mmDuration && Number.isFinite(mmDuration) && mmDuration > 0) {
+      return Math.max(0, Math.round(mmDuration));
+    }
+  } catch {
+    // ignore, идём дальше
+  }
 
   // 1) Пытаемся через ffprobe (корректнее и быстрее).
   const tryFfprobe = async (): Promise<number | null> => {
