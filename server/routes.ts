@@ -11792,6 +11792,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     req.on("error", (err) => {
       console.error("[upload] request stream error:", err?.message ?? err);
     });
+    if (req.socket) {
+      req.socket.on("error", (err) => {
+        console.error("[upload] socket error:", err?.message ?? err);
+      });
+    }
     next();
   });
 
@@ -11815,7 +11820,22 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return;
       }
 
+      let aborted = req.aborted;
+      req.on("aborted", () => {
+        aborted = true;
+        console.warn("[transcribe] request aborted by client");
+      });
+      res.on("error", (err) => {
+        console.error("[transcribe] response error:", err?.message ?? err);
+      });
+      const ensureNotAborted = () => {
+        if (aborted) {
+          throw new Error("REQUEST_ABORTED");
+        }
+      };
+
       try {
+        ensureNotAborted();
         const file = req.file;
         if (!file) {
           return res.status(400).json({ message: "Аудиофайл не предоставлен" });
@@ -11898,6 +11918,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           chatId,
           executionId: asrExecution.id,
         });
+        ensureNotAborted();
 
         const transcript = await storage.createTranscript({
           workspaceId,
@@ -11937,6 +11958,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           details: { provider: "yandex_speechkit", operationId: response.operationId, language: lang ?? null },
         });
 
+        ensureNotAborted();
         res.json({
           operationId: response.operationId,
           message: response.message,
@@ -11961,6 +11983,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         });
       } catch (error) {
         console.error(`[transcribe] user=${user.id} error:`, error);
+        if (error instanceof Error && error.message === "REQUEST_ABORTED") {
+          // Клиент закрыл соединение, просто выходим без ответа.
+          return;
+        }
         
         if (error instanceof YandexSttAsyncConfigError) {
           return res.status(400).json({ message: error.message, code: error.code });
