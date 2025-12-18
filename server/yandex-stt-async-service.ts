@@ -748,6 +748,22 @@ class YandexSttAsyncService {
         }
         if (durationSeconds !== null && durationSeconds !== undefined && durationSeconds > 0) {
             try {
+              // Уточняем цену из модели, если при старте не было creditsPerUnit.
+              let creditsPerUnit = cached.creditsPerUnit ?? 0;
+              if ((!creditsPerUnit || creditsPerUnit <= 0) && (cached.modelId || cached.modelKey)) {
+                try {
+                  const model = await ensureModelAvailable(cached.modelId ?? cached.modelKey!, {
+                    expectedType: "ASR",
+                    requireActive: false,
+                  });
+                  creditsPerUnit = model.creditsPerUnit ?? 0;
+                  cached.creditsPerUnit = creditsPerUnit;
+                  operationsCache.set(cacheId, cached);
+                } catch (resolveErr) {
+                  console.warn("[usage][asr] unable to resolve model creditsPerUnit", resolveErr);
+                }
+              }
+
               const measurement: UsageMeasurement = measureUsageForModel(
                 { consumptionUnit: "MINUTES" },
                 { kind: "SECONDS", seconds: durationSeconds },
@@ -757,7 +773,7 @@ class YandexSttAsyncService {
                 },
               );
               const price = calculatePriceForUsage(
-                { consumptionUnit: "MINUTES", creditsPerUnit: cached.creditsPerUnit ?? 0 } as any,
+                { consumptionUnit: "MINUTES", creditsPerUnit } as any,
                 measurement,
               );
               const chargeOperationId = cached.executionId ?? operationId;
