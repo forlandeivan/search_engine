@@ -342,6 +342,8 @@ export default function AdminModelsPage() {
 
   const models = modelsQuery.data ?? [];
   const archivedModelsCount = useMemo(() => models.filter((m) => !m.isActive).length, [models]);
+  const [sortField, setSortField] = useState<"default" | "name" | "cost" | "credits">("default");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const providerOptions = useMemo(() => {
     const llm = llmProvidersQuery.data ?? [];
     const emb = embeddingProvidersQuery.data ?? [];
@@ -374,14 +376,38 @@ export default function AdminModelsPage() {
     return result;
   }, [models, selectedProviderId, selectedProviderKind, providerKindById, showArchived]);
 
-  const sortedModels = useMemo(
-    () =>
-      [...filteredModels].sort((a, b) => {
-        if (a.sortOrder === b.sortOrder) return a.displayName.localeCompare(b.displayName);
-        return a.sortOrder - b.sortOrder;
-      }),
-    [filteredModels],
-  );
+  const sortedModels = useMemo(() => {
+    const costPriority: Record<CostLevel, number> = {
+      FREE: 0,
+      LOW: 1,
+      MEDIUM: 2,
+      HIGH: 3,
+      VERY_HIGH: 4,
+    };
+    const direction = sortDirection === "asc" ? 1 : -1;
+    const base = [...filteredModels];
+    if (sortField === "cost") {
+      return base.sort((a, b) => {
+        const diff = costPriority[a.costLevel] - costPriority[b.costLevel];
+        if (diff !== 0) return direction * diff;
+        return a.displayName.localeCompare(b.displayName);
+      });
+    }
+    if (sortField === "credits") {
+      return base.sort((a, b) => {
+        const diff = (a.creditsPerUnit ?? 0) - (b.creditsPerUnit ?? 0);
+        if (diff !== 0) return direction * diff;
+        return a.displayName.localeCompare(b.displayName);
+      });
+    }
+    if (sortField === "name") {
+      return base.sort((a, b) => direction * a.displayName.localeCompare(b.displayName));
+    }
+    return base.sort((a, b) => {
+      if (a.sortOrder === b.sortOrder) return a.displayName.localeCompare(b.displayName);
+      return a.sortOrder - b.sortOrder;
+    });
+  }, [filteredModels, sortField, sortDirection]);
 
   return (
     <div className="p-4 space-y-4">
@@ -467,6 +493,33 @@ export default function AdminModelsPage() {
               : ""}
           </CardDescription>
         </CardHeader>
+        <div className="flex flex-wrap items-center gap-3 px-4 text-sm text-muted-foreground">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">
+            Сортировать
+          </span>
+          <Select
+            value={sortField}
+            onValueChange={(value) => setSortField(value as "default" | "name" | "cost" | "credits")}
+            className="w-44 text-sm"
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="По умолчанию" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">По приоритету (sortOrder)</SelectItem>
+              <SelectItem value="name">По названию</SelectItem>
+              <SelectItem value="cost">По Cost level</SelectItem>
+              <SelectItem value="credits">По Credits/Unit</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"))}
+          >
+            {sortDirection === "asc" ? "↑ По возрастанию" : "↓ По убыванию"}
+          </Button>
+        </div>
         <CardContent>
           <div className="overflow-x-auto">
             <Table>
