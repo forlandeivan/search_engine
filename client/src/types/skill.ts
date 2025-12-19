@@ -6,6 +6,7 @@ export interface Skill {
   name?: string | null;
   description?: string | null;
   systemPrompt?: string | null;
+  icon?: string | null;
   modelId?: string | null;
   llmProviderConfigId?: string | null;
   collectionName?: string | null;
@@ -25,6 +26,7 @@ export interface SkillPayload {
   name?: string | null;
   description?: string | null;
   systemPrompt?: string | null;
+  icon?: string | null;
   modelId?: string | null;
   llmProviderConfigId?: string | null;
   collectionName?: string | null;

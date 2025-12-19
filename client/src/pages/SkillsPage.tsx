@@ -1140,6 +1140,7 @@ function IconPicker({
             triggerClassName,
           )}
           aria-label="Выбрать иконку"
+          data-testid="skill-icon-trigger"
         >
           {renderIcon(value, "h-5 w-5") ?? <span className="text-xs text-muted-foreground">—</span>}
         </button>
@@ -1154,6 +1155,7 @@ function IconPicker({
               value === "" ? "border-primary bg-primary/10" : "border-border hover:border-primary/60",
             )}
             aria-label="Без иконки"
+            data-testid="skill-icon-option-none"
           >
             ✕
           </button>
@@ -1169,6 +1171,7 @@ function IconPicker({
                   selected ? "border-primary bg-primary/10" : "border-border hover:border-primary/60",
                 )}
                 aria-label={icon.value}
+                data-testid={`skill-icon-option-${icon.value}`}
               >
                 {renderIcon(icon.value, "h-5 w-5")}
               </button>
@@ -1394,7 +1397,7 @@ export function SkillFormContent({
     <div className="space-y-5">
       {!hideHeader && (
         <div className="space-y-2">
-          <h2 className="text-xl font-semibold">
+          <h2 className="text-xl font-semibold" data-testid="skill-title">
             {skill?.name && skill.name.trim().length > 0 ? skill.name : skill ? "Настройка навыка" : "Новый навык"}
           </h2>
           {isSystemSkill && (
@@ -1464,7 +1467,9 @@ export function SkillFormContent({
                       triggerClassName="h-10 w-10"
                     />
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <span>{form.watch("icon") ? form.watch("icon") : "Не выбрана"}</span>
+                      <span data-testid="skill-icon-label">
+                        {form.watch("icon") ? form.watch("icon") : "Не выбрана"}
+                      </span>
                     </div>
                   </div>
                 }
@@ -1958,7 +1963,7 @@ export function SkillFormContent({
             <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
               Отменить
             </Button>
-            <Button type="submit" disabled={isSubmitting || isSystemSkill}>
+            <Button type="submit" disabled={isSubmitting || isSystemSkill} data-testid="skill-save-button">
 
               {isSystemSkill ? "Недоступно" : isSubmitting ? "Сохраняем..." : "Сохранить"}
 
@@ -2292,6 +2297,7 @@ export default function SkillsPage() {
                     tabIndex={0}
                     className="cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring focus-visible:ring-primary/40"
                     onClick={(e) => openSkill(`/skills/${skill.id}/edit`, e)}
+                    data-testid={`skill-row-${skill.id}`}
                     onMouseDown={(e) => {
                       if (e.button === 1 || e.ctrlKey || e.metaKey) {
                         e.preventDefault();

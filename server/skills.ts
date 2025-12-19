@@ -251,6 +251,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     systemKey: row.systemKey ?? null,
     status: (row.status as SkillStatus) ?? "active",
     mode: normalizeSkillMode(row.mode),
+    icon: row.icon ?? null,
     knowledgeBaseIds,
     ragConfig: {
       mode: normalizeRagModeFromValue(row.ragMode),
