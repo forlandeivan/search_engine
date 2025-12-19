@@ -1836,9 +1836,8 @@ export function SkillFormContent({
                 {isSystemSkill ? "Недоступно" : isSubmitting ? "Сохраняем..." : "Сохранить"}
 
               </Button>
-            </DialogFooter>
-          </form>
-        </Form>
+          </DialogFooter>
+        </form>
       </Form>
     </div>
   );
