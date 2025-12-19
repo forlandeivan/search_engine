@@ -1851,6 +1851,14 @@ async function fetchKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSu
 
 export default function SkillsPage() {
   const [, navigate] = useLocation();
+  const openSkill = (url: string, e?: { metaKey?: boolean; ctrlKey?: boolean; button?: number }) => {
+    const openInNewTab = Boolean(e?.metaKey || e?.ctrlKey || e?.button === 1);
+    if (openInNewTab) {
+      window.open(url, "_blank");
+    } else {
+      navigate(url);
+    }
+  };
   const { data: session } = useQuery<SessionResponse>({
     queryKey: ["/api/auth/session"],
   });
@@ -2151,7 +2159,25 @@ export default function SkillsPage() {
               </TableHeader>
               <TableBody>
                 {sortedSkills.map((skill) => (
-                  <TableRow key={skill.id}>
+                  <TableRow
+                    key={skill.id}
+                    role="button"
+                    tabIndex={0}
+                    className="cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring focus-visible:ring-primary/40"
+                    onClick={(e) => openSkill(`/skills/${skill.id}/edit`, e)}
+                    onMouseDown={(e) => {
+                      if (e.button === 1 || e.ctrlKey || e.metaKey) {
+                        e.preventDefault();
+                        openSkill(`/skills/${skill.id}/edit`, e);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openSkill(`/skills/${skill.id}/edit`);
+                      }
+                    }}
+                  >
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center">
                         {getIconComponent(skill.icon) ? (
@@ -2213,12 +2239,16 @@ export default function SkillsPage() {
                         )}
                         {!skill.isSystem && (
                           <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
+                            <DropdownMenuTrigger
+                              asChild
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8"
                                 aria-label="Действия с навыком"
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <MoreVertical className="h-4 w-4" />
                               </Button>
