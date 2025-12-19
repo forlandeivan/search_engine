@@ -145,15 +145,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import { useSkills, useCreateSkill, useUpdateSkill } from "@/hooks/useSkills";
+import { useSkills } from "@/hooks/useSkills";
 import { useModels, type PublicModel } from "@/hooks/useModels";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { useLocation } from "wouter";
 
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 import type { ActionDto, SkillActionDto } from "@shared/skills";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
-import type { Skill, SkillPayload } from "@/types/skill";
+import type { Skill } from "@/types/skill";
 import type { SessionResponse } from "@/types/session";
 
 const ICON_OPTIONS = [
@@ -240,7 +241,7 @@ const ICON_OPTIONS = [
 
 const NO_EMBEDDING_PROVIDER_VALUE = "__none";
 
-const skillFormSchema = z.object({
+export const skillFormSchema = z.object({
   name: z.string().trim().min(1, "Название обязательно").max(200, "Не более 200 символов"),
   description: z
     .string()
@@ -315,8 +316,8 @@ const skillFormSchema = z.object({
 
 
 
-const buildLlmKey = (providerId: string, modelId: string) => `${providerId}::${modelId}`;
-const catalogModelMap = (models: PublicModel[]) => new Map(models.map((m) => [m.key, m]));
+export const buildLlmKey = (providerId: string, modelId: string) => `${providerId}::${modelId}`;
+export const catalogModelMap = (models: PublicModel[]) => new Map(models.map((m) => [m.key, m]));
 const costLevelLabel: Record<PublicModel["costLevel"], string> = {
   FREE: "Free",
   LOW: "Low",
@@ -325,7 +326,7 @@ const costLevelLabel: Record<PublicModel["costLevel"], string> = {
   VERY_HIGH: "Very high",
 };
 
-const defaultFormValues = {
+export const defaultFormValues = {
   name: "",
   description: "",
   mode: "rag" as "rag" | "llm",
@@ -344,9 +345,9 @@ const defaultFormValues = {
   onTranscriptionAutoActionId: "",
 };
 
-type SkillFormValues = z.infer<typeof skillFormSchema>;
+export type SkillFormValues = z.infer<typeof skillFormSchema>;
 
-type LlmSelectionOption = {
+export type LlmSelectionOption = {
   key: string;
   label: string;
   providerId: string;
@@ -633,6 +634,7 @@ type SkillActionsPreviewProps = {
 
 function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewProps) {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [archiveTarget, setArchiveTarget] = useState<Skill | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery<SkillActionConfigItem[]>({
@@ -959,24 +961,35 @@ function SkillActionsPreview({ skillId, canEdit = true }: SkillActionsPreviewPro
                         <>
                           <p className="text-sm font-medium leading-tight">{label}</p>
                           {ui.editable && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 px-2 text-xs"
-                              onClick={() =>
-                                setRows((prev) =>
-                                  prev.map((item) =>
-                                    item.action.id === row.action.id
-                                      ? { ...item, editing: true, draftLabel: item.labelOverride ?? label }
-                                      : item,
-                                  ),
-                                )
-                              }
-                              disabled={row.saving}
-                            >
-                              Переименовать
-                            </Button>
+                            <div className="flex flex-wrap gap-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs"
+                                onClick={() =>
+                                  setRows((prev) =>
+                                    prev.map((item) =>
+                                      item.action.id === row.action.id
+                                        ? { ...item, editing: true, draftLabel: item.labelOverride ?? label }
+                                        : item,
+                                    ),
+                                  )
+                                }
+                                disabled={row.saving}
+                              >
+                                Переименовать
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => navigate(`/skills/${skillId}/actions/${row.action.id}/edit`)}
+                              >
+                                Открыть страницу
+                              </Button>
+                            </div>
                           )}
                         </>
                       )}
@@ -1084,9 +1097,7 @@ function ActionsPreviewForNewSkill() {
   );
 }
 
-type SkillFormDialogProps = {
-  open: boolean;
-  onOpenChange: (next: boolean) => void;
+type SkillFormProps = {
   knowledgeBases: KnowledgeBaseSummary[];
   vectorCollections: VectorCollectionSummary[];
   isVectorCollectionsLoading: boolean;
@@ -1097,11 +1108,12 @@ type SkillFormDialogProps = {
   isSubmitting: boolean;
   skill?: Skill | null;
   getIconComponent: (iconName: string | null | undefined) => JSX.Element | null;
+  onCancel?: () => void;
+  hideHeader?: boolean;
+  isOpen?: boolean;
 };
 
-function SkillFormDialog({
-  open,
-  onOpenChange,
+export function SkillFormContent({
   knowledgeBases,
   vectorCollections,
   isVectorCollectionsLoading,
@@ -1112,7 +1124,10 @@ function SkillFormDialog({
   isSubmitting,
   skill,
   getIconComponent,
-}: SkillFormDialogProps) {
+  onCancel,
+  hideHeader = false,
+  isOpen = true,
+}: SkillFormProps) {
   const form = useForm<SkillFormValues>({
     resolver: zodResolver(skillFormSchema),
     defaultValues: defaultFormValues,
@@ -1202,7 +1217,7 @@ function SkillFormDialog({
   }, [llmOptions, skill]);
 
   useEffect(() => {
-    if (!open) {
+    if (!isOpen) {
       form.reset(defaultFormValues);
       return;
     }
@@ -1246,7 +1261,7 @@ function SkillFormDialog({
 
     const fallbackLlmKey = effectiveLlmOptions.find((option) => !option.disabled)?.key ?? "";
     form.reset({ ...defaultFormValues, llmKey: fallbackLlmKey });
-  }, [open, skill, form, effectiveLlmOptions]);
+  }, [isOpen, skill, form, effectiveLlmOptions]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
     if (isSystemSkill) {
@@ -1259,26 +1274,26 @@ function SkillFormDialog({
   const llmDisabled = effectiveLlmOptions.length === 0;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-5xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+    <div className="space-y-5">
+      {!hideHeader && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
             {skill?.icon && getIconComponent(skill.icon)}
-            {skill ? "Редактирование навыка" : "Создание навыка"}
-          </DialogTitle>
-          <DialogDescription>
+            <h2 className="text-xl font-semibold">{skill ? "Редактирование навыка" : "Создание навыка"}</h2>
+          </div>
+          <p className="text-sm text-muted-foreground">
             Настройте параметры навыка: выберите связанные базы знаний, модель LLM и при необходимости систем промпт.
-          </DialogDescription>
-
+          </p>
           {isSystemSkill && (
             <Alert variant="default">
               <AlertTitle>Системный навык</AlertTitle>
               <AlertDescription>{systemSkillDescription}</AlertDescription>
             </Alert>
           )}
-        </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={handleSubmit} className="space-y-5">
+        </div>
+      )}
+      <Form {...form}>
+        <form onSubmit={handleSubmit} className="space-y-5">
 
             <fieldset disabled={controlsDisabled} className="space-y-5">
             <FormField
@@ -1813,7 +1828,7 @@ function SkillFormDialog({
             </fieldset>
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
+              <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
                 Отменить
               </Button>
               <Button type="submit" disabled={isSubmitting || isSystemSkill}>
@@ -1824,10 +1839,11 @@ function SkillFormDialog({
             </DialogFooter>
           </form>
         </Form>
-      </DialogContent>
-    </Dialog>
+      </Form>
+    </div>
   );
 }
+
 
 async function fetchKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSummary[]> {
   const response = await apiRequest("GET", "/api/knowledge/bases", undefined, undefined, { workspaceId });
@@ -1835,6 +1851,7 @@ async function fetchKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSu
 }
 
 export default function SkillsPage() {
+  const [, navigate] = useLocation();
   const { data: session } = useQuery<SessionResponse>({
     queryKey: ["/api/auth/session"],
   });
@@ -1893,23 +1910,6 @@ export default function SkillsPage() {
   const { toast } = useToast();
   const [archiveTarget, setArchiveTarget] = useState<Skill | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
-
-  const { createSkill, isCreating } = useCreateSkill({
-    workspaceId,
-    onSuccess: () => {
-      toast({ title: "Навык сохранён" });
-    },
-  });
-  const { updateSkill, isUpdating } = useUpdateSkill({
-    workspaceId,
-    onSuccess: () => {
-      toast({ title: "Навык сохранён" });
-    },
-  });
-
-  const isSaving = isCreating || isUpdating;
 
   const knowledgeBaseMap = useMemo(() => {
     return new Map(knowledgeBases.map((kb) => [kb.id, kb]));
@@ -1972,18 +1972,6 @@ export default function SkillsPage() {
     return null;
   })();
 
-  const openCreateDialog = () => {
-    setEditingSkill(null);
-    setIsDialogOpen(true);
-  };
-
-  const handleDialogChange = (nextOpen: boolean) => {
-    setIsDialogOpen(nextOpen);
-    if (!nextOpen) {
-      setEditingSkill(null);
-    }
-  };
-
   const handleEditClick = (skill: Skill) => {
     if (skill.isSystem) {
       toast({
@@ -1996,9 +1984,7 @@ export default function SkillsPage() {
       });
       return;
     }
-
-    setEditingSkill(skill);
-    setIsDialogOpen(true);
+    navigate(`/skills/${skill.id}/edit`);
   };
 
   const handleArchiveSkill = async (skill: Skill) => {
@@ -2025,106 +2011,6 @@ export default function SkillsPage() {
     } finally {
       setIsArchiving(false);
       setArchiveTarget(null);
-    }
-  };
-
-  const handleSubmit = async (values: SkillFormValues) => {
-    const [providerId, modelId] = values.llmKey.split("::");
-    const catalogByKey = catalogModelMap(catalogLlmModels);
-    const resolvedModel = catalogByKey.get(modelId) ?? null;
-    if (!resolvedModel) {
-      form.setError("llmKey", { message: "Модель не найдена в каталоге или отключена" });
-      return;
-    }
-    if (values.onTranscriptionMode === "auto_action") {
-      const selectedAction = values.onTranscriptionAutoActionId?.trim();
-      if (!selectedAction) {
-        form.setError("onTranscriptionAutoActionId", { message: "Выберите действие для авто-запуска" });
-        return;
-      }
-    }
-    const parseIntegerOrDefault = (candidate: string | undefined, fallback: number) => {
-      if (!candidate) {
-        return fallback;
-      }
-      const parsed = Number.parseInt(candidate, 10);
-      if (!Number.isFinite(parsed)) {
-        return fallback;
-      }
-      return parsed;
-    };
-    const parseScoreOrDefault = (candidate: string | undefined, fallback: number) => {
-      if (!candidate) {
-        return fallback;
-      }
-      const parsed = Number.parseFloat(candidate);
-      if (!Number.isFinite(parsed)) {
-        return fallback;
-      }
-      return Math.min(1, Math.max(0, Number(parsed.toFixed(3))));
-    };
-    const ragTopK = Math.max(1, parseIntegerOrDefault(values.ragTopK, 5));
-    const ragMinScore = parseScoreOrDefault(values.ragMinScore, 0.7);
-    const sanitizedMaxTokens = values.ragMaxContextTokens?.trim();
-    let ragMaxContextTokens: number | null = null;
-    if (sanitizedMaxTokens) {
-      const parsed = Number.parseInt(sanitizedMaxTokens, 10);
-      ragMaxContextTokens = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-    }
-    const ragCollectionIds =
-      values.ragMode === "selected_collections"
-        ? values.ragCollectionIds.map((name) => name.trim()).filter((name) => name.length > 0)
-        : [];
-    const autoActionId =
-      values.onTranscriptionMode === "auto_action" && values.onTranscriptionAutoActionId
-        ? values.onTranscriptionAutoActionId.trim() || null
-        : null;
-    const payload: SkillPayload = {
-      name: values.name.trim(),
-      description: values.description?.trim() ? values.description.trim() : null,
-      systemPrompt: values.systemPrompt?.trim() ? values.systemPrompt.trim() : null,
-      icon: values.icon?.trim() ? values.icon.trim() : null,
-      knowledgeBaseIds: values.knowledgeBaseIds,
-      mode: values.mode,
-      llmProviderConfigId: providerId,
-      modelId: resolvedModel.key,
-      ragConfig: {
-        mode: values.ragMode,
-        collectionIds: ragCollectionIds,
-        topK: ragTopK,
-        minScore: ragMinScore,
-        maxContextTokens: ragMaxContextTokens,
-        showSources: values.ragShowSources,
-        embeddingProviderId:
-          values.ragEmbeddingProviderId && values.ragEmbeddingProviderId !== NO_EMBEDDING_PROVIDER_VALUE
-            ? values.ragEmbeddingProviderId.trim()
-            : null,
-        bm25Weight: null,
-        bm25Limit: null,
-        vectorWeight: null,
-        vectorLimit: null,
-        llmTemperature: null,
-        llmMaxTokens: null,
-        llmResponseFormat: null,
-      },
-      onTranscriptionMode: values.onTranscriptionMode,
-      onTranscriptionAutoActionId: autoActionId,
-    };
-
-    try {
-      if (editingSkill) {
-        await updateSkill({ skillId: editingSkill.id, payload });
-      } else {
-        await createSkill(payload);
-      }
-      handleDialogChange(false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Неизвестная ошибка";
-      toast({
-        title: "Не удалось сохранить навык",
-        description: message,
-        variant: "destructive",
-      });
     }
   };
 
@@ -2213,7 +2099,7 @@ export default function SkillsPage() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
-          <Button onClick={openCreateDialog} disabled={Boolean(creationDisabledReason)}>
+          <Button onClick={() => navigate("/skills/new")} disabled={Boolean(creationDisabledReason)}>
             <Plus className="mr-2 h-4 w-4" /> Создать навык
           </Button>
           {creationDisabledReason && (
@@ -2364,20 +2250,6 @@ export default function SkillsPage() {
         </CardContent>
       </Card>
 
-      <SkillFormDialog
-        open={isDialogOpen}
-        onOpenChange={handleDialogChange}
-        knowledgeBases={knowledgeBases}
-        vectorCollections={vectorCollections}
-        isVectorCollectionsLoading={vectorCollectionsQuery.isLoading}
-        embeddingProviders={embeddingProviders}
-        isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
-        llmOptions={llmOptions}
-        onSubmit={handleSubmit}
-        isSubmitting={isSaving}
-        skill={editingSkill}
-        getIconComponent={getIconComponent}
-      />
       <Dialog open={Boolean(archiveTarget)} onOpenChange={(open) => !open && setArchiveTarget(null)}>
         <DialogContent>
           <DialogHeader>

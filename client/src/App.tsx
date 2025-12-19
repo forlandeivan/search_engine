@@ -44,6 +44,8 @@ import { useToast } from "@/hooks/use-toast";
 import type { PublicUser } from "@shared/schema";
 import type { SessionResponse, WorkspaceState } from "@/types/session";
 import type { CSSProperties } from "react";
+import SkillSettingsPage from "@/pages/SkillSettingsPage";
+import ActionSettingsPage from "@/pages/ActionSettingsPage";
 
 function AdminRouter() {
   return (
@@ -97,6 +99,15 @@ function MainRouter() {
       <Route path="/knowledge/:knowledgeBaseId/node/:nodeId" component={KnowledgeBasePage} />
       <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
       <Route path="/knowledge" component={KnowledgeBasePage} />
+      <Route path="/skills/new">
+        <SkillSettingsPage isNew />
+      </Route>
+      <Route path="/skills/:skillId/actions/:actionId/edit">
+        {(params) => <ActionSettingsPage actionId={params.actionId} skillId={params.skillId} />}
+      </Route>
+      <Route path="/skills/:skillId/edit">
+        {(params) => <SkillSettingsPage skillId={params.skillId} />}
+      </Route>
       <Route path="/skills" component={SkillsPage} />
       <Route path="/workspaces/:workspaceId/actions" component={WorkspaceActionsPage} />
       <Route path="/workspaces/actions" component={WorkspaceActionsPage} />
