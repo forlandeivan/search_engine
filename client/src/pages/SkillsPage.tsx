@@ -1473,100 +1473,111 @@ export function SkillFormContent({
 
             <TabsContent value="llm" className="space-y-5">
               <fieldset disabled={controlsDisabled} className="space-y-5">
-                <FormField
-                  control={form.control}
-                  name="mode"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Тип навыка</FormLabel>
-                      <FormControl>
-                        <RadioGroup
-                          value={field.value}
-                          onValueChange={controlsDisabled ? undefined : field.onChange}
-                          className="grid gap-3 md:grid-cols-2"
-                        >
-                          <div className="rounded-lg border p-3">
-                            <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                              <RadioGroupItem value="rag" id="skill-mode-rag" className="mt-1" disabled={controlsDisabled} />
-                              <span>
-                                RAG-навык
-                                <span className="block text-xs font-normal text-muted-foreground">
-                                  Использует базу знаний и поиск перед генерацией ответа.
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-semibold">Конфигурация модели</h3>
+                    <p className="text-sm text-muted-foreground">Выберите тип навыка и конкретную модель LLM.</p>
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="mode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Тип навыка</FormLabel>
+                        <FormControl>
+                          <RadioGroup
+                            value={field.value}
+                            onValueChange={controlsDisabled ? undefined : field.onChange}
+                            className="grid gap-3 md:grid-cols-2"
+                          >
+                            <div className="rounded-lg border p-3">
+                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                <RadioGroupItem value="rag" id="skill-mode-rag" className="mt-1" disabled={controlsDisabled} />
+                                <span>
+                                  RAG-навык
+                                  <span className="block text-xs font-normal text-muted-foreground">
+                                    Использует базу знаний и поиск перед генерацией ответа.
+                                  </span>
                                 </span>
-                              </span>
-                            </label>
-                          </div>
-                          <div className="rounded-lg border p-3">
-                            <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                              <RadioGroupItem value="llm" id="skill-mode-llm" className="mt-1" disabled={controlsDisabled} />
-                              <span>
-                                LLM-навык
-                                <span className="block text-xs font-normal text-muted-foreground">
-                                  Обращается напрямую к модели LLM без RAG-поиска.
+                              </label>
+                            </div>
+                            <div className="rounded-lg border p-3">
+                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                <RadioGroupItem value="llm" id="skill-mode-llm" className="mt-1" disabled={controlsDisabled} />
+                                <span>
+                                  LLM-навык
+                                  <span className="block text-xs font-normal text-muted-foreground">
+                                    Обращается напрямую к модели LLM без RAG-поиска.
+                                  </span>
                                 </span>
-                              </span>
-                            </label>
-                          </div>
-                        </RadioGroup>
-                      </FormControl>
-                      <FormDescription>
-                        Определяет, нужен ли этому навыку RAG-пайплайн или только LLM.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                              </label>
+                            </div>
+                          </RadioGroup>
+                        </FormControl>
+                        <FormDescription>
+                          Определяет, нужен ли этому навыку RAG-пайплайн или только LLM.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                <FormField
-                  control={form.control}
-                  name="llmKey"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>LLM провайдер и модель</FormLabel>
-                      <FormControl>
-                        <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Выберите модель" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {effectiveLlmOptions.map((option) => (
-                              <SelectItem key={option.key} value={option.key} disabled={option.disabled}>
-                                <div className="flex flex-col gap-0.5">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-medium">{option.label}</span>
-                                    <Badge variant="outline" className="uppercase tracking-wide">
-                                      {costLevelLabel[option.costLevel]}
-                                    </Badge>
+                  <FormField
+                    control={form.control}
+                    name="llmKey"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>LLM провайдер и модель</FormLabel>
+                        <FormControl>
+                          <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Выберите модель" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {effectiveLlmOptions.map((option) => (
+                                <SelectItem key={option.key} value={option.key} disabled={option.disabled}>
+                                  <div className="flex flex-col gap-0.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium">{option.label}</span>
+                                      <Badge variant="outline" className="uppercase tracking-wide">
+                                        {costLevelLabel[option.costLevel]}
+                                      </Badge>
+                                    </div>
+                                    {!option.providerIsActive && (
+                                      <span className="text-xs text-muted-foreground">Провайдер отключён</span>
+                                    )}
                                   </div>
-                                  {!option.providerIsActive && (
-                                    <span className="text-xs text-muted-foreground">Провайдер отключён</span>
-                                  )}
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </FormControl>
-                      <FormDescription>Используется для генеративных ответов навыка.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormControl>
+                        <FormDescription>Используется для генеративных ответов навыка.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-                <FormField
-                  control={form.control}
-                  name="systemPrompt"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Системный промпт</FormLabel>
-                      <FormControl>
-                        <Textarea {...field} rows={4} placeholder="Добавьте инструкции для модели" />
-                      </FormControl>
-                      <FormDescription>Опциональные инструкции, которые всегда будут отправляться в LLM.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-semibold">Системный промпт</h3>
+                    <p className="text-sm text-muted-foreground">Инструкции, которые всегда отправляются вместе с запросом.</p>
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="systemPrompt"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <Textarea {...field} rows={4} placeholder="Добавьте инструкции для модели" />
+                        </FormControl>
+                        <FormDescription>Опциональные инструкции, которые всегда будут отправляться в LLM.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
                 <div className="space-y-4 rounded-lg border p-4">
                   <div className="space-y-1">
@@ -1679,254 +1690,251 @@ export function SkillFormContent({
 
             <TabsContent value="rag" className="space-y-5">
               <fieldset disabled={controlsDisabled} className="space-y-5">
-                {isRagModeSelected ? (
-                  <>
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-semibold">Базы знаний</h3>
+                    <p className="text-sm text-muted-foreground">Навык будет искать ответы только в выбранных базах знаний.</p>
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="knowledgeBaseIds"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <KnowledgeBaseMultiSelect
+                            value={field.value}
+                            onChange={field.onChange}
+                            knowledgeBases={sortedKnowledgeBases}
+                            disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-semibold">Коллекции и режим</h3>
+                    <p className="text-sm text-muted-foreground">Управляют тем, где искать и сколько текста отдавать в ответах.</p>
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="ragMode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Режим использования коллекций</FormLabel>
+                        <FormControl>
+                          <RadioGroup
+                            value={field.value}
+                            onValueChange={controlsDisabled ? undefined : field.onChange}
+                            className="grid gap-3 md:grid-cols-2"
+                          >
+                            <div className="rounded-lg border p-3">
+                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                <RadioGroupItem value="all_collections" id="rag-mode-all" className="mt-1" disabled={controlsDisabled} />
+                                <span>
+                                  Все коллекции
+                                  <span className="block text-xs font-normal text-muted-foreground">
+                                    Навык автоматически ищет во всех коллекциях рабочей области.
+                                  </span>
+                                </span>
+                              </label>
+                            </div>
+                            <div className="rounded-lg border p-3">
+                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                <RadioGroupItem value="selected_collections" id="rag-mode-selected" className="mt-1" disabled={controlsDisabled} />
+                                <span>
+                                  Выбрать вручную
+                                  <span className="block text-xs font-normal text-muted-foreground">
+                                    Укажите конкретные коллекции, в которых навык может искать ответы.
+                                  </span>
+                                </span>
+                              </label>
+                            </div>
+                          </RadioGroup>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {isManualRagMode ? (
                     <FormField
                       control={form.control}
-                      name="knowledgeBaseIds"
+                      name="ragCollectionIds"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Базы знаний</FormLabel>
+                          <FormLabel>Коллекции для навыка</FormLabel>
                           <FormControl>
-                            <KnowledgeBaseMultiSelect
+                            <VectorCollectionMultiSelect
                               value={field.value}
                               onChange={field.onChange}
-                              knowledgeBases={sortedKnowledgeBases}
-                              disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
+                              collections={vectorCollections}
+                              disabled={vectorCollectionsDisabled}
                             />
                           </FormControl>
                           <FormDescription>
-                            Навык будет искать ответы только в выбранных базах знаний.
+                            {isVectorCollectionsLoading
+                              ? "Загружаем список коллекций..."
+                              : vectorCollectionsEmpty
+                                ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
+                                : "Можно выбрать одну или несколько коллекций рабочего пространства."}
                           </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
+                  ) : null}
+                </div>
 
-                    <div className="space-y-4 rounded-lg border p-4">
-                      <div className="space-y-1">
-                        <h3 className="text-base font-semibold">RAG-настройки</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Управляют тем, по каким коллекциям искать и сколько текста отдавать в ответах навыка.
-                        </p>
-                      </div>
-                      <FormField
-                        control={form.control}
-                        name="ragMode"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Режим использования коллекций</FormLabel>
-                            <FormControl>
-                              <RadioGroup
-                                value={field.value}
-                                onValueChange={controlsDisabled ? undefined : field.onChange}
-                                className="grid gap-3 md:grid-cols-2"
-                              >
-                                <div className="rounded-lg border p-3">
-                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                    <RadioGroupItem value="all_collections" id="rag-mode-all" className="mt-1" disabled={controlsDisabled} />
-                                    <span>
-                                      Все коллекции
-                                      <span className="block text-xs font-normal text-muted-foreground">
-                                        Навык автоматически ищет во всех коллекциях рабочей области.
-                                      </span>
-                                    </span>
-                                  </label>
-                                </div>
-                                <div className="rounded-lg border p-3">
-                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                    <RadioGroupItem value="selected_collections" id="rag-mode-selected" className="mt-1" disabled={controlsDisabled} />
-                                    <span>
-                                      Выбрать вручную
-                                      <span className="block text-xs font-normal text-muted-foreground">
-                                        Укажите конкретные коллекции, в которых навык может искать ответы.
-                                      </span>
-                                    </span>
-                                  </label>
-                                </div>
-                              </RadioGroup>
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      {isManualRagMode && (
-                        <FormField
-                          control={form.control}
-                          name="ragCollectionIds"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Коллекции для навыка</FormLabel>
-                              <FormControl>
-                                <VectorCollectionMultiSelect
-                                  value={field.value}
-                                  onChange={field.onChange}
-                                  collections={vectorCollections}
-                                  disabled={vectorCollectionsDisabled}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {isVectorCollectionsLoading
-                                  ? "Загружаем список коллекций..."
-                                  : vectorCollectionsEmpty
-                                    ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
-                                    : "Можно выбрать одну или несколько коллекций рабочего пространства."}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      <FormField
-                        control={form.control}
-                        name="ragEmbeddingProviderId"
-                        render={({ field }) => (
-                          <FormItem>
-                            <div className="flex items-center gap-2">
-                              <FormLabel>Сервис эмбеддингов</FormLabel>
-                              <InfoTooltipIcon text="Используется для генерации вектора запроса перед поиском по коллекциям." />
-                            </div>
-                            <Select
-                              value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
-                              onValueChange={field.onChange}
-                              disabled={embeddingProviderSelectDisabled}
-                            >
-                              <SelectTrigger>
-                                <SelectValue
-                                  placeholder={
-                                    embeddingProvidersUnavailable
-                                      ? "Загрузка..."
-                                      : embeddingProvidersEmpty
-                                        ? "Нет доступных сервисов"
-                                        : "Выберите сервис"
-                                  }
-                                />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
-                                {effectiveEmbeddingProviderOptions.map((provider) => (
-                                  <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
-                                    <div className="flex flex-col gap-0.5">
-                                      <span>{provider.name}</span>
-                                      {!provider.isActive && (
-                                        <span className="text-xs text-muted-foreground">Провайдер отключён</span>
-                                      )}
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormDescription>
-                              Провайдер должен совпадать с тем, что используется для выбранных коллекций.
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <FormField
-                          control={form.control}
-                          name="ragTopK"
-                          render={({ field }) => (
-                            <FormItem>
-                              <div className="flex items-center gap-2">
-                                <FormLabel>topK</FormLabel>
-                                <InfoTooltipIcon text="Число чанков, которые ищем для каждого запроса. Больше — точнее, но дороже. По умолчанию 5." />
-                              </div>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  min={1}
-                                  max={50}
-                                  placeholder="5"
-                                  value={field.value ?? ""}
-                                  onChange={(event) => field.onChange(event.target.value)}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={form.control}
-                          name="ragMinScore"
-                          render={({ field }) => (
-                            <FormItem>
-                              <div className="flex items-center gap-2">
-                                <FormLabel>minScore</FormLabel>
-                                <InfoTooltipIcon text="Минимальная релевантность чанка (0–1). Всё, что ниже порога, отбрасывается." />
-                              </div>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  step="0.05"
-                                  min={0}
-                                  max={1}
-                                  placeholder="0.7"
-                                  value={field.value ?? ""}
-                                  onChange={(event) => field.onChange(event.target.value)}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-
-                      <FormField
-                        control={form.control}
-                        name="ragMaxContextTokens"
-                        render={({ field }) => (
-                          <FormItem>
-                            <div className="flex items-center gap-2">
-                              <FormLabel>Лимит контекста (токены)</FormLabel>
-                              <InfoTooltipIcon text="Мягкий лимит на суммарный текст из базы знаний для одного ответа LLM. Если пусто — используем настройку по умолчанию." />
-                            </div>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={500}
-                                placeholder="3000"
-                                value={field.value ?? ""}
-                                onChange={(event) => field.onChange(event.target.value)}
-                              />
-                            </FormControl>
-                            <FormDescription>Оставьте поле пустым, чтобы использовать стандартное значение.</FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="ragShowSources"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
-                            <div className="space-y-0.5">
-                              <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
-                              <FormDescription>Показывает пользователю документы и ссылки, из которых взяты чанки.</FormDescription>
-                            </div>
-                            <FormControl>
-                              <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                    Выберите тип навыка «RAG», чтобы настроить параметры поиска и коллекции.
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-semibold">Провайдер эмбеддингов</h3>
+                    <p className="text-sm text-muted-foreground">Должен совпадать с тем, что использует выбранная коллекция.</p>
                   </div>
-                )}
+                  <FormField
+                    control={form.control}
+                    name="ragEmbeddingProviderId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <Select
+                          value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
+                          onValueChange={field.onChange}
+                          disabled={embeddingProviderSelectDisabled}
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={
+                                embeddingProvidersUnavailable
+                                  ? "Загрузка..."
+                                  : embeddingProvidersEmpty
+                                    ? "Нет доступных сервисов"
+                                    : "Выберите сервис"
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
+                            {effectiveEmbeddingProviderOptions.map((provider) => (
+                              <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
+                                <div className="flex flex-col gap-0.5">
+                                  <span>{provider.name}</span>
+                                  {!provider.isActive && (
+                                    <span className="text-xs text-muted-foreground">Провайдер отключён</span>
+                                  )}
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-semibold">Параметры поиска</h3>
+                    <p className="text-sm text-muted-foreground">Управляют объёмом и точностью выдачи.</p>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="ragTopK"
+                      render={({ field }) => (
+                        <FormItem>
+                          <div className="flex items-center gap-2">
+                            <FormLabel>topK</FormLabel>
+                            <InfoTooltipIcon text="Число чанков, которые ищем для каждого запроса. Больше — точнее, но дороже. По умолчанию 5." />
+                          </div>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={50}
+                              placeholder="5"
+                              value={field.value ?? ""}
+                              onChange={(event) => field.onChange(event.target.value)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="ragMinScore"
+                      render={({ field }) => (
+                        <FormItem>
+                          <div className="flex items-center gap-2">
+                            <FormLabel>minScore</FormLabel>
+                            <InfoTooltipIcon text="Минимальная релевантность чанка (0–1). Всё, что ниже порога, отбрасывается." />
+                          </div>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="0.05"
+                              min={0}
+                              max={1}
+                              placeholder="0.7"
+                              value={field.value ?? ""}
+                              onChange={(event) => field.onChange(event.target.value)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  <FormField
+                    control={form.control}
+                    name="ragMaxContextTokens"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="flex items-center gap-2">
+                          <FormLabel>Лимит контекста (токены)</FormLabel>
+                          <InfoTooltipIcon text="Мягкий лимит на суммарный текст из базы знаний для одного ответа LLM. Если пусто — используем настройку по умолчанию." />
+                        </div>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={500}
+                            placeholder="3000"
+                            value={field.value ?? ""}
+                            onChange={(event) => field.onChange(event.target.value)}
+                          />
+                        </FormControl>
+                        <FormDescription>Оставьте поле пустым, чтобы использовать стандартное значение.</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="ragShowSources"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
+                          <FormDescription>Показывает пользователю документы и ссылки, из которых взяты чанки.</FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </div>
               </fieldset>
             </TabsContent>
 
             <TabsContent value="actions" className="space-y-4">
-              <fieldset className="space-y-2 rounded-xl border border-dashed border-slate-200 p-4 dark:border-slate-800">
+              <fieldset className="space-y-3 rounded-xl border border-dashed border-slate-200 p-4 dark:border-slate-800">
                 <div className="space-y-1">
                   <FormLabel className="text-base">Действия</FormLabel>
                   <FormDescription>

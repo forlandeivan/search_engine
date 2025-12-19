@@ -26,6 +26,13 @@ import {
   catalogModelMap,
 } from "./SkillsPage";
 
+const parseTab = (search: string | null | undefined): SkillSettingsTab | null => {
+  if (!search) return null;
+  const params = new URLSearchParams(search.startsWith("?") ? search : `?${search}`);
+  const tab = params.get("tab");
+  return tab === "llm" || tab === "rag" || tab === "actions" || tab === "main" ? tab : null;
+};
+
 type SkillSettingsPageProps = {
   skillId?: string;
   isNew?: boolean;
@@ -49,12 +56,9 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   const cameFromHistory = useRef<boolean>(false);
   const { toast } = useToast();
   const getInitialTab = (): SkillSettingsTab => {
-    const params = new URLSearchParams(location.split("?")[1] ?? "");
-    const tab = params.get("tab");
-    if (tab === "llm" || tab === "rag" || tab === "actions" || tab === "main") {
-      return tab;
-    }
-    return "main";
+    const fromWindow = typeof window !== "undefined" ? parseTab(window.location.search) : null;
+    const fromLocation = parseTab(location.split("?")[1]);
+    return fromWindow ?? fromLocation ?? "main";
   };
   const [activeTab, setActiveTab] = useState<SkillSettingsTab>(getInitialTab());
 
@@ -63,14 +67,9 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   }, []);
 
   useEffect(() => {
-    const params = new URLSearchParams(location.split("?")[1] ?? "");
-    const tabParam = params.get("tab");
-    if (tabParam === "llm" || tabParam === "rag" || tabParam === "actions" || tabParam === "main") {
-      if (tabParam !== activeTab) {
-        setActiveTab(tabParam);
-      }
-    } else if (activeTab !== "main") {
-      setActiveTab("main");
+    const parsed = typeof window !== "undefined" ? parseTab(window.location.search) : null;
+    if (parsed && parsed !== activeTab) {
+      setActiveTab(parsed);
     }
   }, [location, activeTab]);
 
