@@ -6,7 +6,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
@@ -296,20 +296,15 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
           <ArrowLeft className="h-4 w-4 mr-1" />
           Назад
         </Button>
-        <div>
+        <div className="space-y-1">
           <p className="text-xs text-muted-foreground">Настройки навыка</p>
-          <h1 className="text-2xl font-semibold break-all">
-            {isNew ? "Создание навыка" : currentSkill?.name ?? "Редактирование навыка"}
-          </h1>
-          {skillId && !isNew && <p className="text-xs text-muted-foreground">ID: {skillId}</p>}
+          {!isNew && currentSkill && (
+            <h1 className="text-lg font-medium text-foreground break-all">{currentSkill.name}</h1>
+          )}
         </div>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Редактирование навыка</CardTitle>
-          <CardDescription>Измените параметры навыка, базы знаний, модель LLM и действия.</CardDescription>
-        </CardHeader>
         <CardContent className="space-y-4">
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">

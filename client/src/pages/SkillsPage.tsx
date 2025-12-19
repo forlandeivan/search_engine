@@ -1113,6 +1113,65 @@ type SkillFormProps = {
   isOpen?: boolean;
 };
 
+function IconPicker({
+  value,
+  onChange,
+  renderIcon,
+}: {
+  value: string;
+  onChange: (icon: string) => void;
+  renderIcon: (name: string | null | undefined, className?: string) => JSX.Element | null;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-md border bg-white shadow-sm transition-colors dark:bg-slate-900",
+            value ? "border-primary" : "border-border hover:border-primary/60",
+          )}
+          aria-label="Выбрать иконку"
+        >
+          {renderIcon(value, "h-5 w-5") ?? <span className="text-xs text-muted-foreground">—</span>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[420px] max-h-[360px] overflow-y-auto">
+        <div className="grid grid-cols-9 gap-2">
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className={cn(
+              "flex h-10 w-10 items-center justify-center rounded-md border text-xs transition-colors",
+              value === "" ? "border-primary bg-primary/10" : "border-border hover:border-primary/60",
+            )}
+            aria-label="Без иконки"
+          >
+            ✕
+          </button>
+          {ICON_OPTIONS.map((icon) => {
+            const selected = value === icon.value;
+            return (
+              <button
+                key={icon.value}
+                type="button"
+                onClick={() => onChange(icon.value)}
+                className={cn(
+                  "flex h-10 w-10 items-center justify-center rounded-md border transition-colors",
+                  selected ? "border-primary bg-primary/10" : "border-border hover:border-primary/60",
+                )}
+                aria-label={icon.value}
+              >
+                {renderIcon(icon.value, "h-5 w-5")}
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function SkillFormContent({
   knowledgeBases,
   vectorCollections,
@@ -1276,14 +1335,36 @@ export function SkillFormContent({
   return (
     <div className="space-y-5">
       {!hideHeader && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            {skill?.icon && getIconComponent(skill.icon)}
-            <h2 className="text-xl font-semibold">{skill ? "Редактирование навыка" : "Создание навыка"}</h2>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <IconPicker
+              value={form.watch("icon") ?? ""}
+              onChange={(icon) => form.setValue("icon", icon, { shouldDirty: true })}
+              renderIcon={(iconName, className = "h-5 w-5") => {
+                if (!iconName) return null;
+                const iconMap: Record<string, typeof Zap> = {
+                  Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
+                  Airplay, AlertCircle, Archive, ArrowRight, Award, Backpack, BarChart2, Battery,
+                  Bell, BellOff, Binoculars, Bluetooth, Bold, BookMarked, Bookmark, Box,
+                  Briefcase, BriefcaseBusiness, Bug, Building, Building2, Calendar,
+                  Camera, CameraOff, Captions, Car, CarFront, Carrot, Cast, Castle,
+                  ChartArea, ChartLine, ChartPie, CheckCircle, CheckCircle2,
+                  ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Chrome, Circle, CircleDollarSign,
+                  CircleOff, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudOff, CloudRain,
+                  CloudRainWind, CloudSnow, Code, Code2, Codepen, Codesandbox, Coffee, Cog, Coins,
+                  Columns, Compass, ConciergeBell, Container, Contrast, Cookie, Copy,
+                  CreditCard, Crop, Crown, Cuboid, CupSoda,
+                };
+                const Icon = iconMap[iconName];
+                return Icon ? <Icon className={className} /> : null;
+              }}
+            />
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold">
+                {skill?.name && skill.name.trim().length > 0 ? skill.name : skill ? "Настройка навыка" : "Новый навык"}
+              </h2>
+            </div>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Настройте параметры навыка: выберите связанные базы знаний, модель LLM и при необходимости систем промпт.
-          </p>
           {isSystemSkill && (
             <Alert variant="default">
               <AlertTitle>Системный навык</AlertTitle>
@@ -1306,48 +1387,6 @@ export function SkillFormContent({
                     <Input {...field} placeholder="Например, Поддержка клиентов" />
                   </FormControl>
                   <FormDescription>Это имя будет отображаться в списке навыков.</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="icon"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Иконка навыка</FormLabel>
-                  <FormControl>
-                    <div className="border rounded-lg p-2 max-h-[360px] overflow-y-auto">
-                      <div className="grid grid-cols-6 gap-1">
-                        <button
-                          type="button"
-                          onClick={() => field.onChange("")}
-                          className={cn(
-                            "flex flex-col items-center justify-center gap-1 rounded-md border p-2 transition-all text-xs",
-                            field.value === "" ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
-                          )}
-                          title="Без иконки"
-                        >
-                          <span className="text-sm">✕</span>
-                        </button>
-                        {ICON_OPTIONS.map((icon) => (
-                          <button
-                            key={icon.value}
-                            type="button"
-                            onClick={() => field.onChange(icon.value)}
-                            className={cn(
-                              "flex flex-col items-center justify-center gap-1 rounded-md border p-2 transition-all",
-                              field.value === icon.value ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"
-                            )}
-                            title={icon.value}
-                          >
-                            {getIconComponent(icon.value)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </FormControl>
-                  <FormDescription>Выберите визуальный идентификатор для навыка</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
