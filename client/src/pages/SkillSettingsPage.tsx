@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -21,6 +21,7 @@ import {
   SkillFormContent,
   type SkillFormValues,
   type LlmSelectionOption,
+  type SkillSettingsTab,
   buildLlmKey,
   catalogModelMap,
 } from "./SkillsPage";
@@ -44,13 +45,41 @@ async function fetchKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSu
 }
 
 export default function SkillSettingsPage({ skillId, isNew = false }: SkillSettingsPageProps) {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const cameFromHistory = useRef<boolean>(false);
   const { toast } = useToast();
+  const getInitialTab = (): SkillSettingsTab => {
+    const params = new URLSearchParams(location.split("?")[1] ?? "");
+    const tab = params.get("tab");
+    if (tab === "llm" || tab === "rag" || tab === "actions" || tab === "main") {
+      return tab;
+    }
+    return "main";
+  };
+  const [activeTab, setActiveTab] = useState<SkillSettingsTab>(getInitialTab());
 
   useEffect(() => {
     cameFromHistory.current = window.history.length > 1;
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.split("?")[1] ?? "");
+    const tabParam = params.get("tab");
+    if (tabParam === "llm" || tabParam === "rag" || tabParam === "actions" || tabParam === "main") {
+      if (tabParam !== activeTab) {
+        setActiveTab(tabParam);
+      }
+    } else if (activeTab !== "main") {
+      setActiveTab("main");
+    }
+  }, [location, activeTab]);
+
+  const handleTabChange = (value: string) => {
+    const next: SkillSettingsTab = value === "llm" || value === "rag" || value === "actions" ? value : "main";
+    setActiveTab(next);
+    const base = location.split("?")[0];
+    navigate(`${base}?tab=${next}`, { replace: true });
+  };
 
   const goBack = () => {
     if (cameFromHistory.current) {
@@ -335,6 +364,8 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
                 getIconComponent={getIconComponent}
                 onCancel={goBack}
                 isOpen
+                activeTab={activeTab}
+                onTabChange={handleTabChange}
               />
               <Separator />
               <div className="flex justify-end">

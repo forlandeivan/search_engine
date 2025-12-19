@@ -144,6 +144,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { useSkills } from "@/hooks/useSkills";
 import { useModels, type PublicModel } from "@/hooks/useModels";
@@ -1111,7 +1112,11 @@ type SkillFormProps = {
   onCancel?: () => void;
   hideHeader?: boolean;
   isOpen?: boolean;
+  activeTab?: SkillSettingsTab;
+  onTabChange?: (tab: SkillSettingsTab) => void;
 };
+
+export type SkillSettingsTab = "main" | "llm" | "rag" | "actions";
 
 function IconPicker({
   value,
@@ -1186,11 +1191,24 @@ export function SkillFormContent({
   onCancel,
   hideHeader = false,
   isOpen = true,
+  activeTab,
+  onTabChange,
 }: SkillFormProps) {
+  const [internalTab, setInternalTab] = useState<SkillSettingsTab>("main");
   const form = useForm<SkillFormValues>({
     resolver: zodResolver(skillFormSchema),
     defaultValues: defaultFormValues,
   });
+  const currentTab = activeTab ?? internalTab;
+
+  const handleTabChange = (tab: string) => {
+    const next = (tab as SkillSettingsTab) ?? "main";
+    if (onTabChange) {
+      onTabChange(next);
+    } else {
+      setInternalTab(next);
+    }
+  };
   const isSystemSkill = Boolean(skill?.isSystem);
   const ragMode = form.watch("ragMode");
   const skillMode = form.watch("mode") ?? "rag";
@@ -1375,7 +1393,14 @@ export function SkillFormContent({
       )}
       <Form {...form}>
         <form onSubmit={handleSubmit} className="space-y-5">
-
+          <Tabs value={currentTab} onValueChange={handleTabChange} className="space-y-4">
+            <TabsList className="w-full justify-start">
+              <TabsTrigger value="main">Основное</TabsTrigger>
+              <TabsTrigger value="llm">LLM</TabsTrigger>
+              <TabsTrigger value="rag">RAG</TabsTrigger>
+              <TabsTrigger value="actions">Действия</TabsTrigger>
+            </TabsList>
+            <TabsContent value="main" className="space-y-5">
             <fieldset disabled={controlsDisabled} className="space-y-5">
             <FormField
               control={form.control}
@@ -1865,16 +1890,27 @@ export function SkillFormContent({
                 <ActionsPreviewForNewSkill />
               )}
             </fieldset>
+            </TabsContent>
+            <TabsContent value="llm">
+              <div className="rounded-lg border p-4 text-sm text-muted-foreground">Настройки LLM будут здесь.</div>
+            </TabsContent>
+            <TabsContent value="rag">
+              <div className="rounded-lg border p-4 text-sm text-muted-foreground">Настройки RAG будут здесь.</div>
+            </TabsContent>
+            <TabsContent value="actions">
+              <div className="rounded-lg border p-4 text-sm text-muted-foreground">Настройки действий будут здесь.</div>
+            </TabsContent>
+          </Tabs>
 
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
-                Отменить
-              </Button>
-              <Button type="submit" disabled={isSubmitting || isSystemSkill}>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
+              Отменить
+            </Button>
+            <Button type="submit" disabled={isSubmitting || isSystemSkill}>
 
-                {isSystemSkill ? "Недоступно" : isSubmitting ? "Сохраняем..." : "Сохранить"}
+              {isSystemSkill ? "Недоступно" : isSubmitting ? "Сохраняем..." : "Сохранить"}
 
-              </Button>
+            </Button>
           </DialogFooter>
         </form>
       </Form>
