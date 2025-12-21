@@ -11,84 +11,6 @@ import {
   ChevronsUpDown,
   Check,
   Info,
-  Zap,
-  Brain,
-  Search,
-  FileText,
-  MessageSquare,
-  Settings,
-  BookOpen,
-  Airplay,
-  AlertCircle,
-  Archive,
-  ArrowRight,
-  Award,
-  Backpack,
-  BarChart2,
-  Battery,
-  Bell,
-  BellOff,
-  Binoculars,
-  Bluetooth,
-  Bold,
-  BookMarked,
-  Bookmark,
-  Box,
-  Briefcase,
-  BriefcaseBusiness,
-  Bug,
-  Building,
-  Building2,
-  Calendar,
-  Camera,
-  CameraOff,
-  Captions,
-  Car,
-  CarFront,
-  Carrot,
-  Cast,
-  Castle,
-  ChartArea,
-  ChartLine,
-  ChartPie,
-  CheckCircle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  Chrome,
-  Circle,
-  CircleDollarSign,
-  CircleOff,
-  Clock,
-  Cloud,
-  CloudDrizzle,
-  CloudFog,
-  CloudLightning,
-  CloudOff,
-  CloudRain,
-  CloudRainWind,
-  CloudSnow,
-  Code,
-  Code2,
-  Codepen,
-  Codesandbox,
-  Coffee,
-  Cog,
-  Coins,
-  Columns,
-  Compass,
-  ConciergeBell,
-  Container,
-  Contrast,
-  Cookie,
-  Copy,
-  CreditCard,
-  Crop,
-  Crown,
-  Cuboid,
-  CupSoda,
 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -145,10 +67,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 import { useSkills } from "@/hooks/useSkills";
 import { useModels, type PublicModel } from "@/hooks/useModels";
 import { apiRequest } from "@/lib/queryClient";
+import { SKILL_ICON_OPTIONS, getSkillIcon } from "@/lib/skill-icons";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 
@@ -158,87 +82,7 @@ import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema"
 import type { Skill } from "@/types/skill";
 import type { SessionResponse } from "@/types/session";
 
-const ICON_OPTIONS = [
-  { value: "Zap" },
-  { value: "Brain" },
-  { value: "Search" },
-  { value: "FileText" },
-  { value: "MessageSquare" },
-  { value: "Settings" },
-  { value: "BookOpen" },
-  { value: "Sparkles" },
-  { value: "Airplay" },
-  { value: "AlertCircle" },
-  { value: "Archive" },
-  { value: "ArrowRight" },
-  { value: "Award" },
-  { value: "Backpack" },
-  { value: "BarChart2" },
-  { value: "Battery" },
-  { value: "Bell" },
-  { value: "BellOff" },
-  { value: "Binoculars" },
-  { value: "Bluetooth" },
-  { value: "Bold" },
-  { value: "BookMarked" },
-  { value: "Bookmark" },
-  { value: "Box" },
-  { value: "Briefcase" },
-  { value: "BriefcaseBusiness" },
-  { value: "Bug" },
-  { value: "Building" },
-  { value: "Building2" },
-  { value: "Calendar" },
-  { value: "Camera" },
-  { value: "CameraOff" },
-  { value: "Captions" },
-  { value: "Car" },
-  { value: "CarFront" },
-  { value: "Carrot" },
-  { value: "Cast" },
-  { value: "Castle" },
-  { value: "ChartArea" },
-  { value: "ChartLine" },
-  { value: "ChartPie" },
-  { value: "CheckCircle" },
-  { value: "CheckCircle2" },
-  { value: "ChevronDown" },
-  { value: "ChevronLeft" },
-  { value: "ChevronRight" },
-  { value: "ChevronUp" },
-  { value: "Chrome" },
-  { value: "Circle" },
-  { value: "CircleDollarSign" },
-  { value: "CircleOff" },
-  { value: "Clock" },
-  { value: "Cloud" },
-  { value: "CloudDrizzle" },
-  { value: "CloudFog" },
-  { value: "CloudLightning" },
-  { value: "CloudOff" },
-  { value: "CloudRain" },
-  { value: "CloudRainWind" },
-  { value: "CloudSnow" },
-  { value: "Code" },
-  { value: "Code2" },
-  { value: "Codepen" },
-  { value: "Codesandbox" },
-  { value: "Coffee" },
-  { value: "Cog" },
-  { value: "Coins" },
-  { value: "Columns" },
-  { value: "Compass" },
-  { value: "ConciergeBell" },
-  { value: "Container" },
-  { value: "Contrast" },
-  { value: "Cookie" },
-  { value: "Copy" },
-  { value: "CreditCard" },
-  { value: "Crop" },
-  { value: "Crown" },
-  { value: "Cuboid" },
-  { value: "CupSoda" },
-];
+const ICON_OPTIONS = SKILL_ICON_OPTIONS;
 
 const NO_EMBEDDING_PROVIDER_VALUE = "__none";
 
@@ -252,6 +96,8 @@ export const skillFormSchema = z.object({
   mode: z.enum(["rag", "llm"]).default("rag"),
   knowledgeBaseIds: z.array(z.string()).default([]),
   llmKey: z.string().min(1, "Выберите конфиг LLM"),
+  llmTemperature: z.string().optional().or(z.literal("")),
+  llmMaxTokens: z.string().optional().or(z.literal("")),
   systemPrompt: z
     .string()
     .max(20000, "Не более 20000 символов")
@@ -268,49 +114,33 @@ export const skillFormSchema = z.object({
   onTranscriptionMode: z.enum(["raw_only", "auto_action"]),
   onTranscriptionAutoActionId: z.string().optional().or(z.literal("")),
 }).superRefine((val, ctx) => {
-  if (val.mode === "rag") {
-    if (!val.knowledgeBaseIds || val.knowledgeBaseIds.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["knowledgeBaseIds"],
-        message: "Выберите хотя бы одну базу знаний",
-      });
-    }
-    if (val.ragMode === "selected_collections" && (!val.ragCollectionIds || val.ragCollectionIds.length === 0)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["ragCollectionIds"],
-        message: "Укажите хотя бы одну коллекцию",
-      });
-    }
-    if (!val.ragEmbeddingProviderId || val.ragEmbeddingProviderId === NO_EMBEDDING_PROVIDER_VALUE) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["ragEmbeddingProviderId"],
-        message: "Выберите сервис эмбеддингов",
-      });
-    }
-    if (!val.ragTopK || val.ragTopK.trim().length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["ragTopK"],
-        message: "Укажите количество документов",
-      });
-    }
-    if (!val.ragMinScore || val.ragMinScore.trim().length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["ragMinScore"],
-        message: "Укажите минимальный порог релевантности",
-      });
-    }
-    if (!val.ragMaxContextTokens || val.ragMaxContextTokens.trim().length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["ragMaxContextTokens"],
-        message: "Укажите лимит токенов контекста",
-      });
-    }
+  const hasKnowledgeBases = Boolean(val.knowledgeBaseIds?.length);
+  const hasCollections =
+    val.ragMode === "selected_collections" && Boolean(val.ragCollectionIds?.length);
+  const hasRagSources = hasKnowledgeBases || hasCollections;
+
+  if (hasCollections && !hasKnowledgeBases) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["knowledgeBaseIds"],
+      message: "Для коллекций выберите базу знаний",
+    });
+  }
+
+  if (hasRagSources && val.ragMode === "selected_collections" && (!val.ragCollectionIds || val.ragCollectionIds.length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["ragCollectionIds"],
+      message: "Укажите хотя бы одну коллекцию",
+    });
+  }
+
+  if (hasRagSources && (!val.ragEmbeddingProviderId || val.ragEmbeddingProviderId === NO_EMBEDDING_PROVIDER_VALUE)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["ragEmbeddingProviderId"],
+      message: "Выберите сервис эмбеддингов",
+    });
   }
 });
 
@@ -330,9 +160,11 @@ const costLevelLabel: Record<PublicModel["costLevel"], string> = {
 export const defaultFormValues = {
   name: "",
   description: "",
-  mode: "rag" as "rag" | "llm",
+  mode: "llm" as "rag" | "llm",
   knowledgeBaseIds: [] as string[],
   llmKey: "",
+  llmTemperature: "",
+  llmMaxTokens: "",
   systemPrompt: "",
   icon: "",
   ragMode: "all_collections" as "all_collections" | "selected_collections",
@@ -456,10 +288,9 @@ function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }:
   const selectedBases = useMemo(() => {
     return knowledgeBases.filter((kb) => selectedSet.has(kb.id));
   }, [knowledgeBases, selectedSet]);
-
-  const buttonLabel = selectedBases.length
-    ? `${selectedBases[0].name}${selectedBases.length > 1 ? ` +${selectedBases.length - 1}` : ""}`
-    : "Выберите базы знаний";
+  const MAX_BADGES = 2;
+  const visibleBadges = selectedBases.slice(0, MAX_BADGES);
+  const extraBadges = selectedBases.length - visibleBadges.length;
 
   const toggle = (id: string) => {
     if (selectedSet.has(id)) {
@@ -476,12 +307,30 @@ function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }:
           <Button
             type="button"
             variant="outline"
-            className="w-full justify-between"
+            className="w-full justify-between gap-2"
             role="combobox"
             aria-expanded={open}
             disabled={disabled || knowledgeBases.length === 0}
+            data-testid="libraries-multiselect"
           >
-            <span className="truncate">{knowledgeBases.length === 0 ? "Нет доступных баз" : buttonLabel}</span>
+            {knowledgeBases.length === 0 ? (
+              <span className="truncate">Нет доступных баз</span>
+            ) : selectedBases.length === 0 ? (
+              <span className="truncate text-muted-foreground">Выберите базы знаний</span>
+            ) : (
+              <span className="flex min-w-0 flex-wrap items-center gap-1">
+                {visibleBadges.map((kb) => (
+                  <Badge key={kb.id} variant="secondary" className="text-[11px]">
+                    {kb.name}
+                  </Badge>
+                ))}
+                {extraBadges > 0 && (
+                  <Badge variant="outline" className="text-[11px] text-muted-foreground">
+                    +{extraBadges}
+                  </Badge>
+                )}
+              </span>
+            )}
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
@@ -515,15 +364,6 @@ function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }:
           </Command>
         </PopoverContent>
       </Popover>
-      {selectedBases.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {selectedBases.map((kb) => (
-            <Badge key={kb.id} variant="secondary" className="text-xs">
-              {kb.name}
-            </Badge>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -541,9 +381,9 @@ function VectorCollectionMultiSelect({
   );
   const selectedSet = useMemo(() => new Set(value), [value]);
   const selected = sortedCollections.filter((collection) => selectedSet.has(collection.name));
-  const buttonLabel = selected.length
-    ? `${selected[0].name}${selected.length > 1 ? ` +${selected.length - 1}` : ""}`
-    : "Выберите коллекции";
+  const MAX_BADGES = 2;
+  const visibleBadges = selected.slice(0, MAX_BADGES);
+  const extraBadges = selected.length - visibleBadges.length;
 
   const toggle = (name: string) => {
     if (selectedSet.has(name)) {
@@ -560,12 +400,30 @@ function VectorCollectionMultiSelect({
           <Button
             type="button"
             variant="outline"
-            className="w-full justify-between"
+            className="w-full justify-between gap-2"
             role="combobox"
             aria-expanded={open}
             disabled={disabled || sortedCollections.length === 0}
+            data-testid="collections-multiselect"
           >
-            <span className="truncate">{sortedCollections.length === 0 ? "Коллекции не найдены" : buttonLabel}</span>
+            {sortedCollections.length === 0 ? (
+              <span className="truncate">Коллекции не найдены</span>
+            ) : selected.length === 0 ? (
+              <span className="truncate text-muted-foreground">Выберите коллекции</span>
+            ) : (
+              <span className="flex min-w-0 flex-wrap items-center gap-1">
+                {visibleBadges.map((collection) => (
+                  <Badge key={collection.name} variant="secondary" className="text-[11px]">
+                    {collection.name}
+                  </Badge>
+                ))}
+                {extraBadges > 0 && (
+                  <Badge variant="outline" className="text-[11px] text-muted-foreground">
+                    +{extraBadges}
+                  </Badge>
+                )}
+              </span>
+            )}
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
@@ -594,15 +452,6 @@ function VectorCollectionMultiSelect({
           </Command>
         </PopoverContent>
       </Popover>
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {selected.map((collection) => (
-            <Badge key={collection.name} variant="secondary" className="text-xs">
-              {collection.name}
-            </Badge>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -1116,7 +965,7 @@ type SkillFormProps = {
   onTabChange?: (tab: SkillSettingsTab) => void;
 };
 
-export type SkillSettingsTab = "main" | "llm" | "rag" | "actions";
+export type SkillSettingsTab = "main" | "transcription" | "actions";
 
 function IconPicker({
   value,
@@ -1208,7 +1057,7 @@ export function SkillFormContent({
   const currentTab = activeTab ?? internalTab;
 
   const handleTabChange = (tab: string) => {
-    const next = (tab as SkillSettingsTab) ?? "main";
+    const next: SkillSettingsTab = tab === "transcription" || tab === "actions" ? tab : "main";
     if (onTabChange) {
       onTabChange(next);
     } else {
@@ -1217,9 +1066,8 @@ export function SkillFormContent({
   };
   const isSystemSkill = Boolean(skill?.isSystem);
   const ragMode = form.watch("ragMode");
-  const skillMode = form.watch("mode") ?? "rag";
-  const isRagModeSelected = skillMode === "rag";
   const isManualRagMode = ragMode === "selected_collections";
+  const iconValue = form.watch("icon") ?? "";
   const transcriptionMode = form.watch("onTranscriptionMode");
   const isAutoActionMode = transcriptionMode === "auto_action";
   const vectorCollectionsEmpty = vectorCollections.length === 0;
@@ -1327,6 +1175,14 @@ export function SkillFormContent({
           skill.llmProviderConfigId && skill.modelId
             ? buildLlmKey(skill.llmProviderConfigId, skill.modelId)
             : "",
+        llmTemperature:
+          ragConfig.llmTemperature === null || ragConfig.llmTemperature === undefined
+            ? ""
+            : String(ragConfig.llmTemperature),
+        llmMaxTokens:
+          ragConfig.llmMaxTokens === null || ragConfig.llmMaxTokens === undefined
+            ? ""
+            : String(ragConfig.llmMaxTokens),
         systemPrompt: skill.systemPrompt ?? "",
         icon: skill.icon ?? "",
         ragMode: ragConfig.mode,
@@ -1357,41 +1213,9 @@ export function SkillFormContent({
   const llmDisabled = effectiveLlmOptions.length === 0;
 
   const renderIconPreview = (iconName: string | null | undefined, className = "h-5 w-5") => {
-    if (!iconName) return null;
-    const iconMap: Record<string, typeof Zap> = {
-      Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
-      Airplay, AlertCircle, Archive, ArrowRight, Award, Backpack, BarChart2, Battery,
-      Bell, BellOff, Binoculars, Bluetooth, Bold, BookMarked, Bookmark, Box,
-      Briefcase, BriefcaseBusiness, Bug, Building, Building2, Calendar,
-      Camera, CameraOff, Captions, Car, CarFront, Carrot, Cast, Castle,
-      ChartArea, ChartLine, ChartPie, CheckCircle, CheckCircle2,
-      ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Chrome, Circle, CircleDollarSign,
-      CircleOff, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudOff, CloudRain,
-      CloudRainWind, CloudSnow, Code, Code2, Codepen, Codesandbox, Coffee, Cog, Coins,
-      Columns, Compass, ConciergeBell, Container, Contrast, Cookie, Copy,
-      CreditCard, Crop, Crown, Cuboid, CupSoda,
-    };
-    const Icon = iconMap[iconName];
+    const Icon = getSkillIcon(iconName);
     return Icon ? <Icon className={className} /> : null;
   };
-
-  const SettingRow = ({
-    label,
-    description,
-    control,
-  }: {
-    label: string;
-    description?: string;
-    control: React.ReactNode;
-  }) => (
-    <div className="grid gap-2 rounded-lg border p-4 md:grid-cols-[240px_1fr] md:items-start">
-      <div className="space-y-1">
-        <p className="text-sm font-medium leading-tight">{label}</p>
-        {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
-      </div>
-      <div className="space-y-2">{control}</div>
-    </div>
-  );
 
   return (
     <div className="space-y-5">
@@ -1412,121 +1236,89 @@ export function SkillFormContent({
         <form onSubmit={handleSubmit} className="space-y-5">
           <Tabs value={currentTab} onValueChange={handleTabChange} className="space-y-4">
             <TabsList className="w-full justify-start">
-              <TabsTrigger value="main">Основное</TabsTrigger>
-              <TabsTrigger value="llm">LLM</TabsTrigger>
-              <TabsTrigger value="rag">RAG</TabsTrigger>
+              <TabsTrigger value="main" data-testid="skill-settings-tab-main">Основное</TabsTrigger>
+              <TabsTrigger value="transcription" data-testid="skill-settings-tab-transcription">Транскрипция</TabsTrigger>
               <TabsTrigger value="actions">Действия</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="main" className="space-y-4">
-              <SettingRow
-                label="Название"
-                description="Будет отображаться в списке навыков."
-                control={
-                  <FormField
-                    control={form.control}
-                    name="name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormControl>
-                          <Input {...field} placeholder="Например, Поддержка клиентов" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                }
-              />
-              <SettingRow
-                label="Описание"
-                description="Кратко опишите назначение навыка."
-                control={
+            <TabsContent value="main" className="space-y-5">
+              <fieldset disabled={controlsDisabled} className="space-y-5">
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-end" data-testid="skill-icon-name-row">
+                    <div className="space-y-2">
+                      <FormLabel>Иконка</FormLabel>
+                      <div className="flex items-center gap-3">
+                        <IconPicker
+                          value={iconValue}
+                          onChange={(icon) => form.setValue("icon", icon, { shouldDirty: true })}
+                          renderIcon={(iconName, className = "h-5 w-5") => renderIconPreview(iconName, className)}
+                          triggerClassName="h-10 w-10"
+                        />
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <span data-testid="skill-icon-label">{iconValue ? iconValue : "Не выбрана"}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <FormField
+                      control={form.control}
+                      name="name"
+                      render={({ field }) => (
+                        <FormItem className="flex-1">
+                          <FormLabel>Название</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="Например, Поддержка клиентов" data-testid="skill-name-input" />
+                          </FormControl>
+                          <FormDescription>Будет отображаться в списке навыков.</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                   <FormField
                     control={form.control}
                     name="description"
                     render={({ field }) => (
                       <FormItem>
+                        <FormLabel>Описание</FormLabel>
                         <FormControl>
-                          <Textarea {...field} placeholder="Помогает коллегам понимать, когда использовать навык" rows={3} />
+                          <Textarea
+                            {...field}
+                            placeholder="Помогает коллегам понимать, когда использовать навык"
+                            rows={3}
+                            data-testid="skill-description-input"
+                          />
                         </FormControl>
+                        <FormDescription>Кратко опишите назначение навыка.</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                }
-              />
-              <SettingRow
-                label="Иконка"
-                description="Выберите компактную иконку для навыка."
-                control={
-                  <div className="flex items-center gap-3">
-                    <IconPicker
-                      value={form.watch("icon") ?? ""}
-                      onChange={(icon) => form.setValue("icon", icon, { shouldDirty: true })}
-                      renderIcon={(iconName, className = "h-5 w-5") => renderIconPreview(iconName, className)}
-                      triggerClassName="h-10 w-10"
-                    />
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <span data-testid="skill-icon-label">
-                        {form.watch("icon") ? form.watch("icon") : "Не выбрана"}
-                      </span>
-                    </div>
-                  </div>
-                }
-              />
-            </TabsContent>
-
-            <TabsContent value="llm" className="space-y-5">
-              <fieldset disabled={controlsDisabled} className="space-y-5">
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Конфигурация модели</h3>
-                    <p className="text-sm text-muted-foreground">Выберите тип навыка и конкретную модель LLM.</p>
-                  </div>
                   <FormField
                     control={form.control}
-                    name="mode"
+                    name="systemPrompt"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Тип навыка</FormLabel>
+                        <FormLabel>Инструкция</FormLabel>
                         <FormControl>
-                          <RadioGroup
-                            value={field.value}
-                            onValueChange={controlsDisabled ? undefined : field.onChange}
-                            className="grid gap-3 md:grid-cols-2"
-                          >
-                            <div className="rounded-lg border p-3">
-                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                <RadioGroupItem value="rag" id="skill-mode-rag" className="mt-1" disabled={controlsDisabled} />
-                                <span>
-                                  RAG-навык
-                                  <span className="block text-xs font-normal text-muted-foreground">
-                                    Использует базу знаний и поиск перед генерацией ответа.
-                                  </span>
-                                </span>
-                              </label>
-                            </div>
-                            <div className="rounded-lg border p-3">
-                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                <RadioGroupItem value="llm" id="skill-mode-llm" className="mt-1" disabled={controlsDisabled} />
-                                <span>
-                                  LLM-навык
-                                  <span className="block text-xs font-normal text-muted-foreground">
-                                    Обращается напрямую к модели LLM без RAG-поиска.
-                                  </span>
-                                </span>
-                              </label>
-                            </div>
-                          </RadioGroup>
+                          <Textarea
+                            {...field}
+                            rows={4}
+                            placeholder="Добавьте инструкции для модели"
+                            data-testid="skill-instruction-textarea"
+                          />
                         </FormControl>
-                        <FormDescription>
-                          Определяет, нужен ли этому навыку RAG-пайплайн или только LLM.
-                        </FormDescription>
+                        <FormDescription>Инструкции, которые всегда будут отправляться в LLM.</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
+                </div>
 
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-semibold">Модель LLM</h3>
+                    <p className="text-sm text-muted-foreground">Выберите модель для генеративных ответов.</p>
+                  </div>
                   <FormField
                     control={form.control}
                     name="llmKey"
@@ -1535,7 +1327,7 @@ export function SkillFormContent({
                         <FormLabel>LLM провайдер и модель</FormLabel>
                         <FormControl>
                           <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
-                            <SelectTrigger>
+                            <SelectTrigger data-testid="llm-model-select">
                               <SelectValue placeholder="Выберите модель" />
                             </SelectTrigger>
                             <SelectContent>
@@ -1562,28 +1354,324 @@ export function SkillFormContent({
                       </FormItem>
                     )}
                   />
+
+                  <Accordion type="single" collapsible>
+                    <AccordionItem value="llm-advanced" className="border-none">
+                      <AccordionTrigger className="py-2" data-testid="llm-advanced-accordion">
+                        Параметры LLM
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <FormField
+                            control={form.control}
+                            name="llmTemperature"
+                            render={({ field }) => (
+                              <FormItem>
+                                <div className="flex items-center gap-2">
+                                  <FormLabel>Температура</FormLabel>
+                                  <InfoTooltipIcon text="Определяет вариативность ответа модели. Чем выше значение, тем более креативный ответ." />
+                                </div>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    step="0.1"
+                                    min={0}
+                                    max={2}
+                                    placeholder="0.7"
+                                    value={field.value ?? ""}
+                                    onChange={(event) => field.onChange(event.target.value)}
+                                    data-testid="llm-temperature-input"
+                                  />
+                                </FormControl>
+                                <FormDescription>Оставьте пустым, чтобы использовать значения провайдера.</FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="llmMaxTokens"
+                            render={({ field }) => (
+                              <FormItem>
+                                <div className="flex items-center gap-2">
+                                  <FormLabel>Макс. токенов ответа</FormLabel>
+                                  <InfoTooltipIcon text="Ограничивает длину ответа модели. Если пусто — используем настройки провайдера." />
+                                </div>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min={16}
+                                    max={4096}
+                                    placeholder="1024"
+                                    value={field.value ?? ""}
+                                    onChange={(event) => field.onChange(event.target.value)}
+                                    data-testid="llm-max-tokens-input"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
                 </div>
 
                 <div className="space-y-4 rounded-lg border p-4">
                   <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Системный промпт</h3>
-                    <p className="text-sm text-muted-foreground">Инструкции, которые всегда отправляются вместе с запросом.</p>
+                    <h3 className="text-base font-semibold">Базы знаний</h3>
+                    <p className="text-sm text-muted-foreground">Навык будет искать ответы только в выбранных базах знаний.</p>
                   </div>
                   <FormField
                     control={form.control}
-                    name="systemPrompt"
+                    name="knowledgeBaseIds"
                     render={({ field }) => (
                       <FormItem>
                         <FormControl>
-                          <Textarea {...field} rows={4} placeholder="Добавьте инструкции для модели" />
+                          <KnowledgeBaseMultiSelect
+                            value={field.value}
+                            onChange={field.onChange}
+                            knowledgeBases={sortedKnowledgeBases}
+                            disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
+                          />
                         </FormControl>
-                        <FormDescription>Опциональные инструкции, которые всегда будут отправляться в LLM.</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
                 </div>
 
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-semibold">Коллекции и режим</h3>
+                    <p className="text-sm text-muted-foreground">Управляют тем, где искать и сколько текста отдавать в ответах.</p>
+                  </div>
+                  <FormField
+                    control={form.control}
+                    name="ragMode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Режим использования коллекций</FormLabel>
+                        <FormControl>
+                          <RadioGroup
+                            value={field.value}
+                            onValueChange={controlsDisabled ? undefined : field.onChange}
+                            className="grid gap-3 md:grid-cols-2"
+                          >
+                            <div className="rounded-lg border p-3">
+                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                <RadioGroupItem value="all_collections" id="rag-mode-all" className="mt-1" disabled={controlsDisabled} />
+                                <span>
+                                  Все коллекции
+                                  <span className="block text-xs font-normal text-muted-foreground">
+                                    Навык автоматически ищет во всех коллекциях рабочей области.
+                                  </span>
+                                </span>
+                              </label>
+                            </div>
+                            <div className="rounded-lg border p-3">
+                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                <RadioGroupItem value="selected_collections" id="rag-mode-selected" className="mt-1" disabled={controlsDisabled} />
+                                <span>
+                                  Выбрать вручную
+                                  <span className="block text-xs font-normal text-muted-foreground">
+                                    Укажите конкретные коллекции, в которых навык может искать ответы.
+                                  </span>
+                                </span>
+                              </label>
+                            </div>
+                          </RadioGroup>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {isManualRagMode ? (
+                    <FormField
+                      control={form.control}
+                      name="ragCollectionIds"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Коллекции для навыка</FormLabel>
+                          <FormControl>
+                            <VectorCollectionMultiSelect
+                              value={field.value}
+                              onChange={field.onChange}
+                              collections={vectorCollections}
+                              disabled={vectorCollectionsDisabled}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {isVectorCollectionsLoading
+                              ? "Загружаем список коллекций..."
+                              : vectorCollectionsEmpty
+                                ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
+                                : "Можно выбрать одну или несколько коллекций рабочего пространства."}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  ) : null}
+                </div>
+
+                <div className="rounded-lg border p-4">
+                  <Accordion type="single" collapsible>
+                    <AccordionItem value="rag-advanced" className="border-none">
+                      <AccordionTrigger className="py-2">RAG (дополнительно)</AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-4">
+                          <div className="space-y-1">
+                            <h3 className="text-base font-semibold">Провайдер эмбеддингов</h3>
+                            <p className="text-sm text-muted-foreground">
+                              Должен совпадать с тем, что использует выбранная коллекция.
+                            </p>
+                          </div>
+                          <FormField
+                            control={form.control}
+                            name="ragEmbeddingProviderId"
+                            render={({ field }) => (
+                              <FormItem>
+                                <Select
+                                  value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
+                                  onValueChange={field.onChange}
+                                  disabled={embeddingProviderSelectDisabled}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue
+                                      placeholder={
+                                        embeddingProvidersUnavailable
+                                          ? "Загрузка..."
+                                          : embeddingProvidersEmpty
+                                            ? "Нет доступных сервисов"
+                                            : "Выберите сервис"
+                                      }
+                                    />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
+                                    {effectiveEmbeddingProviderOptions.map((provider) => (
+                                      <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
+                                        <div className="flex flex-col gap-0.5">
+                                          <span>{provider.name}</span>
+                                          {!provider.isActive && (
+                                            <span className="text-xs text-muted-foreground">Провайдер отключён</span>
+                                          )}
+                                        </div>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <div className="space-y-1">
+                            <h3 className="text-base font-semibold">Параметры поиска</h3>
+                            <p className="text-sm text-muted-foreground">Управляют объёмом и точностью выдачи.</p>
+                          </div>
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <FormField
+                              control={form.control}
+                              name="ragTopK"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <div className="flex items-center gap-2">
+                                    <FormLabel>topK</FormLabel>
+                                    <InfoTooltipIcon text="Число чанков, которые ищем для каждого запроса. Больше — точнее, но дороже. По умолчанию 5." />
+                                  </div>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      max={50}
+                                      placeholder="5"
+                                      value={field.value ?? ""}
+                                      onChange={(event) => field.onChange(event.target.value)}
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="ragMinScore"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <div className="flex items-center gap-2">
+                                    <FormLabel>minScore</FormLabel>
+                                    <InfoTooltipIcon text="Минимальная релевантность чанка (0–1). Всё, что ниже порога, отбрасывается." />
+                                  </div>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      step="0.05"
+                                      min={0}
+                                      max={1}
+                                      placeholder="0.7"
+                                      value={field.value ?? ""}
+                                      onChange={(event) => field.onChange(event.target.value)}
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          <FormField
+                            control={form.control}
+                            name="ragMaxContextTokens"
+                            render={({ field }) => (
+                              <FormItem>
+                                <div className="flex items-center gap-2">
+                                  <FormLabel>Лимит контекста (токены)</FormLabel>
+                                  <InfoTooltipIcon text="Мягкий лимит на суммарный текст из базы знаний для одного ответа LLM. Если пусто — используем настройку по умолчанию." />
+                                </div>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min={500}
+                                    placeholder="3000"
+                                    value={field.value ?? ""}
+                                    onChange={(event) => field.onChange(event.target.value)}
+                                  />
+                                </FormControl>
+                                <FormDescription>Оставьте поле пустым, чтобы использовать стандартное значение.</FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={form.control}
+                            name="ragShowSources"
+                            render={({ field }) => (
+                              <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                                <div className="space-y-0.5">
+                                  <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
+                                  <FormDescription>Показывает пользователю документы и ссылки, из которых взяты чанки.</FormDescription>
+                                </div>
+                                <FormControl>
+                                  <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
+                </div>
+              </fieldset>
+            </TabsContent>
+
+            <TabsContent value="transcription" className="space-y-5">
+              <fieldset disabled={controlsDisabled} className="space-y-5">
                 <div className="space-y-4 rounded-lg border p-4">
                   <div className="space-y-1">
                     <h3 className="text-base font-semibold">Поведение при транскрибировании аудио</h3>
@@ -1693,251 +1781,6 @@ export function SkillFormContent({
               </fieldset>
             </TabsContent>
 
-            <TabsContent value="rag" className="space-y-5">
-              <fieldset disabled={controlsDisabled} className="space-y-5">
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Базы знаний</h3>
-                    <p className="text-sm text-muted-foreground">Навык будет искать ответы только в выбранных базах знаний.</p>
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="knowledgeBaseIds"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormControl>
-                          <KnowledgeBaseMultiSelect
-                            value={field.value}
-                            onChange={field.onChange}
-                            knowledgeBases={sortedKnowledgeBases}
-                            disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Коллекции и режим</h3>
-                    <p className="text-sm text-muted-foreground">Управляют тем, где искать и сколько текста отдавать в ответах.</p>
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="ragMode"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Режим использования коллекций</FormLabel>
-                        <FormControl>
-                          <RadioGroup
-                            value={field.value}
-                            onValueChange={controlsDisabled ? undefined : field.onChange}
-                            className="grid gap-3 md:grid-cols-2"
-                          >
-                            <div className="rounded-lg border p-3">
-                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                <RadioGroupItem value="all_collections" id="rag-mode-all" className="mt-1" disabled={controlsDisabled} />
-                                <span>
-                                  Все коллекции
-                                  <span className="block text-xs font-normal text-muted-foreground">
-                                    Навык автоматически ищет во всех коллекциях рабочей области.
-                                  </span>
-                                </span>
-                              </label>
-                            </div>
-                            <div className="rounded-lg border p-3">
-                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                <RadioGroupItem value="selected_collections" id="rag-mode-selected" className="mt-1" disabled={controlsDisabled} />
-                                <span>
-                                  Выбрать вручную
-                                  <span className="block text-xs font-normal text-muted-foreground">
-                                    Укажите конкретные коллекции, в которых навык может искать ответы.
-                                  </span>
-                                </span>
-                              </label>
-                            </div>
-                          </RadioGroup>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {isManualRagMode ? (
-                    <FormField
-                      control={form.control}
-                      name="ragCollectionIds"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Коллекции для навыка</FormLabel>
-                          <FormControl>
-                            <VectorCollectionMultiSelect
-                              value={field.value}
-                              onChange={field.onChange}
-                              collections={vectorCollections}
-                              disabled={vectorCollectionsDisabled}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            {isVectorCollectionsLoading
-                              ? "Загружаем список коллекций..."
-                              : vectorCollectionsEmpty
-                                ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
-                                : "Можно выбрать одну или несколько коллекций рабочего пространства."}
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  ) : null}
-                </div>
-
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Провайдер эмбеддингов</h3>
-                    <p className="text-sm text-muted-foreground">Должен совпадать с тем, что использует выбранная коллекция.</p>
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="ragEmbeddingProviderId"
-                    render={({ field }) => (
-                      <FormItem>
-                        <Select
-                          value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
-                          onValueChange={field.onChange}
-                          disabled={embeddingProviderSelectDisabled}
-                        >
-                          <SelectTrigger>
-                            <SelectValue
-                              placeholder={
-                                embeddingProvidersUnavailable
-                                  ? "Загрузка..."
-                                  : embeddingProvidersEmpty
-                                    ? "Нет доступных сервисов"
-                                    : "Выберите сервис"
-                              }
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
-                            {effectiveEmbeddingProviderOptions.map((provider) => (
-                              <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
-                                <div className="flex flex-col gap-0.5">
-                                  <span>{provider.name}</span>
-                                  {!provider.isActive && (
-                                    <span className="text-xs text-muted-foreground">Провайдер отключён</span>
-                                  )}
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Параметры поиска</h3>
-                    <p className="text-sm text-muted-foreground">Управляют объёмом и точностью выдачи.</p>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <FormField
-                      control={form.control}
-                      name="ragTopK"
-                      render={({ field }) => (
-                        <FormItem>
-                          <div className="flex items-center gap-2">
-                            <FormLabel>topK</FormLabel>
-                            <InfoTooltipIcon text="Число чанков, которые ищем для каждого запроса. Больше — точнее, но дороже. По умолчанию 5." />
-                          </div>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={50}
-                              placeholder="5"
-                              value={field.value ?? ""}
-                              onChange={(event) => field.onChange(event.target.value)}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="ragMinScore"
-                      render={({ field }) => (
-                        <FormItem>
-                          <div className="flex items-center gap-2">
-                            <FormLabel>minScore</FormLabel>
-                            <InfoTooltipIcon text="Минимальная релевантность чанка (0–1). Всё, что ниже порога, отбрасывается." />
-                          </div>
-                          <FormControl>
-                            <Input
-                              type="number"
-                              step="0.05"
-                              min={0}
-                              max={1}
-                              placeholder="0.7"
-                              value={field.value ?? ""}
-                              onChange={(event) => field.onChange(event.target.value)}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <FormField
-                    control={form.control}
-                    name="ragMaxContextTokens"
-                    render={({ field }) => (
-                      <FormItem>
-                        <div className="flex items-center gap-2">
-                          <FormLabel>Лимит контекста (токены)</FormLabel>
-                          <InfoTooltipIcon text="Мягкий лимит на суммарный текст из базы знаний для одного ответа LLM. Если пусто — используем настройку по умолчанию." />
-                        </div>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            min={500}
-                            placeholder="3000"
-                            value={field.value ?? ""}
-                            onChange={(event) => field.onChange(event.target.value)}
-                          />
-                        </FormControl>
-                        <FormDescription>Оставьте поле пустым, чтобы использовать стандартное значение.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="ragShowSources"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
-                        <div className="space-y-0.5">
-                          <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
-                          <FormDescription>Показывает пользователю документы и ссылки, из которых взяты чанки.</FormDescription>
-                        </div>
-                        <FormControl>
-                          <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
-                        </FormControl>
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              </fieldset>
-            </TabsContent>
-
             <TabsContent value="actions" className="space-y-4">
               <fieldset className="space-y-3 rounded-xl border border-dashed border-slate-200 p-4 dark:border-slate-800">
                 <div className="space-y-1">
@@ -1963,7 +1806,7 @@ export function SkillFormContent({
             <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
               Отменить
             </Button>
-            <Button type="submit" disabled={isSubmitting || isSystemSkill} data-testid="skill-save-button">
+            <Button type="submit" disabled={isSubmitting || isSystemSkill} data-testid="save-button">
 
               {isSystemSkill ? "Недоступно" : isSubmitting ? "Сохраняем..." : "Сохранить"}
 
@@ -2102,9 +1945,6 @@ export default function SkillsPage() {
   }, []);
 
   const creationDisabledReason = (() => {
-    if (knowledgeBases.length === 0) {
-      return "Сначала создайте хотя бы одну базу знаний.";
-    }
     if (llmOptions.length === 0) {
       return "Подключите активного провайдера LLM с моделью из каталога.";
     }
@@ -2207,21 +2047,7 @@ export default function SkillsPage() {
     isModelsLoading;
 
   const getIconComponent = (iconName: string | null | undefined) => {
-    if (!iconName) return null;
-    const iconMap: Record<string, typeof Zap> = {
-      Zap, Brain, Search, FileText, MessageSquare, Settings, BookOpen, Sparkles,
-      Airplay, AlertCircle, Archive, ArrowRight, Award, Backpack, BarChart2, Battery,
-      Bell, BellOff, Binoculars, Bluetooth, Bold, BookMarked, Bookmark, Box,
-      Briefcase, BriefcaseBusiness, Bug, Building, Building2, Calendar,
-      Camera, CameraOff, Captions, Car, CarFront, Carrot, Cast, Castle,
-      ChartArea, ChartLine, ChartPie, CheckCircle, CheckCircle2,
-      ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Chrome, Circle, CircleDollarSign,
-      CircleOff, Clock, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudOff, CloudRain,
-      CloudRainWind, CloudSnow, Code, Code2, Codepen, Codesandbox, Coffee, Cog, Coins,
-      Columns, Compass, ConciergeBell, Container, Contrast, Cookie, Copy,
-      CreditCard, Crop, Crown, Cuboid, CupSoda,
-    };
-    const Icon = iconMap[iconName];
+    const Icon = getSkillIcon(iconName);
     return Icon ? <Icon className="h-5 w-5" /> : null;
   };
 
@@ -2290,27 +2116,31 @@ export default function SkillsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedSkills.map((skill) => (
-                  <TableRow
-                    key={skill.id}
-                    role="button"
-                    tabIndex={0}
-                    className="cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring focus-visible:ring-primary/40"
-                    onClick={(e) => openSkill(`/skills/${skill.id}/edit`, e)}
-                    data-testid={`skill-row-${skill.id}`}
-                    onMouseDown={(e) => {
-                      if (e.button === 1 || e.ctrlKey || e.metaKey) {
-                        e.preventDefault();
-                        openSkill(`/skills/${skill.id}/edit`, e);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        openSkill(`/skills/${skill.id}/edit`);
-                      }
-                    }}
-                  >
+                {sortedSkills.map((skill) => {
+                  const isRagSkill =
+                    (skill.knowledgeBaseIds ?? []).length > 0 ||
+                    (skill.ragConfig?.collectionIds ?? []).length > 0;
+                  return (
+                    <TableRow
+                      key={skill.id}
+                      role="button"
+                      tabIndex={0}
+                      className="cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring focus-visible:ring-primary/40"
+                      onClick={(e) => openSkill(`/skills/${skill.id}/edit`, e)}
+                      data-testid={`skill-row-${skill.id}`}
+                      onMouseDown={(e) => {
+                        if (e.button === 1 || e.ctrlKey || e.metaKey) {
+                          e.preventDefault();
+                          openSkill(`/skills/${skill.id}/edit`, e);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openSkill(`/skills/${skill.id}/edit`);
+                        }
+                      }}
+                    >
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center">
                         {getIconComponent(skill.icon) ? (
@@ -2345,12 +2175,12 @@ export default function SkillsPage() {
                         variant="outline"
                         className={cn(
                           "text-[11px] uppercase",
-                          skill.mode === "llm"
-                            ? "border-green-200 bg-green-100 text-green-800"
-                            : "border-blue-200 bg-blue-100 text-blue-800",
+                          isRagSkill
+                            ? "border-blue-200 bg-blue-100 text-blue-800"
+                            : "border-green-200 bg-green-100 text-green-800",
                         )}
                       >
-                        {skill.mode === "llm" ? "LLM" : "RAG"}
+                        {isRagSkill ? "RAG" : "LLM"}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -2404,8 +2234,9 @@ export default function SkillsPage() {
                         )}
                       </div>
                     </TableCell>
-                  </TableRow>
-                ))}
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
@@ -2440,3 +2271,4 @@ export default function SkillsPage() {
     </div>
   );
 }
+

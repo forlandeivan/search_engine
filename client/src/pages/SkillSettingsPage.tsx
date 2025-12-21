@@ -30,7 +30,13 @@ const parseTab = (search: string | null | undefined): SkillSettingsTab | null =>
   if (!search) return null;
   const params = new URLSearchParams(search.startsWith("?") ? search : `?${search}`);
   const tab = params.get("tab");
-  return tab === "llm" || tab === "rag" || tab === "actions" || tab === "main" ? tab : null;
+  if (tab === "transcription" || tab === "actions" || tab === "main") {
+    return tab;
+  }
+  if (tab === "llm" || tab === "rag") {
+    return "main";
+  }
+  return null;
 };
 
 type SkillSettingsPageProps = {
@@ -74,7 +80,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   }, [location, activeTab]);
 
   const handleTabChange = (value: string) => {
-    const next: SkillSettingsTab = value === "llm" || value === "rag" || value === "actions" ? value : "main";
+    const next: SkillSettingsTab = value === "transcription" || value === "actions" ? value : "main";
     setActiveTab(next);
     const base = location.split("?")[0];
     navigate(`${base}?tab=${next}`, { replace: true });
@@ -228,6 +234,18 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       if (!Number.isFinite(parsed)) return fallback;
       return Math.min(1, Math.max(0, Number(parsed.toFixed(3))));
     };
+    const parseTemperatureOrNull = (candidate: string | undefined) => {
+      if (!candidate) return null;
+      const parsed = Number.parseFloat(candidate);
+      if (!Number.isFinite(parsed)) return null;
+      return Math.min(2, Math.max(0, Number(parsed.toFixed(2))));
+    };
+    const parseMaxTokensOrNull = (candidate: string | undefined) => {
+      if (!candidate) return null;
+      const parsed = Number.parseInt(candidate, 10);
+      if (!Number.isFinite(parsed)) return null;
+      return Math.min(4096, Math.max(16, parsed));
+    };
 
     const ragTopK = Math.max(1, parseIntegerOrDefault(values.ragTopK, 5));
     const ragMinScore = parseScoreOrDefault(values.ragMinScore, 0.7);
@@ -241,6 +259,9 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       values.ragMode === "selected_collections"
         ? values.ragCollectionIds.map((name) => name.trim()).filter((name) => name.length > 0)
         : [];
+    const hasRagSources = values.knowledgeBaseIds.length > 0 || ragCollectionIds.length > 0;
+    const llmTemperature = parseTemperatureOrNull(values.llmTemperature);
+    const llmMaxTokens = parseMaxTokensOrNull(values.llmMaxTokens);
     const autoActionId =
       values.onTranscriptionMode === "auto_action" && values.onTranscriptionAutoActionId
         ? values.onTranscriptionAutoActionId.trim() || null
@@ -252,7 +273,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       systemPrompt: values.systemPrompt?.trim() ? values.systemPrompt.trim() : null,
       icon: values.icon?.trim() ? values.icon.trim() : null,
       knowledgeBaseIds: values.knowledgeBaseIds,
-      mode: values.mode,
+      mode: hasRagSources ? "rag" : "llm",
       llmProviderConfigId: providerId,
       modelId: resolvedModel.key,
       ragConfig: {
@@ -270,8 +291,8 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
         bm25Limit: null,
         vectorWeight: null,
         vectorLimit: null,
-        llmTemperature: null,
-        llmMaxTokens: null,
+        llmTemperature,
+        llmMaxTokens,
         llmResponseFormat: null,
       },
       onTranscriptionMode: values.onTranscriptionMode,

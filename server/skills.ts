@@ -119,14 +119,17 @@ const normalizeActionId = (value: string | null | undefined): string | null => {
 };
 
 function assertRagRequirements(
-  mode: SkillMode,
   ragConfig: SkillRagConfig,
   knowledgeBaseIds: readonly string[],
 ): void {
-  if (mode !== "rag") {
+  const hasKnowledgeBases = Boolean(knowledgeBaseIds?.length);
+  const hasCollections = Boolean(ragConfig.collectionIds?.length);
+  const hasRagSources = hasKnowledgeBases || hasCollections;
+
+  if (!hasRagSources) {
     return;
   }
-  if (!knowledgeBaseIds || knowledgeBaseIds.length === 0) {
+  if (!hasKnowledgeBases) {
     throw new SkillServiceError("Для RAG-навыка нужно выбрать хотя бы одну базу знаний", 400);
   }
   if (ragConfig.mode === "selected_collections" && (!ragConfig.collectionIds || ragConfig.collectionIds.length === 0)) {
@@ -464,7 +467,7 @@ export async function createSkill(
   const transcriptionMode = normalized.onTranscriptionMode ?? DEFAULT_TRANSCRIPTION_MODE;
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
   const mode = normalized.mode ?? DEFAULT_SKILL_MODE;
-  assertRagRequirements(mode, ragConfig, validKnowledgeBases);
+  assertRagRequirements(ragConfig, validKnowledgeBases);
   let resolvedModelId: string | null = normalized.modelId ?? null;
   if (normalized.modelId) {
     try {
@@ -594,7 +597,7 @@ export async function updateSkill(
     knowledgeBaseIdsForValidation = await getSkillKnowledgeBaseIds(skillId, workspaceId);
   }
 
-  assertRagRequirements(effectiveMode, nextRagConfig, knowledgeBaseIdsForValidation);
+  assertRagRequirements(nextRagConfig, knowledgeBaseIdsForValidation);
 
   if (normalized.modelId !== undefined) {
     if (normalized.modelId === null) {

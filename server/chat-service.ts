@@ -38,6 +38,15 @@ export type ChatSummary = ChatSession & {
 };
 
 const sanitizeTitle = (title?: string | null) => title?.trim() ?? "";
+const clampTemperature = (value: number | null | undefined) => {
+  if (typeof value !== "number" || Number.isNaN(value)) return null;
+  return Math.min(2, Math.max(0, value));
+};
+const clampMaxTokens = (value: number | null | undefined) => {
+  if (typeof value !== "number" || Number.isNaN(value)) return null;
+  const rounded = Math.round(value);
+  return Math.min(4096, Math.max(16, rounded));
+};
 
 type ExecutionLogMeta = {
   input?: unknown;
@@ -307,8 +316,8 @@ export async function buildChatLlmContext(
 
   const isUnica = isUnicaChatSkill(skill);
   const isRag = isRagSkill(skill);
-  const isLlmMode = skill.mode === "llm";
-  const skillType: ChatSkillType = isUnica ? "UNICA_CHAT" : isLlmMode ? "LLM_SKILL" : "RAG_SKILL";
+  const isLlmMode = !isRag;
+  const skillType: ChatSkillType = isUnica ? "UNICA_CHAT" : isRag ? "RAG_SKILL" : "LLM_SKILL";
   const skillContext: ChatSkillContext = {
     id: skill.id,
     name: skill.name ?? null,
@@ -362,6 +371,16 @@ export async function buildChatLlmContext(
     }
     if (typeof unicaConfig.maxTokens === "number") {
       requestOverrides.maxTokens = unicaConfig.maxTokens;
+    }
+  }
+  if (!isUnica) {
+    const skillTemperature = clampTemperature(skill.ragConfig?.llmTemperature ?? null);
+    if (skillTemperature !== null) {
+      requestOverrides.temperature = skillTemperature;
+    }
+    const skillMaxTokens = clampMaxTokens(skill.ragConfig?.llmMaxTokens ?? null);
+    if (skillMaxTokens !== null) {
+      requestOverrides.maxTokens = skillMaxTokens;
     }
   }
 

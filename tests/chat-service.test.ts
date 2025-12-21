@@ -1,4 +1,4 @@
-﻿import { afterEach, describe, expect, it, vi } from "vitest";
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { skillExecutionLogServiceMock } = vi.hoisted(() => ({
   skillExecutionLogServiceMock: {
@@ -36,8 +36,17 @@ vi.mock("../server/skills", () => ({
   UNICA_CHAT_SYSTEM_KEY: "UNICA_CHAT",
 }));
 
+vi.mock("../server/model-service", () => ({
+  ensureModelAvailable: vi.fn(),
+  tryResolveModel: vi.fn(),
+  ModelInactiveError: class ModelInactiveError extends Error {},
+  ModelUnavailableError: class ModelUnavailableError extends Error {},
+  ModelValidationError: class ModelValidationError extends Error {},
+}));
+
 import { storage } from "../server/storage";
 import { getSkillById, UNICA_CHAT_SYSTEM_KEY } from "../server/skills";
+import { ensureModelAvailable } from "../server/model-service";
 
 import {
   addUserMessage,
@@ -51,6 +60,7 @@ import {
 
 const storageMock = vi.mocked(storage);
 const getSkillByIdMock = vi.mocked(getSkillById);
+const ensureModelAvailableMock = vi.mocked(ensureModelAvailable);
 
 const baseChat = {
   id: "chat-1",
@@ -68,6 +78,17 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+beforeEach(() => {
+  ensureModelAvailableMock.mockResolvedValue({
+    id: "model-1",
+    modelKey: "model-global",
+    displayName: "Model",
+    modelType: "LLM",
+    consumptionUnit: "TOKENS",
+    isActive: true,
+  } as any);
+});
+
 describe("chat service", () => {
   it("returns user chats", async () => {
     storageMock.listChatSessions.mockResolvedValueOnce([baseChat as any]);
@@ -75,7 +96,7 @@ describe("chat service", () => {
     const result = await listUserChats("workspace-1", "user-1");
 
     expect(result).toHaveLength(1);
-    expect(storageMock.listChatSessions).toHaveBeenCalledWith("workspace-1", "user-1", undefined);
+    expect(storageMock.listChatSessions).toHaveBeenCalledWith("workspace-1", "user-1", undefined, {});
   });
 
   it("fails to create chat when skill is missing", async () => {
@@ -224,6 +245,94 @@ describe("chat service", () => {
     );
   });
 
+  it("marks skill as RAG when knowledge bases are selected", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce(baseChat as any);
+    getSkillByIdMock.mockResolvedValueOnce({
+      id: "skill-1",
+      llmProviderConfigId: "provider-global",
+      modelId: "model-global",
+      systemPrompt: null,
+      isSystem: false,
+      knowledgeBaseIds: ["kb-1"],
+      ragConfig: { collectionIds: [] },
+    } as any);
+    storageMock.getLlmProvider.mockResolvedValueOnce({
+      id: "provider-global",
+      name: "Provider",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://example/token",
+      completionUrl: "https://example/completions",
+      authorizationKey: "key",
+      scope: "scope",
+      model: "base-model",
+      availableModels: [],
+      allowSelfSignedCertificate: false,
+      requestHeaders: {},
+      requestConfig: {
+        modelField: "model",
+        messagesField: "messages",
+        temperature: 0.1,
+        additionalBodyFields: {},
+      },
+      responseConfig: null,
+      workspaceId: "workspace-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+    storageMock.listChatMessages.mockResolvedValueOnce([]);
+
+    const context = await buildChatLlmContext("chat-1", "workspace-1", "user-1", { executionId: "exec-rag" });
+
+    expect(context.skill.isRagSkill).toBe(true);
+    expect(context.skill.mode).toBe("rag");
+  });
+
+  it("marks skill as LLM when no RAG sources are selected", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce(baseChat as any);
+    getSkillByIdMock.mockResolvedValueOnce({
+      id: "skill-1",
+      llmProviderConfigId: "provider-global",
+      modelId: "model-global",
+      systemPrompt: null,
+      isSystem: false,
+      knowledgeBaseIds: [],
+      ragConfig: { collectionIds: [] },
+    } as any);
+    storageMock.getLlmProvider.mockResolvedValueOnce({
+      id: "provider-global",
+      name: "Provider",
+      providerType: "gigachat",
+      description: null,
+      isActive: true,
+      tokenUrl: "https://example/token",
+      completionUrl: "https://example/completions",
+      authorizationKey: "key",
+      scope: "scope",
+      model: "base-model",
+      availableModels: [],
+      allowSelfSignedCertificate: false,
+      requestHeaders: {},
+      requestConfig: {
+        modelField: "model",
+        messagesField: "messages",
+        temperature: 0.1,
+        additionalBodyFields: {},
+      },
+      responseConfig: null,
+      workspaceId: "workspace-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
+    storageMock.listChatMessages.mockResolvedValueOnce([]);
+
+    const context = await buildChatLlmContext("chat-1", "workspace-1", "user-1", { executionId: "exec-llm" });
+
+    expect(context.skill.isRagSkill).toBe(false);
+    expect(context.skill.mode).toBe("llm");
+  });
+
   it("logs provider resolution errors", async () => {
     storageMock.getChatSessionById.mockResolvedValueOnce(baseChat as any);
     getSkillByIdMock.mockResolvedValueOnce({
@@ -247,3 +356,4 @@ describe("chat service", () => {
     );
   });
 });
+

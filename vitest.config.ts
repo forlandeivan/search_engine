@@ -15,5 +15,6 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     threads: false,
+    setupFiles: ["tests/setup.ts"],
   },
 });

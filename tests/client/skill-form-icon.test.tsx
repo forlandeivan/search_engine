@@ -4,6 +4,7 @@ import { render, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { SkillFormContent } from "@/pages/SkillsPage";
 import type { Skill } from "@/types/skill";
 
@@ -15,7 +16,11 @@ vi.mock("@/lib/queryClient", () => ({
 
 function renderWithClient(node: ReactNode) {
   const client = new QueryClient();
-  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={client}>
+      <TooltipProvider>{node}</TooltipProvider>
+    </QueryClientProvider>,
+  );
 }
 
 const baseSkill: Skill = {
@@ -55,7 +60,7 @@ const baseSkill: Skill = {
   updatedAt: new Date().toISOString(),
 };
 
-describe("SkillFormContent icon selection", () => {
+describe("SkillFormContent", () => {
   it("updates icon value and submits it", async () => {
     mockApiRequest.mockResolvedValue({ json: async () => ({ items: [] }) });
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
@@ -89,9 +94,15 @@ describe("SkillFormContent icon selection", () => {
       />,
     );
 
+    const iconNameRow = getByTestId("skill-icon-name-row");
+    expect(iconNameRow.contains(getByTestId("skill-icon-trigger"))).toBe(true);
+    expect(iconNameRow.contains(getByTestId("skill-name-input"))).toBe(true);
+    expect(getByTestId("skill-description-input")).toBeTruthy();
+    expect(getByTestId("skill-instruction-textarea")).toBeTruthy();
+
     fireEvent.click(getByTestId("skill-icon-trigger"));
     fireEvent.click(getByTestId("skill-icon-option-Brain"));
-    fireEvent.click(getByTestId("skill-save-button"));
+    fireEvent.click(getByTestId("save-button"));
 
     await waitFor(() => {
       expect(handleSubmit).toHaveBeenCalled();
@@ -99,5 +110,88 @@ describe("SkillFormContent icon selection", () => {
 
     const submitted = handleSubmit.mock.calls[0][0];
     expect(submitted.icon).toBe("Brain");
+  });
+
+  it("submits advanced LLM parameters", async () => {
+    mockApiRequest.mockResolvedValue({ json: async () => ({ items: [] }) });
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    const llmOptions = [
+      {
+        key: "provider-1::model-1",
+        label: "Provider · Model",
+        providerId: "provider-1",
+        providerName: "Provider",
+        modelId: "model-1",
+        modelDisplayName: "Model",
+        costLevel: "LOW" as const,
+        providerIsActive: true,
+        disabled: false,
+      },
+    ];
+
+    const { getByTestId } = renderWithClient(
+      <SkillFormContent
+        knowledgeBases={[]}
+        vectorCollections={[]}
+        isVectorCollectionsLoading={false}
+        embeddingProviders={[]}
+        isEmbeddingProvidersLoading={false}
+        llmOptions={llmOptions}
+        onSubmit={handleSubmit}
+        isSubmitting={false}
+        skill={baseSkill}
+        getIconComponent={() => null}
+      />,
+    );
+
+    fireEvent.click(getByTestId("llm-advanced-accordion"));
+    fireEvent.change(getByTestId("llm-temperature-input"), { target: { value: "0.9" } });
+    fireEvent.change(getByTestId("llm-max-tokens-input"), { target: { value: "512" } });
+    fireEvent.click(getByTestId("save-button"));
+
+    await waitFor(() => {
+      expect(handleSubmit).toHaveBeenCalled();
+    });
+
+    const submitted = handleSubmit.mock.calls[0][0];
+    expect(submitted.llmTemperature).toBe("0.9");
+    expect(submitted.llmMaxTokens).toBe("512");
+  });
+
+  it("shows transcription settings in transcription tab", () => {
+    mockApiRequest.mockResolvedValue({ json: async () => ({ items: [] }) });
+
+    const llmOptions = [
+      {
+        key: "provider-1::model-1",
+        label: "Provider · Model",
+        providerId: "provider-1",
+        providerName: "Provider",
+        modelId: "model-1",
+        modelDisplayName: "Model",
+        costLevel: "LOW" as const,
+        providerIsActive: true,
+        disabled: false,
+      },
+    ];
+
+    const { getByText } = renderWithClient(
+      <SkillFormContent
+        knowledgeBases={[]}
+        vectorCollections={[]}
+        isVectorCollectionsLoading={false}
+        embeddingProviders={[]}
+        isEmbeddingProvidersLoading={false}
+        llmOptions={llmOptions}
+        onSubmit={vi.fn()}
+        isSubmitting={false}
+        skill={baseSkill}
+        getIconComponent={() => null}
+        activeTab="transcription"
+      />,
+    );
+
+    expect(getByText("Поведение при транскрибировании аудио")).toBeTruthy();
   });
 });

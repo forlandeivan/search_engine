@@ -22,15 +22,12 @@ import {
   X,
   Cpu,
   Wand2,
-  FileText,
-  Briefcase,
-  Grid2X2,
-  Mic,
   ChevronDown,
   Plus,
   Archive,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { getSkillIcon } from "@/lib/skill-icons";
 
 type ChatSidebarProps = {
   workspaceId?: string;
@@ -41,15 +38,6 @@ type ChatSidebarProps = {
   onCreateChatForSkill?: (skillId: string) => void;
   creatingSkillId?: string | null;
   className?: string;
-};
-
-const skillIcons: Record<string, typeof Cpu> = {
-  "Управление навыками": Cpu,
-  "Анализ судебного дела": Wand2,
-  "Подготовка судебных решений": FileText,
-  "Судебное делопроизводство": Briefcase,
-  "Техподдержка ГАС Правосудие": Grid2X2,
-  "Транскрибация": Mic,
 };
 
 export default function ChatSidebar({
@@ -154,16 +142,29 @@ export default function ChatSidebar({
         </Link>
 
         {customSkills.map((skill) => {
-          const Icon = skillIcons[skill.name || ""] || Wand2;
+          const iconName = skill.icon?.trim() || null;
+          const Icon = getSkillIcon(iconName);
+          const isFallback = !Icon;
           return (
             <div
               key={skill.id}
               className="group flex cursor-pointer items-center gap-2 px-6 py-5 hover:bg-slate-100 dark:hover:bg-slate-800"
               onClick={() => onCreateChatForSkill?.(skill.id)}
-              data-testid={`skill-${skill.id}`}
+              data-testid={`skill-list-item-${skill.id}`}
+              data-skill-id={skill.id}
             >
-              <Icon className="h-6 w-6 text-slate-400" />
-              <span className="flex-1 text-base font-medium text-slate-900 dark:text-slate-100">
+              <span
+                className="flex h-6 w-6 items-center justify-center text-slate-400"
+                data-testid="skill-icon"
+                data-fallback={isFallback ? "true" : "false"}
+                data-icon-name={iconName ?? ""}
+              >
+                {Icon ? <Icon className="h-6 w-6" /> : <Wand2 className="h-6 w-6" />}
+              </span>
+              <span
+                className="flex-1 text-base font-medium text-slate-900 dark:text-slate-100"
+                data-testid="skill-name"
+              >
                 {skill.name}
               </span>
               {creatingSkillId === skill.id ? (

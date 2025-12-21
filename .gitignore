@@ -28,6 +28,7 @@ attached_assets/stock_images/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+/e2e/.screenshots/
 
 # MinIO local data
 minio-data/
