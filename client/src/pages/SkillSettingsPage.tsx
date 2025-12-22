@@ -294,6 +294,8 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       values.onTranscriptionMode === "auto_action" && values.onTranscriptionAutoActionId
         ? values.onTranscriptionAutoActionId.trim() || null
         : null;
+    const trimmedNoCodeEndpoint = (values.noCodeEndpointUrl ?? "").trim();
+    const noCodeEndpointUrl = trimmedNoCodeEndpoint.length > 0 ? trimmedNoCodeEndpoint : null;
 
     const payload: SkillPayload = {
       name: values.name.trim(),
@@ -326,7 +328,13 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       },
       onTranscriptionMode: values.onTranscriptionMode,
       onTranscriptionAutoActionId: autoActionId,
+      noCodeEndpointUrl,
+      noCodeAuthType: values.noCodeAuthType,
     };
+
+    if (values.noCodeBearerToken?.trim()) {
+      payload.noCodeBearerToken = values.noCodeBearerToken.trim();
+    }
 
     try {
       if (isNew) {

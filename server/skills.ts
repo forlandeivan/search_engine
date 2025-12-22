@@ -7,10 +7,18 @@ import {
   skillExecutionModes,
   skillRagModes,
   skillTranscriptionModes,
+  noCodeAuthTypes,
   chatSessions,
 } from "@shared/schema";
 import type { SkillDto, SkillRagConfig, CreateSkillPayload } from "@shared/skills";
-import type { SkillExecutionMode, SkillMode, SkillRagMode, SkillTranscriptionMode, SkillStatus } from "@shared/schema";
+import type {
+  SkillExecutionMode,
+  SkillMode,
+  SkillRagMode,
+  SkillTranscriptionMode,
+  SkillStatus,
+  NoCodeAuthType,
+} from "@shared/schema";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
@@ -48,6 +56,9 @@ type EditableSkillColumns = Pick<
   | "mode"
   | "onTranscriptionMode"
   | "onTranscriptionAutoActionId"
+  | "noCodeEndpointUrl"
+  | "noCodeAuthType"
+  | "noCodeBearerToken"
 >;
 
 type RagConfigInput = CreateSkillPayload["ragConfig"];
@@ -140,6 +151,12 @@ const normalizeSkillExecutionMode = (value: unknown): SkillExecutionMode =>
 
 const normalizeSkillMode = (value: unknown): SkillMode =>
   value === "llm" ? "llm" : DEFAULT_SKILL_MODE;
+
+const isNoCodeAuthType = (value: unknown): value is NoCodeAuthType =>
+  typeof value === "string" && noCodeAuthTypes.includes(value as NoCodeAuthType);
+
+const normalizeNoCodeAuthType = (value: unknown): NoCodeAuthType =>
+  isNoCodeAuthType(value) ? value : "none";
 
 const normalizeActionId = (value: string | null | undefined): string | null => {
   const normalized = normalizeNullableString(value);
@@ -284,6 +301,11 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     status: (row.status as SkillStatus) ?? "active",
     mode: normalizeSkillMode(row.mode),
     icon: row.icon ?? null,
+    noCodeConnection: {
+      endpointUrl: row.noCodeEndpointUrl ?? null,
+      authType: normalizeNoCodeAuthType(row.noCodeAuthType),
+      tokenIsSet: Boolean(row.noCodeBearerToken?.trim()),
+    },
     knowledgeBaseIds,
     ragConfig: {
       mode: normalizeRagModeFromValue(row.ragMode),
@@ -403,6 +425,15 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   if (input.onTranscriptionAutoActionId !== undefined) {
     next.onTranscriptionAutoActionId = normalizeActionId(input.onTranscriptionAutoActionId);
   }
+  if (input.noCodeEndpointUrl !== undefined) {
+    next.noCodeEndpointUrl = normalizeNullableString(input.noCodeEndpointUrl);
+  }
+  if (input.noCodeAuthType !== undefined) {
+    next.noCodeAuthType = normalizeNoCodeAuthType(input.noCodeAuthType);
+  }
+  if (input.noCodeBearerToken !== undefined) {
+    next.noCodeBearerToken = normalizeNullableString(input.noCodeBearerToken);
+  }
   if (input.knowledgeBaseIds !== undefined) {
     const filtered = input.knowledgeBaseIds.filter(
       (value) => typeof value === "string" && value.trim().length > 0,
@@ -487,6 +518,44 @@ export async function createSkill(
   }
 
   const normalized = buildEditableColumns(input);
+  const existingNoCodeEndpoint = row.noCodeEndpointUrl ?? null;
+  const existingNoCodeAuth = normalizeNoCodeAuthType(row.noCodeAuthType);
+  const existingBearerToken = row.noCodeBearerToken ?? null;
+  const submittedNoCodeEndpoint =
+    normalized.noCodeEndpointUrl !== undefined ? normalized.noCodeEndpointUrl : existingNoCodeEndpoint;
+  const submittedNoCodeAuth =
+    normalized.noCodeAuthType !== undefined ? normalizeNoCodeAuthType(normalized.noCodeAuthType) : existingNoCodeAuth;
+  if (submittedNoCodeAuth === "bearer" && !submittedNoCodeEndpoint) {
+    throw new SkillServiceError("Укажите URL для no-code подключения", 400);
+  }
+  const submittedBearerCandidate =
+    normalized.noCodeBearerToken !== undefined ? Boolean(normalized.noCodeBearerToken) : Boolean(existingBearerToken);
+  if (submittedNoCodeAuth === "bearer" && !submittedBearerCandidate) {
+    throw new SkillServiceError("Введите токен для Bearer-авторизации", 400);
+  }
+  let nextBearerToken =
+    normalized.noCodeBearerToken !== undefined ? normalized.noCodeBearerToken : existingBearerToken;
+  if (submittedNoCodeAuth === "none" || !submittedNoCodeEndpoint) {
+    nextBearerToken = null;
+  }
+  const normalizedEndpointUrl = normalized.noCodeEndpointUrl ?? null;
+  const normalizedAuthType = normalizeNoCodeAuthType(normalized.noCodeAuthType ?? "none");
+  let normalizedBearerToken = normalized.noCodeBearerToken ?? null;
+
+  if (normalizedAuthType === "bearer") {
+    if (!normalizedEndpointUrl) {
+      throw new SkillServiceError("Укажите URL для no-code подключения", 400);
+    }
+    if (!normalizedBearerToken) {
+      throw new SkillServiceError("Введите токен для Bearer-авторизации", 400);
+    }
+  } else {
+    normalizedBearerToken = null;
+  }
+
+  if (!normalizedEndpointUrl) {
+    normalizedBearerToken = null;
+  }
   if (normalized.executionMode === "no_code") {
     await assertNoCodeFlowAllowed(workspaceId);
   }
@@ -546,6 +615,9 @@ export async function createSkill(
       ragLlmResponseFormat: ragConfig.llmResponseFormat,
       onTranscriptionMode: transcriptionMode,
       onTranscriptionAutoActionId: transcriptionAutoActionId,
+      noCodeEndpointUrl: normalizedEndpointUrl,
+      noCodeAuthType: normalizedAuthType,
+      noCodeBearerToken: normalizedBearerToken,
     })
     .returning();
 
@@ -600,6 +672,10 @@ export async function updateSkill(
       (updates as Record<string, unknown>)[key] = normalized[key];
     }
   });
+
+  updates.noCodeEndpointUrl = submittedNoCodeEndpoint;
+  updates.noCodeAuthType = submittedNoCodeAuth;
+  updates.noCodeBearerToken = nextBearerToken;
 
   const currentRagConfig: SkillRagConfig = {
     mode: normalizeRagModeFromValue(row.ragMode),

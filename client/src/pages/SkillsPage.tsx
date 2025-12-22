@@ -115,6 +115,13 @@ export const skillFormSchema = z.object({
   ragEmbeddingProviderId: z.string().optional().or(z.literal("")),
   onTranscriptionMode: z.enum(["raw_only", "auto_action"]),
   onTranscriptionAutoActionId: z.string().optional().or(z.literal("")),
+  noCodeEndpointUrl: z
+    .string()
+    .url({ message: "Некорректный URL" })
+    .optional()
+    .or(z.literal("")),
+  noCodeAuthType: z.enum(["none", "bearer"]).default("none"),
+  noCodeBearerToken: z.string().optional().or(z.literal("")),
 }).superRefine((val, ctx) => {
   const hasKnowledgeBases = Boolean(val.knowledgeBaseIds?.length);
   const hasCollections =
@@ -179,6 +186,9 @@ export const defaultFormValues = {
   ragEmbeddingProviderId: NO_EMBEDDING_PROVIDER_VALUE,
   onTranscriptionMode: "raw_only" as "raw_only" | "auto_action",
   onTranscriptionAutoActionId: "",
+  noCodeEndpointUrl: "",
+  noCodeAuthType: "none" as "none" | "bearer",
+  noCodeBearerToken: "",
 };
 
 export type SkillFormValues = z.infer<typeof skillFormSchema>;
@@ -1117,6 +1127,11 @@ export function SkillFormContent({
   const embeddingProvidersEmpty = embeddingProviders.length === 0;
   const embeddingProvidersUnavailable = isEmbeddingProvidersLoading || embeddingProvidersEmpty;
   const embeddingProviderSelectDisabled = embeddingProvidersUnavailable || controlsDisabled;
+  const isNoCodeMode = form.watch("executionMode") === "no_code";
+  const noCodeAuthType = form.watch("noCodeAuthType");
+  const noCodeBearerTokenValue = form.watch("noCodeBearerToken");
+  const hasBearerTokenDraft = Boolean(noCodeBearerTokenValue?.trim());
+  const storedNoCodeTokenIsSet = skill?.noCodeConnection?.tokenIsSet ?? false;
   const embeddingProviderOptions = useMemo(() => {
     return embeddingProviders
       .map((provider) => ({
@@ -1214,6 +1229,11 @@ export function SkillFormContent({
       };
 
       const llmKey = buildLlmKey(skill.llmProviderConfigId ?? "", skill.modelId ?? "");
+      const noCodeConnection = skill.noCodeConnection ?? {
+        endpointUrl: null,
+        authType: "none" as "none" | "bearer",
+        tokenIsSet: false,
+      };
       const nextValues: SkillFormValues = {
         name: skill.name ?? "",
         description: skill.description ?? "",
@@ -1240,6 +1260,9 @@ export function SkillFormContent({
         ragEmbeddingProviderId: ragConfig.embeddingProviderId ?? NO_EMBEDDING_PROVIDER_VALUE,
         onTranscriptionMode: skill.onTranscriptionMode ?? "raw_only",
         onTranscriptionAutoActionId: skill.onTranscriptionAutoActionId ?? "",
+        noCodeEndpointUrl: noCodeConnection.endpointUrl ?? "",
+        noCodeAuthType: noCodeConnection.authType ?? "none",
+        noCodeBearerToken: "",
       };
       form.reset(nextValues);
       lastSavedRef.current = nextValues;
@@ -1480,6 +1503,124 @@ export function SkillFormContent({
                           </FormItem>
                         )}
                       />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="px-6 grid gap-2">
+                      <CardTitle className="text-base font-semibold">No-code подключение</CardTitle>
+                      <CardDescription className="text-sm text-muted-foreground">
+                        {allowNoCodeFlow
+                          ? isNoCodeMode
+                            ? "Укажите URL и авторизацию, чтобы платформа перенаправляла события во внешний сценарий."
+                            : "Можно заранее задать параметры, затем переключитесь в режим No-code."
+                          : "Доступно только на премиум-тарифе."}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="px-6 pb-6 space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="noCodeEndpointUrl"
+                        render={({ field }) => (
+                          <FormItem className="grid gap-1.5">
+                            <FormLabel>URL сценария</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder="https://example.com/no-code"
+                                disabled={noCodeDisabled}
+                                data-testid="skill-no-code-endpoint-input"
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs text-muted-foreground leading-tight">
+                              {noCodeDisabled
+                                ? "Доступно только на премиум-тарифе."
+                                : "Сюда будет приходить запрос, когда выбранно выполнение в no-code режиме."}
+                            </FormDescription>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="noCodeAuthType"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Авторизация</FormLabel>
+                            <FormControl>
+                              <RadioGroup
+                                value={field.value}
+                                onValueChange={noCodeDisabled ? undefined : field.onChange}
+                                className="grid gap-3 md:grid-cols-2"
+                              >
+                                <div className="rounded-lg border p-3">
+                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                    <RadioGroupItem
+                                      value="none"
+                                      id="no-code-auth-none"
+                                      className="mt-1"
+                                      disabled={noCodeDisabled}
+                                      data-testid="no-code-auth-none"
+                                    />
+                                    <span>
+                                      Без авторизации
+                                      <span className="block text-xs font-normal text-muted-foreground">
+                                        Сценарий без токена.
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
+                                <div className="rounded-lg border p-3">
+                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                    <RadioGroupItem
+                                      value="bearer"
+                                      id="no-code-auth-bearer"
+                                      className="mt-1"
+                                      disabled={noCodeDisabled}
+                                      data-testid="no-code-auth-bearer"
+                                    />
+                                    <span>
+                                      Bearer token
+                                      <span className="block text-xs font-normal text-muted-foreground">
+                                        Отправляем токен в заголовке Authorization.
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
+                              </RadioGroup>
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      {noCodeAuthType === "bearer" && (
+                        <FormField
+                          control={form.control}
+                          name="noCodeBearerToken"
+                          render={({ field }) => (
+                            <FormItem className="grid gap-1.5">
+                              <FormLabel>Bearer токен</FormLabel>
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  type="password"
+                                  placeholder="Введите токен"
+                                  disabled={noCodeDisabled}
+                                  autoComplete="new-password"
+                                  data-testid="skill-no-code-token-input"
+                                />
+                              </FormControl>
+                              <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                {hasBearerTokenDraft
+                                  ? "После сохранения токен будет заменён."
+                                  : storedNoCodeTokenIsSet
+                                  ? "Токен задан. Введите новый, чтобы заменить."
+                                  : "Токен не сохраняется и не отображается после сохранения."}
+                              </FormDescription>
+                              <FormMessage className="text-xs text-destructive leading-tight" />
+                            </FormItem>
+                          )}
+                        />
+                      )}
                     </CardContent>
                   </Card>
 

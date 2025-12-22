@@ -1073,6 +1073,9 @@ export const skills = pgTable(
     ragLlmTemperature: doublePrecision("rag_llm_temperature"),
     ragLlmMaxTokens: integer("rag_llm_max_tokens"),
     ragLlmResponseFormat: text("rag_llm_response_format"),
+    noCodeEndpointUrl: text("no_code_endpoint_url"),
+    noCodeAuthType: text("no_code_auth_type").$type<NoCodeAuthType>().notNull().default("none"),
+    noCodeBearerToken: text("no_code_bearer_token"),
     onTranscriptionMode: text("on_transcription_mode")
       .$type<SkillTranscriptionMode>()
       .notNull()
@@ -1308,6 +1311,8 @@ export const skillTranscriptionModes = ["raw_only", "auto_action"] as const;
 export type SkillTranscriptionMode = (typeof skillTranscriptionModes)[number];
 export const skillExecutionModes = ["standard", "no_code"] as const;
 export type SkillExecutionMode = (typeof skillExecutionModes)[number];
+export const noCodeAuthTypes = ["none", "bearer"] as const;
+export type NoCodeAuthType = (typeof noCodeAuthTypes)[number];
 export const skillModes = ["rag", "llm"] as const;
 export type SkillMode = (typeof skillModes)[number];
 

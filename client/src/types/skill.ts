@@ -1,5 +1,5 @@
-import type { SkillRagConfig } from "@shared/skills";
-import type { SkillExecutionMode, SkillMode, SkillTranscriptionMode } from "@shared/schema";
+import type { SkillNoCodeConnection, SkillRagConfig } from "@shared/skills";
+import type { SkillExecutionMode, SkillMode, SkillTranscriptionMode, NoCodeAuthType } from "@shared/schema";
 
 export interface Skill {
   id: string;
@@ -22,6 +22,7 @@ export interface Skill {
   onTranscriptionAutoActionId: string | null;
   createdAt: string;
   updatedAt: string;
+  noCodeConnection?: SkillNoCodeConnection;
 }
 
 export interface SkillPayload {
@@ -38,4 +39,7 @@ export interface SkillPayload {
   ragConfig?: SkillRagConfig;
   onTranscriptionMode?: SkillTranscriptionMode;
   onTranscriptionAutoActionId?: string | null;
+  noCodeEndpointUrl?: string | null;
+  noCodeAuthType?: NoCodeAuthType;
+  noCodeBearerToken?: string | null;
 }

@@ -1,6 +1,12 @@
 import { z } from "zod";
-import { skillExecutionModes, skillModes, skillRagModes, skillTranscriptionModes } from "./schema";
-import type { SkillExecutionMode, SkillMode, SkillRagMode, SkillTranscriptionMode } from "./schema";
+import { skillExecutionModes, skillModes, skillRagModes, skillTranscriptionModes, noCodeAuthTypes } from "./schema";
+import type {
+  SkillExecutionMode,
+  SkillMode,
+  SkillRagMode,
+  SkillTranscriptionMode,
+  NoCodeAuthType,
+} from "./schema";
 
 const optionalString = (limit: number) =>
   z
@@ -43,6 +49,14 @@ const ragConfigInputSchema = z.object({
   llmResponseFormat: z.enum(["text", "markdown", "html"]).nullable().optional(),
 });
 
+const noCodeEndpointUrlSchema = z
+  .string()
+  .url({ message: "Некорректный URL" })
+  .optional()
+  .or(z.literal(""));
+
+const noCodeBearerTokenSchema = z.string().max(4096, "Не более 4096 символов").optional().or(z.literal(""));
+
 const skillEditableFieldsSchema = z.object({
   name: optionalString(200),
   description: optionalText(4000),
@@ -57,6 +71,9 @@ const skillEditableFieldsSchema = z.object({
   icon: optionalString(100),
   onTranscriptionMode: z.enum(skillTranscriptionModes).optional(),
   onTranscriptionAutoActionId: optionalString(200),
+  noCodeEndpointUrl: noCodeEndpointUrlSchema.optional(),
+  noCodeAuthType: z.enum(noCodeAuthTypes).optional(),
+  noCodeBearerToken: noCodeBearerTokenSchema.optional(),
 });
 
 export const createSkillSchema = skillEditableFieldsSchema;
@@ -64,6 +81,12 @@ export const updateSkillSchema = skillEditableFieldsSchema;
 
 export type CreateSkillPayload = z.infer<typeof createSkillSchema>;
 export type UpdateSkillPayload = z.infer<typeof updateSkillSchema>;
+
+export type SkillNoCodeConnection = {
+  endpointUrl: string | null;
+  authType: NoCodeAuthType;
+  tokenIsSet: boolean;
+};
 
 export type SkillDto = {
   id: string;
@@ -84,6 +107,7 @@ export type SkillDto = {
   onTranscriptionMode: SkillTranscriptionMode;
   onTranscriptionAutoActionId: string | null;
   icon?: string | null;
+  noCodeConnection: SkillNoCodeConnection;
   createdAt: string;
   updatedAt: string;
 };
