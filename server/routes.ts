@@ -106,6 +106,28 @@ import {
   ChatServiceError,
   getChatById,
 } from "./chat-service";
+type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
+const NO_CODE_FLOW_MESSAGES: Record<NoCodeFlowFailureReason, string> = {
+  NOT_CONFIGURED: "No-code сценарий недоступен. Проверьте подключение или попробуйте позже.",
+  TIMEOUT: "No-code сценарий не ответил (таймаут). Попробуйте ещё раз.",
+  UPSTREAM_ERROR: "No-code сценарий завершился с ошибкой. Попробуйте ещё раз.",
+};
+
+function createNoCodeFlowError(reason: NoCodeFlowFailureReason): ChatServiceError {
+  const code = reason === "NOT_CONFIGURED" ? "NO_CODE_UNAVAILABLE" : "NO_CODE_FAILED";
+  return new ChatServiceError(NO_CODE_FLOW_MESSAGES[reason], 503, code, { reason });
+}
+
+function buildChatServiceErrorPayload(error: ChatServiceError) {
+  const payload: Record<string, unknown> = { message: error.message };
+  if (error.code) {
+    payload.errorCode = error.code;
+  }
+  if (error.details !== undefined) {
+    payload.details = error.details;
+  }
+  return payload;
+}
 import { callRagForSkillChat, SkillRagConfigurationError } from "./chat-rag";
 import {
   fetchLlmCompletion,
@@ -10154,7 +10176,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(error.status).json({ message: error.message });
         }
         if (error instanceof ChatServiceError) {
-          return res.status(error.status).json({ message: error.message });
+          return res.status(error.status).json(buildChatServiceErrorPayload(error));
         }
         next(error);
       }
@@ -10204,7 +10226,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(error.status).json({ message: error.message });
       }
       if (error instanceof ChatServiceError) {
-        return res.status(error.status).json({ message: error.message });
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
       }
       next(error);
     }
@@ -10226,7 +10248,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "Неверные данные", details: error.issues });
       }
       if (error instanceof ChatServiceError) {
-        return res.status(error.status).json({ message: error.message });
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
       }
       next(error);
     }
@@ -10245,7 +10267,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.status(204).send();
     } catch (error) {
       if (error instanceof ChatServiceError) {
-        return res.status(error.status).json({ message: error.message });
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
       }
       if (error instanceof OperationBlockedError) {
         return res.status(error.status).json(error.toJSON());
@@ -10287,6 +10309,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(403).json({ message: "Навык архивирован, чат только для чтения" });
       }
       const message = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
+      if (skill && skill.executionMode === "no_code") {
+        throw createNoCodeFlowError("NOT_CONFIGURED");
+      }
       scheduleChatTitleGenerationIfNeeded({
         chatId: req.params.chatId,
         workspaceId,
@@ -10301,7 +10326,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "Некорректные параметры запроса", details: error.issues });
       }
       if (error instanceof ChatServiceError) {
-        return res.status(error.status).json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
       }
       if (error instanceof HttpError) {
         return res.status(error.status).json({ message: error.message, ...(error as any)?.code ? { errorCode: (error as any).code } : {} });
@@ -10521,6 +10546,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           errorMessage: messageError instanceof Error ? messageError.message : "Failed to save user message",
         });
         throw messageError;
+      }
+
+      if (skillForChat && skillForChat.executionMode === "no_code") {
+        throw createNoCodeFlowError("NOT_CONFIGURED");
       }
 
       const context = await buildChatLlmContext(req.params.chatId, workspaceId, user.id, {
@@ -10967,7 +10996,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "Некорректное содержимое запроса", details: error.issues });
       }
       if (error instanceof ChatServiceError) {
-        return res.status(error.status).json({ message: error.message });
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
       }
       if (error instanceof HttpError) {
         return res.status(error.status).json({ message: error.message });

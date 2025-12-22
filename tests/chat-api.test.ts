@@ -17,6 +17,24 @@ function setupAuthMock(): void {
   vi.doMock("../server/auth", () => {
     const requireAuth = (_req: any, _res: any, next: () => void) => next();
 
+    const ensureWorkspaceContextMiddleware = (_options: any = {}) => (req: any, _res: any, next: () => void) => {
+      const context = {
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        role: "owner",
+        status: "active",
+        membershipKey: "workspace-1:user-1",
+        workspace: { id: "workspace-1", name: "Workspace", ownerId: "user-1", status: "active" },
+        membership: { id: "membership-1", workspaceId: "workspace-1", userId: "user-1", role: "owner", status: "active" },
+      };
+      Object.assign(req, {
+        workspaceContext: context,
+        workspaceId: context.workspaceId,
+        workspaceRole: context.role,
+      });
+      return next();
+    };
+
     const memberships = [
       { id: "workspace-1", role: "owner" },
       { id: "workspace-2", role: "member" },
@@ -25,6 +43,7 @@ function setupAuthMock(): void {
     return {
       requireAuth,
       requireAdmin: requireAuth,
+      ensureWorkspaceContextMiddleware,
       getSessionUser: () => ({ id: "user-1", email: "user@example.com" }),
       toPublicUser: (user: unknown) => user,
       reloadGoogleAuth: vi.fn(),

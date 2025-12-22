@@ -22,12 +22,14 @@ import {
 export class ChatServiceError extends Error {
   public status: number;
   public code?: string;
+  public details?: unknown;
 
-  constructor(message: string, status = 400, code?: string) {
+  constructor(message: string, status = 400, code?: string, details?: unknown) {
     super(message);
     this.name = "ChatServiceError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
