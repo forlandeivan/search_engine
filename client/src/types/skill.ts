@@ -1,5 +1,11 @@
 import type { SkillNoCodeConnection, SkillRagConfig } from "@shared/skills";
-import type { SkillExecutionMode, SkillMode, SkillTranscriptionMode, NoCodeAuthType } from "@shared/schema";
+import type {
+  SkillExecutionMode,
+  SkillMode,
+  SkillTranscriptionMode,
+  SkillTranscriptionFlowMode,
+  NoCodeAuthType,
+} from "@shared/schema";
 
 export interface Skill {
   id: string;
@@ -18,6 +24,7 @@ export interface Skill {
   mode: SkillMode;
   knowledgeBaseIds?: string[];
   ragConfig: SkillRagConfig;
+  transcriptionFlowMode: SkillTranscriptionFlowMode;
   onTranscriptionMode: SkillTranscriptionMode;
   onTranscriptionAutoActionId: string | null;
   createdAt: string;
@@ -38,6 +45,7 @@ export interface SkillPayload {
   executionMode?: SkillExecutionMode;
   knowledgeBaseIds?: string[];
   ragConfig?: SkillRagConfig;
+  transcriptionFlowMode?: SkillTranscriptionFlowMode;
   onTranscriptionMode?: SkillTranscriptionMode;
   onTranscriptionAutoActionId?: string | null;
   noCodeEndpointUrl?: string | null;

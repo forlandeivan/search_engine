@@ -113,6 +113,7 @@ export const skillFormSchema = z.object({
   ragMaxContextTokens: z.string().optional().or(z.literal("")),
   ragShowSources: z.boolean(),
   ragEmbeddingProviderId: z.string().optional().or(z.literal("")),
+  transcriptionFlowMode: z.enum(["standard", "no_code"]).default("standard"),
   onTranscriptionMode: z.enum(["raw_only", "auto_action"]),
   onTranscriptionAutoActionId: z.string().optional().or(z.literal("")),
   contextInputLimit: z.string().optional().or(z.literal("")),
@@ -193,6 +194,7 @@ export const defaultFormValues = {
   ragMaxContextTokens: "3000",
   ragShowSources: true,
   ragEmbeddingProviderId: NO_EMBEDDING_PROVIDER_VALUE,
+  transcriptionFlowMode: "standard" as "standard" | "no_code",
   onTranscriptionMode: "raw_only" as "raw_only" | "auto_action",
   onTranscriptionAutoActionId: "",
   contextInputLimit: "",
@@ -1361,6 +1363,7 @@ export function SkillFormContent({
         ragMaxContextTokens: ragConfig.maxContextTokens !== null ? String(ragConfig.maxContextTokens) : "",
         ragShowSources: ragConfig.showSources,
         ragEmbeddingProviderId: ragConfig.embeddingProviderId ?? NO_EMBEDDING_PROVIDER_VALUE,
+        transcriptionFlowMode: skill.transcriptionFlowMode ?? "standard",
         onTranscriptionMode: skill.onTranscriptionMode ?? "raw_only",
         onTranscriptionAutoActionId: skill.onTranscriptionAutoActionId ?? "",
         contextInputLimit:
@@ -2190,6 +2193,66 @@ export function SkillFormContent({
             <TabsContent value="transcription" className="space-y-6">
               <div className="mx-auto w-full max-w-6xl px-6">
                 <fieldset disabled={controlsDisabled} className="space-y-6">
+                  <Card>
+                    <CardHeader className="px-6 grid gap-2">
+                      <CardTitle className="text-base font-semibold">Маршрут транскрибации</CardTitle>
+                      <CardDescription className="text-sm text-muted-foreground">
+                        Влияет только на обработку файлов/транскрибации. Стандартный сценарий чата остаётся прежним.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="px-6 pb-6 space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="transcriptionFlowMode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormControl>
+                              <RadioGroup
+                                value={field.value}
+                                onValueChange={controlsDisabled ? undefined : field.onChange}
+                                className="grid gap-3 md:grid-cols-2"
+                              >
+                                <div className="rounded-lg border p-3">
+                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                    <RadioGroupItem
+                                      value="standard"
+                                      id="transcription-flow-standard"
+                                      className="mt-1"
+                                      disabled={controlsDisabled}
+                                    />
+                                    <span>
+                                      Стандартный
+                                      <span className="block text-xs font-normal text-muted-foreground">
+                                        Используем текущий встроенный пайплайн транскрибации.
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
+                                <div className="rounded-lg border p-3">
+                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                    <RadioGroupItem
+                                      value="no_code"
+                                      id="transcription-flow-no-code"
+                                      className="mt-1"
+                                      disabled={controlsDisabled}
+                                    />
+                                    <span>
+                                      Через no-code
+                                      <span className="block text-xs font-normal text-muted-foreground">
+                                        Отправляем событие в ваш no-code сценарий и ждём ответ оттуда.
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
+                              </RadioGroup>
+                            </FormControl>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+                    </CardContent>
+                  </Card>
+
                   <Card>
                     <CardHeader className="px-6 grid gap-2">
                       <CardTitle className="text-base font-semibold">Поведение при транскрибировании аудио</CardTitle>

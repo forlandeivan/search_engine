@@ -1,10 +1,18 @@
 import { z } from "zod";
-import { skillExecutionModes, skillModes, skillRagModes, skillTranscriptionModes, noCodeAuthTypes } from "./schema";
+import {
+  skillExecutionModes,
+  skillModes,
+  skillRagModes,
+  skillTranscriptionModes,
+  skillTranscriptionFlowModes,
+  noCodeAuthTypes,
+} from "./schema";
 import type {
   SkillExecutionMode,
   SkillMode,
   SkillRagMode,
   SkillTranscriptionMode,
+  SkillTranscriptionFlowMode,
   NoCodeAuthType,
 } from "./schema";
 
@@ -78,6 +86,7 @@ const skillEditableFieldsSchema = z.object({
   icon: optionalString(100),
   onTranscriptionMode: z.enum(skillTranscriptionModes).optional(),
   onTranscriptionAutoActionId: optionalString(200),
+  transcriptionFlowMode: z.enum(skillTranscriptionFlowModes).optional(),
   noCodeEndpointUrl: noCodeEndpointUrlSchema.optional(),
   noCodeAuthType: z.enum(noCodeAuthTypes).optional(),
   noCodeBearerToken: noCodeBearerTokenSchema.optional(),
@@ -115,6 +124,7 @@ export type SkillDto = {
   mode: SkillMode;
   knowledgeBaseIds?: string[];
   ragConfig: SkillRagConfig;
+  transcriptionFlowMode: SkillTranscriptionFlowMode;
   onTranscriptionMode: SkillTranscriptionMode;
   onTranscriptionAutoActionId: string | null;
   icon?: string | null;

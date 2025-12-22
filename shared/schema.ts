@@ -1080,6 +1080,10 @@ export const skills = pgTable(
     noCodeCallbackTokenLastFour: text("no_code_callback_token_last_four"),
     noCodeCallbackTokenRotatedAt: timestamp("no_code_callback_token_rotated_at"),
     contextInputLimit: integer("context_input_limit"),
+    transcriptionFlowMode: text("transcription_flow_mode")
+      .$type<SkillTranscriptionFlowMode>()
+      .notNull()
+      .default("standard"),
     onTranscriptionMode: text("on_transcription_mode")
       .$type<SkillTranscriptionMode>()
       .notNull()
@@ -1320,6 +1324,8 @@ export const skillRagModes = ["all_collections", "selected_collections"] as cons
 export type SkillRagMode = (typeof skillRagModes)[number];
 export const skillTranscriptionModes = ["raw_only", "auto_action"] as const;
 export type SkillTranscriptionMode = (typeof skillTranscriptionModes)[number];
+export const skillTranscriptionFlowModes = ["standard", "no_code"] as const;
+export type SkillTranscriptionFlowMode = (typeof skillTranscriptionFlowModes)[number];
 export const skillExecutionModes = ["standard", "no_code"] as const;
 export type SkillExecutionMode = (typeof skillExecutionModes)[number];
 export const noCodeAuthTypes = ["none", "bearer"] as const;

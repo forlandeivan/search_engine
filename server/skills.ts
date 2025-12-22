@@ -8,6 +8,7 @@ import {
   skillExecutionModes,
   skillRagModes,
   skillTranscriptionModes,
+  skillTranscriptionFlowModes,
   noCodeAuthTypes,
   chatSessions,
 } from "@shared/schema";
@@ -17,6 +18,7 @@ import type {
   SkillMode,
   SkillRagMode,
   SkillTranscriptionMode,
+  SkillTranscriptionFlowMode,
   SkillStatus,
   NoCodeAuthType,
 } from "@shared/schema";
@@ -55,6 +57,7 @@ type EditableSkillColumns = Pick<
   | "status"
   | "executionMode"
   | "mode"
+  | "transcriptionFlowMode"
   | "onTranscriptionMode"
   | "onTranscriptionAutoActionId"
   | "noCodeEndpointUrl"
@@ -73,6 +76,7 @@ type SkillEditableInput = Partial<EditableSkillColumns> & {
 type NormalizedSkillEditableInput = Omit<SkillEditableInput, "ragConfig"> & {
   executionMode?: SkillExecutionMode;
   mode?: SkillMode;
+  transcriptionFlowMode?: SkillTranscriptionFlowMode;
   ragConfig?: SkillRagConfig;
   contextInputLimit?: number | null;
 };
@@ -96,6 +100,7 @@ const DEFAULT_RAG_CONFIG: SkillRagConfig = {
 // Режим выполнения фиксируем отдельным полем в skills, чтобы менять маршрут без изменения остальных настроек.
 const DEFAULT_SKILL_EXECUTION_MODE: SkillExecutionMode = "standard";
 const DEFAULT_SKILL_MODE: SkillMode = "rag";
+const DEFAULT_TRANSCRIPTION_FLOW_MODE: SkillTranscriptionFlowMode = "standard";
 const DEFAULT_TRANSCRIPTION_MODE: SkillTranscriptionMode = "raw_only";
 const DEFAULT_CONTEXT_INPUT_LIMIT: number | null = null;
 const CALLBACK_UNAUTHORIZED_CODE = "CALLBACK_UNAUTHORIZED";
@@ -172,6 +177,12 @@ const isSkillTranscriptionMode = (value: unknown): value is SkillTranscriptionMo
 
 const normalizeTranscriptionMode = (value: unknown): SkillTranscriptionMode =>
   isSkillTranscriptionMode(value) ? value : DEFAULT_TRANSCRIPTION_MODE;
+
+const isSkillTranscriptionFlowMode = (value: unknown): value is SkillTranscriptionFlowMode =>
+  typeof value === "string" && skillTranscriptionFlowModes.includes(value as SkillTranscriptionFlowMode);
+
+const normalizeTranscriptionFlowMode = (value: unknown): SkillTranscriptionFlowMode =>
+  isSkillTranscriptionFlowMode(value) ? value : DEFAULT_TRANSCRIPTION_FLOW_MODE;
 
 const isSkillExecutionMode = (value: unknown): value is SkillExecutionMode =>
   typeof value === "string" && skillExecutionModes.includes(value as SkillExecutionMode);
@@ -360,6 +371,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
       llmMaxTokens: row.ragLlmMaxTokens ?? DEFAULT_RAG_CONFIG.llmMaxTokens,
       llmResponseFormat: row.ragLlmResponseFormat ?? DEFAULT_RAG_CONFIG.llmResponseFormat,
     },
+    transcriptionFlowMode: normalizeTranscriptionFlowMode(row.transcriptionFlowMode),
     onTranscriptionMode: normalizeTranscriptionMode(row.onTranscriptionMode),
     onTranscriptionAutoActionId: row.onTranscriptionAutoActionId ?? null,
     createdAt: toIso(row.createdAt),
@@ -452,6 +464,9 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   }
   if (input.mode !== undefined) {
     next.mode = normalizeSkillMode(input.mode);
+  }
+  if (input.transcriptionFlowMode !== undefined) {
+    next.transcriptionFlowMode = normalizeTranscriptionFlowMode(input.transcriptionFlowMode);
   }
   if (input.icon !== undefined) {
     next.icon = normalizeNullableString(input.icon);
@@ -607,6 +622,7 @@ export async function createSkill(
   }
 
   const ragConfig = normalized.ragConfig ?? { ...DEFAULT_RAG_CONFIG };
+  const transcriptionFlowMode = normalized.transcriptionFlowMode ?? DEFAULT_TRANSCRIPTION_FLOW_MODE;
   const transcriptionMode = normalized.onTranscriptionMode ?? DEFAULT_TRANSCRIPTION_MODE;
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
   const executionMode = normalized.executionMode ?? DEFAULT_SKILL_EXECUTION_MODE;
@@ -652,6 +668,7 @@ export async function createSkill(
       ragLlmTemperature: ragConfig.llmTemperature,
       ragLlmMaxTokens: ragConfig.llmMaxTokens,
       ragLlmResponseFormat: ragConfig.llmResponseFormat,
+      transcriptionFlowMode,
       onTranscriptionMode: transcriptionMode,
       onTranscriptionAutoActionId: transcriptionAutoActionId,
       noCodeEndpointUrl: normalizedEndpointUrl,

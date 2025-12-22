@@ -340,6 +340,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
         llmMaxTokens,
         llmResponseFormat: null,
       },
+      transcriptionFlowMode: values.transcriptionFlowMode,
       onTranscriptionMode: values.onTranscriptionMode,
       onTranscriptionAutoActionId: autoActionId,
       contextInputLimit,
