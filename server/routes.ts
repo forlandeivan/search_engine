@@ -103,9 +103,15 @@ import {
   buildChatLlmContext,
   buildChatCompletionRequestBody,
   addAssistantMessage,
+  addNoCodeCallbackMessage,
   ChatServiceError,
   getChatById,
 } from "./chat-service";
+import {
+  buildMessageCreatedEventPayload,
+  getNoCodeConnectionInternal,
+  scheduleNoCodeEventDelivery,
+} from "./no-code-events";
 type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
 const NO_CODE_FLOW_MESSAGES: Record<NoCodeFlowFailureReason, string> = {
   NOT_CONFIGURED: "No-code сценарий недоступен. Проверьте подключение или попробуйте позже.",
@@ -6965,6 +6971,28 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     operationId: z.string().trim().max(200).optional(),
   });
 
+  const noCodeCallbackCreateMessageSchema = z
+    .object({
+      workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
+      chatId: z.string().trim().min(1, "Укажите чат"),
+      role: z.enum(["user", "assistant", "system"]),
+      content: z.string().trim().max(20000).optional(),
+      text: z.string().trim().max(20000).optional(),
+      triggerMessageId: z.string().trim().max(200).optional(),
+      correlationId: z.string().trim().max(200).optional(),
+      metadata: z.record(z.unknown()).optional(),
+    })
+    .superRefine((val, ctx) => {
+      const content = (val.content ?? val.text ?? "").trim();
+      if (!content) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["content"],
+          message: "Сообщение не может быть пустым",
+        });
+      }
+    });
+
 
 
   const adminLlmExecutionStatusSchema = z.enum(["pending", "running", "success", "error", "timeout", "cancelled"]);
@@ -10310,7 +10338,28 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
       const message = await addUserMessage(req.params.chatId, workspaceId, user.id, payload.content);
       if (skill && skill.executionMode === "no_code") {
-        throw createNoCodeFlowError("NOT_CONFIGURED");
+        const connection = await getNoCodeConnectionInternal({ workspaceId, skillId: skill.id });
+        if (!connection?.endpointUrl) {
+          throw createNoCodeFlowError("NOT_CONFIGURED");
+        }
+        if (connection.authType === "bearer" && !connection.bearerToken) {
+          throw createNoCodeFlowError("NOT_CONFIGURED");
+        }
+
+        // MVP: отправляем событие только на user-сообщения, чтобы избежать зацикливания и утечек ответа обратно в сценарий.
+        const eventPayload = buildMessageCreatedEventPayload({
+          workspaceId,
+          chatId: req.params.chatId,
+          skillId: skill.id,
+          message,
+          actorUserId: user.id,
+        });
+        scheduleNoCodeEventDelivery({
+          endpointUrl: connection.endpointUrl,
+          authType: connection.authType,
+          bearerToken: connection.bearerToken,
+          payload: eventPayload,
+        });
       }
       scheduleChatTitleGenerationIfNeeded({
         chatId: req.params.chatId,
@@ -10549,7 +10598,37 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       if (skillForChat && skillForChat.executionMode === "no_code") {
-        throw createNoCodeFlowError("NOT_CONFIGURED");
+        const connection = await getNoCodeConnectionInternal({ workspaceId, skillId: skillForChat.id });
+        if (!connection?.endpointUrl) {
+          throw createNoCodeFlowError("NOT_CONFIGURED");
+        }
+        if (connection.authType === "bearer" && !connection.bearerToken) {
+          throw createNoCodeFlowError("NOT_CONFIGURED");
+        }
+
+        await safeLogStep("DISPATCH_NO_CODE_EVENT", SKILL_EXECUTION_STEP_STATUS.RUNNING, {
+          input: { chatId: chat.id, userMessageId: userMessageRecord?.id, skillId: skillForChat.id },
+        });
+
+        const eventPayload = buildMessageCreatedEventPayload({
+          workspaceId,
+          chatId: chat.id,
+          skillId: skillForChat.id,
+          message: userMessageRecord,
+          actorUserId: user.id,
+        });
+        scheduleNoCodeEventDelivery({
+          endpointUrl: connection.endpointUrl,
+          authType: connection.authType,
+          bearerToken: connection.bearerToken,
+          payload: eventPayload,
+        });
+
+        await safeLogStep("DISPATCH_NO_CODE_EVENT", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
+          output: { eventId: eventPayload.eventId },
+        });
+        await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
+        return res.status(202).json({ accepted: true, userMessage: userMessageRecord });
       }
 
       const context = await buildChatLlmContext(req.params.chatId, workspaceId, user.id, {
@@ -11000,6 +11079,33 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
       if (error instanceof HttpError) {
         return res.status(error.status).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/no-code/callback/messages", async (req, res, next) => {
+    try {
+      const payload = noCodeCallbackCreateMessageSchema.parse(req.body ?? {});
+      const content = (payload.content ?? payload.text ?? "").trim();
+      const triggerMessageId = (payload.triggerMessageId ?? payload.correlationId ?? "").trim() || null;
+
+      const message = await addNoCodeCallbackMessage({
+        workspaceId: payload.workspaceId,
+        chatId: payload.chatId,
+        role: payload.role,
+        content,
+        triggerMessageId,
+        metadata: payload.metadata ?? null,
+      });
+
+      return res.status(201).json({ message });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
       }
       next(error);
     }

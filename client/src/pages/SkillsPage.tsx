@@ -119,7 +119,15 @@ export const skillFormSchema = z.object({
     .string()
     .url({ message: "Некорректный URL" })
     .optional()
-    .or(z.literal("")),
+    .or(z.literal(""))
+    .refine(
+      (value) =>
+        value === undefined ||
+        value === "" ||
+        value.startsWith("http://") ||
+        value.startsWith("https://"),
+      { message: "Разрешены только http/https URL" },
+    ),
   noCodeAuthType: z.enum(["none", "bearer"]).default("none"),
   noCodeBearerToken: z.string().optional().or(z.literal("")),
 }).superRefine((val, ctx) => {

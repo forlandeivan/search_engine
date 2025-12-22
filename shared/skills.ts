@@ -50,10 +50,16 @@ const ragConfigInputSchema = z.object({
 });
 
 const noCodeEndpointUrlSchema = z
-  .string()
-  .url({ message: "Некорректный URL" })
+  .union([z.string().url({ message: "Некорректный URL" }), z.literal("")])
   .optional()
-  .or(z.literal(""));
+  .refine(
+    (value) =>
+      value === undefined ||
+      value === "" ||
+      value.startsWith("http://") ||
+      value.startsWith("https://"),
+    "Разрешены только http/https URL",
+  );
 
 const noCodeBearerTokenSchema = z.string().max(4096, "Не более 4096 символов").optional().or(z.literal(""));
 

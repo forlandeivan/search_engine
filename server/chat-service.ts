@@ -660,3 +660,49 @@ export async function addAssistantMessage(
   await storage.touchChatSession(chatId);
   return mapMessage(message);
 }
+
+export async function addNoCodeCallbackMessage(opts: {
+  chatId: string;
+  workspaceId: string;
+  role: ChatMessageRole;
+  content: string;
+  triggerMessageId?: string | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<ReturnType<typeof mapMessage>> {
+  const chatRecord = await storage.getChatSessionById(opts.chatId);
+  if (!chatRecord || chatRecord.workspaceId !== opts.workspaceId) {
+    throw new ChatServiceError("Чат не найден", 404);
+  }
+
+  const chat = mapChatSummary(chatRecord);
+  ensureChatAndSkillAreActive(chat);
+
+  const skill = await getSkillById(opts.workspaceId, chat.skillId);
+  if (!skill) {
+    throw new ChatServiceError("Навык не найден", 404);
+  }
+  ensureSkillIsActive(skill);
+  if (skill.executionMode !== "no_code") {
+    throw new ChatServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
+  }
+
+  const content = opts.content?.trim() ?? "";
+  if (!content) {
+    throw new ChatServiceError("Сообщение не может быть пустым", 400);
+  }
+
+  const metadata: Record<string, unknown> = { ...(opts.metadata ?? {}) };
+  const triggerMessageId = opts.triggerMessageId?.trim() ?? "";
+  if (triggerMessageId) {
+    metadata.triggerMessageId = triggerMessageId;
+  }
+
+  const message = await storage.createChatMessage({
+    chatId: opts.chatId,
+    role: opts.role,
+    content,
+    metadata,
+  });
+  await storage.touchChatSession(opts.chatId);
+  return mapMessage(message);
+}
