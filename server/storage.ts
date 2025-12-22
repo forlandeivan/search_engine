@@ -6705,6 +6705,11 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
     await db.execute(sql`
       ALTER TABLE "skills"
+      ADD COLUMN IF NOT EXISTS "execution_mode" text NOT NULL DEFAULT 'standard'
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "skills"
       ADD COLUMN IF NOT EXISTS "rag_bm25_weight" double precision
     `);
 

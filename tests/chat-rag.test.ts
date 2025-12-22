@@ -23,6 +23,9 @@ const baseSkill = (overrides: Partial<SkillDto> = {}): SkillDto => {
     collectionName: "kb_default_collection",
     isSystem: false,
     systemKey: null,
+    executionMode: "standard",
+    status: "active",
+    mode: "rag",
     knowledgeBaseIds: ["kb-1"],
     ragConfig: {
       mode: "selected_collections",
@@ -42,6 +45,9 @@ const baseSkill = (overrides: Partial<SkillDto> = {}): SkillDto => {
     },
     createdAt: now,
     updatedAt: now,
+    icon: null,
+    onTranscriptionMode: "raw_only",
+    onTranscriptionAutoActionId: null,
     ...overrides,
   };
 };

@@ -70,6 +70,58 @@ test.describe("skill settings", () => {
     await saveSuccessScreenshot(page, testInfo);
   });
 
+  test("layout matches requirements and dirty action bar toggles", async ({ page }, testInfo) => {
+    await login(page);
+
+    const workspaceId = await fetchWorkspaceId(page);
+    expect(workspaceId, "workspace id must be available").toBeTruthy();
+
+    const skillsResponse = await page.request.get("/api/skills", {
+      headers: { "X-Workspace-Id": workspaceId },
+    });
+    const skillsPayload = await skillsResponse.json();
+    const skills = (skillsPayload?.skills ?? []) as Array<{
+      id: string;
+      isSystem?: boolean;
+      status?: string | null;
+    }>;
+    const editableSkill = skills.find((skill) => !skill.isSystem && skill.status !== "archived");
+    if (!editableSkill) {
+      testInfo.skip("No editable skills available");
+    }
+
+    await page.goto("/skills");
+    const skillRow = page.getByTestId(`skill-row-${editableSkill!.id}`);
+    await expect(skillRow).toBeVisible();
+    await skillRow.click();
+
+    await expect(page.getByTestId("skill-title")).toHaveText("Настройки навыка");
+    await expect(page.getByTestId("skill-settings-tab-main")).toBeVisible();
+    await expect(page.getByTestId("skill-settings-tab-transcription")).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Действия" })).toBeVisible();
+
+    const saveButton = page.getByTestId("save-button");
+    await expect(saveButton).toHaveCount(0);
+
+    const descriptionInput = page.getByTestId("skill-description-input");
+    const initialDescription = await descriptionInput.inputValue();
+    await descriptionInput.fill(`E2E layout check ${Date.now()}`);
+    await expect(saveButton).toBeVisible();
+
+    const cancelButton = page.getByRole("button", { name: "Отмена" });
+    await expect(cancelButton).toBeVisible();
+    await cancelButton.click();
+
+    await expect(descriptionInput).toHaveValue(initialDescription);
+    await expect(saveButton).toHaveCount(0);
+
+    await page.getByTestId("skill-icon-trigger").click();
+    await expect(page.getByText("Иконка навыка")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await saveSuccessScreenshot(page, testInfo);
+  });
+
   test("auto routes to LLM when no RAG sources selected", async ({ page }, testInfo) => {
     await login(page);
 

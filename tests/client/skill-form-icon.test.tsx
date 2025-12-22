@@ -36,6 +36,7 @@ const baseSkill: Skill = {
   isSystem: false,
   systemKey: null,
   status: "active",
+  executionMode: "standard",
   mode: "llm",
   knowledgeBaseIds: [],
   ragConfig: {
@@ -63,7 +64,7 @@ const baseSkill: Skill = {
 describe("SkillFormContent", () => {
   it("updates icon value and submits it", async () => {
     mockApiRequest.mockResolvedValue({ json: async () => ({ items: [] }) });
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+    const handleSubmit = vi.fn().mockResolvedValue(true);
 
     const llmOptions = [
       {
@@ -79,7 +80,7 @@ describe("SkillFormContent", () => {
       },
     ];
 
-    const { getByTestId } = renderWithClient(
+    const { getByTestId, findByTestId } = renderWithClient(
       <SkillFormContent
         knowledgeBases={[]}
         vectorCollections={[]}
@@ -102,7 +103,8 @@ describe("SkillFormContent", () => {
 
     fireEvent.click(getByTestId("skill-icon-trigger"));
     fireEvent.click(getByTestId("skill-icon-option-Brain"));
-    fireEvent.click(getByTestId("save-button"));
+    const saveButton = await findByTestId("save-button");
+    fireEvent.click(saveButton);
 
     await waitFor(() => {
       expect(handleSubmit).toHaveBeenCalled();
@@ -112,9 +114,9 @@ describe("SkillFormContent", () => {
     expect(submitted.icon).toBe("Brain");
   });
 
-  it("submits advanced LLM parameters", async () => {
+  it("defaults execution mode to standard when missing", async () => {
     mockApiRequest.mockResolvedValue({ json: async () => ({ items: [] }) });
-    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+    const handleSubmit = vi.fn().mockResolvedValue(true);
 
     const llmOptions = [
       {
@@ -130,7 +132,101 @@ describe("SkillFormContent", () => {
       },
     ];
 
-    const { getByTestId } = renderWithClient(
+    const skillWithoutMode = { ...baseSkill } as Skill;
+    delete (skillWithoutMode as Record<string, unknown>).executionMode;
+
+    const { findByTestId } = renderWithClient(
+      <SkillFormContent
+        knowledgeBases={[]}
+        vectorCollections={[]}
+        isVectorCollectionsLoading={false}
+        embeddingProviders={[]}
+        isEmbeddingProvidersLoading={false}
+        llmOptions={llmOptions}
+        onSubmit={handleSubmit}
+        isSubmitting={false}
+        skill={skillWithoutMode}
+        getIconComponent={() => null}
+      />,
+    );
+
+    const nameInput = await findByTestId("skill-name-input");
+    fireEvent.change(nameInput, { target: { value: "Icon Skill Updated" } });
+    const saveButton = await findByTestId("save-button");
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(handleSubmit).toHaveBeenCalled();
+    });
+
+    const submitted = handleSubmit.mock.calls[0][0];
+    expect(submitted.executionMode).toBe("standard");
+  });
+
+  it("submits execution mode changes", async () => {
+    mockApiRequest.mockResolvedValue({ json: async () => ({ items: [] }) });
+    const handleSubmit = vi.fn().mockResolvedValue(true);
+
+    const llmOptions = [
+      {
+        key: "provider-1::model-1",
+        label: "Provider · Model",
+        providerId: "provider-1",
+        providerName: "Provider",
+        modelId: "model-1",
+        modelDisplayName: "Model",
+        costLevel: "LOW" as const,
+        providerIsActive: true,
+        disabled: false,
+      },
+    ];
+
+    const { findByTestId } = renderWithClient(
+      <SkillFormContent
+        knowledgeBases={[]}
+        vectorCollections={[]}
+        isVectorCollectionsLoading={false}
+        embeddingProviders={[]}
+        isEmbeddingProvidersLoading={false}
+        llmOptions={llmOptions}
+        onSubmit={handleSubmit}
+        isSubmitting={false}
+        skill={baseSkill}
+        getIconComponent={() => null}
+      />,
+    );
+
+    fireEvent.click(await findByTestId("execution-mode-no-code"));
+    const saveButton = await findByTestId("save-button");
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(handleSubmit).toHaveBeenCalled();
+    });
+
+    const submitted = handleSubmit.mock.calls[0][0];
+    expect(submitted.executionMode).toBe("no_code");
+  });
+
+  it("submits advanced LLM parameters", async () => {
+    mockApiRequest.mockResolvedValue({ json: async () => ({ items: [] }) });
+    const handleSubmit = vi.fn().mockResolvedValue(true);
+
+    const llmOptions = [
+      {
+        key: "provider-1::model-1",
+        label: "Provider · Model",
+        providerId: "provider-1",
+        providerName: "Provider",
+        modelId: "model-1",
+        modelDisplayName: "Model",
+        costLevel: "LOW" as const,
+        providerIsActive: true,
+        disabled: false,
+      },
+    ];
+
+    const { getByTestId, findByTestId } = renderWithClient(
       <SkillFormContent
         knowledgeBases={[]}
         vectorCollections={[]}
@@ -148,7 +244,8 @@ describe("SkillFormContent", () => {
     fireEvent.click(getByTestId("llm-advanced-accordion"));
     fireEvent.change(getByTestId("llm-temperature-input"), { target: { value: "0.9" } });
     fireEvent.change(getByTestId("llm-max-tokens-input"), { target: { value: "512" } });
-    fireEvent.click(getByTestId("save-button"));
+    const saveButton = await findByTestId("save-button");
+    fireEvent.click(saveButton);
 
     await waitFor(() => {
       expect(handleSubmit).toHaveBeenCalled();
@@ -184,7 +281,7 @@ describe("SkillFormContent", () => {
         embeddingProviders={[]}
         isEmbeddingProvidersLoading={false}
         llmOptions={llmOptions}
-        onSubmit={vi.fn()}
+        onSubmit={vi.fn().mockResolvedValue(true)}
         isSubmitting={false}
         skill={baseSkill}
         getIconComponent={() => null}

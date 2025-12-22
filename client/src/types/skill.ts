@@ -1,4 +1,5 @@
-import type { SkillMode, SkillRagConfig, SkillTranscriptionMode } from "@shared/skills";
+import type { SkillRagConfig } from "@shared/skills";
+import type { SkillExecutionMode, SkillMode, SkillTranscriptionMode } from "@shared/schema";
 
 export interface Skill {
   id: string;
@@ -13,6 +14,7 @@ export interface Skill {
   isSystem: boolean;
   systemKey?: string | null;
   status?: "active" | "archived";
+  executionMode: SkillExecutionMode;
   mode: SkillMode;
   knowledgeBaseIds?: string[];
   ragConfig: SkillRagConfig;
@@ -31,6 +33,7 @@ export interface SkillPayload {
   llmProviderConfigId?: string | null;
   collectionName?: string | null;
   mode?: SkillMode;
+  executionMode?: SkillExecutionMode;
   knowledgeBaseIds?: string[];
   ragConfig?: SkillRagConfig;
   onTranscriptionMode?: SkillTranscriptionMode;

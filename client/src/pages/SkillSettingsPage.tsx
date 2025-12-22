@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Separator } from "@/components/ui/separator";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useCreateSkill, useSkills, useUpdateSkill } from "@/hooks/useSkills";
@@ -188,12 +194,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     return options.sort((a, b) => a.label.localeCompare(b.label, "ru"));
   }, [llmProviders, catalogLlmModels]);
 
-  const { updateSkill, isUpdating } = useUpdateSkill({
-    workspaceId,
-    onSuccess: () => {
-      toast({ title: "Навык сохранён" });
-    },
-  });
+  const { updateSkill, isUpdating } = useUpdateSkill({ workspaceId });
   const { createSkill, isCreating } = useCreateSkill({
     workspaceId,
     onSuccess: (created) => {
@@ -212,7 +213,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
         description: "Модель не найдена в каталоге или отключена",
         variant: "destructive",
       });
-      return;
+      throw new Error("Модель не найдена в каталоге или отключена");
     }
     if (values.onTranscriptionMode === "auto_action" && !values.onTranscriptionAutoActionId?.trim()) {
       toast({
@@ -220,7 +221,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
         description: "Выберите действие для авто-запуска после транскрипции",
         variant: "destructive",
       });
-      return;
+      throw new Error("Не выбрано действие для авто-запуска");
     }
 
     const parseIntegerOrDefault = (candidate: string | undefined, fallback: number) => {
@@ -273,6 +274,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       systemPrompt: values.systemPrompt?.trim() ? values.systemPrompt.trim() : null,
       icon: values.icon?.trim() ? values.icon.trim() : null,
       knowledgeBaseIds: values.knowledgeBaseIds,
+      executionMode: values.executionMode,
       mode: hasRagSources ? "rag" : "llm",
       llmProviderConfigId: providerId,
       modelId: resolvedModel.key,
@@ -302,10 +304,13 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     try {
       if (isNew) {
         await createSkill(payload);
+        return true;
       } else if (currentSkill) {
         await updateSkill({ skillId: currentSkill.id, payload });
-        toast({ title: "Навык сохранён" });
+        toast({ title: "Сохранено" });
+        return true;
       }
+      return false;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Неизвестная ошибка";
       toast({
@@ -313,6 +318,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
         description: message,
         variant: "destructive",
       });
+      throw err instanceof Error ? err : new Error(message);
     }
   };
 
@@ -334,69 +340,81 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
 
   const getIconComponent = (iconName: string | null | undefined) => {
     if (!iconName) return null;
-    const Icon = (LucideIcons as Record<string, ComponentType<{ className?: string }>>)[iconName];
+    const iconMap = LucideIcons as unknown as Record<string, ComponentType<{ className?: string }>>;
+    const Icon = iconMap[iconName];
     return Icon ? <Icon className="h-5 w-5" /> : null;
   };
 
+  const skillName = currentSkill?.name?.trim() || (isNew ? "Новый навык" : "Навык");
+
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={goBack} className="shrink-0">
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Назад
-        </Button>
-        <div className="space-y-1">
-          <p className="text-xs text-muted-foreground">Настройки навыка</p>
-          {!isNew && currentSkill && (
-            <h1 className="text-lg font-medium text-foreground break-all">{currentSkill.name}</h1>
-          )}
+    <div className="space-y-6 pb-10">
+      <div className="mx-auto w-full max-w-6xl px-6 pt-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <Button variant="ghost" size="sm" onClick={goBack} className="shrink-0">
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Назад
+            </Button>
+            <div className="flex flex-col gap-1">
+              <Breadcrumb className="text-sm text-muted-foreground">
+                <BreadcrumbList>
+                  <BreadcrumbItem>
+                    <BreadcrumbLink asChild>
+                      <Link href="/skills">Навыки</Link>
+                    </BreadcrumbLink>
+                  </BreadcrumbItem>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    <BreadcrumbPage>{skillName}</BreadcrumbPage>
+                  </BreadcrumbItem>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    <BreadcrumbPage>Настройки</BreadcrumbPage>
+                  </BreadcrumbItem>
+                </BreadcrumbList>
+              </Breadcrumb>
+              <h1 className="text-base font-semibold" data-testid="skill-title">
+                Настройки навыка
+              </h1>
+            </div>
+          </div>
         </div>
       </div>
 
-      <Card>
-        <CardContent className="space-y-4">
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Загружаем данные...
-            </div>
-          ) : error ? (
-            <Alert variant="destructive">
-              <AlertTitle>Не удалось загрузить данные</AlertTitle>
-              <AlertDescription>{(error as Error).message}</AlertDescription>
-            </Alert>
-          ) : !isNew && !currentSkill ? (
-            <Alert variant="destructive">
-              <AlertTitle>Навык не найден</AlertTitle>
-              <AlertDescription>Проверьте ссылку и попробуйте снова.</AlertDescription>
-            </Alert>
-          ) : (
-            <>
-              <SkillFormContent
-                knowledgeBases={knowledgeBases}
-                vectorCollections={vectorCollections}
-                isVectorCollectionsLoading={vectorCollectionsQuery.isLoading}
-                embeddingProviders={embeddingProviders}
-                isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
-                llmOptions={llmOptions}
-                onSubmit={handleSubmit}
-                isSubmitting={isUpdating || isCreating}
-                skill={isNew ? null : currentSkill}
-                getIconComponent={getIconComponent}
-                onCancel={goBack}
-                isOpen
-                activeTab={activeTab}
-                onTabChange={handleTabChange}
-              />
-              <Separator />
-              <div className="flex justify-end">
-                <Button variant="outline" onClick={goBack}>
-                  Назад к списку
-                </Button>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+      <div className="mx-auto w-full max-w-6xl px-6">
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Загружаем данные...
+          </div>
+        ) : error ? (
+          <Alert variant="destructive">
+            <AlertTitle>Не удалось загрузить данные</AlertTitle>
+            <AlertDescription>{(error as Error).message}</AlertDescription>
+          </Alert>
+        ) : !isNew && !currentSkill ? (
+          <Alert variant="destructive">
+            <AlertTitle>Навык не найден</AlertTitle>
+            <AlertDescription>Проверьте ссылку и попробуйте снова.</AlertDescription>
+          </Alert>
+        ) : (
+          <SkillFormContent
+            knowledgeBases={knowledgeBases}
+            vectorCollections={vectorCollections}
+            isVectorCollectionsLoading={vectorCollectionsQuery.isLoading}
+            embeddingProviders={embeddingProviders}
+            isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
+            llmOptions={llmOptions}
+            onSubmit={handleSubmit}
+            isSubmitting={isUpdating || isCreating}
+            skill={isNew ? null : currentSkill}
+            getIconComponent={getIconComponent}
+            isOpen
+            activeTab={activeTab}
+            onTabChange={handleTabChange}
+          />
+        )}
+      </div>
     </div>
   );
 }

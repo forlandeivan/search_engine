@@ -1,8 +1,16 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./db";
-import { skills, skillKnowledgeBases, knowledgeBases, skillRagModes, skillTranscriptionModes, chatSessions } from "@shared/schema";
+import {
+  skills,
+  skillKnowledgeBases,
+  knowledgeBases,
+  skillExecutionModes,
+  skillRagModes,
+  skillTranscriptionModes,
+  chatSessions,
+} from "@shared/schema";
 import type { SkillDto, SkillRagConfig, CreateSkillPayload } from "@shared/skills";
-import type { SkillMode, SkillRagMode, SkillTranscriptionMode, SkillStatus } from "@shared/schema";
+import type { SkillExecutionMode, SkillMode, SkillRagMode, SkillTranscriptionMode, SkillStatus } from "@shared/schema";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
@@ -33,6 +41,7 @@ type EditableSkillColumns = Pick<
   | "collectionName"
   | "icon"
   | "status"
+  | "executionMode"
   | "mode"
   | "onTranscriptionMode"
   | "onTranscriptionAutoActionId"
@@ -46,6 +55,7 @@ type SkillEditableInput = Partial<EditableSkillColumns> & {
 };
 
 type NormalizedSkillEditableInput = Omit<SkillEditableInput, "ragConfig"> & {
+  executionMode?: SkillExecutionMode;
   mode?: SkillMode;
   ragConfig?: SkillRagConfig;
 };
@@ -66,6 +76,8 @@ const DEFAULT_RAG_CONFIG: SkillRagConfig = {
   llmMaxTokens: null,
   llmResponseFormat: null,
 };
+// Режим выполнения фиксируем отдельным полем в skills, чтобы менять маршрут без изменения остальных настроек.
+const DEFAULT_SKILL_EXECUTION_MODE: SkillExecutionMode = "standard";
 const DEFAULT_SKILL_MODE: SkillMode = "rag";
 const DEFAULT_TRANSCRIPTION_MODE: SkillTranscriptionMode = "raw_only";
 
@@ -109,6 +121,12 @@ const isSkillTranscriptionMode = (value: unknown): value is SkillTranscriptionMo
 
 const normalizeTranscriptionMode = (value: unknown): SkillTranscriptionMode =>
   isSkillTranscriptionMode(value) ? value : DEFAULT_TRANSCRIPTION_MODE;
+
+const isSkillExecutionMode = (value: unknown): value is SkillExecutionMode =>
+  typeof value === "string" && skillExecutionModes.includes(value as SkillExecutionMode);
+
+const normalizeSkillExecutionMode = (value: unknown): SkillExecutionMode =>
+  isSkillExecutionMode(value) ? value : DEFAULT_SKILL_EXECUTION_MODE;
 
 const normalizeSkillMode = (value: unknown): SkillMode =>
   value === "llm" ? "llm" : DEFAULT_SKILL_MODE;
@@ -252,6 +270,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     collectionName: row.collectionName ?? null,
     isSystem: Boolean(row.isSystem),
     systemKey: row.systemKey ?? null,
+    executionMode: normalizeSkillExecutionMode(row.executionMode),
     status: (row.status as SkillStatus) ?? "active",
     mode: normalizeSkillMode(row.mode),
     icon: row.icon ?? null,
@@ -358,6 +377,9 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   }
   if (input.collectionName !== undefined) {
     next.collectionName = normalizeNullableString(input.collectionName);
+  }
+  if (input.executionMode !== undefined) {
+    next.executionMode = normalizeSkillExecutionMode(input.executionMode);
   }
   if (input.mode !== undefined) {
     next.mode = normalizeSkillMode(input.mode);
@@ -466,6 +488,7 @@ export async function createSkill(
   const ragConfig = normalized.ragConfig ?? { ...DEFAULT_RAG_CONFIG };
   const transcriptionMode = normalized.onTranscriptionMode ?? DEFAULT_TRANSCRIPTION_MODE;
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
+  const executionMode = normalized.executionMode ?? DEFAULT_SKILL_EXECUTION_MODE;
   const mode = normalized.mode ?? DEFAULT_SKILL_MODE;
   assertRagRequirements(ragConfig, validKnowledgeBases);
   let resolvedModelId: string | null = normalized.modelId ?? null;
@@ -491,6 +514,7 @@ export async function createSkill(
       modelId: resolvedModelId,
       llmProviderConfigId: normalized.llmProviderConfigId,
       collectionName: normalized.collectionName,
+      executionMode,
       mode,
       icon: normalized.icon,
       ragMode: ragConfig.mode,

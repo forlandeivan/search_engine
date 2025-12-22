@@ -1055,6 +1055,7 @@ export const skills = pgTable(
       .references(() => workspaceVectorCollections.collectionName, { onDelete: "set null" }),
     isSystem: boolean("is_system").notNull().default(false),
     systemKey: text("system_key"),
+    executionMode: text("execution_mode").$type<SkillExecutionMode>().notNull().default("standard"),
     mode: text("mode").$type<SkillMode>().notNull().default("rag"),
     ragMode: text("rag_mode").notNull().default("all_collections"),
     ragCollectionIds: jsonb("rag_collection_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
@@ -1305,6 +1306,8 @@ export const skillRagModes = ["all_collections", "selected_collections"] as cons
 export type SkillRagMode = (typeof skillRagModes)[number];
 export const skillTranscriptionModes = ["raw_only", "auto_action"] as const;
 export type SkillTranscriptionMode = (typeof skillTranscriptionModes)[number];
+export const skillExecutionModes = ["standard", "no_code"] as const;
+export type SkillExecutionMode = (typeof skillExecutionModes)[number];
 export const skillModes = ["rag", "llm"] as const;
 export type SkillMode = (typeof skillModes)[number];
 

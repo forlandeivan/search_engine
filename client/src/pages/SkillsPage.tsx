@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
+import { useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -93,6 +94,7 @@ export const skillFormSchema = z.object({
     .max(4000, "Не более 4000 символов")
     .optional()
     .or(z.literal("")),
+  executionMode: z.enum(["standard", "no_code"]).default("standard"),
   mode: z.enum(["rag", "llm"]).default("rag"),
   knowledgeBaseIds: z.array(z.string()).default([]),
   llmKey: z.string().min(1, "Выберите конфиг LLM"),
@@ -160,6 +162,7 @@ const costLevelLabel: Record<PublicModel["costLevel"], string> = {
 export const defaultFormValues = {
   name: "",
   description: "",
+  executionMode: "standard" as "standard" | "no_code",
   mode: "llm" as "rag" | "llm",
   knowledgeBaseIds: [] as string[],
   llmKey: "",
@@ -954,11 +957,10 @@ type SkillFormProps = {
   embeddingProviders: PublicEmbeddingProvider[];
   isEmbeddingProvidersLoading: boolean;
   llmOptions: LlmSelectionOption[];
-  onSubmit: (values: SkillFormValues) => Promise<void>;
+  onSubmit: (values: SkillFormValues) => Promise<boolean>;
   isSubmitting: boolean;
   skill?: Skill | null;
   getIconComponent: (iconName: string | null | undefined) => JSX.Element | null;
-  onCancel?: () => void;
   hideHeader?: boolean;
   isOpen?: boolean;
   activeTab?: SkillSettingsTab;
@@ -971,64 +973,99 @@ function IconPicker({
   value,
   onChange,
   renderIcon,
-  triggerClassName,
 }: {
   value: string;
   onChange: (icon: string) => void;
   renderIcon: (name: string | null | undefined, className?: string) => JSX.Element | null;
-  triggerClassName?: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredIcons = useMemo(() => {
+    if (!normalizedQuery) {
+      return ICON_OPTIONS;
+    }
+    return ICON_OPTIONS.filter((icon) => icon.value.toLowerCase().includes(normalizedQuery));
+  }, [normalizedQuery]);
+
+  const handleSelect = (icon: string) => {
+    onChange(icon);
+    setOpen(false);
+  };
+
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "flex h-10 w-10 items-center justify-center rounded-md border bg-white shadow-sm transition-colors dark:bg-slate-900",
-            value ? "border-primary" : "border-border hover:border-primary/60",
-            triggerClassName,
-          )}
-          aria-label="Выбрать иконку"
-          data-testid="skill-icon-trigger"
-        >
+    <Dialog open={open} onOpenChange={setOpen}>
+      <div className="flex items-center gap-3">
+        <div className="size-12 rounded-md border bg-muted flex items-center justify-center">
           {renderIcon(value, "h-5 w-5") ?? <span className="text-xs text-muted-foreground">—</span>}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-[420px] max-h-[360px] overflow-y-auto">
-        <div className="grid grid-cols-9 gap-2">
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            className={cn(
-              "flex h-10 w-10 items-center justify-center rounded-md border text-xs transition-colors",
-              value === "" ? "border-primary bg-primary/10" : "border-border hover:border-primary/60",
-            )}
-            aria-label="Без иконки"
-            data-testid="skill-icon-option-none"
-          >
-            ✕
-          </button>
-          {ICON_OPTIONS.map((icon) => {
-            const selected = value === icon.value;
-            return (
-              <button
-                key={icon.value}
-                type="button"
-                onClick={() => onChange(icon.value)}
-                className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-md border transition-colors",
-                  selected ? "border-primary bg-primary/10" : "border-border hover:border-primary/60",
-                )}
-                aria-label={icon.value}
-                data-testid={`skill-icon-option-${icon.value}`}
-              >
-                {renderIcon(icon.value, "h-5 w-5")}
-              </button>
-            );
-          })}
         </div>
-      </PopoverContent>
-    </Popover>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="h-9"
+          data-testid="skill-icon-trigger"
+          onClick={() => setOpen(true)}
+        >
+          Выбрать
+        </Button>
+      </div>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Иконка навыка</DialogTitle>
+          <DialogDescription>Выберите иконку, которая будет отображаться в списке навыков.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Поиск иконки"
+            className="h-9"
+          />
+          <div className="grid gap-2 grid-cols-4 sm:grid-cols-6">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "size-9 text-xs",
+                "data-[selected=true]:ring-2 data-[selected=true]:ring-ring data-[selected=true]:bg-accent",
+              )}
+              data-selected={value === ""}
+              onClick={() => handleSelect("")}
+              aria-label="Без иконки"
+              data-testid="skill-icon-option-none"
+            >
+              ✕
+            </Button>
+            {filteredIcons.map((icon) => {
+              const selected = value === icon.value;
+              return (
+                <Button
+                  key={icon.value}
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "size-9",
+                    "data-[selected=true]:ring-2 data-[selected=true]:ring-ring data-[selected=true]:bg-accent",
+                  )}
+                  data-selected={selected}
+                  onClick={() => handleSelect(icon.value)}
+                  aria-label={icon.value}
+                  data-testid={`skill-icon-option-${icon.value}`}
+                >
+                  {renderIcon(icon.value, "h-4 w-4")}
+                </Button>
+              );
+            })}
+          </div>
+          {filteredIcons.length === 0 && (
+            <p className="text-xs text-muted-foreground">Ничего не найдено</p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1043,7 +1080,6 @@ export function SkillFormContent({
   isSubmitting,
   skill,
   getIconComponent,
-  onCancel,
   hideHeader = false,
   isOpen = true,
   activeTab,
@@ -1054,6 +1090,7 @@ export function SkillFormContent({
     resolver: zodResolver(skillFormSchema),
     defaultValues: defaultFormValues,
   });
+  const lastSavedRef = useRef<SkillFormValues>(defaultFormValues);
   const currentTab = activeTab ?? internalTab;
 
   const handleTabChange = (tab: string) => {
@@ -1149,32 +1186,38 @@ export function SkillFormContent({
 
   useEffect(() => {
     if (!isOpen) {
-      form.reset(defaultFormValues);
+      const nextValues = { ...defaultFormValues };
+      form.reset(nextValues);
+      lastSavedRef.current = nextValues;
       return;
     }
 
     if (skill) {
-      const ragConfig = {
-        mode: skill.ragConfig?.mode ?? "all_collections",
-        collectionIds: skill.ragConfig?.collectionIds ?? [],
-        topK: skill.ragConfig?.topK ?? 5,
-        minScore: skill.ragConfig?.minScore ?? 0.7,
-        maxContextTokens:
-          skill.ragConfig?.maxContextTokens === null || skill.ragConfig?.maxContextTokens === undefined
-            ? null
-            : skill.ragConfig.maxContextTokens,
-        showSources: skill.ragConfig?.showSources ?? true,
-        embeddingProviderId: skill.ragConfig?.embeddingProviderId ?? null,
+      const ragConfig = skill.ragConfig ?? {
+        mode: "all_collections",
+        collectionIds: [],
+        topK: 5,
+        minScore: 0.7,
+        maxContextTokens: null,
+        showSources: true,
+        embeddingProviderId: null,
+        bm25Weight: null,
+        bm25Limit: null,
+        vectorWeight: null,
+        vectorLimit: null,
+        llmTemperature: null,
+        llmMaxTokens: null,
+        llmResponseFormat: null,
       };
-      form.reset({
+
+      const llmKey = buildLlmKey(skill.llmProviderConfigId ?? "", skill.modelId ?? "");
+      const nextValues: SkillFormValues = {
         name: skill.name ?? "",
         description: skill.description ?? "",
-        mode: skill.mode ?? "rag",
+        executionMode: skill.executionMode ?? "standard",
+        mode: skill.mode ?? "llm",
         knowledgeBaseIds: skill.knowledgeBaseIds ?? [],
-        llmKey:
-          skill.llmProviderConfigId && skill.modelId
-            ? buildLlmKey(skill.llmProviderConfigId, skill.modelId)
-            : "",
+        llmKey,
         llmTemperature:
           ragConfig.llmTemperature === null || ragConfig.llmTemperature === undefined
             ? ""
@@ -1194,19 +1237,38 @@ export function SkillFormContent({
         ragEmbeddingProviderId: ragConfig.embeddingProviderId ?? NO_EMBEDDING_PROVIDER_VALUE,
         onTranscriptionMode: skill.onTranscriptionMode ?? "raw_only",
         onTranscriptionAutoActionId: skill.onTranscriptionAutoActionId ?? "",
-      });
+      };
+      form.reset(nextValues);
+      lastSavedRef.current = nextValues;
       return;
     }
 
     const fallbackLlmKey = effectiveLlmOptions.find((option) => !option.disabled)?.key ?? "";
-    form.reset({ ...defaultFormValues, llmKey: fallbackLlmKey });
+    const nextValues = { ...defaultFormValues, llmKey: fallbackLlmKey };
+    form.reset(nextValues);
+    lastSavedRef.current = nextValues;
   }, [isOpen, skill, form, effectiveLlmOptions]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
     if (isSystemSkill) {
       return;
     }
-    await onSubmit(values);
+    try {
+      const didSave = await onSubmit(values);
+      if (didSave) {
+        const normalized: SkillFormValues = {
+          ...values,
+          name: values.name.trim(),
+          description: values.description?.trim() ?? "",
+          systemPrompt: values.systemPrompt?.trim() ?? "",
+          icon: values.icon?.trim() ?? "",
+        };
+        lastSavedRef.current = normalized;
+        form.reset(normalized);
+      }
+    } catch {
+      // Ошибка обрабатывается в родителе через toast, оставляем форму dirty.
+    }
   });
 
   const selectedKnowledgeBasesDisabled = sortedKnowledgeBases.length === 0;
@@ -1217,601 +1279,744 @@ export function SkillFormContent({
     return Icon ? <Icon className={className} /> : null;
   };
 
+  const isDirty = form.formState.isDirty;
+
+  const handleReset = () => {
+    form.reset(lastSavedRef.current);
+  };
+
   return (
-    <div className="space-y-5">
-      {!hideHeader && (
-        <div className="space-y-2">
-          <h2 className="text-xl font-semibold" data-testid="skill-title">
-            {skill?.name && skill.name.trim().length > 0 ? skill.name : skill ? "Настройка навыка" : "Новый навык"}
-          </h2>
-          {isSystemSkill && (
-            <Alert variant="default">
-              <AlertTitle>Системный навык</AlertTitle>
-              <AlertDescription>{systemSkillDescription}</AlertDescription>
-            </Alert>
-          )}
-        </div>
+    <div className="space-y-6">
+      {!hideHeader && isSystemSkill && (
+        <Alert variant="default">
+          <AlertTitle>Системный навык</AlertTitle>
+          <AlertDescription>{systemSkillDescription}</AlertDescription>
+        </Alert>
       )}
       <Form {...form}>
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-6">
           <Tabs value={currentTab} onValueChange={handleTabChange} className="space-y-4">
-            <TabsList className="w-full justify-start">
-              <TabsTrigger value="main" data-testid="skill-settings-tab-main">Основное</TabsTrigger>
-              <TabsTrigger value="transcription" data-testid="skill-settings-tab-transcription">Транскрипция</TabsTrigger>
-              <TabsTrigger value="actions">Действия</TabsTrigger>
-            </TabsList>
+            <div className="mx-auto w-full max-w-6xl px-6">
+              <TabsList className="inline-flex h-9 w-full items-center justify-start rounded-lg bg-muted p-[3px] overflow-x-auto">
+                <TabsTrigger value="main" data-testid="skill-settings-tab-main" className="whitespace-nowrap">
+                  Основное
+                </TabsTrigger>
+                <TabsTrigger value="transcription" data-testid="skill-settings-tab-transcription" className="whitespace-nowrap">
+                  Транскрипция
+                </TabsTrigger>
+                <TabsTrigger value="actions" className="whitespace-nowrap">
+                  Действия
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-            <TabsContent value="main" className="space-y-5">
-              <fieldset disabled={controlsDisabled} className="space-y-5">
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="flex flex-col gap-4 md:flex-row md:items-end" data-testid="skill-icon-name-row">
-                    <div className="space-y-2">
-                      <FormLabel>Иконка</FormLabel>
-                      <div className="flex items-center gap-3">
-                        <IconPicker
-                          value={iconValue}
-                          onChange={(icon) => form.setValue("icon", icon, { shouldDirty: true })}
-                          renderIcon={(iconName, className = "h-5 w-5") => renderIconPreview(iconName, className)}
-                          triggerClassName="h-10 w-10"
-                        />
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <span data-testid="skill-icon-label">{iconValue ? iconValue : "Не выбрана"}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <FormField
-                      control={form.control}
-                      name="name"
-                      render={({ field }) => (
-                        <FormItem className="flex-1">
-                          <FormLabel>Название</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="Например, Поддержка клиентов" data-testid="skill-name-input" />
-                          </FormControl>
-                          <FormDescription>Будет отображаться в списке навыков.</FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="description"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Описание</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            {...field}
-                            placeholder="Помогает коллегам понимать, когда использовать навык"
-                            rows={3}
-                            data-testid="skill-description-input"
-                          />
-                        </FormControl>
-                        <FormDescription>Кратко опишите назначение навыка.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="systemPrompt"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Инструкция</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            {...field}
-                            rows={4}
-                            placeholder="Добавьте инструкции для модели"
-                            data-testid="skill-instruction-textarea"
-                          />
-                        </FormControl>
-                        <FormDescription>Инструкции, которые всегда будут отправляться в LLM.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Модель LLM</h3>
-                    <p className="text-sm text-muted-foreground">Выберите модель для генеративных ответов.</p>
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="llmKey"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>LLM провайдер и модель</FormLabel>
-                        <FormControl>
-                          <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
-                            <SelectTrigger data-testid="llm-model-select">
-                              <SelectValue placeholder="Выберите модель" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {effectiveLlmOptions.map((option) => (
-                                <SelectItem key={option.key} value={option.key} disabled={option.disabled}>
-                                  <div className="flex flex-col gap-0.5">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-medium">{option.label}</span>
-                                      <Badge variant="outline" className="uppercase tracking-wide">
-                                        {costLevelLabel[option.costLevel]}
-                                      </Badge>
-                                    </div>
-                                    {!option.providerIsActive && (
-                                      <span className="text-xs text-muted-foreground">Провайдер отключён</span>
-                                    )}
-                                  </div>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </FormControl>
-                        <FormDescription>Используется для генеративных ответов навыка.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <Accordion type="single" collapsible>
-                    <AccordionItem value="llm-advanced" className="border-none">
-                      <AccordionTrigger className="py-2" data-testid="llm-advanced-accordion">
-                        Параметры LLM
-                      </AccordionTrigger>
-                      <AccordionContent>
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <FormField
-                            control={form.control}
-                            name="llmTemperature"
-                            render={({ field }) => (
-                              <FormItem>
-                                <div className="flex items-center gap-2">
-                                  <FormLabel>Температура</FormLabel>
-                                  <InfoTooltipIcon text="Определяет вариативность ответа модели. Чем выше значение, тем более креативный ответ." />
-                                </div>
-                                <FormControl>
-                                  <Input
-                                    type="number"
-                                    step="0.1"
-                                    min={0}
-                                    max={2}
-                                    placeholder="0.7"
-                                    value={field.value ?? ""}
-                                    onChange={(event) => field.onChange(event.target.value)}
-                                    data-testid="llm-temperature-input"
-                                  />
-                                </FormControl>
-                                <FormDescription>Оставьте пустым, чтобы использовать значения провайдера.</FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          <FormField
-                            control={form.control}
-                            name="llmMaxTokens"
-                            render={({ field }) => (
-                              <FormItem>
-                                <div className="flex items-center gap-2">
-                                  <FormLabel>Макс. токенов ответа</FormLabel>
-                                  <InfoTooltipIcon text="Ограничивает длину ответа модели. Если пусто — используем настройки провайдера." />
-                                </div>
-                                <FormControl>
-                                  <Input
-                                    type="number"
-                                    min={16}
-                                    max={4096}
-                                    placeholder="1024"
-                                    value={field.value ?? ""}
-                                    onChange={(event) => field.onChange(event.target.value)}
-                                    data-testid="llm-max-tokens-input"
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
-                  </Accordion>
-                </div>
-
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Базы знаний</h3>
-                    <p className="text-sm text-muted-foreground">Навык будет искать ответы только в выбранных базах знаний.</p>
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="knowledgeBaseIds"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormControl>
-                          <KnowledgeBaseMultiSelect
-                            value={field.value}
-                            onChange={field.onChange}
-                            knowledgeBases={sortedKnowledgeBases}
-                            disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Коллекции и режим</h3>
-                    <p className="text-sm text-muted-foreground">Управляют тем, где искать и сколько текста отдавать в ответах.</p>
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="ragMode"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Режим использования коллекций</FormLabel>
-                        <FormControl>
-                          <RadioGroup
-                            value={field.value}
-                            onValueChange={controlsDisabled ? undefined : field.onChange}
-                            className="grid gap-3 md:grid-cols-2"
-                          >
-                            <div className="rounded-lg border p-3">
-                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                <RadioGroupItem value="all_collections" id="rag-mode-all" className="mt-1" disabled={controlsDisabled} />
-                                <span>
-                                  Все коллекции
-                                  <span className="block text-xs font-normal text-muted-foreground">
-                                    Навык автоматически ищет во всех коллекциях рабочей области.
-                                  </span>
-                                </span>
-                              </label>
-                            </div>
-                            <div className="rounded-lg border p-3">
-                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                <RadioGroupItem value="selected_collections" id="rag-mode-selected" className="mt-1" disabled={controlsDisabled} />
-                                <span>
-                                  Выбрать вручную
-                                  <span className="block text-xs font-normal text-muted-foreground">
-                                    Укажите конкретные коллекции, в которых навык может искать ответы.
-                                  </span>
-                                </span>
-                              </label>
-                            </div>
-                          </RadioGroup>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {isManualRagMode ? (
-                    <FormField
-                      control={form.control}
-                      name="ragCollectionIds"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Коллекции для навыка</FormLabel>
-                          <FormControl>
-                            <VectorCollectionMultiSelect
-                              value={field.value}
-                              onChange={field.onChange}
-                              collections={vectorCollections}
-                              disabled={vectorCollectionsDisabled}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            {isVectorCollectionsLoading
-                              ? "Загружаем список коллекций..."
-                              : vectorCollectionsEmpty
-                                ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
-                                : "Можно выбрать одну или несколько коллекций рабочего пространства."}
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  ) : null}
-                </div>
-
-                <div className="rounded-lg border p-4">
-                  <Accordion type="single" collapsible>
-                    <AccordionItem value="rag-advanced" className="border-none">
-                      <AccordionTrigger className="py-2">RAG (дополнительно)</AccordionTrigger>
-                      <AccordionContent>
-                        <div className="space-y-4">
-                          <div className="space-y-1">
-                            <h3 className="text-base font-semibold">Провайдер эмбеддингов</h3>
-                            <p className="text-sm text-muted-foreground">
-                              Должен совпадать с тем, что использует выбранная коллекция.
-                            </p>
-                          </div>
-                          <FormField
-                            control={form.control}
-                            name="ragEmbeddingProviderId"
-                            render={({ field }) => (
-                              <FormItem>
-                                <Select
-                                  value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
-                                  onValueChange={field.onChange}
-                                  disabled={embeddingProviderSelectDisabled}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue
-                                      placeholder={
-                                        embeddingProvidersUnavailable
-                                          ? "Загрузка..."
-                                          : embeddingProvidersEmpty
-                                            ? "Нет доступных сервисов"
-                                            : "Выберите сервис"
-                                      }
-                                    />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
-                                    {effectiveEmbeddingProviderOptions.map((provider) => (
-                                      <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
-                                        <div className="flex flex-col gap-0.5">
-                                          <span>{provider.name}</span>
-                                          {!provider.isActive && (
-                                            <span className="text-xs text-muted-foreground">Провайдер отключён</span>
-                                          )}
-                                        </div>
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-
-                          <div className="space-y-1">
-                            <h3 className="text-base font-semibold">Параметры поиска</h3>
-                            <p className="text-sm text-muted-foreground">Управляют объёмом и точностью выдачи.</p>
-                          </div>
-                          <div className="grid gap-4 md:grid-cols-2">
-                            <FormField
-                              control={form.control}
-                              name="ragTopK"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <div className="flex items-center gap-2">
-                                    <FormLabel>topK</FormLabel>
-                                    <InfoTooltipIcon text="Число чанков, которые ищем для каждого запроса. Больше — точнее, но дороже. По умолчанию 5." />
-                                  </div>
-                                  <FormControl>
-                                    <Input
-                                      type="number"
-                                      min={1}
-                                      max={50}
-                                      placeholder="5"
-                                      value={field.value ?? ""}
-                                      onChange={(event) => field.onChange(event.target.value)}
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField
-                              control={form.control}
-                              name="ragMinScore"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <div className="flex items-center gap-2">
-                                    <FormLabel>minScore</FormLabel>
-                                    <InfoTooltipIcon text="Минимальная релевантность чанка (0–1). Всё, что ниже порога, отбрасывается." />
-                                  </div>
-                                  <FormControl>
-                                    <Input
-                                      type="number"
-                                      step="0.05"
-                                      min={0}
-                                      max={1}
-                                      placeholder="0.7"
-                                      value={field.value ?? ""}
-                                      onChange={(event) => field.onChange(event.target.value)}
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </div>
-
-                          <FormField
-                            control={form.control}
-                            name="ragMaxContextTokens"
-                            render={({ field }) => (
-                              <FormItem>
-                                <div className="flex items-center gap-2">
-                                  <FormLabel>Лимит контекста (токены)</FormLabel>
-                                  <InfoTooltipIcon text="Мягкий лимит на суммарный текст из базы знаний для одного ответа LLM. Если пусто — используем настройку по умолчанию." />
-                                </div>
-                                <FormControl>
-                                  <Input
-                                    type="number"
-                                    min={500}
-                                    placeholder="3000"
-                                    value={field.value ?? ""}
-                                    onChange={(event) => field.onChange(event.target.value)}
-                                  />
-                                </FormControl>
-                                <FormDescription>Оставьте поле пустым, чтобы использовать стандартное значение.</FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-
-                          <FormField
-                            control={form.control}
-                            name="ragShowSources"
-                            render={({ field }) => (
-                              <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
-                                <div className="space-y-0.5">
-                                  <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
-                                  <FormDescription>Показывает пользователю документы и ссылки, из которых взяты чанки.</FormDescription>
-                                </div>
-                                <FormControl>
-                                  <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
-                                </FormControl>
-                              </FormItem>
-                            )}
-                          />
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
-                  </Accordion>
-                </div>
-              </fieldset>
-            </TabsContent>
-
-            <TabsContent value="transcription" className="space-y-5">
-              <fieldset disabled={controlsDisabled} className="space-y-5">
-                <div className="space-y-4 rounded-lg border p-4">
-                  <div className="space-y-1">
-                    <h3 className="text-base font-semibold">Поведение при транскрибировании аудио</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Оставить сырую стенограмму или автоматически запустить действие после транскрипции.
-                    </p>
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="onTranscriptionMode"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Режим</FormLabel>
-                        <FormControl>
-                          <RadioGroup
-                            value={field.value}
-                            onValueChange={controlsDisabled ? undefined : field.onChange}
-                            className="grid gap-3 md:grid-cols-2"
-                          >
-                            <div className="rounded-lg border p-3">
-                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                <RadioGroupItem
-                                  value="raw_only"
-                                  id="transcription-mode-raw"
-                                  className="mt-1"
-                                  disabled={controlsDisabled}
-                                />
-                                <span>
-                                  Только транскрипция
-                                  <span className="block text-xs font-normal text-muted-foreground">
-                                    Создаётся сырая стенограмма без дополнительных шагов.
-                                  </span>
-                                </span>
-                              </label>
-                            </div>
-                            <div className="rounded-lg border p-3">
-                              <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                <RadioGroupItem
-                                  value="auto_action"
-                                  id="transcription-mode-auto"
-                                  className="mt-1"
-                                  disabled={controlsDisabled}
-                                />
-                                <span>
-                                  Транскрипция + авто-действие
-                                  <span className="block text-xs font-normal text-muted-foreground">
-                                    После получения стенограммы запускается выбранное действие.
-                                  </span>
-                                </span>
-                              </label>
-                            </div>
-                          </RadioGroup>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {isAutoActionMode ? (
-                    <FormField
-                      control={form.control}
-                      name="onTranscriptionAutoActionId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Действие для авто-запуска</FormLabel>
-                          {skill ? (
+            <TabsContent value="main" className="space-y-6">
+              <div className="mx-auto w-full max-w-6xl px-6">
+              <fieldset disabled={controlsDisabled} className="space-y-6">
+                <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
+                <Card>
+                  <CardHeader className="px-6 grid gap-2">
+                    <CardTitle className="text-base font-semibold">Метаданные</CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-6 pb-6">
+                    <div className="grid gap-4" data-testid="skill-icon-name-row">
+                      <FormField
+                        control={form.control}
+                        name="icon"
+                        render={({ field }) => (
+                          <FormItem className="grid gap-1.5">
+                            <FormLabel>Иконка</FormLabel>
                             <FormControl>
-                              <Select
-                                value={field.value ?? ""}
-                                onValueChange={field.onChange}
-                                disabled={controlsDisabled || transcriptActionsQuery.isLoading || transcriptActions.length === 0}
+                              <div className="flex items-center gap-3">
+                                <IconPicker
+                                  value={field.value ?? ""}
+                                  onChange={(icon) => field.onChange(icon)}
+                                  renderIcon={(iconName, className = "h-5 w-5") =>
+                                    renderIconPreview(iconName, className)
+                                  }
+                                />
+                                <span className="text-sm text-muted-foreground" data-testid="skill-icon-label">
+                                  {iconValue ? iconValue : "Не выбрана"}
+                                </span>
+                              </div>
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem className="grid gap-1.5">
+                            <FormLabel>Название</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder="Например: Бизнес-процессы"
+                                data-testid="skill-name-input"
+                              />
+                            </FormControl>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="description"
+                        render={({ field }) => (
+                          <FormItem className="grid gap-1.5">
+                            <FormLabel>Описание</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                {...field}
+                                placeholder="Когда использовать навык и чем он помогает"
+                                rows={3}
+                                data-testid="skill-description-input"
+                              />
+                            </FormControl>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="grid gap-6">
+                  <Card>
+                    <CardHeader className="px-6 grid gap-2">
+                      <CardTitle className="text-base font-semibold">Инструкция</CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-6 pb-6">
+                      <FormField
+                        control={form.control}
+                        name="systemPrompt"
+                        render={({ field }) => (
+                          <FormItem className="grid gap-1.5">
+                            <FormLabel className="sr-only">Инструкция</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                {...field}
+                                placeholder="Добавьте инструкции для модели"
+                                className="min-h-[220px]"
+                                data-testid="skill-instruction-textarea"
+                              />
+                            </FormControl>
+                            <p className="text-xs text-muted-foreground leading-tight">
+                              Всегда отправляется в LLM.
+                            </p>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="px-6 grid gap-2">
+                      <CardTitle className="text-base font-semibold">Режим выполнения</CardTitle>
+                      <CardDescription className="text-sm text-muted-foreground">
+                        Определяет, где выполняется логика обработки сообщений.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="px-6 pb-6 space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="executionMode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Режим</FormLabel>
+                            <FormControl>
+                              <RadioGroup
+                                value={field.value}
+                                onValueChange={controlsDisabled ? undefined : field.onChange}
+                                className="grid gap-3 md:grid-cols-2"
                               >
-                                <SelectTrigger>
-                                  <SelectValue
-                                    placeholder={
-                                      transcriptActionsQuery.isLoading
-                                        ? "Загружаем действия..."
-                                        : transcriptActions.length === 0
-                                          ? "Нет действий с целью «Стенограмма»"
-                                          : "Выберите действие"
-                                    }
-                                  />
+                                <div className="rounded-lg border p-3">
+                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                    <RadioGroupItem
+                                      value="standard"
+                                      id="execution-mode-standard"
+                                      className="mt-1"
+                                      disabled={controlsDisabled}
+                                      data-testid="execution-mode-standard"
+                                    />
+                                    <span>
+                                      Стандартный
+                                      <span className="block text-xs font-normal text-muted-foreground">
+                                        Обработка внутри платформы.
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
+                                <div className="rounded-lg border p-3">
+                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                    <RadioGroupItem
+                                      value="no_code"
+                                      id="execution-mode-no-code"
+                                      className="mt-1"
+                                      disabled={controlsDisabled}
+                                      data-testid="execution-mode-no-code"
+                                    />
+                                    <span>
+                                      No-code
+                                      <span className="block text-xs font-normal text-muted-foreground">
+                                        Обработка во внешнем сценарии (оркестрация настраивается отдельно).
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
+                              </RadioGroup>
+                            </FormControl>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="px-6 grid gap-2">
+                      <CardTitle className="text-base font-semibold">Модель LLM</CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-6 pb-6 space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="llmKey"
+                        render={({ field }) => (
+                          <FormItem className="grid gap-1.5">
+                            <FormLabel>LLM провайдер и модель</FormLabel>
+                            <FormControl>
+                              <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
+                                <SelectTrigger data-testid="llm-model-select">
+                                  <SelectValue placeholder="Выберите модель" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {transcriptActions.map((item) => (
-                                    <SelectItem key={item.action.id} value={item.action.id}>
-                                      {item.action.label}
+                                  {effectiveLlmOptions.map((option) => (
+                                    <SelectItem key={option.key} value={option.key} disabled={option.disabled}>
+                                      <div className="flex flex-col gap-0.5">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-medium">{option.label}</span>
+                                          <Badge variant="outline" className="uppercase tracking-wide">
+                                            {costLevelLabel[option.costLevel]}
+                                          </Badge>
+                                        </div>
+                                        {!option.providerIsActive && (
+                                          <span className="text-xs text-muted-foreground">Провайдер отключён</span>
+                                        )}
+                                      </div>
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
                             </FormControl>
-                          ) : (
-                            <div className="rounded-md border border-dashed bg-slate-50 p-3 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
-                              Доступно после сохранения навыка. Сначала создайте навык, затем выберите авто-действие.
+                            <p className="text-xs text-muted-foreground leading-tight">
+                              Используется для генеративных ответов навыка.
+                            </p>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+
+                      <Accordion type="single" collapsible>
+                        <AccordionItem value="llm-advanced" className="border-none">
+                          <AccordionTrigger className="py-2" data-testid="llm-advanced-accordion">
+                            Параметры LLM
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <FormField
+                                control={form.control}
+                                name="llmTemperature"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <div className="flex items-center gap-2">
+                                      <FormLabel>Температура</FormLabel>
+                                      <InfoTooltipIcon text="Определяет вариативность ответа модели. Чем выше значение, тем более креативный ответ." />
+                                    </div>
+                                    <FormControl>
+                                      <Input
+                                        type="number"
+                                        step="0.1"
+                                        min={0}
+                                        max={2}
+                                        placeholder="0.7"
+                                        value={field.value ?? ""}
+                                        onChange={(event) => field.onChange(event.target.value)}
+                                        data-testid="llm-temperature-input"
+                                      />
+                                    </FormControl>
+                                    <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                      Оставьте пустым, чтобы использовать значения провайдера.
+                                    </FormDescription>
+                                    <FormMessage className="text-xs text-destructive leading-tight" />
+                                  </FormItem>
+                                )}
+                              />
+                              <FormField
+                                control={form.control}
+                                name="llmMaxTokens"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <div className="flex items-center gap-2">
+                                      <FormLabel>Макс. токенов ответа</FormLabel>
+                                      <InfoTooltipIcon text="Ограничивает длину ответа модели. Если пусто — используем настройки провайдера." />
+                                    </div>
+                                    <FormControl>
+                                      <Input
+                                        type="number"
+                                        min={16}
+                                        max={4096}
+                                        placeholder="1024"
+                                        value={field.value ?? ""}
+                                        onChange={(event) => field.onChange(event.target.value)}
+                                        data-testid="llm-max-tokens-input"
+                                      />
+                                    </FormControl>
+                                    <FormMessage className="text-xs text-destructive leading-tight" />
+                                  </FormItem>
+                                )}
+                              />
                             </div>
-                          )}
-                          <FormDescription>
-                            Покажем превью обработанного результата и откроем вкладку действия при просмотре стенограммы.
-                          </FormDescription>
-                          <FormMessage />
+                          </AccordionContent>
+                        </AccordionItem>
+                      </Accordion>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+
+                <div className="grid gap-6">
+                <Card>
+                  <CardHeader className="px-6 grid gap-2">
+                    <CardTitle className="text-base font-semibold">Базы знаний</CardTitle>
+                    <CardDescription className="text-sm text-muted-foreground">
+                      Навык будет искать ответы только в выбранных базах знаний.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="px-6 pb-6">
+                    <FormField
+                      control={form.control}
+                      name="knowledgeBaseIds"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <KnowledgeBaseMultiSelect
+                              value={field.value}
+                              onChange={field.onChange}
+                              knowledgeBases={sortedKnowledgeBases}
+                              disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
+                            />
+                          </FormControl>
+                          <FormMessage className="text-xs text-destructive leading-tight" />
                         </FormItem>
                       )}
                     />
-                  ) : null}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="px-6 grid gap-2">
+                    <CardTitle className="text-base font-semibold">Коллекции и режим</CardTitle>
+                    <CardDescription className="text-sm text-muted-foreground">
+                      Управляют тем, где искать и сколько текста отдавать в ответах.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="px-6 pb-6 space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="ragMode"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Режим использования коллекций</FormLabel>
+                          <FormControl>
+                            <RadioGroup
+                              value={field.value}
+                              onValueChange={controlsDisabled ? undefined : field.onChange}
+                              className="grid gap-3 md:grid-cols-2"
+                            >
+                              <div className="rounded-lg border p-3">
+                                <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                  <RadioGroupItem value="all_collections" id="rag-mode-all" className="mt-1" disabled={controlsDisabled} />
+                                  <span>
+                                    Все коллекции
+                                    <span className="block text-xs font-normal text-muted-foreground">
+                                      Навык автоматически ищет во всех коллекциях рабочей области.
+                                    </span>
+                                  </span>
+                                </label>
+                              </div>
+                              <div className="rounded-lg border p-3">
+                                <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                  <RadioGroupItem value="selected_collections" id="rag-mode-selected" className="mt-1" disabled={controlsDisabled} />
+                                  <span>
+                                    Выбрать вручную
+                                    <span className="block text-xs font-normal text-muted-foreground">
+                                      Укажите конкретные коллекции, в которых навык может искать ответы.
+                                    </span>
+                                  </span>
+                                </label>
+                              </div>
+                            </RadioGroup>
+                          </FormControl>
+                          <FormMessage className="text-xs text-destructive leading-tight" />
+                        </FormItem>
+                      )}
+                    />
+
+                    {isManualRagMode ? (
+                      <FormField
+                        control={form.control}
+                        name="ragCollectionIds"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Коллекции для навыка</FormLabel>
+                            <FormControl>
+                              <VectorCollectionMultiSelect
+                                value={field.value}
+                                onChange={field.onChange}
+                                collections={vectorCollections}
+                                disabled={vectorCollectionsDisabled}
+                              />
+                            </FormControl>
+                            <FormDescription className="text-xs text-muted-foreground leading-tight">
+                              {isVectorCollectionsLoading
+                                ? "Загружаем список коллекций..."
+                                : vectorCollectionsEmpty
+                                  ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
+                                  : "Можно выбрать одну или несколько коллекций рабочего пространства."}
+                            </FormDescription>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+                    ) : null}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="px-6 pb-6">
+                    <Accordion type="single" collapsible>
+                      <AccordionItem value="rag-advanced" className="border-none">
+                        <AccordionTrigger className="py-2">RAG (дополнительно)</AccordionTrigger>
+                        <AccordionContent>
+                          <div className="space-y-4">
+                            <div className="space-y-1">
+                              <h3 className="text-base font-semibold">Провайдер эмбеддингов</h3>
+                              <p className="text-sm text-muted-foreground">
+                                Должен совпадать с тем, что использует выбранная коллекция.
+                              </p>
+                            </div>
+                            <FormField
+                              control={form.control}
+                              name="ragEmbeddingProviderId"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <Select
+                                    value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
+                                    onValueChange={field.onChange}
+                                    disabled={embeddingProviderSelectDisabled}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue
+                                        placeholder={
+                                          embeddingProvidersUnavailable
+                                            ? "Загрузка..."
+                                            : embeddingProvidersEmpty
+                                              ? "Нет доступных сервисов"
+                                              : "Выберите сервис"
+                                        }
+                                      />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
+                                      {effectiveEmbeddingProviderOptions.map((provider) => (
+                                        <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
+                                          <div className="flex flex-col gap-0.5">
+                                            <span>{provider.name}</span>
+                                            {!provider.isActive && (
+                                              <span className="text-xs text-muted-foreground">Провайдер отключён</span>
+                                            )}
+                                          </div>
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <FormMessage className="text-xs text-destructive leading-tight" />
+                                </FormItem>
+                              )}
+                            />
+
+                            <div className="space-y-1">
+                              <h3 className="text-base font-semibold">Параметры поиска</h3>
+                              <p className="text-sm text-muted-foreground">Управляют объёмом и точностью выдачи.</p>
+                            </div>
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <FormField
+                                control={form.control}
+                                name="ragTopK"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <div className="flex items-center gap-2">
+                                      <FormLabel>topK</FormLabel>
+                                      <InfoTooltipIcon text="Число чанков, которые ищем для каждого запроса. Больше — точнее, но дороже. По умолчанию 5." />
+                                    </div>
+                                    <FormControl>
+                                      <Input
+                                        type="number"
+                                        min={1}
+                                        max={50}
+                                        placeholder="5"
+                                        value={field.value ?? ""}
+                                        onChange={(event) => field.onChange(event.target.value)}
+                                      />
+                                    </FormControl>
+                                    <FormMessage className="text-xs text-destructive leading-tight" />
+                                  </FormItem>
+                                )}
+                              />
+                              <FormField
+                                control={form.control}
+                                name="ragMinScore"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <div className="flex items-center gap-2">
+                                      <FormLabel>minScore</FormLabel>
+                                      <InfoTooltipIcon text="Минимальная релевантность чанка (0–1). Всё, что ниже порога, отбрасывается." />
+                                    </div>
+                                    <FormControl>
+                                      <Input
+                                        type="number"
+                                        step="0.05"
+                                        min={0}
+                                        max={1}
+                                        placeholder="0.7"
+                                        value={field.value ?? ""}
+                                        onChange={(event) => field.onChange(event.target.value)}
+                                      />
+                                    </FormControl>
+                                    <FormMessage className="text-xs text-destructive leading-tight" />
+                                  </FormItem>
+                                )}
+                              />
+                            </div>
+
+                            <FormField
+                              control={form.control}
+                              name="ragMaxContextTokens"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <div className="flex items-center gap-2">
+                                    <FormLabel>Лимит контекста (токены)</FormLabel>
+                                    <InfoTooltipIcon text="Мягкий лимит на суммарный текст из базы знаний для одного ответа LLM. Если пусто — используем настройку по умолчанию." />
+                                  </div>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      min={500}
+                                      placeholder="3000"
+                                      value={field.value ?? ""}
+                                      onChange={(event) => field.onChange(event.target.value)}
+                                    />
+                                  </FormControl>
+                                  <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                    Оставьте поле пустым, чтобы использовать стандартное значение.
+                                  </FormDescription>
+                                  <FormMessage className="text-xs text-destructive leading-tight" />
+                                </FormItem>
+                              )}
+                            />
+
+                            <FormField
+                              control={form.control}
+                              name="ragShowSources"
+                              render={({ field }) => (
+                                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                                  <div className="space-y-0.5">
+                                    <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
+                                    <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                      Показывает пользователю документы и ссылки, из которых взяты чанки.
+                                    </FormDescription>
+                                  </div>
+                                  <FormControl>
+                                    <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
+                  </CardContent>
+                </Card>
                 </div>
               </fieldset>
+              </div>
             </TabsContent>
 
-            <TabsContent value="actions" className="space-y-4">
-              <fieldset className="space-y-3 rounded-xl border border-dashed border-slate-200 p-4 dark:border-slate-800">
-                <div className="space-y-1">
-                  <FormLabel className="text-base">Действия</FormLabel>
-                  <FormDescription>
-                    Настройте, какие действия доступны в навыке и где они отображаются (холст, сообщения, панель ввода).
-                  </FormDescription>
-                </div>
-                {isSystemSkill ? (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
-                    Настройка действий недоступна для системных навыков.
-                  </div>
-                ) : skill?.id ? (
-                  <SkillActionsPreview skillId={skill.id} />
-                ) : (
-                  <ActionsPreviewForNewSkill />
-                )}
-              </fieldset>
+            <TabsContent value="transcription" className="space-y-6">
+              <div className="mx-auto w-full max-w-6xl px-6">
+                <fieldset disabled={controlsDisabled} className="space-y-6">
+                  <Card>
+                    <CardHeader className="px-6 grid gap-2">
+                      <CardTitle className="text-base font-semibold">Поведение при транскрибировании аудио</CardTitle>
+                      <CardDescription className="text-sm text-muted-foreground">
+                        Оставить сырую стенограмму или автоматически запустить действие после транскрипции.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="px-6 pb-6 space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="onTranscriptionMode"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Режим</FormLabel>
+                            <FormControl>
+                              <RadioGroup
+                                value={field.value}
+                                onValueChange={controlsDisabled ? undefined : field.onChange}
+                                className="grid gap-3 md:grid-cols-2"
+                              >
+                                <div className="rounded-lg border p-3">
+                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                    <RadioGroupItem
+                                      value="raw_only"
+                                      id="transcription-mode-raw"
+                                      className="mt-1"
+                                      disabled={controlsDisabled}
+                                    />
+                                    <span>
+                                      Только транскрипция
+                                      <span className="block text-xs font-normal text-muted-foreground">
+                                        Создаётся сырая стенограмма без дополнительных шагов.
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
+                                <div className="rounded-lg border p-3">
+                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
+                                    <RadioGroupItem
+                                      value="auto_action"
+                                      id="transcription-mode-auto"
+                                      className="mt-1"
+                                      disabled={controlsDisabled}
+                                    />
+                                    <span>
+                                      Транскрипция + авто-действие
+                                      <span className="block text-xs font-normal text-muted-foreground">
+                                        После получения стенограммы запускается выбранное действие.
+                                      </span>
+                                    </span>
+                                  </label>
+                                </div>
+                              </RadioGroup>
+                            </FormControl>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+
+                      {isAutoActionMode ? (
+                        <FormField
+                          control={form.control}
+                          name="onTranscriptionAutoActionId"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Действие для авто-запуска</FormLabel>
+                              {skill ? (
+                                <FormControl>
+                                  <Select
+                                    value={field.value ?? ""}
+                                    onValueChange={field.onChange}
+                                    disabled={controlsDisabled || transcriptActionsQuery.isLoading || transcriptActions.length === 0}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue
+                                        placeholder={
+                                          transcriptActionsQuery.isLoading
+                                            ? "Загружаем действия..."
+                                            : transcriptActions.length === 0
+                                              ? "Нет действий с целью «Стенограмма»"
+                                              : "Выберите действие"
+                                        }
+                                      />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {transcriptActions.map((item) => (
+                                        <SelectItem key={item.action.id} value={item.action.id}>
+                                          {item.action.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </FormControl>
+                              ) : (
+                                <div className="rounded-md border border-dashed bg-slate-50 p-3 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
+                                  Доступно после сохранения навыка. Сначала создайте навык, затем выберите авто-действие.
+                                </div>
+                              )}
+                              <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                Покажем превью обработанного результата и откроем вкладку действия при просмотре стенограммы.
+                              </FormDescription>
+                              <FormMessage className="text-xs text-destructive leading-tight" />
+                            </FormItem>
+                          )}
+                        />
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                </fieldset>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="actions" className="space-y-6">
+              <div className="mx-auto w-full max-w-6xl px-6">
+                <fieldset disabled={controlsDisabled} className="space-y-6">
+                  <Card>
+                    <CardHeader className="px-6 grid gap-2">
+                      <CardTitle className="text-base font-semibold">Действия</CardTitle>
+                      <CardDescription className="text-xs text-muted-foreground leading-tight">
+                        Настройте, какие действия доступны в навыке и где они отображаются (холст, сообщения, панель ввода).
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="px-6 pb-6">
+                      {isSystemSkill ? (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-muted-foreground dark:border-slate-700 dark:bg-slate-900/40">
+                          Настройка действий недоступна для системных навыков.
+                        </div>
+                      ) : skill?.id ? (
+                        <SkillActionsPreview skillId={skill.id} />
+                      ) : (
+                        <ActionsPreviewForNewSkill />
+                      )}
+                    </CardContent>
+                  </Card>
+                </fieldset>
+              </div>
             </TabsContent>
           </Tabs>
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
-              Отменить
-            </Button>
-            <Button type="submit" disabled={isSubmitting || isSystemSkill} data-testid="save-button">
-
-              {isSystemSkill ? "Недоступно" : isSubmitting ? "Сохраняем..." : "Сохранить"}
-
-            </Button>
-          </DialogFooter>
+          {isDirty ? (
+            <div className="mx-auto w-full max-w-6xl px-6">
+              <div className="sticky bottom-0 z-10 -mx-6 mt-6 border-t border-border bg-background/80 px-6 py-3 backdrop-blur">
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="secondary" className="h-9" onClick={handleReset} disabled={isSubmitting}>
+                    Отмена
+                  </Button>
+                  <Button
+                    type="submit"
+                    className="h-9"
+                    disabled={isSubmitting || isSystemSkill}
+                    data-testid="save-button"
+                  >
+                    {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    {isSystemSkill ? "Недоступно" : "Сохранить"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </form>
       </Form>
     </div>
