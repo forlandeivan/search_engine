@@ -329,12 +329,15 @@ export async function addUserMessage(
   return mapMessage(message);
 }
 
-type ChatConversationMessage = {
+export type ChatConversationMessage = {
   role: ChatMessageRole;
   content: string;
 };
 
-function applyContextLimitByCharacters(messages: ChatConversationMessage[], limit: number | null): ChatConversationMessage[] {
+export function applyContextLimitByCharacters(
+  messages: ChatConversationMessage[],
+  limit: number | null,
+): ChatConversationMessage[] {
   if (!limit || limit <= 0) return messages;
   const reversed: ChatConversationMessage[] = [];
   let total = 0;

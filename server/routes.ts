@@ -115,6 +115,7 @@ import {
   getNoCodeConnectionInternal,
   scheduleNoCodeEventDelivery,
 } from "./no-code-events";
+import { buildContextPack } from "./context-pack";
 import { assistantActionTypes, type AssistantActionType } from "@shared/schema";
 type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
 const NO_CODE_FLOW_MESSAGES: Record<NoCodeFlowFailureReason, string> = {
@@ -10410,12 +10411,22 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
 
         // MVP: отправляем событие только на user-сообщения, чтобы избежать зацикливания и утечек ответа обратно в сценарий.
+        const contextPack = await buildContextPack({
+          workspaceId,
+          chatId: req.params.chatId,
+          skillId: skill.id,
+          triggerMessageId: message.id,
+          userId: user.id,
+          limitCharacters: skill.contextInputLimit ?? null,
+        });
+
         const eventPayload = buildMessageCreatedEventPayload({
           workspaceId,
           chatId: req.params.chatId,
           skillId: skill.id,
           message,
           actorUserId: user.id,
+          contextPack,
         });
         scheduleNoCodeEventDelivery({
           endpointUrl: connection.endpointUrl,

@@ -29,6 +29,7 @@ export type MessageCreatedEventPayload = {
     metadata: Record<string, unknown>;
   };
   actor: { userId: string };
+  contextPack?: Record<string, unknown>;
 };
 
 export type SyncFinalResult = {
@@ -99,6 +100,7 @@ export function buildMessageCreatedEventPayload(args: {
   skillId: string;
   message: { id: string; role: "user" | "assistant" | "system"; content: string; createdAt: string; metadata?: unknown };
   actorUserId: string;
+  contextPack?: Record<string, unknown> | null;
 }): MessageCreatedEventPayload {
   return {
     schemaVersion: 1,
@@ -119,6 +121,7 @@ export function buildMessageCreatedEventPayload(args: {
           : {},
     },
     actor: { userId: args.actorUserId },
+    ...(args.contextPack ? { contextPack: args.contextPack } : {}),
   };
 }
 
