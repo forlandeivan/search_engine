@@ -10,6 +10,7 @@ import type {
   LlmRequestConfig,
   Model,
   AssistantActionType,
+  ChatMessageRole,
 } from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
@@ -26,6 +27,7 @@ import {
   ModelValidationError,
   tryResolveModel,
 } from "./model-service";
+import type { SyncFinalResult } from "./no-code-events";
 
 export class ChatServiceError extends Error {
   public status: number;
@@ -736,6 +738,157 @@ export async function addNoCodeCallbackMessage(opts: {
     chatId: opts.chatId,
     role: opts.role,
     content,
+    metadata,
+  });
+  await storage.touchChatSession(opts.chatId);
+  return mapMessage(message);
+}
+
+export async function addNoCodeSyncFinalResults(opts: {
+  workspaceId: string;
+  chatId: string;
+  skillId: string;
+  triggerMessageId: string;
+  results: SyncFinalResult[];
+}): Promise<Array<ReturnType<typeof mapMessage>>> {
+  const chatRecord = await storage.getChatSessionById(opts.chatId);
+  if (!chatRecord || chatRecord.workspaceId !== opts.workspaceId) {
+    throw new ChatServiceError("Чат не найден", 404);
+  }
+  const chat = mapChatSummary(chatRecord);
+  ensureChatAndSkillAreActive(chat);
+
+  const skill = await getSkillById(opts.workspaceId, chat.skillId);
+  if (!skill) {
+    throw new ChatServiceError("Навык не найден", 404);
+  }
+  ensureSkillIsActive(skill);
+  if (skill.executionMode !== "no_code") {
+    throw new ChatServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
+  }
+
+  const created: Array<ReturnType<typeof mapMessage>> = [];
+
+  for (const result of opts.results) {
+    const content = result.text?.trim() ?? "";
+    if (!content) {
+      continue;
+    }
+
+    const existing = await storage.findChatMessageByResultId(opts.chatId, result.resultId);
+    if (existing) {
+      created.push(mapMessage(existing));
+      continue;
+    }
+
+    const metadata: Record<string, unknown> = {
+      resultId: result.resultId,
+    };
+    const triggerMessageId = result.triggerMessageId?.trim() || opts.triggerMessageId || "";
+    if (triggerMessageId) {
+      metadata.triggerMessageId = triggerMessageId;
+    }
+
+    const message = await storage.createChatMessage({
+      chatId: opts.chatId,
+      role: result.role,
+      content,
+      metadata,
+    });
+    created.push(mapMessage(message));
+  }
+
+  if (created.length > 0) {
+    await storage.touchChatSession(opts.chatId);
+  }
+
+  return created;
+}
+
+export async function addNoCodeStreamChunk(opts: {
+  workspaceId: string;
+  chatId: string;
+  streamId: string;
+  triggerMessageId: string;
+  chunkId: string;
+  delta?: string | null;
+  role?: ChatMessageRole;
+  isFinal?: boolean;
+  seq?: number | null;
+}): Promise<ReturnType<typeof mapMessage>> {
+  const chatRecord = await storage.getChatSessionById(opts.chatId);
+  if (!chatRecord || chatRecord.workspaceId !== opts.workspaceId) {
+    throw new ChatServiceError("Чат не найден", 404);
+  }
+  const chat = mapChatSummary(chatRecord);
+  ensureChatAndSkillAreActive(chat);
+
+  const skill = await getSkillById(opts.workspaceId, chat.skillId);
+  if (!skill) {
+    throw new ChatServiceError("Навык не найден", 404);
+  }
+  ensureSkillIsActive(skill);
+  if (skill.executionMode !== "no_code") {
+    throw new ChatServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
+  }
+
+  const role: ChatMessageRole = opts.role ?? "assistant";
+  if (!["assistant", "user", "system"].includes(role)) {
+    throw new ChatServiceError("Некорректная роль", 400);
+  }
+
+  const streamId = opts.streamId.trim();
+  const chunkId = opts.chunkId.trim();
+  const triggerMessageId = opts.triggerMessageId.trim();
+  if (!streamId || !chunkId || !triggerMessageId) {
+    throw new ChatServiceError("streamId, chunkId и triggerMessageId обязательны", 400);
+  }
+
+  const delta = opts.delta ?? "";
+  const existing = await storage.findChatMessageByStreamId(opts.chatId, streamId);
+
+  if (existing) {
+    const existingMetadata = (existing.metadata ?? {}) as Record<string, unknown>;
+    const processedChunks = Array.isArray(existingMetadata.processedChunkIds)
+      ? existingMetadata.processedChunkIds.map((id) => String(id))
+      : [];
+    if (processedChunks.includes(chunkId)) {
+      return mapMessage(existing);
+    }
+
+    const nextContent = `${existing.content ?? ""}${delta}`;
+    const nextMetadata = {
+      ...existingMetadata,
+      triggerMessageId,
+      streamId,
+      processedChunkIds: [...processedChunks, chunkId],
+      streamSeq: opts.seq ?? existingMetadata.streamSeq ?? null,
+      streaming: !opts.isFinal,
+    };
+
+    const updated = await storage.updateChatMessage(existing.id, {
+      content: nextContent,
+      metadata: nextMetadata,
+    });
+    if (!updated) {
+      throw new ChatServiceError("Не удалось обновить сообщение стрима", 500);
+    }
+    await storage.touchChatSession(opts.chatId);
+    return mapMessage(updated);
+  }
+
+  const metadata: Record<string, unknown> = {
+    triggerMessageId,
+    streamId,
+    processedChunkIds: [chunkId],
+    streamSeq: opts.seq ?? null,
+    streaming: !opts.isFinal,
+  };
+
+  const message = await storage.createChatMessage({
+    chatId: opts.chatId,
+    role,
+    content: delta,
     metadata,
   });
   await storage.touchChatSession(opts.chatId);

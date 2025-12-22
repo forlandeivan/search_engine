@@ -130,6 +130,8 @@ function setupChatServiceMock() {
     addAssistantMessage: vi.fn(),
     getChatById: vi.fn(),
     addNoCodeCallbackMessage: vi.fn(),
+    addNoCodeSyncFinalResults: vi.fn(),
+    addNoCodeStreamChunk: vi.fn(),
     setNoCodeAssistantAction: vi.fn(),
     ChatServiceError,
   };
@@ -535,6 +537,48 @@ describe("No-code callback API", () => {
       expect(chatService.listUserChats).toHaveBeenCalledWith("workspace-1", "user-1", undefined, {
         includeArchived: false,
       });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("accepts streaming chunk via callback endpoint", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    const chatService = setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockResolvedValueOnce({ skillId: "skill-1" });
+    chatService.addNoCodeStreamChunk.mockResolvedValueOnce({ id: "m-stream", chatId: "chat-1" });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer token" },
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          triggerMessageId: "msg-1",
+          streamId: "stream-1",
+          chunkId: "chunk-1",
+          delta: "Привет",
+          isFinal: false,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(chatService.addNoCodeStreamChunk).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: "chat-1",
+          streamId: "stream-1",
+          chunkId: "chunk-1",
+          delta: "Привет",
+        }),
+      );
     } finally {
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => (error ? reject(error) : resolve()));

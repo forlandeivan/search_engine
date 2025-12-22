@@ -5167,6 +5167,30 @@ export class DatabaseStorage implements IStorage {
     return message ?? undefined;
   }
 
+  async findChatMessageByResultId(chatId: string, resultId: string): Promise<ChatMessage | undefined> {
+    await ensureChatTables();
+    const [message] = await this.db
+      .select()
+      .from(chatMessages)
+      .where(
+        and(eq(chatMessages.chatId, chatId), eq(sql`"metadata"->>'resultId'`, resultId)),
+      )
+      .limit(1);
+    return message ?? undefined;
+  }
+
+  async findChatMessageByStreamId(chatId: string, streamId: string): Promise<ChatMessage | undefined> {
+    await ensureChatTables();
+    const [message] = await this.db
+      .select()
+      .from(chatMessages)
+      .where(
+        and(eq(chatMessages.chatId, chatId), eq(sql`"metadata"->>'streamId'`, streamId)),
+      )
+      .limit(1);
+    return message ?? undefined;
+  }
+
   async createTranscript(values: TranscriptInsert): Promise<Transcript> {
     await ensureChatTables();
     const [created] = await this.db.insert(transcripts).values(values).returning();

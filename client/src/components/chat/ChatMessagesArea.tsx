@@ -275,7 +275,7 @@ export default function ChatMessagesArea({
                     key={message.id}
                     message={message}
                     previousRole={index > 0 ? sortedMessages[index - 1]?.role : undefined}
-                    isStreamingBubble={streamingAssistantId === message.id}
+                    isStreamingBubble={streamingAssistantId === message.id || message.metadata?.streaming === true}
                     isTranscribingBubble={
                       isTranscribing &&
                       index === messages.length - 1 &&
@@ -349,13 +349,14 @@ function ChatBubble({
     return match ? match[1].toLowerCase() : "audio";
   };
 
-  const displayContent = useTypewriter(message.content ?? "", {
-    enabled: isStreamingBubble && !isAudioFile && !isAudioMessage,
-    resetKey: message.id,
-  });
-
   const metadata = (message.metadata ?? {}) as ChatMessage["metadata"];
   const isTranscript = metadata?.type === "transcript" && metadata.transcriptId;
+  const resolvedStreaming = isStreamingBubble || metadata?.streaming === true;
+
+  const displayContent = useTypewriter(message.content ?? "", {
+    enabled: resolvedStreaming && !isAudioFile && !isAudioMessage,
+    resetKey: message.id,
+  });
 
   const renderAudioBubble = (fileName: string) => (
     <div className="flex items-start gap-2">
@@ -437,8 +438,9 @@ function ChatBubble({
                 markdown={displayContent}
                 className="text-sm text-slate-900 break-words dark:text-slate-100"
               />
-              <div className="mt-2">
-                <span className="text-xs text-slate-500">{timestamp}</span>
+              <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                {resolvedStreaming ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                <span>{resolvedStreaming ? "Ассистент печатает..." : timestamp}</span>
               </div>
             </>
           )}

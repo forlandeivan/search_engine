@@ -39,6 +39,10 @@ export type ChatMessage = {
     defaultViewId?: string | null;
     defaultViewActionId?: string | null;
     preferredTranscriptTabId?: string | null;
+    streaming?: boolean;
+    streamId?: string | null;
+    triggerMessageId?: string | null;
+    processedChunkIds?: string[];
     [key: string]: unknown;
   };
 };

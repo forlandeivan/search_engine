@@ -71,7 +71,9 @@ export default function ChatPage({ params }: ChatPageProps) {
     isLoading: isMessagesLoading,
     isError: isMessagesError,
     error: messagesError,
-  } = useChatMessages(effectiveChatId ?? undefined, workspaceId || undefined);
+  } = useChatMessages(effectiveChatId ?? undefined, workspaceId || undefined, {
+    refetchIntervalMs: effectiveChatId ? 2000 : false,
+  });
 
   const [localChatId, setLocalChatId] = useState<string | null>(null);
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);

@@ -5,6 +5,7 @@ import { skills } from "@shared/schema";
 import { applyTlsPreferences } from "./http-utils";
 import type { NoCodeAuthType } from "@shared/schema";
 import { z } from "zod";
+import { addNoCodeSyncFinalResults } from "./chat-service";
 
 export type NoCodeConnectionInternal = {
   endpointUrl: string | null;
@@ -127,7 +128,7 @@ export async function deliverNoCodeEvent(opts: {
   bearerToken: string | null;
   payload: MessageCreatedEventPayload;
   timeoutMs?: number;
-}): Promise<{ ok: boolean; status: number; responseText: string }> {
+}): Promise<{ ok: boolean; status: number; responseText: string; syncFinal: SyncFinalResponse | null }> {
   const timeoutMs = Math.max(100, Math.trunc(opts.timeoutMs ?? 10_000));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -157,7 +158,14 @@ export async function deliverNoCodeEvent(opts: {
   try {
     const response = await fetch(opts.endpointUrl, request);
     const responseText = await response.text();
-    return { ok: response.ok, status: response.status, responseText };
+    let syncFinal: SyncFinalResponse | null = null;
+    try {
+      const parsedJson = JSON.parse(responseText);
+      syncFinal = parseSyncFinalResponse(parsedJson);
+    } catch {
+      syncFinal = null;
+    }
+    return { ok: response.ok, status: response.status, responseText, syncFinal };
   } finally {
     clearTimeout(timer);
   }
@@ -176,6 +184,7 @@ export function scheduleNoCodeEventDelivery(opts: {
         authType: opts.authType,
         bearerToken: opts.bearerToken,
         payload: opts.payload,
+        timeoutMs: 2000,
       });
 
       if (!result.ok) {
@@ -190,6 +199,23 @@ export function scheduleNoCodeEventDelivery(opts: {
         eventId: opts.payload.eventId,
         status: result.status,
       });
+
+      if (result.syncFinal?.results?.length) {
+        try {
+          await addNoCodeSyncFinalResults({
+            workspaceId: opts.payload.workspace.id,
+            chatId: opts.payload.chat.id,
+            skillId: opts.payload.skill.id,
+            triggerMessageId: opts.payload.message.id,
+            results: result.syncFinal.results,
+          });
+        } catch (error) {
+          console.warn("[no-code] failed to apply sync_final results", {
+            eventId: opts.payload.eventId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     } catch (error) {
       console.warn("[no-code] message.created delivery error", {
         eventId: opts.payload.eventId,

@@ -134,16 +134,17 @@ export function useDeleteChat(options: { onSuccess?: () => void } = {}) {
 
 type UseChatMessagesOptions = {
   enabled?: boolean;
+  refetchIntervalMs?: number | false;
 };
 
 export function useChatMessages(chatId?: string, workspaceId?: string, options: UseChatMessagesOptions = {}) {
-  const { enabled = true } = options;
+  const { enabled = true, refetchIntervalMs = false } = options;
   const queryKey = buildChatMessagesKey(workspaceId, chatId);
   const query = useQuery<ChatMessage[], Error>({
     queryKey,
     queryFn: () => fetchChatMessages(chatId!, workspaceId!),
     enabled: Boolean(enabled && chatId && workspaceId),
-    refetchInterval: false,
+    refetchInterval: refetchIntervalMs,
   });
 
   return {

@@ -105,6 +105,7 @@ import {
   buildChatCompletionRequestBody,
   addAssistantMessage,
   addNoCodeCallbackMessage,
+  addNoCodeStreamChunk,
   setNoCodeAssistantAction,
   ChatServiceError,
   getChatById,
@@ -7011,6 +7012,19 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     occurredAt: z.string().datetime().optional(),
   });
 
+  const noCodeCallbackStreamSchema = z.object({
+    workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
+    chatId: z.string().trim().min(1, "Укажите чат"),
+    triggerMessageId: z.string().trim().min(1, "Укажите исходное сообщение"),
+    streamId: z.string().trim().min(1, "Укажите streamId"),
+    chunkId: z.string().trim().min(1, "Укажите chunkId"),
+    delta: z.string().max(20000).optional(),
+    text: z.string().max(20000).optional(),
+    role: z.enum(["user", "assistant", "system"]).optional(),
+    seq: z.number().int().nonnegative().optional(),
+    isFinal: z.boolean().optional(),
+  });
+
 
 
   const adminLlmExecutionStatusSchema = z.enum(["pending", "running", "success", "error", "timeout", "cancelled"]);
@@ -11166,6 +11180,57 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
 
       return res.status(201).json({ message });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      if (error instanceof SkillServiceError) {
+        return res
+          .status(error.status)
+          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/no-code/callback/stream", async (req, res, next) => {
+    try {
+      const payload = noCodeCallbackStreamSchema.parse(req.body ?? {});
+      const authorizationHeader = Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization;
+      let callbackToken: string | null = null;
+      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
+        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
+        if (scheme && scheme.toLowerCase() === "bearer") {
+          const candidate = rest.join(" ").trim();
+          callbackToken = candidate.length > 0 ? candidate : null;
+        }
+      }
+
+      await verifyNoCodeCallbackToken({
+        workspaceId: payload.workspaceId,
+        chatId: payload.chatId,
+        token: callbackToken,
+      });
+
+      const delta = (payload.delta ?? payload.text ?? "") ?? "";
+      const message = await addNoCodeStreamChunk({
+        workspaceId: payload.workspaceId,
+        chatId: payload.chatId,
+        triggerMessageId: payload.triggerMessageId,
+        streamId: payload.streamId,
+        chunkId: payload.chunkId,
+        delta,
+        isFinal: payload.isFinal ?? false,
+        role: payload.role ?? "assistant",
+        seq: payload.seq ?? null,
+      });
+
+      return res.status(200).json({ message });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Некорректные данные", details: error.issues });
