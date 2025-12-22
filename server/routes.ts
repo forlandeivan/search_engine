@@ -10064,7 +10064,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       if (error instanceof SkillServiceError) {
-        return res.status(error.status).json({ message: error.message });
+        return res
+          .status(error.status)
+          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
       }
 
       next(error);
@@ -10093,7 +10095,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       if (error instanceof SkillServiceError) {
-        return res.status(error.status).json({ message: error.message });
+        return res
+          .status(error.status)
+          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
       }
 
       next(error);
@@ -10117,7 +10121,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.status(200).json({ skill: result.skill, archivedChats: result.archivedChats });
     } catch (error) {
       if (error instanceof SkillServiceError) {
-        return res.status(error.status).json({ message: error.message });
+        return res
+          .status(error.status)
+          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
       }
 
       next(error);

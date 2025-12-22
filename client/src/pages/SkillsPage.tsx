@@ -960,6 +960,7 @@ type SkillFormProps = {
   onSubmit: (values: SkillFormValues) => Promise<boolean>;
   isSubmitting: boolean;
   skill?: Skill | null;
+  allowNoCodeFlow?: boolean;
   getIconComponent: (iconName: string | null | undefined) => JSX.Element | null;
   hideHeader?: boolean;
   isOpen?: boolean;
@@ -1079,6 +1080,7 @@ export function SkillFormContent({
   onSubmit,
   isSubmitting,
   skill,
+  allowNoCodeFlow = false,
   getIconComponent,
   hideHeader = false,
   isOpen = true,
@@ -1110,6 +1112,7 @@ export function SkillFormContent({
   const vectorCollectionsEmpty = vectorCollections.length === 0;
   const vectorCollectionsUnavailable = isVectorCollectionsLoading || vectorCollectionsEmpty;
   const controlsDisabled = isSubmitting || isSystemSkill;
+  const noCodeDisabled = controlsDisabled || !allowNoCodeFlow;
   const vectorCollectionsDisabled = vectorCollectionsUnavailable || controlsDisabled;
   const embeddingProvidersEmpty = embeddingProviders.length === 0;
   const embeddingProvidersUnavailable = isEmbeddingProvidersLoading || embeddingProvidersEmpty;
@@ -1455,7 +1458,7 @@ export function SkillFormContent({
                                       value="no_code"
                                       id="execution-mode-no-code"
                                       className="mt-1"
-                                      disabled={controlsDisabled}
+                                      disabled={noCodeDisabled}
                                       data-testid="execution-mode-no-code"
                                     />
                                     <span>
@@ -1463,6 +1466,11 @@ export function SkillFormContent({
                                       <span className="block text-xs font-normal text-muted-foreground">
                                         Обработка во внешнем сценарии (оркестрация настраивается отдельно).
                                       </span>
+                                      {!allowNoCodeFlow && (
+                                        <span className="block text-xs font-normal text-muted-foreground">
+                                          Доступно на премиум-тарифе.
+                                        </span>
+                                      )}
                                     </span>
                                   </label>
                                 </div>

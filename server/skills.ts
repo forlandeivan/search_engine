@@ -16,14 +16,17 @@ import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { mapDecisionToPayload, OperationBlockedError } from "./guards/errors";
 import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } from "./model-service";
+import { workspacePlanService } from "./workspace-plan-service";
 
 export class SkillServiceError extends Error {
   public status: number;
+  public code?: string;
 
-  constructor(message: string, status = 400) {
+  constructor(message: string, status = 400, code?: string) {
     super(message);
     this.name = "SkillServiceError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -107,6 +110,13 @@ function normalizeCollectionIds(ids: readonly string[] | undefined): string[] {
 
   // TODO(forlandeivan): validate that each collection belongs to the workspace before saving.
   return Array.from(unique);
+}
+
+async function assertNoCodeFlowAllowed(workspaceId: string): Promise<void> {
+  const allowed = await workspacePlanService.isNoCodeFlowEnabled(workspaceId);
+  if (!allowed) {
+    throw new SkillServiceError("No-code режим недоступен на текущем тарифе", 403, "NO_CODE_NOT_ALLOWED");
+  }
 }
 
 const isSkillRagMode = (value: unknown): value is SkillRagMode =>
@@ -477,6 +487,9 @@ export async function createSkill(
   }
 
   const normalized = buildEditableColumns(input);
+  if (normalized.executionMode === "no_code") {
+    await assertNoCodeFlowAllowed(workspaceId);
+  }
   const validKnowledgeBases = normalized.knowledgeBaseIds
     ? await filterWorkspaceKnowledgeBases(workspaceId, normalized.knowledgeBaseIds)
     : [];
@@ -571,6 +584,9 @@ export async function updateSkill(
 
 
   const normalized = buildEditableColumns(input);
+  if (normalized.executionMode === "no_code") {
+    await assertNoCodeFlowAllowed(workspaceId);
+  }
   const updates: Partial<EditableSkillColumns> = {};
 
   (Object.keys(normalized) as (keyof SkillEditableInput)[]).forEach((key) => {

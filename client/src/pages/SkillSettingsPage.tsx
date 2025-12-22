@@ -58,6 +58,12 @@ type VectorCollectionsResponse = {
   collections: VectorCollectionSummary[];
 };
 
+type WorkspacePlanResponse = {
+  plan: {
+    noCodeFlowEnabled?: boolean;
+  };
+};
+
 async function fetchKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSummary[]> {
   const response = await apiRequest("GET", "/api/knowledge/bases", undefined, undefined, { workspaceId });
   return (await response.json()) as KnowledgeBaseSummary[];
@@ -104,6 +110,18 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     queryKey: ["/api/auth/session"],
   });
   const workspaceId = session?.workspace.active.id ?? session?.activeWorkspaceId ?? null;
+
+  const workspacePlanQuery = useQuery<WorkspacePlanResponse>({
+    queryKey: ["workspace-plan", workspaceId],
+    enabled: Boolean(workspaceId),
+    queryFn: async () => {
+      if (!workspaceId) {
+        throw new Error("Рабочее пространство не выбрано");
+      }
+      const response = await apiRequest("GET", `/api/workspaces/${workspaceId}/plan`);
+      return (await response.json()) as WorkspacePlanResponse;
+    },
+  });
 
   const {
     skills,
@@ -162,6 +180,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   const vectorCollectionsError = vectorCollectionsQuery.error as Error | undefined;
   const embeddingProviders = embeddingProvidersResponse?.providers ?? [];
   const embeddingProvidersError = embeddingProvidersErrorRaw as Error | undefined;
+  const allowNoCodeFlow = Boolean(workspacePlanQuery.data?.plan?.noCodeFlowEnabled);
 
   const llmOptions = useMemo<LlmSelectionOption[]>(() => {
     const options: LlmSelectionOption[] = [];
@@ -222,6 +241,14 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
         variant: "destructive",
       });
       throw new Error("Не выбрано действие для авто-запуска");
+    }
+    if (!allowNoCodeFlow && values.executionMode === "no_code") {
+      toast({
+        title: "No-code недоступен",
+        description: "Доступно на премиум-тарифе.",
+        variant: "destructive",
+      });
+      return false;
     }
 
     const parseIntegerOrDefault = (candidate: string | undefined, fallback: number) => {
@@ -324,6 +351,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
 
   const loading =
     (isNew ? false : isSkillsLoading) ||
+    workspacePlanQuery.isLoading ||
     knowledgeBaseQuery.isLoading ||
     vectorCollectionsQuery.isLoading ||
     isEmbeddingProvidersLoading ||
@@ -332,6 +360,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
 
   const error =
     (isNew ? null : skillsError) ||
+    workspacePlanQuery.error ||
     knowledgeBaseQuery.error ||
     vectorCollectionsError ||
     embeddingProvidersError ||
@@ -408,6 +437,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
             onSubmit={handleSubmit}
             isSubmitting={isUpdating || isCreating}
             skill={isNew ? null : currentSkill}
+            allowNoCodeFlow={allowNoCodeFlow}
             getIconComponent={getIconComponent}
             isOpen
             activeTab={activeTab}

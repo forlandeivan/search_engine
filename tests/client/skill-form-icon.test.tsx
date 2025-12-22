@@ -91,6 +91,7 @@ describe("SkillFormContent", () => {
         onSubmit={handleSubmit}
         isSubmitting={false}
         skill={baseSkill}
+        allowNoCodeFlow={true}
         getIconComponent={() => null}
       />,
     );
@@ -146,6 +147,7 @@ describe("SkillFormContent", () => {
         onSubmit={handleSubmit}
         isSubmitting={false}
         skill={skillWithoutMode}
+        allowNoCodeFlow={true}
         getIconComponent={() => null}
       />,
     );
@@ -192,6 +194,7 @@ describe("SkillFormContent", () => {
         onSubmit={handleSubmit}
         isSubmitting={false}
         skill={baseSkill}
+        allowNoCodeFlow={true}
         getIconComponent={() => null}
       />,
     );
@@ -206,6 +209,57 @@ describe("SkillFormContent", () => {
 
     const submitted = handleSubmit.mock.calls[0][0];
     expect(submitted.executionMode).toBe("no_code");
+  });
+
+  it("disables no-code when plan forbids it", async () => {
+    mockApiRequest.mockResolvedValue({ json: async () => ({ items: [] }) });
+    const handleSubmit = vi.fn().mockResolvedValue(true);
+
+    const llmOptions = [
+      {
+        key: "provider-1::model-1",
+        label: "Provider · Model",
+        providerId: "provider-1",
+        providerName: "Provider",
+        modelId: "model-1",
+        modelDisplayName: "Model",
+        costLevel: "LOW" as const,
+        providerIsActive: true,
+        disabled: false,
+      },
+    ];
+
+    const { findByTestId } = renderWithClient(
+      <SkillFormContent
+        knowledgeBases={[]}
+        vectorCollections={[]}
+        isVectorCollectionsLoading={false}
+        embeddingProviders={[]}
+        isEmbeddingProvidersLoading={false}
+        llmOptions={llmOptions}
+        onSubmit={handleSubmit}
+        isSubmitting={false}
+        skill={baseSkill}
+        allowNoCodeFlow={false}
+        getIconComponent={() => null}
+      />,
+    );
+
+    const noCodeOption = await findByTestId("execution-mode-no-code");
+    expect((noCodeOption as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(noCodeOption);
+    const nameInput = await findByTestId("skill-name-input");
+    fireEvent.change(nameInput, { target: { value: "Icon Skill Updated" } });
+    const saveButton = await findByTestId("save-button");
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(handleSubmit).toHaveBeenCalled();
+    });
+
+    const submitted = handleSubmit.mock.calls[0][0];
+    expect(submitted.executionMode).toBe("standard");
   });
 
   it("submits advanced LLM parameters", async () => {
@@ -237,6 +291,7 @@ describe("SkillFormContent", () => {
         onSubmit={handleSubmit}
         isSubmitting={false}
         skill={baseSkill}
+        allowNoCodeFlow={true}
         getIconComponent={() => null}
       />,
     );
@@ -284,6 +339,7 @@ describe("SkillFormContent", () => {
         onSubmit={vi.fn().mockResolvedValue(true)}
         isSubmitting={false}
         skill={baseSkill}
+        allowNoCodeFlow={true}
         getIconComponent={() => null}
         activeTab="transcription"
       />,
