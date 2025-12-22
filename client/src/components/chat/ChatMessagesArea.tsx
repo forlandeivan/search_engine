@@ -7,11 +7,14 @@ import type { ChatMessage } from "@/types/chat";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
+type ReadOnlyReason = "chat" | "skill";
+
 type ChatMessagesAreaProps = {
   chatTitle: string | null;
   skillName: string | null;
   chatId?: string | null;
   isReadOnly?: boolean;
+  readOnlyReason?: ReadOnlyReason | null;
   messages: ChatMessage[];
   isLoading: boolean;
   isNewChat: boolean;
@@ -30,6 +33,7 @@ export default function ChatMessagesArea({
   skillName,
   chatId,
   isReadOnly = false,
+  readOnlyReason,
   messages,
   isLoading,
   isNewChat,
@@ -46,6 +50,15 @@ export default function ChatMessagesArea({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState(chatTitle ?? "");
   const [isSavingTitle, setIsSavingTitle] = useState(false);
+  const resolvedReadOnlyReason = readOnlyReason ?? (isReadOnly ? "chat" : null);
+  const readOnlyBannerText =
+    resolvedReadOnlyReason === "skill"
+      ? "Навык архивирован. Этот диалог доступен только для чтения."
+      : "Чат архивирован. Этот диалог доступен только для чтения.";
+  const readOnlyTooltipText =
+    resolvedReadOnlyReason === "skill"
+      ? "Навык архивирован, доступ только для чтения"
+      : "Чат архивирован, доступ только для чтения";
 
   useEffect(() => {
     const target = scrollContainerRef?.current ?? listRef.current;
@@ -61,7 +74,7 @@ export default function ChatMessagesArea({
 
   const readonlyBanner = isReadOnly ? (
     <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-      Навык или чат архивирован. Этот диалог доступен только для чтения.
+      {readOnlyBannerText}
     </div>
   ) : null;
 
@@ -109,7 +122,7 @@ export default function ChatMessagesArea({
                       <Archive className="h-5 w-5 text-amber-600" aria-label="Архивный чат" />
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      Чат архивирован, доступен только для чтения
+                      {readOnlyTooltipText}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>

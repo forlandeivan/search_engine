@@ -67,11 +67,13 @@ const baseChat = {
   workspaceId: "workspace-1",
   userId: "user-1",
   skillId: "skill-1",
+  status: "active",
   title: "",
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
   deletedAt: null,
   skillName: "Test",
+  skillStatus: "active",
 };
 
 afterEach(() => {
@@ -178,6 +180,34 @@ describe("chat service", () => {
     await expect(() =>
       addUserMessage("chat-1", "workspace-1", "user-1", "hello"),
     ).rejects.toThrow(ChatServiceError);
+  });
+
+  it("blocks sending messages to archived chat", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce({
+      ...baseChat,
+      status: "archived",
+    } as any);
+
+    await expect(() =>
+      addUserMessage("chat-1", "workspace-1", "user-1", "hello"),
+    ).rejects.toMatchObject({
+      message: "Чат архивирован. Отправка сообщений недоступна.",
+      code: "CHAT_ARCHIVED",
+    });
+  });
+
+  it("blocks sending messages when skill archived", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce({
+      ...baseChat,
+      skillStatus: "archived",
+    } as any);
+
+    await expect(() =>
+      addUserMessage("chat-1", "workspace-1", "user-1", "hello"),
+    ).rejects.toMatchObject({
+      message: "Навык архивирован. Отправка сообщений недоступна.",
+      code: "SKILL_ARCHIVED",
+    });
   });
 
   it("logs skill config and provider resolution when building LLM context", async () => {
@@ -331,6 +361,42 @@ describe("chat service", () => {
 
     expect(context.skill.isRagSkill).toBe(false);
     expect(context.skill.mode).toBe("llm");
+  });
+
+  it("blocks building context for archived chat", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce({
+      ...baseChat,
+      status: "archived",
+    } as any);
+
+    await expect(() =>
+      buildChatLlmContext("chat-1", "workspace-1", "user-1", { executionId: "exec-archived-chat" }),
+    ).rejects.toMatchObject({
+      message: "Чат архивирован. Отправка сообщений недоступна.",
+      code: "CHAT_ARCHIVED",
+    });
+  });
+
+  it("blocks building context for archived skill", async () => {
+    storageMock.getChatSessionById.mockResolvedValueOnce({
+      ...baseChat,
+      skillStatus: "active",
+    } as any);
+    getSkillByIdMock.mockResolvedValueOnce({
+      id: "skill-1",
+      llmProviderConfigId: "provider-global",
+      modelId: "model-global",
+      systemPrompt: null,
+      isSystem: false,
+      status: "archived",
+    } as any);
+
+    await expect(() =>
+      buildChatLlmContext("chat-1", "workspace-1", "user-1", { executionId: "exec-archived-skill" }),
+    ).rejects.toMatchObject({
+      message: "Навык архивирован. Отправка сообщений недоступна.",
+      code: "SKILL_ARCHIVED",
+    });
   });
 
   it("logs provider resolution errors", async () => {

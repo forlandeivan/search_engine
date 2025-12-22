@@ -35,6 +35,7 @@ export type ChatSummary = ChatSession & {
   skillName: string | null;
   skillIsSystem: boolean;
   skillSystemKey: string | null;
+  skillStatus: string | null;
 };
 
 const sanitizeTitle = (title?: string | null) => title?.trim() ?? "";
@@ -112,7 +113,12 @@ const mapModelErrorToChatError = (error: unknown): ChatServiceError | null => {
 };
 
 const mapChatSummary = (
-  session: ChatSession & { skillName: string | null; skillIsSystem?: boolean; skillSystemKey?: string | null },
+  session: ChatSession & {
+    skillName: string | null;
+    skillIsSystem?: boolean;
+    skillSystemKey?: string | null;
+    skillStatus?: string | null;
+  },
 ) => ({
   id: session.id,
   workspaceId: session.workspaceId,
@@ -128,6 +134,24 @@ const mapChatSummary = (
   updatedAt: session.updatedAt,
   deletedAt: session.deletedAt ?? null,
 });
+
+const ARCHIVED_CHAT_ERROR_MESSAGE = "Чат архивирован. Отправка сообщений недоступна.";
+const ARCHIVED_SKILL_ERROR_MESSAGE = "Навык архивирован. Отправка сообщений недоступна.";
+
+function ensureChatAndSkillAreActive(chat: ChatSummary) {
+  if (chat.status === "archived") {
+    throw new ChatServiceError(ARCHIVED_CHAT_ERROR_MESSAGE, 403, "CHAT_ARCHIVED");
+  }
+  if (chat.skillStatus === "archived") {
+    throw new ChatServiceError(ARCHIVED_SKILL_ERROR_MESSAGE, 403, "SKILL_ARCHIVED");
+  }
+}
+
+function ensureSkillIsActive(skill: SkillDto) {
+  if (skill.status === "archived") {
+    throw new ChatServiceError(ARCHIVED_SKILL_ERROR_MESSAGE, 403, "SKILL_ARCHIVED");
+  }
+}
 
 const mapMessage = (message: ChatMessage) => ({
   id: message.id,
@@ -235,7 +259,8 @@ export async function addUserMessage(
   userId: string,
   content: string,
 ) {
-  await getOwnedChat(chatId, workspaceId, userId);
+  const chat = await getOwnedChat(chatId, workspaceId, userId);
+  ensureChatAndSkillAreActive(chat);
   const message = await storage.createChatMessage({
     chatId,
     role: "user",
@@ -288,6 +313,19 @@ export async function buildChatLlmContext(
   const executionId = options?.executionId ?? null;
   const chat = await getOwnedChat(chatId, workspaceId, userId);
 
+  try {
+    ensureChatAndSkillAreActive(chat);
+  } catch (error) {
+    const info = describeError(error);
+    await logExecutionStepForChat(executionId, "LOAD_SKILL_CONFIG", SKILL_EXECUTION_STEP_STATUS.ERROR, {
+      input: { chatId, workspaceId, skillId: chat.skillId },
+      errorCode: info.code,
+      errorMessage: info.message,
+      diagnosticInfo: info.diagnosticInfo,
+    });
+    throw error;
+  }
+
   let skill;
   try {
     skill = await getSkillById(workspaceId, chat.skillId);
@@ -313,6 +351,8 @@ export async function buildChatLlmContext(
     });
     throw notFound;
   }
+
+  ensureSkillIsActive(skill);
 
   const isUnica = isUnicaChatSkill(skill);
   const isRag = isRagSkill(skill);

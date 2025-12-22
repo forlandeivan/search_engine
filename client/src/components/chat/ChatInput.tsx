@@ -226,9 +226,13 @@ export default function ChatInput({
       setIsSending(false);
       return;
     }
-    setValue("");
-    await onSend(trimmed);
-    setIsSending(false);
+
+    try {
+      await onSend(trimmed);
+      setValue("");
+    } finally {
+      setIsSending(false);
+    }
   }, [attachedFile, disabled, onSend, onTranscribe, pendingTranscribe, readOnlyHint, toast, value]);
 
   const handleAttachClick = useCallback(() => {

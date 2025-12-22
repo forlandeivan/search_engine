@@ -8,8 +8,16 @@ import ChatInput, { type TranscribePayload } from "@/components/chat/ChatInput";
 import { TranscriptCanvas } from "@/components/chat/TranscriptCanvas";
 import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { useSkills } from "@/hooks/useSkills";
-import { formatApiErrorMessage } from "@/lib/api-errors";
+import { formatApiErrorMessage, isApiError } from "@/lib/api-errors";
+import { useToast } from "@/hooks/use-toast";
 import type { ChatMessage } from "@/types/chat";
+
+const ARCHIVE_ERROR_MESSAGES: Record<string, string> = {
+  CHAT_ARCHIVED: "Чат архивирован. Отправка недоступна.",
+  SKILL_ARCHIVED: "Навык архивирован. Отправка недоступна.",
+};
+
+type ArchiveReadOnlyReason = "chat" | "skill";
 
 type ChatPageParams = {
   workspaceId?: string;
@@ -68,6 +76,13 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const { toast } = useToast();
+  const resolveArchiveErrorMessage = (error: unknown): string | null => {
+    if (isApiError(error) && error.code) {
+      return ARCHIVE_ERROR_MESSAGES[error.code] ?? null;
+    }
+    return null;
+  };
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [openTranscript, setOpenTranscript] = useState<{ id: string; tabId?: string | null } | null>(null);
 
@@ -214,7 +229,8 @@ export default function ChatPage({ params }: ChatPageProps) {
             },
             onError: (error) => {
               debugLog("[chat] streamMessage error", error);
-              setStreamError(formatApiErrorMessage(error));
+              const archiveMessage = resolveArchiveErrorMessage(error);
+              setStreamError(archiveMessage ?? formatApiErrorMessage(error));
               // При ошибке тоже удаляем placeholder, чтобы не было фантома.
               setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
             },
@@ -222,7 +238,13 @@ export default function ChatPage({ params }: ChatPageProps) {
         });
       } catch (error) {
         debugLog("[chat] streamMessage failure", error);
-        setStreamError(formatApiErrorMessage(error));
+        const archiveMessage = resolveArchiveErrorMessage(error);
+        if (archiveMessage) {
+          toast({ title: archiveMessage, variant: "destructive" });
+          setStreamError(archiveMessage);
+        } else {
+          setStreamError(formatApiErrorMessage(error));
+        }
         setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
       } finally {
         setIsStreaming(false);
@@ -499,9 +521,26 @@ export default function ChatPage({ params }: ChatPageProps) {
   const isNewChat = !effectiveChatId;
   const skillLabel = activeSkill?.name ?? activeChat?.skillName ?? "Unica Chat";
   const chatTitle = activeChat?.title ?? null;
-  const isReadOnlyChat = activeChat?.status === "archived" || activeSkill?.status === "archived";
+  const chatArchived = activeChat?.status === "archived";
+  const skillArchived = activeSkill?.status === "archived";
+  const readOnlyReason: ArchiveReadOnlyReason | null = chatArchived ? "chat" : skillArchived ? "skill" : null;
+  const isReadOnlyChat = Boolean(readOnlyReason);
   const disableInput = !workspaceId || isStreaming || Boolean(normalizedMessagesError && !isNewChat) || isReadOnlyChat;
   const isDefaultCreating = creatingSkillId !== null && creatingSkillId === (defaultSkill?.id ?? null);
+  const readOnlyHint =
+    readOnlyReason === "skill"
+      ? "Навык архивирован, ввод недоступен"
+      : readOnlyReason === "chat"
+        ? "Чат архивирован, ввод недоступен"
+        : undefined;
+  const placeholder =
+    readOnlyReason === "skill"
+      ? "Навык архивирован и доступен только для чтения"
+      : readOnlyReason === "chat"
+        ? "Чат архивирован и доступен только для чтения"
+        : isNewChat
+          ? "Спросите что-нибудь..."
+          : "Введите сообщение...";
 
   useEffect(() => {
     document.body.classList.add("chat-scroll-locked");
@@ -544,20 +583,17 @@ export default function ChatPage({ params }: ChatPageProps) {
               onOpenTranscript={(id: string, defaultTabId?: string | null) =>
                 setOpenTranscript({ id, tabId: defaultTabId ?? null })
               }
+              readOnlyReason={readOnlyReason}
             />
           <div className="shrink-0">
             <ChatInput
               onSend={handleSend}
               onTranscribe={handleTranscription}
               disabled={disableInput}
-              readOnlyHint={isReadOnlyChat ? "Чат архивирован, ввод недоступен" : undefined}
+              readOnlyHint={readOnlyHint}
               chatId={effectiveChatId ?? null}
               placeholder={
-                isReadOnlyChat
-                  ? "Чат архивирован и доступен только для чтения"
-                  : isNewChat
-                    ? "Спросите что-нибудь..."
-                    : "Введите сообщение..."
+                placeholder
               }
             />
           </div>
