@@ -1175,7 +1175,6 @@ export function SkillFormContent({
   const hasBearerTokenDraft = Boolean(noCodeBearerTokenValue?.trim());
   const storedNoCodeTokenIsSet = skill?.noCodeConnection?.tokenIsSet ?? false;
   const canManageCallbackToken = Boolean(skill?.id && isNoCodeMode && allowNoCodeFlow && onGenerateCallbackToken);
-  const callbackTokenRotatedLabel = formatDateTime(callbackTokenStatus.lastRotatedAt);
   const formatDateTime = (value: string | null | undefined): string | null => {
     if (!value) return null;
     try {
@@ -1184,6 +1183,7 @@ export function SkillFormContent({
       return null;
     }
   };
+  const callbackTokenRotatedLabel = formatDateTime(callbackTokenStatus.lastRotatedAt);
   const handleGenerateCallbackToken = async () => {
     if (!skill?.id || !onGenerateCallbackToken) {
       return;
