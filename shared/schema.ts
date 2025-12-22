@@ -1173,6 +1173,9 @@ export type ChatMessageRole = (typeof chatMessageRoles)[number];
 export const chatStatuses = ["active", "archived"] as const;
 export type ChatStatus = (typeof chatStatuses)[number];
 
+export const assistantActionTypes = ["ANALYZING", "TRANSCRIBING", "TYPING"] as const;
+export type AssistantActionType = (typeof assistantActionTypes)[number];
+
 export const chatSessions = pgTable(
   "chat_sessions",
   {
@@ -1188,6 +1191,10 @@ export const chatSessions = pgTable(
       .references(() => skills.id, { onDelete: "cascade" }),
     title: text("title").notNull().default(""),
     status: text("status").$type<ChatStatus>().notNull().default("active"),
+    currentAssistantActionType: text("current_assistant_action_type").$type<AssistantActionType | null>(),
+    currentAssistantActionText: text("current_assistant_action_text"),
+    currentAssistantActionTriggerMessageId: text("current_assistant_action_trigger_message_id"),
+    currentAssistantActionUpdatedAt: timestamp("current_assistant_action_updated_at"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     deletedAt: timestamp("deleted_at"),

@@ -2,7 +2,15 @@ import { storage } from "./storage";
 import type { SkillDto } from "@shared/skills";
 import { getSkillById, UNICA_CHAT_SYSTEM_KEY } from "./skills";
 import { isRagSkill, isUnicaChatSkill } from "./skill-type";
-import type { ChatSession, ChatMessage, ChatMessageRole, LlmProvider, LlmRequestConfig, Model } from "@shared/schema";
+import type {
+  ChatSession,
+  ChatMessage,
+  ChatMessageRole,
+  LlmProvider,
+  LlmRequestConfig,
+  Model,
+  AssistantActionType,
+} from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
 import { skillExecutionLogService } from "./skill-execution-log-context";
@@ -38,6 +46,12 @@ export type ChatSummary = ChatSession & {
   skillIsSystem: boolean;
   skillSystemKey: string | null;
   skillStatus: string | null;
+  currentAssistantAction?: {
+    type: AssistantActionType;
+    text: string | null;
+    triggerMessageId: string | null;
+    updatedAt: string | null;
+  } | null;
 };
 
 const sanitizeTitle = (title?: string | null) => title?.trim() ?? "";
@@ -114,6 +128,26 @@ const mapModelErrorToChatError = (error: unknown): ChatServiceError | null => {
   return null;
 };
 
+const mapAssistantAction = (session: ChatSession): ChatSummary["currentAssistantAction"] => {
+  const rawType = (session as any).currentAssistantActionType as AssistantActionType | null | undefined;
+  if (!rawType) {
+    return null;
+  }
+
+  const normalizedType = rawType.toUpperCase() as AssistantActionType;
+  return {
+    type: normalizedType,
+    text: (session as any).currentAssistantActionText ?? null,
+    triggerMessageId: (session as any).currentAssistantActionTriggerMessageId ?? null,
+    updatedAt:
+      (session as any).currentAssistantActionUpdatedAt instanceof Date
+        ? (session as any).currentAssistantActionUpdatedAt.toISOString()
+        : (session as any).currentAssistantActionUpdatedAt
+          ? new Date((session as any).currentAssistantActionUpdatedAt).toISOString()
+          : null,
+  };
+};
+
 const mapChatSummary = (
   session: ChatSession & {
     skillName: string | null;
@@ -132,6 +166,7 @@ const mapChatSummary = (
   skillStatus: (session as any).skillStatus ?? null,
   skillIsSystem: Boolean(session.skillIsSystem),
   skillSystemKey: session.skillSystemKey ?? null,
+  currentAssistantAction: mapAssistantAction(session),
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
   deletedAt: session.deletedAt ?? null,
@@ -705,4 +740,62 @@ export async function addNoCodeCallbackMessage(opts: {
   });
   await storage.touchChatSession(opts.chatId);
   return mapMessage(message);
+}
+
+export async function setNoCodeAssistantAction(opts: {
+  workspaceId: string;
+  chatId: string;
+  actionType: AssistantActionType;
+  actionText?: string | null;
+  triggerMessageId?: string | null;
+  occurredAt?: string | Date | null;
+}): Promise<ChatSummary> {
+  const chatRecord = await storage.getChatSessionById(opts.chatId);
+  if (!chatRecord || chatRecord.workspaceId !== opts.workspaceId) {
+    throw new ChatServiceError("Чат не найден", 404);
+  }
+
+  const chat = mapChatSummary(chatRecord);
+  ensureChatAndSkillAreActive(chat);
+
+  const skill = await getSkillById(opts.workspaceId, chat.skillId);
+  if (!skill) {
+    throw new ChatServiceError("Навык не найден", 404);
+  }
+  ensureSkillIsActive(skill);
+  if (skill.executionMode !== "no_code") {
+    throw new ChatServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
+  }
+
+  let normalizedOccurredAt: Date | null = null;
+  if (opts.occurredAt) {
+    const parsed =
+      opts.occurredAt instanceof Date ? opts.occurredAt : new Date(opts.occurredAt);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new ChatServiceError("Некорректное значение occurredAt", 400);
+    }
+    normalizedOccurredAt = parsed;
+  }
+
+  const normalizedText = opts.actionText?.trim() ?? "";
+  const normalizedTrigger = opts.triggerMessageId?.trim() ?? "";
+
+  const updated = await storage.setChatAssistantAction(chat.id, {
+    type: opts.actionType,
+    text: normalizedText.length > 0 ? normalizedText : null,
+    triggerMessageId: normalizedTrigger.length > 0 ? normalizedTrigger : null,
+    updatedAt: normalizedOccurredAt ?? new Date(),
+  });
+
+  if (!updated) {
+    throw new ChatServiceError("Не удалось обновить состояние действия", 500);
+  }
+
+  return mapChatSummary({
+    ...updated,
+    skillName: chat.skillName,
+    skillIsSystem: chat.skillIsSystem,
+    skillSystemKey: chat.skillSystemKey,
+    skillStatus: chat.skillStatus,
+  } as any);
 }

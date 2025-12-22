@@ -3,7 +3,7 @@ import { Loader2, Sparkles, Music, Search, Archive } from "lucide-react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ChatMessage } from "@/types/chat";
+import type { AssistantActionState, ChatMessage } from "@/types/chat";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -13,6 +13,7 @@ type ChatMessagesAreaProps = {
   chatTitle: string | null;
   skillName: string | null;
   chatId?: string | null;
+  assistantAction?: AssistantActionState | null;
   isReadOnly?: boolean;
   readOnlyReason?: ReadOnlyReason | null;
   messages: ChatMessage[];
@@ -32,6 +33,7 @@ export default function ChatMessagesArea({
   chatTitle,
   skillName,
   chatId,
+  assistantAction = null,
   isReadOnly = false,
   readOnlyReason,
   messages,
@@ -71,6 +73,22 @@ export default function ChatMessagesArea({
     if (chatTitle && chatTitle.trim().length > 0) return chatTitle.trim();
     return "Новый разговор";
   }, [chatTitle, isNewChat]);
+
+  const assistantActionText = useMemo(() => {
+    if (!assistantAction?.type) return null;
+    const explicit = assistantAction.text?.trim();
+    if (explicit) return explicit;
+    switch (assistantAction.type) {
+      case "ANALYZING":
+        return "Ассистент анализирует...";
+      case "TRANSCRIBING":
+        return "Готовит стенограмму...";
+      case "TYPING":
+        return "Ассистент печатает...";
+      default:
+        return null;
+    }
+  }, [assistantAction]);
 
   const readonlyBanner = isReadOnly ? (
     <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -203,6 +221,14 @@ export default function ChatMessagesArea({
       <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto py-6">
         <div className="mx-auto max-w-3xl px-4">
           {readonlyBanner}
+          {assistantActionText ? (
+            <div className="mb-3 flex items-center gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-500/40 dark:bg-sky-900/40 dark:text-sky-100">
+              <Sparkles className="h-4 w-4 text-sky-600 dark:text-sky-200" />
+              <div className="flex flex-col leading-tight">
+                <span>{assistantActionText}</span>
+              </div>
+            </div>
+          ) : null}
           <div className="flex h-full min-h-0 flex-col gap-3">
           {errorMessage ? (
             <div className="mx-auto mt-10 max-w-lg rounded-2xl border bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
@@ -272,7 +298,7 @@ export default function ChatMessagesArea({
         <div className="border-t bg-destructive/10 px-6 py-3 text-sm text-destructive">{streamError}</div>
       ) : null}
 
-      {isStreaming ? (
+      {isStreaming && !assistantActionText ? (
         <div className="border-t bg-white/60 px-6 py-3 text-sm text-muted-foreground dark:bg-slate-900/60">
           Ассистент печатает...
         </div>

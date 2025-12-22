@@ -130,6 +130,7 @@ function setupChatServiceMock() {
     addAssistantMessage: vi.fn(),
     getChatById: vi.fn(),
     addNoCodeCallbackMessage: vi.fn(),
+    setNoCodeAssistantAction: vi.fn(),
     ChatServiceError,
   };
 
@@ -374,6 +375,166 @@ describe("No-code callback API", () => {
       expect(skillsMock.generateNoCodeCallbackToken).toHaveBeenCalledWith(
         expect.objectContaining({ workspaceId: "workspace-1", skillId: "skill-1" }),
       );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("sets assistant action via callback endpoint", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    const chatService = setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockResolvedValueOnce({ skillId: "skill-1" });
+    chatService.setNoCodeAssistantAction.mockResolvedValueOnce({
+      id: "chat-1",
+      currentAssistantAction: {
+        type: "ANALYZING",
+        text: "Пишу",
+        triggerMessageId: "msg-1",
+        updatedAt: new Date("2025-01-01T00:00:00.000Z").toISOString(),
+      },
+    });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/assistant-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer callback-token" },
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          actionType: "ANALYZING",
+          actionText: "Пишу",
+          triggerMessageId: "msg-1",
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const json = await response.json();
+      expect(json.currentAssistantAction?.type).toBe("ANALYZING");
+      expect(chatService.setNoCodeAssistantAction).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: "chat-1", actionType: "ANALYZING" }),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects assistant action without token", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockRejectedValueOnce(
+      new skillsMock.SkillServiceError("Нет токена", 401, "CALLBACK_UNAUTHORIZED"),
+    );
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/assistant-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          actionType: "TYPING",
+        }),
+      });
+
+      expect(response.status).toBe(401);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects assistant action with invalid actionType", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockResolvedValueOnce({ skillId: "skill-1" });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/assistant-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer token" },
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          actionType: "unknown",
+        }),
+      });
+
+      expect(response.status).toBe(400);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("exposes currentAssistantAction in chat list response", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    const chatService = setupChatServiceMock();
+    const now = new Date("2025-01-01T00:00:00.000Z").toISOString();
+    chatService.listUserChats.mockResolvedValueOnce([
+      {
+        id: "chat-1",
+        workspaceId: "workspace-1",
+        userId: "user-1",
+        skillId: "skill-1",
+        status: "active",
+        title: "Чат",
+        skillName: "Навык",
+        skillStatus: "active",
+        skillIsSystem: false,
+        skillSystemKey: null,
+        currentAssistantAction: {
+          type: "ANALYZING",
+          text: "Готовлю ответ",
+          triggerMessageId: "msg-1",
+          updatedAt: now,
+        },
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      },
+    ]);
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/chat/sessions?workspaceId=workspace-1`,
+        {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const json = await response.json();
+      expect(json.chats?.[0]?.currentAssistantAction?.type).toBe("ANALYZING");
+      expect(chatService.listUserChats).toHaveBeenCalledWith("workspace-1", "user-1", undefined, {
+        includeArchived: false,
+      });
     } finally {
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => (error ? reject(error) : resolve()));

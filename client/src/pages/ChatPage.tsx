@@ -46,8 +46,9 @@ export default function ChatPage({ params }: ChatPageProps) {
   const effectiveChatId = routeChatId || overrideChatId || null;
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
 
-  const { chats } = useChats(workspaceId);
+  const { chats } = useChats(workspaceId, undefined, { refetchIntervalMs: 3000 });
   const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
+  const activeAssistantAction = activeChat?.currentAssistantAction ?? null;
 
   const { skills } = useSkills({
     workspaceId: workspaceId || null,
@@ -570,6 +571,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           <ChatMessagesArea
               chatTitle={chatTitle}
               skillName={skillLabel}
+              assistantAction={activeAssistantAction}
               isReadOnly={isReadOnlyChat}
               messages={visibleMessages}
               isLoading={isMessagesLoading && !isNewChat}

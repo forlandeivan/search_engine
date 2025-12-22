@@ -105,6 +105,7 @@ import {
   buildChatCompletionRequestBody,
   addAssistantMessage,
   addNoCodeCallbackMessage,
+  setNoCodeAssistantAction,
   ChatServiceError,
   getChatById,
 } from "./chat-service";
@@ -113,6 +114,7 @@ import {
   getNoCodeConnectionInternal,
   scheduleNoCodeEventDelivery,
 } from "./no-code-events";
+import { assistantActionTypes, type AssistantActionType } from "@shared/schema";
 type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
 const NO_CODE_FLOW_MESSAGES: Record<NoCodeFlowFailureReason, string> = {
   NOT_CONFIGURED: "No-code сценарий недоступен. Проверьте подключение или попробуйте позже.",
@@ -6994,6 +6996,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     });
 
+  const assistantActionTypeSchema = z
+    .string()
+    .trim()
+    .transform((val) => val.toUpperCase())
+    .refine((val) => assistantActionTypes.includes(val as any), { message: "Недопустимый actionType" });
+
+  const noCodeCallbackAssistantActionSchema = z.object({
+    workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
+    chatId: z.string().trim().min(1, "Укажите чат"),
+    actionType: assistantActionTypeSchema,
+    actionText: z.string().trim().max(2000).optional(),
+    triggerMessageId: z.string().trim().max(200).optional(),
+    occurredAt: z.string().datetime().optional(),
+  });
+
 
 
   const adminLlmExecutionStatusSchema = z.enum(["pending", "running", "success", "error", "timeout", "cancelled"]);
@@ -11149,6 +11166,57 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
 
       return res.status(201).json({ message });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      if (error instanceof SkillServiceError) {
+        return res
+          .status(error.status)
+          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/no-code/callback/assistant-action", async (req, res, next) => {
+    try {
+      const payload = noCodeCallbackAssistantActionSchema.parse(req.body ?? {});
+      const authorizationHeader = Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization;
+      let callbackToken: string | null = null;
+      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
+        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
+        if (scheme && scheme.toLowerCase() === "bearer") {
+          const candidate = rest.join(" ").trim();
+          callbackToken = candidate.length > 0 ? candidate : null;
+        }
+      }
+
+      await verifyNoCodeCallbackToken({
+        workspaceId: payload.workspaceId,
+        chatId: payload.chatId,
+        token: callbackToken,
+      });
+
+      const action = await setNoCodeAssistantAction({
+        workspaceId: payload.workspaceId,
+        chatId: payload.chatId,
+        actionType: payload.actionType as AssistantActionType,
+        actionText: payload.actionText ?? null,
+        triggerMessageId: payload.triggerMessageId ?? null,
+        occurredAt: payload.occurredAt ?? null,
+      });
+
+      return res.status(200).json({
+        ok: true,
+        chatId: action.id,
+        currentAssistantAction: action.currentAssistantAction ?? null,
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Некорректные данные", details: error.issues });

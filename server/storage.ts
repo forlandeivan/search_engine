@@ -51,6 +51,7 @@ import {
   type AuthProvider,
   type AuthProviderInsert,
   type AuthProviderType,
+  type AssistantActionType,
   type WorkspaceEmbedKey,
   type WorkspaceEmbedKeyDomain,
   type KnowledgeBaseRagRequest,
@@ -1189,6 +1190,23 @@ async function ensureChatSessionsTable(): Promise<void> {
         FOREIGN KEY ("skill_id") REFERENCES "skills"("id") ON DELETE CASCADE
       `,
     );
+
+    await db.execute(sql`
+      ALTER TABLE "chat_sessions"
+      ADD COLUMN IF NOT EXISTS "current_assistant_action_type" text
+    `);
+    await db.execute(sql`
+      ALTER TABLE "chat_sessions"
+      ADD COLUMN IF NOT EXISTS "current_assistant_action_text" text
+    `);
+    await db.execute(sql`
+      ALTER TABLE "chat_sessions"
+      ADD COLUMN IF NOT EXISTS "current_assistant_action_trigger_message_id" text
+    `);
+    await db.execute(sql`
+      ALTER TABLE "chat_sessions"
+      ADD COLUMN IF NOT EXISTS "current_assistant_action_updated_at" timestamp
+    `);
 
     chatSessionsTableEnsured = true;
   })();
@@ -5018,8 +5036,18 @@ export class DatabaseStorage implements IStorage {
 
   async updateChatSession(
     chatId: string,
-    updates: Partial<Pick<ChatSessionInsert, "title">>,
+    updates: Partial<
+      Pick<
+        ChatSessionInsert,
+        | "title"
+        | "currentAssistantActionType"
+        | "currentAssistantActionText"
+        | "currentAssistantActionTriggerMessageId"
+        | "currentAssistantActionUpdatedAt"
+      >
+    >,
   ): Promise<ChatSession | null> {
+    await ensureChatTables();
     if (!updates || Object.keys(updates).length === 0) {
       const current = await this.getChatSessionById(chatId);
       return current ?? null;
@@ -5029,6 +5057,28 @@ export class DatabaseStorage implements IStorage {
       .update(chatSessions)
       .set({
         ...updates,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(and(eq(chatSessions.id, chatId), isNull(chatSessions.deletedAt)))
+      .returning();
+
+    return updated ?? null;
+  }
+
+  async setChatAssistantAction(chatId: string, action: {
+    type: AssistantActionType | null;
+    text: string | null;
+    triggerMessageId: string | null;
+    updatedAt: Date | null;
+  }): Promise<ChatSession | null> {
+    await ensureChatTables();
+    const [updated] = await this.db
+      .update(chatSessions)
+      .set({
+        currentAssistantActionType: action.type,
+        currentAssistantActionText: action.text,
+        currentAssistantActionTriggerMessageId: action.triggerMessageId,
+        currentAssistantActionUpdatedAt: action.updatedAt,
         updatedAt: sql`CURRENT_TIMESTAMP`,
       })
       .where(and(eq(chatSessions.id, chatId), isNull(chatSessions.deletedAt)))

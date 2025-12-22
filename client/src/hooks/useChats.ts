@@ -52,13 +52,16 @@ async function deleteChatRequest(chatId: string, workspaceId: string): Promise<v
   await apiRequest("DELETE", `/api/chat/sessions/${chatId}?${params.toString()}`);
 }
 
-export function useChats(workspaceId?: string, searchQuery?: string, options: { includeArchived?: boolean } = {}) {
-  const { includeArchived = false } = options;
+type UseChatsOptions = { includeArchived?: boolean; refetchIntervalMs?: number | false };
+
+export function useChats(workspaceId?: string, searchQuery?: string, options: UseChatsOptions = {}) {
+  const { includeArchived = false, refetchIntervalMs = false } = options;
   const queryKey = buildChatsQueryKey(workspaceId, searchQuery);
   const query = useQuery<ChatSummary[], Error>({
     queryKey,
     queryFn: () => fetchChats(workspaceId!, searchQuery, includeArchived),
     enabled: Boolean(workspaceId),
+    refetchInterval: refetchIntervalMs,
   });
 
   return {

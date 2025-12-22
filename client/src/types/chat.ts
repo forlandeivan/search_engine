@@ -6,9 +6,17 @@ export type ChatSummary = {
   status?: "active" | "archived";
   skillName?: string | null;
   skillStatus?: "active" | "archived" | null;
+  currentAssistantAction?: AssistantActionState | null;
   title: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type AssistantActionState = {
+  type: AssistantActionType;
+  text: string | null;
+  triggerMessageId: string | null;
+  updatedAt: string | null;
 };
 
 export type ChatPayload = {
@@ -79,3 +87,4 @@ export type CanvasDocument = {
   updatedAt: string;
   deletedAt?: string | null;
 };
+import type { AssistantActionType } from "@shared/schema";
