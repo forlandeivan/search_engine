@@ -192,6 +192,25 @@ function ensureSkillIsActive(skill: SkillDto) {
   }
 }
 
+export async function clearAssistantActionForChat(opts: {
+  workspaceId: string;
+  chatId: string;
+  triggerMessageId?: string | null;
+}): Promise<void> {
+  const chatRecord = await storage.getChatSessionById(opts.chatId);
+  if (!chatRecord || chatRecord.workspaceId !== opts.workspaceId) {
+    return;
+  }
+  const chat = mapChatSummary(chatRecord);
+  const trigger = opts.triggerMessageId?.trim();
+  const current = chat.currentAssistantAction;
+  if (current && trigger && current.triggerMessageId && trigger !== current.triggerMessageId) {
+    return;
+  }
+
+  await storage.clearChatAssistantAction(opts.chatId);
+}
+
 const mapMessage = (message: ChatMessage) => ({
   id: message.id,
   chatId: message.chatId,
@@ -741,6 +760,11 @@ export async function addNoCodeCallbackMessage(opts: {
     metadata,
   });
   await storage.touchChatSession(opts.chatId);
+  await clearAssistantActionForChat({
+    workspaceId: opts.workspaceId,
+    chatId: opts.chatId,
+    triggerMessageId,
+  });
   return mapMessage(message);
 }
 
@@ -768,6 +792,7 @@ export async function addNoCodeSyncFinalResults(opts: {
   }
 
   const created: Array<ReturnType<typeof mapMessage>> = [];
+  let createdNew = false;
 
   for (const result of opts.results) {
     const content = result.text?.trim() ?? "";
@@ -796,10 +821,19 @@ export async function addNoCodeSyncFinalResults(opts: {
       metadata,
     });
     created.push(mapMessage(message));
+    createdNew = true;
   }
 
   if (created.length > 0) {
     await storage.touchChatSession(opts.chatId);
+  }
+
+  if (createdNew) {
+    await clearAssistantActionForChat({
+      workspaceId: opts.workspaceId,
+      chatId: opts.chatId,
+      triggerMessageId: opts.triggerMessageId,
+    });
   }
 
   return created;
@@ -892,6 +926,11 @@ export async function addNoCodeStreamChunk(opts: {
     metadata,
   });
   await storage.touchChatSession(opts.chatId);
+  await clearAssistantActionForChat({
+    workspaceId: opts.workspaceId,
+    chatId: opts.chatId,
+    triggerMessageId,
+  });
   return mapMessage(message);
 }
 

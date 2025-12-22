@@ -7,6 +7,7 @@ const storageMock = {
   findChatMessageByResultId: vi.fn(),
   findChatMessageByStreamId: vi.fn(),
   updateChatMessage: vi.fn(),
+  clearChatAssistantAction: vi.fn(),
 };
 
 const getSkillByIdMock = vi.fn();
@@ -31,13 +32,15 @@ describe("no-code callback message creation", () => {
     storageMock.findChatMessageByResultId.mockReset();
     storageMock.findChatMessageByStreamId.mockReset();
     storageMock.updateChatMessage.mockReset();
+    storageMock.clearChatAssistantAction.mockReset();
+    storageMock.clearChatAssistantAction.mockResolvedValue(undefined);
     getSkillByIdMock.mockReset();
   });
 
   it("creates assistant message and stores triggerMessageId in metadata", async () => {
     const { addNoCodeCallbackMessage } = await import("../server/chat-service");
 
-    storageMock.getChatSessionById.mockResolvedValueOnce({
+    storageMock.getChatSessionById.mockResolvedValue({
       id: "chat-1",
       workspaceId: "workspace-1",
       userId: "user-1",
@@ -114,6 +117,7 @@ describe("no-code callback message creation", () => {
       metadata: { foo: "bar", triggerMessageId: "user-msg-1" },
     });
     expect(storageMock.touchChatSession).toHaveBeenCalledWith("chat-1");
+    expect(storageMock.clearChatAssistantAction).toHaveBeenCalledWith("chat-1");
     expect(message.role).toBe("assistant");
     expect((message.metadata as any).triggerMessageId).toBe("user-msg-1");
   });
@@ -262,6 +266,7 @@ describe("no-code callback message creation", () => {
         metadata: expect.objectContaining({ resultId: "r1", triggerMessageId: "orig-1" }),
       }),
     );
+    expect(storageMock.clearChatAssistantAction).toHaveBeenCalledWith("chat-1");
   });
 
   it("creates stream placeholder and appends chunks", async () => {
@@ -309,6 +314,7 @@ describe("no-code callback message creation", () => {
       delta: "Прив",
     });
     expect(first.id).toBe("m1");
+    expect(storageMock.clearChatAssistantAction).toHaveBeenCalledTimes(1);
 
     storageMock.findChatMessageByStreamId.mockResolvedValueOnce({
       id: "m1",
@@ -344,5 +350,6 @@ describe("no-code callback message creation", () => {
         content: "Привет!",
       }),
     );
+    expect(storageMock.clearChatAssistantAction).toHaveBeenCalledTimes(1);
   });
 });

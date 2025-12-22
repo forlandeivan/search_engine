@@ -5191,6 +5191,22 @@ export class DatabaseStorage implements IStorage {
     return message ?? undefined;
   }
 
+  async clearChatAssistantAction(chatId: string): Promise<ChatSession | undefined> {
+    await ensureChatTables();
+    const [updated] = await this.db
+      .update(chatSessions)
+      .set({
+        currentAssistantActionType: null,
+        currentAssistantActionText: null,
+        currentAssistantActionTriggerMessageId: null,
+        currentAssistantActionUpdatedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(chatSessions.id, chatId))
+      .returning();
+    return updated ?? undefined;
+  }
+
   async createTranscript(values: TranscriptInsert): Promise<Transcript> {
     await ensureChatTables();
     const [created] = await this.db.insert(transcripts).values(values).returning();

@@ -11,6 +11,7 @@ import { useSkills } from "@/hooks/useSkills";
 import { formatApiErrorMessage, isApiError } from "@/lib/api-errors";
 import { useToast } from "@/hooks/use-toast";
 import type { ChatMessage } from "@/types/chat";
+import { resolveAssistantActionVisibility } from "@/lib/assistantAction";
 
 const ARCHIVE_ERROR_MESSAGES: Record<string, string> = {
   CHAT_ARCHIVED: "Чат архивирован. Отправка недоступна.",
@@ -167,6 +168,11 @@ export default function ChatPage({ params }: ChatPageProps) {
     const combined = [...deduped, ...localMessages];
     return combined.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   }, [fetchedMessages, localMessages, shouldShowLocal]);
+
+  const effectiveAssistantAction = useMemo(
+    () => resolveAssistantActionVisibility(activeAssistantAction, visibleMessages),
+    [activeAssistantAction, visibleMessages],
+  );
 
   const normalizedMessagesError = useMemo(() => {
     if (!isMessagesError || !messagesError) {
@@ -573,7 +579,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           <ChatMessagesArea
               chatTitle={chatTitle}
               skillName={skillLabel}
-              assistantAction={activeAssistantAction}
+              assistantAction={effectiveAssistantAction}
               isReadOnly={isReadOnlyChat}
               messages={visibleMessages}
               isLoading={isMessagesLoading && !isNewChat}
