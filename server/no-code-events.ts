@@ -4,6 +4,7 @@ import { db } from "./db";
 import { skills } from "@shared/schema";
 import { applyTlsPreferences } from "./http-utils";
 import type { NoCodeAuthType } from "@shared/schema";
+import { z } from "zod";
 
 export type NoCodeConnectionInternal = {
   endpointUrl: string | null;
@@ -28,6 +29,38 @@ export type MessageCreatedEventPayload = {
   };
   actor: { userId: string };
 };
+
+export type SyncFinalResult = {
+  role: "assistant" | "user" | "system";
+  text: string;
+  resultId: string;
+  triggerMessageId?: string | null;
+};
+
+export type SyncFinalResponse = {
+  mode: "sync_final";
+  results: SyncFinalResult[];
+};
+
+const syncFinalResultSchema = z.object({
+  role: z.enum(["assistant", "user", "system"]),
+  text: z.string(),
+  resultId: z.string().min(1),
+  triggerMessageId: z.string().min(1).optional(),
+});
+
+const syncFinalResponseSchema = z.object({
+  mode: z.literal("sync_final"),
+  results: z.array(syncFinalResultSchema).min(1),
+});
+
+export function parseSyncFinalResponse(payload: unknown): SyncFinalResponse | null {
+  const parsed = syncFinalResponseSchema.safeParse(payload);
+  if (!parsed.success) {
+    return null;
+  }
+  return parsed.data;
+}
 
 export async function getNoCodeConnectionInternal(opts: {
   workspaceId: string;
