@@ -1079,6 +1079,7 @@ export const skills = pgTable(
     noCodeCallbackTokenHash: text("no_code_callback_token_hash"),
     noCodeCallbackTokenLastFour: text("no_code_callback_token_last_four"),
     noCodeCallbackTokenRotatedAt: timestamp("no_code_callback_token_rotated_at"),
+    contextInputLimit: integer("context_input_limit"),
     onTranscriptionMode: text("on_transcription_mode")
       .$type<SkillTranscriptionMode>()
       .notNull()
