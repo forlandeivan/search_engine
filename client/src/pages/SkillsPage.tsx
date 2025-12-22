@@ -78,7 +78,7 @@ import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
-import type { ActionDto, SkillActionDto } from "@shared/skills";
+import type { ActionDto, SkillActionDto, SkillCallbackTokenResponse } from "@shared/skills";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { Skill } from "@/types/skill";
 import type { SessionResponse } from "@/types/session";
@@ -984,6 +984,9 @@ type SkillFormProps = {
   isOpen?: boolean;
   activeTab?: SkillSettingsTab;
   onTabChange?: (tab: SkillSettingsTab) => void;
+  onGenerateCallbackToken?: (skillId: string) => Promise<SkillCallbackTokenResponse>;
+  isGeneratingCallbackToken?: boolean;
+  onSkillPatched?: (skill: Skill) => void;
 };
 
 export type SkillSettingsTab = "main" | "transcription" | "actions";
@@ -1104,6 +1107,9 @@ export function SkillFormContent({
   isOpen = true,
   activeTab,
   onTabChange,
+  onGenerateCallbackToken,
+  isGeneratingCallbackToken = false,
+  onSkillPatched,
 }: SkillFormProps) {
   const [internalTab, setInternalTab] = useState<SkillSettingsTab>("main");
   const form = useForm<SkillFormValues>({
@@ -1112,6 +1118,22 @@ export function SkillFormContent({
   });
   const lastSavedRef = useRef<SkillFormValues>(defaultFormValues);
   const currentTab = activeTab ?? internalTab;
+  const { toast } = useToast();
+  const [callbackTokenStatus, setCallbackTokenStatus] = useState<{
+    isSet: boolean;
+    lastRotatedAt: string | null;
+    lastFour: string | null;
+  }>({
+    isSet: Boolean(skill?.noCodeConnection?.callbackTokenIsSet),
+    lastRotatedAt: skill?.noCodeConnection?.callbackTokenLastRotatedAt ?? null,
+    lastFour: skill?.noCodeConnection?.callbackTokenLastFour ?? null,
+  });
+  const [issuedCallbackToken, setIssuedCallbackToken] = useState<string | null>(null);
+  const [issuedCallbackTokenMeta, setIssuedCallbackTokenMeta] = useState<{ rotatedAt: string | null; lastFour: string | null }>({
+    rotatedAt: null,
+    lastFour: null,
+  });
+  const [showCallbackTokenModal, setShowCallbackTokenModal] = useState(false);
 
   const handleTabChange = (tab: string) => {
     const next: SkillSettingsTab = tab === "transcription" || tab === "actions" ? tab : "main";
@@ -1121,6 +1143,18 @@ export function SkillFormContent({
       setInternalTab(next);
     }
   };
+  useEffect(() => {
+    setCallbackTokenStatus({
+      isSet: Boolean(skill?.noCodeConnection?.callbackTokenIsSet),
+      lastRotatedAt: skill?.noCodeConnection?.callbackTokenLastRotatedAt ?? null,
+      lastFour: skill?.noCodeConnection?.callbackTokenLastFour ?? null,
+    });
+  }, [
+    skill?.id,
+    skill?.noCodeConnection?.callbackTokenIsSet,
+    skill?.noCodeConnection?.callbackTokenLastRotatedAt,
+    skill?.noCodeConnection?.callbackTokenLastFour,
+  ]);
   const isSystemSkill = Boolean(skill?.isSystem);
   const ragMode = form.watch("ragMode");
   const isManualRagMode = ragMode === "selected_collections";
@@ -1140,6 +1174,62 @@ export function SkillFormContent({
   const noCodeBearerTokenValue = form.watch("noCodeBearerToken");
   const hasBearerTokenDraft = Boolean(noCodeBearerTokenValue?.trim());
   const storedNoCodeTokenIsSet = skill?.noCodeConnection?.tokenIsSet ?? false;
+  const canManageCallbackToken = Boolean(skill?.id && isNoCodeMode && allowNoCodeFlow && onGenerateCallbackToken);
+  const callbackTokenRotatedLabel = formatDateTime(callbackTokenStatus.lastRotatedAt);
+  const formatDateTime = (value: string | null | undefined): string | null => {
+    if (!value) return null;
+    try {
+      return new Date(value).toLocaleString("ru-RU");
+    } catch {
+      return null;
+    }
+  };
+  const handleGenerateCallbackToken = async () => {
+    if (!skill?.id || !onGenerateCallbackToken) {
+      return;
+    }
+    try {
+      const result = await onGenerateCallbackToken(skill.id);
+      if (!result) {
+        return;
+      }
+      const connection = result.skill?.noCodeConnection;
+      setCallbackTokenStatus({
+        isSet: Boolean(connection?.callbackTokenIsSet),
+        lastRotatedAt: connection?.callbackTokenLastRotatedAt ?? result.rotatedAt ?? null,
+        lastFour: connection?.callbackTokenLastFour ?? result.lastFour ?? null,
+      });
+      onSkillPatched?.(result.skill as unknown as Skill);
+      setIssuedCallbackToken(result.token);
+      setIssuedCallbackTokenMeta({ rotatedAt: result.rotatedAt ?? null, lastFour: result.lastFour ?? null });
+      setShowCallbackTokenModal(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось сгенерировать токен";
+      toast({
+        title: "Не удалось сгенерировать токен",
+        description: message,
+        variant: "destructive",
+      });
+    }
+  };
+  const handleCopyCallbackToken = async () => {
+    if (!issuedCallbackToken) {
+      return;
+    }
+    try {
+      if (typeof navigator !== "undefined" && navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(issuedCallbackToken);
+        toast({ title: "Токен скопирован" });
+      }
+    } catch {
+      toast({ title: "Не удалось скопировать токен", variant: "destructive" });
+    }
+  };
+  const handleCloseCallbackTokenModal = () => {
+    setShowCallbackTokenModal(false);
+    setIssuedCallbackToken(null);
+    setIssuedCallbackTokenMeta({ rotatedAt: null, lastFour: null });
+  };
   const embeddingProviderOptions = useMemo(() => {
     return embeddingProviders
       .map((provider) => ({
@@ -1241,6 +1331,9 @@ export function SkillFormContent({
         endpointUrl: null,
         authType: "none" as "none" | "bearer",
         tokenIsSet: false,
+        callbackTokenIsSet: false,
+        callbackTokenLastRotatedAt: null,
+        callbackTokenLastFour: null,
       };
       const nextValues: SkillFormValues = {
         name: skill.name ?? "",
@@ -1629,6 +1722,47 @@ export function SkillFormContent({
                           )}
                         />
                       )}
+                      <Separator />
+                      <div className="rounded-lg border bg-muted/40 p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="space-y-1">
+                            <p className="text-sm font-semibold">Токен для входящих callback</p>
+                            <p className="text-xs text-muted-foreground">
+                              Передавайте в заголовке Authorization: Bearer &#123;token&#125;.
+                            </p>
+                            {callbackTokenRotatedLabel && (
+                              <p className="text-xs text-muted-foreground">
+                                Обновлён {callbackTokenRotatedLabel}
+                                {callbackTokenStatus.lastFour ? ` · окончание ${callbackTokenStatus.lastFour}` : ""}
+                              </p>
+                            )}
+                          </div>
+                          <Badge variant={callbackTokenStatus.isSet ? "default" : "outline"}>
+                            {callbackTokenStatus.isSet ? "Задан" : "Не задан"}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            disabled={!canManageCallbackToken || isGeneratingCallbackToken}
+                            onClick={handleGenerateCallbackToken}
+                          >
+                            {isGeneratingCallbackToken && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            {callbackTokenStatus.isSet ? "Сменить токен" : "Сгенерировать токен"}
+                          </Button>
+                          {!skill?.id && (
+                            <span className="text-xs text-muted-foreground">Сохраните навык, чтобы выдать токен.</span>
+                          )}
+                          {!isNoCodeMode && (
+                            <span className="text-xs text-muted-foreground">Доступно в режиме No-code.</span>
+                          )}
+                          {!allowNoCodeFlow && (
+                            <span className="text-xs text-muted-foreground">Доступно на премиум-тарифе.</span>
+                          )}
+                        </div>
+                      </div>
                     </CardContent>
                   </Card>
 
@@ -2176,6 +2310,49 @@ export function SkillFormContent({
           ) : null}
         </form>
       </Form>
+      <Dialog
+        open={showCallbackTokenModal}
+        onOpenChange={(open) => {
+          if (open) {
+            setShowCallbackTokenModal(true);
+          } else {
+            handleCloseCallbackTokenModal();
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>API-токен для входящих callback</DialogTitle>
+            <DialogDescription>
+              Токен показывается один раз. Сохраните его и передавайте в заголовке Authorization: Bearer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border bg-muted px-3 py-2 font-mono text-sm break-all">
+            {issuedCallbackToken ?? "—"}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            {issuedCallbackTokenMeta.lastFour ? (
+              <span className="text-xs text-muted-foreground">Окончание {issuedCallbackTokenMeta.lastFour}</span>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={!issuedCallbackToken}
+                onClick={handleCopyCallbackToken}
+              >
+                Скопировать
+              </Button>
+              <Button type="button" size="sm" onClick={handleCloseCallbackTokenModal}>
+                Закрыть
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

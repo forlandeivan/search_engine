@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { Skill, SkillPayload } from "@/types/skill";
+import type { SkillCallbackTokenResponse } from "@shared/skills";
 
 const buildSkillsQueryKey = (workspaceId: string | null, includeArchived: boolean) =>
   ["skills", workspaceId ?? "none", includeArchived ? "all" : "active"] as const;
@@ -43,6 +44,18 @@ async function updateSkill(workspaceId: string, skillId: string, payload: SkillP
   );
   const data = (await response.json()) as SkillResponse;
   return data.skill;
+}
+
+async function generateCallbackToken(workspaceId: string, skillId: string): Promise<SkillCallbackTokenResponse> {
+  const response = await apiRequest(
+    "POST",
+    `/api/skills/${skillId}/no-code/callback-token`,
+    { workspaceId },
+    undefined,
+    { workspaceId },
+  );
+  const data = (await response.json()) as SkillCallbackTokenResponse;
+  return data;
 }
 
 export function useSkills(options: { workspaceId: string | null; enabled?: boolean; includeArchived?: boolean }) {
@@ -119,6 +132,38 @@ export function useUpdateSkill(options: { workspaceId: string | null; onSuccess?
   return {
     updateSkill: mutation.mutateAsync,
     isUpdating: mutation.isPending,
+    error: mutation.error,
+    reset: mutation.reset,
+  };
+}
+
+export function useGenerateCallbackToken(options: {
+  workspaceId: string | null;
+  onSuccess?: (response: SkillCallbackTokenResponse) => void;
+}) {
+  const { workspaceId, onSuccess } = options;
+  const queryClient = useQueryClient();
+  const mutation = useMutation<SkillCallbackTokenResponse, Error, { skillId: string }>({
+    mutationFn: async ({ skillId }) => {
+      if (!workspaceId) {
+        throw new Error("Не удалось определить рабочее пространство");
+      }
+      return await generateCallbackToken(workspaceId, skillId);
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({
+        predicate: (query) => {
+          const [key] = query.queryKey as [unknown, ...unknown[]];
+          return key === "skills";
+        },
+      });
+      onSuccess?.(result);
+    },
+  });
+
+  return {
+    generateCallbackToken: mutation.mutateAsync,
+    isGenerating: mutation.isPending,
     error: mutation.error,
     reset: mutation.reset,
   };

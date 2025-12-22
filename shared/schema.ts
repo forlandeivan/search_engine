@@ -1076,6 +1076,9 @@ export const skills = pgTable(
     noCodeEndpointUrl: text("no_code_endpoint_url"),
     noCodeAuthType: text("no_code_auth_type").$type<NoCodeAuthType>().notNull().default("none"),
     noCodeBearerToken: text("no_code_bearer_token"),
+    noCodeCallbackTokenHash: text("no_code_callback_token_hash"),
+    noCodeCallbackTokenLastFour: text("no_code_callback_token_last_four"),
+    noCodeCallbackTokenRotatedAt: timestamp("no_code_callback_token_rotated_at"),
     onTranscriptionMode: text("on_transcription_mode")
       .$type<SkillTranscriptionMode>()
       .notNull()

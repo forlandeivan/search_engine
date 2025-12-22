@@ -58,9 +58,10 @@ import {
   archiveSkill,
   getSkillById,
   SkillServiceError,
-  getSkillById,
   UNICA_CHAT_SYSTEM_KEY,
   createUnicaChatSkillForWorkspace,
+  generateNoCodeCallbackToken,
+  verifyNoCodeCallbackToken,
 } from "./skills";
 import { asrExecutionLogService } from "./asr-execution-log-context";
 import {
@@ -10155,6 +10156,37 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  app.post(
+    "/api/skills/:skillId/no-code/callback-token",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
+    async (req, res, next) => {
+    try {
+      const workspaceId = req.workspaceContext?.workspaceId ?? getRequestWorkspace(req).id;
+      const skillId = req.params.skillId;
+      if (!skillId) {
+        return res.status(400).json({ message: "Не указан идентификатор навыка" });
+      }
+
+      const result = await generateNoCodeCallbackToken({ workspaceId, skillId });
+      return res.status(201).json({
+        token: result.token,
+        lastFour: result.lastFour,
+        rotatedAt: result.rotatedAt,
+        skill: result.skill,
+      });
+    } catch (error) {
+      if (error instanceof SkillServiceError) {
+        return res
+          .status(error.status)
+          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
+      }
+
+      next(error);
+    }
+    },
+  );
+
   app.delete(
     "/api/skills/:skillId",
     requireAuth,
@@ -11089,6 +11121,23 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const payload = noCodeCallbackCreateMessageSchema.parse(req.body ?? {});
       const content = (payload.content ?? payload.text ?? "").trim();
       const triggerMessageId = (payload.triggerMessageId ?? payload.correlationId ?? "").trim() || null;
+      const authorizationHeader = Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization;
+      let callbackToken: string | null = null;
+      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
+        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
+        if (scheme && scheme.toLowerCase() === "bearer") {
+          const candidate = rest.join(" ").trim();
+          callbackToken = candidate.length > 0 ? candidate : null;
+        }
+      }
+
+      await verifyNoCodeCallbackToken({
+        workspaceId: payload.workspaceId,
+        chatId: payload.chatId,
+        token: callbackToken,
+      });
 
       const message = await addNoCodeCallbackMessage({
         workspaceId: payload.workspaceId,
@@ -11103,6 +11152,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      if (error instanceof SkillServiceError) {
+        return res
+          .status(error.status)
+          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
       }
       if (error instanceof ChatServiceError) {
         return res.status(error.status).json(buildChatServiceErrorPayload(error));

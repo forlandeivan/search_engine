@@ -71,7 +71,14 @@ describe("no-code callback message creation", () => {
       },
       onTranscriptionMode: "raw_only",
       onTranscriptionAutoActionId: null,
-      noCodeConnection: { endpointUrl: "https://example.com/hook", authType: "none", tokenIsSet: false },
+      noCodeConnection: {
+        endpointUrl: "https://example.com/hook",
+        authType: "none",
+        tokenIsSet: false,
+        callbackTokenIsSet: false,
+        callbackTokenLastRotatedAt: null,
+        callbackTokenLastFour: null,
+      },
       createdAt: new Date("2025-01-01T00:00:00.000Z").toISOString(),
       updatedAt: new Date("2025-01-01T00:00:00.000Z").toISOString(),
     });
@@ -177,7 +184,14 @@ describe("no-code callback message creation", () => {
       },
       onTranscriptionMode: "raw_only",
       onTranscriptionAutoActionId: null,
-      noCodeConnection: { endpointUrl: null, authType: "none", tokenIsSet: false },
+      noCodeConnection: {
+        endpointUrl: null,
+        authType: "none",
+        tokenIsSet: false,
+        callbackTokenIsSet: false,
+        callbackTokenLastRotatedAt: null,
+        callbackTokenLastFour: null,
+      },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });

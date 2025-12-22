@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { useCreateSkill, useSkills, useUpdateSkill } from "@/hooks/useSkills";
+import { useCreateSkill, useGenerateCallbackToken, useSkills, useUpdateSkill } from "@/hooks/useSkills";
 import { useModels, type PublicModel } from "@/hooks/useModels";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
@@ -214,6 +214,12 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   }, [llmProviders, catalogLlmModels]);
 
   const { updateSkill, isUpdating } = useUpdateSkill({ workspaceId });
+  const { generateCallbackToken, isGenerating: isGeneratingCallbackToken } = useGenerateCallbackToken({
+    workspaceId,
+    onSuccess: () => {
+      toast({ title: "API-токен обновлён" });
+    },
+  });
   const { createSkill, isCreating } = useCreateSkill({
     workspaceId,
     onSuccess: (created) => {
@@ -450,6 +456,8 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
             isOpen
             activeTab={activeTab}
             onTabChange={handleTabChange}
+            onGenerateCallbackToken={(skillId) => generateCallbackToken({ skillId })}
+            isGeneratingCallbackToken={isGeneratingCallbackToken}
           />
         )}
       </div>

@@ -92,6 +92,9 @@ export type SkillNoCodeConnection = {
   endpointUrl: string | null;
   authType: NoCodeAuthType;
   tokenIsSet: boolean;
+  callbackTokenIsSet: boolean;
+  callbackTokenLastRotatedAt: string | null;
+  callbackTokenLastFour: string | null;
 };
 
 export type SkillDto = {
@@ -141,6 +144,13 @@ export type SkillResponse = {
 
 export type SkillListResponse = {
   skills: SkillDto[];
+};
+
+export type SkillCallbackTokenResponse = {
+  token: string;
+  lastFour: string;
+  rotatedAt: string;
+  skill: SkillDto;
 };
 
 // Actions domain

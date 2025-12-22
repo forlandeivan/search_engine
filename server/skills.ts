@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { db } from "./db";
 import {
   skills,
@@ -94,6 +95,32 @@ const DEFAULT_RAG_CONFIG: SkillRagConfig = {
 const DEFAULT_SKILL_EXECUTION_MODE: SkillExecutionMode = "standard";
 const DEFAULT_SKILL_MODE: SkillMode = "rag";
 const DEFAULT_TRANSCRIPTION_MODE: SkillTranscriptionMode = "raw_only";
+const CALLBACK_UNAUTHORIZED_CODE = "CALLBACK_UNAUTHORIZED";
+
+function hashCallbackToken(token: string): { token: string; hash: string; lastFour: string; rotatedAt: Date } {
+  const rawToken = token.trim();
+  const hash = createHash("sha256").update(rawToken, "utf8").digest("hex");
+  const lastFour = rawToken.slice(-4);
+  return { token: rawToken, hash, lastFour, rotatedAt: new Date() };
+}
+
+function generateCallbackToken(): { token: string; hash: string; lastFour: string; rotatedAt: Date } {
+  const rawToken = randomBytes(32).toString("hex");
+  return hashCallbackToken(rawToken);
+}
+
+function timingSafeHashEquals(expectedHex: string, actualHex: string): boolean {
+  try {
+    const expected = Buffer.from(expectedHex, "hex");
+    const actual = Buffer.from(actualHex, "hex");
+    if (expected.length === 0 || expected.length !== actual.length) {
+      return false;
+    }
+    return timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+}
 
 function normalizeNullableString(value: string | null | undefined): string | null {
   if (value === undefined || value === null) {
@@ -286,6 +313,9 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
   const toIso = (value: Date | string): string =>
     value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 
+  const callbackTokenHash =
+    typeof row.noCodeCallbackTokenHash === "string" ? row.noCodeCallbackTokenHash.trim() : "";
+
   const payload: SkillDto = {
     id: row.id,
     workspaceId: row.workspaceId,
@@ -305,6 +335,9 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
       endpointUrl: row.noCodeEndpointUrl ?? null,
       authType: normalizeNoCodeAuthType(row.noCodeAuthType),
       tokenIsSet: Boolean(row.noCodeBearerToken?.trim()),
+      callbackTokenIsSet: callbackTokenHash.length > 0,
+      callbackTokenLastRotatedAt: row.noCodeCallbackTokenRotatedAt ? toIso(row.noCodeCallbackTokenRotatedAt) : null,
+      callbackTokenLastFour: row.noCodeCallbackTokenLastFour ?? null,
     },
     knowledgeBaseIds,
     ragConfig: {
@@ -518,28 +551,21 @@ export async function createSkill(
   }
 
   const normalized = buildEditableColumns(input);
-  const existingNoCodeEndpoint = row.noCodeEndpointUrl ?? null;
-  const existingNoCodeAuth = normalizeNoCodeAuthType(row.noCodeAuthType);
-  const existingBearerToken = row.noCodeBearerToken ?? null;
-  const submittedNoCodeEndpoint =
-    normalized.noCodeEndpointUrl !== undefined ? normalized.noCodeEndpointUrl : existingNoCodeEndpoint;
-  const submittedNoCodeAuth =
-    normalized.noCodeAuthType !== undefined ? normalizeNoCodeAuthType(normalized.noCodeAuthType) : existingNoCodeAuth;
+  const submittedNoCodeEndpoint = normalized.noCodeEndpointUrl ?? null;
+  const submittedNoCodeAuth = normalizeNoCodeAuthType(normalized.noCodeAuthType ?? "none");
   if (submittedNoCodeAuth === "bearer" && !submittedNoCodeEndpoint) {
     throw new SkillServiceError("Укажите URL для no-code подключения", 400);
   }
-  const submittedBearerCandidate =
-    normalized.noCodeBearerToken !== undefined ? Boolean(normalized.noCodeBearerToken) : Boolean(existingBearerToken);
+  const submittedBearerCandidate = Boolean(normalized.noCodeBearerToken);
   if (submittedNoCodeAuth === "bearer" && !submittedBearerCandidate) {
     throw new SkillServiceError("Введите токен для Bearer-авторизации", 400);
   }
-  let nextBearerToken =
-    normalized.noCodeBearerToken !== undefined ? normalized.noCodeBearerToken : existingBearerToken;
+  let nextBearerToken = normalized.noCodeBearerToken ?? null;
   if (submittedNoCodeAuth === "none" || !submittedNoCodeEndpoint) {
     nextBearerToken = null;
   }
   const normalizedEndpointUrl = normalized.noCodeEndpointUrl ?? null;
-  const normalizedAuthType = normalizeNoCodeAuthType(normalized.noCodeAuthType ?? "none");
+  const normalizedAuthType = submittedNoCodeAuth;
   let normalizedBearerToken = normalized.noCodeBearerToken ?? null;
 
   if (normalizedAuthType === "bearer") {
@@ -618,6 +644,9 @@ export async function createSkill(
       noCodeEndpointUrl: normalizedEndpointUrl,
       noCodeAuthType: normalizedAuthType,
       noCodeBearerToken: normalizedBearerToken,
+      noCodeCallbackTokenHash: null,
+      noCodeCallbackTokenLastFour: null,
+      noCodeCallbackTokenRotatedAt: null,
     })
     .returning();
 
@@ -656,6 +685,26 @@ export async function updateSkill(
 
 
   const normalized = buildEditableColumns(input);
+  const existingNoCodeEndpoint = row.noCodeEndpointUrl ?? null;
+  const existingNoCodeAuth = normalizeNoCodeAuthType(row.noCodeAuthType);
+  const existingBearerToken = row.noCodeBearerToken ?? null;
+  const submittedNoCodeEndpoint =
+    normalized.noCodeEndpointUrl !== undefined ? normalized.noCodeEndpointUrl : existingNoCodeEndpoint;
+  const submittedNoCodeAuth =
+    normalized.noCodeAuthType !== undefined ? normalizeNoCodeAuthType(normalized.noCodeAuthType) : existingNoCodeAuth;
+  if (submittedNoCodeAuth === "bearer" && !submittedNoCodeEndpoint) {
+    throw new SkillServiceError("Укажите URL для no-code подключения", 400);
+  }
+  const submittedBearerCandidate =
+    normalized.noCodeBearerToken !== undefined ? Boolean(normalized.noCodeBearerToken) : Boolean(existingBearerToken);
+  if (submittedNoCodeAuth === "bearer" && !submittedBearerCandidate) {
+    throw new SkillServiceError("Введите токен для Bearer-авторизации", 400);
+  }
+  let nextBearerToken =
+    normalized.noCodeBearerToken !== undefined ? normalized.noCodeBearerToken : existingBearerToken;
+  if (submittedNoCodeAuth === "none" || !submittedNoCodeEndpoint) {
+    nextBearerToken = null;
+  }
   if (normalized.executionMode === "no_code") {
     await assertNoCodeFlowAllowed(workspaceId);
   }
@@ -841,6 +890,126 @@ export async function getSkillById(
 
   const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
   return mapSkillRow(row, knowledgeBaseIds);
+}
+
+export async function generateNoCodeCallbackToken(opts: {
+  workspaceId: string;
+  skillId: string;
+}): Promise<{ token: string; lastFour: string; rotatedAt: string; skill: SkillDto }> {
+  const { workspaceId, skillId } = opts;
+  const existingRows = await db
+    .select()
+    .from(skills)
+    .where(and(eq(skills.id, skillId), eq(skills.workspaceId, workspaceId)))
+    .limit(1);
+
+  const existing = existingRows[0];
+  if (!existing) {
+    throw new SkillServiceError("Навык не найден", 404);
+  }
+
+  if (existing.isSystem) {
+    throw new SkillServiceError("Системные навыки нельзя менять на уровне рабочего пространства", 403);
+  }
+
+  if ((existing.status as SkillStatus) === "archived") {
+    throw new SkillServiceError("Навык архивирован", 409);
+  }
+
+  if (existing.executionMode !== "no_code") {
+    throw new SkillServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
+  }
+
+  await assertNoCodeFlowAllowed(workspaceId);
+
+  const secrets = generateCallbackToken();
+  const [updated] = await db
+    .update(skills)
+    .set({
+      noCodeCallbackTokenHash: secrets.hash,
+      noCodeCallbackTokenLastFour: secrets.lastFour,
+      noCodeCallbackTokenRotatedAt: secrets.rotatedAt,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(and(eq(skills.id, skillId), eq(skills.workspaceId, workspaceId)))
+    .returning();
+
+  const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
+  const skill = mapSkillRow(updated ?? existing, knowledgeBaseIds);
+
+  return {
+    token: secrets.token,
+    lastFour: secrets.lastFour,
+    rotatedAt: secrets.rotatedAt.toISOString(),
+    skill,
+  };
+}
+
+export async function verifyNoCodeCallbackToken(opts: {
+  workspaceId: string;
+  chatId: string;
+  token: string | null;
+}): Promise<{ skillId: string }> {
+  const token = typeof opts.token === "string" ? opts.token.trim() : "";
+  if (!token) {
+    throw new SkillServiceError("API-токен для callback не указан", 401, CALLBACK_UNAUTHORIZED_CODE);
+  }
+
+  const chatRows = await db
+    .select({
+      id: chatSessions.id,
+      workspaceId: chatSessions.workspaceId,
+      skillId: chatSessions.skillId,
+    })
+    .from(chatSessions)
+    .where(and(eq(chatSessions.id, opts.chatId), eq(chatSessions.workspaceId, opts.workspaceId)))
+    .limit(1);
+
+  const chat = chatRows[0];
+  if (!chat) {
+    throw new SkillServiceError("Чат не найден", 404);
+  }
+
+  const skillRows = await db
+    .select({
+      id: skills.id,
+      status: skills.status,
+      executionMode: skills.executionMode,
+      callbackTokenHash: skills.noCodeCallbackTokenHash,
+    })
+    .from(skills)
+    .where(and(eq(skills.id, chat.skillId), eq(skills.workspaceId, chat.workspaceId)))
+    .limit(1);
+
+  const skill = skillRows[0];
+  if (!skill) {
+    throw new SkillServiceError("Навык не найден", 404);
+  }
+
+  if ((skill.status as SkillStatus) === "archived") {
+    throw new SkillServiceError("Навык архивирован", 409);
+  }
+
+  if (skill.executionMode !== "no_code") {
+    throw new SkillServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
+  }
+
+  const expectedHash = typeof skill.callbackTokenHash === "string" ? skill.callbackTokenHash.trim() : "";
+  if (!expectedHash) {
+    throw new SkillServiceError(
+      "API-токен для callback не задан",
+      401,
+      CALLBACK_UNAUTHORIZED_CODE,
+    );
+  }
+
+  const providedHash = hashCallbackToken(token).hash;
+  const tokenMatches = timingSafeHashEquals(expectedHash, providedHash);
+  if (!tokenMatches) {
+    throw new SkillServiceError("Некорректный API-токен", 401, CALLBACK_UNAUTHORIZED_CODE);
+  }
+
+  return { skillId: skill.id };
 }
 
 export const UNICA_CHAT_SYSTEM_KEY = "UNICA_CHAT";

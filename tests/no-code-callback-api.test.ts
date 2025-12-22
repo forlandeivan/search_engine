@@ -137,6 +137,35 @@ function setupChatServiceMock() {
   return chatService;
 }
 
+function setupSkillsMock() {
+  const SkillServiceError = class extends Error {
+    status: number;
+    code?: string;
+    constructor(message: string, status = 400, code?: string) {
+      super(message);
+      this.name = "SkillServiceError";
+      this.status = status;
+      this.code = code;
+    }
+  };
+
+  const skillsMock = {
+    listSkills: vi.fn().mockResolvedValue([]),
+    createSkill: vi.fn(),
+    updateSkill: vi.fn(),
+    archiveSkill: vi.fn(),
+    getSkillById: vi.fn(),
+    createUnicaChatSkillForWorkspace: vi.fn(),
+    generateNoCodeCallbackToken: vi.fn(),
+    verifyNoCodeCallbackToken: vi.fn(async () => ({ skillId: "skill-1" })),
+    SkillServiceError,
+    UNICA_CHAT_SYSTEM_KEY: "UNICA_CHAT",
+  };
+
+  vi.doMock("../server/skills", () => skillsMock);
+  return skillsMock;
+}
+
 async function createTestServer() {
   const expressModule = await import("express");
   const app = expressModule.default();
@@ -150,11 +179,14 @@ async function createTestServer() {
 }
 
 describe("No-code callback API", () => {
+  let skillsMock: ReturnType<typeof setupSkillsMock>;
+
   beforeEach(() => {
     vi.resetModules();
     executeMock.mockReset();
     executeMock.mockResolvedValue({ rows: [] });
     fetchMock.mockReset();
+    skillsMock = setupSkillsMock();
   });
 
   const fetchMock = vi.fn(async () => ({
@@ -174,6 +206,7 @@ describe("No-code callback API", () => {
     setupStorageMock();
     setupOtherMocks();
     const chatService = setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockResolvedValueOnce({ skillId: "skill-1" });
 
     chatService.addNoCodeCallbackMessage.mockResolvedValueOnce({
       id: "msg-1",
@@ -189,7 +222,7 @@ describe("No-code callback API", () => {
       const address = httpServer.address() as AddressInfo;
       const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: "Bearer callback-token" },
         body: JSON.stringify({
           workspaceId: "workspace-1",
           chatId: "chat-1",
@@ -202,6 +235,9 @@ describe("No-code callback API", () => {
       expect(response.status).toBe(201);
       const json = await response.json();
       expect(json.message?.id).toBe("msg-1");
+      expect(skillsMock.verifyNoCodeCallbackToken).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: "workspace-1", chatId: "chat-1", token: "callback-token" }),
+      );
       expect(chatService.addNoCodeCallbackMessage).toHaveBeenCalledWith(
         expect.objectContaining({ workspaceId: "workspace-1", chatId: "chat-1", role: "assistant" }),
       );
@@ -218,13 +254,14 @@ describe("No-code callback API", () => {
     setupStorageMock();
     setupOtherMocks();
     setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockResolvedValueOnce({ skillId: "skill-1" });
 
     const { httpServer } = await createTestServer();
     try {
       const address = httpServer.address() as AddressInfo;
       const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: "Bearer callback-token" },
         body: JSON.stringify({
           workspaceId: "workspace-1",
           chatId: "chat-1",
@@ -240,5 +277,107 @@ describe("No-code callback API", () => {
       });
     }
   });
-});
 
+  it("rejects callback without token", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockRejectedValueOnce(
+      new skillsMock.SkillServiceError("Нет токена", 401, "CALLBACK_UNAUTHORIZED"),
+    );
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          role: "assistant",
+          text: "Ответ",
+        }),
+      });
+
+      expect(response.status).toBe(401);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects callback with invalid token", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockRejectedValueOnce(
+      new skillsMock.SkillServiceError("bad token", 401, "CALLBACK_UNAUTHORIZED"),
+    );
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer invalid" },
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          role: "assistant",
+          text: "Ответ",
+        }),
+      });
+
+      expect(response.status).toBe(401);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("generates callback token via skill endpoint", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    setupChatServiceMock();
+    skillsMock.generateNoCodeCallbackToken.mockResolvedValueOnce({
+      token: "new-token",
+      lastFour: "wxyz",
+      rotatedAt: "2025-01-01T00:00:00.000Z",
+      skill: { id: "skill-1" },
+    });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/skills/skill-1/no-code/callback-token`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspaceId: "workspace-1" }),
+        },
+      );
+
+      expect(response.status).toBe(201);
+      const json = await response.json();
+      expect(json.token).toBe("new-token");
+      expect(json.lastFour).toBe("wxyz");
+      expect(skillsMock.generateNoCodeCallbackToken).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: "workspace-1", skillId: "skill-1" }),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
