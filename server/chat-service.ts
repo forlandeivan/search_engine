@@ -334,6 +334,22 @@ type ChatConversationMessage = {
   content: string;
 };
 
+function applyContextLimitByCharacters(messages: ChatConversationMessage[], limit: number | null): ChatConversationMessage[] {
+  if (!limit || limit <= 0) return messages;
+  const reversed: ChatConversationMessage[] = [];
+  let total = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const entry = messages[i];
+    const len = (entry.content ?? "").length;
+    if (total + len > limit && reversed.length > 0) {
+      break;
+    }
+    total += len;
+    reversed.push(entry);
+  }
+  return reversed.reverse();
+}
+
 export type ChatSkillType = "UNICA_CHAT" | "RAG_SKILL" | "LLM_SKILL";
 
 export type ChatSkillContext = {
@@ -356,6 +372,7 @@ export type ChatLlmContext = {
   model: string | null;
   modelInfo: Model | null;
   messages: ChatConversationMessage[];
+  contextInputLimit: number | null;
 };
 
 export type BuildChatLlmContextOptions = {
@@ -615,6 +632,7 @@ export async function buildChatLlmContext(
         temperature: requestOverrides.temperature ?? null,
         topP: requestOverrides.topP ?? null,
         maxTokens: requestOverrides.maxTokens ?? null,
+        contextInputLimit: skill.contextInputLimit ?? null,
       },
     },
   });
@@ -626,6 +644,8 @@ export async function buildChatLlmContext(
   }));
 
   // TODO: for skillContext.isRagSkill, enrich conversation with RAG context before calling LLM.
+  const contextLimit = skill.contextInputLimit ?? null;
+  const limitedConversation = applyContextLimitByCharacters(conversation, contextLimit);
 
   return {
     chat,
@@ -635,7 +655,8 @@ export async function buildChatLlmContext(
     requestConfig,
     model: resolvedModelKey ?? null,
     modelInfo,
-    messages: conversation,
+    messages: limitedConversation,
+    contextInputLimit: contextLimit,
   };
 }
 

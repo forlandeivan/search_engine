@@ -115,6 +115,7 @@ export const skillFormSchema = z.object({
   ragEmbeddingProviderId: z.string().optional().or(z.literal("")),
   onTranscriptionMode: z.enum(["raw_only", "auto_action"]),
   onTranscriptionAutoActionId: z.string().optional().or(z.literal("")),
+  contextInputLimit: z.string().optional().or(z.literal("")),
   noCodeEndpointUrl: z
     .string()
     .url({ message: "Некорректный URL" })
@@ -194,6 +195,7 @@ export const defaultFormValues = {
   ragEmbeddingProviderId: NO_EMBEDDING_PROVIDER_VALUE,
   onTranscriptionMode: "raw_only" as "raw_only" | "auto_action",
   onTranscriptionAutoActionId: "",
+  contextInputLimit: "",
   noCodeEndpointUrl: "",
   noCodeAuthType: "none" as "none" | "bearer",
   noCodeBearerToken: "",
@@ -1361,6 +1363,10 @@ export function SkillFormContent({
         ragEmbeddingProviderId: ragConfig.embeddingProviderId ?? NO_EMBEDDING_PROVIDER_VALUE,
         onTranscriptionMode: skill.onTranscriptionMode ?? "raw_only",
         onTranscriptionAutoActionId: skill.onTranscriptionAutoActionId ?? "",
+        contextInputLimit:
+          skill.contextInputLimit === null || skill.contextInputLimit === undefined
+            ? ""
+            : String(skill.contextInputLimit),
         noCodeEndpointUrl: noCodeConnection.endpointUrl ?? "",
         noCodeAuthType: noCodeConnection.authType ?? "none",
         noCodeBearerToken: "",
@@ -1600,6 +1606,41 @@ export function SkillFormContent({
                                 </div>
                               </RadioGroup>
                             </FormControl>
+                            <FormMessage className="text-xs text-destructive leading-tight" />
+                          </FormItem>
+                        )}
+                      />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="px-6 grid gap-2">
+                      <CardTitle className="text-base font-semibold">Лимит контекста</CardTitle>
+                      <CardDescription className="text-sm text-muted-foreground">
+                        Ограничивает объём истории, отправляемой в обработку. Пусто — используем дефолт.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="px-6 pb-6">
+                      <FormField
+                        control={form.control}
+                        name="contextInputLimit"
+                        render={({ field }) => (
+                          <FormItem className="grid gap-2 max-w-xs">
+                            <FormLabel>Лимит символов</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                min={100}
+                                max={50000}
+                                placeholder="например, 4000"
+                                value={field.value ?? ""}
+                                onChange={(event) => field.onChange(event.target.value)}
+                                data-testid="skill-context-input-limit"
+                              />
+                            </FormControl>
+                            <p className="text-xs text-muted-foreground leading-tight">
+                              Меньше — дешевле, но меньше “память” диалога. Оставьте пустым, чтобы использовать дефолт.
+                            </p>
                             <FormMessage className="text-xs text-destructive leading-tight" />
                           </FormItem>
                         )}

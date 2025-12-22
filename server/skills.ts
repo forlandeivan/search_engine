@@ -60,6 +60,7 @@ type EditableSkillColumns = Pick<
   | "noCodeEndpointUrl"
   | "noCodeAuthType"
   | "noCodeBearerToken"
+  | "contextInputLimit"
 >;
 
 type RagConfigInput = CreateSkillPayload["ragConfig"];
@@ -73,6 +74,7 @@ type NormalizedSkillEditableInput = Omit<SkillEditableInput, "ragConfig"> & {
   executionMode?: SkillExecutionMode;
   mode?: SkillMode;
   ragConfig?: SkillRagConfig;
+  contextInputLimit?: number | null;
 };
 
 const DEFAULT_RAG_CONFIG: SkillRagConfig = {
@@ -95,6 +97,7 @@ const DEFAULT_RAG_CONFIG: SkillRagConfig = {
 const DEFAULT_SKILL_EXECUTION_MODE: SkillExecutionMode = "standard";
 const DEFAULT_SKILL_MODE: SkillMode = "rag";
 const DEFAULT_TRANSCRIPTION_MODE: SkillTranscriptionMode = "raw_only";
+const DEFAULT_CONTEXT_INPUT_LIMIT: number | null = null;
 const CALLBACK_UNAUTHORIZED_CODE = "CALLBACK_UNAUTHORIZED";
 
 function hashCallbackToken(token: string): { token: string; hash: string; lastFour: string; rotatedAt: Date } {
@@ -340,6 +343,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
       callbackTokenLastFour: row.noCodeCallbackTokenLastFour ?? null,
     },
     knowledgeBaseIds,
+    contextInputLimit: row.contextInputLimit ?? DEFAULT_CONTEXT_INPUT_LIMIT,
     ragConfig: {
       mode: normalizeRagModeFromValue(row.ragMode),
       collectionIds: (row.ragCollectionIds ?? []) as string[],
@@ -466,6 +470,15 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   }
   if (input.noCodeBearerToken !== undefined) {
     next.noCodeBearerToken = normalizeNullableString(input.noCodeBearerToken);
+  }
+  if (input.contextInputLimit !== undefined) {
+    const value =
+      input.contextInputLimit === null || input.contextInputLimit === undefined
+        ? null
+        : Number.isFinite(input.contextInputLimit)
+          ? Math.trunc(Number(input.contextInputLimit))
+          : null;
+    next.contextInputLimit = value;
   }
   if (input.knowledgeBaseIds !== undefined) {
     const filtered = input.knowledgeBaseIds.filter(
@@ -644,6 +657,7 @@ export async function createSkill(
       noCodeEndpointUrl: normalizedEndpointUrl,
       noCodeAuthType: normalizedAuthType,
       noCodeBearerToken: normalizedBearerToken,
+      contextInputLimit: normalized.contextInputLimit ?? DEFAULT_CONTEXT_INPUT_LIMIT,
       noCodeCallbackTokenHash: null,
       noCodeCallbackTokenLastFour: null,
       noCodeCallbackTokenRotatedAt: null,
@@ -725,6 +739,9 @@ export async function updateSkill(
   updates.noCodeEndpointUrl = submittedNoCodeEndpoint;
   updates.noCodeAuthType = submittedNoCodeAuth;
   updates.noCodeBearerToken = nextBearerToken;
+  if (normalized.contextInputLimit !== undefined) {
+    updates.contextInputLimit = normalized.contextInputLimit;
+  }
 
   const currentRagConfig: SkillRagConfig = {
     mode: normalizeRagModeFromValue(row.ragMode),

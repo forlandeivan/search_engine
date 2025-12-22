@@ -62,6 +62,7 @@ const noCodeEndpointUrlSchema = z
   );
 
 const noCodeBearerTokenSchema = z.string().max(4096, "Не более 4096 символов").optional().or(z.literal(""));
+const contextInputLimitSchema = z.number().int().min(100).max(50000).nullable().optional();
 
 const skillEditableFieldsSchema = z.object({
   name: optionalString(200),
@@ -80,6 +81,7 @@ const skillEditableFieldsSchema = z.object({
   noCodeEndpointUrl: noCodeEndpointUrlSchema.optional(),
   noCodeAuthType: z.enum(noCodeAuthTypes).optional(),
   noCodeBearerToken: noCodeBearerTokenSchema.optional(),
+  contextInputLimit: contextInputLimitSchema,
 });
 
 export const createSkillSchema = skillEditableFieldsSchema;
@@ -117,6 +119,7 @@ export type SkillDto = {
   onTranscriptionAutoActionId: string | null;
   icon?: string | null;
   noCodeConnection: SkillNoCodeConnection;
+  contextInputLimit: number | null;
   createdAt: string;
   updatedAt: string;
 };

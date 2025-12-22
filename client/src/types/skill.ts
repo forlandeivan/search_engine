@@ -23,6 +23,7 @@ export interface Skill {
   createdAt: string;
   updatedAt: string;
   noCodeConnection?: SkillNoCodeConnection;
+  contextInputLimit?: number | null;
 }
 
 export interface SkillPayload {
@@ -42,4 +43,5 @@ export interface SkillPayload {
   noCodeEndpointUrl?: string | null;
   noCodeAuthType?: NoCodeAuthType;
   noCodeBearerToken?: string | null;
+  contextInputLimit?: number | null;
 }
