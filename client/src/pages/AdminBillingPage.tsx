@@ -24,6 +24,7 @@ type TariffSummary = {
   isActive: boolean;
   includedCreditsAmount?: number;
   includedCreditsPeriod?: string;
+  noCodeFlowEnabled?: boolean;
 };
 
 type TariffLimit = {
@@ -123,6 +124,7 @@ export default function AdminBillingPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [creditsAmount, setCreditsAmount] = useState<string>("0.00");
   const [storageDisplayUnits, setStorageDisplayUnits] = useState<Record<string, ByteDisplayUnit>>({});
+  const [noCodeFlowEnabled, setNoCodeFlowEnabled] = useState(false);
 
   const tariffsQuery = useQuery({
     queryKey: ["admin", "tariffs"],
@@ -155,6 +157,7 @@ export default function AdminBillingPage() {
     if (detailQuery.data?.plan) {
       const amount = detailQuery.data.plan.includedCreditsAmount ?? 0;
       setCreditsAmount(formatCredits(amount));
+      setNoCodeFlowEnabled(Boolean(detailQuery.data.plan.noCodeFlowEnabled));
     }
     if (detailQuery.data?.limits) {
       const nextUnits: Record<string, ByteDisplayUnit> = {};
@@ -241,6 +244,7 @@ export default function AdminBillingPage() {
       await apiRequest("PUT", `/api/admin/tariffs/${selectedPlanId}`, {
         includedCreditsAmount: creditsAmount,
         includedCreditsPeriod: "monthly",
+        noCodeFlowEnabled,
       });
       const limitsPayload = Object.entries(formLimits).map(([limitKey, data]) => ({
         limitKey,
@@ -384,6 +388,22 @@ export default function AdminBillingPage() {
                     кредит(ов) / месяц
                   </p>
                   <p className="text-xs text-muted-foreground">Период: ежемесячно</p>
+                </div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">No-code flow</Label>
+                    <p className="text-sm font-medium">Разрешить no-code flow</p>
+                    <p className="text-xs text-muted-foreground">
+                      Открывает возможность включать no-code режим навыков для воркспейсов на этом тарифе.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={noCodeFlowEnabled}
+                    onCheckedChange={setNoCodeFlowEnabled}
+                    data-testid="tariff-no-code-switch"
+                  />
                 </div>
               </div>
               <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">

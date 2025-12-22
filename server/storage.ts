@@ -3329,10 +3329,20 @@ export class DatabaseStorage implements IStorage {
             "sort_order" integer NOT NULL DEFAULT 0,
             "included_credits_amount" integer NOT NULL DEFAULT 0,
             "included_credits_period" text NOT NULL DEFAULT 'monthly',
+            "no_code_flow_enabled" boolean NOT NULL DEFAULT false,
             "is_active" boolean NOT NULL DEFAULT true,
             "created_at" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
             "updated_at" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
           )
+        `);
+      } catch (error) {
+        swallowPgError(error, ["42P07", "42710"]);
+      }
+
+      try {
+        await this.db.execute(sql`
+          ALTER TABLE "tariff_plans"
+          ADD COLUMN IF NOT EXISTS "no_code_flow_enabled" boolean NOT NULL DEFAULT false
         `);
       } catch (error) {
         swallowPgError(error, ["42P07", "42710"]);

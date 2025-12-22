@@ -7906,6 +7906,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         isActive: p.isActive,
         includedCreditsAmount: centsToCredits(p.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (p.includedCreditsPeriod as string) ?? "monthly",
+        noCodeFlowEnabled: Boolean(p.noCodeFlowEnabled),
       })),
     });
   });
@@ -7914,6 +7915,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     const { planId } = req.params;
     const rawAmount = req.body?.includedCreditsAmount;
     const rawPeriod = req.body?.includedCreditsPeriod;
+    const rawNoCodeFlow = req.body?.noCodeFlowEnabled;
 
     if (!planId) {
       return res.status(400).json({ message: "planId is required" });
@@ -7925,15 +7927,25 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return res.status(400).json({ message: "includedCreditsAmount must be a non-negative number" });
     }
 
-    const period = typeof rawPeriod === "string" && rawPeriod.trim() ? rawPeriod.trim() : "monthly";
-    if (period.toLowerCase() !== "monthly") {
+    const period =
+      rawPeriod === null || rawPeriod === undefined
+        ? undefined
+        : typeof rawPeriod === "string" && rawPeriod.trim()
+          ? rawPeriod.trim()
+          : "monthly";
+    if (period && period.toLowerCase() !== "monthly") {
       return res.status(400).json({ message: "includedCreditsPeriod must be 'monthly'" });
+    }
+
+    if (rawNoCodeFlow !== undefined && typeof rawNoCodeFlow !== "boolean") {
+      return res.status(400).json({ message: "noCodeFlowEnabled must be a boolean" });
     }
 
     try {
       const updated = await tariffPlanService.updatePlanCredits(planId, {
         amountCents: parsedAmountCents,
-        period,
+        period: period ?? undefined,
+        noCodeFlowEnabled: rawNoCodeFlow ?? undefined,
       });
       res.json({
         plan: {
@@ -7946,6 +7958,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           isActive: updated.isActive,
           includedCreditsAmount: centsToCredits(updated.includedCreditsAmount ?? 0),
           includedCreditsPeriod: (updated.includedCreditsPeriod as string) ?? "monthly",
+          noCodeFlowEnabled: Boolean(updated.noCodeFlowEnabled),
         },
       });
     } catch (error) {
@@ -7972,6 +7985,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         isActive: plan.isActive,
         includedCreditsAmount: centsToCredits(plan.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
+        noCodeFlowEnabled: Boolean(plan.noCodeFlowEnabled),
       },
       limits: Object.entries(plan.limits).map(([limitKey, value]) => ({
         limitKey,
@@ -8023,6 +8037,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 shortDescription: current.shortDescription,
                 sortOrder: current.sortOrder,
                 isActive: current.isActive,
+                noCodeFlowEnabled: Boolean(current.noCodeFlowEnabled),
               }
             : null,
           limits: current
@@ -8046,6 +8061,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           shortDescription: updated.shortDescription,
           sortOrder: updated.sortOrder,
           isActive: updated.isActive,
+          noCodeFlowEnabled: Boolean(updated.noCodeFlowEnabled),
         },
         limits: Object.entries(updated.limits).map(([limitKey, value]) => ({
           limitKey,
@@ -8077,6 +8093,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         sortOrder: plan.sortOrder,
         includedCreditsAmount: centsToCredits(plan.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
+        noCodeFlowEnabled: Boolean(plan.noCodeFlowEnabled),
       },
     });
   });
@@ -8097,6 +8114,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           description: plan.description,
           shortDescription: plan.shortDescription,
           sortOrder: plan.sortOrder,
+          noCodeFlowEnabled: Boolean(plan.noCodeFlowEnabled),
         },
       });
     } catch (error) {
@@ -8125,6 +8143,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         sortOrder: plan.sortOrder,
         includedCreditsAmount: centsToCredits(plan.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (plan.includedCreditsPeriod as string) ?? "monthly",
+        noCodeFlowEnabled: Boolean(plan.noCodeFlowEnabled),
       },
     });
   });
@@ -8513,6 +8532,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           description: plan.description,
           shortDescription: plan.shortDescription,
           sortOrder: plan.sortOrder,
+          noCodeFlowEnabled: Boolean(plan.noCodeFlowEnabled),
         },
       });
     } catch (error) {
@@ -8541,6 +8561,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         sortOrder: p.sortOrder,
         includedCreditsAmount: centsToCredits(p.includedCreditsAmount ?? 0),
         includedCreditsPeriod: (p.includedCreditsPeriod as string) ?? "monthly",
+        noCodeFlowEnabled: Boolean(p.noCodeFlowEnabled),
       })),
     });
   });

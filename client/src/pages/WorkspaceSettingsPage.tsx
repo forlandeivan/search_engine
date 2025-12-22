@@ -100,6 +100,7 @@ type TariffSummary = {
   sortOrder?: number | null;
   includedCreditsAmount?: number;
   includedCreditsPeriod?: string;
+  noCodeFlowEnabled?: boolean;
 };
 
 type CreditsSummary = {

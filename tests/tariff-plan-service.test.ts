@@ -1,16 +1,17 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { tariffPlanService } from "../server/tariff-plan-service";
 import { db } from "../server/db";
 import { tariffLimits, tariffPlans } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 describe("TariffPlanService", () => {
-  const planId = `plan-${Date.now()}`;
-  const planCode = "PRO";
+  const runId = Date.now();
+  const planId = `plan-${runId}`;
+  const planCode = `TEST_PRO_${runId}`;
 
   beforeAll(async () => {
-    await db.delete(tariffLimits);
-    await db.delete(tariffPlans);
+    await db.delete(tariffLimits).where(eq(tariffLimits.planId, planId));
+    await db.delete(tariffPlans).where(eq(tariffPlans.code, planCode));
 
     await db.insert(tariffPlans).values({
       id: planId,
@@ -22,8 +23,8 @@ describe("TariffPlanService", () => {
     await db.insert(tariffLimits).values([
       {
         planId,
-        limitKey: "TOKEN_LLM",
-        unit: "tokens",
+        limitKey: "OBJECT_SKILLS",
+        unit: "count",
         limitValue: 1000000,
         isEnabled: true,
       },
@@ -44,16 +45,22 @@ describe("TariffPlanService", () => {
     ]);
   });
 
+  afterAll(async () => {
+    await db.delete(tariffLimits).where(eq(tariffLimits.planId, planId));
+    await db.delete(tariffPlans).where(eq(tariffPlans.code, planCode));
+  });
+
   it("returns plan by code", async () => {
     const plan = await tariffPlanService.getPlanByCode(planCode);
     expect(plan?.id).toBe(planId);
     expect(plan?.code).toBe(planCode);
+    expect(plan?.noCodeFlowEnabled).toBe(false);
   });
 
   it("returns plan with limits map and ignores unknown keys", async () => {
     const plan = await tariffPlanService.getPlanWithLimitsByCode(planCode);
     expect(plan).not.toBeNull();
-    expect(plan?.limits.TOKEN_LLM?.value).toBe(1000000);
+    expect(plan?.limits.OBJECT_SKILLS?.value).toBe(1000000);
     expect(plan?.limits.STORAGE_BYTES?.value).toBeNull();
     expect(plan?.limits.STORAGE_BYTES?.isEnabled).toBe(true);
     expect(plan?.limits).not.toHaveProperty("UNKNOWN_KEY");
@@ -63,8 +70,8 @@ describe("TariffPlanService", () => {
     await expect(
       db.insert(tariffLimits).values({
         planId,
-        limitKey: "TOKEN_LLM",
-        unit: "tokens",
+        limitKey: "OBJECT_SKILLS",
+        unit: "count",
         limitValue: 1,
         isEnabled: true,
       }),

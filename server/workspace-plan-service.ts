@@ -53,6 +53,11 @@ export class WorkspacePlanService {
     return plan;
   }
 
+  async isNoCodeFlowEnabled(workspaceId: string): Promise<boolean> {
+    const plan = await this.getWorkspacePlan(workspaceId);
+    return Boolean(plan.noCodeFlowEnabled);
+  }
+
   async getWorkspacePlanWithLimits(workspaceId: string): Promise<TariffPlanWithLimits> {
     const ws = await this.resolveWorkspace(workspaceId);
     const planId = await this.ensureTariffPlanId(workspaceId, ws.tariffPlanId ?? null);

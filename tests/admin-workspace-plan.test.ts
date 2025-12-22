@@ -11,6 +11,7 @@ vi.doMock("../server/auth", () => {
   return {
     requireAuth: allow,
     requireAdmin: allow,
+    ensureWorkspaceContextMiddleware: () => allow,
     getSessionUser: () => ({ id: "admin-1", role: "admin" }),
     toPublicUser: (user: unknown) => user,
     reloadGoogleAuth: vi.fn(),
@@ -73,14 +74,14 @@ describe("admin workspace plan API", () => {
 
     const [free] = await db
       .insert(tariffPlans)
-      .values({ code: planFreeCode, name: "Free", isActive: true })
+      .values({ code: planFreeCode, name: "Free", isActive: true, noCodeFlowEnabled: false })
       .returning({ id: tariffPlans.id, code: tariffPlans.code });
     planFreeId = free.id;
     planFreeCode = free.code;
 
     const [pro] = await db
       .insert(tariffPlans)
-      .values({ code: planProCode, name: "Pro", isActive: true })
+      .values({ code: planProCode, name: "Pro", isActive: true, noCodeFlowEnabled: true })
       .returning({ id: tariffPlans.id, code: tariffPlans.code });
     planProId = pro.id;
     planProCode = pro.code;
@@ -102,6 +103,7 @@ describe("admin workspace plan API", () => {
     const res = await supertest(`http://127.0.0.1:${address.port}`).get(`/api/admin/workspaces/${workspaceId}/plan`);
     expect(res.status).toBe(200);
     expect(res.body?.plan?.code).toBe(planFreeCode);
+    expect(res.body?.plan?.noCodeFlowEnabled).toBe(false);
     httpServer.close();
   });
 
@@ -113,9 +115,11 @@ describe("admin workspace plan API", () => {
       .send({ planCode: planProCode });
     expect(res.status).toBe(200);
     expect(res.body?.plan?.code).toBe(planProCode);
+    expect(res.body?.plan?.noCodeFlowEnabled).toBe(true);
 
     const getRes = await supertest(`http://127.0.0.1:${address.port}`).get(`/api/admin/workspaces/${workspaceId}/plan`);
     expect(getRes.body?.plan?.code).toBe(planProCode);
+    expect(getRes.body?.plan?.noCodeFlowEnabled).toBe(true);
     httpServer.close();
   });
 

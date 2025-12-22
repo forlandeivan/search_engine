@@ -242,20 +242,34 @@ export class TariffPlanService {
     return updated;
   }
 
-  async updatePlanCredits(planId: string, payload: { amountCents?: number | null; period?: string | null }) {
+  async updatePlanCredits(
+    planId: string,
+    payload: { amountCents?: number | null; period?: string | null; noCodeFlowEnabled?: boolean | null },
+  ) {
     const plan = await this.getPlanById(planId);
     if (!plan) {
       throw new Error("Tariff plan not found");
     }
 
-    const amount = this.normalizeCreditsAmountCents(payload.amountCents);
-    const period = this.normalizeCreditsPeriod(payload.period ?? plan.includedCreditsPeriod ?? "monthly");
+    const amount =
+      payload.amountCents === undefined
+        ? Number(plan.includedCreditsAmount ?? 0)
+        : this.normalizeCreditsAmountCents(payload.amountCents);
+    const period =
+      payload.period === undefined
+        ? this.normalizeCreditsPeriod(plan.includedCreditsPeriod ?? "monthly")
+        : this.normalizeCreditsPeriod(payload.period ?? "monthly");
+    const noCodeFlowEnabled =
+      payload.noCodeFlowEnabled === undefined || payload.noCodeFlowEnabled === null
+        ? Boolean(plan.noCodeFlowEnabled)
+        : Boolean(payload.noCodeFlowEnabled);
 
     const [updated] = await db
       .update(tariffPlans)
       .set({
         includedCreditsAmount: amount,
         includedCreditsPeriod: period,
+        noCodeFlowEnabled,
         updatedAt: new Date(),
       })
       .where(eq(tariffPlans.id, planId))
