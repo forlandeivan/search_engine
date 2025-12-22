@@ -32,6 +32,7 @@ export type MessageCreatedEventPayload = {
       mimeType?: string | null;
       sizeBytes?: number | null;
       downloadUrl?: string | null;
+      expiresAt?: string | null;
       uploadedByUserId?: string | null;
     };
     createdAt: string;
@@ -124,6 +125,7 @@ export function buildMessageCreatedEventPayload(args: {
           mimeType: fileMeta.mimeType ?? null,
           sizeBytes: typeof fileMeta.sizeBytes === "number" ? fileMeta.sizeBytes : null,
           downloadUrl: fileMeta.downloadUrl ?? `/api/chat/messages/${args.message.id}/file`,
+          expiresAt: fileMeta.expiresAt ?? null,
           uploadedByUserId: fileMeta.uploadedByUserId ?? null,
         }
       : undefined;

@@ -223,7 +223,8 @@ const mapMessage = (message: ChatMessage) => {
           mimeType: fileMeta?.mimeType ?? null,
           sizeBytes: typeof fileMeta?.sizeBytes === "number" ? fileMeta.sizeBytes : null,
           uploadedByUserId: fileMeta?.uploadedByUserId ?? null,
-          downloadUrl: `/api/chat/messages/${message.id}/file`,
+          downloadUrl: fileMeta?.downloadUrl ?? `/api/chat/messages/${message.id}/file`,
+          expiresAt: fileMeta?.expiresAt ?? null,
         }
       : undefined;
 

@@ -53,6 +53,7 @@ export type ChatMessage = {
     sizeBytes?: number | null;
     uploadedByUserId?: string | null;
     downloadUrl?: string;
+    expiresAt?: string | null;
   };
 };
 

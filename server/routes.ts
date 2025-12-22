@@ -166,7 +166,7 @@ import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { listGuardBlockEvents } from "./guards/block-log-service";
 import { buildEmbeddingsOperationContext, buildStorageUploadOperationContext, buildLlmOperationContext } from "./guards/helpers";
-import { uploadWorkspaceFile, getWorkspaceFile } from "./workspace-storage-service";
+import { uploadWorkspaceFile, getWorkspaceFile, generateWorkspaceFileDownloadUrl } from "./workspace-storage-service";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
@@ -10528,7 +10528,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             file: {
               ...baseMetadata.file,
               attachmentId: attachment.id,
-              downloadUrl: `/api/chat/messages/${message.id}/file`,
             },
           },
         });
@@ -10536,7 +10535,20 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         await storage.touchChatSession(chat.id);
 
         const latest = await storage.getChatMessage(message.id);
-        const mapped = mapMessage(latest ?? message);
+        const presigned = await generateWorkspaceFileDownloadUrl(workspaceId, storageKey, ATTACHMENT_URL_TTL_SECONDS);
+        const enriched = latest ?? message;
+        const mapped = mapMessage({
+          ...enriched,
+          metadata: {
+            ...(enriched.metadata ?? {}),
+            file: {
+              ...(enriched.metadata as any)?.file,
+              attachmentId: attachment.id,
+              downloadUrl: presigned.url,
+              expiresAt: presigned.expiresAt,
+            },
+          },
+        });
 
         if (skill && skill.executionMode === "no_code") {
           const connection = await getNoCodeConnectionInternal({ workspaceId, skillId: skill.id });
@@ -12352,6 +12364,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   const buildAttachmentKey = (chatId: string, filename: string): string => {
     return `attachments/${chatId}/${randomUUID()}-${filename}`;
   };
+
+  const ATTACHMENT_URL_TTL_SECONDS = Math.max(
+    60,
+    Math.min(Number.parseInt(process.env.ATTACHMENT_URL_TTL_SECONDS ?? "900", 10) || 900, 3600),
+  );
 
   // Страховка на случай обрыва соединения в процессе загрузки аудио.
   app.use((req, _res, next) => {

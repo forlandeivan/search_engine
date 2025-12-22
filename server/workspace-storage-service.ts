@@ -6,6 +6,7 @@
   HeadBucketCommand,
   HeadObjectCommand,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Readable } from "stream";
 import { minioClient } from "./minio-client";
 import { storage } from "./storage";
@@ -214,4 +215,21 @@ export async function deleteWorkspaceFile(workspaceId: string, relativePath: str
   if (previousSize && previousSize > 0) {
     await adjustWorkspaceStorageUsageBytes(workspaceId, -previousSize);
   }
+}
+
+export async function generateWorkspaceFileDownloadUrl(
+  workspaceId: string,
+  relativePath: string,
+  ttlSeconds = 900,
+): Promise<{ url: string; expiresAt: string }> {
+  ensureAllowedPrefix(relativePath);
+  const bucket = await ensureWorkspaceBucketExists(workspaceId);
+  const expiresIn = Math.max(60, Math.min(ttlSeconds, 60 * 60)); // 1 мин - 1 час
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: relativePath,
+  });
+  const url = await getSignedUrl(minioClient, command, { expiresIn });
+  const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+  return { url, expiresAt };
 }
