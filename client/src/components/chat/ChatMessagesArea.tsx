@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Loader2, Sparkles, Music, Search, Archive } from "lucide-react";
+import { Loader2, Sparkles, Music, Search, Archive, File as FileIcon, Download } from "lucide-react";
 import MarkdownRenderer from "@/components/ui/markdown";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -352,11 +352,56 @@ function ChatBubble({
   const metadata = (message.metadata ?? {}) as ChatMessage["metadata"];
   const isTranscript = metadata?.type === "transcript" && metadata.transcriptId;
   const resolvedStreaming = isStreamingBubble || metadata?.streaming === true;
+  const fileMeta = message.file ?? (metadata as any)?.file;
+  const isFileMessage =
+    message.type === "file" ||
+    Boolean(fileMeta?.attachmentId || fileMeta?.storageKey || fileMeta?.filename) ||
+    (message.role === "user" && fileMeta);
 
   const displayContent = useTypewriter(message.content ?? "", {
     enabled: resolvedStreaming && !isAudioFile && !isAudioMessage,
     resetKey: message.id,
   });
+
+  const formatSize = (size?: number | null) => {
+    if (!size || size <= 0) return null;
+    const kb = size / 1024;
+    if (kb < 1024) return `${kb.toFixed(1)} КБ`;
+    const mb = kb / 1024;
+    return `${mb.toFixed(1)} МБ`;
+  };
+
+  const renderFileBubble = () => {
+    const name = fileMeta?.filename || message.content || "Файл";
+    const sizeLabel = formatSize(fileMeta?.sizeBytes ?? null);
+    const downloadUrl = fileMeta?.downloadUrl || `/api/chat/messages/${message.id}/file`;
+    const by = fileMeta?.uploadedByUserId ? `Загрузил: ${fileMeta.uploadedByUserId}` : null;
+    return (
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-100">
+          <FileIcon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <p className="font-semibold text-slate-900 dark:text-slate-100 break-all">{name}</p>
+          <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-wrap gap-2">
+            {sizeLabel ? <span>{sizeLabel}</span> : null}
+            {by ? <span>{by}</span> : null}
+          </div>
+          <div className="pt-1">
+            <a
+              href={downloadUrl}
+              className="inline-flex items-center gap-2 text-sm font-medium text-[#095998] hover:underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <Download className="h-4 w-4" />
+              Скачать
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderAudioBubble = (fileName: string) => (
     <div className="flex items-start gap-2">
@@ -381,7 +426,16 @@ function ChatBubble({
         )}
       >
         <div className="max-w-[70%]">
-          {(isAudioMessage || isAudioFile) ? (
+          {isFileMessage ? (
+            <div className="rounded-2xl bg-[#2278bf] p-1">
+              <div className="rounded-xl bg-[#1269a2] border border-[#4497d9] p-3 text-white">
+                {renderFileBubble()}
+              </div>
+              <div className="flex items-center justify-end gap-1 p-2">
+                <span className="text-xs text-indigo-200">{timestamp}</span>
+              </div>
+            </div>
+          ) : (isAudioMessage || isAudioFile) ? (
             <div className="rounded-2xl bg-[#2278bf] p-1">
               <div className="rounded-xl bg-[#1269a2] border border-[#4497d9] p-3">
                 {renderAudioBubble(audioFileName || legacyAudioFileName)}
@@ -427,6 +481,8 @@ function ChatBubble({
                 )
               }
             />
+          ) : isFileMessage ? (
+            renderFileBubble()
           ) : isTranscribingBubble ? (
             <div className="flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />

@@ -23,8 +23,17 @@ export type MessageCreatedEventPayload = {
   skill: { id: string; executionMode: "no_code" };
   message: {
     id: string;
+    type?: "text" | "file" | string;
     role: "user" | "assistant" | "system";
     text: string;
+    file?: {
+      attachmentId?: string | null;
+      filename?: string | null;
+      mimeType?: string | null;
+      sizeBytes?: number | null;
+      downloadUrl?: string | null;
+      uploadedByUserId?: string | null;
+    };
     createdAt: string;
     metadata: Record<string, unknown>;
   };
@@ -102,6 +111,23 @@ export function buildMessageCreatedEventPayload(args: {
   actorUserId: string;
   contextPack?: Record<string, unknown> | null;
 }): MessageCreatedEventPayload {
+  const metadata =
+    args.message.metadata && typeof args.message.metadata === "object"
+      ? (args.message.metadata as Record<string, unknown>)
+      : {};
+  const fileMeta = (metadata as any).file;
+  const file =
+    fileMeta && typeof fileMeta === "object"
+      ? {
+          attachmentId: fileMeta.attachmentId ?? null,
+          filename: fileMeta.filename ?? null,
+          mimeType: fileMeta.mimeType ?? null,
+          sizeBytes: typeof fileMeta.sizeBytes === "number" ? fileMeta.sizeBytes : null,
+          downloadUrl: fileMeta.downloadUrl ?? `/api/chat/messages/${args.message.id}/file`,
+          uploadedByUserId: fileMeta.uploadedByUserId ?? null,
+        }
+      : undefined;
+
   return {
     schemaVersion: 1,
     event: "message.created",
@@ -112,13 +138,12 @@ export function buildMessageCreatedEventPayload(args: {
     skill: { id: args.skillId, executionMode: "no_code" },
     message: {
       id: args.message.id,
+      type: (args.message as any).messageType ?? (file ? "file" : "text"),
       role: args.message.role,
       text: args.message.content,
+      file,
       createdAt: args.message.createdAt,
-      metadata:
-        args.message.metadata && typeof args.message.metadata === "object"
-          ? (args.message.metadata as Record<string, unknown>)
-          : {},
+      metadata,
     },
     actor: { userId: args.actorUserId },
     ...(args.contextPack ? { contextPack: args.contextPack } : {}),

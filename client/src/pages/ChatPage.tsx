@@ -7,6 +7,7 @@ import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput, { type TranscribePayload } from "@/components/chat/ChatInput";
 import { TranscriptCanvas } from "@/components/chat/TranscriptCanvas";
 import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
+import { throwIfResNotOk } from "@/lib/queryClient";
 import { useSkills } from "@/hooks/useSkills";
 import { formatApiErrorMessage, isApiError } from "@/lib/api-errors";
 import { useToast } from "@/hooks/use-toast";
@@ -72,6 +73,7 @@ export default function ChatPage({ params }: ChatPageProps) {
     isLoading: isMessagesLoading,
     isError: isMessagesError,
     error: messagesError,
+    refetch: refetchMessages,
   } = useChatMessages(effectiveChatId ?? undefined, workspaceId || undefined, {
     refetchIntervalMs: effectiveChatId ? 2000 : false,
   });
@@ -340,6 +342,36 @@ export default function ChatPage({ params }: ChatPageProps) {
     ],
   );
 
+  const handleSendFile = useCallback(
+    async (file: File) => {
+      if (!workspaceId) return;
+      let targetChatId = effectiveChatId;
+      if (!targetChatId) {
+        if (!defaultSkill) {
+          setStreamError("Unica Chat skill is not configured. Please contact the administrator.");
+          return;
+        }
+        const newChat = await createChat({ workspaceId, skillId: defaultSkill.id });
+        setOverrideChatId(newChat.id);
+        targetChatId = newChat.id;
+        handleSelectChat(newChat.id);
+      }
+
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("workspaceId", workspaceId);
+
+      const response = await fetch(`/api/chat/sessions/${targetChatId}/messages/file`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      await throwIfResNotOk(response);
+      await refetchMessages();
+    },
+    [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, refetchMessages],
+  );
+
   const handleTranscription = useCallback(
     async (input: TranscribePayload) => {
       if (!workspaceId) return;
@@ -599,6 +631,7 @@ export default function ChatPage({ params }: ChatPageProps) {
             <ChatInput
               onSend={handleSend}
               onTranscribe={handleTranscription}
+              onSendFile={handleSendFile}
               disabled={disableInput}
               readOnlyHint={readOnlyHint}
               chatId={effectiveChatId ?? null}

@@ -22,6 +22,7 @@ export type TranscribePayload =
 type ChatInputProps = {
   onSend: (message: string) => Promise<void> | void;
   onTranscribe?: (payload: TranscribePayload) => void;
+  onSendFile?: (file: File) => Promise<void> | void;
   onEnsureChat?: () => Promise<string | null> | string | null;
   disabled?: boolean;
   readOnlyHint?: string;
@@ -56,11 +57,13 @@ export default function ChatInput({
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [pendingTranscribe, setPendingTranscribe] = useState<TranscribePayload | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
@@ -111,6 +114,34 @@ export default function ChatInput({
     }
     return true;
   };
+
+  const handleSendFile = useCallback(
+    async (file: File) => {
+      if (!onSendFile) return;
+      const targetChatId = await ensureChatId();
+      if (!targetChatId) {
+        toast({
+          title: "Нужен чат",
+          description: "Сначала выберите или создайте чат, чтобы прикрепить файл.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setIsUploadingFile(true);
+      try {
+        await onSendFile(file);
+      } catch (error) {
+        toast({
+          title: "Не удалось отправить файл",
+          description: formatApiErrorMessage(error),
+          variant: "destructive",
+        });
+      } finally {
+        setIsUploadingFile(false);
+      }
+    },
+    [onSendFile, ensureChatId, toast],
+  );
 
   const ensureChatId = useCallback(async (): Promise<string | null> => {
     if (chatId) return chatId;
@@ -302,6 +333,7 @@ export default function ChatInput({
     (value.trim().length === 0 && !attachedFile) ||
     (attachedFile && !pendingTranscribe);
   const isAttachDisabled = disabled || isUploading || !!attachedFile;
+  const isFileAttachDisabled = disabled || isUploadingFile;
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -377,6 +409,36 @@ export default function ChatInput({
                 </TooltipTrigger>
                 <TooltipContent side="top">
                   <p>{disabledTooltip ?? "Прикрепите файл для транскрибации"}</p>
+                </TooltipContent>
+              </Tooltip>
+              <input
+                ref={attachInputRef}
+                type="file"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (!file) return;
+                  void handleSendFile(file);
+                }}
+                className="hidden"
+                data-testid="input-chat-file"
+              />
+              <Tooltip disabled={!disabledTooltip}>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
+                    onClick={() => attachInputRef.current?.click()}
+                    disabled={isFileAttachDisabled}
+                    data-testid="button-attach-file"
+                  >
+                    <Paperclip className="h-6 w-6" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p>{disabledTooltip ?? "Прикрепите файл"}</p>
                 </TooltipContent>
               </Tooltip>
             </>

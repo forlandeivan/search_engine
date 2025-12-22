@@ -211,15 +211,34 @@ export async function clearAssistantActionForChat(opts: {
   await storage.clearChatAssistantAction(opts.chatId);
 }
 
-const mapMessage = (message: ChatMessage) => ({
-  id: message.id,
-  chatId: message.chatId,
-  role: message.role,
-  content: message.content,
-  metadata: message.metadata ?? {},
-  // Всегда возвращаем ISO в UTC; отображение в UI — локальное время браузера.
-  createdAt: new Date(message.createdAt ?? Date.now()).toISOString(),
-});
+const mapMessage = (message: ChatMessage) => {
+  const metadata = message.metadata ?? {};
+  const type = (message as any).messageType ?? "text";
+  const fileMeta = (metadata as any).file ?? null;
+  const file =
+    type === "file"
+      ? {
+          attachmentId: fileMeta?.attachmentId ?? null,
+          filename: fileMeta?.filename ?? message.content,
+          mimeType: fileMeta?.mimeType ?? null,
+          sizeBytes: typeof fileMeta?.sizeBytes === "number" ? fileMeta.sizeBytes : null,
+          uploadedByUserId: fileMeta?.uploadedByUserId ?? null,
+          downloadUrl: `/api/chat/messages/${message.id}/file`,
+        }
+      : undefined;
+
+  return {
+    id: message.id,
+    chatId: message.chatId,
+    role: message.role,
+    type,
+    content: message.content,
+    metadata,
+    file,
+    // Всегда возвращаем ISO в UTC; отображение в UI — локальное время браузера.
+    createdAt: new Date(message.createdAt ?? Date.now()).toISOString(),
+  };
+};
 
 async function getOwnedChat(
   chatId: string,

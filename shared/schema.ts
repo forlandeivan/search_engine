@@ -1174,6 +1174,8 @@ export const skillActions = pgTable(
 
 export const chatMessageRoles = ["user", "assistant", "system"] as const;
 export type ChatMessageRole = (typeof chatMessageRoles)[number];
+export const chatMessageTypes = ["text", "file"] as const;
+export type ChatMessageType = (typeof chatMessageTypes)[number];
 
 export const chatStatuses = ["active", "archived"] as const;
 export type ChatStatus = (typeof chatStatuses)[number];
@@ -1220,6 +1222,7 @@ export const chatMessages = pgTable(
     chatId: varchar("chat_id")
       .notNull()
       .references(() => chatSessions.id, { onDelete: "cascade" }),
+    messageType: text("message_type").$type<ChatMessageType>().notNull().default("text"),
     role: text("role").$type<ChatMessageRole>().notNull(),
     content: text("content").notNull(),
     metadata: jsonb("metadata").$type<ChatMessageMetadata>().notNull().default(sql`'{}'::jsonb`),
@@ -1236,6 +1239,14 @@ export type TranscriptStatus = (typeof transcriptStatuses)[number];
 export type ChatMessageMetadata = {
   transcriptId?: string;
   transcriptStatus?: TranscriptStatus;
+  file?: {
+    attachmentId?: string;
+    filename?: string;
+    mimeType?: string | null;
+    sizeBytes?: number | null;
+    storageKey?: string;
+    uploadedByUserId?: string | null;
+  };
   [key: string]: unknown;
 };
 
@@ -1285,6 +1296,34 @@ export const transcriptViews = pgTable(
     transcriptIdx: index("transcript_views_transcript_idx").on(table.transcriptId),
   }),
 );
+
+export const chatAttachments = pgTable(
+  "chat_attachments",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    chatId: varchar("chat_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    messageId: varchar("message_id").references(() => chatMessages.id, { onDelete: "set null" }),
+    uploaderUserId: varchar("uploader_user_id").references(() => users.id, { onDelete: "set null" }),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+    storageKey: text("storage_key").notNull(),
+    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    workspaceIdx: index("chat_attachments_workspace_idx").on(table.workspaceId, table.createdAt),
+    chatIdx: index("chat_attachments_chat_idx").on(table.chatId, table.createdAt),
+    messageIdx: index("chat_attachments_message_idx").on(table.messageId),
+  }),
+);
+
+export type ChatAttachment = typeof chatAttachments.$inferSelect;
+export type ChatAttachmentInsert = typeof chatAttachments.$inferInsert;
 
 export const canvasDocumentTypes = ["source", "derived", "summary", "cleaned", "custom"] as const;
 export type CanvasDocumentType = (typeof canvasDocumentTypes)[number];

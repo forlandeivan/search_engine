@@ -24,6 +24,7 @@ import {
   unicaChatConfig,
   chatSessions,
   chatMessages,
+  chatAttachments,
   transcripts,
   transcriptViews,
   canvasDocuments,
@@ -59,6 +60,8 @@ import {
   type ChatSessionInsert,
   type ChatMessage,
   type ChatMessageInsert,
+  type ChatAttachment,
+  type ChatAttachmentInsert,
   type Transcript,
   type TranscriptInsert,
   type TranscriptView,
@@ -67,6 +70,8 @@ import {
   type CanvasDocumentInsert,
   type TranscriptStatus,
   type ChatMessageMetadata,
+  type ChatAttachment,
+  type ChatAttachmentInsert,
   type SpeechProvider,
   type SpeechProviderInsert,
   type SpeechProviderSecret,
@@ -914,6 +919,9 @@ export interface IStorage {
   createChatMessage(values: ChatMessageInsert): Promise<ChatMessage>;
   getChatMessage(id: string): Promise<ChatMessage | undefined>;
   countChatMessages(chatId: string): Promise<number>;
+  createChatAttachment(values: ChatAttachmentInsert): Promise<ChatAttachment>;
+  findChatAttachmentByMessageId(messageId: string): Promise<ChatAttachment | undefined>;
+  getChatAttachment(id: string): Promise<ChatAttachment | undefined>;
   updateChatTitleIfEmpty(chatId: string, title: string): Promise<boolean>;
 }
 
@@ -946,6 +954,8 @@ let chatSessionsTableEnsured = false;
 let ensuringChatSessionsTable: Promise<void> | null = null;
 let chatMessagesTableEnsured = false;
 let ensuringChatMessagesTable: Promise<void> | null = null;
+let chatAttachmentsTableEnsured = false;
+let ensuringChatAttachmentsTable: Promise<void> | null = null;
 let transcriptsTableEnsured = false;
 let ensuringTranscriptsTable: Promise<void> | null = null;
 
@@ -1231,6 +1241,7 @@ async function ensureChatMessagesTable(): Promise<void> {
       CREATE TABLE IF NOT EXISTS "chat_messages" (
         "id" varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
         "chat_id" varchar NOT NULL,
+        "message_type" text NOT NULL DEFAULT 'text',
         "role" text NOT NULL,
         "content" text NOT NULL,
         "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -1253,6 +1264,95 @@ async function ensureChatMessagesTable(): Promise<void> {
 
   await ensuringChatMessagesTable;
   ensuringChatMessagesTable = null;
+}
+
+async function ensureChatAttachmentsTable(): Promise<void> {
+  if (chatAttachmentsTableEnsured) {
+    return;
+  }
+  if (ensuringChatAttachmentsTable) {
+    await ensuringChatAttachmentsTable;
+    return;
+  }
+
+  ensuringChatAttachmentsTable = (async () => {
+    await ensureChatSessionsTable();
+    await ensureWorkspacesTable();
+    await ensureUsersTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "chat_attachments" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "workspace_id" varchar NOT NULL,
+        "chat_id" varchar NOT NULL,
+        "message_id" varchar,
+        "uploader_user_id" varchar,
+        "filename" text NOT NULL,
+        "mime_type" text,
+        "size_bytes" bigint,
+        "storage_key" text NOT NULL,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "chat_attachments",
+      "chat_attachments_workspace_id_fkey",
+      sql`
+        ALTER TABLE "chat_attachments"
+        ADD CONSTRAINT "chat_attachments_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "chat_attachments",
+      "chat_attachments_chat_id_fkey",
+      sql`
+        ALTER TABLE "chat_attachments"
+        ADD CONSTRAINT "chat_attachments_chat_id_fkey"
+        FOREIGN KEY ("chat_id") REFERENCES "chat_sessions"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "chat_attachments",
+      "chat_attachments_message_id_fkey",
+      sql`
+        ALTER TABLE "chat_attachments"
+        ADD CONSTRAINT "chat_attachments_message_id_fkey"
+        FOREIGN KEY ("message_id") REFERENCES "chat_messages"("id") ON DELETE SET NULL
+      `,
+    );
+
+    await ensureConstraint(
+      "chat_attachments",
+      "chat_attachments_uploader_user_id_fkey",
+      sql`
+        ALTER TABLE "chat_attachments"
+        ADD CONSTRAINT "chat_attachments_uploader_user_id_fkey"
+        FOREIGN KEY ("uploader_user_id") REFERENCES "users"("id") ON DELETE SET NULL
+      `,
+    );
+
+    await ensureIndex(
+      "chat_attachments_workspace_idx",
+      sql`CREATE INDEX IF NOT EXISTS chat_attachments_workspace_idx ON chat_attachments (workspace_id, created_at)`,
+    );
+    await ensureIndex(
+      "chat_attachments_chat_idx",
+      sql`CREATE INDEX IF NOT EXISTS chat_attachments_chat_idx ON chat_attachments (chat_id, created_at)`,
+    );
+    await ensureIndex(
+      "chat_attachments_message_idx",
+      sql`CREATE INDEX IF NOT EXISTS chat_attachments_message_idx ON chat_attachments (message_id)`,
+    );
+
+    chatAttachmentsTableEnsured = true;
+  })();
+
+  await ensuringChatAttachmentsTable;
+  ensuringChatAttachmentsTable = null;
 }
 
 async function ensureTranscriptsTable(): Promise<void> {
@@ -1413,6 +1513,7 @@ async function ensureCanvasDocumentsTable(): Promise<void> {
 async function ensureChatTables(): Promise<void> {
   await ensureChatSessionsTable();
   await ensureChatMessagesTable();
+  await ensureChatAttachmentsTable();
   await ensureTranscriptsTable();
   await ensureTranscriptViewsTable();
 }
@@ -5118,7 +5219,13 @@ export class DatabaseStorage implements IStorage {
 
   async createChatMessage(values: ChatMessageInsert): Promise<ChatMessage> {
     await ensureChatTables();
-    const [created] = await this.db.insert(chatMessages).values(values).returning();
+    const [created] = await this.db
+      .insert(chatMessages)
+      .values({
+        messageType: (values as any).messageType ?? "text",
+        ...values,
+      })
+      .returning();
     return created;
   }
 
@@ -5126,6 +5233,24 @@ export class DatabaseStorage implements IStorage {
     await ensureChatTables();
     const [message] = await this.db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
     return message ?? undefined;
+  }
+
+  async createChatAttachment(values: ChatAttachmentInsert): Promise<ChatAttachment> {
+    await ensureChatTables();
+    const [created] = await this.db.insert(chatAttachments).values(values).returning();
+    return created;
+  }
+
+  async findChatAttachmentByMessageId(messageId: string): Promise<ChatAttachment | undefined> {
+    await ensureChatTables();
+    const rows = await this.db.select().from(chatAttachments).where(eq(chatAttachments.messageId, messageId)).limit(1);
+    return rows[0];
+  }
+
+  async getChatAttachment(id: string): Promise<ChatAttachment | undefined> {
+    await ensureChatTables();
+    const rows = await this.db.select().from(chatAttachments).where(eq(chatAttachments.id, id)).limit(1);
+    return rows[0];
   }
 
   async countChatMessages(chatId: string): Promise<number> {

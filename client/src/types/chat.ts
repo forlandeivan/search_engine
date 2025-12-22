@@ -29,6 +29,7 @@ export type ChatMessage = {
   id: string;
   chatId: string;
   role: "user" | "assistant" | "system";
+  type?: "text" | "file" | string;
   content: string;
   createdAt: string;
   metadata?: {
@@ -44,6 +45,14 @@ export type ChatMessage = {
     triggerMessageId?: string | null;
     processedChunkIds?: string[];
     [key: string]: unknown;
+  };
+  file?: {
+    attachmentId?: string | null;
+    filename?: string | null;
+    mimeType?: string | null;
+    sizeBytes?: number | null;
+    uploadedByUserId?: string | null;
+    downloadUrl?: string;
   };
 };
 

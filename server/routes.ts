@@ -166,6 +166,7 @@ import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { listGuardBlockEvents } from "./guards/block-log-service";
 import { buildEmbeddingsOperationContext, buildStorageUploadOperationContext, buildLlmOperationContext } from "./guards/helpers";
+import { uploadWorkspaceFile, getWorkspaceFile } from "./workspace-storage-service";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
@@ -10458,6 +10459,164 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  app.post(
+    "/api/chat/sessions/:chatId/messages/file",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    fileUpload.single("file"),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ message: "Файл не найден в запросе" });
+      }
+
+      try {
+        const workspaceCandidate = pickFirstString(
+          (req.body as any)?.workspaceId,
+          req.query.workspaceId,
+          req.query.workspace_id,
+        );
+        const workspaceId = req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, workspaceCandidate);
+        const chat = await getChatById(req.params.chatId, workspaceId, user.id);
+        ensureChatAndSkillAreActive(chat);
+        const skill = await getSkillById(workspaceId, chat.skillId);
+        ensureSkillIsActive(skill);
+
+        const filename = sanitizeFilename(file.originalname || "file");
+        const mimeType = file.mimetype || "application/octet-stream";
+        const sizeBytes = typeof file.size === "number" ? file.size : file.buffer.length;
+        const storageKey = buildAttachmentKey(chat.id, filename);
+
+        await uploadWorkspaceFile(workspaceId, storageKey, file.buffer, mimeType, sizeBytes);
+
+        const baseMetadata = {
+          file: {
+            filename,
+            mimeType,
+            sizeBytes,
+            storageKey,
+            uploadedByUserId: user.id,
+          },
+        };
+
+        const message = await storage.createChatMessage({
+          chatId: chat.id,
+          role: "user",
+          content: filename,
+          metadata: baseMetadata,
+          messageType: "file",
+        });
+
+        const attachment = await storage.createChatAttachment({
+          workspaceId,
+          chatId: chat.id,
+          messageId: message.id,
+          uploaderUserId: user.id,
+          filename,
+          mimeType,
+          sizeBytes,
+          storageKey,
+        });
+
+        await storage.updateChatMessage(message.id, {
+          metadata: {
+            ...baseMetadata,
+            file: {
+              ...baseMetadata.file,
+              attachmentId: attachment.id,
+              downloadUrl: `/api/chat/messages/${message.id}/file`,
+            },
+          },
+        });
+
+        await storage.touchChatSession(chat.id);
+
+        const latest = await storage.getChatMessage(message.id);
+        const mapped = mapMessage(latest ?? message);
+
+        if (skill && skill.executionMode === "no_code") {
+          const connection = await getNoCodeConnectionInternal({ workspaceId, skillId: skill.id });
+          if (!connection?.endpointUrl) {
+            throw createNoCodeFlowError("NOT_CONFIGURED");
+          }
+          const eventPayload = buildMessageCreatedEventPayload({
+            workspaceId,
+            chatId: chat.id,
+            skillId: skill.id,
+            message: { ...mapped, metadata: mapped.metadata },
+            actorUserId: user.id,
+          });
+          scheduleNoCodeEventDelivery({
+            endpointUrl: connection.endpointUrl,
+            authType: connection.authType,
+            bearerToken: connection.bearerToken,
+            payload: eventPayload,
+          });
+        }
+
+        res.status(201).json({ message: mapped });
+      } catch (error) {
+        if (error instanceof ChatServiceError) {
+          return res.status(error.status).json(buildChatServiceErrorPayload(error));
+        }
+        if (error instanceof HttpError) {
+          return res.status(error.status).json({ message: error.message });
+        }
+        next(error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/chat/messages/:messageId/file",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+      try {
+        const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+        const workspaceId = req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, workspaceCandidate);
+        const message = await storage.getChatMessage(req.params.messageId);
+        if (!message) {
+          return res.status(404).json({ message: "Сообщение не найдено" });
+        }
+        const chat = await storage.getChatSessionById(message.chatId);
+        if (!chat || chat.workspaceId !== workspaceId || chat.userId !== user.id) {
+          return res.status(404).json({ message: "Сообщение не найдено" });
+        }
+        if ((message as any).messageType !== "file") {
+          return res.status(400).json({ message: "У сообщения нет файла" });
+        }
+        const fileMeta = (message.metadata as any)?.file;
+        if (!fileMeta?.storageKey) {
+          return res.status(404).json({ message: "Файл не найден" });
+        }
+
+        const fileName = sanitizeFilename(fileMeta.filename || "file");
+        const object = await getWorkspaceFile(chat.workspaceId, fileMeta.storageKey);
+        if (!object) {
+          return res.status(404).json({ message: "Файл не найден" });
+        }
+
+        res.setHeader("Content-Type", object.contentType ?? "application/octet-stream");
+        res.setHeader("Content-Disposition", `attachment; filename=\"${fileName}\"`);
+        object.body.pipe(res);
+      } catch (error) {
+        if (error instanceof ChatServiceError) {
+          return res.status(error.status).json(buildChatServiceErrorPayload(error));
+        }
+        next(error);
+      }
+    },
+  );
+
   app.post("/api/chat/sessions/:chatId/messages/llm", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -12176,6 +12335,23 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   });
+
+  const fileUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 500 * 1024 * 1024,
+      files: 1,
+    },
+  });
+
+  const sanitizeFilename = (name: string): string => {
+    const safe = name.replace(/[\\/:*?"<>|]/g, "_").trim();
+    return safe.length > 0 ? safe : "file";
+  };
+
+  const buildAttachmentKey = (chatId: string, filename: string): string => {
+    return `attachments/${chatId}/${randomUUID()}-${filename}`;
+  };
 
   // Страховка на случай обрыва соединения в процессе загрузки аудио.
   app.use((req, _res, next) => {
