@@ -6977,6 +6977,28 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     operationId: z.string().trim().max(200).optional(),
   });
 
+  const fileUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 500 * 1024 * 1024,
+      files: 1,
+    },
+  });
+
+  const sanitizeFilename = (name: string): string => {
+    const safe = name.replace(/[\\/:*?"<>|]/g, "_").trim();
+    return safe.length > 0 ? safe : "file";
+  };
+
+  const buildAttachmentKey = (chatId: string, filename: string): string => {
+    return `attachments/${chatId}/${randomUUID()}-${filename}`;
+  };
+
+  const ATTACHMENT_URL_TTL_SECONDS = Math.max(
+    60,
+    Math.min(Number.parseInt(process.env.ATTACHMENT_URL_TTL_SECONDS ?? "900", 10) || 900, 3600),
+  );
+
   const noCodeCallbackCreateMessageSchema = z
     .object({
       workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
@@ -12373,28 +12395,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   });
-
-  const fileUpload = multer({
-    storage: multer.memoryStorage(),
-    limits: {
-      fileSize: 500 * 1024 * 1024,
-      files: 1,
-    },
-  });
-
-  const sanitizeFilename = (name: string): string => {
-    const safe = name.replace(/[\\/:*?"<>|]/g, "_").trim();
-    return safe.length > 0 ? safe : "file";
-  };
-
-  const buildAttachmentKey = (chatId: string, filename: string): string => {
-    return `attachments/${chatId}/${randomUUID()}-${filename}`;
-  };
-
-  const ATTACHMENT_URL_TTL_SECONDS = Math.max(
-    60,
-    Math.min(Number.parseInt(process.env.ATTACHMENT_URL_TTL_SECONDS ?? "900", 10) || 900, 3600),
-  );
 
   // Страховка на случай обрыва соединения в процессе загрузки аудио.
   app.use((req, _res, next) => {

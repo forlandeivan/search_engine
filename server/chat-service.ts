@@ -150,7 +150,7 @@ const mapAssistantAction = (session: ChatSession): ChatSummary["currentAssistant
   };
 };
 
-const mapChatSummary = (
+export const mapChatSummary = (
   session: ChatSession & {
     skillName: string | null;
     skillIsSystem?: boolean;
