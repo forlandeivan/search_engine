@@ -48,7 +48,7 @@ export default function ChatPage({ params }: ChatPageProps) {
   const effectiveChatId = routeChatId || overrideChatId || null;
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
 
-  const { chats } = useChats(workspaceId, undefined, { refetchIntervalMs: 3000 });
+  const { chats } = useChats(workspaceId, undefined, { refetchIntervalMs: false });
   const activeChat = chats.find((chat) => chat.id === effectiveChatId) ?? null;
   const activeAssistantAction = activeChat?.currentAssistantAction ?? null;
 
@@ -68,16 +68,6 @@ export default function ChatPage({ params }: ChatPageProps) {
     return defaultSkill;
   }, [activeChat, defaultSkill, skills]);
 
-  const {
-    messages: fetchedMessages,
-    isLoading: isMessagesLoading,
-    isError: isMessagesError,
-    error: messagesError,
-    refetch: refetchMessages,
-  } = useChatMessages(effectiveChatId ?? undefined, workspaceId || undefined, {
-    refetchIntervalMs: effectiveChatId ? 2000 : false,
-  });
-
   const [localChatId, setLocalChatId] = useState<string | null>(null);
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -94,6 +84,16 @@ export default function ChatPage({ params }: ChatPageProps) {
 
   const { createChat } = useCreateChat();
   const [creatingSkillId, setCreatingSkillId] = useState<string | null>(null);
+
+  const {
+    messages: fetchedMessages,
+    isLoading: isMessagesLoading,
+    isError: isMessagesError,
+    error: messagesError,
+    refetch: refetchMessages,
+  } = useChatMessages(effectiveChatId ?? undefined, workspaceId || undefined, {
+    refetchIntervalMs: effectiveChatId && isStreaming ? 1000 : false,
+  });
 
   useEffect(() => {
     setOverrideChatId(null);
@@ -236,6 +236,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               // чтобы не осталось пустого bubble: сервер отдаст финальный ответ через refetch.
               setLocalMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
               await queryClient.invalidateQueries({ queryKey: ["chat-messages"] });
+              await queryClient.invalidateQueries({ queryKey: ["chats"] });
               debugLog("[chat] streamMessage finished", { chatId: targetChatId });
             },
             onError: (error) => {
