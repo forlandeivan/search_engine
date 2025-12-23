@@ -10555,18 +10555,44 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           if (!connection?.endpointUrl) {
             throw createNoCodeFlowError("NOT_CONFIGURED");
           }
-          const eventPayload = buildMessageCreatedEventPayload({
+          const messagePayload = buildMessageCreatedEventPayload({
             workspaceId,
             chatId: chat.id,
             skillId: skill.id,
             message: { ...mapped, metadata: mapped.metadata },
             actorUserId: user.id,
           });
+          const fileUploadedPayload = buildFileUploadedEventPayload({
+            workspaceId,
+            chatId: chat.id,
+            skillId: skill.id,
+            message: { id: mapped.id, createdAt: mapped.createdAt },
+            actorUserId: user.id,
+            file: {
+              attachmentId: attachment.id,
+              filename,
+              mimeType,
+              sizeBytes,
+              downloadUrl: presigned.url,
+              expiresAt: presigned.expiresAt,
+              uploadedByUserId: user.id,
+            },
+            meta: { transcriptionFlowMode: skill.transcriptionFlowMode ?? "standard" },
+          });
+
           scheduleNoCodeEventDelivery({
             endpointUrl: connection.endpointUrl,
             authType: connection.authType,
             bearerToken: connection.bearerToken,
-            payload: eventPayload,
+            payload: messagePayload,
+            idempotencyKey: messagePayload.eventId,
+          });
+          scheduleNoCodeEventDelivery({
+            endpointUrl: connection.endpointUrl,
+            authType: connection.authType,
+            bearerToken: connection.bearerToken,
+            payload: fileUploadedPayload,
+            idempotencyKey: `file.uploaded:${mapped.id}`,
           });
         }
 

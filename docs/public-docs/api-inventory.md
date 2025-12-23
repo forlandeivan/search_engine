@@ -18,12 +18,15 @@
 - `GET /api/chat/sessions/:chatId/messages?workspaceId=...` — история чата.
 - `POST /api/chat/sessions/:chatId/messages` — отправка user-сообщения (используется внутри UI).
 - `POST /api/chat/sessions/:chatId/messages/llm` — запуск LLM-ответа; Accept `text/event-stream` для стрима (SSE).
+- `POST /api/chat/sessions/:chatId/messages/file` — загрузка файла (multipart/form-data, поле `file`, workspaceId в body/query). Возвращает message `{ type: "file", file: { attachmentId, filename, mimeType, sizeBytes, downloadUrl, expiresAt } }`.
+- `GET /api/chat/messages/:messageId/file?workspaceId=...` — скачать файл сообщения (auth, workspace scope). downloadUrl из ответа — presigned с TTL `ATTACHMENT_URL_TTL_SECONDS` (по умолчанию 15 минут).
 - No-code входящие callbacks:
   - `POST /api/no-code/callback/messages` body `{ workspaceId, chatId, role, content|text, triggerMessageId?, metadata? }` + `Authorization: Bearer <callback_token>`.
   - `POST /api/no-code/callback/stream` body `{ workspaceId, chatId, triggerMessageId, streamId, chunkId, delta|text, seq?, isFinal? }` + bearer-токен навыка.
   - `POST /api/no-code/callback/assistant-action` body `{ workspaceId, chatId, actionType, actionText?, triggerMessageId?, occurredAt? }` + bearer-токен навыка.
 - Исходящие события no-code:
   - `message.created` webhook (POST на сконфигурированный endpoint навыка) с полями message + `contextPack` (history в пределах contextInputLimit).
+  - `file.uploaded` webhook (для no-code навыков): файл метаданные + presigned downloadUrl/expiresAt, idempotency-key `file.uploaded:<messageId>`.
 
 ## Assistant action
 - Поле `currentAssistantAction` отдаётся в `GET /api/chat/sessions`. Callback для установки см. выше.

@@ -54,6 +54,28 @@ export type SyncFinalResponse = {
   results: SyncFinalResult[];
 };
 
+export type FileUploadedEventPayload = {
+  schemaVersion: 1;
+  event: "file.uploaded";
+  eventId: string;
+  occurredAt: string;
+  workspace: { id: string };
+  chat: { id: string };
+  skill: { id: string };
+  message: { id: string; createdAt: string; type: "file" };
+  actor: { userId: string };
+  file: {
+    attachmentId: string | null;
+    filename: string | null;
+    mimeType: string | null;
+    sizeBytes: number | null;
+    downloadUrl: string;
+    expiresAt: string | null;
+    uploadedByUserId?: string | null;
+  };
+  meta?: Record<string, unknown>;
+};
+
 const syncFinalResultSchema = z.object({
   role: z.enum(["assistant", "user", "system"]),
   text: z.string(),
@@ -157,6 +179,7 @@ export async function deliverNoCodeEvent(opts: {
   authType: NoCodeAuthType;
   bearerToken: string | null;
   payload: MessageCreatedEventPayload;
+  idempotencyKey?: string;
   timeoutMs?: number;
 }): Promise<{ ok: boolean; status: number; responseText: string; syncFinal: SyncFinalResponse | null }> {
   const timeoutMs = Math.max(100, Math.trunc(opts.timeoutMs ?? 10_000));
@@ -167,6 +190,9 @@ export async function deliverNoCodeEvent(opts: {
   const headers = new Headers();
   headers.set("Content-Type", "application/json");
   headers.set("Accept", "application/json");
+  if (opts.idempotencyKey) {
+    headers.set("Idempotency-Key", opts.idempotencyKey);
+  }
 
   if (opts.authType === "bearer") {
     if (!opts.bearerToken) {
@@ -206,6 +232,7 @@ export function scheduleNoCodeEventDelivery(opts: {
   authType: NoCodeAuthType;
   bearerToken: string | null;
   payload: MessageCreatedEventPayload;
+  idempotencyKey?: string;
 }): void {
   void (async () => {
     try {
@@ -214,6 +241,7 @@ export function scheduleNoCodeEventDelivery(opts: {
         authType: opts.authType,
         bearerToken: opts.bearerToken,
         payload: opts.payload,
+        idempotencyKey: opts.idempotencyKey,
         timeoutMs: 2000,
       });
 
@@ -243,8 +271,40 @@ export function scheduleNoCodeEventDelivery(opts: {
           console.warn("[no-code] failed to apply sync_final results", {
             eventId: opts.payload.eventId,
             error: error instanceof Error ? error.message : String(error),
-          });
-        }
+  });
+}
+
+export function buildFileUploadedEventPayload(args: {
+  workspaceId: string;
+  chatId: string;
+  skillId: string;
+  message: { id: string; createdAt: string };
+  actorUserId: string;
+  file: {
+    attachmentId: string | null;
+    filename: string | null;
+    mimeType: string | null;
+    sizeBytes: number | null;
+    downloadUrl: string;
+    expiresAt: string | null;
+    uploadedByUserId?: string | null;
+  };
+  meta?: Record<string, unknown>;
+}): FileUploadedEventPayload {
+  return {
+    schemaVersion: 1,
+    event: "file.uploaded",
+    eventId: args.message.id,
+    occurredAt: new Date().toISOString(),
+    workspace: { id: args.workspaceId },
+    chat: { id: args.chatId },
+    skill: { id: args.skillId },
+    message: { id: args.message.id, createdAt: args.message.createdAt, type: "file" },
+    actor: { userId: args.actorUserId },
+    file: { ...args.file },
+    ...(args.meta ? { meta: args.meta } : {}),
+  };
+}
       }
     } catch (error) {
       console.warn("[no-code] message.created delivery error", {
