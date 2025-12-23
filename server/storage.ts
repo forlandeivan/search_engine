@@ -378,6 +378,22 @@ async function ensureConstraint(
   await db.execute(createConstraintSql);
 }
 
+async function ensureIndex(indexName: string, createIndexSql: SQL): Promise<void> {
+  const indexCheck = await db.execute(sql`
+    SELECT COUNT(*)::int AS "indexCount"
+    FROM pg_class
+    WHERE relname = ${indexName}
+      AND relkind = 'i'
+  `);
+
+  const count = Number(indexCheck.rows[0]?.indexCount ?? 0);
+  if (Number.isFinite(count) && count > 0) {
+    return;
+  }
+
+  await db.execute(createIndexSql);
+}
+
 async function hasGenRandomUuidFunction(): Promise<boolean> {
   const result = await db.execute(sql`
     SELECT COUNT(*)::int AS "functionCount"
@@ -1247,6 +1263,11 @@ async function ensureChatMessagesTable(): Promise<void> {
         "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "chat_messages"
+      ADD COLUMN IF NOT EXISTS "message_type" text NOT NULL DEFAULT 'text'
     `);
 
     await ensureConstraint(

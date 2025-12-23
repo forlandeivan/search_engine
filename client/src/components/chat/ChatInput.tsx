@@ -47,6 +47,7 @@ function EqualizerIcon() {
 export default function ChatInput({
   onSend,
   onTranscribe,
+  onSendFile,
   onEnsureChat,
   disabled,
   readOnlyHint,
@@ -62,7 +63,6 @@ export default function ChatInput({
   const [isDragOver, setIsDragOver] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [pendingTranscribe, setPendingTranscribe] = useState<TranscribePayload | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const attachInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -114,34 +114,6 @@ export default function ChatInput({
     }
     return true;
   };
-
-  const handleSendFile = useCallback(
-    async (file: File) => {
-      if (!onSendFile) return;
-      const targetChatId = await ensureChatId();
-      if (!targetChatId) {
-        toast({
-          title: "Нужен чат",
-          description: "Сначала выберите или создайте чат, чтобы прикрепить файл.",
-          variant: "destructive",
-        });
-        return;
-      }
-      setIsUploadingFile(true);
-      try {
-        await onSendFile(file);
-      } catch (error) {
-        toast({
-          title: "Не удалось отправить файл",
-          description: formatApiErrorMessage(error),
-          variant: "destructive",
-        });
-      } finally {
-        setIsUploadingFile(false);
-      }
-    },
-    [onSendFile, ensureChatId, toast],
-  );
 
   const ensureChatId = useCallback(async (): Promise<string | null> => {
     if (chatId) return chatId;
@@ -230,6 +202,34 @@ export default function ChatInput({
     [ensureChatId, toast],
   );
 
+  const handleSendFile = useCallback(
+    async (file: File) => {
+      if (!onSendFile) return;
+      const targetChatId = await ensureChatId();
+      if (!targetChatId) {
+        toast({
+          title: "Нужен чат",
+          description: "Сначала выберите или создайте чат, чтобы прикрепить файл.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setIsUploadingFile(true);
+      try {
+        await onSendFile(file);
+      } catch (error) {
+        toast({
+          title: "Не удалось отправить файл",
+          description: formatApiErrorMessage(error),
+          variant: "destructive",
+        });
+      } finally {
+        setIsUploadingFile(false);
+      }
+    },
+    [onSendFile, ensureChatId, toast],
+  );
+
   const handleSend = useCallback(async () => {
     if (disabled) {
       if (readOnlyHint) {
@@ -265,10 +265,6 @@ export default function ChatInput({
       setIsSending(false);
     }
   }, [attachedFile, disabled, onSend, onTranscribe, pendingTranscribe, readOnlyHint, toast, value]);
-
-  const handleAttachClick = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -309,19 +305,6 @@ export default function ChatInput({
     [handleUploadAudio],
   );
 
-  const handleFileChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      event.target.value = "";
-      if (validateAudioFile(file)) {
-        setAttachedFile(file);
-        handleUploadAudio(file);
-      }
-    },
-    [handleUploadAudio],
-  );
-
   useEffect(() => {
     autoResize();
   }, [value, autoResize]);
@@ -332,8 +315,7 @@ export default function ChatInput({
     isSending ||
     (value.trim().length === 0 && !attachedFile) ||
     (attachedFile && !pendingTranscribe);
-  const isAttachDisabled = disabled || isUploading || !!attachedFile;
-  const isFileAttachDisabled = disabled || isUploadingFile;
+  const isAttachDisabled = disabled || isUploading || isUploadingFile || !!attachedFile;
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -386,38 +368,19 @@ export default function ChatInput({
           {showAudioAttach && (
             <>
               <input
-                ref={fileInputRef}
-                type="file"
-                accept={ACCEPTED_AUDIO_TYPES}
-                onChange={handleFileChange}
-                className="hidden"
-                data-testid="input-audio-file"
-              />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
-                    onClick={handleAttachClick}
-                    disabled={isAttachDisabled}
-                    data-testid="button-attach-audio"
-                  >
-                    <Paperclip className="h-6 w-6" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  <p>{disabledTooltip ?? "Прикрепите файл для транскрибации"}</p>
-                </TooltipContent>
-              </Tooltip>
-              <input
                 ref={attachInputRef}
                 type="file"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = "";
                   if (!file) return;
+                  if (showAudioAttach && file.type?.startsWith("audio/")) {
+                    if (validateAudioFile(file)) {
+                      setAttachedFile(file);
+                      void handleUploadAudio(file);
+                    }
+                    return;
+                  }
                   void handleSendFile(file);
                 }}
                 className="hidden"
@@ -431,7 +394,7 @@ export default function ChatInput({
                     size="icon"
                     className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
                     onClick={() => attachInputRef.current?.click()}
-                    disabled={isFileAttachDisabled}
+                    disabled={isAttachDisabled}
                     data-testid="button-attach-file"
                   >
                     <Paperclip className="h-6 w-6" />
@@ -477,24 +440,6 @@ export default function ChatInput({
                 <p>{disabledTooltip}</p>
               </TooltipContent>
             ) : null}
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
-                data-testid="button-voice-input"
-                disabled={disabled}
-              >
-                <Mic className="h-6 w-6" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <p>{disabledTooltip ?? "Голосовой ввод"}</p>
-            </TooltipContent>
           </Tooltip>
 
           <Button

@@ -143,6 +143,7 @@ async function setupFetchMock() {
   const fetchMock = vi.fn(async () => ({
     ok: true,
     text: async () => '{"access_token":"token"}',
+    json: async () => ({ access_token: "token" }),
     headers: new actual.Headers(),
   }));
 
@@ -184,6 +185,50 @@ function setupChatServiceMock() {
   }));
 
   return Object.assign(chatService, { ChatServiceError });
+}
+
+function setupSkillsMock(overrides: Partial<Record<string, unknown>> = {}) {
+  const skill = {
+    id: "skill-1",
+    workspaceId: "workspace-1",
+    name: "Skill",
+    description: null,
+    isSystem: false,
+    systemKey: null,
+    status: "active",
+    executionMode: "llm",
+    contextInputLimit: null,
+    ...overrides,
+  };
+
+  const getSkillById = vi.fn(async () => skill);
+  const createUnicaChatSkillForWorkspace = vi.fn(async () => skill);
+
+  class SkillServiceError extends Error {
+    status: number;
+    code?: string;
+
+    constructor(message: string, status = 400, code?: string) {
+      super(message);
+      this.status = status;
+      this.code = code;
+    }
+  }
+
+  vi.doMock("../server/skills", () => ({
+    listSkills: vi.fn(),
+    createSkill: vi.fn(),
+    updateSkill: vi.fn(),
+    archiveSkill: vi.fn(),
+    getSkillById,
+    SkillServiceError,
+    UNICA_CHAT_SYSTEM_KEY: "UNICA_CHAT",
+    createUnicaChatSkillForWorkspace,
+    generateNoCodeCallbackToken: vi.fn(),
+    verifyNoCodeCallbackToken: vi.fn(),
+  }));
+
+  return { getSkillById, createUnicaChatSkillForWorkspace };
 }
 
 const baseSkillContext = {
@@ -329,6 +374,7 @@ describe("Chat API", () => {
     setupAuthMock();
     setupStorageMock();
     setupOtherMocks();
+    setupSkillsMock();
     const chatService = setupChatServiceMock();
     chatService.listUserChats.mockResolvedValueOnce([
       {
@@ -351,7 +397,12 @@ describe("Chat API", () => {
       expect(response.status).toBe(200);
       const payload = (await response.json()) as { chats: Array<{ id: string }> };
       expect(payload.chats).toHaveLength(1);
-      expect(chatService.listUserChats).toHaveBeenCalledWith("workspace-1", "user-1", undefined);
+      expect(chatService.listUserChats).toHaveBeenCalledWith(
+        "workspace-1",
+        "user-1",
+        undefined,
+        { includeArchived: false },
+      );
     } finally {
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => (error ? reject(error) : resolve()));
@@ -364,7 +415,21 @@ describe("Chat API", () => {
     setupAuthMock();
     setupStorageMock();
     setupOtherMocks();
+    setupSkillsMock();
     const chatService = setupChatServiceMock();
+    chatService.getChatById.mockResolvedValueOnce({
+      id: "chat-1",
+      workspaceId: "workspace-1",
+      userId: "user-1",
+      skillId: "skill-1",
+      title: "Chat",
+      status: "active",
+      skillStatus: "active",
+      skillIsSystem: false,
+      skillSystemKey: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     chatService.addUserMessage.mockResolvedValueOnce({
       id: "msg-1",
       chatId: "chat-1",
@@ -397,6 +462,7 @@ describe("Chat API", () => {
     setupAuthMock();
     setupStorageMock();
     setupOtherMocks();
+    setupSkillsMock();
     const logService = setupSkillExecutionLogMock();
     await setupFetchMock();
     const { executeLlmCompletion } = setupLlmClientMock();
@@ -500,7 +566,7 @@ describe("Chat API", () => {
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ content: "Привет" }),
+          body: JSON.stringify({ content: "Привет", stream: false }),
         },
       );
 
@@ -511,7 +577,13 @@ describe("Chat API", () => {
         executionId: "execution-1",
       });
       expect(chatService.buildChatCompletionRequestBody).toHaveBeenCalled();
-      expect(chatService.addAssistantMessage).toHaveBeenCalledWith("chat-1", "workspace-1", "user-1", "Ответ");
+      expect(chatService.addAssistantMessage).toHaveBeenCalledWith(
+        "chat-1",
+        "workspace-1",
+        "user-1",
+        "Ответ",
+        undefined,
+      );
       expect(logService.startExecution).toHaveBeenCalledWith({
         workspaceId: "workspace-1",
         userId: "user-1",
@@ -556,6 +628,7 @@ describe("Chat API", () => {
     setupAuthMock();
     setupStorageMock();
     setupOtherMocks();
+    setupSkillsMock();
     const logService = setupSkillExecutionLogMock();
     await setupFetchMock();
     const { executeLlmCompletion } = setupLlmClientMock();
@@ -688,6 +761,7 @@ describe("Chat API", () => {
     setupAuthMock();
     setupStorageMock();
     setupOtherMocks();
+    setupSkillsMock();
     const logService = setupSkillExecutionLogMock();
     await setupFetchMock();
     setupLlmClientMock();
@@ -742,6 +816,7 @@ describe("Chat API", () => {
     setupAuthMock();
     setupStorageMock();
     setupOtherMocks();
+    setupSkillsMock();
     const logService = setupSkillExecutionLogMock();
     await setupFetchMock();
     const { executeLlmCompletion } = setupLlmClientMock();
@@ -836,7 +911,7 @@ describe("Chat API", () => {
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ content: "Привет" }),
+          body: JSON.stringify({ content: "Привет", stream: false }),
         },
       );
 
