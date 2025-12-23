@@ -122,6 +122,47 @@ test.describe("skill settings", () => {
     await saveSuccessScreenshot(page, testInfo);
   });
 
+  test("execution mode shows the right sections", async ({ page }, testInfo) => {
+    await login(page);
+
+    const workspaceId = await fetchWorkspaceId(page);
+    expect(workspaceId, "workspace id must be available").toBeTruthy();
+
+    const skillsResponse = await page.request.get("/api/skills", {
+      headers: { "X-Workspace-Id": workspaceId },
+    });
+    const skillsPayload = await skillsResponse.json();
+    const skills = (skillsPayload?.skills ?? []) as Array<{
+      id: string;
+      isSystem?: boolean;
+      status?: string | null;
+    }>;
+    const editableSkill = skills.find((skill) => !skill.isSystem && skill.status !== "archived");
+    if (!editableSkill) {
+      testInfo.skip("No editable skills available");
+    }
+
+    await page.goto("/skills");
+    const skillRow = page.getByTestId(`skill-row-${editableSkill!.id}`);
+    await expect(skillRow).toBeVisible();
+    await skillRow.click();
+
+    await page.getByTestId("execution-mode-standard").click();
+    await expect(page.getByText("Навык будет искать ответы только в выбранных базах знаний.")).toBeVisible();
+    await expect(page.getByText("Управляют тем, где искать и сколько текста отдавать в ответах.")).toBeVisible();
+    await expect(page.getByText("RAG (дополнительно)")).toBeVisible();
+    await expect(page.getByText("No-code подключение")).toHaveCount(0);
+
+    await page.getByTestId("execution-mode-no-code").click();
+    await expect(page.getByText("No-code подключение")).toBeVisible();
+    await expect(page.getByText("URL сценария")).toBeVisible();
+    await expect(page.getByText("Навык будет искать ответы только в выбранных базах знаний.")).toHaveCount(0);
+    await expect(page.getByText("Управляют тем, где искать и сколько текста отдавать в ответах.")).toHaveCount(0);
+    await expect(page.getByText("RAG (дополнительно)")).toHaveCount(0);
+
+    await saveSuccessScreenshot(page, testInfo);
+  });
+
   test("auto routes to LLM when no RAG sources selected", async ({ page }, testInfo) => {
     await login(page);
 

@@ -207,7 +207,12 @@ const normalizeActionId = (value: string | null | undefined): string | null => {
 function assertRagRequirements(
   ragConfig: SkillRagConfig,
   knowledgeBaseIds: readonly string[],
+  executionMode?: SkillExecutionMode,
 ): void {
+  if (executionMode === "no_code") {
+    return;
+  }
+
   const hasKnowledgeBases = Boolean(knowledgeBaseIds?.length);
   const hasCollections = Boolean(ragConfig.collectionIds?.length);
   const hasRagSources = hasKnowledgeBases || hasCollections;
@@ -215,14 +220,12 @@ function assertRagRequirements(
   if (!hasRagSources) {
     return;
   }
-  if (!hasKnowledgeBases) {
-    throw new SkillServiceError("Для RAG-навыка нужно выбрать хотя бы одну базу знаний", 400);
+
+  if (hasCollections && !hasKnowledgeBases) {
+    throw new SkillServiceError("Для выбранных коллекций укажите базу знаний", 400);
   }
   if (ragConfig.mode === "selected_collections" && (!ragConfig.collectionIds || ragConfig.collectionIds.length === 0)) {
-    throw new SkillServiceError("Для выбранного режима RAG укажите коллекции", 400);
-  }
-  if (!ragConfig.embeddingProviderId) {
-    throw new SkillServiceError("Для RAG-навыка нужно выбрать сервис эмбеддингов", 400);
+    return;
   }
 }
 
@@ -627,7 +630,7 @@ export async function createSkill(
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
   const executionMode = normalized.executionMode ?? DEFAULT_SKILL_EXECUTION_MODE;
   const mode = normalized.mode ?? DEFAULT_SKILL_MODE;
-  assertRagRequirements(ragConfig, validKnowledgeBases);
+  assertRagRequirements(ragConfig, validKnowledgeBases, executionMode);
   let resolvedModelId: string | null = normalized.modelId ?? null;
   if (normalized.modelId) {
     try {
@@ -716,6 +719,7 @@ export async function updateSkill(
 
 
   const normalized = buildEditableColumns(input);
+  const submittedExecutionMode = normalized.executionMode ?? normalizeSkillExecutionMode(row.executionMode);
   const existingNoCodeEndpoint = row.noCodeEndpointUrl ?? null;
   const existingNoCodeAuth = normalizeNoCodeAuthType(row.noCodeAuthType);
   const existingBearerToken = row.noCodeBearerToken ?? null;
@@ -723,20 +727,20 @@ export async function updateSkill(
     normalized.noCodeEndpointUrl !== undefined ? normalized.noCodeEndpointUrl : existingNoCodeEndpoint;
   const submittedNoCodeAuth =
     normalized.noCodeAuthType !== undefined ? normalizeNoCodeAuthType(normalized.noCodeAuthType) : existingNoCodeAuth;
-  if (submittedNoCodeAuth === "bearer" && !submittedNoCodeEndpoint) {
+  if (submittedExecutionMode === "no_code" && submittedNoCodeAuth === "bearer" && !submittedNoCodeEndpoint) {
     throw new SkillServiceError("Укажите URL для no-code подключения", 400);
   }
   const submittedBearerCandidate =
     normalized.noCodeBearerToken !== undefined ? Boolean(normalized.noCodeBearerToken) : Boolean(existingBearerToken);
-  if (submittedNoCodeAuth === "bearer" && !submittedBearerCandidate) {
+  if (submittedExecutionMode === "no_code" && submittedNoCodeAuth === "bearer" && !submittedBearerCandidate) {
     throw new SkillServiceError("Введите токен для Bearer-авторизации", 400);
   }
   let nextBearerToken =
     normalized.noCodeBearerToken !== undefined ? normalized.noCodeBearerToken : existingBearerToken;
-  if (submittedNoCodeAuth === "none" || !submittedNoCodeEndpoint) {
+  if (submittedExecutionMode === "no_code" && (submittedNoCodeAuth === "none" || !submittedNoCodeEndpoint)) {
     nextBearerToken = null;
   }
-  if (normalized.executionMode === "no_code") {
+  if (submittedExecutionMode === "no_code") {
     await assertNoCodeFlowAllowed(workspaceId);
   }
   const updates: Partial<EditableSkillColumns> = {};
@@ -796,7 +800,7 @@ export async function updateSkill(
     knowledgeBaseIdsForValidation = await getSkillKnowledgeBaseIds(skillId, workspaceId);
   }
 
-  assertRagRequirements(nextRagConfig, knowledgeBaseIdsForValidation);
+  assertRagRequirements(nextRagConfig, knowledgeBaseIdsForValidation, submittedExecutionMode);
 
   if (normalized.modelId !== undefined) {
     if (normalized.modelId === null) {

@@ -281,6 +281,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       return Math.min(4096, Math.max(16, parsed));
     };
 
+    const isNoCodeMode = values.executionMode === "no_code";
     const ragTopK = Math.max(1, parseIntegerOrDefault(values.ragTopK, 5));
     const ragMinScore = parseScoreOrDefault(values.ragMinScore, 0.7);
     const sanitizedMaxTokens = values.ragMaxContextTokens?.trim();
@@ -293,7 +294,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       values.ragMode === "selected_collections"
         ? values.ragCollectionIds.map((name) => name.trim()).filter((name) => name.length > 0)
         : [];
-    const hasRagSources = values.knowledgeBaseIds.length > 0 || ragCollectionIds.length > 0;
+    const hasRagSources = !isNoCodeMode && (values.knowledgeBaseIds.length > 0 || ragCollectionIds.length > 0);
     const llmTemperature = parseTemperatureOrNull(values.llmTemperature);
     const llmMaxTokens = parseMaxTokensOrNull(values.llmMaxTokens);
     const autoActionId =
@@ -318,28 +319,30 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       icon: values.icon?.trim() ? values.icon.trim() : null,
       knowledgeBaseIds: values.knowledgeBaseIds,
       executionMode: values.executionMode,
-      mode: hasRagSources ? "rag" : "llm",
+      mode: isNoCodeMode ? "llm" : hasRagSources ? "rag" : "llm",
       llmProviderConfigId: providerId,
       modelId: resolvedModel.key,
-      ragConfig: {
-        mode: values.ragMode,
-        collectionIds: ragCollectionIds,
-        topK: ragTopK,
-        minScore: ragMinScore,
-        maxContextTokens: ragMaxContextTokens,
-        showSources: values.ragShowSources,
-        embeddingProviderId:
-          values.ragEmbeddingProviderId && values.ragEmbeddingProviderId !== "__none"
-            ? values.ragEmbeddingProviderId.trim()
-            : null,
-        bm25Weight: null,
-        bm25Limit: null,
-        vectorWeight: null,
-        vectorLimit: null,
-        llmTemperature,
-        llmMaxTokens,
-        llmResponseFormat: null,
-      },
+      ragConfig: isNoCodeMode
+        ? undefined
+        : {
+            mode: values.ragMode,
+            collectionIds: ragCollectionIds,
+            topK: ragTopK,
+            minScore: ragMinScore,
+            maxContextTokens: ragMaxContextTokens,
+            showSources: values.ragShowSources,
+            embeddingProviderId:
+              values.ragEmbeddingProviderId && values.ragEmbeddingProviderId !== "__none"
+                ? values.ragEmbeddingProviderId.trim()
+                : null,
+            bm25Weight: null,
+            bm25Limit: null,
+            vectorWeight: null,
+            vectorLimit: null,
+            llmTemperature,
+            llmMaxTokens,
+            llmResponseFormat: null,
+          },
       transcriptionFlowMode: values.transcriptionFlowMode,
       onTranscriptionMode: values.onTranscriptionMode,
       onTranscriptionAutoActionId: autoActionId,
