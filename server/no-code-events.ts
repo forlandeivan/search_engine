@@ -271,7 +271,16 @@ export function scheduleNoCodeEventDelivery(opts: {
           console.warn("[no-code] failed to apply sync_final results", {
             eventId: opts.payload.eventId,
             error: error instanceof Error ? error.message : String(error),
-  });
+          });
+        }
+      }
+    } catch (error) {
+      console.warn("[no-code] message.created delivery error", {
+        eventId: opts.payload.eventId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  })();
 }
 
 export function buildFileUploadedEventPayload(args: {
@@ -304,13 +313,4 @@ export function buildFileUploadedEventPayload(args: {
     file: { ...args.file },
     ...(args.meta ? { meta: args.meta } : {}),
   };
-}
-      }
-    } catch (error) {
-      console.warn("[no-code] message.created delivery error", {
-        eventId: opts.payload.eventId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  })();
 }
