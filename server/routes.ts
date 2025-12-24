@@ -10306,7 +10306,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
     async (req, res, next) => {
       try {
-        const { id: workspaceId } = getRequestWorkspace(req);
+        const workspaceId = req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, null);
         const chatId = req.params.chatId;
         if (!chatId) {
           return res.status(400).json({ message: "Не указан chatId" });
