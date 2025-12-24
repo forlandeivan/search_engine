@@ -178,7 +178,7 @@ export const mapChatSummary = (
 const ARCHIVED_CHAT_ERROR_MESSAGE = "Чат архивирован. Отправка сообщений недоступна.";
 const ARCHIVED_SKILL_ERROR_MESSAGE = "Навык архивирован. Отправка сообщений недоступна.";
 
-function ensureChatAndSkillAreActive(chat: ChatSummary) {
+export function ensureChatAndSkillAreActive(chat: ChatSummary) {
   if (chat.status === "archived") {
     throw new ChatServiceError(ARCHIVED_CHAT_ERROR_MESSAGE, 403, "CHAT_ARCHIVED");
   }

@@ -380,7 +380,11 @@ export default function ChatPage({ params }: ChatPageProps) {
       formData.append("file", file);
       formData.append("workspaceId", workspaceId);
 
-      const response = await fetch(`/api/chat/sessions/${targetChatId}/messages/file`, {
+      const response = await fetch(
+        `/api/chat/sessions/${targetChatId}/messages/file?workspaceId=${encodeURIComponent(
+          workspaceId,
+        )}`,
+        {
         method: "POST",
         credentials: "include",
         body: formData,
