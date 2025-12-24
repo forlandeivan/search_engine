@@ -647,17 +647,18 @@ export default function ChatPage({ params }: ChatPageProps) {
               readOnlyReason={readOnlyReason}
             />
           <div className="shrink-0">
-            <ChatInput
-              onSend={handleSend}
-              onTranscribe={handleTranscription}
-              onSendFile={handleSendFile}
-              disabled={disableInput}
-              readOnlyHint={readOnlyHint}
-              chatId={effectiveChatId ?? null}
-              placeholder={
-                placeholder
-              }
-            />
+          <ChatInput
+            onSend={handleSend}
+            onTranscribe={handleTranscription}
+            onSendFile={handleSendFile}
+            disabled={disableInput}
+            readOnlyHint={readOnlyHint}
+            chatId={effectiveChatId ?? null}
+            placeholder={
+              placeholder
+            }
+            disableAudioTranscription={activeSkill?.executionMode === "no_code"}
+          />
           </div>
         </div>
         {openTranscript?.id && (

@@ -12512,6 +12512,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
         const workspaceId = chat.workspaceId;
         const skillIdForChat = chat.skillId ?? null;
+        const skill =
+          skillIdForChat && workspaceId
+            ? await getSkillById(workspaceId, skillIdForChat)
+            : null;
+        if (skill?.executionMode === "no_code") {
+          return res.status(409).json({
+            message: "Для No-code навыков ASR выполняется внешним сценарием.",
+          });
+        }
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 

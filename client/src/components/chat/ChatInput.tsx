@@ -29,6 +29,7 @@ type ChatInputProps = {
   placeholder?: string;
   showAudioAttach?: boolean;
   chatId?: string | null;
+  disableAudioTranscription?: boolean;
 };
 
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
@@ -54,6 +55,7 @@ export default function ChatInput({
   placeholder,
   showAudioAttach = true,
   chatId = null,
+  disableAudioTranscription = false,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
@@ -126,6 +128,12 @@ export default function ChatInput({
 
   const handleUploadAudio = useCallback(
     async (file: File): Promise<TranscribePayload | null> => {
+      if (disableAudioTranscription) {
+        if (onSendFile) {
+          await onSendFile(file);
+        }
+        return null;
+      }
       const targetChatId = await ensureChatId();
       if (!targetChatId) {
         toast({
@@ -199,7 +207,7 @@ export default function ChatInput({
         setIsUploading(false);
       }
     },
-    [ensureChatId, toast],
+    [ensureChatId, toast, disableAudioTranscription, onSendFile],
   );
 
   const handleSendFile = useCallback(
@@ -298,7 +306,9 @@ export default function ChatInput({
       if (!files || files.length === 0) return;
       const file = files[0];
       if (validateAudioFile(file)) {
-        setAttachedFile(file);
+        if (!disableAudioTranscription) {
+          setAttachedFile(file);
+        }
         handleUploadAudio(file);
       }
     },
@@ -374,13 +384,15 @@ export default function ChatInput({
                   const file = event.target.files?.[0];
                   event.target.value = "";
                   if (!file) return;
-                  if (showAudioAttach && file.type?.startsWith("audio/")) {
-                    if (validateAudioFile(file)) {
+                if (showAudioAttach && file.type?.startsWith("audio/")) {
+                  if (validateAudioFile(file)) {
+                    if (!disableAudioTranscription) {
                       setAttachedFile(file);
-                      void handleUploadAudio(file);
                     }
-                    return;
+                    void handleUploadAudio(file);
                   }
+                  return;
+                }
                   void handleSendFile(file);
                 }}
                 className="hidden"
