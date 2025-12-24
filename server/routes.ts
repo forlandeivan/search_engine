@@ -122,6 +122,7 @@ import {
 import { offChatEvent, onChatEvent } from "./chat-events";
 import {
   buildMessageCreatedEventPayload,
+  buildFileUploadedEventPayload,
   getNoCodeConnectionInternal,
   scheduleNoCodeEventDelivery,
 } from "./no-code-events";
