@@ -187,7 +187,7 @@ export function ensureChatAndSkillAreActive(chat: ChatSummary) {
   }
 }
 
-function ensureSkillIsActive(skill: SkillDto) {
+export function ensureSkillIsActive(skill: SkillDto) {
   if (skill.status === "archived") {
     throw new ChatServiceError(ARCHIVED_SKILL_ERROR_MESSAGE, 403, "SKILL_ARCHIVED");
   }
@@ -212,7 +212,7 @@ export async function clearAssistantActionForChat(opts: {
   await storage.clearChatAssistantAction(opts.chatId);
 }
 
-const mapMessage = (message: ChatMessage) => {
+export const mapMessage = (message: ChatMessage) => {
   const metadata = message.metadata ?? {};
   const type = (message as any).messageType ?? "text";
   const fileMeta = (metadata as any).file ?? null;

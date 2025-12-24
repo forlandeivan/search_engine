@@ -116,6 +116,8 @@ import {
   ChatServiceError,
   getChatById,
   ensureChatAndSkillAreActive,
+  ensureSkillIsActive,
+  mapMessage,
 } from "./chat-service";
 import { offChatEvent, onChatEvent } from "./chat-events";
 import {
