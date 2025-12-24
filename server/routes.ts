@@ -12568,7 +12568,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           chatTitle: chat.title,
         });
 
-        // Создаём запись выполнения ASR
+        // Создаём запись выполнения ASR (используем известную длительность, если прочитали из файла)
         const asrExecution = await asrExecutionLogService.createExecution({
           workspaceId,
           skillId: skillIdForChat,
@@ -12578,7 +12578,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           status: "processing",
           fileName,
           fileSizeBytes: file.size,
-          durationMs: response.durationSeconds ? response.durationSeconds * 1000 : null,
+          durationMs: audioDurationSeconds ? audioDurationSeconds * 1000 : null,
           language: lang ?? null,
           startedAt: new Date(),
         });
@@ -12597,7 +12597,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
         // Use async API for all files regardless of size
         console.info(`[transcribe] Using async API for file (${file.size} bytes)`);
-        const response = await yandexSttAsyncService.startAsyncTranscription({
+        const sttResponse = await yandexSttAsyncService.startAsyncTranscription({
           audioBuffer: file.buffer,
           mimeType: file.mimetype,
           lang,
@@ -12612,14 +12612,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const transcript = await storage.createTranscript({
           workspaceId,
           chatId,
-          sourceFileId: response.uploadResult?.objectKey ?? null,
+          sourceFileId: sttResponse.uploadResult?.objectKey ?? null,
           status: "processing",
           title: file.originalname ? `Аудиозапись: ${fileName}` : "Аудиозапись заседания",
           previewText: null,
           fullText: null,
         });
 
-        yandexSttAsyncService.setOperationContext(user.id, response.operationId, {
+        yandexSttAsyncService.setOperationContext(user.id, sttResponse.operationId, {
           chatId,
           transcriptId: transcript.id,
           executionId: asrExecution.id,
@@ -12644,13 +12644,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         });
         await asrExecutionLogService.addEvent(asrExecution.id, {
           stage: "asr_request_sent",
-          details: { provider: "yandex_speechkit", operationId: response.operationId, language: lang ?? null },
+          details: { provider: "yandex_speechkit", operationId: sttResponse.operationId, language: lang ?? null },
         });
 
         ensureNotAborted();
         res.json({
-          operationId: response.operationId,
-          message: response.message,
+          operationId: sttResponse.operationId,
+          message: sttResponse.message,
           transcriptId: transcript.id,
           audioMessageId: audioMessage.id,
           audioMessage: {
