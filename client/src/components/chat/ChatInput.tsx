@@ -163,6 +163,13 @@ export default function ChatInput({
           },
         });
 
+        if (disableAudioTranscription && response.status === 409) {
+          if (onSendFile) {
+            await onSendFile(file);
+          }
+          return null;
+        }
+
         try {
           await throwIfResNotOk(response);
         } catch (error) {
