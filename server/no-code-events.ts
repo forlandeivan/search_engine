@@ -231,7 +231,7 @@ export function scheduleNoCodeEventDelivery(opts: {
   endpointUrl: string;
   authType: NoCodeAuthType;
   bearerToken: string | null;
-  payload: MessageCreatedEventPayload;
+  payload: MessageCreatedEventPayload | FileUploadedEventPayload;
   idempotencyKey?: string;
 }): void {
   void (async () => {
@@ -240,20 +240,20 @@ export function scheduleNoCodeEventDelivery(opts: {
         endpointUrl: opts.endpointUrl,
         authType: opts.authType,
         bearerToken: opts.bearerToken,
-        payload: opts.payload,
+        payload: opts.payload as MessageCreatedEventPayload,
         idempotencyKey: opts.idempotencyKey,
         timeoutMs: 2000,
       });
 
       if (!result.ok) {
-        console.warn("[no-code] message.created delivery failed", {
+        console.warn(`[no-code] ${opts.payload.event} delivery failed`, {
           eventId: opts.payload.eventId,
           status: result.status,
         });
         return;
       }
 
-      console.info("[no-code] message.created delivered", {
+      console.info(`[no-code] ${opts.payload.event} delivered`, {
         eventId: opts.payload.eventId,
         status: result.status,
       });
