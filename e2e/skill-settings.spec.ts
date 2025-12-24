@@ -7,7 +7,9 @@ const E2E_PASSWORD = process.env.E2E_PASSWORD;
 const login = async (page: Page) => {
   await page.goto("/");
   await page.waitForSelector("#login-email");
+  await page.click("#login-email", { clickCount: 3 });
   await page.fill("#login-email", E2E_EMAIL as string);
+  await page.click("#login-password", { clickCount: 3 });
   await page.fill("#login-password", E2E_PASSWORD as string);
   await page.getByTestId("button-login-submit").click();
   await expect(page.getByTestId("link-chat")).toBeVisible({ timeout: 15000 });

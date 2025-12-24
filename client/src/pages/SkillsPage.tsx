@@ -1435,9 +1435,9 @@ export function SkillFormContent({
             </div>
 
             <TabsContent value="main" className="space-y-6">
-              <div className="mx-auto w-full max-w-6xl px-6">
-              <fieldset disabled={controlsDisabled} className="space-y-6">
-                <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
+              <div className="mx-auto w-full max-w-6xl px-6 py-6">
+                <fieldset disabled={controlsDisabled} className="space-y-6">
+                  <div className="grid gap-6 md:grid-cols-2">
                 <Card>
                   <CardHeader className="px-6 grid gap-2">
                     <CardTitle className="text-base font-semibold">Метаданные</CardTitle>
@@ -1505,7 +1505,6 @@ export function SkillFormContent({
                     </div>
                   </CardContent>
                 </Card>
-                <div className="grid gap-6">
                   <Card>
                     <CardHeader className="px-6 grid gap-2">
                       <CardTitle className="text-base font-semibold">Режим выполнения</CardTitle>
@@ -1513,672 +1512,644 @@ export function SkillFormContent({
                         Определяет, где выполняется логика обработки сообщений.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="px-6 pb-6 space-y-4">
+                    <CardContent className="px-6 pb-6">
                       <FormField
                         control={form.control}
                         name="executionMode"
                         render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Режим</FormLabel>
-                            <FormControl>
-                              <RadioGroup
-                                value={field.value}
-                                onValueChange={controlsDisabled ? undefined : field.onChange}
-                                className="grid gap-3 md:grid-cols-2"
-                              >
-                                <div className="rounded-lg border p-3">
-                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                    <RadioGroupItem
-                                      value="standard"
-                                      id="execution-mode-standard"
-                                      className="mt-1"
-                                      disabled={controlsDisabled}
-                                      data-testid="execution-mode-standard"
-                                    />
-                                    <span>
-                                      Стандартный
-                                      <span className="block text-xs font-normal text-muted-foreground">
-                                        Обработка внутри платформы.
-                                      </span>
-                                    </span>
-                                  </label>
+                          <FormItem className="space-y-4">
+                            <RadioGroup value={field.value} onValueChange={controlsDisabled ? undefined : field.onChange} className="grid gap-3 md:grid-cols-2">
+                              <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
+                                <RadioGroupItem value="standard" className="peer sr-only" disabled={controlsDisabled} data-testid="execution-mode-standard" />
+                                <div className="flex items-start gap-3">
+                                  <div className="h-5 w-5 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                                  <div>
+                                    <p className="text-sm font-medium">Стандартный</p>
+                                    <p className="text-xs text-muted-foreground">Обработка внутри платформы.</p>
+                                  </div>
                                 </div>
-                                <div className="rounded-lg border p-3">
-                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                    <RadioGroupItem
-                                      value="no_code"
-                                      id="execution-mode-no-code"
-                                      className="mt-1"
-                                      disabled={noCodeDisabled}
-                                      data-testid="execution-mode-no-code"
-                                    />
-                                    <span>
-                                      No-code
-                                      <span className="block text-xs font-normal text-muted-foreground">
-                                        Обработка во внешнем сценарии (оркестрация настраивается отдельно).
-                                      </span>
-                                      {!allowNoCodeFlow && (
-                                        <span className="block text-xs font-normal text-muted-foreground">
-                                          Доступно на премиум-тарифе.
-                                        </span>
-                                      )}
-                                    </span>
-                                  </label>
+                                <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
+                              </label>
+                              <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
+                                <RadioGroupItem value="no_code" className="peer sr-only" disabled={noCodeDisabled} data-testid="execution-mode-no-code" />
+                                <div className="flex items-start gap-3">
+                                  <div className="h-5 w-5 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                                  <div>
+                                    <p className="text-sm font-medium">No-code</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      Обработка во внешнем сценарии (оркестрация настраивается отдельно).
+                                    </p>
+                                    {!allowNoCodeFlow && <span className="text-xs font-normal text-muted-foreground">Доступно на премиум-тарифе.</span>}
+                                  </div>
                                 </div>
-                              </RadioGroup>
-                            </FormControl>
-                            <FormMessage className="text-xs text-destructive leading-tight" />
+                                <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
+                              </label>
+                            </RadioGroup>
                           </FormItem>
                         )}
                       />
                     </CardContent>
                   </Card>
-                </div>
 
                 {isStandardMode ? (
-                  <>
-                    <div className="grid gap-6">
-                  <Card>
-                    <CardHeader className="px-6 grid gap-2">
-                      <CardTitle className="text-base font-semibold">Инструкция</CardTitle>
-                    </CardHeader>
-                    <CardContent className="px-6 pb-6">
-                      <FormField
-                        control={form.control}
-                        name="systemPrompt"
-                        render={({ field }) => (
-                          <FormItem className="grid gap-1.5">
-                            <FormLabel className="sr-only">Инструкция</FormLabel>
-                            <FormControl>
-                              <Textarea
-                                {...field}
-                                placeholder="Добавьте инструкции для модели"
-                                className="min-h-[220px]"
-                                data-testid="skill-instruction-textarea"
-                              />
-                            </FormControl>
-                            <p className="text-xs text-muted-foreground leading-tight">
-                              Всегда отправляется в LLM.
-                            </p>
-                            <FormMessage className="text-xs text-destructive leading-tight" />
-                          </FormItem>
-                        )}
-                      />
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="px-6 grid gap-2">
-                      <CardTitle className="text-base font-semibold">Лимит контекста</CardTitle>
-                      <CardDescription className="text-sm text-muted-foreground">
-                        Ограничивает объём истории, отправляемой в обработку. Пусто — используем дефолт.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="px-6 pb-6">
-                      <FormField
-                        control={form.control}
-                        name="contextInputLimit"
-                        render={({ field }) => (
-                          <FormItem className="grid gap-2 max-w-xs">
-                            <FormLabel>Лимит символов</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                min={100}
-                                max={50000}
-                                placeholder="например, 4000"
-                                value={field.value ?? ""}
-                                onChange={(event) => field.onChange(event.target.value)}
-                                data-testid="skill-context-input-limit"
-                              />
-                            </FormControl>
-                            <p className="text-xs text-muted-foreground leading-tight">
-                              Меньше — дешевле, но меньше “память” диалога. Оставьте пустым, чтобы использовать дефолт.
-                            </p>
-                            <FormMessage className="text-xs text-destructive leading-tight" />
-                          </FormItem>
-                        )}
-                      />
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="px-6 grid gap-2">
-                      <CardTitle className="text-base font-semibold">Модель LLM</CardTitle>
-                    </CardHeader>
-                    <CardContent className="px-6 pb-6 space-y-4">
-                      <FormField
-                        control={form.control}
-                        name="llmKey"
-                        render={({ field }) => (
-                          <FormItem className="grid gap-1.5">
-                            <FormLabel>LLM провайдер и модель</FormLabel>
-                            <FormControl>
-                              <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
-                                <SelectTrigger data-testid="llm-model-select">
-                                  <SelectValue placeholder="Выберите модель" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {effectiveLlmOptions.map((option) => (
-                                    <SelectItem key={option.key} value={option.key} disabled={option.disabled}>
-                                      <div className="flex flex-col gap-0.5">
-                                        <div className="flex items-center gap-2">
-                                          <span className="font-medium">{option.label}</span>
-                                          <Badge variant="outline" className="uppercase tracking-wide">
-                                            {costLevelLabel[option.costLevel]}
-                                          </Badge>
+                  <div className="md:col-span-2 grid gap-6 md:grid-cols-2">
+                    <Card className="md:col-span-2">
+                      <CardHeader className="px-6 grid gap-2">
+                        <CardTitle className="text-base font-semibold">Инструкция</CardTitle>
+                      </CardHeader>
+                      <CardContent className="px-6 pb-6">
+                        <FormField
+                          control={form.control}
+                          name="systemPrompt"
+                          render={({ field }) => (
+                            <FormItem className="grid gap-1.5">
+                              <FormLabel className="sr-only">Инструкция</FormLabel>
+                              <FormControl>
+                                <Textarea
+                                  {...field}
+                                  placeholder="Добавьте инструкции для модели"
+                                  className="min-h-[220px]"
+                                  data-testid="skill-instruction-textarea"
+                                />
+                              </FormControl>
+                              <p className="text-xs text-muted-foreground leading-tight">
+                                Всегда отправляется в LLM.
+                              </p>
+                              <FormMessage className="text-xs text-destructive leading-tight" />
+                            </FormItem>
+                          )}
+                        />
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="px-6 grid gap-2">
+                        <CardTitle className="text-base font-semibold">Лимит контекста</CardTitle>
+                        <CardDescription className="text-sm text-muted-foreground">
+                          Ограничивает объём истории, отправляемой в обработку. Пусто — используем дефолт.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="px-6 pb-6">
+                        <FormField
+                          control={form.control}
+                          name="contextInputLimit"
+                          render={({ field }) => (
+                            <FormItem className="grid gap-2 max-w-xs">
+                              <FormLabel>Лимит символов</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  min={100}
+                                  max={50000}
+                                  placeholder="например, 4000"
+                                  value={field.value ?? ""}
+                                  onChange={(event) => field.onChange(event.target.value)}
+                                  data-testid="skill-context-input-limit"
+                                />
+                              </FormControl>
+                              <p className="text-xs text-muted-foreground leading-tight">
+                                Меньше — дешевле, но меньше “память” диалога. Оставьте пустым, чтобы использовать дефолт.
+                              </p>
+                              <FormMessage className="text-xs text-destructive leading-tight" />
+                            </FormItem>
+                          )}
+                        />
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="px-6 grid gap-2">
+                        <CardTitle className="text-base font-semibold">Модель LLM</CardTitle>
+                      </CardHeader>
+                      <CardContent className="px-6 pb-6 space-y-4">
+                        <FormField
+                          control={form.control}
+                          name="llmKey"
+                          render={({ field }) => (
+                            <FormItem className="grid gap-1.5">
+                              <FormLabel>LLM провайдер и модель</FormLabel>
+                              <FormControl>
+                                <Select value={field.value} onValueChange={field.onChange} disabled={llmDisabled || controlsDisabled}>
+                                  <SelectTrigger data-testid="llm-model-select">
+                                    <SelectValue placeholder="Выберите модель" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {effectiveLlmOptions.map((option) => (
+                                      <SelectItem key={option.key} value={option.key} disabled={option.disabled}>
+                                        <div className="flex flex-col gap-0.5">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-medium">{option.label}</span>
+                                            <Badge variant="outline" className="uppercase tracking-wide">
+                                              {costLevelLabel[option.costLevel]}
+                                            </Badge>
+                                          </div>
+                                          {!option.providerIsActive && (
+                                            <span className="text-xs text-muted-foreground">Провайдер отключён</span>
+                                          )}
                                         </div>
-                                        {!option.providerIsActive && (
-                                          <span className="text-xs text-muted-foreground">Провайдер отключён</span>
-                                        )}
-                                      </div>
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </FormControl>
-                            <p className="text-xs text-muted-foreground leading-tight">
-                              Используется для генеративных ответов навыка.
-                            </p>
-                            <FormMessage className="text-xs text-destructive leading-tight" />
-                          </FormItem>
-                        )}
-                      />
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </FormControl>
+                              <p className="text-xs text-muted-foreground leading-tight">
+                                Используется для генеративных ответов навыка.
+                              </p>
+                              <FormMessage className="text-xs text-destructive leading-tight" />
+                            </FormItem>
+                          )}
+                        />
 
-                      <Accordion type="single" collapsible>
-                        <AccordionItem value="llm-advanced" className="border-none">
-                          <AccordionTrigger className="py-2" data-testid="llm-advanced-accordion">
-                            Параметры LLM
-                          </AccordionTrigger>
-                          <AccordionContent>
-                            <div className="grid gap-4 md:grid-cols-2">
+                        <Accordion type="single" collapsible>
+                          <AccordionItem value="llm-advanced" className="border-none">
+                            <AccordionTrigger className="py-2" data-testid="llm-advanced-accordion">
+                              Параметры LLM
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <div className="grid gap-4 md:grid-cols-2">
+                                <FormField
+                                  control={form.control}
+                                  name="llmTemperature"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <div className="flex items-center gap-2">
+                                        <FormLabel>Температура</FormLabel>
+                                        <InfoTooltipIcon text="Определяет вариативность ответа модели. Чем выше значение, тем более креативный ответ." />
+                                      </div>
+                                      <FormControl>
+                                        <Input
+                                          type="number"
+                                          step="0.1"
+                                          min={0}
+                                          max={2}
+                                          placeholder="0.7"
+                                          value={field.value ?? ""}
+                                          onChange={(event) => field.onChange(event.target.value)}
+                                          data-testid="llm-temperature-input"
+                                        />
+                                      </FormControl>
+                                      <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                        Оставьте пустым, чтобы использовать значения провайдера.
+                                      </FormDescription>
+                                      <FormMessage className="text-xs text-destructive leading-tight" />
+                                    </FormItem>
+                                  )}
+                                />
+                                <FormField
+                                  control={form.control}
+                                  name="llmMaxTokens"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <div className="flex items-center gap-2">
+                                        <FormLabel>Макс. токенов ответа</FormLabel>
+                                        <InfoTooltipIcon text="Ограничивает длину ответа модели. Если пусто — используем настройки провайдера." />
+                                      </div>
+                                      <FormControl>
+                                        <Input
+                                          type="number"
+                                          min={16}
+                                          max={4096}
+                                          placeholder="1024"
+                                          value={field.value ?? ""}
+                                          onChange={(event) => field.onChange(event.target.value)}
+                                          data-testid="llm-max-tokens-input"
+                                        />
+                                      </FormControl>
+                                      <FormMessage className="text-xs text-destructive leading-tight" />
+                                    </FormItem>
+                                  )}
+                                />
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
+                      </CardContent>
+                    </Card>
+                    <Card className="md:col-span-2">
+                      <CardHeader className="px-6 grid gap-2">
+                        <CardTitle className="text-base font-semibold">Источники и коллекции</CardTitle>
+                        <CardDescription className="text-sm text-muted-foreground">
+                          Навык будет искать ответы только в выбранных базах, коллекциях и режимах RAG.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="px-6 pb-6 space-y-6">
+                        <div className="grid gap-6 md:grid-cols-2">
+                          <div className="space-y-6">
+                            <FormField
+                              control={form.control}
+                              name="knowledgeBaseIds"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Базы знаний</FormLabel>
+                                  <FormControl>
+                                    <KnowledgeBaseMultiSelect
+                                      value={field.value}
+                                      onChange={field.onChange}
+                                      knowledgeBases={sortedKnowledgeBases}
+                                      disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
+                                    />
+                                  </FormControl>
+                                  <FormMessage className="text-xs text-destructive leading-tight" />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                          <div className="space-y-6">
+                            <FormField
+                              control={form.control}
+                              name="ragMode"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Режим использования коллекций</FormLabel>
+                                  <FormControl>
+                                    <RadioGroup
+                                      value={field.value}
+                                      onValueChange={controlsDisabled ? undefined : field.onChange}
+                                      className="grid gap-3"
+                                    >
+                                      <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
+                                        <RadioGroupItem value="all_collections" className="peer sr-only" disabled={controlsDisabled} />
+                                        <div className="flex items-start gap-3">
+                                          <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                                          <div>
+                                            <p className="text-sm font-medium">Все коллекции</p>
+                                            <p className="text-xs text-muted-foreground">
+                                              Навык автоматически ищет во всех коллекциях рабочего пространства.
+                                            </p>
+                                          </div>
+                                        </div>
+                                        <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
+                                      </label>
+                                      <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
+                                        <RadioGroupItem value="selected_collections" className="peer sr-only" disabled={controlsDisabled} />
+                                        <div className="flex items-start gap-3">
+                                          <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                                          <div>
+                                            <p className="text-sm font-medium">Выбрать вручную</p>
+                                            <p className="text-xs text-muted-foreground">
+                                              Укажите конкретные коллекции, в которых навык может искать ответы.
+                                            </p>
+                                          </div>
+                                        </div>
+                                        <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
+                                      </label>
+                                    </RadioGroup>
+                                  </FormControl>
+                                  <FormMessage className="text-xs text-destructive leading-tight" />
+                                </FormItem>
+                              )}
+                            />
+                            {isManualRagMode ? (
                               <FormField
                                 control={form.control}
-                                name="llmTemperature"
+                                name="ragCollectionIds"
                                 render={({ field }) => (
                                   <FormItem>
-                                    <div className="flex items-center gap-2">
-                                      <FormLabel>Температура</FormLabel>
-                                      <InfoTooltipIcon text="Определяет вариативность ответа модели. Чем выше значение, тем более креативный ответ." />
-                                    </div>
+                                    <FormLabel>Коллекции для навыка</FormLabel>
                                     <FormControl>
-                                      <Input
-                                        type="number"
-                                        step="0.1"
-                                        min={0}
-                                        max={2}
-                                        placeholder="0.7"
-                                        value={field.value ?? ""}
-                                        onChange={(event) => field.onChange(event.target.value)}
-                                        data-testid="llm-temperature-input"
+                                      <VectorCollectionMultiSelect
+                                        value={field.value}
+                                        onChange={field.onChange}
+                                        collections={vectorCollections}
+                                        disabled={vectorCollectionsDisabled}
                                       />
                                     </FormControl>
                                     <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                      Оставьте пустым, чтобы использовать значения провайдера.
+                                      {isVectorCollectionsLoading
+                                        ? "Загружаем список коллекций..."
+                                        : vectorCollectionsEmpty
+                                          ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
+                                          : "Можно выбрать одну или несколько коллекций рабочего пространства."}
                                     </FormDescription>
                                     <FormMessage className="text-xs text-destructive leading-tight" />
                                   </FormItem>
                                 )}
                               />
-                              <FormField
-                                control={form.control}
-                                name="llmMaxTokens"
-                                render={({ field }) => (
-                                  <FormItem>
-                                    <div className="flex items-center gap-2">
-                                      <FormLabel>Макс. токенов ответа</FormLabel>
-                                      <InfoTooltipIcon text="Ограничивает длину ответа модели. Если пусто — используем настройки провайдера." />
-                                    </div>
-                                    <FormControl>
-                                      <Input
-                                        type="number"
-                                        min={16}
-                                        max={4096}
-                                        placeholder="1024"
-                                        value={field.value ?? ""}
-                                        onChange={(event) => field.onChange(event.target.value)}
-                                        data-testid="llm-max-tokens-input"
-                                      />
-                                    </FormControl>
-                                    <FormMessage className="text-xs text-destructive leading-tight" />
-                                  </FormItem>
-                                )}
-                              />
-                            </div>
-                          </AccordionContent>
-                        </AccordionItem>
-                      </Accordion>
-                    </CardContent>
-                  </Card>
-                </div>
+                            ) : null}
+                          </div>
+                        </div>
+                        <Accordion type="single" collapsible>
+                          <AccordionItem value="rag-advanced" className="border-none">
+                            <AccordionTrigger className="py-2">RAG (дополнительно)</AccordionTrigger>
+                            <AccordionContent>
+                              <div className="space-y-4">
+                                <div className="space-y-1">
+                                  <h3 className="text-base font-semibold">Провайдер эмбеддингов</h3>
+                                  <p className="text-sm text-muted-foreground">
+                                    Должен совпадать с тем, что использует выбранная коллекция.
+                                  </p>
+                                </div>
+                                <FormField
+                                  control={form.control}
+                                  name="ragEmbeddingProviderId"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <Select
+                                        value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
+                                        onValueChange={field.onChange}
+                                        disabled={embeddingProviderSelectDisabled}
+                                      >
+                                        <SelectTrigger>
+                                          <SelectValue
+                                            placeholder={
+                                              embeddingProvidersUnavailable
+                                                ? "Загрузка..."
+                                                : embeddingProvidersEmpty
+                                                  ? "Нет доступных сервисов"
+                                                  : "Выберите сервис"
+                                            }
+                                          />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
+                                          {effectiveEmbeddingProviderOptions.map((provider) => (
+                                            <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
+                                              <div className="flex flex-col gap-0.5">
+                                                <span>{provider.name}</span>
+                                                {!provider.isActive && (
+                                                  <span className="text-xs text-muted-foreground">Провайдер отключён</span>
+                                                )}
+                                              </div>
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      <FormMessage className="text-xs text-destructive leading-tight" />
+                                    </FormItem>
+                                  )}
+                                />
 
-                    <div className="grid gap-6">
-                <Card>
-                  <CardHeader className="px-6 grid gap-2">
-                    <CardTitle className="text-base font-semibold">Базы знаний</CardTitle>
-                    <CardDescription className="text-sm text-muted-foreground">
-                      Навык будет искать ответы только в выбранных базах знаний.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="px-6 pb-6">
-                    <FormField
-                      control={form.control}
-                      name="knowledgeBaseIds"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormControl>
-                            <KnowledgeBaseMultiSelect
-                              value={field.value}
-                              onChange={field.onChange}
-                              knowledgeBases={sortedKnowledgeBases}
-                              disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
-                            />
-                          </FormControl>
-                          <FormMessage className="text-xs text-destructive leading-tight" />
-                        </FormItem>
-                      )}
-                    />
-                  </CardContent>
-                </Card>
+                                <div className="space-y-1">
+                                  <h3 className="text-base font-semibold">Параметры поиска</h3>
+                                  <p className="text-sm text-muted-foreground">Управляют объёмом и точностью выдачи.</p>
+                                </div>
+                                <div className="grid gap-4 md:grid-cols-2">
+                                  <FormField
+                                    control={form.control}
+                                    name="ragTopK"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <div className="flex items-center gap-2">
+                                          <FormLabel>topK</FormLabel>
+                                          <InfoTooltipIcon text="Число чанков, которые ищем для каждого запроса. Больше — точнее, но дороже. По умолчанию 5." />
+                                        </div>
+                                        <FormControl>
+                                          <Input
+                                            type="number"
+                                            min={1}
+                                            max={50}
+                                            placeholder="5"
+                                            value={field.value ?? ""}
+                                            onChange={(event) => field.onChange(event.target.value)}
+                                          />
+                                        </FormControl>
+                                        <FormMessage className="text-xs text-destructive leading-tight" />
+                                      </FormItem>
+                                    )}
+                                  />
+                                  <FormField
+                                    control={form.control}
+                                    name="ragMinScore"
+                                    render={({ field }) => (
+                                      <FormItem>
+                                        <div className="flex items-center gap-2">
+                                          <FormLabel>minScore</FormLabel>
+                                          <InfoTooltipIcon text="Минимальная релевантность чанка (0–1). Всё, что ниже порога, отбрасывается." />
+                                        </div>
+                                        <FormControl>
+                                          <Input
+                                            type="number"
+                                            step="0.05"
+                                            min={0}
+                                            max={1}
+                                            placeholder="0.7"
+                                            value={field.value ?? ""}
+                                            onChange={(event) => field.onChange(event.target.value)}
+                                          />
+                                        </FormControl>
+                                        <FormMessage className="text-xs text-destructive leading-tight" />
+                                      </FormItem>
+                                    )}
+                                  />
+                                </div>
 
-                <Card>
-                  <CardHeader className="px-6 grid gap-2">
-                    <CardTitle className="text-base font-semibold">Коллекции и режим</CardTitle>
-                    <CardDescription className="text-sm text-muted-foreground">
-                      Управляют тем, где искать и сколько текста отдавать в ответах.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="px-6 pb-6 space-y-4">
-                    <FormField
-                      control={form.control}
-                      name="ragMode"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Режим использования коллекций</FormLabel>
-                          <FormControl>
-                            <RadioGroup
-                              value={field.value}
-                              onValueChange={controlsDisabled ? undefined : field.onChange}
-                              className="grid gap-3 md:grid-cols-2"
-                            >
-                              <div className="rounded-lg border p-3">
-                                <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                  <RadioGroupItem value="all_collections" id="rag-mode-all" className="mt-1" disabled={controlsDisabled} />
-                                  <span>
-                                    Все коллекции
-                                    <span className="block text-xs font-normal text-muted-foreground">
-                                      Навык автоматически ищет во всех коллекциях рабочей области.
-                                    </span>
-                                  </span>
-                                </label>
+                                <FormField
+                                  control={form.control}
+                                  name="ragMaxContextTokens"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <div className="flex items-center gap-2">
+                                        <FormLabel>Лимит контекста (токены)</FormLabel>
+                                        <InfoTooltipIcon text="Мягкий лимит на суммарный текст из базы знаний для одного ответа LLM. Если пусто — используем настройку по умолчанию." />
+                                      </div>
+                                      <FormControl>
+                                        <Input
+                                          type="number"
+                                          min={500}
+                                          placeholder="3000"
+                                          value={field.value ?? ""}
+                                          onChange={(event) => field.onChange(event.target.value)}
+                                        />
+                                      </FormControl>
+                                      <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                        Оставьте поле пустым, чтобы использовать стандартное значение.
+                                      </FormDescription>
+                                      <FormMessage className="text-xs text-destructive leading-tight" />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                <FormField
+                                  control={form.control}
+                                  name="ragShowSources"
+                                  render={({ field }) => (
+                                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                                      <div className="space-y-0.5">
+                                        <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
+                                        <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                          Показывает пользователю документы и ссылки, из которых взяты чанки.
+                                        </FormDescription>
+                                      </div>
+                                      <FormControl>
+                                        <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
+                                      </FormControl>
+                                    </FormItem>
+                                  )}
+                                />
                               </div>
-                              <div className="rounded-lg border p-3">
-                                <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                  <RadioGroupItem value="selected_collections" id="rag-mode-selected" className="mt-1" disabled={controlsDisabled} />
-                                  <span>
-                                    Выбрать вручную
-                                    <span className="block text-xs font-normal text-muted-foreground">
-                                      Укажите конкретные коллекции, в которых навык может искать ответы.
-                                    </span>
-                                  </span>
-                                </label>
-                              </div>
-                            </RadioGroup>
-                          </FormControl>
-                          <FormMessage className="text-xs text-destructive leading-tight" />
-                        </FormItem>
-                      )}
-                    />
-
-                    {isManualRagMode ? (
-                      <FormField
-                        control={form.control}
-                        name="ragCollectionIds"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Коллекции для навыка</FormLabel>
-                            <FormControl>
-                              <VectorCollectionMultiSelect
-                                value={field.value}
-                                onChange={field.onChange}
-                                collections={vectorCollections}
-                                disabled={vectorCollectionsDisabled}
-                              />
-                            </FormControl>
-                            <FormDescription className="text-xs text-muted-foreground leading-tight">
-                              {isVectorCollectionsLoading
-                                ? "Загружаем список коллекций..."
-                                : vectorCollectionsEmpty
-                                  ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
-                                  : "Можно выбрать одну или несколько коллекций рабочего пространства."}
-                            </FormDescription>
-                            <FormMessage className="text-xs text-destructive leading-tight" />
-                          </FormItem>
-                        )}
-                      />
-                    ) : null}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="px-6 pb-6">
-                    <Accordion type="single" collapsible>
-                      <AccordionItem value="rag-advanced" className="border-none">
-                        <AccordionTrigger className="py-2">RAG (дополнительно)</AccordionTrigger>
-                        <AccordionContent>
-                          <div className="space-y-4">
-                            <div className="space-y-1">
-                              <h3 className="text-base font-semibold">Провайдер эмбеддингов</h3>
-                              <p className="text-sm text-muted-foreground">
-                                Должен совпадать с тем, что использует выбранная коллекция.
-                              </p>
-                            </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
+                      </CardContent>
+                    </Card>
+                  </div>
+                ) : null}
+                {isNoCodeMode ? (
+                  <div className="md:col-span-2">
+                    <Card>
+                      <CardHeader className="px-6 grid gap-2">
+                        <CardTitle className="text-base font-semibold">No-code подключение</CardTitle>
+                        <CardDescription className="text-sm text-muted-foreground">
+                          {allowNoCodeFlow
+                            ? "Укажите URL и авторизацию, чтобы платформа перенаправляла события во внешний сценарий."
+                            : "Доступно только на премиум-тарифе."}
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="px-6 pb-6">
+                        <div className="grid gap-6 md:grid-cols-2">
+                          <div className="space-y-6">
                             <FormField
                               control={form.control}
-                              name="ragEmbeddingProviderId"
+                              name="noCodeEndpointUrl"
                               render={({ field }) => (
-                                <FormItem>
-                                  <Select
-                                    value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
-                                    onValueChange={field.onChange}
-                                    disabled={embeddingProviderSelectDisabled}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue
-                                        placeholder={
-                                          embeddingProvidersUnavailable
-                                            ? "Загрузка..."
-                                            : embeddingProvidersEmpty
-                                              ? "Нет доступных сервисов"
-                                              : "Выберите сервис"
-                                        }
-                                      />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
-                                      {effectiveEmbeddingProviderOptions.map((provider) => (
-                                        <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
-                                          <div className="flex flex-col gap-0.5">
-                                            <span>{provider.name}</span>
-                                            {!provider.isActive && (
-                                              <span className="text-xs text-muted-foreground">Провайдер отключён</span>
-                                            )}
-                                          </div>
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  <FormMessage className="text-xs text-destructive leading-tight" />
-                                </FormItem>
-                              )}
-                            />
-
-                            <div className="space-y-1">
-                              <h3 className="text-base font-semibold">Параметры поиска</h3>
-                              <p className="text-sm text-muted-foreground">Управляют объёмом и точностью выдачи.</p>
-                            </div>
-                            <div className="grid gap-4 md:grid-cols-2">
-                              <FormField
-                                control={form.control}
-                                name="ragTopK"
-                                render={({ field }) => (
-                                  <FormItem>
-                                    <div className="flex items-center gap-2">
-                                      <FormLabel>topK</FormLabel>
-                                      <InfoTooltipIcon text="Число чанков, которые ищем для каждого запроса. Больше — точнее, но дороже. По умолчанию 5." />
-                                    </div>
-                                    <FormControl>
-                                      <Input
-                                        type="number"
-                                        min={1}
-                                        max={50}
-                                        placeholder="5"
-                                        value={field.value ?? ""}
-                                        onChange={(event) => field.onChange(event.target.value)}
-                                      />
-                                    </FormControl>
-                                    <FormMessage className="text-xs text-destructive leading-tight" />
-                                  </FormItem>
-                                )}
-                              />
-                              <FormField
-                                control={form.control}
-                                name="ragMinScore"
-                                render={({ field }) => (
-                                  <FormItem>
-                                    <div className="flex items-center gap-2">
-                                      <FormLabel>minScore</FormLabel>
-                                      <InfoTooltipIcon text="Минимальная релевантность чанка (0–1). Всё, что ниже порога, отбрасывается." />
-                                    </div>
-                                    <FormControl>
-                                      <Input
-                                        type="number"
-                                        step="0.05"
-                                        min={0}
-                                        max={1}
-                                        placeholder="0.7"
-                                        value={field.value ?? ""}
-                                        onChange={(event) => field.onChange(event.target.value)}
-                                      />
-                                    </FormControl>
-                                    <FormMessage className="text-xs text-destructive leading-tight" />
-                                  </FormItem>
-                                )}
-                              />
-                            </div>
-
-                            <FormField
-                              control={form.control}
-                              name="ragMaxContextTokens"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <div className="flex items-center gap-2">
-                                    <FormLabel>Лимит контекста (токены)</FormLabel>
-                                    <InfoTooltipIcon text="Мягкий лимит на суммарный текст из базы знаний для одного ответа LLM. Если пусто — используем настройку по умолчанию." />
-                                  </div>
+                                <FormItem className="grid gap-1.5">
+                                  <FormLabel>URL сценария</FormLabel>
                                   <FormControl>
                                     <Input
-                                      type="number"
-                                      min={500}
-                                      placeholder="3000"
-                                      value={field.value ?? ""}
-                                      onChange={(event) => field.onChange(event.target.value)}
+                                      {...field}
+                                      placeholder="https://example.com/no-code"
+                                      disabled={noCodeDisabled}
+                                      data-testid="skill-no-code-endpoint-input"
+                                      className="h-9"
                                     />
                                   </FormControl>
                                   <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                    Оставьте поле пустым, чтобы использовать стандартное значение.
+                                    {noCodeDisabled
+                                      ? "Доступно только на премиум-тарифе."
+                                      : "Сюда будет приходить запрос, когда выбранно выполнение в no-code режиме."}
                                   </FormDescription>
                                   <FormMessage className="text-xs text-destructive leading-tight" />
                                 </FormItem>
                               )}
                             />
-
+                            <Separator className="border-border" />
                             <FormField
                               control={form.control}
-                              name="ragShowSources"
+                              name="noCodeAuthType"
                               render={({ field }) => (
-                                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
-                                  <div className="space-y-0.5">
-                                    <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
-                                    <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                      Показывает пользователю документы и ссылки, из которых взяты чанки.
-                                    </FormDescription>
-                                  </div>
+                                <FormItem>
+                                  <FormLabel>Авторизация</FormLabel>
                                   <FormControl>
-                                    <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
+                                    <RadioGroup
+                                      value={field.value}
+                                      onValueChange={noCodeDisabled ? undefined : field.onChange}
+                                      className="grid gap-3 md:grid-cols-2"
+                                    >
+                                      <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
+                                        <RadioGroupItem
+                                          value="none"
+                                          className="peer sr-only"
+                                          disabled={noCodeDisabled}
+                                          data-testid="no-code-auth-none"
+                                        />
+                                        <div className="flex items-start gap-3">
+                                          <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                                          <div>
+                                            <p className="text-sm font-medium">Без авторизации</p>
+                                            <p className="text-xs text-muted-foreground">Сценарий без токена.</p>
+                                          </div>
+                                        </div>
+                                        <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
+                                      </label>
+                                      <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
+                                        <RadioGroupItem
+                                          value="bearer"
+                                          className="peer sr-only"
+                                          disabled={noCodeDisabled}
+                                          data-testid="no-code-auth-bearer"
+                                        />
+                                        <div className="flex items-start gap-3">
+                                          <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                                          <div>
+                                            <p className="text-sm font-medium">Bearer token</p>
+                                            <p className="text-xs text-muted-foreground">Отправляем токен в заголовке Authorization.</p>
+                                          </div>
+                                        </div>
+                                        <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
+                                      </label>
+                                    </RadioGroup>
                                   </FormControl>
                                 </FormItem>
                               )}
                             />
-                          </div>
-                        </AccordionContent>
-                      </AccordionItem>
-                    </Accordion>
-                  </CardContent>
-                </Card>
-                    </div>
-                  </>
-                ) : null}
-
-                {isNoCodeMode ? (
-                  <Card>
-                    <CardHeader className="px-6 grid gap-2">
-                      <CardTitle className="text-base font-semibold">No-code подключение</CardTitle>
-                      <CardDescription className="text-sm text-muted-foreground">
-                        {allowNoCodeFlow
-                          ? "Укажите URL и авторизацию, чтобы платформа перенаправляла события во внешний сценарий."
-                          : "Доступно только на премиум-тарифе."}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="px-6 pb-6 space-y-4">
-                      <FormField
-                        control={form.control}
-                        name="noCodeEndpointUrl"
-                        render={({ field }) => (
-                          <FormItem className="grid gap-1.5">
-                            <FormLabel>URL сценария</FormLabel>
-                            <FormControl>
-                              <Input
-                                {...field}
-                                placeholder="https://example.com/no-code"
-                                disabled={noCodeDisabled}
-                                data-testid="skill-no-code-endpoint-input"
+                            {noCodeAuthType === "bearer" && (
+                              <FormField
+                                control={form.control}
+                                name="noCodeBearerToken"
+                                render={({ field }) => (
+                                  <FormItem className="grid gap-1.5">
+                                    <FormLabel>Bearer токен</FormLabel>
+                                    <FormControl>
+                                      <Input
+                                        {...field}
+                                        type="password"
+                                        placeholder="Введите токен"
+                                        disabled={noCodeDisabled}
+                                        autoComplete="new-password"
+                                        data-testid="skill-no-code-token-input"
+                                        className="h-9"
+                                      />
+                                    </FormControl>
+                                    <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                      {hasBearerTokenDraft
+                                        ? "После сохранения токен будет заменён."
+                                        : storedNoCodeTokenIsSet
+                                        ? "Токен задан. Введите новый, чтобы заменить."
+                                        : "Токен не сохраняется и не отображается после сохранения."}
+                                    </FormDescription>
+                                    <FormMessage className="text-xs text-destructive leading-tight" />
+                                  </FormItem>
+                                )}
                               />
-                            </FormControl>
-                            <FormDescription className="text-xs text-muted-foreground leading-tight">
-                              {noCodeDisabled
-                                ? "Доступно только на премиум-тарифе."
-                                : "Сюда будет приходить запрос, когда выбранно выполнение в no-code режиме."}
-                            </FormDescription>
-                            <FormMessage className="text-xs text-destructive leading-tight" />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="noCodeAuthType"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Авторизация</FormLabel>
-                            <FormControl>
-                              <RadioGroup
-                                value={field.value}
-                                onValueChange={noCodeDisabled ? undefined : field.onChange}
-                                className="grid gap-3 md:grid-cols-2"
-                              >
-                                <div className="rounded-lg border p-3">
-                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                    <RadioGroupItem
-                                      value="none"
-                                      id="no-code-auth-none"
-                                      className="mt-1"
-                                      disabled={noCodeDisabled}
-                                      data-testid="no-code-auth-none"
-                                    />
-                                    <span>
-                                      Без авторизации
-                                      <span className="block text-xs font-normal text-muted-foreground">
-                                        Сценарий без токена.
-                                      </span>
-                                    </span>
-                                  </label>
-                                </div>
-                                <div className="rounded-lg border p-3">
-                                  <label className="flex items-start gap-3 text-sm font-medium leading-tight">
-                                    <RadioGroupItem
-                                      value="bearer"
-                                      id="no-code-auth-bearer"
-                                      className="mt-1"
-                                      disabled={noCodeDisabled}
-                                      data-testid="no-code-auth-bearer"
-                                    />
-                                    <span>
-                                      Bearer token
-                                      <span className="block text-xs font-normal text-muted-foreground">
-                                        Отправляем токен в заголовке Authorization.
-                                      </span>
-                                    </span>
-                                  </label>
-                                </div>
-                              </RadioGroup>
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-                      {noCodeAuthType === "bearer" && (
-                        <FormField
-                          control={form.control}
-                          name="noCodeBearerToken"
-                          render={({ field }) => (
-                            <FormItem className="grid gap-1.5">
-                              <FormLabel>Bearer токен</FormLabel>
-                              <FormControl>
-                                <Input
-                                  {...field}
-                                  type="password"
-                                  placeholder="Введите токен"
-                                  disabled={noCodeDisabled}
-                                  autoComplete="new-password"
-                                  data-testid="skill-no-code-token-input"
-                                />
-                              </FormControl>
-                              <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                {hasBearerTokenDraft
-                                  ? "После сохранения токен будет заменён."
-                                  : storedNoCodeTokenIsSet
-                                  ? "Токен задан. Введите новый, чтобы заменить."
-                                  : "Токен не сохраняется и не отображается после сохранения."}
-                              </FormDescription>
-                              <FormMessage className="text-xs text-destructive leading-tight" />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-                      <Separator />
-                      <div className="rounded-lg border bg-muted/40 p-4 space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="space-y-1">
-                            <p className="text-sm font-semibold">Токен для входящих callback</p>
-                            <p className="text-xs text-muted-foreground">
-                              Передавайте в заголовке Authorization: Bearer &#123;token&#125;.
-                            </p>
-                            {callbackTokenRotatedLabel && (
-                              <p className="text-xs text-muted-foreground">
-                                Обновлён {callbackTokenRotatedLabel}
-                                {callbackTokenStatus.lastFour ? ` · окончание ${callbackTokenStatus.lastFour}` : ""}
-                              </p>
                             )}
                           </div>
-                          <Badge variant={callbackTokenStatus.isSet ? "default" : "outline"}>
-                            {callbackTokenStatus.isSet ? "Задан" : "Не задан"}
-                          </Badge>
+                          <div className="space-y-6">
+                            <div className="rounded-lg border bg-muted/40 p-4 space-y-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="space-y-1">
+                                  <p className="text-sm font-semibold">Токен для входящих callback</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Передавайте в заголовке Authorization: Bearer &#123;token&#125;.
+                                  </p>
+                                  {callbackTokenRotatedLabel && (
+                                    <p className="text-xs text-muted-foreground">
+                                      Обновлён {callbackTokenRotatedLabel}
+                                      {callbackTokenStatus.lastFour ? ` · окончание ${callbackTokenStatus.lastFour}` : ""}
+                                    </p>
+                                  )}
+                                </div>
+                                <Badge variant={callbackTokenStatus.isSet ? "default" : "outline"}>
+                                  {callbackTokenStatus.isSet ? "Задан" : "Не задан"}
+                                </Badge>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-9"
+                                  disabled={!canManageCallbackToken || isGeneratingCallbackToken}
+                                  onClick={handleGenerateCallbackToken}
+                                >
+                                  {isGeneratingCallbackToken && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                  {callbackTokenStatus.isSet ? "Сменить токен" : "Сгенерировать токен"}
+                                </Button>
+                                {!skill?.id && (
+                                  <span className="text-xs text-muted-foreground">Сохраните навык, чтобы выдать токен.</span>
+                                )}
+                                {!isNoCodeMode && (
+                                  <span className="text-xs text-muted-foreground">Доступно в режиме No-code.</span>
+                                )}
+                                {!allowNoCodeFlow && (
+                                  <span className="text-xs text-muted-foreground">Доступно на премиум-тарифе.</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            disabled={!canManageCallbackToken || isGeneratingCallbackToken}
-                            onClick={handleGenerateCallbackToken}
-                          >
-                            {isGeneratingCallbackToken && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                            {callbackTokenStatus.isSet ? "Сменить токен" : "Сгенерировать токен"}
-                          </Button>
-                          {!skill?.id && (
-                            <span className="text-xs text-muted-foreground">Сохраните навык, чтобы выдать токен.</span>
-                          )}
-                          {!isNoCodeMode && (
-                            <span className="text-xs text-muted-foreground">Доступно в режиме No-code.</span>
-                          )}
-                          {!allowNoCodeFlow && (
-                            <span className="text-xs text-muted-foreground">Доступно на премиум-тарифе.</span>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
+                      </CardContent>
+                    </Card>
+                  </div>
                 ) : null}
-              </div>
+                </div>
               </fieldset>
               </div>
             </TabsContent>
