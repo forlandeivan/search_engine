@@ -978,6 +978,7 @@ type SkillFormProps = {
   onGenerateCallbackToken?: (skillId: string) => Promise<SkillCallbackTokenResponse>;
   isGeneratingCallbackToken?: boolean;
   onSkillPatched?: (skill: Skill) => void;
+  onEnsureNoCodeMode?: () => Promise<void>;
 };
 
 export type SkillSettingsTab = "main" | "transcription" | "actions";
@@ -1101,6 +1102,7 @@ export function SkillFormContent({
   onGenerateCallbackToken,
   isGeneratingCallbackToken = false,
   onSkillPatched,
+  onEnsureNoCodeMode,
 }: SkillFormProps) {
   const [internalTab, setInternalTab] = useState<SkillSettingsTab>("main");
   const form = useForm<SkillFormValues>({
@@ -1180,7 +1182,18 @@ export function SkillFormContent({
     if (!skill?.id || !onGenerateCallbackToken) {
       return;
     }
+    if (!isNoCodeMode) {
+      toast({
+        title: "Сохраните навык в режиме No-code",
+        description: "Сначала выберите No-code и сохраните навык, чтобы сгенерировать токен.",
+        variant: "destructive",
+      });
+      return;
+    }
     try {
+      if (onEnsureNoCodeMode) {
+        await onEnsureNoCodeMode();
+      }
       const result = await onGenerateCallbackToken(skill.id);
       if (!result) {
         return;

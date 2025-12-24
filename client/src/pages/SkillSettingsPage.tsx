@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -403,6 +403,14 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
 
   const skillName = currentSkill?.name?.trim() || (isNew ? "Новый навык" : "Навык");
 
+  const ensureNoCodeMode = useCallback(async () => {
+    if (!currentSkill || currentSkill.executionMode === "no_code") return;
+    await updateSkill({
+      skillId: currentSkill.id,
+      payload: { executionMode: "no_code" },
+    });
+  }, [currentSkill, updateSkill]);
+
   return (
     <div className="space-y-6 pb-10">
       <div className="mx-auto w-full max-w-6xl px-6 pt-6">
@@ -471,6 +479,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
             onTabChange={handleTabChange}
             onGenerateCallbackToken={(skillId) => generateCallbackToken({ skillId })}
             isGeneratingCallbackToken={isGeneratingCallbackToken}
+            onEnsureNoCodeMode={ensureNoCodeMode}
           />
         )}
       </div>
