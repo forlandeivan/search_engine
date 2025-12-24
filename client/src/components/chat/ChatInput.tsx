@@ -129,17 +129,11 @@ export default function ChatInput({
   const handleUploadAudio = useCallback(
     async (file: File): Promise<TranscribePayload | null> => {
       if (disableAudioTranscription) {
-        if (!onSendFile) {
-          return null;
-        }
-        setIsUploading(true);
-        try {
-          await onSendFile(file);
-          setAttachedFile(null);
-          setPendingTranscribe(null);
-        } finally {
-          setIsUploading(false);
-        }
+        // В No-code режиме не запускаем внутреннюю транскрибацию: просто показываем превью файла.
+        setAttachedFile(file);
+        setPendingTranscribe(null);
+        setIsUploading(false);
+        setIsUploadingFile(false);
         return null;
       }
       const targetChatId = await ensureChatId();
