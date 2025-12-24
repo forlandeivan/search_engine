@@ -7,7 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { Copy, ExternalLink, Sparkles, Workflow } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-const EXTERNAL_API_HOST = "https://aiknowledge.ru";
+const FALLBACK_EXTERNAL_API_HOST = "https://aiknowledge.ru";
 
 type DocId = "vector-search" | "rag-search";
 
@@ -27,7 +27,7 @@ type DocSection = {
   endpointPath: string;
   steps: string[];
   requestFields: RequestField[];
-  requestExample: string;
+  requestExample: (host: string) => string;
   responseExample: string;
   tips: string[];
 };
@@ -85,7 +85,7 @@ const DOC_SECTIONS: DocSection[] = [
         description: "Передайте true, чтобы получить исходные данные документа вместе с точкой.",
       },
     ],
-    requestExample: `POST ${EXTERNAL_API_HOST}/api/public/collections/search/vector\nX-API-Key: pk_live_your_key\nContent-Type: application/json\n\n{\n  "workspace_id": "ws_1234567890",\n  "collection": "kb_public_docs",\n  "vector": [0.1123, -0.0648, 0.3201, 0.4872, -0.1924],\n  "limit": 5,\n  "offset": 0,\n  "withPayload": true,\n  "withVector": false\n}`,
+    requestExample: (host) => `POST ${host}/api/public/collections/search/vector\nX-API-Key: pk_live_your_key\nContent-Type: application/json\n\n{\n  "workspace_id": "ws_1234567890",\n  "collection": "kb_public_docs",\n  "vector": [0.1123, -0.0648, 0.3201, 0.4872, -0.1924],\n  "limit": 5,\n  "offset": 0,\n  "withPayload": true,\n  "withVector": false\n}`,
     responseExample: `{
   "collection": "kb_public_docs",
   "results": [
@@ -177,7 +177,7 @@ const DOC_SECTIONS: DocSection[] = [
         description: "Передайте true, чтобы в ответе пришёл список чанков, отправленных в LLM.",
       },
     ],
-    requestExample: `POST ${EXTERNAL_API_HOST}/api/public/collections/search/rag\nX-API-Key: pk_live_your_key\nContent-Type: application/json\n\n{\n  "workspace_id": "ws_1234567890",\n  "collection": "kb_public_docs",\n  "query": "Как подключить поиск к сайту?",\n  "embeddingProviderId": "openai-embeddings",\n  "llmProviderId": "openai",\n  "llmModel": "gpt-4o-mini",\n  "limit": 5,\n  "contextLimit": 8,\n  "responseFormat": "markdown",\n  "includeContext": true,\n  "includeQueryVector": false\n}`,
+    requestExample: (host) => `POST ${host}/api/public/collections/search/rag\nX-API-Key: pk_live_your_key\nContent-Type: application/json\n\n{\n  "workspace_id": "ws_1234567890",\n  "collection": "kb_public_docs",\n  "query": "Как подключить поиск к сайту?",\n  "embeddingProviderId": "openai-embeddings",\n  "llmProviderId": "openai",\n  "llmModel": "gpt-4o-mini",\n  "limit": 5,\n  "contextLimit": 8,\n  "responseFormat": "markdown",\n  "includeContext": true,\n  "includeQueryVector": false\n}`,
     responseExample: `{
   "answer": "1. Создайте публичный API-ключ в админке.\n2. Подключите виджет или вызывайте эндпоинт /search/vector.\n3. При необходимости используйте RAG, чтобы получить готовый ответ.",
   "format": "markdown",
@@ -229,11 +229,18 @@ export default function ApiDocsPage() {
   const [activeSection, setActiveSection] = useState<DocId>("vector-search");
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
+  const apiDocsHost = useMemo(
+    () => (typeof window !== "undefined" ? window.location.origin : FALLBACK_EXTERNAL_API_HOST),
+    [],
+  );
+
   const sectionsById = useMemo(() => {
     return new Map(DOC_SECTIONS.map((section) => [section.id, section]));
   }, []);
 
   const activeDoc = sectionsById.get(activeSection);
+  const activeDocEndpointUrl = activeDoc ? `${apiDocsHost}${activeDoc.endpointPath}` : "";
+  const activeDocRequestExample = activeDoc ? activeDoc.requestExample(apiDocsHost) : "";
 
   const copyToClipboard = async (text: string, token: string) => {
     try {
@@ -319,15 +326,13 @@ export default function ApiDocsPage() {
                       <Badge variant="outline" className="font-semibold uppercase">
                         {activeDoc.method}
                       </Badge>
-                      <code className="text-sm font-mono">
-                        {`${EXTERNAL_API_HOST}${activeDoc.endpointPath}`}
-                      </code>
+                      <code className="text-sm font-mono">{activeDocEndpointUrl}</code>
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={() =>
                           copyToClipboard(
-                            `${EXTERNAL_API_HOST}${activeDoc.endpointPath}`,
+                            activeDocEndpointUrl,
                             `${activeDoc.id}-endpoint`,
                           )
                         }
@@ -352,11 +357,7 @@ export default function ApiDocsPage() {
                     className="shrink-0"
                     aria-label="Открыть описание в новой вкладке"
                   >
-                    <a
-                      href={`${EXTERNAL_API_HOST}${activeDoc.endpointPath}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
+                    <a href={activeDocEndpointUrl} target="_blank" rel="noreferrer">
                       <ExternalLink className="h-4 w-4" />
                     </a>
                   </Button>
@@ -407,7 +408,7 @@ export default function ApiDocsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => copyToClipboard(activeDoc.requestExample, `${activeDoc.id}-request`) }
+                        onClick={() => copyToClipboard(activeDocRequestExample, `${activeDoc.id}-request`)}
                         aria-label="Скопировать пример запроса"
                       >
                         {copiedToken === `${activeDoc.id}-request` ? (
@@ -419,7 +420,7 @@ export default function ApiDocsPage() {
                     </div>
                     <ScrollArea className="max-h-72">
                       <pre className="whitespace-pre-wrap px-3 py-3 text-xs text-muted-foreground">
-                        {activeDoc.requestExample}
+                        {activeDocRequestExample}
                       </pre>
                     </ScrollArea>
                   </div>
