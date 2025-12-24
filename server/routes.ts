@@ -111,6 +111,7 @@ import {
   ChatServiceError,
   getChatById,
 } from "./chat-service";
+import { offChatEvent, onChatEvent } from "./chat-events";
 import {
   buildMessageCreatedEventPayload,
   getNoCodeConnectionInternal,
@@ -10294,6 +10295,41 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         if (error instanceof ChatServiceError) {
           return res.status(error.status).json(buildChatServiceErrorPayload(error));
         }
+        next(error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/chats/:chatId/events",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    async (req, res, next) => {
+      try {
+        const { id: workspaceId } = getRequestWorkspace(req);
+        const chatId = req.params.chatId;
+        if (!chatId) {
+          return res.status(400).json({ message: "Не указан chatId" });
+        }
+
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders();
+        res.write(`retry: 3000\n\n`);
+
+        const listener = (payload: { type: "message"; message: unknown }) => {
+          res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        };
+
+        onChatEvent(chatId, listener);
+        const cleanup = () => {
+          offChatEvent(chatId, listener);
+        };
+
+        res.on("close", cleanup);
+        req.on("close", cleanup);
+      } catch (error) {
         next(error);
       }
     },

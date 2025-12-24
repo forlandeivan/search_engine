@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { emitChatMessage } from "./chat-events";
 import type { SkillDto } from "@shared/skills";
 import { getSkillById, UNICA_CHAT_SYSTEM_KEY } from "./skills";
 import { isRagSkill, isUnicaChatSkill } from "./skill-type";
@@ -346,7 +347,9 @@ export async function addUserMessage(
     metadata: {},
   });
   await storage.touchChatSession(chatId);
-  return mapMessage(message);
+  const mapped = mapMessage(message);
+  emitChatMessage(chatId, mapped);
+  return mapped;
 }
 
 export type ChatConversationMessage = {
@@ -758,7 +761,9 @@ export async function addAssistantMessage(
     metadata: metadata ?? {},
   });
   await storage.touchChatSession(chatId);
-  return mapMessage(message);
+  const mapped = mapMessage(message);
+  emitChatMessage(chatId, mapped);
+  return mapped;
 }
 
 export async function addNoCodeCallbackMessage(opts: {
@@ -814,7 +819,9 @@ export async function addNoCodeCallbackMessage(opts: {
     chatId: opts.chatId,
     triggerMessageId,
   });
-  return mapMessage(message);
+  const mapped = mapMessage(message);
+  emitChatMessage(opts.chatId, mapped);
+  return mapped;
 }
 
 export async function addNoCodeSyncFinalResults(opts: {
@@ -841,6 +848,7 @@ export async function addNoCodeSyncFinalResults(opts: {
   }
 
   const created: Array<ReturnType<typeof mapMessage>> = [];
+  const newMessages: Array<ReturnType<typeof mapMessage>> = [];
   let createdNew = false;
 
   for (const result of opts.results) {
@@ -869,7 +877,9 @@ export async function addNoCodeSyncFinalResults(opts: {
       content,
       metadata,
     });
-    created.push(mapMessage(message));
+    const mapped = mapMessage(message);
+    created.push(mapped);
+    newMessages.push(mapped);
     createdNew = true;
   }
 
@@ -883,6 +893,10 @@ export async function addNoCodeSyncFinalResults(opts: {
       chatId: opts.chatId,
       triggerMessageId: opts.triggerMessageId,
     });
+  }
+
+  if (newMessages.length > 0) {
+    newMessages.forEach((message) => emitChatMessage(opts.chatId, message));
   }
 
   return created;

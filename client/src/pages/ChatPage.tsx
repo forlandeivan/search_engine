@@ -94,6 +94,10 @@ export default function ChatPage({ params }: ChatPageProps) {
   } = useChatMessages(effectiveChatId ?? undefined, workspaceId || undefined, {
     refetchIntervalMs: effectiveChatId && isStreaming ? 1000 : false,
   });
+  const chatMessagesQueryKey = useMemo(
+    () => ["chat-messages", workspaceId || "unknown", effectiveChatId || "none"],
+    [workspaceId, effectiveChatId],
+  );
 
   useEffect(() => {
     setOverrideChatId(null);
@@ -132,6 +136,34 @@ export default function ChatPage({ params }: ChatPageProps) {
   useEffect(() => {
     setOpenTranscript(null);
   }, [effectiveChatId]);
+
+  useEffect(() => {
+    if (!workspaceId || !effectiveChatId) {
+      return;
+    }
+    const url = new URL(`/api/chats/${effectiveChatId}/events`, window.location.origin);
+    const source = new EventSource(url.toString(), { withCredentials: true });
+    source.onopen = () => {
+      setStreamError(null);
+    };
+    source.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { type: string; message?: ChatMessage };
+        if (payload?.type === "message" && payload.message) {
+          setLocalMessages((prev) => [...prev, payload.message]);
+          queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey });
+        }
+      } catch (error) {
+        debugLog("Failed to parse SSE event", error);
+      }
+    };
+    source.onerror = () => {
+      setStreamError("Не удалось подключиться к каналу чата.");
+    };
+    return () => {
+      source.close();
+    };
+  }, [effectiveChatId, workspaceId, queryClient, chatMessagesQueryKey]);
 
   const shouldShowLocal = Boolean(
     effectiveChatId && localChatId === effectiveChatId && localMessages.length > 0,
