@@ -768,10 +768,15 @@ export async function addNoCodeCallbackMessage(opts: {
   content: string;
   triggerMessageId?: string | null;
   metadata?: Record<string, unknown> | null;
+  expectedSkillId?: string | null;
 }): Promise<ReturnType<typeof mapMessage>> {
   const chatRecord = await storage.getChatSessionById(opts.chatId);
   if (!chatRecord || chatRecord.workspaceId !== opts.workspaceId) {
     throw new ChatServiceError("Чат не найден", 404);
+  }
+
+  if (opts.expectedSkillId && chatRecord.skillId !== opts.expectedSkillId) {
+    throw new ChatServiceError("Неверный callback-ключ для навыка", 403);
   }
 
   const chat = mapChatSummary(chatRecord);

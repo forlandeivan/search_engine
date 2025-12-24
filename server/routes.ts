@@ -62,6 +62,7 @@ import {
   createUnicaChatSkillForWorkspace,
   generateNoCodeCallbackToken,
   verifyNoCodeCallbackToken,
+  verifyNoCodeCallbackKey,
 } from "./skills";
 import { asrExecutionLogService } from "./asr-execution-log-context";
 import {
@@ -11394,19 +11395,32 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
       }
 
-      await verifyNoCodeCallbackToken({
-        workspaceId: payload.workspaceId,
-        chatId: payload.chatId,
-        token: callbackToken,
-      });
+      const { id: workspaceId } = getRequestWorkspace(req);
+      if (payload.workspaceId && payload.workspaceId !== workspaceId) {
+        throw new SkillServiceError("Invalid workspaceId", 400);
+      }
+
+      const callbackKey =
+        typeof req.query?.callbackKey === "string" ? req.query.callbackKey.trim() : "";
+      let skillReference: { skillId: string };
+      if (callbackKey) {
+        skillReference = await verifyNoCodeCallbackKey({ workspaceId, callbackKey });
+      } else {
+        skillReference = await verifyNoCodeCallbackToken({
+          workspaceId,
+          chatId: payload.chatId,
+          token: callbackToken,
+        });
+      }
 
       const message = await addNoCodeCallbackMessage({
-        workspaceId: payload.workspaceId,
+        workspaceId,
         chatId: payload.chatId,
         role: payload.role,
         content,
         triggerMessageId,
         metadata: payload.metadata ?? null,
+        expectedSkillId: skillReference.skillId,
       });
 
       return res.status(201).json({ message });

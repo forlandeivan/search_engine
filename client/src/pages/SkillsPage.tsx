@@ -12,6 +12,7 @@ import {
   ChevronsUpDown,
   Check,
   Info,
+  Copy,
 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1148,6 +1149,31 @@ export function SkillFormContent({
     skill?.noCodeConnection?.callbackTokenLastRotatedAt,
     skill?.noCodeConnection?.callbackTokenLastFour,
   ]);
+  const callbackLink = useMemo(() => {
+    const callbackKey = skill?.noCodeConnection?.callbackKey;
+    const workspaceId = skill?.workspaceId;
+    if (!callbackKey || !workspaceId) {
+      return null;
+    }
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const url = new URL("/api/no-code/callback/messages", window.location.origin);
+    url.searchParams.set("workspaceId", workspaceId);
+    url.searchParams.set("callbackKey", callbackKey);
+    return url.toString();
+  }, [skill?.noCodeConnection?.callbackKey, skill?.workspaceId]);
+  const handleCopyCallbackLink = async () => {
+    if (!callbackLink || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(callbackLink);
+      toast({ title: "Ссылка callback скопирована" });
+    } catch {
+      toast({ title: "Не удалось скопировать ссылку", variant: "destructive" });
+    }
+  };
   const isSystemSkill = Boolean(skill?.isSystem);
   const ragMode = form.watch("ragMode");
   const isManualRagMode = ragMode === "selected_collections";
@@ -2171,6 +2197,39 @@ export function SkillFormContent({
                                 )}
                                 {!allowNoCodeFlow && (
                                   <span className="text-xs text-muted-foreground">Доступно на премиум-тарифе.</span>
+                                )}
+                              </div>
+                              <div className="rounded-lg border border-border bg-background/60 p-4 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-semibold">Callback-ссылка</p>
+                                  <Badge variant={callbackLink ? "default" : "outline"}>
+                                    {callbackLink ? "Генерируется" : "Не создана"}
+                                  </Badge>
+                                </div>
+                                {callbackLink ? (
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <Input
+                                      value={callbackLink}
+                                      readOnly
+                                      className="flex-1 min-w-0 text-xs"
+                                      data-testid="callback-link-input"
+                                    />
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-9"
+                                      disabled={!callbackLink}
+                                      onClick={handleCopyCallbackLink}
+                                    >
+                                      <Copy className="mr-1 h-4 w-4" />
+                                      Скопировать
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">
+                                    Сохраните навык в режиме No-code, чтобы получить ссылку.
+                                  </p>
                                 )}
                               </div>
                             </div>

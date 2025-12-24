@@ -1079,6 +1079,7 @@ export const skills = pgTable(
     noCodeCallbackTokenHash: text("no_code_callback_token_hash"),
     noCodeCallbackTokenLastFour: text("no_code_callback_token_last_four"),
     noCodeCallbackTokenRotatedAt: timestamp("no_code_callback_token_rotated_at"),
+    noCodeCallbackKey: text("no_code_callback_key"),
     contextInputLimit: integer("context_input_limit"),
     transcriptionFlowMode: text("transcription_flow_mode")
       .$type<SkillTranscriptionFlowMode>()
@@ -1102,6 +1103,7 @@ export const skills = pgTable(
       table.workspaceId,
       table.systemKey,
     ),
+    noCodeCallbackKeyUnique: uniqueIndex("skills_no_code_callback_key_idx").on(table.noCodeCallbackKey),
   }),
 );
 

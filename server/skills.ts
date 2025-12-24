@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { createHash, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, randomBytes, timingSafeEqual, randomUUID } from "crypto";
 import { db } from "./db";
 import {
   skills,
@@ -63,8 +63,13 @@ type EditableSkillColumns = Pick<
   | "noCodeEndpointUrl"
   | "noCodeAuthType"
   | "noCodeBearerToken"
+  | "noCodeCallbackKey"
   | "contextInputLimit"
 >;
+
+function generateCallbackKey(): string {
+  return randomUUID();
+}
 
 type RagConfigInput = CreateSkillPayload["ragConfig"];
 
@@ -355,6 +360,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
       callbackTokenIsSet: callbackTokenHash.length > 0,
       callbackTokenLastRotatedAt: row.noCodeCallbackTokenRotatedAt ? toIso(row.noCodeCallbackTokenRotatedAt) : null,
       callbackTokenLastFour: row.noCodeCallbackTokenLastFour ?? null,
+      callbackKey: row.noCodeCallbackKey ?? null,
     },
     knowledgeBaseIds,
     contextInputLimit: row.contextInputLimit ?? DEFAULT_CONTEXT_INPUT_LIMIT,
@@ -630,6 +636,7 @@ export async function createSkill(
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
   const executionMode = normalized.executionMode ?? DEFAULT_SKILL_EXECUTION_MODE;
   const mode = normalized.mode ?? DEFAULT_SKILL_MODE;
+  const callbackKey = executionMode === "no_code" ? generateCallbackKey() : null;
   assertRagRequirements(ragConfig, validKnowledgeBases, executionMode);
   let resolvedModelId: string | null = normalized.modelId ?? null;
   if (normalized.modelId) {
@@ -681,6 +688,7 @@ export async function createSkill(
       noCodeCallbackTokenHash: null,
       noCodeCallbackTokenLastFour: null,
       noCodeCallbackTokenRotatedAt: null,
+      noCodeCallbackKey: callbackKey,
     })
     .returning();
 
@@ -743,6 +751,19 @@ export async function updateSkill(
   if (submittedExecutionMode === "no_code") {
     await assertNoCodeFlowAllowed(workspaceId);
   }
+  const previousExecutionMode = normalizeSkillExecutionMode(row.executionMode);
+  const isSwitchingExecutionMode = normalized.executionMode !== undefined;
+  let callbackKeyUpdate: string | null | undefined;
+
+  if (isSwitchingExecutionMode) {
+    if (submittedExecutionMode === "no_code") {
+      callbackKeyUpdate = row.noCodeCallbackKey ?? generateCallbackKey();
+    } else if (previousExecutionMode === "no_code") {
+      callbackKeyUpdate = null;
+    }
+  } else if (!row.noCodeCallbackKey && submittedExecutionMode === "no_code") {
+    callbackKeyUpdate = generateCallbackKey();
+  }
   const updates: Partial<EditableSkillColumns> = {};
 
   (Object.keys(normalized) as (keyof SkillEditableInput)[]).forEach((key) => {
@@ -762,6 +783,9 @@ export async function updateSkill(
   updates.noCodeBearerToken = nextBearerToken;
   if (normalized.contextInputLimit !== undefined) {
     updates.contextInputLimit = normalized.contextInputLimit;
+  }
+  if (callbackKeyUpdate !== undefined) {
+    updates.noCodeCallbackKey = callbackKeyUpdate;
   }
 
   const currentRagConfig: SkillRagConfig = {
@@ -961,12 +985,14 @@ export async function generateNoCodeCallbackToken(opts: {
   await assertNoCodeFlowAllowed(workspaceId);
 
   const secrets = generateCallbackToken();
+  const callbackKey = existing.noCodeCallbackKey ?? generateCallbackKey();
   const [updated] = await db
     .update(skills)
     .set({
       noCodeCallbackTokenHash: secrets.hash,
       noCodeCallbackTokenLastFour: secrets.lastFour,
       noCodeCallbackTokenRotatedAt: secrets.rotatedAt,
+      noCodeCallbackKey: callbackKey,
       updatedAt: sql`CURRENT_TIMESTAMP`,
     })
     .where(and(eq(skills.id, skillId), eq(skills.workspaceId, workspaceId)))
@@ -1045,6 +1071,41 @@ export async function verifyNoCodeCallbackToken(opts: {
   const tokenMatches = timingSafeHashEquals(expectedHash, providedHash);
   if (!tokenMatches) {
     throw new SkillServiceError("Некорректный API-токен", 401, CALLBACK_UNAUTHORIZED_CODE);
+  }
+
+  return { skillId: skill.id };
+}
+
+export async function verifyNoCodeCallbackKey(opts: {
+  workspaceId: string;
+  callbackKey: string;
+}): Promise<{ skillId: string }> {
+  const callbackKey = typeof opts.callbackKey === "string" ? opts.callbackKey.trim() : "";
+  if (!callbackKey) {
+    throw new SkillServiceError("Callback-ключ не указан", 401, CALLBACK_UNAUTHORIZED_CODE);
+  }
+
+  const rows = await db
+    .select({
+      id: skills.id,
+      status: skills.status,
+      executionMode: skills.executionMode,
+    })
+    .from(skills)
+    .where(and(eq(skills.workspaceId, opts.workspaceId), eq(skills.noCodeCallbackKey, callbackKey)))
+    .limit(1);
+
+  const skill = rows[0];
+  if (!skill) {
+    throw new SkillServiceError("Навык не найден", 404);
+  }
+
+  if ((skill.status as SkillStatus) === "archived") {
+    throw new SkillServiceError("Навык архивирован", 409);
+  }
+
+  if (normalizeSkillExecutionMode(skill.executionMode) !== "no_code") {
+    throw new SkillServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
   }
 
   return { skillId: skill.id };

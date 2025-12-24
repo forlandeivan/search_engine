@@ -161,6 +161,7 @@ function setupSkillsMock() {
     createUnicaChatSkillForWorkspace: vi.fn(),
     generateNoCodeCallbackToken: vi.fn(),
     verifyNoCodeCallbackToken: vi.fn(async () => ({ skillId: "skill-1" })),
+    verifyNoCodeCallbackKey: vi.fn(async () => ({ skillId: "skill-1" })),
     SkillServiceError,
     UNICA_CHAT_SYSTEM_KEY: "UNICA_CHAT",
   };
@@ -241,8 +242,59 @@ describe("No-code callback API", () => {
       expect(skillsMock.verifyNoCodeCallbackToken).toHaveBeenCalledWith(
         expect.objectContaining({ workspaceId: "workspace-1", chatId: "chat-1", token: "callback-token" }),
       );
+      expect(skillsMock.verifyNoCodeCallbackKey).not.toHaveBeenCalled();
       expect(chatService.addNoCodeCallbackMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ workspaceId: "workspace-1", chatId: "chat-1", role: "assistant" }),
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          role: "assistant",
+          expectedSkillId: "skill-1",
+        }),
+      );
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          httpServer.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+    });
+  
+  it("creates message via callback link", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    const chatService = setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackKey.mockResolvedValueOnce({ skillId: "skill-2" });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/no-code/callback/messages?callbackKey=unique-key`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspaceId: "workspace-1",
+            chatId: "chat-1",
+            role: "assistant",
+            text: "Ответ",
+          }),
+        },
+      );
+
+      expect(response.status).toBe(201);
+      expect(skillsMock.verifyNoCodeCallbackKey).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: "workspace-1", callbackKey: "unique-key" }),
+      );
+      expect(skillsMock.verifyNoCodeCallbackToken).not.toHaveBeenCalled();
+      expect(chatService.addNoCodeCallbackMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          role: "assistant",
+          expectedSkillId: "skill-2",
+        }),
       );
     } finally {
       await new Promise<void>((resolve, reject) => {
