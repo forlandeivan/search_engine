@@ -129,8 +129,16 @@ export default function ChatInput({
   const handleUploadAudio = useCallback(
     async (file: File): Promise<TranscribePayload | null> => {
       if (disableAudioTranscription) {
-        if (onSendFile) {
+        if (!onSendFile) {
+          return null;
+        }
+        setIsUploading(true);
+        try {
           await onSendFile(file);
+          setAttachedFile(null);
+          setPendingTranscribe(null);
+        } finally {
+          setIsUploading(false);
         }
         return null;
       }
@@ -163,10 +171,13 @@ export default function ChatInput({
           },
         });
 
-        if (disableAudioTranscription && response.status === 409) {
+        if (response.status === 409) {
+          // В No-code режиме сервер сообщает 409 — переключаемся на прямую отправку файла.
           if (onSendFile) {
             await onSendFile(file);
           }
+          setAttachedFile(null);
+          setPendingTranscribe(null);
           return null;
         }
 
@@ -257,6 +268,16 @@ export default function ChatInput({
     }
     setIsSending(true);
 
+    if (attachedFile && disableAudioTranscription) {
+      if (onSendFile) {
+        await onSendFile(attachedFile);
+      }
+      setAttachedFile(null);
+      setPendingTranscribe(null);
+      setIsSending(false);
+      return;
+    }
+
     if (attachedFile && pendingTranscribe) {
       if (onTranscribe) {
         onTranscribe(pendingTranscribe);
@@ -331,7 +352,7 @@ export default function ChatInput({
     isUploading ||
     isSending ||
     (value.trim().length === 0 && !attachedFile) ||
-    (attachedFile && !pendingTranscribe);
+    (attachedFile && !disableAudioTranscription && !pendingTranscribe);
   const isAttachDisabled = disabled || isUploading || isUploadingFile || !!attachedFile;
 
   const formatFileSize = (bytes: number): string => {

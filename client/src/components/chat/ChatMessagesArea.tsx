@@ -375,22 +375,20 @@ function ChatBubble({
     const name = fileMeta?.filename || message.content || "Файл";
     const sizeLabel = formatSize(fileMeta?.sizeBytes ?? null);
     const downloadUrl = fileMeta?.downloadUrl || `/api/chat/messages/${message.id}/file`;
-    const by = fileMeta?.uploadedByUserId ? `Загрузил: ${fileMeta.uploadedByUserId}` : null;
     return (
-      <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-100">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 text-white">
           <FileIcon className="h-5 w-5" />
         </div>
         <div className="min-w-0 space-y-1">
-          <p className="font-semibold text-slate-900 dark:text-slate-100 break-all">{name}</p>
-          <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-wrap gap-2">
+          <p className="break-words font-semibold text-white">{name}</p>
+          <div className="text-xs text-white/70">
             {sizeLabel ? <span>{sizeLabel}</span> : null}
-            {by ? <span>{by}</span> : null}
           </div>
           <div className="pt-1">
             <a
               href={downloadUrl}
-              className="inline-flex items-center gap-2 text-sm font-medium text-[#095998] hover:underline"
+              className="inline-flex items-center gap-2 text-sm font-medium text-white hover:underline"
               target="_blank"
               rel="noreferrer"
             >
@@ -427,12 +425,10 @@ function ChatBubble({
       >
         <div className="max-w-[70%]">
           {isFileMessage ? (
-            <div className="rounded-2xl bg-[#2278bf] p-1">
-              <div className="rounded-xl bg-[#1269a2] border border-[#4497d9] p-3 text-white">
-                {renderFileBubble()}
-              </div>
-              <div className="flex items-center justify-end gap-1 p-2">
-                <span className="text-xs text-indigo-200">{timestamp}</span>
+            <div className="rounded-2xl bg-[#2278bf] px-3 py-2.5 text-white">
+              {renderFileBubble()}
+              <div className="mt-2 flex items-center justify-end gap-1 text-xs text-indigo-200">
+                <span>{timestamp}</span>
               </div>
             </div>
           ) : (isAudioMessage || isAudioFile) ? (
