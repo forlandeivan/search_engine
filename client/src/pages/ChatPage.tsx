@@ -142,6 +142,9 @@ export default function ChatPage({ params }: ChatPageProps) {
       return;
     }
     const url = new URL(`/api/chats/${effectiveChatId}/events`, window.location.origin);
+    if (workspaceId) {
+      url.searchParams.set("workspaceId", workspaceId);
+    }
     const source = new EventSource(url.toString(), { withCredentials: true });
     source.onopen = () => {
       setStreamError(null);
