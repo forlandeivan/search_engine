@@ -2605,7 +2605,7 @@ export default function SkillsPage() {
       const response = await apiRequest(
         "DELETE",
         `/api/skills/${archiveTarget.id}`,
-        undefined,
+        { workspaceId },
         undefined,
         { workspaceId },
       );

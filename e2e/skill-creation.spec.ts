@@ -49,5 +49,29 @@ test.describe("skill creation", () => {
     await expect(page.getByTestId("skill-title")).toBeVisible();
 
     await saveSuccessScreenshot(page, testInfo);
+
+    const createdSkillId = saveBody.skill.id as string;
+    await page.goto("/skills");
+    const skillRow = page.getByTestId(`skill-row-${createdSkillId}`);
+    await expect(skillRow).toBeVisible();
+
+    await skillRow
+      .locator("button[aria-label='Действия с навыком']")
+      .click();
+    await page.getByRole("menuitem", { name: "Архивировать" }).click();
+
+    const archiveDialog = page.getByRole("dialog", { name: "Архивировать навык?" });
+    await expect(archiveDialog).toBeVisible();
+
+    const archiveResponsePromise = page.waitForResponse((response) => {
+      return (
+        response.url().includes("/api/skills/") && response.request().method() === "DELETE"
+      );
+    });
+    await archiveDialog.getByRole("button", { name: "Архивировать" }).click();
+    const archiveResponse = await archiveResponsePromise;
+    expect(archiveResponse.status()).toBe(200);
+
+    await expect(page.getByTestId(`skill-row-${createdSkillId}`)).toHaveCount(0);
   });
 });
