@@ -153,7 +153,12 @@ export default function ChatPage({ params }: ChatPageProps) {
       try {
         const payload = JSON.parse(event.data) as { type: string; message?: ChatMessage };
         if (payload?.type === "message" && payload.message) {
-          setLocalMessages((prev) => [...prev, payload.message]);
+          setLocalMessages((prev) => {
+            if (prev.some((local) => areMessagesEquivalent(local, payload.message!))) {
+              return prev;
+            }
+            return [...prev, payload.message!];
+          });
           queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey });
         }
       } catch (error) {
@@ -177,30 +182,8 @@ export default function ChatPage({ params }: ChatPageProps) {
     if (!shouldShowLocal) {
       return base;
     }
-    const isSameTranscript = (a?: ChatMessage, b?: ChatMessage) =>
-      a?.metadata?.type === "transcript" &&
-      b?.metadata?.type === "transcript" &&
-      a?.metadata?.transcriptId &&
-      b?.metadata?.transcriptId &&
-      a.metadata.transcriptId === b.metadata.transcriptId;
-
-    const isSameAudio = (a?: ChatMessage, b?: ChatMessage) =>
-      a?.metadata?.type === "audio" &&
-      b?.metadata?.type === "audio" &&
-      a?.metadata?.fileName &&
-      b?.metadata?.fileName &&
-      a.metadata.fileName === b.metadata.fileName;
-
     const deduped = base.filter(
-      (message) =>
-        !localMessages.some(
-          (local) =>
-            local.id === message.id ||
-            (local.role === message.role &&
-              (local.content ?? "").trim() === (message.content ?? "").trim()) ||
-            isSameTranscript(local, message) ||
-            isSameAudio(local, message),
-        ),
+      (message) => !localMessages.some((local) => areMessagesEquivalent(local, message)),
     );
     const combined = [...deduped, ...localMessages];
     return combined.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -703,4 +686,49 @@ function buildLocalMessage(role: ChatMessage["role"], chatId: string, content: s
     content,
     createdAt: date.toISOString(),
   };
+}
+
+function areMessagesEquivalent(a?: ChatMessage, b?: ChatMessage): boolean {
+  if (!a || !b) {
+    return false;
+  }
+
+  if (a.id === b.id) {
+    return true;
+  }
+
+  const normalizedContent = (value?: string | null) => (value ?? "").trim();
+  if (
+    a.role === b.role &&
+    normalizedContent(a.content) === normalizedContent(b.content) &&
+    normalizedContent(a.content) !== ""
+  ) {
+    return true;
+  }
+
+  if (isSameTranscript(a, b) || isSameAudio(a, b)) {
+    return true;
+  }
+
+  return false;
+}
+
+function isSameTranscript(a?: ChatMessage, b?: ChatMessage): boolean {
+  return (
+    a?.metadata?.type === "transcript" &&
+    b?.metadata?.type === "transcript" &&
+    Boolean(a?.metadata?.transcriptId) &&
+    Boolean(b?.metadata?.transcriptId) &&
+    a?.metadata?.transcriptId === b?.metadata?.transcriptId
+  );
+}
+
+function isSameAudio(a?: ChatMessage, b?: ChatMessage): boolean {
+  return (
+    a?.metadata?.type === "audio" &&
+    b?.metadata?.type === "audio" &&
+    Boolean(a?.metadata?.fileName) &&
+    Boolean(b?.metadata?.fileName) &&
+    a?.metadata?.fileName === b?.metadata?.fileName
+  );
 }
