@@ -58,12 +58,13 @@ const ragConfigInputSchema = z.object({
 });
 
 const noCodeEndpointUrlSchema = z
-  .union([z.string().url({ message: "Некорректный URL" }), z.literal("")])
+  .union([z.string().url({ message: "Некорректный URL" }), z.literal(""), z.null()])
   .optional()
   .refine(
     (value) =>
       value === undefined ||
       value === "" ||
+      value === null ||
       value.startsWith("http://") ||
       value.startsWith("https://"),
     "Разрешены только http/https URL",

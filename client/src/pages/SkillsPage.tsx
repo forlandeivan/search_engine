@@ -1519,30 +1519,48 @@ export function SkillFormContent({
                         render={({ field }) => (
                           <FormItem className="space-y-4">
                             <RadioGroup value={field.value} onValueChange={controlsDisabled ? undefined : field.onChange} className="grid gap-3 md:grid-cols-2">
-                              <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
-                                <RadioGroupItem value="standard" className="peer sr-only" disabled={controlsDisabled} data-testid="execution-mode-standard" />
-                                <div className="flex items-start gap-3">
-                                  <div className="h-5 w-5 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                              <label className="flex w-full">
+                                <RadioGroupItem
+                                  value="standard"
+                                  className="peer sr-only"
+                                  disabled={controlsDisabled}
+                                  data-testid="execution-mode-standard"
+                                />
+                                <div
+                                  className="flex w-full cursor-pointer items-start gap-3 rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent/40 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2"
+                                >
+                                  <div className="flex h-5 w-5 items-center justify-center rounded-full border border-muted peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary peer-focus-visible:border-primary" aria-hidden="true">
+                                    <span className="h-2 w-2 rounded-full bg-transparent peer-data-[state=checked]:bg-white" />
+                                  </div>
                                   <div>
                                     <p className="text-sm font-medium">Стандартный</p>
                                     <p className="text-xs text-muted-foreground">Обработка внутри платформы.</p>
                                   </div>
                                 </div>
-                                <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
                               </label>
-                              <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
-                                <RadioGroupItem value="no_code" className="peer sr-only" disabled={noCodeDisabled} data-testid="execution-mode-no-code" />
-                                <div className="flex items-start gap-3">
-                                  <div className="h-5 w-5 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                              <label className="flex w-full">
+                                <RadioGroupItem
+                                  value="no_code"
+                                  className="peer sr-only"
+                                  disabled={noCodeDisabled}
+                                  data-testid="execution-mode-no-code"
+                                />
+                                <div
+                                  className="flex w-full cursor-pointer items-start gap-3 rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent/40 peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2"
+                                >
+                                  <div className="flex h-5 w-5 items-center justify-center rounded-full border border-muted peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary peer-focus-visible:border-primary" aria-hidden="true">
+                                    <span className="h-2 w-2 rounded-full bg-transparent peer-data-[state=checked]:bg-white" />
+                                  </div>
                                   <div>
                                     <p className="text-sm font-medium">No-code</p>
                                     <p className="text-xs text-muted-foreground">
                                       Обработка во внешнем сценарии (оркестрация настраивается отдельно).
                                     </p>
-                                    {!allowNoCodeFlow && <span className="text-xs font-normal text-muted-foreground">Доступно на премиум-тарифе.</span>}
+                                    {!allowNoCodeFlow && (
+                                      <span className="text-xs font-normal text-muted-foreground">Доступно на премиум-тарифе.</span>
+                                    )}
                                   </div>
                                 </div>
-                                <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
                               </label>
                             </RadioGroup>
                           </FormItem>
@@ -1553,7 +1571,7 @@ export function SkillFormContent({
 
                 {isStandardMode ? (
                   <div className="md:col-span-2 grid gap-6 md:grid-cols-2">
-                    <Card className="md:col-span-2">
+                      <Card className="md:col-span-2">
                       <CardHeader className="px-6 grid gap-2">
                         <CardTitle className="text-base font-semibold">Инструкция</CardTitle>
                       </CardHeader>
@@ -1983,8 +2001,8 @@ export function SkillFormContent({
                   </div>
                 ) : null}
                 {isNoCodeMode ? (
-                  <div className="md:col-span-2">
-                    <Card>
+                  <div className="md:col-span-2 grid gap-6 md:grid-cols-2">
+                    <Card className="md:col-span-2">
                       <CardHeader className="px-6 grid gap-2">
                         <CardTitle className="text-base font-semibold">No-code подключение</CardTitle>
                         <CardDescription className="text-sm text-muted-foreground">
@@ -2581,7 +2599,16 @@ export default function SkillsPage() {
     if (!archiveTarget) return;
     setIsArchiving(true);
     try {
-      const response = await apiRequest("DELETE", `/api/skills/${archiveTarget.id}`);
+      if (!workspaceId) {
+        throw new Error("Рабочее пространство не выбрано");
+      }
+      const response = await apiRequest(
+        "DELETE",
+        `/api/skills/${archiveTarget.id}`,
+        undefined,
+        undefined,
+        { workspaceId },
+      );
       const payload = await response.json().catch(() => ({}));
       await refetchSkills();
       toast({
@@ -2824,14 +2851,22 @@ export default function SkillsPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleEditClick(skill)}>
+                              <DropdownMenuItem
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleEditClick(skill);
+                                }}
+                              >
                                 <Pencil className="mr-2 h-4 w-4" />
                                 Редактировать
                               </DropdownMenuItem>
                               {skill.status !== "archived" && (
                                 <DropdownMenuItem
                                   className="text-red-600 focus:text-red-700"
-                                  onClick={() => handleArchiveSkill(skill)}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleArchiveSkill(skill);
+                                  }}
                                 >
                                   Архивировать
                                 </DropdownMenuItem>
