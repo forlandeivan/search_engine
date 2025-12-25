@@ -33,6 +33,8 @@ import {
 } from "./SkillsPage";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { UploadCloud } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 const parseTab = (search: string | null | undefined): SkillSettingsTab | null => {
   if (!search) return null;
@@ -75,8 +77,6 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   const [location, navigate] = useLocation();
   const cameFromHistory = useRef<boolean>(false);
   const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [filesPresent] = useState(false);
   const getInitialTab = (): SkillSettingsTab => {
     const fromWindow = typeof window !== "undefined" ? parseTab(window.location.search) : null;
     const fromLocation = parseTab(location.split("?")[1]);
@@ -416,27 +416,6 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     });
   }, [currentSkill, updateSkill]);
 
-  const handleFilesUploadClick = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-      fileInputRef.current.click();
-      return;
-    }
-    toast({
-      title: "Загрузка скоро будет доступна",
-      description: "Обработка файлов подключим в следующих шагах.",
-    });
-  };
-
-  const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files.length > 0) {
-      toast({
-        title: "Загрузка будет доступна в следующих сторях",
-        description: "Мы сохранили ваш выбор, скоро добавим обработку файлов.",
-      });
-    }
-  };
-
   return (
     <div className="space-y-6 pb-10">
       <div className="mx-auto w-full max-w-6xl px-6 pt-6">
@@ -512,16 +491,8 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
               <div className="mt-6">
                 <SkillFilesSection
                   canEdit
-                  hasFiles={filesPresent}
-                  onUploadClick={handleFilesUploadClick}
-                />
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={handleFilesSelected}
-                  data-testid="skill-files-input"
+                  workspaceId={workspaceId}
+                  skillId={currentSkill?.id ?? null}
                 />
               </div>
             ) : null}
@@ -534,16 +505,132 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
 
 export function SkillFilesSection({
   canEdit,
-  hasFiles,
-  onUploadClick,
+  workspaceId,
+  skillId,
+  uploadFiles,
 }: {
   canEdit: boolean;
-  hasFiles?: boolean;
-  onUploadClick: () => void;
+  workspaceId: string | null;
+  skillId: string | null;
+  uploadFiles?: (params: { workspaceId: string; skillId: string; files: File[] }) => Promise<{
+    files: Array<{ id?: string; name?: string; size?: number | null; contentType?: string | null; status?: string }>;
+  }>;
 }) {
   if (!canEdit) {
     return null;
   }
+
+  const { toast } = useToast();
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [uploads, setUploads] = useState<
+    Array<{ id: string; name: string; size?: number | null; status: string; error?: string }>
+  >([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const generateId = () => (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+
+  const doUpload = uploadFiles
+    ? uploadFiles
+    : async (params: { workspaceId: string; skillId: string; files: File[] }) => {
+        const formData = new FormData();
+        params.files.forEach((file) => formData.append("files", file));
+        const res = await apiRequest(
+          "POST",
+          `/api/workspaces/${params.workspaceId}/skills/${params.skillId}/files`,
+          formData,
+        );
+        return (await res.json()) as {
+          files: Array<{ id?: string; name?: string; size?: number | null; contentType?: string | null; status?: string }>;
+        };
+      };
+
+  const validateFiles = (files: File[]): { valid: File[]; error?: string } => {
+    if (files.length > 10) {
+      return { valid: [], error: "За один раз можно загрузить до 10 файлов" };
+    }
+    const allowedExt = [".pdf", ".docx", ".txt"];
+    const oversized = files.find((file) => file.size > 512 * 1024 * 1024);
+    if (oversized) {
+      return { valid: [], error: "Файл слишком большой (максимум 512MB)" };
+    }
+    const unsupported = files.find((file) => {
+      const ext = file.name ? file.name.toLowerCase().slice(file.name.lastIndexOf(".")) : "";
+      return !allowedExt.includes(ext);
+    });
+    if (unsupported) {
+      return { valid: [], error: "Формат не поддерживается. Загрузите PDF, DOCX или TXT." };
+    }
+    return { valid: files };
+  };
+
+  const handleFiles = async (files: File[]) => {
+    if (!workspaceId || !skillId) {
+      toast({
+        title: "Недоступно",
+        description: "Не удалось определить рабочее пространство или навык.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const { valid, error } = validateFiles(files);
+    if (error) {
+      toast({ title: "Не удалось загрузить файлы", description: error, variant: "destructive" });
+      return;
+    }
+    if (valid.length === 0) return;
+
+    const pendingIds = valid.map(() => generateId());
+    const pendingEntries = valid.map((file, idx) => ({
+      id: pendingIds[idx],
+      name: file.name,
+      size: file.size,
+      status: "uploading",
+    }));
+    setUploads((prev) => [...prev, ...pendingEntries]);
+    setIsUploading(true);
+    try {
+      const response = await doUpload({ workspaceId, skillId, files: valid });
+      const updated = pendingEntries.map((pending, idx) => {
+        const fromApi = response?.files?.[idx];
+        return {
+          id: fromApi?.id || pending.id,
+          name: fromApi?.name || pending.name,
+          size: fromApi?.size ?? pending.size,
+          status: fromApi?.status || "uploaded",
+          error: undefined,
+        };
+      });
+      setUploads((prev) => [...prev.filter((item) => !pendingIds.includes(item.id)), ...updated]);
+      toast({ title: "Файлы загружены" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось загрузить файлы";
+      setUploads((prev) =>
+        prev.map((item) =>
+          pendingIds.includes(item.id) ? { ...item, status: "error", error: message } : item,
+        ),
+      );
+      toast({ title: "Ошибка загрузки", description: message, variant: "destructive" });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const onDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragOver(false);
+    const files = Array.from(event.dataTransfer.files ?? []);
+    void handleFiles(files);
+  };
+
+  const onInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    void handleFiles(files);
+  };
+
+  const triggerFileDialog = () => {
+    fileInputRef.current?.click();
+  };
 
   return (
     <Card data-testid="skill-files-section">
@@ -552,24 +639,67 @@ export function SkillFilesSection({
         <CardDescription>Загрузите документы (PDF/DOCX/TXT), чтобы навык отвечал по ним.</CardDescription>
       </CardHeader>
       <CardContent>
-        {hasFiles ? (
-          <div className="text-sm text-muted-foreground">Список файлов появится здесь.</div>
-        ) : (
+        <div
+          className={cn(
+            "border-2 border-dashed rounded-md p-4 flex flex-col gap-3 transition-colors",
+            isDragOver ? "border-primary bg-muted/50" : "border-muted",
+          )}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            setIsDragOver(false);
+          }}
+          onDrop={onDrop}
+        >
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex items-start gap-3">
               <div className="mt-1 rounded-md bg-muted p-2">
                 <UploadCloud className="h-5 w-5 text-muted-foreground" />
               </div>
               <div className="space-y-1">
-                <p className="text-sm font-medium">Загрузите файлы, чтобы навык отвечал по вашим документам.</p>
-                <p className="text-sm text-muted-foreground">Поддерживаются PDF, DOCX, TXT.</p>
+                <p className="text-sm font-medium">Перетащите файлы сюда или нажмите “Загрузить”.</p>
+                <p className="text-sm text-muted-foreground">Поддерживаются PDF, DOCX, TXT. До 10 файлов за раз.</p>
               </div>
             </div>
-            <Button type="button" onClick={onUploadClick} data-testid="skill-files-upload">
-              Загрузить файлы
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button type="button" onClick={triggerFileDialog} data-testid="skill-files-upload" disabled={isUploading}>
+                {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                Загрузить файлы
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.docx,.txt"
+                className="hidden"
+                onChange={onInputChange}
+                data-testid="skill-files-input"
+              />
+            </div>
           </div>
-        )}
+
+          {uploads.length > 0 ? (
+            <div className="space-y-2">
+              {uploads.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-2 rounded-md border p-2">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">{item.name}</span>
+                    {item.size ? (
+                      <span className="text-xs text-muted-foreground">{(item.size / 1024).toFixed(1)} KB</span>
+                    ) : null}
+                    {item.error ? <span className="text-xs text-destructive">{item.error}</span> : null}
+                  </div>
+                  <Badge variant={item.status === "error" ? "destructive" : "outline"}>
+                    {item.status === "uploading" ? "Загружается" : item.status === "error" ? "Ошибка" : "Загружен"}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   );

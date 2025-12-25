@@ -7,8 +7,10 @@ import fetch, {
   type RequestInit as FetchRequestInit,
 } from "node-fetch";
 import { createHash, randomUUID, randomBytes } from "crypto";
+import { extname } from "path";
 import { performance } from "perf_hooks";
 import { storage } from "./storage";
+import { uploadWorkspaceFile } from "./workspace-storage-service";
 import type { KnowledgeChunkSearchEntry, WorkspaceMemberWithUser } from "./storage";
 import {
   startKnowledgeBaseCrawl,
@@ -7085,10 +7087,20 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   });
 
+  const skillFilesUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 512 * 1024 * 1024,
+      files: 10,
+    },
+  });
+
   const sanitizeFilename = (name: string): string => {
     const safe = name.replace(/[\\/:*?"<>|]/g, "_").trim();
     return safe.length > 0 ? safe : "file";
   };
+
+  const ALLOWED_SKILL_FILE_EXTENSIONS = new Set([".pdf", ".docx", ".txt"]);
 
   const buildAttachmentKey = (chatId: string, filename: string): string => {
     return `attachments/${chatId}/${randomUUID()}-${filename}`;
@@ -10474,8 +10486,88 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
       }
 
-      next(error);
-    }
+        next(error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/workspaces/:workspaceId/skills/:skillId/files",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
+    skillFilesUpload.array("files", 10),
+    async (req, res, next) => {
+      try {
+        const user = getSessionUser(req);
+        if (!user) {
+          return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        const workspaceId = req.params.workspaceId || req.workspaceContext?.workspaceId || getRequestWorkspace(req).id;
+        const skillId = req.params.skillId;
+        if (!workspaceId || !skillId) {
+          return res.status(400).json({ message: "Не указан workspaceId или skillId" });
+        }
+
+        const memberships = getRequestWorkspaceMemberships(req);
+        if (memberships.length > 0 && !memberships.some((entry) => entry.id === workspaceId)) {
+          return res.status(403).json({ message: "Нет доступа к рабочему пространству" });
+        }
+
+        const skill = await getSkillById(workspaceId, skillId);
+        if (!skill) {
+          return res.status(404).json({ message: "Навык не найден" });
+        }
+
+        const files = (req.files as Express.Multer.File[]) ?? [];
+        if (files.length === 0) {
+          return res.status(400).json({ message: "Прикрепите хотя бы один файл" });
+        }
+        if (files.length > 10) {
+          return res.status(400).json({ message: "За один раз можно загрузить до 10 файлов" });
+        }
+
+        for (const file of files) {
+          const ext = extname(file.originalname || "").toLowerCase();
+          if (!ALLOWED_SKILL_FILE_EXTENSIONS.has(ext)) {
+            return res.status(400).json({
+              message: "Формат файла не поддерживается. Загрузите PDF, DOCX или TXT.",
+              code: "UNSUPPORTED_FILE_TYPE",
+            });
+          }
+        }
+
+        const toInsert = [];
+        for (const file of files) {
+          const safeName = sanitizeFilename(file.originalname || "file");
+          const objectKey = `files/skills/${skillId}/${randomUUID()}-${safeName}`;
+          await uploadWorkspaceFile(workspaceId, objectKey, file.buffer, file.mimetype, file.size);
+          toInsert.push({
+            workspaceId,
+            skillId,
+            storageKey: objectKey,
+            originalName: file.originalname || safeName,
+            mimeType: file.mimetype || null,
+            sizeBytes: file.size,
+            status: "uploaded",
+            createdByUserId: user.id,
+          });
+        }
+
+        const saved = await storage.createSkillFiles(toInsert);
+        const result = saved.map((item) => ({
+          id: item.id,
+          name: item.originalName,
+          size: item.sizeBytes ?? null,
+          contentType: item.mimeType ?? null,
+          status: item.status,
+        }));
+
+        res.json({ files: result });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Не удалось загрузить файлы";
+        res.status(400).json({ message });
+      }
     },
   );
 

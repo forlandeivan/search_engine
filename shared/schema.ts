@@ -1365,12 +1365,42 @@ export const chatAttachments = pgTable(
   (table) => ({
     workspaceIdx: index("chat_attachments_workspace_idx").on(table.workspaceId, table.createdAt),
     chatIdx: index("chat_attachments_chat_idx").on(table.chatId, table.createdAt),
-    messageIdx: index("chat_attachments_message_idx").on(table.messageId),
+  messageIdx: index("chat_attachments_message_idx").on(table.messageId),
   }),
 );
 
 export type ChatAttachment = typeof chatAttachments.$inferSelect;
 export type ChatAttachmentInsert = typeof chatAttachments.$inferInsert;
+
+export const skillFileStatuses = ["uploaded", "processing", "error"] as const;
+export type SkillFileStatus = (typeof skillFileStatuses)[number];
+
+export const skillFiles = pgTable(
+  "skill_files",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    skillId: varchar("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    storageKey: text("storage_key").notNull(),
+    originalName: text("original_name").notNull(),
+    mimeType: text("mime_type"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+    status: text("status").$type<SkillFileStatus>().notNull().default("uploaded"),
+    createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("skill_files_workspace_idx").on(table.workspaceId, table.createdAt),
+    skillIdx: index("skill_files_skill_idx").on(table.skillId, table.createdAt),
+  }),
+);
+
+export type SkillFile = typeof skillFiles.$inferSelect;
+export type SkillFileInsert = typeof skillFiles.$inferInsert;
 
 export const canvasDocumentTypes = ["source", "derived", "summary", "cleaned", "custom"] as const;
 export type CanvasDocumentType = (typeof canvasDocumentTypes)[number];

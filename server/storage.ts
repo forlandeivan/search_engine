@@ -26,6 +26,7 @@ import {
   chatCards,
   chatMessages,
   chatAttachments,
+  skillFiles,
   transcripts,
   transcriptViews,
   canvasDocuments,
@@ -61,6 +62,8 @@ import {
   type ChatSessionInsert,
   type ChatAttachment,
   type ChatAttachmentInsert,
+  type SkillFile,
+  type SkillFileInsert,
   type ChatMessage,
   type ChatMessageInsert,
   type ChatCard,
@@ -945,6 +948,7 @@ export interface IStorage {
   createChatAttachment(values: ChatAttachmentInsert): Promise<ChatAttachment>;
   findChatAttachmentByMessageId(messageId: string): Promise<ChatAttachment | undefined>;
   getChatAttachment(id: string): Promise<ChatAttachment | undefined>;
+  createSkillFiles(values: SkillFileInsert[]): Promise<SkillFile[]>;
   updateChatTitleIfEmpty(chatId: string, title: string): Promise<boolean>;
 }
 
@@ -999,6 +1003,9 @@ let ensuringKnowledgeBaseAskAiRunsTable: Promise<void> | null = null;
 let knowledgeBaseTablesEnsured = false;
 let ensuringKnowledgeBaseTables: Promise<void> | null = null;
 let knowledgeBasePathUsesLtree: boolean | null = null;
+
+let skillFilesTableEnsured = false;
+let ensuringSkillFilesTable: Promise<void> | null = null;
 
 function coerceDatabaseBoolean(value: unknown): boolean {
   if (typeof value === "boolean") {
@@ -1483,6 +1490,71 @@ async function ensureChatAttachmentsTable(): Promise<void> {
 
   await ensuringChatAttachmentsTable;
   ensuringChatAttachmentsTable = null;
+}
+
+async function ensureSkillFilesTable(): Promise<void> {
+  if (skillFilesTableEnsured) {
+    return;
+  }
+  if (ensuringSkillFilesTable) {
+    await ensuringSkillFilesTable;
+    return;
+  }
+
+  ensuringSkillFilesTable = (async () => {
+    await ensureWorkspacesTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "skill_files" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "workspace_id" varchar NOT NULL,
+        "skill_id" varchar NOT NULL,
+        "storage_key" text NOT NULL,
+        "original_name" text NOT NULL,
+        "mime_type" text,
+        "size_bytes" bigint,
+        "status" text NOT NULL DEFAULT 'uploaded',
+        "created_by_user_id" varchar,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint("skill_files", "skill_files_workspace_id_fkey", () =>
+      db.execute(sql`
+        ALTER TABLE "skill_files"
+        ADD CONSTRAINT "skill_files_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `),
+    );
+
+    await ensureConstraint("skill_files", "skill_files_skill_id_fkey", () =>
+      db.execute(sql`
+        ALTER TABLE "skill_files"
+        ADD CONSTRAINT "skill_files_skill_id_fkey"
+        FOREIGN KEY ("skill_id") REFERENCES "skills"("id") ON DELETE CASCADE
+      `),
+    );
+
+    await ensureConstraint("skill_files", "skill_files_created_by_user_id_fkey", () =>
+      db.execute(sql`
+        ALTER TABLE "skill_files"
+        ADD CONSTRAINT "skill_files_created_by_user_id_fkey"
+        FOREIGN KEY ("created_by_user_id") REFERENCES "users"("id") ON DELETE SET NULL
+      `),
+    );
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS skill_files_workspace_idx ON "skill_files" ("workspace_id", "created_at")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS skill_files_skill_idx ON "skill_files" ("skill_id", "created_at")
+    `);
+
+    skillFilesTableEnsured = true;
+  })();
+
+  await ensuringSkillFilesTable;
+  ensuringSkillFilesTable = null;
 }
 
 async function ensureTranscriptsTable(): Promise<void> {
@@ -5406,6 +5478,12 @@ export class DatabaseStorage implements IStorage {
     await ensureChatTables();
     const rows = await this.db.select().from(chatAttachments).where(eq(chatAttachments.id, id)).limit(1);
     return rows[0];
+  }
+
+  async createSkillFiles(values: SkillFileInsert[]): Promise<SkillFile[]> {
+    await ensureSkillFilesTable();
+    const inserted = await this.db.insert(skillFiles).values(values).returning();
+    return inserted;
   }
 
   async countChatMessages(chatId: string): Promise<number> {
