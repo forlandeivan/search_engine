@@ -1,9 +1,8 @@
 import EventEmitter from "events";
-import type { ChatMessage } from "@shared/schema";
-
 export type ChatEventPayload = {
   type: "message";
-  message: ChatMessage;
+  // При передачах наружу сериализуем сами, поэтому допускаем любые поля.
+  message: any;
 };
 
 class ChatEvents extends EventEmitter {
@@ -15,7 +14,7 @@ class ChatEvents extends EventEmitter {
 
 export const chatEvents = new ChatEvents();
 
-export function emitChatMessage(chatId: string, message: ChatMessage): void {
+export function emitChatMessage(chatId: string, message: any): void {
   chatEvents.emit(chatId, { type: "message", message });
 }
 

@@ -20,6 +20,8 @@ export function __getSkillExecutionLogRepositoryForTests() {
 }
 
 export function __resetSkillExecutionLogsForTests() {
-  repository.executions.length = 0;
-  repository.steps.length = 0;
+  if (repository instanceof InMemorySkillExecutionLogRepository) {
+    repository.executions.length = 0;
+    repository.steps.length = 0;
+  }
 }

@@ -16,6 +16,8 @@ type EvaluationInput = {
 };
 
 const EMPTY_SNAPSHOT: UsageSnapshot = {
+  workspaceId: "",
+  periodCode: "",
   llmTokensTotal: 0,
   embeddingsTokensTotal: 0,
   asrMinutesTotal: 0,
@@ -25,6 +27,8 @@ const EMPTY_SNAPSHOT: UsageSnapshot = {
   knowledgeBasesCount: 0,
   membersCount: 0,
   qdrantStorageBytes: 0,
+  qdrantCollectionsCount: 0,
+  qdrantPointsCount: 0,
 };
 
 function matchesRule(rule: LimitRule, context: OperationContext): boolean {

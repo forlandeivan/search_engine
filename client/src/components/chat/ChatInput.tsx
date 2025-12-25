@@ -417,64 +417,104 @@ export default function ChatInput({
                 }
                   void handleSendFile(file);
                 }}
-                className="hidden"
-                data-testid="input-chat-file"
-              />
-              <Tooltip disabled={!disabledTooltip}>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
-                    onClick={() => attachInputRef.current?.click()}
-                    disabled={isAttachDisabled}
-                    data-testid="button-attach-file"
-                  >
-                    <Paperclip className="h-6 w-6" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  <p>{disabledTooltip ?? "Прикрепите файл"}</p>
-                </TooltipContent>
-              </Tooltip>
+            className="hidden"
+            data-testid="input-chat-file"
+          />
+              {disabledTooltip ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
+                      onClick={() => attachInputRef.current?.click()}
+                      disabled={isAttachDisabled}
+                      data-testid="button-attach-file"
+                    >
+                      <Paperclip className="h-6 w-6" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    <p>{disabledTooltip}</p>
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 shrink-0 rounded-full text-slate-400 hover:text-slate-600"
+                  onClick={() => attachInputRef.current?.click()}
+                  disabled={isAttachDisabled}
+                  data-testid="button-attach-file"
+                >
+                  <Paperclip className="h-6 w-6" />
+                </Button>
+              )}
             </>
           )}
 
-          <Tooltip disabled={!disabledTooltip}>
-            <TooltipTrigger asChild>
-              <Textarea
-                ref={textareaRef}
-                value={value}
-                onChange={(event) => {
-                  setValue(event.target.value);
-                  requestAnimationFrame(autoResize);
-                }}
-                placeholder={placeholder ?? "Спросите что-нибудь..."}
-                disabled={disabled}
-                rows={1}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    handleSend();
-                  }
-                }}
-                style={{ maxHeight: "240px", overflowY: "hidden", borderRadius: "12px" }}
-                className={cn(
-                  "!min-h-0 flex-1 resize-none border-none px-2 py-2 text-base leading-6",
-                  disabled
-                    ? "cursor-not-allowed bg-transparent text-slate-400 dark:text-slate-600"
-                    : "bg-transparent text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
-                )}
-                data-testid="input-chat-message"
-              />
-            </TooltipTrigger>
-            {disabledTooltip ? (
+          {disabledTooltip ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Textarea
+                  ref={textareaRef}
+                  value={value}
+                  onChange={(event) => {
+                    setValue(event.target.value);
+                    requestAnimationFrame(autoResize);
+                  }}
+                  placeholder={placeholder ?? "Спросите что-нибудь..."}
+                  disabled={disabled}
+                  rows={1}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  style={{ maxHeight: "240px", overflowY: "hidden", borderRadius: "12px" }}
+                  className={cn(
+                    "!min-h-0 flex-1 resize-none border-none px-2 py-2 text-base leading-6",
+                    disabled
+                      ? "cursor-not-allowed bg-transparent text-slate-400 dark:text-slate-600"
+                      : "bg-transparent text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
+                  )}
+                  data-testid="input-chat-message"
+                />
+              </TooltipTrigger>
               <TooltipContent side="top">
                 <p>{disabledTooltip}</p>
               </TooltipContent>
-            ) : null}
-          </Tooltip>
+            </Tooltip>
+          ) : (
+            <Textarea
+              ref={textareaRef}
+              value={value}
+              onChange={(event) => {
+                setValue(event.target.value);
+                requestAnimationFrame(autoResize);
+              }}
+              placeholder={placeholder ?? "Спросите что-нибудь..."}
+              disabled={disabled}
+              rows={1}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  handleSend();
+                }
+              }}
+              style={{ maxHeight: "240px", overflowY: "hidden", borderRadius: "12px" }}
+              className={cn(
+                "!min-h-0 flex-1 resize-none border-none px-2 py-2 text-base leading-6",
+                disabled
+                  ? "cursor-not-allowed bg-transparent text-slate-400 dark:text-slate-600"
+                  : "bg-transparent text-slate-600 placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-slate-300 dark:placeholder:text-slate-500"
+              )}
+              data-testid="input-chat-message"
+            />
+          )}
 
           <Button
             type="button"

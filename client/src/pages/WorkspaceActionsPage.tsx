@@ -25,7 +25,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { EllipsisVertical, Loader2 } from "lucide-react";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { ActionDto } from "@shared/skills";
+import type { ActionDto, ActionPlacement } from "@shared/skills";
 import type { SessionResponse } from "@/types/session";
 
 type WorkspaceActionsResponse = {
@@ -40,7 +40,7 @@ type CreateActionState = {
   label: string;
   description: string;
   target: string;
-  placements: Set<string>;
+  placements: Set<ActionPlacement>;
   inputType: string;
   outputMode: string;
   promptTemplate: string;
@@ -86,19 +86,20 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
   const actions = actionsQuery.data?.actions ?? [];
 
   const placementLabels = useMemo(
-    () => ({
+    (): Record<ActionPlacement, string> => ({
       canvas: "Canvas",
       chat_message: "Message",
       chat_toolbar: "Toolbar",
     }),
     [],
   );
+  const placementKeys: ActionPlacement[] = ["canvas", "chat_message", "chat_toolbar"];
 
   const [createState, setCreateState] = useState<CreateActionState>({
     label: "",
     description: "",
     target: "transcript",
-    placements: new Set(["canvas"]),
+    placements: new Set<ActionPlacement>(["canvas"]),
     inputType: "full_transcript",
     outputMode: "replace_text",
     promptTemplate: "",
@@ -112,7 +113,7 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
       label: "",
       description: "",
       target: "transcript",
-      placements: new Set(["canvas"]),
+    placements: new Set<ActionPlacement>(["canvas"]),
       inputType: "full_transcript",
       outputMode: "replace_text",
       promptTemplate: "",
@@ -121,7 +122,7 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
       editingActionId: null,
     });
 
-  const togglePlacement = (key: string) =>
+  const togglePlacement = (key: ActionPlacement) =>
     setCreateState((prev) => {
       const next = new Set(prev.placements);
       if (next.has(key)) {
@@ -280,7 +281,7 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
                       </Tooltip>
                     </TooltipProvider>
                   </div>
-                  {["canvas", "chat_message", "chat_toolbar"].map((p) => (
+                  {placementKeys.map((p) => (
                     <label key={p} className="flex items-center gap-2 text-sm">
                       <Checkbox
                         checked={createState.placements.has(p)}

@@ -17,6 +17,7 @@ import { useAdminWorkspaces } from "@/hooks/useAdminWorkspaces";
 import { useAsrExecutionDetail, useAsrExecutionsList } from "@/hooks/useAsrExecutions";
 import type { AsrExecutionEvent, AsrExecutionStatus } from "@/types/asr-execution";
 import { centsToCredits } from "@shared/credits";
+import type { DateRange } from "react-day-picker";
 
 const STATUS_BADGES: Record<AsrExecutionStatus, string> = {
   pending: "bg-slate-200 text-slate-800",
@@ -86,7 +87,7 @@ export default function AsrExecutionsPage() {
 
   const [statusFilter, setStatusFilter] = useState<AsrExecutionStatus | "all">("all");
   const [workspaceId, setWorkspaceId] = useState<string>("");
-  const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
+  const [dateRange, setDateRange] = useState<DateRange>({ from: undefined, to: undefined });
 
   const { workspaces } = useAdminWorkspaces();
   const { executions, pagination, isLoading, error } = useAsrExecutionsList({
@@ -190,7 +191,10 @@ export default function AsrExecutionsPage() {
                       selected={dateRange}
                       onSelect={(range) => {
                         if (!range) return;
-                        setDateRange(range);
+                        setDateRange({
+                          from: range.from,
+                          to: range.to,
+                        });
                       }}
                       numberOfMonths={2}
                     />

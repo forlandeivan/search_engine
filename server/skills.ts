@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { createHash, randomBytes, timingSafeEqual, randomUUID } from "crypto";
 import { db } from "./db";
 import {
@@ -337,6 +337,11 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
 
   const callbackTokenHash =
     typeof row.noCodeCallbackTokenHash === "string" ? row.noCodeCallbackTokenHash.trim() : "";
+  const responseFormatRaw = row.ragLlmResponseFormat;
+  const normalizedResponseFormat =
+    responseFormatRaw === "text" || responseFormatRaw === "markdown" || responseFormatRaw === "html"
+      ? responseFormatRaw
+      : DEFAULT_RAG_CONFIG.llmResponseFormat;
 
   const payload: SkillDto = {
     id: row.id,
@@ -378,7 +383,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
       embeddingProviderId: row.ragEmbeddingProviderId ?? DEFAULT_RAG_CONFIG.embeddingProviderId,
       llmTemperature: row.ragLlmTemperature ?? DEFAULT_RAG_CONFIG.llmTemperature,
       llmMaxTokens: row.ragLlmMaxTokens ?? DEFAULT_RAG_CONFIG.llmMaxTokens,
-      llmResponseFormat: row.ragLlmResponseFormat ?? DEFAULT_RAG_CONFIG.llmResponseFormat,
+      llmResponseFormat: normalizedResponseFormat,
     },
     transcriptionFlowMode: normalizeTranscriptionFlowMode(row.transcriptionFlowMode),
     onTranscriptionMode: normalizeTranscriptionMode(row.onTranscriptionMode),
@@ -522,11 +527,9 @@ export async function listSkills(
   options: { includeArchived?: boolean } = {},
 ): Promise<SkillDto[]> {
   const fetchSkillsForWorkspace = async (): Promise<SkillRow[]> => {
-    let condition = eq(skills.workspaceId, workspaceId);
-    if (!options.includeArchived) {
-      condition = and(condition, eq(skills.status, "active"));
-    }
-    return await db.select().from(skills).where(condition).orderBy(asc(skills.createdAt));
+    const baseCondition = eq(skills.workspaceId, workspaceId);
+    const condition = options.includeArchived ? baseCondition : and(baseCondition, eq(skills.status, "active"));
+    return await db.select().from(skills).where(condition as SQL<unknown>).orderBy(asc(skills.createdAt));
   };
 
   let rows: SkillRow[] = await fetchSkillsForWorkspace();

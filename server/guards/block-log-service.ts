@@ -116,7 +116,7 @@ export async function listGuardBlockEvents(
   ]);
 
   const total = Number(countRows[0]?.count ?? 0);
-  const items: GuardBlockEventWithWorkspace[] = rows.map((row) => ({
+  const items: GuardBlockEventWithWorkspace[] = rows.map((row: any) => ({
     ...row.event,
     workspaceName: row.workspaceName ?? null,
   }));

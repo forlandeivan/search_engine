@@ -41,30 +41,29 @@ function mapSkillActionRow(row: SkillActionRow): SkillActionDto {
 }
 
 async function getById(id: string): Promise<SkillActionDto | null> {
-  const result = await db.execute<SkillActionRow>(
-    sql`SELECT * FROM "skill_actions" WHERE "id" = ${id} LIMIT 1`,
-  );
-  const row = result.rows?.[0];
+  const result = await db.execute(sql`SELECT * FROM "skill_actions" WHERE "id" = ${id} LIMIT 1`);
+  const row = (result as any)?.rows?.[0] as SkillActionRow | undefined;
   return row ? mapSkillActionRow(row) : null;
 }
 
 async function listForSkill(skillId: string): Promise<SkillActionDto[]> {
-  const result = await db.execute<SkillActionRow>(
+  const result = await db.execute(
     sql`SELECT * FROM "skill_actions" WHERE "skill_id" = ${skillId} ORDER BY "created_at" DESC`,
   );
-  console.log("[skill-actions] listForSkill raw rows:", JSON.stringify(result.rows, null, 2));
-  return (result.rows ?? []).map(mapSkillActionRow);
+  const rows = ((result as any)?.rows ?? []) as SkillActionRow[];
+  console.log("[skill-actions] listForSkill raw rows:", JSON.stringify(rows, null, 2));
+  return rows.map(mapSkillActionRow);
 }
 
 async function getForSkillAndAction(skillId: string, actionId: string): Promise<SkillActionDto | null> {
-  const result = await db.execute<SkillActionRow>(
+  const result = await db.execute(
     sql`
       SELECT * FROM "skill_actions"
       WHERE "skill_id" = ${skillId} AND "action_id" = ${actionId}
       LIMIT 1
     `,
   );
-  const row = result.rows?.[0];
+  const row = (result as any)?.rows?.[0] as SkillActionRow | undefined;
   return row ? mapSkillActionRow(row) : null;
 }
 
@@ -92,7 +91,7 @@ async function upsertForSkill(
   }
 
   const placementsArray = toPgArray(payload.enabledPlacements);
-  const result = await db.execute<SkillActionRow>(
+  const result = await db.execute(
     sql`
       INSERT INTO "skill_actions" (
         "skill_id", "action_id", "workspace_id", "enabled", "enabled_placements", "label_override"
@@ -109,7 +108,7 @@ async function upsertForSkill(
     `,
   );
 
-  const row = result.rows?.[0];
+  const row = (result as any)?.rows?.[0] as SkillActionRow | undefined;
   if (!row) {
     throw new Error("Failed to upsert skill action");
   }

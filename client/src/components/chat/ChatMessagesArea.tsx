@@ -285,6 +285,7 @@ export default function ChatMessagesArea({
                       !message.content
                     }
                     onOpenTranscript={onOpenTranscript}
+                    onOpenCard={onOpenCard}
                   />
                 ))
             : null}
@@ -315,6 +316,7 @@ type ChatBubbleProps = {
   isStreamingBubble?: boolean;
   isTranscribingBubble?: boolean;
   onOpenTranscript?: (transcriptId: string, defaultTabId?: string | null) => void;
+  onOpenCard?: (cardId: string, fallbackTranscriptId?: string | null, defaultTabId?: string | null) => void;
 };
 
 function ChatBubble({
@@ -323,6 +325,7 @@ function ChatBubble({
   isStreamingBubble = false,
   isTranscribingBubble = false,
   onOpenTranscript,
+  onOpenCard,
 }: ChatBubbleProps) {
   const isUser = message.role === "user";
   const isGroupedWithPrevious = previousRole === message.role;
@@ -353,7 +356,9 @@ function ChatBubble({
 
   const metadata = (message.metadata ?? {}) as ChatMessage["metadata"];
   const cardId = (message as any).cardId ?? (metadata as any)?.cardId ?? null;
-  const isTranscript = (metadata?.type === "transcript" && metadata.transcriptId) || Boolean(cardId);
+  const isTranscript =
+    (metadata?.type === "transcript" && metadata.transcriptId) ||
+    Boolean(cardId);
   const resolvedStreaming = isStreamingBubble || metadata?.streaming === true;
   const fileMeta = message.file ?? (metadata as any)?.file;
   const isFileMessage =

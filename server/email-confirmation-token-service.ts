@@ -93,7 +93,9 @@ class DbEmailConfirmationTokenRepo implements Repo {
   async cleanupExpired(now: Date): Promise<void> {
     await db
       .delete(emailConfirmationTokens)
-      .where(and(isNull(emailConfirmationTokens.consumedAt), gt(now, emailConfirmationTokens.expiresAt)));
+      .where(
+        and(isNull(emailConfirmationTokens.consumedAt), gt(emailConfirmationTokens.expiresAt, now)),
+      );
   }
 }
 

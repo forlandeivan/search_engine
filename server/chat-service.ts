@@ -7,6 +7,7 @@ import type {
   ChatSession,
   ChatMessage,
   ChatMessageRole,
+  ChatStatus,
   LlmProvider,
   LlmRequestConfig,
   Model,
@@ -43,11 +44,24 @@ export class ChatServiceError extends Error {
   }
 }
 
-export type ChatSummary = ChatSession & {
+export type ChatSummary = {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  skillId: string;
+  status: ChatStatus;
+  title: string;
+  createdAt: Date;
+  updatedAt: Date;
+  deletedAt?: Date | null;
   skillName: string | null;
   skillIsSystem: boolean;
   skillSystemKey: string | null;
   skillStatus: string | null;
+  currentAssistantActionType?: AssistantActionType | null;
+  currentAssistantActionText?: string | null;
+  currentAssistantActionTriggerMessageId?: string | null;
+  currentAssistantActionUpdatedAt?: Date | string | null;
   currentAssistantAction?: {
     type: AssistantActionType;
     text: string | null;
@@ -168,6 +182,10 @@ export const mapChatSummary = (
   skillStatus: (session as any).skillStatus ?? null,
   skillIsSystem: Boolean(session.skillIsSystem),
   skillSystemKey: session.skillSystemKey ?? null,
+  currentAssistantActionType: (session as any).currentAssistantActionType ?? null,
+  currentAssistantActionText: (session as any).currentAssistantActionText ?? null,
+  currentAssistantActionTriggerMessageId: (session as any).currentAssistantActionTriggerMessageId ?? null,
+  currentAssistantActionUpdatedAt: (session as any).currentAssistantActionUpdatedAt ?? null,
   currentAssistantAction: mapAssistantAction(session),
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
@@ -345,6 +363,7 @@ export async function addUserMessage(
   const message = await storage.createChatMessage({
     chatId,
     role: "user",
+    messageType: "text",
     content,
     metadata: {},
   });
@@ -759,6 +778,7 @@ export async function addAssistantMessage(
   const message = await storage.createChatMessage({
     chatId,
     role: "assistant",
+    messageType: "text",
     content,
     metadata: metadata ?? {},
   });
@@ -883,6 +903,7 @@ export async function addNoCodeSyncFinalResults(opts: {
     const message = await storage.createChatMessage({
       chatId: opts.chatId,
       role: result.role,
+      messageType: (result as any).messageType ?? "text",
       content,
       metadata,
     });
@@ -994,6 +1015,7 @@ export async function addNoCodeStreamChunk(opts: {
   const message = await storage.createChatMessage({
     chatId: opts.chatId,
     role,
+    messageType: "text",
     content: delta,
     metadata,
   });

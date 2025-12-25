@@ -28,7 +28,8 @@ export async function reconcileWorkspaceQdrantUsage(workspaceId: string): Promis
       pointsCount: 0,
       storageBytes: 0,
     });
-    return { workspaceId, ...updated, updated: true };
+    const { workspaceId: _ignored, ...rest } = updated;
+    return { workspaceId, ...rest, updated: true };
   }
 
   try {
@@ -55,7 +56,8 @@ export async function reconcileWorkspaceQdrantUsage(workspaceId: string): Promis
       storageBytes: storageBytesTotal,
     });
 
-    return { workspaceId, ...updated, updated: true };
+    const { workspaceId: _ignored, ...rest } = updated;
+    return { workspaceId, ...rest, updated: true };
   } catch (error) {
     if (error instanceof QdrantConfigurationError) {
       const message = error.message || "Qdrant не настроен";

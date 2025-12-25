@@ -107,6 +107,7 @@ export type SkillNoCodeConnection = {
   callbackTokenIsSet: boolean;
   callbackTokenLastRotatedAt: string | null;
   callbackTokenLastFour: string | null;
+  callbackKey: string | null;
 };
 
 export type SkillDto = {

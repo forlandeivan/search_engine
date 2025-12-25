@@ -5487,12 +5487,6 @@ export class DatabaseStorage implements IStorage {
     return updated ?? undefined;
   }
 
-  async createTranscript(values: TranscriptInsert): Promise<Transcript> {
-    await ensureChatTables();
-    const [created] = await this.db.insert(transcripts).values(values).returning();
-    return created;
-  }
-
   async getTranscriptBySourceFileId(sourceFileId: string): Promise<Transcript | undefined> {
     await ensureChatTables();
     const [found] = await this.db

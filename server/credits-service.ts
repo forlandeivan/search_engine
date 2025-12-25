@@ -79,7 +79,7 @@ export async function grantSubscriptionCreditsOnEvent(
   let ledgerEntry: WorkspaceCreditLedgerEntry | undefined;
   let accountAfter: WorkspaceCreditAccount | null = null;
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: any) => {
     // ensure account row and lock
     await tx
       .insert(workspaceCreditAccounts)
@@ -218,7 +218,7 @@ export async function getRecentManualAdjustments(
     .orderBy(sql`${workspaceCreditLedger.occurredAt} desc`)
     .limit(limit);
 
-  return rows.map((row) => ({
+  return rows.map((row: any) => ({
     id: row.id,
     amountDelta: centsToCredits(row.amountDelta ?? 0),
     reason: row.reason ?? null,
@@ -246,7 +246,7 @@ export async function applyManualCreditAdjustment(payload: ManualAdjustmentPaylo
 
   let accountAfter: WorkspaceCreditAccount | null = null;
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: any) => {
     await tx
       .insert(workspaceCreditAccounts)
       .values({ workspaceId })

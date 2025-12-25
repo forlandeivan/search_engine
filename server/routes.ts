@@ -127,7 +127,6 @@ import {
   assistantActionTypes,
   chatCardTypes,
   type AssistantActionType,
-  type ChatMessageMetadata,
 } from "@shared/schema";
 type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
 const NO_CODE_FLOW_MESSAGES: Record<NoCodeFlowFailureReason, string> = {
@@ -243,6 +242,7 @@ import {
   type KnowledgeBaseAskAiPipelineStepLog,
   type UnicaChatConfigInsert,
   type ChatMessageMetadata,
+  type ChatMessage,
   models,
   workspaceCreditLedger,
 } from "@shared/schema";
@@ -257,7 +257,7 @@ import {
   actionTargets,
 } from "@shared/skills";
 import { actionsRepository } from "./actions";
-import type { SkillDto, ActionPlacement } from "@shared/skills";
+import type { SkillDto, ActionPlacement, ActionDto } from "@shared/skills";
 import { skillActionsRepository } from "./skill-actions";
 import { resolveLlmConfigForAction, LlmConfigNotFoundError } from "./llm-config-resolver";
 import type {
@@ -320,8 +320,6 @@ import {
   YandexSttAsyncError,
   YandexSttAsyncConfigError,
 } from "./yandex-stt-async-service";
-import { estimateEmbeddingsPreflight, estimateAsrPreflight } from "./preflight-estimator";
-import { assertSufficientWorkspaceCredits, InsufficientCreditsError } from "./credits-precheck";
 import { yandexIamTokenService } from "./yandex-iam-token-service";
 import multer from "multer";
 import { getLlmPromptDebugConfig, isLlmPromptDebugEnabled, setLlmPromptDebugEnabled } from "./llm-debug-config";
@@ -1076,6 +1074,7 @@ async function resolveGenerativeWorkspace(
   if (!apiKey) {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
+      const workspaceIdStrict = workspaceId as string;
       return { workspaceId, site: null, isPublic: false };
     } catch (error) {
       if (error instanceof WorkspaceContextError) {
@@ -3344,7 +3343,7 @@ async function runKnowledgeBaseRagPipeline(options: {
   let llmProviderId = body.llm.provider?.trim() || null;
   let llmModel = body.llm.model?.trim() || null;
   let llmModelLabel: string | null = null;
-  let llmModelInfo: { id: string; modelKey: string } | null = null;
+  let llmModelInfo: ModelInfoForUsage | null = null;
 
   let selectedEmbeddingProvider: EmbeddingProvider | null = null;
   let embeddingResultForMetadata: EmbeddingVectorResult | null = null;
@@ -4170,7 +4169,12 @@ async function runKnowledgeBaseRagPipeline(options: {
     if (requestedModel.length > 0) {
       try {
         const model = await ensureModelAvailable(selectedModelValue ?? requestedModel, { expectedType: "LLM" });
-        llmModelInfo = { id: model.id, modelKey: model.modelKey };
+        llmModelInfo = {
+          id: model.id,
+          modelKey: model.modelKey,
+          consumptionUnit: model.consumptionUnit,
+          creditsPerUnit: model.creditsPerUnit,
+        };
         llmModel = model.modelKey;
       } catch (error) {
         if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
@@ -4186,7 +4190,12 @@ async function runKnowledgeBaseRagPipeline(options: {
     } else if (selectedModelValue) {
       try {
         const model = await ensureModelAvailable(selectedModelValue, { expectedType: "LLM" });
-        llmModelInfo = { id: model.id, modelKey: model.modelKey };
+        llmModelInfo = {
+          id: model.id,
+          modelKey: model.modelKey,
+          consumptionUnit: model.consumptionUnit,
+          creditsPerUnit: model.creditsPerUnit,
+        };
         llmModel = model.modelKey;
       } catch (error) {
         if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
@@ -6356,12 +6365,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 type AutoActionRunPayload = {
   userId: string;
   skill: SkillDto;
-  action: Awaited<ReturnType<typeof actionsRepository.getByIdForWorkspace>>;
+  action: ActionDto;
   placement: ActionPlacement;
   transcriptId?: string | null;
   transcriptText: string;
   context: Record<string, unknown>;
-  placement?: ActionPlacement | null;
 };
 
 async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise<{
@@ -6384,6 +6392,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     transcriptId: transcriptId ?? undefined,
     trigger: typeof context?.trigger === "string" ? context.trigger : undefined,
   };
+  const executionMetadata = {
+    trigger: logContext.trigger ?? "manual_action",
+    actionId: logContext.actionId,
+    target: logContext.target,
+    placement: logContext.placement,
+    transcriptId: logContext.transcriptId,
+  };
   const execution = await skillExecutionLogService.startExecution({
     workspaceId: logContext.workspaceId,
     skillId: logContext.skillId,
@@ -6391,13 +6406,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     chatId: logContext.chatId ?? null,
     userMessageId: null,
     source: "workspace_skill",
-    metadata: {
-      trigger: logContext.trigger ?? "manual_action",
-      actionId: logContext.actionId,
-      target: logContext.target,
-      placement: logContext.placement,
-      transcriptId: logContext.transcriptId,
-    },
+    metadata: executionMetadata as any,
   });
   const executionId = execution?.id ?? null;
 
@@ -6697,9 +6706,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         lastName,
         phone: "",
         passwordHash,
-        isEmailConfirmed: false,
-        status: "pending_email_confirmation",
-        emailConfirmedAt: null,
       });
 
       // Создаём токен подтверждения
@@ -7102,7 +7108,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  function isWorkspaceAdmin(role: WorkspaceMemberRole) {
+  function isWorkspaceAdmin(role: (typeof workspaceMemberRoles)[number]) {
     return role === "owner" || role === "manager";
   }
 
@@ -8388,25 +8394,48 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         .limit(limit)
         .offset(offset);
 
+      const ledgerRows = rows as Array<typeof workspaceCreditLedger.$inferSelect>;
+
       const modelIds = Array.from(
         new Set(
-          rows
+          ledgerRows
             .map((row) => {
               const meta = (row.metadata ?? {}) as Record<string, unknown>;
               const mid = typeof meta.modelId === "string" ? meta.modelId : null;
               return mid;
             })
-            .filter((v): v is string => Boolean(v)),
+            .filter((v: string | null): v is string => Boolean(v)),
         ),
       );
-      const modelsMap = new Map<string, any>();
+      const modelsMap = new Map<string, typeof models.$inferSelect>();
       if (modelIds.length > 0) {
         const modelsList = await db.select().from(models).where(inArray(models.id, modelIds));
-        modelsList.forEach((m) => modelsMap.set(m.id, m));
+        modelsList.forEach((m: typeof models.$inferSelect) => modelsMap.set(m.id, m));
       }
 
-      const items = rows
-        .map((row) => {
+      type LedgerItem = {
+        id: string;
+        operationId: string | null;
+        workspaceId: string;
+        occurredAt: Date;
+        model:
+          | {
+              id: string | null;
+              key: string | null;
+              displayName: string | null;
+              modelType: string | null;
+              consumptionUnit: string | null;
+            }
+          | null;
+        unit: string | null;
+        quantityUnits: number | null;
+        quantityRaw: number | null;
+        appliedCreditsPerUnit: number | null;
+        creditsCharged: number;
+      };
+
+      const items = ledgerRows
+        .map<LedgerItem | null>((row) => {
           const meta = (row.metadata ?? {}) as Record<string, unknown>;
           const modelId = typeof meta.modelId === "string" ? meta.modelId : null;
           const model = modelId ? modelsMap.get(modelId) ?? null : null;
@@ -8466,7 +8495,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             creditsCharged: centsToCredits(Math.abs(Number(row.amountDelta ?? 0))),
           };
         })
-        .filter((v): v is NonNullable<typeof v> => Boolean(v));
+        .filter((v): v is LedgerItem => Boolean(v));
 
       res.json({ items, total, limit, offset });
     } catch (error) {
@@ -10519,7 +10548,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         userId: user.id,
         messageText: payload.content ?? "",
         messageMetadata: message?.metadata ?? {},
-        chatTitle: message?.chatTitle ?? undefined,
       });
       res.status(201).json({ message });
     } catch (error) {
@@ -10561,6 +10589,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const chat = await getChatById(req.params.chatId, workspaceId, user.id);
         ensureChatAndSkillAreActive(chat);
         const skill = await getSkillById(workspaceId, chat.skillId);
+        if (!skill) {
+          return res.status(404).json({ message: "Skill not found" });
+        }
         ensureSkillIsActive(skill);
 
         const filename = sanitizeFilename(file.originalname || "file");
@@ -10742,7 +10773,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     let streamingResponseStarted = false;
     let resolvedWorkspaceId: string | null = null;
     let executionId: string | null = null;
-    let userMessageRecord: { id: string } | null = null;
+    let userMessageRecord: ReturnType<typeof mapMessage> | null = null;
     const operationId = resolveOperationId(req);
 
     type StepLogMeta = {
@@ -10765,7 +10796,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     };
 
     const safeLogStep = async (
-      type: SkillExecutionStepType,
+      type: SkillExecutionStepType | string,
       status: SkillExecutionStepStatus,
       meta: StepLogMeta = {},
     ) => {
@@ -10775,7 +10806,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       try {
         const payload = {
           executionId,
-          type,
+          type: type as SkillExecutionStepType,
           input: meta.input,
           output: meta.output,
           errorCode: meta.errorCode,
@@ -10943,6 +10974,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           errorMessage: messageError instanceof Error ? messageError.message : "Failed to save user message",
         });
         throw messageError;
+      }
+
+      if (!userMessageRecord) {
+        throw new Error("Failed to create user message");
       }
 
       if (skillForChat && skillForChat.executionMode === "no_code") {
@@ -11449,7 +11484,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
       }
 
-      const { id: workspaceId } = getRequestWorkspace(req);
+      const { id: workspaceId } = getRequestWorkspace(req) as { id: string };
+      const workspaceIdStrict = workspaceId as string;
       if (payload.workspaceId && payload.workspaceId !== workspaceId) {
         throw new SkillServiceError("Invalid workspaceId", 400);
       }
@@ -11461,7 +11497,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         skillReference = await verifyNoCodeCallbackKey({ workspaceId, callbackKey });
       } else {
         skillReference = await verifyNoCodeCallbackToken({
-          workspaceId,
+          workspaceId: workspaceIdStrict,
           chatId: payload.chatId,
           token: callbackToken,
         });
@@ -11475,7 +11511,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           chatId: payload.chatId,
           type: payload.card.type,
           title: payload.card.title ?? null,
-          previewText: payload.card.previewText ?? content || "Карточка",
+          previewText: (payload.card.previewText ?? content) || "Карточка",
           transcriptId: payload.card.transcriptId ?? null,
           createdByUserId: null,
         });
@@ -11722,7 +11758,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         if (!actionTargets.includes(body.target)) {
           return res.status(400).json({ message: "invalid target" });
         }
-        if (!Array.isArray(body.placements) || body.placements.some((p: unknown) => !actionPlacements.includes(p as string))) {
+        if (
+          !Array.isArray(body.placements) ||
+          body.placements.some((p: unknown) => !actionPlacements.includes(p as ActionPlacement))
+        ) {
           return res.status(400).json({ message: "invalid placements" });
         }
         if (!body.promptTemplate || typeof body.promptTemplate !== "string") {
@@ -11735,14 +11774,19 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(400).json({ message: "invalid outputMode" });
         }
 
+        const target = body.target as (typeof actionTargets)[number];
+        const inputType = body.inputType as (typeof actionInputTypes)[number];
+        const outputMode = body.outputMode as (typeof actionOutputModes)[number];
+        const placements = (body.placements as ActionPlacement[]).filter((p) => actionPlacements.includes(p));
+
         const created = await actionsRepository.createWorkspaceAction(workspaceId, {
           label: body.label,
           description: typeof body.description === "string" ? body.description : null,
-          target: body.target,
-          placements: body.placements,
+          target,
+          placements,
           promptTemplate: body.promptTemplate,
-          inputType: body.inputType,
-          outputMode: body.outputMode,
+          inputType,
+          outputMode,
           llmConfigId: null,
         });
 
@@ -11772,13 +11816,22 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const patch: Record<string, unknown> = {};
         if (typeof body.label === "string") patch.label = body.label;
         if (typeof body.description === "string" || body.description === null) patch.description = body.description;
-        if (body.target && actionTargets.includes(body.target)) patch.target = body.target;
-        if (Array.isArray(body.placements) && body.placements.every((p: unknown) => actionPlacements.includes(p as string))) {
-          patch.placements = body.placements;
+        if (body.target && actionTargets.includes(body.target)) {
+          patch.target = body.target as (typeof actionTargets)[number];
+        }
+        if (
+          Array.isArray(body.placements) &&
+          body.placements.every((p: unknown) => actionPlacements.includes(p as ActionPlacement))
+        ) {
+          patch.placements = (body.placements as ActionPlacement[]).filter((p) => actionPlacements.includes(p));
         }
         if (typeof body.promptTemplate === "string") patch.promptTemplate = body.promptTemplate;
-        if (body.inputType && actionInputTypes.includes(body.inputType)) patch.inputType = body.inputType;
-        if (body.outputMode && actionOutputModes.includes(body.outputMode)) patch.outputMode = body.outputMode;
+        if (body.inputType && actionInputTypes.includes(body.inputType)) {
+          patch.inputType = body.inputType as (typeof actionInputTypes)[number];
+        }
+        if (body.outputMode && actionOutputModes.includes(body.outputMode)) {
+          patch.outputMode = body.outputMode as (typeof actionOutputModes)[number];
+        }
 
         const updated = await actionsRepository.updateWorkspaceAction(workspaceId, actionId, patch);
         res.json({
@@ -11902,6 +11955,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           } catch {
             // ignore
           }
+          const actionContext = transcriptChatId ? { ...ctx, chatId: transcriptChatId } : ctx;
           const resultAction = await runTranscriptActionCommon({
             userId: user.id,
             skill,
@@ -11909,8 +11963,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             placement,
             transcriptId,
             transcriptText: textForPrompt,
-            context: ctx,
-            ...(transcriptChatId ? { placement, context: { ...ctx, chatId: transcriptChatId } } : { context: ctx }),
+            context: actionContext,
           });
 
           return res.json({
@@ -12322,9 +12375,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         if (typeof body.enabled !== "boolean") {
           return res.status(400).json({ message: "enabled is required" });
         }
-        if (!Array.isArray(body.enabledPlacements) || body.enabledPlacements.some((p: unknown) => !actionPlacements.includes(p as string))) {
+        if (
+          !Array.isArray(body.enabledPlacements) ||
+          body.enabledPlacements.some((p: unknown) => !actionPlacements.includes(p as ActionPlacement))
+        ) {
           return res.status(400).json({ message: "invalid enabledPlacements" });
         }
+        const enabledPlacements = body.enabledPlacements as ActionPlacement[];
 
         const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
         const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
@@ -12339,7 +12396,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
 
         // проверяем, что enabledPlacements ⊆ action.placements
-        const isSubset = body.enabledPlacements.every((p: string) => (action.placements ?? []).includes(p));
+        const allowedPlacements = (action.placements ?? []) as ActionPlacement[];
+        const isSubset = enabledPlacements.every((p: ActionPlacement) => allowedPlacements.includes(p));
         if (!isSubset) {
           return res.status(400).json({ message: "enabledPlacements must be subset of action.placements" });
         }
@@ -12350,7 +12408,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           actionId,
           {
             enabled: body.enabled,
-            enabledPlacements: body.enabledPlacements,
+            enabledPlacements,
             labelOverride:
               typeof body.labelOverride === "string" || body.labelOverride === null
                 ? body.labelOverride
@@ -12769,7 +12827,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "ID операции не предоставлен" });
       }
 
-      const status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
+      const status = (await yandexSttAsyncService.getOperationStatus(user.id, operationId)) as any;
       res.json(status);
     } catch (error) {
       console.error(`[transcribe/operations] user=${user.id} error:`, error);
@@ -12793,7 +12851,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "ID операции не предоставлен" });
       }
 
-      const status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
+      const status: any = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
       
       if (status.status !== 'completed' || !status.text) {
         console.warn(
@@ -12966,8 +13024,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               status: "ready",
             });
           }
-          const updatedMetadata = {
-            ...(createdMessage.metadata as Record<string, unknown>),
+          const updatedMetadata: ChatMessageMetadata = {
+            ...(createdMessage.metadata as ChatMessageMetadata),
             transcriptStatus: "ready",
             previewText,
             defaultViewActionId: action.id,
@@ -12999,8 +13057,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           }
         } catch (autoError) {
           console.error("[transcribe/complete] авто-действие не удалось:", autoError);
-          const failedMetadata = {
-            ...(createdMessage.metadata as Record<string, unknown>),
+          const failedMetadata: ChatMessageMetadata = {
+            ...(createdMessage.metadata as ChatMessageMetadata),
             transcriptStatus: "auto_action_failed",
             autoActionFailed: true,
             previewText: transcriptText.substring(0, 200),
@@ -13062,17 +13120,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       res.json({
-        status: 'ok',
-        message: {
-          id: createdMessage.id,
-          chatId: createdMessage.chatId,
-          type: (createdMessage as any).messageType ?? "text",
-          cardId: (createdMessage as any).cardId ?? null,
-          role: createdMessage.role,
-          content: createdMessage.content,
-          metadata: createdMessage.metadata ?? {},
-          createdAt: createdMessage.createdAt,
-        },
+        status: "ok",
+        message: mapMessage(createdMessage),
       });
     } catch (error) {
       console.error(`[transcribe/complete] user=${user.id} error:`, error);
@@ -13125,9 +13174,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             operationType: "EMBEDDINGS",
           }),
         );
-      }
-      if (!decision.allowed) {
-        throw new OperationBlockedError(decision);
       }
 
       const upsertPayload: Parameters<QdrantClient["upsert"]>[1] = {
@@ -14698,6 +14744,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
+      const workspaceIdStrict = workspaceId as string;
       const {
         embeddingProviderId,
         collectionName: requestedCollectionName,
@@ -14926,7 +14973,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const startedAtIso = new Date().toISOString();
         const newJob: KnowledgeDocumentVectorizationJobInternal = {
           id: randomUUID(),
-          workspaceId,
+          workspaceId: workspaceIdStrict,
           documentId: vectorDocument.id,
           status: "pending",
           totalChunks,
@@ -15021,15 +15068,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       if (collectionExists && !existingWorkspaceId) {
         try {
-          await storage.upsertCollectionWorkspace(collectionName, workspaceId);
+           await storage.upsertCollectionWorkspace(collectionName, workspaceIdStrict);
           existingWorkspaceId = workspaceId;
         } catch (mappingError) {
           const message =
             mappingError instanceof Error
               ? mappingError.message
               : "Не удалось привязать коллекцию к рабочему пространству";
-          console.error(
-            `Не удалось привязать существующую коллекцию ${collectionName} к рабочему пространству ${workspaceId}:`,
+           console.error(
+             `Не удалось привязать существующую коллекцию ${collectionName} к рабочему пространству ${workspaceIdStrict}:`,
             mappingError,
           );
           markImmediateFailure(message, 500);
@@ -15049,7 +15096,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       let embeddingCreditsPerUnit: number | null = null;
       let embeddingModelName: string | null = null;
       try {
-        const resolved = await ensureModelAvailable(embeddingModelKey, { expectedType: "EMBEDDINGS" });
+       const resolved = await ensureModelAvailable(embeddingModelKey, { expectedType: "EMBEDDINGS" });
         embeddingModelId = resolved.id;
         embeddingModelName = resolved.displayName;
         embeddingCreditsPerUnit = resolved.creditsPerUnit ?? null;
@@ -15081,9 +15128,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               const pricingUnits = tokensToUnits(result.usageTokens);
               const appliedCreditsPerUnitCents = Math.max(0, Math.trunc(embeddingCreditsPerUnit ?? 0));
               const creditsChargedCents = pricingUnits.units * appliedCreditsPerUnitCents;
+              const operationId = chunk.id ?? `chunk-${index}`;
               await recordEmbeddingUsageEvent({
-                workspaceId,
-                operationId: chunk.id,
+                workspaceId: workspaceIdStrict,
+                operationId,
                 provider: provider.id ?? provider.providerType ?? "unknown",
                 model: provider.model ?? "unknown",
                 modelId: embeddingModelId,
@@ -15093,8 +15141,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 creditsCharged: creditsChargedCents,
               });
               await applyIdempotentUsageCharge({
-                workspaceId,
-                operationId: chunk.id,
+                workspaceId: workspaceIdStrict,
+                operationId,
                 model: {
                   id: embeddingModelId,
                   key: provider.model ?? null,

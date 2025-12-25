@@ -269,7 +269,7 @@ async function executeAitunnelCompletion(
   accessToken: string,
   rawBody: Record<string, unknown>,
   options?: ExecuteOptions,
-): Promise<LlmCompletionResult> & { streamIterator?: AsyncIterable<LlmStreamEvent> } {
+): Promise<LlmCompletionResult> {
   const wantsStream = options?.stream === true || rawBody.stream === true;
 
   const body: Record<string, unknown> = {
@@ -497,7 +497,7 @@ async function executeAitunnelCompletion(
       };
     })();
 
-    return Object.assign(streamPromise, { streamIterator: streamController.iterator });
+    return Object.assign(streamPromise, { streamIterator: streamController.iterator }) as LlmCompletionPromise;
   }
 
   // Non-streaming branch

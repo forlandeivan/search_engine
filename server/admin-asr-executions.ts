@@ -3,7 +3,7 @@ import type { JsonValue } from "./json-types";
 import { storage } from "./storage";
 import { getSkillById } from "./skills";
 import { asrExecutionLogService } from "./asr-execution-log-context";
-import type { AsrExecutionRecord, AsrExecutionStatus } from "./asr-execution-log";
+import type { AsrExecutionEvent, AsrExecutionRecord, AsrExecutionStatus } from "./asr-execution-log";
 import { workspaceCreditLedger } from "@shared/schema";
 import { db } from "./db";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -51,7 +51,7 @@ export interface AdminAsrExecutionSummary {
 }
 
 export interface AdminAsrExecutionDetail {
-  execution: AdminAsrExecutionSummary & { pipelineEvents?: JsonValue };
+  execution: AdminAsrExecutionSummary & { pipelineEvents?: AsrExecutionEvent[] };
 }
 
 export async function listAdminAsrExecutions(filters: {

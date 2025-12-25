@@ -4,11 +4,12 @@ import {
   type ModelType,
   type ModelConsumptionUnit,
   type ModelCostLevel,
-  type InferInsertModel,
   type LlmModelOption,
   type LlmProvider,
   type EmbeddingProvider,
   type SpeechProvider,
+  type ModelInsert,
+  type Model,
 } from "@shared/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { sanitizeLlmModelOptions } from "./llm-utils";
@@ -89,7 +90,7 @@ export async function listModels(opts?: {
   type?: ModelType;
   providerId?: string | null;
   providerType?: string | null;
-}): Promise<InferInsertModel<typeof models>[]> {
+}): Promise<Model[]> {
   const clauses = [];
   if (!opts?.includeInactive) {
     clauses.push(eq(models.isActive, true));
@@ -111,7 +112,7 @@ export async function listModels(opts?: {
     .orderBy(models.sortOrder, models.displayName);
 }
 
-export async function createModel(input: ModelInput): Promise<InferInsertModel<typeof models>> {
+export async function createModel(input: ModelInput): Promise<ModelInsert> {
   const modelKey = input.modelKey.trim();
   if (!modelKey) throw new Error("modelKey is required");
   validateUnit(input.modelType, input.consumptionUnit);
@@ -130,7 +131,7 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
       costLevel: input.costLevel ?? "MEDIUM",
       creditsPerUnit: creditsPerUnitCents,
       isActive,
-      deletedAt: isActive ? null : sql`CURRENT_TIMESTAMP`,
+      deletedAt: isActive ? null : new Date(),
       sortOrder: input.sortOrder ?? 0,
       metadata: (input.metadata as any) ?? {},
       providerId: provider.providerId,
@@ -144,9 +145,9 @@ export async function createModel(input: ModelInput): Promise<InferInsertModel<t
 export async function updateModel(
   id: string,
   input: Partial<ModelInput>,
-): Promise<InferInsertModel<typeof models> | null> {
+): Promise<Model | null> {
   const provider = normalizeProvider(input as ModelInput);
-  const values: Partial<InferInsertModel<typeof models>> = {};
+  const values: Partial<ModelInsert> = {};
   if (input.modelKey !== undefined) {
     const nextKey = input.modelKey.trim();
     if (!nextKey) {
@@ -162,7 +163,7 @@ export async function updateModel(
   if (input.creditsPerUnit !== undefined) values.creditsPerUnit = Math.max(0, Math.trunc(input.creditsPerUnit ?? 0));
   if (input.isActive !== undefined) {
     values.isActive = input.isActive;
-    values.deletedAt = input.isActive ? null : sql`CURRENT_TIMESTAMP`;
+    values.deletedAt = input.isActive ? null : new Date();
   }
   if (input.sortOrder !== undefined) values.sortOrder = input.sortOrder;
   if (input.metadata !== undefined) values.metadata = (input.metadata as any) ?? {};
@@ -185,7 +186,7 @@ export async function updateModel(
 export async function getModelByKeyOrId(
   input: string,
   opts: { requireActive?: boolean } = {},
-): Promise<InferInsertModel<typeof models> | null> {
+): Promise<Model | null> {
   const trimmed = input.trim();
   const clauses = [];
   if (isValidUuid(trimmed)) {
@@ -201,7 +202,7 @@ export async function getModelByKeyOrId(
   return row ?? null;
 }
 
-function assertModelType(model: InferInsertModel<typeof models>, expectedType?: ModelType) {
+function assertModelType(model: Model, expectedType?: ModelType) {
   if (expectedType && model.modelType !== expectedType) {
     throw new ModelValidationError(`Модель должна быть типа ${expectedType}`);
   }
@@ -210,7 +211,7 @@ function assertModelType(model: InferInsertModel<typeof models>, expectedType?: 
 export async function ensureModelAvailable(
   modelKeyOrId: string,
   opts: { expectedType?: ModelType; requireActive?: boolean } = {},
-): Promise<InferInsertModel<typeof models>> {
+): Promise<Model> {
   const trimmed = modelKeyOrId?.trim();
   if (!trimmed) {
     throw new ModelValidationError("Не указан идентификатор модели");
@@ -231,7 +232,7 @@ export async function ensureModelAvailable(
 export async function tryResolveModel(
   modelKeyOrId: string | null | undefined,
   opts: { expectedType?: ModelType; requireActive?: boolean } = {},
-): Promise<InferInsertModel<typeof models> | null> {
+): Promise<Model | null> {
   const trimmed = modelKeyOrId?.trim();
   if (!trimmed) return null;
   try {
@@ -283,7 +284,7 @@ async function upsertProviderModel(spec: ProviderModelSpec) {
     const shouldUpdateDisplayName =
       existing.providerId === spec.providerId || existing.displayName === existing.modelKey;
 
-    const updates: Partial<InferInsertModel<typeof models>> = {};
+  const updates: Partial<ModelInsert> = {};
     if (shouldUpdateDisplayName && existing.displayName !== normalizedDisplayName) {
       updates.displayName = normalizedDisplayName;
     }

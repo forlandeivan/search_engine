@@ -21,6 +21,9 @@ const ONE_MB = 1024 * 1024;
 const ONE_GB = ONE_MB * 1024;
 
 const LIMIT_UNITS: Record<LimitKey, TariffSeedConfig["limits"][number]["unit"]> = {
+  TOKEN_LLM: "tokens",
+  TOKEN_EMBEDDINGS: "tokens",
+  ASR_MINUTES: "minutes",
   STORAGE_BYTES: "bytes",
   OBJECT_SKILLS: "count",
   OBJECT_ACTIONS: "count",
@@ -30,6 +33,9 @@ const LIMIT_UNITS: Record<LimitKey, TariffSeedConfig["limits"][number]["unit"]> 
 };
 
 const FREE_LIMIT_VALUES: Record<LimitKey, number | null> = {
+  TOKEN_LLM: 0,
+  TOKEN_EMBEDDINGS: 0,
+  ASR_MINUTES: 0,
   STORAGE_BYTES: 1 * ONE_GB,
   OBJECT_SKILLS: 3,
   OBJECT_ACTIONS: 20,

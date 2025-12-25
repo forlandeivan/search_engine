@@ -1317,18 +1317,20 @@ export function SkillFormContent({
       return llmOptions;
     }
 
-    return [
-      ...llmOptions,
-      {
-        key,
-        label: `${skill.llmProviderConfigId} В· ${skill.modelId}`,
-        providerId: skill.llmProviderConfigId,
-        providerName: skill.llmProviderConfigId,
-        modelId: skill.modelId,
-        providerIsActive: false,
-        disabled: true,
-      },
-    ];
+    const fallbackOption: LlmSelectionOption = {
+      key,
+      label: `${skill.llmProviderConfigId} · ${skill.modelId}`,
+      providerId: skill.llmProviderConfigId,
+      providerName: skill.llmProviderConfigId,
+      modelId: skill.modelId,
+      modelDisplayName: skill.modelId,
+      costLevel: "MEDIUM",
+      providerIsActive: false,
+      disabled: true,
+      catalogModel: null,
+    };
+
+    return [...llmOptions, fallbackOption];
   }, [llmOptions, skill]);
 
   useEffect(() => {

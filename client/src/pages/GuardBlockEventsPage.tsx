@@ -85,7 +85,7 @@ function useGuardBlockEvents(params: Record<string, string | number | undefined>
       const payload = (await res.json()) as GuardBlocksResponse;
       return payload;
     },
-    keepPreviousData: true,
+    placeholderData: (previousData) => previousData,
   });
 }
 

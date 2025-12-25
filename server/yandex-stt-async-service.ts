@@ -283,10 +283,19 @@ export interface AsyncTranscribeOptions {
   executionId?: string;
 }
 
+type AsyncUploadResult = {
+  attachmentId?: string;
+  objectKey?: string;
+  fileName?: string | null;
+  downloadUrl?: string | null;
+  expiresAt?: string | Date | null;
+  sizeBytes?: number | null;
+};
+
 export interface AsyncTranscribeResponse {
   operationId: string;
   message: string;
-  uploadResult?: UploadResult;
+  uploadResult?: AsyncUploadResult;
   durationSeconds?: number | null;
 }
 
@@ -343,7 +352,7 @@ class YandexSttAsyncService {
       throw new YandexSttAsyncConfigError("Не все учетные данные Object Storage настроены.");
     }
 
-    let asrModelKey = provider.model ?? null;
+    let asrModelKey = (provider as any).model ?? null;
     let asrModelId: string | null = null;
     let asrCreditsPerUnit: number | null = null;
     if (asrModelKey) {
@@ -720,11 +729,11 @@ class YandexSttAsyncService {
 
         cached.status = "completed";
         cached.result = { text, lang: "ru-RU" };
-        if (!cached.chatId && jobId) {
-          cached.chatId = jobId;
+        if (!cached.chatId && operationId) {
+          cached.chatId = operationId;
         }
-        if (!cached.executionId && jobId) {
-          cached.executionId = jobId;
+        if (!cached.executionId && operationId) {
+          cached.executionId = operationId;
         }
 
         // Подготавливаем контекст для авто-действия (если оно включено у навыка)
@@ -841,7 +850,7 @@ class YandexSttAsyncService {
                     price,
                     metadata: {
                       source: "asr_transcription",
-                      fileName: cached.fileName ?? null,
+                      fileName: (cached as any).fileName ?? null,
                       provider: "yandex_speechkit",
                     },
                   });
@@ -1105,8 +1114,8 @@ class YandexSttAsyncService {
 
       if (message) {
         const baseMetadata = (message.metadata as Record<string, unknown>) ?? {};
-        const metadata = {
-          ...baseMetadata,
+        const metadata: ChatMessageMetadata = {
+          ...(baseMetadata as ChatMessageMetadata),
           transcriptStatus: "ready",
           previewText,
           defaultViewActionId: action.id,
@@ -1166,8 +1175,8 @@ class YandexSttAsyncService {
       const message = await storage.findChatMessageByTranscriptId(transcript.id);
       if (message) {
         const baseMetadata = (message.metadata as Record<string, unknown>) ?? {};
-        const metadata = {
-          ...baseMetadata,
+        const metadata: ChatMessageMetadata = {
+          ...(baseMetadata as ChatMessageMetadata),
           transcriptStatus: "auto_action_failed",
           autoActionFailed: true,
           previewText: fallbackPreview,

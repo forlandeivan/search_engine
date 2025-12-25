@@ -140,10 +140,11 @@ class SpeechProviderService {
     const secrets = await storage.getSpeechProviderSecrets(providerId);
     const values: Record<string, string> = {};
     for (const entry of secrets) {
-      if (!BUILT_IN_SECRET_KEYS.includes(entry.secretKey)) {
+      if (!BUILT_IN_SECRET_KEYS.includes(entry.secretKey as (typeof BUILT_IN_SECRET_KEYS)[number])) {
         continue;
       }
-      values[entry.secretKey] = entry.secretValue;
+      const key = entry.secretKey as (typeof BUILT_IN_SECRET_KEYS)[number];
+      values[key] = entry.secretValue;
     }
 
     return values;

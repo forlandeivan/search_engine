@@ -100,9 +100,10 @@ export class SystemNotificationLogService {
     // Для устранения ошибок биндинга в prepared statement (08P01) используем raw-запрос без параметров
     // Значение рассчитывается в коде и подставляется явно.
     const thresholdIso = thresholdDate.toISOString();
-    const { rows } = await db.execute<{ id: string }>(
+    const result = await db.execute(
       sql.raw(`delete from "system_notification_logs" where "created_at" < '${thresholdIso}' returning "id"`),
     );
+    const rows = ((result as any)?.rows ?? []) as Array<{ id: string }>;
     return rows.length;
   }
 

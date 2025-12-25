@@ -527,7 +527,7 @@ const KnowledgeBaseSearchSettingsForm = ({
               value={llmModelValue}
               placeholder={llmModelPlaceholder}
               options={llmModelOptions}
-              disabled={disabled || !selectedLlmProvider || availableLlmModels.length === 0}
+              disabled={disabled || !selectedLlmProvider || providerLlmModels.length === 0}
               isMissing={isCustomLlmModel}
               missingLabel="Модель не найдена"
               onChange={onLlmModelChange}

@@ -70,8 +70,8 @@ function tryConnectCustomPostgres(): void {
       allowExitOnIdle: true,
     });
 
-    customPool.on("connect", (client) => {
-      client.query("SET TIME ZONE 'UTC'").catch((error) => {
+    customPool.on("connect", (client: any) => {
+      client.query("SET TIME ZONE 'UTC'").catch((error: unknown) => {
         console.warn("[db] Failed to set timezone UTC for custom pool client:", error);
       });
     });
@@ -183,7 +183,7 @@ function tryConnectDatabaseUrl(): void {
   if (isLikelyNeonConnection(databaseUrl)) {
     try {
       pool = new NeonPool({ connectionString: databaseUrl });
-      pool.on("connect", (client) => {
+      pool.on("connect", (client: any) => {
         client.query("SET TIME ZONE 'UTC'").catch((error: unknown) => {
           console.warn("[db] Failed to set timezone UTC for Neon client:", error);
         });

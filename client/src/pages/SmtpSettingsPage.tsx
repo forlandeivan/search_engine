@@ -234,7 +234,7 @@ export default function SmtpSettingsPage() {
     },
   });
 
-  const logsQuery = useQuery<LogsResponse>({
+  const logsQuery = useQuery<LogsResponse, Error>({
     queryKey: [
       "/api/admin/system-notifications/logs",
       logFilters.email,
@@ -261,7 +261,7 @@ export default function SmtpSettingsPage() {
       }
       return json as LogsResponse;
     },
-    keepPreviousData: true,
+    placeholderData: (previousData) => previousData,
     enabled: activeTab === "logs",
   });
 

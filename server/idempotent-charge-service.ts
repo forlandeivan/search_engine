@@ -106,7 +106,7 @@ export async function applyIdempotentUsageCharge(input: IdempotentChargeInput): 
   const occurredAt = input.occurredAt ?? new Date();
   const metadata = buildMetadata(input);
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx: any) => {
     await tx
       .insert(workspaceCreditAccounts)
       .values({ workspaceId: input.workspaceId })
@@ -200,4 +200,5 @@ export async function applyIdempotentUsageCharge(input: IdempotentChargeInput): 
       balanceAfter: Math.max(0, Number(updatedAccount?.currentBalance ?? 0)),
     };
   });
+  return result as IdempotentChargeResult;
 }

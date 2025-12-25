@@ -343,6 +343,10 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
     const active = sessionWorkspaceQuery.data;
     return active?.name ?? "Рабочее пространство";
   }, [sessionWorkspaceQuery.data]);
+  const workspaceDescription = useMemo(
+    () => ((sessionWorkspaceQuery.data as { description?: string | null } | null)?.description ?? ""),
+    [sessionWorkspaceQuery.data],
+  );
 
   const effectiveWorkspaceId = workspaceIdFromRoute ?? sessionWorkspaceQuery.data?.id ?? null;
   const isOwner = sessionWorkspaceQuery.data?.role === ("owner" as WorkspaceMemberRole);
@@ -492,8 +496,8 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
   useEffect(() => {
     setName(workspaceName);
     setIconPreview(sessionWorkspaceQuery.data?.iconUrl ?? null);
-    setDescription(sessionWorkspaceQuery.data?.description ?? "");
-  }, [workspaceName, sessionWorkspaceQuery.data?.iconUrl, sessionWorkspaceQuery.data?.description]);
+    setDescription(workspaceDescription);
+  }, [workspaceName, sessionWorkspaceQuery.data?.iconUrl, workspaceDescription]);
 
   const handleFileSelect = (file: File | null) => {
     if (!file) return;
@@ -616,9 +620,9 @@ export default function WorkspaceSettingsPage({ params }: { params?: { workspace
             <Skeleton className="h-6 w-28" />
           ) : workspacePlanQuery.isError ? (
             <Badge variant="outline">Тариф: неизвестно</Badge>
-          ) : workspacePlanQuery.data?.plan ? (
+          ) : workspacePlanQuery.data ? (
             <Badge variant="secondary" className="text-sm font-medium">
-              Тариф: {workspacePlanQuery.data.plan.name || workspacePlanQuery.data.plan.code}
+              Тариф: {workspacePlanQuery.data.name || workspacePlanQuery.data.code}
             </Badge>
           ) : null}
         </div>

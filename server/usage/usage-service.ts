@@ -272,7 +272,7 @@ export async function adjustWorkspaceObjectCounters(
     return usage;
   }
 
-  const updates: Partial<typeof workspaceUsageMonth> = {};
+  const updates: Partial<typeof workspaceUsageMonth.$inferInsert> = {};
 
   if (skillsDelta !== 0) {
     const current = Number(usage.skillsCount ?? 0);
@@ -350,7 +350,7 @@ export async function recordLlmUsageEvent(params: LlmUsageRecord): Promise<void>
   const occurredAt = params.occurredAt ?? new Date();
   const period = buildPeriod(params.period ?? getUsagePeriodForDate(occurredAt));
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: any) => {
     const inserted = await tx
       .insert(workspaceLlmUsageLedger)
       .values({
@@ -486,7 +486,7 @@ export async function getWorkspaceLlmUsageSummary(
       end: end.toISOString(),
     },
     totalTokens: Number(totalsRows[0]?.tokens ?? 0),
-    byModelTotal: byModelRows.map((row) => ({
+    byModelTotal: byModelRows.map((row: any) => ({
       provider: row.provider,
       model: row.model,
       modelId: row.modelId ?? null,
@@ -597,7 +597,7 @@ export async function getWorkspaceEmbeddingUsageSummary(
       end: end.toISOString(),
     },
     totalTokens: Number(totalsRows[0]?.tokens ?? 0),
-    byModelTotal: byModelRows.map((row) => ({
+    byModelTotal: byModelRows.map((row: any) => ({
       provider: row.provider,
       model: row.model,
       modelId: row.modelId ?? null,
@@ -712,14 +712,14 @@ export async function getWorkspaceAsrUsageSummary(
     },
     totalMinutes: secondsToMinutesRoundedUp(totalSeconds),
     totalSeconds,
-    byProviderModelTotal: byProviderModelRows.map((row) => ({
+    byProviderModelTotal: byProviderModelRows.map((row: any) => ({
       provider: row.provider ?? null,
       model: row.model ?? null,
       modelId: row.modelId ?? null,
       seconds: Number(row.durationSeconds),
       minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)),
     })),
-    timeseries: timeseriesRows.map((row) => ({
+    timeseries: timeseriesRows.map((row: any) => ({
       date: new Date(row.day).toISOString().slice(0, 10),
       seconds: Number(row.durationSeconds),
       minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)),
@@ -902,7 +902,7 @@ export async function adjustWorkspaceQdrantUsage(
     };
   }
 
-  const updates: Partial<typeof workspaces> = {};
+  const updates: Record<string, any> = {};
 
   if (collectionsDelta !== 0) {
     updates.qdrantCollectionsCount = sql`GREATEST(0, ${workspaces.qdrantCollectionsCount} + ${collectionsDelta})`;
@@ -1027,7 +1027,7 @@ export async function recordAsrUsageEvent(params: AsrUsageRecord): Promise<void>
   const occurredAt = params.occurredAt ?? new Date();
   const period = buildPeriod(params.period ?? getUsagePeriodForDate(occurredAt));
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: any) => {
     const inserted = await tx
       .insert(workspaceAsrUsageLedger)
       .values({
@@ -1107,7 +1107,7 @@ export async function recordEmbeddingUsageEvent(params: EmbeddingUsageRecord): P
   const occurredAt = params.occurredAt ?? new Date();
   const period = buildPeriod(params.period ?? getUsagePeriodForDate(occurredAt));
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: any) => {
     const inserted = await tx
       .insert(workspaceEmbeddingUsageLedger)
       .values({

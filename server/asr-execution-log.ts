@@ -23,6 +23,7 @@ export interface AsrExecutionEvent {
   timestamp: string;
   stage: AsrExecutionStage | string;
   details?: JsonValue;
+  [key: string]: JsonValue | undefined;
 }
 
 export interface AsrExecutionRecord {
@@ -67,7 +68,7 @@ export interface AsrExecutionCreateInput {
   finishedAt?: Date | null;
   errorCode?: string | null;
   errorMessage?: string | null;
-  pipelineEvents?: JsonValue;
+  pipelineEvents?: AsrExecutionEvent[];
 }
 
 export interface AsrExecutionUpdateInput extends Partial<AsrExecutionCreateInput> {

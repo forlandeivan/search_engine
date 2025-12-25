@@ -141,7 +141,7 @@ export class SmtpSettingsService {
       useTls: input.useTls,
       useSsl: input.useSsl,
       username,
-      password: nextPassword ?? undefined,
+      password: nextPassword ?? null,
       fromEmail,
       fromName,
       updatedByAdminId: input.updatedByAdminId ?? null,

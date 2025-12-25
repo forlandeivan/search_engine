@@ -2,7 +2,6 @@ import { storage } from "./storage";
 import { applyContextLimitByCharacters, type ChatConversationMessage, mapChatSummary } from "./chat-service";
 import type { SkillDto } from "@shared/skills";
 import { getSkillById } from "./skills";
-import { mapChatSummary } from "./chat-service";
 
 export type ContextPackLimits = {
   unit: "characters";

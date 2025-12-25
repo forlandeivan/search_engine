@@ -704,6 +704,22 @@ export default function VectorCollectionDetailPage() {
     return options.sort((a, b) => a.model.label.localeCompare(b.model.label, "ru"));
   }, [activeLlmProviders, catalogLlmModels]);
 
+  const llmModelGroups = useMemo(
+    () =>
+      llmModelOptions.reduce<
+        Array<{ provider: PublicLlmProvider; models: LlmModelSelectionOption["model"][] }>
+      >((acc, option) => {
+        const existing = acc.find((group) => group.provider.id === option.provider.id);
+        if (existing) {
+          existing.models.push(option.model);
+          return acc;
+        }
+        acc.push({ provider: option.provider, models: [option.model] });
+        return acc;
+      }, []),
+    [llmModelOptions],
+  );
+
   const collectionVectorSizeValue = collection?.vectorSize ?? null;
 
   const matchingProviders = useMemo(() => {

@@ -1,6 +1,6 @@
 import fetch from "node-fetch";
 import { Headers } from "node-fetch";
-import { applyTlsPreferences } from "../server/http-utils";
+import { applyTlsPreferences } from "../http-utils";
 
 /**
  * Dev-утилита: ручная проверка доступных моделей AITunnel.
