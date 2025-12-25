@@ -18,7 +18,7 @@ export function useUpdateIndexingRules() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload: UpdateIndexingRulesDto | IndexingRulesDto) => {
-      const res = await apiRequest("PATCH", "/api/admin/indexing-rules", payload);
+      const res = await apiRequest("PUT", "/api/admin/indexing-rules", payload);
       return (await res.json()) as IndexingRulesDto;
     },
     onSuccess: (data) => {

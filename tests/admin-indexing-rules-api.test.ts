@@ -7,14 +7,33 @@ import {
   MIN_CHUNK_SIZE,
   MIN_RELEVANCE_THRESHOLD,
   MIN_TOP_K,
+  indexingRulesSchema,
   updateIndexingRulesSchema,
 } from "@shared/indexing-rules";
 
 const authMock = vi.hoisted(() => ({ allowAdmin: true }));
-const indexingRulesMock = vi.hoisted(() => ({
-  getIndexingRules: vi.fn(async () => DEFAULT_INDEXING_RULES),
-  updateIndexingRules: vi.fn(async (payload: any) => ({ ...DEFAULT_INDEXING_RULES, ...payload })),
-}));
+const indexingRulesMock = vi.hoisted(() => {
+  let state = { ...DEFAULT_INDEXING_RULES };
+  return {
+    getIndexingRules: vi.fn(async () => state),
+    updateIndexingRules: vi.fn(async (payload: any) => {
+      const next = { ...state, ...payload };
+      if (next.chunkOverlap >= next.chunkSize) {
+        const error = new (class extends Error {
+          code = "INDEXING_CHUNK_OVERLAP_GT_CHUNK_SIZE";
+          field = "chunk_overlap";
+          status = 400;
+        })("overlap >= size");
+        throw error;
+      }
+      state = next;
+      return state;
+    }),
+    reset: () => {
+      state = { ...DEFAULT_INDEXING_RULES };
+    },
+  };
+});
 
 vi.doMock("../server/auth", () => {
   const guard = (_req: any, res: any, next: () => void) => {
@@ -94,6 +113,35 @@ async function createTestServer() {
     }
   });
 
+  app.put("/api/admin/indexing-rules", requireAdmin, async (req, res, next) => {
+    try {
+      const parsed = indexingRulesSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid indexing rules", details: parsed.error.format() });
+      }
+
+      const admin = getSessionUser(req);
+      if (!admin) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const updated = await indexingRulesService.updateIndexingRules(parsed.data, admin.id, {
+        workspaceId: getRequestWorkspace(req)?.id,
+      });
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof IndexingRulesDomainError) {
+        return res
+          .status((error as any).status || 400)
+          .json({ message: error.message, code: (error as any).code, field: (error as any).field });
+      }
+      if (error instanceof IndexingRulesError) {
+        return res.status((error as any).status || 400).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
   const httpServer = app.listen(0);
   await new Promise<void>((resolve) => httpServer.listening ? resolve() : httpServer.once("listening", resolve));
   return { httpServer };
@@ -103,6 +151,7 @@ afterEach(() => {
   authMock.allowAdmin = true;
   indexingRulesMock.getIndexingRules.mockClear();
   indexingRulesMock.updateIndexingRules.mockClear();
+  indexingRulesMock.reset();
 });
 
 describe("Admin indexing rules API", () => {
@@ -148,6 +197,37 @@ describe("Admin indexing rules API", () => {
       "admin-1",
       expect.objectContaining({ workspaceId: "workspace-1" }),
     );
+
+    httpServer.close();
+  });
+
+  it("PUT сохраняет все поля целиком", async () => {
+    const { httpServer } = await createTestServer();
+    const address = httpServer.address() as AddressInfo;
+
+    const payload = { ...DEFAULT_INDEXING_RULES, chunkSize: 1000, citationsEnabled: false };
+    const res = await supertest(`http://127.0.0.1:${address.port}`).put("/api/admin/indexing-rules").send(payload);
+
+    expect(res.status).toBe(200);
+    expect(res.body?.chunkSize).toBe(1000);
+    expect(res.body?.citationsEnabled).toBe(false);
+
+    const after = await supertest(`http://127.0.0.1:${address.port}`).get("/api/admin/indexing-rules");
+    expect(after.body?.chunkSize).toBe(1000);
+
+    httpServer.close();
+  });
+
+  it("не изменяет правила при невалидном PUT", async () => {
+    const { httpServer } = await createTestServer();
+    const address = httpServer.address() as AddressInfo;
+
+    const invalid = { ...DEFAULT_INDEXING_RULES, chunkSize: MIN_CHUNK_SIZE, chunkOverlap: MIN_CHUNK_SIZE };
+    const res = await supertest(`http://127.0.0.1:${address.port}`).put("/api/admin/indexing-rules").send(invalid);
+    expect(res.status).toBe(400);
+
+    const after = await supertest(`http://127.0.0.1:${address.port}`).get("/api/admin/indexing-rules");
+    expect(after.body?.chunkOverlap).toBe(DEFAULT_INDEXING_RULES.chunkOverlap);
 
     httpServer.close();
   });

@@ -31,6 +31,8 @@ import {
   buildLlmKey,
   catalogModelMap,
 } from "./SkillsPage";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { UploadCloud } from "lucide-react";
 
 const parseTab = (search: string | null | undefined): SkillSettingsTab | null => {
   if (!search) return null;
@@ -73,6 +75,8 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   const [location, navigate] = useLocation();
   const cameFromHistory = useRef<boolean>(false);
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [filesPresent] = useState(false);
   const getInitialTab = (): SkillSettingsTab => {
     const fromWindow = typeof window !== "undefined" ? parseTab(window.location.search) : null;
     const fromLocation = parseTab(location.split("?")[1]);
@@ -402,6 +406,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   };
 
   const skillName = currentSkill?.name?.trim() || (isNew ? "Новый навык" : "Навык");
+  const canEditSkillFiles = Boolean(!isNew && currentSkill && !currentSkill.isSystem);
 
   const ensureNoCodeMode = useCallback(async () => {
     if (!currentSkill || currentSkill.executionMode === "no_code") return;
@@ -410,6 +415,27 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       payload: { executionMode: "no_code" },
     });
   }, [currentSkill, updateSkill]);
+
+  const handleFilesUploadClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+      return;
+    }
+    toast({
+      title: "Загрузка скоро будет доступна",
+      description: "Обработка файлов подключим в следующих шагах.",
+    });
+  };
+
+  const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files.length > 0) {
+      toast({
+        title: "Загрузка будет доступна в следующих сторях",
+        description: "Мы сохранили ваш выбор, скоро добавим обработку файлов.",
+      });
+    }
+  };
 
   return (
     <div className="space-y-6 pb-10">
@@ -462,27 +488,89 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
             <AlertDescription>Проверьте ссылку и попробуйте снова.</AlertDescription>
           </Alert>
         ) : (
-          <SkillFormContent
-            knowledgeBases={knowledgeBases}
-            vectorCollections={vectorCollections}
-            isVectorCollectionsLoading={vectorCollectionsQuery.isLoading}
-            embeddingProviders={embeddingProviders}
-            isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
-            llmOptions={llmOptions}
-            onSubmit={handleSubmit}
-            isSubmitting={isUpdating || isCreating}
-            skill={isNew ? null : currentSkill}
-            allowNoCodeFlow={allowNoCodeFlow}
-            getIconComponent={getIconComponent}
-            isOpen
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-            onGenerateCallbackToken={(skillId) => generateCallbackToken({ skillId })}
-            isGeneratingCallbackToken={isGeneratingCallbackToken}
-            onEnsureNoCodeMode={ensureNoCodeMode}
-          />
+          <>
+            <SkillFormContent
+              knowledgeBases={knowledgeBases}
+              vectorCollections={vectorCollections}
+              isVectorCollectionsLoading={vectorCollectionsQuery.isLoading}
+              embeddingProviders={embeddingProviders}
+              isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
+              llmOptions={llmOptions}
+              onSubmit={handleSubmit}
+              isSubmitting={isUpdating || isCreating}
+              skill={isNew ? null : currentSkill}
+              allowNoCodeFlow={allowNoCodeFlow}
+              getIconComponent={getIconComponent}
+              isOpen
+              activeTab={activeTab}
+              onTabChange={handleTabChange}
+              onGenerateCallbackToken={(skillId) => generateCallbackToken({ skillId })}
+              isGeneratingCallbackToken={isGeneratingCallbackToken}
+              onEnsureNoCodeMode={ensureNoCodeMode}
+            />
+            {canEditSkillFiles ? (
+              <div className="mt-6">
+                <SkillFilesSection
+                  canEdit
+                  hasFiles={filesPresent}
+                  onUploadClick={handleFilesUploadClick}
+                />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={handleFilesSelected}
+                  data-testid="skill-files-input"
+                />
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+export function SkillFilesSection({
+  canEdit,
+  hasFiles,
+  onUploadClick,
+}: {
+  canEdit: boolean;
+  hasFiles?: boolean;
+  onUploadClick: () => void;
+}) {
+  if (!canEdit) {
+    return null;
+  }
+
+  return (
+    <Card data-testid="skill-files-section">
+      <CardHeader>
+        <CardTitle>Файлы навыка</CardTitle>
+        <CardDescription>Загрузите документы (PDF/DOCX/TXT), чтобы навык отвечал по ним.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {hasFiles ? (
+          <div className="text-sm text-muted-foreground">Список файлов появится здесь.</div>
+        ) : (
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="mt-1 rounded-md bg-muted p-2">
+                <UploadCloud className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Загрузите файлы, чтобы навык отвечал по вашим документам.</p>
+                <p className="text-sm text-muted-foreground">Поддерживаются PDF, DOCX, TXT.</p>
+              </div>
+            </div>
+            <Button type="button" onClick={onUploadClick} data-testid="skill-files-upload">
+              Загрузить файлы
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

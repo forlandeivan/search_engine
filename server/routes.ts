@@ -7990,6 +7990,40 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  app.put("/api/admin/indexing-rules", requireAdmin, async (req, res, next) => {
+    try {
+      const parsed = indexingRulesSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Invalid indexing rules",
+          code: "INDEXING_RULES_INVALID",
+          details: parsed.error.format(),
+        });
+      }
+
+      const admin = getSessionUser(req);
+      if (!admin) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const workspace = getRequestWorkspace(req);
+      const updated = await indexingRulesService.updateIndexingRules(parsed.data, admin.id, {
+        workspaceId: workspace?.id,
+      });
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof IndexingRulesDomainError) {
+        return res
+          .status(error.status || 400)
+          .json({ message: error.message, code: error.code, field: error.field ?? "embeddings_provider" });
+      }
+      if (error instanceof IndexingRulesError) {
+        return res.status(error.status || 400).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
   app.patch("/api/admin/indexing-rules", requireAdmin, async (req, res, next) => {
     try {
       const chunkSizeProvided = typeof (req.body as any)?.chunkSize !== "undefined";

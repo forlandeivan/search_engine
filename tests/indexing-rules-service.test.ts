@@ -280,4 +280,33 @@ describe("IndexingRulesService", () => {
     expect(updated.topK).toBe(5);
     expect(updated.relevanceThreshold).toBe(0.75);
   });
+
+  it("не изменяет сохранённые правила при ошибке валидации (атомарность)", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      { resolveModels: async () => defaultModels },
+    );
+
+    await service.updateIndexingRules({
+      embeddingsProvider: "p1",
+      embeddingsModel: "m1",
+      chunkSize: MIN_CHUNK_SIZE + 10,
+      chunkOverlap: 0,
+      topK: MIN_TOP_K,
+      relevanceThreshold: 0.5,
+      citationsEnabled: true,
+    });
+
+    await expect(
+      service.updateIndexingRules({
+        chunkSize: MIN_CHUNK_SIZE,
+        chunkOverlap: MIN_CHUNK_SIZE, // invalid: overlap >= size
+      }),
+    ).rejects.toBeInstanceOf(IndexingRulesDomainError);
+
+    expect(repo.getRecord()?.chunkOverlap).toBe(0);
+    expect(repo.getRecord()?.chunkSize).toBe(MIN_CHUNK_SIZE + 10);
+  });
 });

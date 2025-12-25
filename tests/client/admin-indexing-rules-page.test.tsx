@@ -59,7 +59,7 @@ beforeEach(() => {
         }),
       });
     }
-    if (method === "PATCH" && url === "/api/admin/indexing-rules") {
+    if (method === "PUT" && url === "/api/admin/indexing-rules") {
       return Promise.resolve({ json: async () => ({ ...defaults, ...(payload as object) }) });
     }
     return Promise.resolve({ json: async () => ({}) });
@@ -95,11 +95,11 @@ describe("AdminIndexingRulesPage", () => {
     fireEvent.click(saveButton);
 
     await waitFor(() => {
-      const patchCall = mockApiRequest.mock.calls.find(
-        ([method, url]) => method === "PATCH" && url === "/api/admin/indexing-rules",
+      const putCall = mockApiRequest.mock.calls.find(
+        ([method, url]) => method === "PUT" && url === "/api/admin/indexing-rules",
       );
-      expect(patchCall).toBeTruthy();
-      expect(patchCall?.[2]).toEqual(expect.objectContaining({ chunkSize: 900 }));
+      expect(putCall).toBeTruthy();
+      expect(putCall?.[2]).toEqual(expect.objectContaining({ chunkSize: 900 }));
     });
   });
 
@@ -116,7 +116,7 @@ describe("AdminIndexingRulesPage", () => {
 
     await waitFor(() => {
       const patchCalls = mockApiRequest.mock.calls.filter(
-        ([method, url]) => method === "PATCH" && url === "/api/admin/indexing-rules",
+        ([method, url]) => method === "PUT" && url === "/api/admin/indexing-rules",
       );
       expect(patchCalls.length).toBe(0);
     });
@@ -161,7 +161,7 @@ describe("AdminIndexingRulesPage", () => {
 
     await waitFor(() => {
       const patchCall = mockApiRequest.mock.calls.find(
-        ([method, url]) => method === "PATCH" && url === "/api/admin/indexing-rules",
+        ([method, url]) => method === "PUT" && url === "/api/admin/indexing-rules",
       );
       expect(patchCall?.[2]).toEqual(expect.objectContaining({ citationsEnabled: !DEFAULT_INDEXING_RULES.citationsEnabled }));
     });
