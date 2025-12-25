@@ -211,9 +211,10 @@ export async function clearAssistantActionForChat(opts: {
   await storage.clearChatAssistantAction(opts.chatId);
 }
 
-export const mapMessage = (message: ChatMessage) => {
+// message может приходить как запись из БД или из временных локальных объектов; упрощаем тип для совместимости
+export const mapMessage = (message: any) => {
   const metadata = message.metadata ?? {};
-  const type = (message as any).messageType ?? "text";
+  const type = (message as any).messageType ?? (message as any).type ?? "text";
   const cardId = (message as any).cardId ?? (metadata as any)?.cardId ?? null;
   const fileMeta = (metadata as any).file ?? null;
   const file =

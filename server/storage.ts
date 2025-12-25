@@ -59,6 +59,8 @@ import {
   type KnowledgeBaseRagRequest,
   type ChatSession,
   type ChatSessionInsert,
+  type ChatAttachment,
+  type ChatAttachmentInsert,
   type ChatMessage,
   type ChatMessageInsert,
   type ChatCard,
