@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
+import { DEFAULT_INDEXING_RULES, MIN_CHUNK_SIZE } from "@shared/indexing-rules";
 import { IndexingRulesDomainError, IndexingRulesError, IndexingRulesService } from "../server/indexing-rules";
 
 function createRepo() {
@@ -209,6 +209,21 @@ describe("IndexingRulesService", () => {
       service.updateIndexingRules({
         embeddingsProvider: "p1",
         embeddingsModel: "unknown-model",
+      }),
+    ).rejects.toBeInstanceOf(IndexingRulesDomainError);
+  });
+
+  it("бросает ошибку если chunkSize ниже минимального", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      { resolveModels: async () => defaultModels },
+    );
+
+    await expect(
+      service.updateIndexingRules({
+        chunkSize: MIN_CHUNK_SIZE - 1,
       }),
     ).rejects.toBeInstanceOf(IndexingRulesDomainError);
   });

@@ -24,7 +24,13 @@ import { useIndexingRules, useUpdateIndexingRules } from "@/hooks/useIndexingRul
 import { useEmbeddingProviders } from "@/hooks/useEmbeddingProviders";
 import { useEmbeddingProviderModels } from "@/hooks/useEmbeddingProviderModels";
 import { ApiError } from "@/lib/queryClient";
-import { DEFAULT_INDEXING_RULES, indexingRulesSchema, type IndexingRulesDto } from "@shared/indexing-rules";
+import {
+  DEFAULT_INDEXING_RULES,
+  MAX_CHUNK_SIZE,
+  MIN_CHUNK_SIZE,
+  indexingRulesSchema,
+  type IndexingRulesDto,
+} from "@shared/indexing-rules";
 
 const formSchema = indexingRulesSchema.refine(
   (value) => value.chunkOverlap < value.chunkSize,
@@ -109,6 +115,9 @@ export default function AdminIndexingRulesPage() {
       if (details?.field === "embeddings_model") {
         form.setError("embeddingsModel", { message });
       }
+      if (details?.field === "chunk_size") {
+        form.setError("chunkSize", { message });
+      }
       toast({ title: "Ошибка сохранения", description: message, variant: "destructive" });
     }
   });
@@ -138,7 +147,7 @@ export default function AdminIndexingRulesPage() {
   const providerFieldDisabled = disableInputs || providersQuery.isLoading || providersQuery.isError;
   const modelRequiredMissing =
     supportsModelSelection && modelOptions.length > 0 && !(form.watch("embeddingsModel") ?? "").trim();
-  const saveDisabled = updateMutation.isPending || modelRequiredMissing;
+  const saveDisabled = updateMutation.isPending || modelRequiredMissing || !form.formState.isValid;
 
   return (
     <div className="p-6 space-y-4">
@@ -368,7 +377,8 @@ export default function AdminIndexingRulesPage() {
                           <Input
                             id="indexing-chunk-size"
                             type="number"
-                            min={1}
+                            min={MIN_CHUNK_SIZE}
+                            max={MAX_CHUNK_SIZE}
                             step={1}
                             disabled={disableInputs}
                             value={field.value ?? ""}
@@ -378,7 +388,10 @@ export default function AdminIndexingRulesPage() {
                             }}
                           />
                         </FormControl>
-                        <FormDescription>Количество символов в одном чанке.</FormDescription>
+                        <FormDescription>
+                          Размер чанка в символах. Больше — меньше фрагментов и быстрее обработка, но ниже точность; меньше —
+                          точнее, но дольше и дороже.
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

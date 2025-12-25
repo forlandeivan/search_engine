@@ -5,6 +5,8 @@ import { storage } from "./storage";
 import { indexingRules, type IndexingRules as StoredIndexingRules, type EmbeddingProvider } from "@shared/schema";
 import {
   DEFAULT_INDEXING_RULES,
+  MAX_CHUNK_SIZE,
+  MIN_CHUNK_SIZE,
   indexingRulesSchema,
   type IndexingRulesDto,
   type UpdateIndexingRulesDto,
@@ -158,8 +160,12 @@ function normalizeFraction(field: string, value: number | undefined, options: { 
 }
 
 function validateRules(config: IndexingRulesDto): void {
-  if (config.chunkSize <= 0) {
-    throw new IndexingRulesError("chunkSize должен быть больше 0");
+  if (config.chunkSize < MIN_CHUNK_SIZE || config.chunkSize > MAX_CHUNK_SIZE) {
+    throw new IndexingRulesDomainError(
+      `Размер чанка должен быть в диапазоне ${MIN_CHUNK_SIZE}..${MAX_CHUNK_SIZE}`,
+      "INDEXING_CHUNK_SIZE_OUT_OF_RANGE",
+      "chunk_size",
+    );
   }
 
   if (config.chunkOverlap < 0) {
@@ -233,6 +239,14 @@ export class IndexingRulesService {
     // Дополнительная проверка типов на случай прямого вызова без zod
     const parsed = indexingRulesSchema.partial().safeParse(patch);
     if (!parsed.success) {
+      const chunkSizeIssue = parsed.error.issues.find((issue) => issue.path?.[0] === "chunkSize");
+      if (chunkSizeIssue) {
+        throw new IndexingRulesDomainError(
+          `Размер чанка должен быть в диапазоне ${MIN_CHUNK_SIZE}..${MAX_CHUNK_SIZE}`,
+          "INDEXING_CHUNK_SIZE_OUT_OF_RANGE",
+          "chunk_size",
+        );
+      }
       throw new IndexingRulesError("Некорректные данные правил индексации");
     }
 

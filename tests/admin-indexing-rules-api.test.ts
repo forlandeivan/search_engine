@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "net";
 import supertest from "supertest";
 import express from "express";
-import { DEFAULT_INDEXING_RULES, updateIndexingRulesSchema } from "@shared/indexing-rules";
+import { DEFAULT_INDEXING_RULES, MIN_CHUNK_SIZE, updateIndexingRulesSchema } from "@shared/indexing-rules";
 
 const authMock = vi.hoisted(() => ({ allowAdmin: true }));
 const indexingRulesMock = vi.hoisted(() => ({
@@ -155,6 +155,19 @@ describe("Admin indexing rules API", () => {
 
     expect(res.status).toBe(400);
     expect(indexingRulesMock.updateIndexingRules).not.toHaveBeenCalled();
+
+    httpServer.close();
+  });
+
+  it("возвращает ошибку по chunk_size если ниже минимума", async () => {
+    const { httpServer } = await createTestServer();
+    const address = httpServer.address() as AddressInfo;
+
+    const res = await supertest(`http://127.0.0.1:${address.port}`)
+      .patch("/api/admin/indexing-rules")
+      .send({ chunkSize: MIN_CHUNK_SIZE - 1 });
+
+    expect(res.status).toBe(400);
 
     httpServer.close();
   });

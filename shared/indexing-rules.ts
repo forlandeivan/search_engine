@@ -1,12 +1,22 @@
 import { z } from "zod";
 
+export const MIN_CHUNK_SIZE = 200;
+export const MAX_CHUNK_SIZE = 8_000;
+
 export const indexingRulesSchema = z.object({
   embeddingsProvider: z.string().trim().min(1, "Укажите провайдера эмбеддингов").max(255),
   embeddingsModel: z.string().trim().min(1, "Укажите модель эмбеддингов").max(255),
-  chunkSize: z.number().int().positive("chunkSize должно быть > 0"),
+  chunkSize: z
+    .number()
+    .int()
+    .min(MIN_CHUNK_SIZE, `Размер чанка должен быть не меньше ${MIN_CHUNK_SIZE}`)
+    .max(MAX_CHUNK_SIZE, `Размер чанка должен быть не больше ${MAX_CHUNK_SIZE}`),
   chunkOverlap: z.number().int().min(0, "chunkOverlap должно быть >= 0"),
   topK: z.number().int().positive("topK должно быть > 0"),
-  relevanceThreshold: z.number().min(0, "relevanceThreshold должно быть от 0 до 1").max(1, "relevanceThreshold должно быть от 0 до 1"),
+  relevanceThreshold: z
+    .number()
+    .min(0, "relevanceThreshold должно быть от 0 до 1")
+    .max(1, "relevanceThreshold должно быть от 0 до 1"),
   citationsEnabled: z.boolean(),
 });
 

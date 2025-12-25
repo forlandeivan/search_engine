@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import AdminIndexingRulesPage from "@/pages/AdminIndexingRulesPage";
-import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
+import { DEFAULT_INDEXING_RULES, MIN_CHUNK_SIZE } from "@shared/indexing-rules";
 
 const mockApiRequest = vi.fn();
 
@@ -102,8 +102,8 @@ describe("AdminIndexingRulesPage", () => {
 
     fireEvent.click(await findByText("Изменить"));
 
-    const overlapInput = (await findByLabelText("Перекрытие чанков")) as HTMLInputElement;
-    fireEvent.change(overlapInput, { target: { value: "5000" } });
+    const chunkSizeInput = (await findByLabelText("Размер чанка")) as HTMLInputElement;
+    fireEvent.change(chunkSizeInput, { target: { value: String(MIN_CHUNK_SIZE - 1) } });
 
     const saveButton = getByTestId("indexing-rules-save");
     fireEvent.click(saveButton);

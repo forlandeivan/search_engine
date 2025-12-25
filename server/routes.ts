@@ -307,7 +307,7 @@ import {
   resolveEmbeddingProviderForWorkspace,
 } from "./indexing-rules";
 import { listEmbeddingProvidersWithStatus, resolveEmbeddingProviderModels } from "./embedding-provider-registry";
-import { updateIndexingRulesSchema } from "@shared/indexing-rules";
+import { MAX_CHUNK_SIZE, MIN_CHUNK_SIZE, updateIndexingRulesSchema } from "@shared/indexing-rules";
 import {
   speechProviderService,
   SpeechProviderServiceError,
@@ -2979,7 +2979,7 @@ const vectorizeKnowledgeDocumentSchema = vectorizePageSchema.extend({
     })
     .optional()
     .nullable(),
-  chunkSize: z.coerce.number().int().min(1).max(8000).default(800),
+  chunkSize: z.coerce.number().int().min(MIN_CHUNK_SIZE).max(MAX_CHUNK_SIZE).default(800),
   chunkOverlap: z.coerce.number().int().min(0).max(4000).default(0),
 });
 
@@ -7918,9 +7918,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   app.patch("/api/admin/indexing-rules", requireAdmin, async (req, res, next) => {
     try {
+      const chunkSizeProvided = typeof (req.body as any)?.chunkSize !== "undefined";
       const parsed = updateIndexingRulesSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ message: "Invalid indexing rules", details: parsed.error.format() });
+        if (chunkSizeProvided) {
+          return res.status(400).json({
+            message: `Размер чанка должен быть в диапазоне ${MIN_CHUNK_SIZE}..${MAX_CHUNK_SIZE}`,
+            code: "INDEXING_CHUNK_SIZE_OUT_OF_RANGE",
+            field: "chunk_size",
+          });
+        }
+        return res.status(400).json({
+          message: "Invalid indexing rules",
+          code: "INDEXING_RULES_INVALID",
+          details: parsed.error.format(),
+        });
       }
 
       const admin = getSessionUser(req);
@@ -14832,8 +14844,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       } = vectorizeKnowledgeDocumentSchema.parse(req.body);
 
       let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"];
+      let indexingRules;
       try {
-        ({ provider: embeddingProvider } = await resolveEmbeddingProviderForWorkspace({
+        ({ provider: embeddingProvider, rules: indexingRules } = await resolveEmbeddingProviderForWorkspace({
           workspaceId,
           requestedProviderId: embeddingProviderId ?? null,
         }));
@@ -14849,6 +14862,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       const embeddingChunkTokenLimit = extractEmbeddingTokenLimit(embeddingProvider);
+      const chunkSizeFromRules = indexingRules.chunkSize;
+      const chunkOverlapFromRules = indexingRules.chunkOverlap;
 
       const documentTextRaw = vectorDocument.text;
       const documentText = documentTextRaw.trim();
@@ -14857,8 +14872,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       const normalizedDocumentText = normalizeDocumentText(documentText);
-      const defaultChunkSize = Math.max(200, Math.min(8000, chunkSize));
-      const defaultChunkOverlap = Math.max(0, Math.min(chunkOverlap, defaultChunkSize - 1));
+      const defaultChunkSize = Math.max(MIN_CHUNK_SIZE, Math.min(MAX_CHUNK_SIZE, chunkSizeFromRules));
+      const defaultChunkOverlap = Math.max(0, Math.min(chunkOverlapFromRules, defaultChunkSize - 1));
       const providedChunksPayload = vectorDocument.chunks;
 
       let documentChunks: KnowledgeDocumentChunk[] = [];
