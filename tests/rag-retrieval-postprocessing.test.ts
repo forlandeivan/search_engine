@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyRetrievalPostProcessing,
+  resolveAllowSources,
   resolveEffectiveRetrievalParams,
   type KnowledgeBaseRagCombinedChunk,
 } from "../server/routes";
@@ -79,6 +80,19 @@ describe("resolveEffectiveRetrievalParams", () => {
     });
 
     expect(result.topK).toBe(3);
+  });
+});
+
+describe("resolveAllowSources", () => {
+  it("отключает источники, если глобально запрещено", () => {
+    expect(resolveAllowSources({ rulesCitationsEnabled: false })).toBe(false);
+    expect(resolveAllowSources({ rulesCitationsEnabled: false, skillShowSources: true })).toBe(false);
+  });
+
+  it("учитывает настройку навыка, если глобально разрешено", () => {
+    expect(resolveAllowSources({ rulesCitationsEnabled: true, skillShowSources: false })).toBe(false);
+    expect(resolveAllowSources({ rulesCitationsEnabled: true, skillShowSources: true })).toBe(true);
+    expect(resolveAllowSources({ rulesCitationsEnabled: true, skillShowSources: undefined })).toBe(true);
   });
 });
 

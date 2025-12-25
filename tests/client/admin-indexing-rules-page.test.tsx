@@ -147,4 +147,23 @@ describe("AdminIndexingRulesPage", () => {
 
     await findByText("Слишком строгий порог");
   });
+
+  it("переключает тумблер цитирования и отправляет значение", async () => {
+    const { findByText, getByTestId } = renderWithClient(<AdminIndexingRulesPage />);
+
+    fireEvent.click(await findByText("Изменить"));
+
+    const toggle = getByTestId("indexing-citations-toggle");
+    fireEvent.click(toggle);
+
+    const saveButton = getByTestId("indexing-rules-save");
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      const patchCall = mockApiRequest.mock.calls.find(
+        ([method, url]) => method === "PATCH" && url === "/api/admin/indexing-rules",
+      );
+      expect(patchCall?.[2]).toEqual(expect.objectContaining({ citationsEnabled: !DEFAULT_INDEXING_RULES.citationsEnabled }));
+    });
+  });
 });

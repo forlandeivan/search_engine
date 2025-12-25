@@ -53,5 +53,5 @@ export const DEFAULT_INDEXING_RULES: IndexingRulesDto = {
   chunkOverlap: 200,
   topK: 6,
   relevanceThreshold: 0.5,
-  citationsEnabled: false,
+  citationsEnabled: true,
 };

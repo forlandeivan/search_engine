@@ -113,6 +113,7 @@ describe("Admin indexing rules API", () => {
 
     expect(res.status).toBe(200);
     expect(res.body?.chunkSize).toBe(DEFAULT_INDEXING_RULES.chunkSize);
+    expect(res.body?.citationsEnabled).toBeDefined();
     expect(indexingRulesMock.getIndexingRules).toHaveBeenCalledTimes(1);
 
     httpServer.close();
@@ -174,6 +175,20 @@ describe("Admin indexing rules API", () => {
       .send({ chunkSize: MIN_CHUNK_SIZE - 1 });
 
     expect(res.status).toBe(400);
+
+    httpServer.close();
+  });
+
+  it("сохраняет флаг цитирования", async () => {
+    const { httpServer } = await createTestServer();
+    const address = httpServer.address() as AddressInfo;
+
+    const res = await supertest(`http://127.0.0.1:${address.port}`)
+      .patch("/api/admin/indexing-rules")
+      .send({ citationsEnabled: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body?.citationsEnabled).toBe(true);
 
     httpServer.close();
   });

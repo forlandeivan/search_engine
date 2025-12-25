@@ -3213,6 +3213,20 @@ export function resolveEffectiveRetrievalParams(options: {
   return { topK, minScore };
 }
 
+export function resolveAllowSources(options: {
+  rulesCitationsEnabled: boolean;
+  skillShowSources?: boolean | null;
+}): boolean {
+  const globalAllowed = Boolean(options.rulesCitationsEnabled);
+  if (!globalAllowed) {
+    return false;
+  }
+  if (options.skillShowSources === false) {
+    return false;
+  }
+  return true;
+}
+
 export function applyRetrievalPostProcessing(options: {
   combinedResults: KnowledgeBaseRagCombinedChunk[];
   topK: number;
@@ -3334,7 +3348,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     let effectiveTopK = retrievalParams.topK;
     let effectiveMinScore = retrievalParams.minScore;
     let effectiveMaxContextTokens: number | null = null;
-    let allowSources = true;
+    let allowSources = resolveAllowSources({ rulesCitationsEnabled: indexingRules.citationsEnabled });
     let skillCollectionFilter: string[] = [];
 
   const pipelineLog: KnowledgeBaseAskAiPipelineStepLog[] = [];
@@ -3580,7 +3594,10 @@ async function runKnowledgeBaseRagPipeline(options: {
         effectiveMinScore = Math.max(effectiveMinScore, skill.ragConfig.minScore);
       }
       effectiveMaxContextTokens = skill.ragConfig.maxContextTokens ?? null;
-      allowSources = skill.ragConfig.showSources;
+      allowSources = resolveAllowSources({
+        rulesCitationsEnabled: indexingRules.citationsEnabled,
+        skillShowSources: skill.ragConfig.showSources,
+      });
       if (skill.ragConfig.mode === "selected_collections") {
         skillCollectionFilter = normalizeCollectionList(skill.ragConfig.collectionIds);
       } else {

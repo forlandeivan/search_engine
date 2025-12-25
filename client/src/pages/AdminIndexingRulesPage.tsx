@@ -539,13 +539,16 @@ export default function AdminIndexingRulesPage() {
                     <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                       <div className="space-y-0.5">
                         <FormLabel>Включить цитирование</FormLabel>
-                        <FormDescription>Платформа будет возвращать ссылки на источники (если поддерживается).</FormDescription>
+                        <FormDescription>
+                          В MVP источники могут не отображаться, но настройка включает подготовку данных для цитирования в ответах.
+                        </FormDescription>
                       </div>
                       <FormControl>
                         <Switch
                           checked={field.value}
                           onCheckedChange={field.onChange}
                           disabled={disableInputs}
+                          data-testid="indexing-citations-toggle"
                         />
                       </FormControl>
                     </FormItem>
