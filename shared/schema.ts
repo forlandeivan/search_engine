@@ -446,6 +446,22 @@ export const smtpSettings = pgTable("smtp_settings", {
 export type SmtpSettings = typeof smtpSettings.$inferSelect;
 export type SmtpSettingsInsert = typeof smtpSettings.$inferInsert;
 
+export const indexingRules = pgTable("indexing_rules", {
+  id: varchar("id").primaryKey().default("indexing_rules_singleton"),
+  embeddingsProvider: varchar("embeddings_provider", { length: 255 }).notNull(),
+  embeddingsModel: varchar("embeddings_model", { length: 255 }).notNull(),
+  chunkSize: integer("chunk_size").notNull(),
+  chunkOverlap: integer("chunk_overlap").notNull(),
+  topK: integer("top_k").notNull(),
+  relevanceThreshold: doublePrecision("relevance_threshold").notNull(),
+  citationsEnabled: boolean("citations_enabled").notNull().default(false),
+  updatedByAdminId: varchar("updated_by_admin_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+export type IndexingRules = typeof indexingRules.$inferSelect;
+export type IndexingRulesInsert = typeof indexingRules.$inferInsert;
+
 export const knowledgeBaseNodeTypes = ["folder", "document"] as const;
 export type KnowledgeBaseNodeType = (typeof knowledgeBaseNodeTypes)[number];
 

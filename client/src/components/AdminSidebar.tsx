@@ -33,6 +33,7 @@ import {
   CreditCard,
   Layers3,
   Receipt,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PublicUser } from "@shared/schema";
@@ -147,6 +148,7 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
     {
       label: "Настройки",
       items: [
+        { title: "Правила индексации", url: "/admin/indexing-rules", icon: SlidersHorizontal },
         { title: "SMTP", url: "/admin/settings/smtp", icon: Mail },
       ],
     },

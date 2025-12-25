@@ -46,6 +46,7 @@ import type { SessionResponse, WorkspaceState } from "@/types/session";
 import type { CSSProperties } from "react";
 import SkillSettingsPage from "@/pages/SkillSettingsPage";
 import ActionSettingsPage from "@/pages/ActionSettingsPage";
+import AdminIndexingRulesPage from "@/pages/AdminIndexingRulesPage";
 
 function AdminRouter() {
   return (
@@ -74,6 +75,7 @@ function AdminRouter() {
       <Route path="/admin/models" component={AdminModelsPage} />
       <Route path="/admin/usage-charges" component={AdminUsageChargesPage} />
       <Route path="/admin/billing" component={AdminBillingPage} />
+      <Route path="/admin/indexing-rules" component={AdminIndexingRulesPage} />
       <Route path="/admin/settings/smtp" component={SmtpSettingsPage} />
       <Route path="/admin/storage" component={VectorStorageSettingsPage} />
       <Route path="/admin/users" component={AdminUsersPage} />

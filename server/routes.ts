@@ -301,6 +301,14 @@ import { smtpSettingsService, SmtpSettingsError } from "./smtp-settings";
 import { updateSmtpSettingsSchema } from "@shared/smtp";
 import { smtpTestService } from "./smtp-test-service";
 import {
+  indexingRulesService,
+  IndexingRulesError,
+  IndexingRulesDomainError,
+  resolveEmbeddingProviderForWorkspace,
+} from "./indexing-rules";
+import { listEmbeddingProvidersWithStatus } from "./embedding-provider-registry";
+import { updateIndexingRulesSchema } from "@shared/indexing-rules";
+import {
   speechProviderService,
   SpeechProviderServiceError,
   SpeechProviderNotFoundError,
@@ -2939,7 +2947,7 @@ const knowledgeDocumentChunksSchema = z.object({
 });
 
 const vectorizePageSchema = z.object({
-  embeddingProviderId: z.string().uuid("Некорректный идентификатор сервиса эмбеддингов"),
+  embeddingProviderId: z.string().uuid("Некорректный идентификатор сервиса эмбеддингов").optional(),
   collectionName: z
     .string()
     .trim()
@@ -7867,6 +7875,55 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const config = await storage.getUnicaChatConfig();
       res.json({ config });
     } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/embeddings/providers", requireAdmin, async (req, res, next) => {
+    try {
+      const workspace = getRequestWorkspace(req);
+      const providers = await listEmbeddingProvidersWithStatus(workspace?.id);
+      res.json({ providers });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/indexing-rules", requireAdmin, async (_req, res, next) => {
+    try {
+      const rules = await indexingRulesService.getIndexingRules();
+      res.json(rules);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/admin/indexing-rules", requireAdmin, async (req, res, next) => {
+    try {
+      const parsed = updateIndexingRulesSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid indexing rules", details: parsed.error.format() });
+      }
+
+      const admin = getSessionUser(req);
+      if (!admin) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const workspace = getRequestWorkspace(req);
+      const updated = await indexingRulesService.updateIndexingRules(parsed.data, admin.id, {
+        workspaceId: workspace?.id,
+      });
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof IndexingRulesDomainError) {
+        return res
+          .status(error.status || 400)
+          .json({ message: error.message, code: error.code, field: error.field ?? "embeddings_provider" });
+      }
+      if (error instanceof IndexingRulesError) {
+        return res.status(error.status || 400).json({ message: error.message });
+      }
       next(error);
     }
   });
@@ -14756,17 +14813,24 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         chunkOverlap,
       } = vectorizeKnowledgeDocumentSchema.parse(req.body);
 
-
-      const provider = await storage.getEmbeddingProvider(embeddingProviderId, workspaceId);
-      if (!provider) {
-        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
+      let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"];
+      try {
+        ({ provider: embeddingProvider } = await resolveEmbeddingProviderForWorkspace({
+          workspaceId,
+          requestedProviderId: embeddingProviderId ?? null,
+        }));
+      } catch (error) {
+        if (error instanceof IndexingRulesDomainError) {
+          return res.status((error as any).status ?? 400).json({
+            error: error.message,
+            code: error.code,
+            field: error.field ?? "embeddings_provider",
+          });
+        }
+        throw error;
       }
 
-      if (!provider.isActive) {
-        return res.status(400).json({ error: "Выбранный сервис эмбеддингов отключён" });
-      }
-
-      const embeddingChunkTokenLimit = extractEmbeddingTokenLimit(provider);
+      const embeddingChunkTokenLimit = extractEmbeddingTokenLimit(embeddingProvider);
 
       const documentTextRaw = vectorDocument.text;
       const documentText = documentTextRaw.trim();
@@ -15019,7 +15083,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const collectionName =
         requestedCollectionName && requestedCollectionName.trim().length > 0
           ? requestedCollectionName.trim()
-          : buildKnowledgeCollectionName(base ?? null, provider, workspaceId);
+          : buildKnowledgeCollectionName(base ?? null, embeddingProvider, workspaceId);
 
       const normalizedSchemaFields: CollectionSchemaFieldInput[] = (schema?.fields ?? []).map((field) => ({
         name: field.name.trim(),
@@ -15086,7 +15150,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
       }
 
-      const embeddingModelKey = typeof provider.model === "string" ? provider.model.trim() : "";
+      const embeddingModelKey =
+        typeof embeddingProvider.model === "string" ? embeddingProvider.model.trim() : "";
       if (!embeddingModelKey) {
         markImmediateFailure("Для сервиса эмбеддингов не указана модель", 400);
         return res.status(400).json({ message: "Для сервиса эмбеддингов не указана модель" });
@@ -15109,7 +15174,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         throw error;
       }
 
-      const accessToken = await fetchAccessToken(provider);
+      const accessToken = await fetchAccessToken(embeddingProvider);
       if (jobId) {
         updateKnowledgeDocumentVectorizationJob(jobId, { status: "running" });
       }
@@ -15121,7 +15186,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const chunk = documentChunks[index];
 
         try {
-          const result = await fetchEmbeddingVector(provider, accessToken, chunk.content);
+          const result = await fetchEmbeddingVector(embeddingProvider, accessToken, chunk.content);
           embeddingResults.push({ ...result, chunk, index });
           if (result.usageTokens !== null && result.usageTokens !== undefined) {
             try {
@@ -15132,8 +15197,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               await recordEmbeddingUsageEvent({
                 workspaceId: workspaceIdStrict,
                 operationId,
-                provider: provider.id ?? provider.providerType ?? "unknown",
-                model: provider.model ?? "unknown",
+                provider: embeddingProvider.id ?? embeddingProvider.providerType ?? "unknown",
+                model: embeddingProvider.model ?? "unknown",
                 modelId: embeddingModelId,
                 tokensTotal: result.usageTokens,
                 contentBytes: Buffer.byteLength(chunk.content, "utf8"),
@@ -15145,7 +15210,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 operationId,
                 model: {
                   id: embeddingModelId,
-                  key: provider.model ?? null,
+                  key: embeddingProvider.model ?? null,
                   name: embeddingModelName,
                   type: "EMBEDDINGS",
                   consumptionUnit: "TOKENS_1K",
@@ -15154,7 +15219,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                   unit: "TOKENS_1K",
                   quantityRaw: pricingUnits.raw,
                   quantityUnits: pricingUnits.units,
-                  metadata: { provider: provider.id ?? provider.providerType ?? "unknown" },
+                  metadata: { provider: embeddingProvider.id ?? embeddingProvider.providerType ?? "unknown" },
                 },
                 price: {
                   creditsChargedCents,
@@ -15209,7 +15274,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         try {
           const created = await ensureCollectionCreatedIfNeeded({
             client,
-            provider,
+            provider: embeddingProvider,
             collectionName,
             detectedVectorLength,
             shouldCreateCollection,
@@ -15295,8 +15360,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               }
             : null,
           provider: {
-            id: provider.id,
-            name: provider.name,
+            id: embeddingProvider.id,
+            name: embeddingProvider.name,
           },
           chunk: {
             id: resolvedChunkId,
@@ -15311,7 +15376,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             excerpt: chunk.excerpt,
           },
           embedding: {
-            model: provider.model,
+            model: embeddingProvider.model,
             vectorSize: vector.length,
             tokens: usageTokens ?? null,
             id: embeddingId ?? null,
@@ -15342,8 +15407,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               }
             : null,
           provider: {
-            id: provider.id,
-            name: provider.name,
+            id: embeddingProvider.id,
+            name: embeddingProvider.name,
           },
           chunk: {
             id: resolvedChunkId,
@@ -15357,7 +15422,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             excerpt: chunk.excerpt,
           },
           embedding: {
-            model: provider.model,
+            model: embeddingProvider.model,
             vectorSize: vector.length,
             tokens: usageTokens ?? null,
             id: embeddingId ?? null,
@@ -15373,7 +15438,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
         const pointVectorPayload = buildVectorPayload(
           vector,
-          provider.qdrantConfig?.vectorFieldName,
+          embeddingProvider.qdrantConfig?.vectorFieldName,
         ) as Schemas["PointStruct"]["vector"];
 
         return {
@@ -15399,15 +15464,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         totalUsageTokens > 0 ? totalUsageTokens : Math.ceil(Buffer.byteLength(documentText, "utf8") / 4),
         {
           consumptionUnit: "TOKENS_1K",
-          modelKey: provider.model ?? null,
+          modelKey: embeddingProvider.model ?? null,
         },
       );
 
       // Записываем потребление эмбеддингов для workspace (с fallback по размеру текста)
       await recordEmbeddingUsageSafe({
         workspaceId,
-        provider,
-        modelKey: provider.model ?? null,
+        provider: embeddingProvider,
+        modelKey: embeddingProvider.model ?? null,
         tokensTotal:
           embeddingUsageMeasurement?.quantityRaw ?? (totalUsageTokens > 0 ? totalUsageTokens : null),
         contentBytes: Buffer.byteLength(documentText, "utf8"),
@@ -15445,8 +15510,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         chunkOverlap: chunkOverlapForMetadata,
         documentId: vectorDocument.id,
         provider: {
-          id: provider.id,
-          name: provider.name,
+          id: embeddingProvider.id,
+          name: embeddingProvider.name,
         },
       };
 

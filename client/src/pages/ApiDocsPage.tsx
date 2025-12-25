@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 
 const FALLBACK_EXTERNAL_API_HOST = "https://aiknowledge.ru";
 
-type DocId = "vector-search" | "rag-search";
+type DocId = "vector-search" | "rag-search" | "chat-message" | "card-message";
 
 type RequestField = {
   name: string;
@@ -220,6 +220,96 @@ const DOC_SECTIONS: DocSection[] = [
       "Если используете Embed Key, убедитесь, что Origin в Postman совпадает с доменом из allowlist — добавьте заголовок X-Embed-Origin.",
       "Передайте kbId, чтобы ограничить поиск конкретной базой знаний внутри рабочего пространства.",
       "Для гибридного поиска добавьте объект hybrid с настройками bm25 и vector (weight, limit).",
+    ],
+  },
+  {
+    id: "chat-message",
+    title: "Сообщение в чат (no-code callback)",
+    description: "Отправьте текстовое сообщение в чат от внешнего сервиса через callback API (по ссылке навыка или с токеном навыка).",
+    icon: ExternalLink,
+    method: "POST",
+    endpointPath: "/api/no-code/callback/messages",
+    steps: [
+      "Получите callback-ключ (callbackKey) навыка или его callback-токен из настроек no-code.",
+      "Сформируйте URL: /api/no-code/callback/messages?callbackKey=<ключ> (без Bearer) ИЛИ добавьте Authorization: Bearer <callbackToken>.",
+      "Передайте workspaceId, chatId, role и текст в полях content или text (до 20 000 символов).",
+      "При необходимости добавьте metadata, triggerMessageId (для связки с исходным сообщением) и correlationId.",
+      "Отправьте запрос — в ответ получите созданное сообщение (messageType=text).",
+    ],
+    requestFields: [
+      { name: "workspaceId", type: "string", required: true, description: "Рабочее пространство навыка (UUID)." },
+      { name: "chatId", type: "string", required: true, description: "Чат, куда отправляем сообщение." },
+      { name: "role", type: "\"assistant\" | \"user\" | \"system\"", required: true, description: "Роль сообщения." },
+      { name: "content | text", type: "string", required: true, description: "Текст сообщения (trim, max 20000 символов)." },
+      { name: "triggerMessageId", type: "string", required: false, description: "Связка с исходным сообщением (для reply/идемпотентности у вас)." },
+      { name: "correlationId", type: "string", required: false, description: "Произвольный идентификатор запроса (не сохраняется отдельно в API)." },
+      { name: "metadata", type: "object", required: false, description: "Дополнительные поля, сохраняются в message.metadata." },
+    ],
+    requestExample: (host) => `POST ${host}/api/no-code/callback/messages?callbackKey=<ваш_callback_key>\nContent-Type: application/json\n\n{\n  \"workspaceId\": \"5aededcf-84fc-4b39-ba3d-28a338ba5107\",\n  \"chatId\": \"ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1\",\n  \"role\": \"assistant\",\n  \"content\": \"Готовая транскрипция загружена. Нажмите 'Читать целиком' в карточке.\",\n  \"metadata\": {\n    \"severity\": \"info\"\n  }\n}\n\n# Альтернатива с токеном навыка:\n# POST ${host}/api/no-code/callback/messages\n# Authorization: Bearer <callback_token>`,
+    responseExample: `{
+  "message": {
+    "id": "msg_abc",
+    "chatId": "ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1",
+    "role": "assistant",
+    "type": "text",
+    "content": "Готовая транскрипция загружена. Нажмите 'Читать целиком' в карточке.",
+    "metadata": {
+      "severity": "info"
+    },
+    "createdAt": "2025-12-25T10:05:00.000Z"
+  }
+}`,
+    tips: [
+      "Можно авторизоваться двумя способами: query ?callbackKey=<ключ навыка> (без заголовков) или Authorization: Bearer <callback_token навыка>.",
+      "Максимальная длина контента — 20 000 символов (валидация на бэкенде).",
+      "card поле опционально; если не передавать card, сообщение будет обычным текстом (messageType=text). Bearer из профиля пользователя здесь не используется.",
+    ],
+  },
+  {
+    id: "card-message",
+    title: "Карточка в чате (no-code callback)",
+    description: "Создайте сообщение типа card с превью и контентом транскрипта, чтобы открыть его в холсте.",
+    icon: Copy,
+    method: "POST",
+    endpointPath: "/api/no-code/callback/messages",
+    steps: [
+      "Получите callback-токен или ключ no-code навыка (по инструкции интеграции).",
+      "Сформируйте POST на /api/no-code/callback/messages, добавьте Authorization: Bearer <callbackToken>.",
+      "Передайте workspaceId, chatId, role и блок card { type, title?, previewText?, transcriptId? }.",
+      "Отправьте запрос — в ответ придёт сообщение с messageType=card и cardId.",
+      "Для открытия контента загрузите сообщение ленты и вызовите GET /api/cards/{cardId}, затем /api/transcripts/{id}.",
+    ],
+    requestFields: [
+      { name: "workspaceId", type: "string", required: true, description: "Рабочее пространство навыка (UUID)." },
+      { name: "chatId", type: "string", required: true, description: "Чат, куда отправляем карточку." },
+      { name: "role", type: "\"assistant\" | \"user\" | \"system\"", required: true, description: "Роль сообщения." },
+      { name: "card.type", type: "string", required: true, description: "Тип карточки. Сейчас используется \"transcript\"." },
+      { name: "card.title", type: "string", required: false, description: "Заголовок превью (опционально)." },
+      { name: "card.previewText", type: "string", required: false, description: "Краткий текст превью для ленты." },
+      { name: "card.transcriptId", type: "string", required: false, description: "ID транскрипта для кнопки «Читать целиком»." },
+      { name: "metadata", type: "object", required: false, description: "Любые дополнительные поля (сохраняются в metadata)." },
+    ],
+    requestExample: (host) => `POST ${host}/api/no-code/callback/messages\nAuthorization: Bearer <callback_token>\nContent-Type: application/json\n\n{\n  \"workspaceId\": \"5aededcf-84fc-4b39-ba3d-28a338ba5107\",\n  \"chatId\": \"ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1\",\n  \"role\": \"assistant\",\n  \"card\": {\n    \"type\": \"transcript\",\n    \"title\": \"Стенограмма звонка\",\n    \"previewText\": \"Краткое резюме беседы...\",\n    \"transcriptId\": \"b7a1c1c8-1234-4567-89ab-00f0a0a0a0a0\"\n  },\n  \"metadata\": {\n    \"defaultTabId\": \"transcript\"\n  }\n}`,
+    responseExample: `{
+  "message": {
+    "id": "msg_123",
+    "chatId": "ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1",
+    "role": "assistant",
+    "type": "card",
+    "cardId": "card_456",
+    "content": "Краткое резюме беседы...",
+    "metadata": {
+      "cardId": "card_456",
+      "transcriptId": "b7a1c1c8-1234-4567-89ab-00f0a0a0a0a0",
+      "defaultTabId": "transcript"
+    },
+    "createdAt": "2025-12-25T10:00:00.000Z"
+  }
+}`,
+    tips: [
+      "card.type сейчас поддерживает транскрипты; для других типов используйте свою валидацию на бэкенде.",
+      "Контент открытки подтягивается через GET /api/cards/{cardId} и затем /api/transcripts/{id} (Bearer пользователя).",
+      "Callback-токен/ключ проверяется по workspace/skill; без него вернётся 401/403.",
     ],
   },
 ];

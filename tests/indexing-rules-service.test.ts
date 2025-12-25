@@ -1,0 +1,143 @@
+import { describe, expect, it } from "vitest";
+
+import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
+import { IndexingRulesDomainError, IndexingRulesError, IndexingRulesService } from "../server/indexing-rules";
+
+function createRepo() {
+  let record: any | null = null;
+  return {
+    get: async () => record,
+    upsert: async (values: any) => {
+      record = { ...values };
+      return record;
+    },
+    getRecord: () => record,
+  };
+}
+
+describe("IndexingRulesService", () => {
+  it("возвращает дефолты если запись отсутствует", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(repo as any, {
+      resolve: async () => ({
+        id: "p1",
+        displayName: "Provider",
+        providerType: "gigachat",
+        model: "m1",
+        isActive: true,
+        isConfigured: true,
+      }),
+    });
+
+    const result = await service.getIndexingRules();
+
+    expect(result).toEqual(DEFAULT_INDEXING_RULES);
+  });
+
+  it("сохраняет и возвращает обновленные значения", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(repo as any, {
+      resolve: async () => ({
+        id: "yandex",
+        displayName: "Yandex",
+        providerType: "gigachat",
+        model: "gpt-lite",
+        isActive: true,
+        isConfigured: true,
+      }),
+    });
+
+    const updated = await service.updateIndexingRules(
+      {
+        embeddingsProvider: "yandex",
+        embeddingsModel: "gpt-lite",
+        chunkSize: 1024,
+        chunkOverlap: 128,
+        topK: 7,
+        relevanceThreshold: 0.65,
+        citationsEnabled: true,
+      },
+      "admin-1",
+    );
+
+    expect(updated.embeddingsProvider).toBe("yandex");
+    expect(updated.chunkSize).toBe(1024);
+    expect(updated.citationsEnabled).toBe(true);
+    expect(repo.getRecord()?.updatedByAdminId).toBe("admin-1");
+  });
+
+  it("бросает ошибку при chunkOverlap >= chunkSize", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(repo as any, {
+      resolve: async () => ({
+        id: "p1",
+        displayName: "Provider",
+        providerType: "gigachat",
+        model: "m1",
+        isActive: true,
+        isConfigured: true,
+      }),
+    });
+
+    await expect(
+      service.updateIndexingRules({
+        chunkSize: 500,
+        chunkOverlap: 500,
+      }),
+    ).rejects.toBeInstanceOf(IndexingRulesError);
+  });
+
+  it("бросает ошибку при выходе relevanceThreshold за пределы 0..1", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(repo as any, {
+      resolve: async () => ({
+        id: "p1",
+        displayName: "Provider",
+        providerType: "gigachat",
+        model: "m1",
+        isActive: true,
+        isConfigured: true,
+      }),
+    });
+
+    await expect(
+      service.updateIndexingRules({
+        relevanceThreshold: 1.5,
+      }),
+    ).rejects.toBeInstanceOf(IndexingRulesError);
+  });
+
+  it("бросает доменную ошибку при неизвестном провайдере", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(repo as any, {
+      resolve: async () => null,
+    });
+
+    await expect(
+      service.updateIndexingRules({
+        embeddingsProvider: "unknown",
+      }),
+    ).rejects.toBeInstanceOf(IndexingRulesDomainError);
+  });
+
+  it("бросает доменную ошибку при ненастроенном провайдере", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(repo as any, {
+      resolve: async () => ({
+        id: "p1",
+        displayName: "Provider",
+        providerType: "gigachat",
+        model: "m1",
+        isActive: true,
+        isConfigured: false,
+        statusReason: "Нет ключа",
+      }),
+    });
+
+    await expect(
+      service.updateIndexingRules({
+        embeddingsProvider: "p1",
+      }),
+    ).rejects.toBeInstanceOf(IndexingRulesDomainError);
+  });
+});
