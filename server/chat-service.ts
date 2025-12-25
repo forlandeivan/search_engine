@@ -772,6 +772,8 @@ export async function addNoCodeCallbackMessage(opts: {
   workspaceId: string;
   role: ChatMessageRole;
   content: string;
+  messageType?: "text" | "card";
+  cardId?: string | null;
   triggerMessageId?: string | null;
   metadata?: Record<string, unknown> | null;
   expectedSkillId?: string | null;
@@ -803,6 +805,9 @@ export async function addNoCodeCallbackMessage(opts: {
   }
 
   const metadata: Record<string, unknown> = { ...(opts.metadata ?? {}) };
+  if (opts.cardId) {
+    metadata.cardId = opts.cardId;
+  }
   const triggerMessageId = opts.triggerMessageId?.trim() ?? "";
   if (triggerMessageId) {
     metadata.triggerMessageId = triggerMessageId;
@@ -812,6 +817,8 @@ export async function addNoCodeCallbackMessage(opts: {
     chatId: opts.chatId,
     role: opts.role,
     content,
+    messageType: opts.messageType ?? "text",
+    cardId: opts.cardId ?? undefined,
     metadata,
   });
   await storage.touchChatSession(opts.chatId);

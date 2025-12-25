@@ -123,7 +123,12 @@ import {
   scheduleNoCodeEventDelivery,
 } from "./no-code-events";
 import { buildContextPack } from "./context-pack";
-import { assistantActionTypes, type AssistantActionType, type ChatMessageMetadata } from "@shared/schema";
+import {
+  assistantActionTypes,
+  chatCardTypes,
+  type AssistantActionType,
+  type ChatMessageMetadata,
+} from "@shared/schema";
 type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
 const NO_CODE_FLOW_MESSAGES: Record<NoCodeFlowFailureReason, string> = {
   NOT_CONFIGURED: "No-code сценарий недоступен. Проверьте подключение или попробуйте позже.",
@@ -7016,14 +7021,22 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       triggerMessageId: z.string().trim().max(200).optional(),
       correlationId: z.string().trim().max(200).optional(),
       metadata: z.record(z.unknown()).optional(),
+      card: z
+        .object({
+          type: z.enum(chatCardTypes),
+          transcriptId: z.string().trim().max(200).optional(),
+          title: z.string().trim().max(500).optional(),
+          previewText: z.string().trim().max(20000).optional(),
+        })
+        .optional(),
     })
     .superRefine((val, ctx) => {
       const content = (val.content ?? val.text ?? "").trim();
-      if (!content) {
+      if (!content && !val.card) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["content"],
-          message: "Сообщение не может быть пустым",
+          message: "Сообщение не может быть пустым (или передайте card)",
         });
       }
     });
@@ -11454,14 +11467,32 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         });
       }
 
+      let cardId: string | null = null;
+      let messageType: "text" | "card" = "text";
+      if (payload.card) {
+        const card = await storage.createChatCard({
+          workspaceId,
+          chatId: payload.chatId,
+          type: payload.card.type,
+          title: payload.card.title ?? null,
+          previewText: payload.card.previewText ?? content || "Карточка",
+          transcriptId: payload.card.transcriptId ?? null,
+          createdByUserId: null,
+        });
+        cardId = card.id;
+        messageType = "card";
+      }
+
       const message = await addNoCodeCallbackMessage({
         workspaceId,
         chatId: payload.chatId,
         role: payload.role,
-        content,
+        content: content || payload.card?.previewText || payload.card?.title || "Карточка",
         triggerMessageId,
-        metadata: payload.metadata ?? null,
+        metadata: { ...(payload.metadata ?? {}), ...(cardId ? { cardId, transcriptId: payload.card?.transcriptId } : {}) },
         expectedSkillId: skillReference.skillId,
+        messageType,
+        cardId,
       });
 
       return res.status(201).json({ message });
