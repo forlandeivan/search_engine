@@ -41,6 +41,18 @@ beforeEach(() => {
         }),
       });
     }
+    if (method === "GET" && url === `/api/admin/embeddings/providers/${defaults.embeddingsProvider}/models`) {
+      return Promise.resolve({
+        json: async () => ({
+          providerId: defaults.embeddingsProvider,
+          providerName: "Default provider",
+          supportsModelSelection: true,
+          defaultModel: defaults.embeddingsModel,
+          models: [defaults.embeddingsModel, "another-model"],
+          isConfigured: true,
+        }),
+      });
+    }
     if (method === "PATCH" && url === "/api/admin/indexing-rules") {
       return Promise.resolve({ json: async () => ({ ...defaults, ...(payload as object) }) });
     }
@@ -59,6 +71,15 @@ describe("AdminIndexingRulesPage", () => {
         ([method, url]) => method === "GET" && url === "/api/admin/embeddings/providers",
       );
       expect(providersCall).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      const modelsCall = mockApiRequest.mock.calls.find(
+        ([method, url]) =>
+          method === "GET" &&
+          url === `/api/admin/embeddings/providers/${DEFAULT_INDEXING_RULES.embeddingsProvider}/models`,
+      );
+      expect(modelsCall).toBeTruthy();
     });
 
     const chunkSizeInput = (await findByLabelText("Размер чанка")) as HTMLInputElement;

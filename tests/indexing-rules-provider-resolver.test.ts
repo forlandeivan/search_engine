@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
 
 const resolveStatusMock = vi.fn();
+const resolveModelsMock = vi.fn();
 const getProviderMock = vi.fn();
 
 vi.doMock("../server/embedding-provider-registry", () => ({
   resolveEmbeddingProviderStatus: resolveStatusMock,
+  resolveEmbeddingProviderModels: resolveModelsMock,
   listEmbeddingProvidersWithStatus: vi.fn(),
 }));
 
@@ -20,6 +22,7 @@ describe("resolveEmbeddingProviderForWorkspace", () => {
     vi.resetModules();
     vi.clearAllMocks();
     resolveStatusMock.mockReset();
+    resolveModelsMock.mockReset();
     getProviderMock.mockReset();
   });
 
@@ -37,6 +40,14 @@ describe("resolveEmbeddingProviderForWorkspace", () => {
       providerType: "gigachat",
       model: "db-model",
       isActive: true,
+      isConfigured: true,
+    });
+    resolveModelsMock.mockResolvedValue({
+      providerId: "rules-provider",
+      providerName: "Rules Provider",
+      supportsModelSelection: true,
+      defaultModel: "db-model",
+      models: [],
       isConfigured: true,
     });
 
@@ -87,6 +98,7 @@ describe("resolveEmbeddingProviderForWorkspace", () => {
       isConfigured: false,
       statusReason: "Missing credentials",
     });
+    resolveModelsMock.mockResolvedValue(null);
 
     await expect(
       resolveEmbeddingProviderForWorkspace({

@@ -9,7 +9,12 @@ import {
   type IndexingRulesDto,
   type UpdateIndexingRulesDto,
 } from "@shared/indexing-rules";
-import { resolveEmbeddingProviderStatus, type EmbeddingProviderStatus } from "./embedding-provider-registry";
+import {
+  resolveEmbeddingProviderStatus,
+  resolveEmbeddingProviderModels,
+  type EmbeddingProviderModelsInfo,
+  type EmbeddingProviderStatus,
+} from "./embedding-provider-registry";
 
 export class IndexingRulesError extends Error {
   status = 400;
@@ -34,6 +39,10 @@ export class IndexingRulesDomainError extends IndexingRulesError {
 
 type EmbeddingProviderResolver = {
   resolve(providerId: string, workspaceId?: string): Promise<EmbeddingProviderStatus | null>;
+};
+
+type EmbeddingProviderModelsResolver = {
+  resolveModels(providerId: string, workspaceId?: string): Promise<EmbeddingProviderModelsInfo | null>;
 };
 
 type IndexingRulesRepository = {
@@ -182,6 +191,7 @@ export class IndexingRulesService {
   constructor(
     private readonly repo: IndexingRulesRepository = new DbIndexingRulesRepository(),
     private readonly providerResolver: EmbeddingProviderResolver = { resolve: resolveEmbeddingProviderStatus },
+    private readonly modelsResolver: EmbeddingProviderModelsResolver = { resolveModels: resolveEmbeddingProviderModels },
   ) {}
 
   private buildRecord(values: IndexingRulesDto, existing?: StoredIndexingRules | null, actorAdminId?: string | null): StoredIndexingRules {
@@ -268,8 +278,6 @@ export class IndexingRulesService {
       ...sanitizedPatch,
     };
 
-    validateRules(merged);
-
     const isProviderChanged = sanitizedPatch.embeddingsProvider !== undefined;
     if (isProviderChanged || !current.embeddingsProvider) {
       const provider = await this.providerResolver.resolve(merged.embeddingsProvider, options?.workspaceId);
@@ -289,6 +297,52 @@ export class IndexingRulesService {
         );
       }
     }
+
+    const modelInfo = await this.modelsResolver.resolveModels(merged.embeddingsProvider, options?.workspaceId);
+    if (!modelInfo) {
+      throw new IndexingRulesDomainError(
+        "Провайдер эмбеддингов не найден",
+        "EMBEDDINGS_PROVIDER_UNKNOWN",
+        "embeddings_provider",
+      );
+    }
+
+    if (!modelInfo.supportsModelSelection) {
+      const fallbackModel =
+        modelInfo.defaultModel ??
+        (typeof merged.embeddingsModel === "string" && merged.embeddingsModel.trim().length > 0
+          ? merged.embeddingsModel.trim()
+          : null);
+      if (!fallbackModel) {
+        throw new IndexingRulesDomainError(
+          "Для выбранного провайдера не задана модель по умолчанию",
+          "EMBEDDINGS_MODEL_REQUIRED",
+          "embeddings_model",
+        );
+      }
+      merged.embeddingsModel = fallbackModel;
+    } else {
+      const modelValue = typeof merged.embeddingsModel === "string" ? merged.embeddingsModel.trim() : "";
+      if (!modelValue) {
+        throw new IndexingRulesDomainError(
+          "Укажите модель эмбеддингов",
+          "EMBEDDINGS_MODEL_REQUIRED",
+          "embeddings_model",
+        );
+      }
+
+      if (modelInfo.models.length > 0 && !modelInfo.models.includes(modelValue)) {
+        throw new IndexingRulesDomainError(
+          `Модель '${modelValue}' не поддерживается провайдером ${modelInfo.providerName}`,
+          "EMBEDDINGS_MODEL_NOT_SUPPORTED",
+          "embeddings_model",
+        );
+      }
+
+      merged.embeddingsModel = modelValue;
+    }
+
+    validateRules(merged);
 
     const saved = await this.repo.upsert(this.buildRecord(merged, current, actorAdminId ?? null));
     return mapToDto(saved);

@@ -11,6 +11,16 @@ export type EmbeddingProviderStatus = {
   statusReason?: string;
 };
 
+export type EmbeddingProviderModelsInfo = {
+  providerId: string;
+  providerName: string;
+  supportsModelSelection: boolean;
+  defaultModel: string | null;
+  models: string[];
+  isConfigured: boolean;
+  statusReason?: string;
+};
+
 function computeStatus(provider: EmbeddingProvider): Pick<EmbeddingProviderStatus, "isConfigured" | "statusReason"> {
   if (!provider.isActive) {
     return { isConfigured: false, statusReason: "Провайдер отключен" };
@@ -54,6 +64,58 @@ export async function listEmbeddingProvidersWithStatus(workspaceId?: string): Pr
       statusReason,
     };
   });
+}
+
+function normalizeModelList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of raw) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const trimmed = entry.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+
+  return result;
+}
+
+export async function resolveEmbeddingProviderModels(
+  providerId: string,
+  workspaceId?: string,
+): Promise<EmbeddingProviderModelsInfo | null> {
+  const provider = await storage.getEmbeddingProvider(providerId, workspaceId);
+  if (!provider) {
+    return null;
+  }
+
+  const status = computeStatus(provider);
+  const requestConfig = provider.requestConfig as Record<string, unknown> | null | undefined;
+  const supportsModelSelection = Boolean((requestConfig as { supportsModelSelection?: unknown })?.supportsModelSelection ?? true);
+  const defaultModel =
+    typeof provider.model === "string" && provider.model.trim().length > 0 ? provider.model.trim() : null;
+  const configModels = normalizeModelList((requestConfig as { models?: unknown })?.models);
+  const supportedModels = normalizeModelList((requestConfig as { supportedModels?: unknown })?.supportedModels);
+  const models = configModels.length > 0 ? configModels : supportedModels;
+
+  return {
+    providerId: provider.id,
+    providerName: provider.name,
+    supportsModelSelection,
+    defaultModel,
+    models,
+    isConfigured: status.isConfigured,
+    statusReason: status.statusReason,
+  };
 }
 
 export async function resolveEmbeddingProviderStatus(

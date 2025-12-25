@@ -16,18 +16,31 @@ function createRepo() {
 }
 
 describe("IndexingRulesService", () => {
+  const defaultProvider = {
+    id: "p1",
+    displayName: "Provider",
+    providerType: "gigachat",
+    model: "m1",
+    isActive: true,
+    isConfigured: true,
+  };
+
+  const defaultModels = {
+    providerId: "p1",
+    providerName: "Provider",
+    supportsModelSelection: true,
+    defaultModel: "m1",
+    models: [],
+    isConfigured: true,
+  };
+
   it("возвращает дефолты если запись отсутствует", async () => {
     const repo = createRepo();
-    const service = new IndexingRulesService(repo as any, {
-      resolve: async () => ({
-        id: "p1",
-        displayName: "Provider",
-        providerType: "gigachat",
-        model: "m1",
-        isActive: true,
-        isConfigured: true,
-      }),
-    });
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      { resolveModels: async () => defaultModels },
+    );
 
     const result = await service.getIndexingRules();
 
@@ -36,16 +49,29 @@ describe("IndexingRulesService", () => {
 
   it("сохраняет и возвращает обновленные значения", async () => {
     const repo = createRepo();
-    const service = new IndexingRulesService(repo as any, {
-      resolve: async () => ({
-        id: "yandex",
-        displayName: "Yandex",
-        providerType: "gigachat",
-        model: "gpt-lite",
-        isActive: true,
-        isConfigured: true,
-      }),
-    });
+    const service = new IndexingRulesService(
+      repo as any,
+      {
+        resolve: async () => ({
+          id: "yandex",
+          displayName: "Yandex",
+          providerType: "gigachat",
+          model: "gpt-lite",
+          isActive: true,
+          isConfigured: true,
+        }),
+      },
+      {
+        resolveModels: async () => ({
+          providerId: "yandex",
+          providerName: "Yandex",
+          supportsModelSelection: true,
+          defaultModel: "gpt-lite",
+          models: ["gpt-lite"],
+          isConfigured: true,
+        }),
+      },
+    );
 
     const updated = await service.updateIndexingRules(
       {
@@ -68,16 +94,11 @@ describe("IndexingRulesService", () => {
 
   it("бросает ошибку при chunkOverlap >= chunkSize", async () => {
     const repo = createRepo();
-    const service = new IndexingRulesService(repo as any, {
-      resolve: async () => ({
-        id: "p1",
-        displayName: "Provider",
-        providerType: "gigachat",
-        model: "m1",
-        isActive: true,
-        isConfigured: true,
-      }),
-    });
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      { resolveModels: async () => defaultModels },
+    );
 
     await expect(
       service.updateIndexingRules({
@@ -89,16 +110,11 @@ describe("IndexingRulesService", () => {
 
   it("бросает ошибку при выходе relevanceThreshold за пределы 0..1", async () => {
     const repo = createRepo();
-    const service = new IndexingRulesService(repo as any, {
-      resolve: async () => ({
-        id: "p1",
-        displayName: "Provider",
-        providerType: "gigachat",
-        model: "m1",
-        isActive: true,
-        isConfigured: true,
-      }),
-    });
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      { resolveModels: async () => defaultModels },
+    );
 
     await expect(
       service.updateIndexingRules({
@@ -109,9 +125,11 @@ describe("IndexingRulesService", () => {
 
   it("бросает доменную ошибку при неизвестном провайдере", async () => {
     const repo = createRepo();
-    const service = new IndexingRulesService(repo as any, {
-      resolve: async () => null,
-    });
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => null },
+      { resolveModels: async () => null },
+    );
 
     await expect(
       service.updateIndexingRules({
@@ -122,21 +140,75 @@ describe("IndexingRulesService", () => {
 
   it("бросает доменную ошибку при ненастроенном провайдере", async () => {
     const repo = createRepo();
-    const service = new IndexingRulesService(repo as any, {
-      resolve: async () => ({
-        id: "p1",
-        displayName: "Provider",
-        providerType: "gigachat",
-        model: "m1",
-        isActive: true,
-        isConfigured: false,
-        statusReason: "Нет ключа",
-      }),
-    });
+    const service = new IndexingRulesService(
+      repo as any,
+      {
+        resolve: async () => ({
+          id: "p1",
+          displayName: "Provider",
+          providerType: "gigachat",
+          model: "m1",
+          isActive: true,
+          isConfigured: false,
+          statusReason: "Нет ключа",
+        }),
+      },
+      { resolveModels: async () => defaultModels },
+    );
 
     await expect(
       service.updateIndexingRules({
         embeddingsProvider: "p1",
+      }),
+    ).rejects.toBeInstanceOf(IndexingRulesDomainError);
+  });
+
+  it("подставляет defaultModel если выбор модели не поддерживается", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      {
+        resolveModels: async () => ({
+          providerId: "p1",
+          providerName: "Provider",
+          supportsModelSelection: false,
+          defaultModel: "fixed-model",
+          models: [],
+          isConfigured: true,
+        }),
+      },
+    );
+
+    const updated = await service.updateIndexingRules({
+      embeddingsProvider: "p1",
+      embeddingsModel: "will-be-overwritten",
+    });
+
+    expect(updated.embeddingsModel).toBe("fixed-model");
+  });
+
+  it("бросает ошибку если выбранная модель не поддерживается", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      {
+        resolveModels: async () => ({
+          providerId: "p1",
+          providerName: "Provider",
+          supportsModelSelection: true,
+          defaultModel: "m1",
+          models: ["m1", "m2"],
+          isConfigured: true,
+        }),
+      },
+    );
+
+    await expect(
+      service.updateIndexingRules({
+        embeddingsProvider: "p1",
+        embeddingsModel: "unknown-model",
       }),
     ).rejects.toBeInstanceOf(IndexingRulesDomainError);
   });

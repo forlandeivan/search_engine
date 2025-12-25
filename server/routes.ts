@@ -306,7 +306,7 @@ import {
   IndexingRulesDomainError,
   resolveEmbeddingProviderForWorkspace,
 } from "./indexing-rules";
-import { listEmbeddingProvidersWithStatus } from "./embedding-provider-registry";
+import { listEmbeddingProvidersWithStatus, resolveEmbeddingProviderModels } from "./embedding-provider-registry";
 import { updateIndexingRulesSchema } from "@shared/indexing-rules";
 import {
   speechProviderService,
@@ -7884,6 +7884,24 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const workspace = getRequestWorkspace(req);
       const providers = await listEmbeddingProvidersWithStatus(workspace?.id);
       res.json({ providers });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/embeddings/providers/:providerId/models", requireAdmin, async (req, res, next) => {
+    try {
+      const workspace = getRequestWorkspace(req);
+      const providerId = req.params.providerId;
+      const modelsInfo = await resolveEmbeddingProviderModels(providerId, workspace?.id);
+
+      if (!modelsInfo) {
+        return res
+          .status(404)
+          .json({ message: "Провайдер эмбеддингов не найден", code: "EMBEDDINGS_PROVIDER_UNKNOWN", field: "embeddings_provider" });
+      }
+
+      res.json(modelsInfo);
     } catch (error) {
       next(error);
     }

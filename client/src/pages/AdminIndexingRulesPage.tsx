@@ -22,6 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { useIndexingRules, useUpdateIndexingRules } from "@/hooks/useIndexingRules";
 import { useEmbeddingProviders } from "@/hooks/useEmbeddingProviders";
+import { useEmbeddingProviderModels } from "@/hooks/useEmbeddingProviderModels";
 import { ApiError } from "@/lib/queryClient";
 import { DEFAULT_INDEXING_RULES, indexingRulesSchema, type IndexingRulesDto } from "@shared/indexing-rules";
 
@@ -52,6 +53,41 @@ export default function AdminIndexingRulesPage() {
     }
   }, [data, form]);
 
+  const selectedProviderId = form.watch("embeddingsProvider");
+  const modelsQuery = useEmbeddingProviderModels(selectedProviderId, { enabled: isEditing && Boolean(selectedProviderId) });
+  const modelsInfo = modelsQuery.data;
+  const supportsModelSelection = modelsInfo?.supportsModelSelection ?? true;
+  const modelOptions = modelsInfo?.models ?? [];
+  const modelsLoading = modelsQuery.isLoading || modelsQuery.isFetching;
+  const modelsError = modelsQuery.isError;
+
+  useEffect(() => {
+    if (!isEditing || !selectedProviderId) {
+      return;
+    }
+    if (modelsLoading || !modelsInfo) {
+      return;
+    }
+
+    if (!modelsInfo.supportsModelSelection) {
+      const fallbackModel = modelsInfo.defaultModel ?? form.getValues("embeddingsModel") ?? "";
+      if (fallbackModel && fallbackModel !== form.getValues("embeddingsModel")) {
+        form.setValue("embeddingsModel", fallbackModel, { shouldValidate: true, shouldDirty: true });
+      }
+      return;
+    }
+
+    if (modelOptions.length > 0) {
+      const currentModel = (form.getValues("embeddingsModel") ?? "").trim();
+      const nextModel = currentModel && modelOptions.includes(currentModel) ? currentModel : modelOptions[0];
+      if (nextModel !== currentModel) {
+        form.setValue("embeddingsModel", nextModel, { shouldValidate: true, shouldDirty: true });
+      }
+    } else if (!form.getValues("embeddingsModel") && modelsInfo.defaultModel) {
+      form.setValue("embeddingsModel", modelsInfo.defaultModel, { shouldValidate: true, shouldDirty: true });
+    }
+  }, [form, isEditing, modelOptions, modelsInfo, modelsLoading, selectedProviderId]);
+
   const onSubmit = form.handleSubmit(async (values) => {
     try {
       const updated = await updateMutation.mutateAsync(values);
@@ -69,6 +105,9 @@ export default function AdminIndexingRulesPage() {
             : "Не удалось сохранить правила индексации";
       if (details?.field === "embeddings_provider") {
         form.setError("embeddingsProvider", { message });
+      }
+      if (details?.field === "embeddings_model") {
+        form.setError("embeddingsModel", { message });
       }
       toast({ title: "Ошибка сохранения", description: message, variant: "destructive" });
     }
@@ -97,6 +136,9 @@ export default function AdminIndexingRulesPage() {
 
   const disableInputs = !isEditing || updateMutation.isPending;
   const providerFieldDisabled = disableInputs || providersQuery.isLoading || providersQuery.isError;
+  const modelRequiredMissing =
+    supportsModelSelection && modelOptions.length > 0 && !(form.watch("embeddingsModel") ?? "").trim();
+  const saveDisabled = updateMutation.isPending || modelRequiredMissing;
 
   return (
     <div className="p-6 space-y-4">
@@ -151,7 +193,7 @@ export default function AdminIndexingRulesPage() {
                     size="sm"
                     type="button"
                     onClick={onSubmit}
-                    disabled={updateMutation.isPending}
+                    disabled={saveDisabled}
                     data-testid="indexing-rules-save"
                   >
                     {updateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
@@ -185,6 +227,8 @@ export default function AdminIndexingRulesPage() {
                             value={field.value}
                             onValueChange={(value) => {
                               form.clearErrors("embeddingsProvider");
+                              form.clearErrors("embeddingsModel");
+                              form.setValue("embeddingsModel", "", { shouldValidate: false, shouldDirty: true });
                               field.onChange(value);
                             }}
                           >
@@ -243,15 +287,62 @@ export default function AdminIndexingRulesPage() {
                       <FormItem>
                         <FormLabel htmlFor="indexing-embeddings-model">Модель эмбеддингов</FormLabel>
                         <FormControl>
-                          <Input
-                            id="indexing-embeddings-model"
-                            placeholder="text-embedding-3-small"
-                            disabled={disableInputs}
-                            value={field.value ?? ""}
-                            onChange={(event) => field.onChange(event.target.value)}
-                          />
+                          {supportsModelSelection && modelOptions.length > 0 ? (
+                            <Select
+                              value={field.value ?? ""}
+                              disabled={disableInputs || modelsLoading || modelsError}
+                              onValueChange={(value) => {
+                                form.clearErrors("embeddingsModel");
+                                field.onChange(value);
+                              }}
+                            >
+                              <SelectTrigger id="indexing-embeddings-model">
+                                <SelectValue
+                                  placeholder={
+                                    modelsLoading
+                                      ? "Загружаем модели..."
+                                      : modelsError
+                                        ? "Не удалось загрузить модели"
+                                        : "Выберите модель"
+                                  }
+                                />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {modelOptions.map((model) => (
+                                  <SelectItem key={model} value={model}>
+                                    {model}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input
+                              id="indexing-embeddings-model"
+                              placeholder="text-embedding-3-small"
+                              disabled={disableInputs || modelsLoading || !supportsModelSelection}
+                              value={field.value ?? ""}
+                              onChange={(event) => {
+                                form.clearErrors("embeddingsModel");
+                                field.onChange(event.target.value);
+                              }}
+                            />
+                          )}
                         </FormControl>
-                        <FormDescription>Ключ модели как в настройках провайдера.</FormDescription>
+                        {modelsLoading ? (
+                          <FormDescription>Загружаем модели выбранного провайдера…</FormDescription>
+                        ) : modelsError ? (
+                          <FormDescription className="text-destructive">
+                            Не удалось загрузить список моделей. Введите модель вручную или попробуйте позже.
+                          </FormDescription>
+                        ) : !supportsModelSelection ? (
+                          <FormDescription>
+                            Провайдер использует модель по умолчанию: {modelsInfo?.defaultModel ?? "—"}.
+                          </FormDescription>
+                        ) : modelOptions.length > 0 ? (
+                          <FormDescription>Выберите модель, доступную для выбранного провайдера.</FormDescription>
+                        ) : (
+                          <FormDescription>Список моделей недоступен, введите идентификатор модели вручную.</FormDescription>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}

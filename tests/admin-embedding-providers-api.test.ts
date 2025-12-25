@@ -15,6 +15,18 @@ const registryMock = vi.hoisted(() => ({
       isConfigured: true,
     },
   ]),
+  resolveEmbeddingProviderModels: vi.fn(async (providerId: string) =>
+    providerId === "p1"
+      ? {
+          providerId: "p1",
+          providerName: "Provider 1",
+          supportsModelSelection: true,
+          defaultModel: "text-embedding",
+          models: ["text-embedding", "text-embedding-3-small"],
+          isConfigured: true,
+        }
+      : null,
+  ),
 }));
 
 vi.doMock("../server/auth", () => {
@@ -45,7 +57,7 @@ vi.doMock("../server/embedding-provider-registry", () => registryMock);
 
 async function createTestServer() {
   const { requireAdmin, getRequestWorkspace } = await import("../server/auth");
-  const { listEmbeddingProvidersWithStatus } = await import("../server/embedding-provider-registry");
+  const { listEmbeddingProvidersWithStatus, resolveEmbeddingProviderModels } = await import("../server/embedding-provider-registry");
   const app = express();
   app.use(express.json());
 
@@ -59,6 +71,19 @@ async function createTestServer() {
     }
   });
 
+  app.get("/api/admin/embeddings/providers/:providerId/models", requireAdmin, async (req, res, next) => {
+    try {
+      const workspace = getRequestWorkspace(req);
+      const models = await resolveEmbeddingProviderModels(req.params.providerId, workspace?.id);
+      if (!models) {
+        return res.status(404).json({ message: "Провайдер эмбеддингов не найден", code: "EMBEDDINGS_PROVIDER_UNKNOWN" });
+      }
+      res.json(models);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   const httpServer = app.listen(0);
   await new Promise<void>((resolve) => (httpServer.listening ? resolve() : httpServer.once("listening", resolve)));
   return { httpServer };
@@ -67,6 +92,7 @@ async function createTestServer() {
 afterEach(() => {
   authMock.allowAdmin = true;
   registryMock.listEmbeddingProvidersWithStatus.mockClear();
+  registryMock.resolveEmbeddingProviderModels.mockClear();
 });
 
 describe("Admin embedding providers API", () => {
@@ -81,6 +107,34 @@ describe("Admin embedding providers API", () => {
     expect(res.body.providers[0]?.id).toBe("p1");
     expect(registryMock.listEmbeddingProvidersWithStatus).toHaveBeenCalledWith("workspace-1");
 
+    httpServer.close();
+  });
+
+  it("возвращает модели провайдера", async () => {
+    const { httpServer } = await createTestServer();
+    const address = httpServer.address() as AddressInfo;
+
+    const res = await supertest(`http://127.0.0.1:${address.port}`).get(
+      "/api/admin/embeddings/providers/p1/models",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body?.providerId).toBe("p1");
+    expect(Array.isArray(res.body?.models)).toBe(true);
+    expect(registryMock.resolveEmbeddingProviderModels).toHaveBeenCalledWith("p1", "workspace-1");
+
+    httpServer.close();
+  });
+
+  it("возвращает 404 для неизвестного провайдера", async () => {
+    const { httpServer } = await createTestServer();
+    const address = httpServer.address() as AddressInfo;
+
+    const res = await supertest(`http://127.0.0.1:${address.port}`).get(
+      "/api/admin/embeddings/providers/unknown/models",
+    );
+
+    expect(res.status).toBe(404);
     httpServer.close();
   });
 
