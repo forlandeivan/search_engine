@@ -26,6 +26,7 @@ type ChatMessagesAreaProps = {
   onReset?: () => void;
   scrollContainerRef?: RefObject<HTMLElement | null>;
   onOpenTranscript?: (transcriptId: string, defaultTabId?: string | null) => void;
+  onOpenCard?: (cardId: string, fallbackTranscriptId?: string | null, defaultTabId?: string | null) => void;
   onRenameChat?: (title: string) => Promise<void>;
 };
 
@@ -46,6 +47,7 @@ export default function ChatMessagesArea({
   onReset,
   scrollContainerRef,
   onOpenTranscript,
+  onOpenCard,
   onRenameChat,
 }: ChatMessagesAreaProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -350,7 +352,8 @@ function ChatBubble({
   };
 
   const metadata = (message.metadata ?? {}) as ChatMessage["metadata"];
-  const isTranscript = metadata?.type === "transcript" && metadata.transcriptId;
+  const cardId = (message as any).cardId ?? (metadata as any)?.cardId ?? null;
+  const isTranscript = (metadata?.type === "transcript" && metadata.transcriptId) || Boolean(cardId);
   const resolvedStreaming = isStreamingBubble || metadata?.streaming === true;
   const fileMeta = message.file ?? (metadata as any)?.file;
   const isFileMessage =
@@ -461,22 +464,25 @@ function ChatBubble({
       <div className="max-w-[70%]">
         <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-800">
           {isTranscript ? (
-            <TranscriptCard
-              status={(metadata?.transcriptStatus as string) ?? "processing"}
-              preview={metadata?.previewText || message.content}
-              onOpen={() =>
-                metadata?.transcriptId &&
-                onOpenTranscript?.(
-                  metadata.transcriptId,
-                  (
+              <TranscriptCard
+                status={(metadata?.transcriptStatus as string) ?? "processing"}
+                preview={metadata?.previewText || message.content}
+                onOpen={() => {
+                  const defaultTabId = (
                     (metadata as Record<string, unknown>)?.defaultViewId ??
                     (metadata as Record<string, unknown>)?.preferredTranscriptTabId ??
                     (metadata as Record<string, unknown>)?.defaultViewActionId ??
                     null
-                  ) as string | null
-                )
-              }
-            />
+                  ) as string | null;
+                  if (cardId && onOpenCard) {
+                    onOpenCard(cardId, metadata?.transcriptId ?? null, defaultTabId);
+                    return;
+                  }
+                  if (metadata?.transcriptId) {
+                    onOpenTranscript?.(metadata.transcriptId, defaultTabId);
+                  }
+                }}
+              />
           ) : isFileMessage ? (
             renderFileBubble()
           ) : isTranscribingBubble ? (

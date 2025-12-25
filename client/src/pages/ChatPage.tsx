@@ -648,6 +648,33 @@ export default function ChatPage({ params }: ChatPageProps) {
               onOpenTranscript={(id: string, defaultTabId?: string | null) =>
                 setOpenTranscript({ id, tabId: defaultTabId ?? null })
               }
+              onOpenCard={async (cardId, fallbackTranscriptId, defaultTabId) => {
+                if (!workspaceId) return;
+                try {
+                  const response = await fetch(
+                    `/api/cards/${cardId}?workspaceId=${workspaceId}`,
+                    { credentials: "include" },
+                  );
+                  await throwIfResNotOk(response);
+                  const data = await response.json();
+                  const transcriptId: string | null =
+                    data?.card?.transcriptId ?? fallbackTranscriptId ?? null;
+                  if (!transcriptId) {
+                    toast({
+                      title: "Карточка не содержит транскрипт",
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+                  setOpenTranscript({ id: transcriptId, tabId: defaultTabId ?? null });
+                } catch (error) {
+                  console.error("[ChatPage] failed to open card", error);
+                  toast({
+                    title: "Не удалось открыть карточку",
+                    variant: "destructive",
+                  });
+                }
+              }}
               readOnlyReason={readOnlyReason}
             />
           <div className="shrink-0">
