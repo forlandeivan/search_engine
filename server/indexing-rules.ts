@@ -169,11 +169,19 @@ function validateRules(config: IndexingRulesDto): void {
   }
 
   if (config.chunkOverlap < 0) {
-    throw new IndexingRulesError("chunkOverlap не может быть отрицательным");
+    throw new IndexingRulesDomainError(
+      "Перекрытие не может быть отрицательным",
+      "INDEXING_CHUNK_OVERLAP_OUT_OF_RANGE",
+      "chunk_overlap",
+    );
   }
 
   if (config.chunkOverlap >= config.chunkSize) {
-    throw new IndexingRulesError("chunkOverlap должен быть меньше chunkSize");
+    throw new IndexingRulesDomainError(
+      "Перекрытие не может быть больше или равно размеру чанка",
+      "INDEXING_CHUNK_OVERLAP_GT_CHUNK_SIZE",
+      "chunk_overlap",
+    );
   }
 
   if (config.topK <= 0) {
@@ -245,6 +253,15 @@ export class IndexingRulesService {
           `Размер чанка должен быть в диапазоне ${MIN_CHUNK_SIZE}..${MAX_CHUNK_SIZE}`,
           "INDEXING_CHUNK_SIZE_OUT_OF_RANGE",
           "chunk_size",
+        );
+      }
+
+      const chunkOverlapIssue = parsed.error.issues.find((issue) => issue.path?.[0] === "chunkOverlap");
+      if (chunkOverlapIssue) {
+        throw new IndexingRulesDomainError(
+          "Перекрытие должно быть неотрицательным и меньше размера чанка",
+          "INDEXING_CHUNK_OVERLAP_OUT_OF_RANGE",
+          "chunk_overlap",
         );
       }
       throw new IndexingRulesError("Некорректные данные правил индексации");

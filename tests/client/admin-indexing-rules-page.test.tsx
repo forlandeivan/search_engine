@@ -102,8 +102,8 @@ describe("AdminIndexingRulesPage", () => {
 
     fireEvent.click(await findByText("Изменить"));
 
-    const chunkSizeInput = (await findByLabelText("Размер чанка")) as HTMLInputElement;
-    fireEvent.change(chunkSizeInput, { target: { value: String(MIN_CHUNK_SIZE - 1) } });
+    const chunkOverlapInput = (await findByLabelText("Перекрытие чанков")) as HTMLInputElement;
+    fireEvent.change(chunkOverlapInput, { target: { value: "9000" } });
 
     const saveButton = getByTestId("indexing-rules-save");
     fireEvent.click(saveButton);

@@ -66,6 +66,8 @@ export default function AdminIndexingRulesPage() {
   const modelOptions = modelsInfo?.models ?? [];
   const modelsLoading = modelsQuery.isLoading || modelsQuery.isFetching;
   const modelsError = modelsQuery.isError;
+  const chunkSizeValue = form.watch("chunkSize") ?? 0;
+  const overlapMax = Math.max(0, chunkSizeValue - 1);
 
   useEffect(() => {
     if (!isEditing || !selectedProviderId) {
@@ -117,6 +119,9 @@ export default function AdminIndexingRulesPage() {
       }
       if (details?.field === "chunk_size") {
         form.setError("chunkSize", { message });
+      }
+      if (details?.field === "chunk_overlap") {
+        form.setError("chunkOverlap", { message });
       }
       toast({ title: "Ошибка сохранения", description: message, variant: "destructive" });
     }
@@ -407,6 +412,7 @@ export default function AdminIndexingRulesPage() {
                             id="indexing-chunk-overlap"
                             type="number"
                             min={0}
+                            max={overlapMax}
                             step={1}
                             disabled={disableInputs}
                             value={field.value ?? ""}
@@ -416,7 +422,10 @@ export default function AdminIndexingRulesPage() {
                             }}
                           />
                         </FormControl>
-                        <FormDescription>Сколько символов повторяется между чанками.</FormDescription>
+                        <FormDescription>
+                          Увеличивайте перекрытие, если важная мысль рвётся на границе чанков; уменьшайте, если обработка стала
+                          дольше и дороже.
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

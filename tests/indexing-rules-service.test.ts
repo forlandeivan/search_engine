@@ -105,7 +105,7 @@ describe("IndexingRulesService", () => {
         chunkSize: 500,
         chunkOverlap: 500,
       }),
-    ).rejects.toBeInstanceOf(IndexingRulesError);
+    ).rejects.toBeInstanceOf(IndexingRulesDomainError);
   });
 
   it("бросает ошибку при выходе relevanceThreshold за пределы 0..1", async () => {

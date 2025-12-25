@@ -7928,6 +7928,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             field: "chunk_size",
           });
         }
+        const chunkOverlapProvided = typeof (req.body as any)?.chunkOverlap !== "undefined";
+        if (chunkOverlapProvided) {
+          return res.status(400).json({
+            message: "Перекрытие должно быть неотрицательным и меньше размера чанка",
+            code: "INDEXING_CHUNK_OVERLAP_OUT_OF_RANGE",
+            field: "chunk_overlap",
+          });
+        }
         return res.status(400).json({
           message: "Invalid indexing rules",
           code: "INDEXING_RULES_INVALID",
