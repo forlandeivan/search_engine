@@ -8,7 +8,7 @@
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Readable } from "stream";
-import { minioClient } from "./minio-client";
+import { downloadMinioClient, minioClient } from "./minio-client";
 import { storage } from "./storage";
 import { adjustWorkspaceStorageUsageBytes } from "./usage/usage-service";
 
@@ -229,7 +229,7 @@ export async function generateWorkspaceFileDownloadUrl(
     Bucket: bucket,
     Key: relativePath,
   });
-  const url = await getSignedUrl(minioClient, command, { expiresIn });
+  const url = await getSignedUrl(downloadMinioClient, command, { expiresIn });
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
   return { url, expiresAt };
 }

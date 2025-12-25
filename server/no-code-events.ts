@@ -96,6 +96,14 @@ export function parseSyncFinalResponse(payload: unknown): SyncFinalResponse | nu
   return parsed.data;
 }
 
+const sanitizeFileMetadata = (fileMeta: unknown): Record<string, unknown> | null => {
+  if (!fileMeta || typeof fileMeta !== "object") {
+    return null;
+  }
+  const { storageKey, ...rest } = fileMeta as Record<string, unknown>;
+  return { ...rest };
+};
+
 export async function getNoCodeConnectionInternal(opts: {
   workspaceId: string;
   skillId: string;
@@ -138,17 +146,23 @@ export function buildMessageCreatedEventPayload(args: {
     args.message.metadata && typeof args.message.metadata === "object"
       ? (args.message.metadata as Record<string, unknown>)
       : {};
-  const fileMeta = (metadata as any).file;
+  const sanitizedMetadata: Record<string, unknown> = { ...metadata };
+  const fileMeta = sanitizeFileMetadata((metadata as any).file);
+  if (fileMeta) {
+    sanitizedMetadata.file = fileMeta;
+  } else if ("file" in sanitizedMetadata) {
+    delete (sanitizedMetadata as any).file;
+  }
   const file =
     fileMeta && typeof fileMeta === "object"
       ? {
-          attachmentId: fileMeta.attachmentId ?? null,
-          filename: fileMeta.filename ?? null,
-          mimeType: fileMeta.mimeType ?? null,
-          sizeBytes: typeof fileMeta.sizeBytes === "number" ? fileMeta.sizeBytes : null,
-          downloadUrl: fileMeta.downloadUrl ?? `/api/chat/messages/${args.message.id}/file`,
-          expiresAt: fileMeta.expiresAt ?? null,
-          uploadedByUserId: fileMeta.uploadedByUserId ?? null,
+          attachmentId: (fileMeta as any).attachmentId ?? null,
+          filename: (fileMeta as any).filename ?? null,
+          mimeType: (fileMeta as any).mimeType ?? null,
+          sizeBytes: typeof (fileMeta as any).sizeBytes === "number" ? (fileMeta as any).sizeBytes : null,
+          downloadUrl: (fileMeta as any).downloadUrl ?? `/api/chat/messages/${args.message.id}/file`,
+          expiresAt: (fileMeta as any).expiresAt ?? null,
+          uploadedByUserId: (fileMeta as any).uploadedByUserId ?? null,
         }
       : undefined;
 
@@ -167,7 +181,7 @@ export function buildMessageCreatedEventPayload(args: {
       text: args.message.content,
       file,
       createdAt: args.message.createdAt,
-      metadata,
+      metadata: sanitizedMetadata,
     },
     actor: { userId: args.actorUserId },
     ...(args.contextPack ? { contextPack: args.contextPack } : {}),
