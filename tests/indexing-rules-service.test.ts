@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_INDEXING_RULES, MIN_CHUNK_SIZE } from "@shared/indexing-rules";
-import { IndexingRulesDomainError, IndexingRulesError, IndexingRulesService } from "../server/indexing-rules";
+import {
+  DEFAULT_INDEXING_RULES,
+  MAX_TOP_K,
+  MIN_CHUNK_SIZE,
+  MIN_RELEVANCE_THRESHOLD,
+  MIN_TOP_K,
+} from "@shared/indexing-rules";
+import { IndexingRulesDomainError, IndexingRulesService } from "../server/indexing-rules";
 
 function createRepo() {
   let record: any | null = null;
@@ -108,7 +114,7 @@ describe("IndexingRulesService", () => {
     ).rejects.toBeInstanceOf(IndexingRulesDomainError);
   });
 
-  it("бросает ошибку при выходе relevanceThreshold за пределы 0..1", async () => {
+  it("бросает доменную ошибку при выходе relevanceThreshold за пределы 0..1", async () => {
     const repo = createRepo();
     const service = new IndexingRulesService(
       repo as any,
@@ -120,7 +126,7 @@ describe("IndexingRulesService", () => {
       service.updateIndexingRules({
         relevanceThreshold: 1.5,
       }),
-    ).rejects.toBeInstanceOf(IndexingRulesError);
+    ).rejects.toBeInstanceOf(IndexingRulesDomainError);
   });
 
   it("бросает доменную ошибку при неизвестном провайдере", async () => {
@@ -226,5 +232,52 @@ describe("IndexingRulesService", () => {
         chunkSize: MIN_CHUNK_SIZE - 1,
       }),
     ).rejects.toBeInstanceOf(IndexingRulesDomainError);
+  });
+
+  it("бросает ошибку при некорректном topK", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      { resolveModels: async () => defaultModels },
+    );
+
+    await expect(service.updateIndexingRules({ topK: MIN_TOP_K - 1 })).rejects.toBeInstanceOf(IndexingRulesDomainError);
+    await expect(service.updateIndexingRules({ topK: MAX_TOP_K + 1 })).rejects.toBeInstanceOf(IndexingRulesDomainError);
+    await expect(service.updateIndexingRules({ topK: 2.5 as unknown as number })).rejects.toBeInstanceOf(
+      IndexingRulesDomainError,
+    );
+  });
+
+  it("бросает ошибку при пороге ниже минимума", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      { resolveModels: async () => defaultModels },
+    );
+
+    await expect(
+      service.updateIndexingRules({
+        relevanceThreshold: MIN_RELEVANCE_THRESHOLD - 0.1,
+      }),
+    ).rejects.toBeInstanceOf(IndexingRulesDomainError);
+  });
+
+  it("сохраняет валидные topK и порог релевантности", async () => {
+    const repo = createRepo();
+    const service = new IndexingRulesService(
+      repo as any,
+      { resolve: async () => defaultProvider },
+      { resolveModels: async () => defaultModels },
+    );
+
+    const updated = await service.updateIndexingRules({
+      topK: 5,
+      relevanceThreshold: 0.75,
+    });
+
+    expect(updated.topK).toBe(5);
+    expect(updated.relevanceThreshold).toBe(0.75);
   });
 });

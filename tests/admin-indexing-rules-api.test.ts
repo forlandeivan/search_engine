@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "net";
 import supertest from "supertest";
 import express from "express";
-import { DEFAULT_INDEXING_RULES, MIN_CHUNK_SIZE, updateIndexingRulesSchema } from "@shared/indexing-rules";
+import {
+  DEFAULT_INDEXING_RULES,
+  MIN_CHUNK_SIZE,
+  MIN_RELEVANCE_THRESHOLD,
+  MIN_TOP_K,
+  updateIndexingRulesSchema,
+} from "@shared/indexing-rules";
 
 const authMock = vi.hoisted(() => ({ allowAdmin: true }));
 const indexingRulesMock = vi.hoisted(() => ({
@@ -168,6 +174,20 @@ describe("Admin indexing rules API", () => {
       .send({ chunkSize: MIN_CHUNK_SIZE - 1 });
 
     expect(res.status).toBe(400);
+
+    httpServer.close();
+  });
+
+  it("возвращает ошибку по top_k и relevance_threshold при выходе за границы", async () => {
+    const { httpServer } = await createTestServer();
+    const address = httpServer.address() as AddressInfo;
+
+    const res = await supertest(`http://127.0.0.1:${address.port}`)
+      .patch("/api/admin/indexing-rules")
+      .send({ topK: MIN_TOP_K - 1, relevanceThreshold: MIN_RELEVANCE_THRESHOLD - 0.1 });
+
+    expect(res.status).toBe(400);
+    expect(res.body?.field).toBe("top_k");
 
     httpServer.close();
   });

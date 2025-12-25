@@ -28,6 +28,10 @@ import {
   DEFAULT_INDEXING_RULES,
   MAX_CHUNK_SIZE,
   MIN_CHUNK_SIZE,
+  MAX_RELEVANCE_THRESHOLD,
+  MAX_TOP_K,
+  MIN_RELEVANCE_THRESHOLD,
+  MIN_TOP_K,
   indexingRulesSchema,
   type IndexingRulesDto,
 } from "@shared/indexing-rules";
@@ -39,6 +43,8 @@ const formSchema = indexingRulesSchema.refine(
     message: "Перекрытие должно быть меньше размера чанка",
   },
 );
+
+const STRICT_THRESHOLD_WARNING = 0.8;
 
 export default function AdminIndexingRulesPage() {
   const { data, isLoading, isError, error, refetch } = useIndexingRules();
@@ -68,6 +74,9 @@ export default function AdminIndexingRulesPage() {
   const modelsError = modelsQuery.isError;
   const chunkSizeValue = form.watch("chunkSize") ?? 0;
   const overlapMax = Math.max(0, chunkSizeValue - 1);
+  const relevanceThresholdValue = form.watch("relevanceThreshold");
+  const showStrictThresholdWarning =
+    isEditing && typeof relevanceThresholdValue === "number" && relevanceThresholdValue > STRICT_THRESHOLD_WARNING;
 
   useEffect(() => {
     if (!isEditing || !selectedProviderId) {
@@ -122,6 +131,12 @@ export default function AdminIndexingRulesPage() {
       }
       if (details?.field === "chunk_overlap") {
         form.setError("chunkOverlap", { message });
+      }
+      if (details?.field === "top_k") {
+        form.setError("topK", { message });
+      }
+      if (details?.field === "relevance_threshold") {
+        form.setError("relevanceThreshold", { message });
       }
       toast({ title: "Ошибка сохранения", description: message, variant: "destructive" });
     }
@@ -451,7 +466,8 @@ export default function AdminIndexingRulesPage() {
                           <Input
                             id="indexing-top-k"
                             type="number"
-                            min={1}
+                            min={MIN_TOP_K}
+                            max={MAX_TOP_K}
                             step={1}
                             disabled={disableInputs}
                             value={field.value ?? ""}
@@ -461,7 +477,10 @@ export default function AdminIndexingRulesPage() {
                             }}
                           />
                         </FormControl>
-                        <FormDescription>Сколько фрагментов возвращать из поиска.</FormDescription>
+                        <FormDescription>
+                          Сколько фрагментов возвращать из поиска. Больше — контекст полнее, но больше шума; меньше — чище, но можно
+                          потерять важное.
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -471,13 +490,13 @@ export default function AdminIndexingRulesPage() {
                     name="relevanceThreshold"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel htmlFor="indexing-relevance-threshold">Порог релевантности (0..1)</FormLabel>
+                        <FormLabel htmlFor="indexing-relevance-threshold">Порог релевантности</FormLabel>
                         <FormControl>
                           <Input
                             id="indexing-relevance-threshold"
                             type="number"
-                            min={0}
-                            max={1}
+                            min={MIN_RELEVANCE_THRESHOLD}
+                            max={MAX_RELEVANCE_THRESHOLD}
                             step={0.01}
                             disabled={disableInputs}
                             value={field.value ?? ""}
@@ -487,8 +506,19 @@ export default function AdminIndexingRulesPage() {
                             }}
                           />
                         </FormControl>
-                        <FormDescription>Чанки ниже этого порога будут отфильтрованы.</FormDescription>
+                        <FormDescription>
+                          Увеличивайте порог, если подтягивается нерелевантный текст; снижайте, если система часто “не находит”
+                          ответы. Чанки ниже порога отфильтруем.
+                        </FormDescription>
                         <FormMessage />
+                        {showStrictThresholdWarning ? (
+                          <Alert variant="warning" className="mt-2">
+                            <AlertTitle>Слишком строгий порог</AlertTitle>
+                            <AlertDescription>
+                              Система может не находить подходящих фрагментов и отвечать без опоры на документы.
+                            </AlertDescription>
+                          </Alert>
+                        ) : null}
                       </FormItem>
                     )}
                   />

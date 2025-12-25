@@ -7,6 +7,10 @@ import {
   DEFAULT_INDEXING_RULES,
   MAX_CHUNK_SIZE,
   MIN_CHUNK_SIZE,
+  MAX_RELEVANCE_THRESHOLD,
+  MAX_TOP_K,
+  MIN_RELEVANCE_THRESHOLD,
+  MIN_TOP_K,
   indexingRulesSchema,
   type IndexingRulesDto,
   type UpdateIndexingRulesDto,
@@ -184,12 +188,20 @@ function validateRules(config: IndexingRulesDto): void {
     );
   }
 
-  if (config.topK <= 0) {
-    throw new IndexingRulesError("topK должен быть больше 0");
+  if (config.topK < MIN_TOP_K || config.topK > MAX_TOP_K) {
+    throw new IndexingRulesDomainError(
+      `Top K должно быть в диапазоне ${MIN_TOP_K}..${MAX_TOP_K}`,
+      "INDEXING_TOP_K_OUT_OF_RANGE",
+      "top_k",
+    );
   }
 
-  if (config.relevanceThreshold < 0 || config.relevanceThreshold > 1) {
-    throw new IndexingRulesError("relevanceThreshold должен быть в диапазоне 0..1");
+  if (config.relevanceThreshold < MIN_RELEVANCE_THRESHOLD || config.relevanceThreshold > MAX_RELEVANCE_THRESHOLD) {
+    throw new IndexingRulesDomainError(
+      `Порог релевантности должен быть в диапазоне ${MIN_RELEVANCE_THRESHOLD}..${MAX_RELEVANCE_THRESHOLD}`,
+      "INDEXING_THRESHOLD_OUT_OF_RANGE",
+      "relevance_threshold",
+    );
   }
 
   if (!config.embeddingsProvider.trim()) {
@@ -264,6 +276,27 @@ export class IndexingRulesService {
           "chunk_overlap",
         );
       }
+
+      const topKIssue = parsed.error.issues.find((issue) => issue.path?.[0] === "topK");
+      if (topKIssue) {
+        const isIntegerIssue = topKIssue.code === "invalid_type" && (topKIssue as any).expected === "integer";
+        throw new IndexingRulesDomainError(
+          isIntegerIssue
+            ? `Top K должно быть целым числом в диапазоне ${MIN_TOP_K}..${MAX_TOP_K}`
+            : `Top K должно быть в диапазоне ${MIN_TOP_K}..${MAX_TOP_K}`,
+          isIntegerIssue ? "INDEXING_TOP_K_NOT_INTEGER" : "INDEXING_TOP_K_OUT_OF_RANGE",
+          "top_k",
+        );
+      }
+
+      const relevanceThresholdIssue = parsed.error.issues.find((issue) => issue.path?.[0] === "relevanceThreshold");
+      if (relevanceThresholdIssue) {
+        throw new IndexingRulesDomainError(
+          `Порог релевантности должен быть в диапазоне ${MIN_RELEVANCE_THRESHOLD}..${MAX_RELEVANCE_THRESHOLD}`,
+          "INDEXING_THRESHOLD_OUT_OF_RANGE",
+          "relevance_threshold",
+        );
+      }
       throw new IndexingRulesError("Некорректные данные правил индексации");
     }
 
@@ -290,14 +323,46 @@ export class IndexingRulesService {
       sanitizedPatch.chunkOverlap = chunkOverlap;
     }
 
-    const topK = normalizeInteger("topK", patch.topK, { gt: 0 });
-    if (topK !== undefined) {
-      sanitizedPatch.topK = topK;
+    if (patch.topK !== undefined) {
+      if (!Number.isInteger(patch.topK)) {
+        throw new IndexingRulesDomainError(
+          `Top K должно быть целым числом в диапазоне ${MIN_TOP_K}..${MAX_TOP_K}`,
+          "INDEXING_TOP_K_NOT_INTEGER",
+          "top_k",
+        );
+      }
+      try {
+        const topK = normalizeInteger("topK", patch.topK, { min: MIN_TOP_K, max: MAX_TOP_K });
+        sanitizedPatch.topK = topK;
+      } catch (error) {
+        if (error instanceof IndexingRulesError) {
+          throw new IndexingRulesDomainError(
+            `Top K должно быть в диапазоне ${MIN_TOP_K}..${MAX_TOP_K}`,
+            "INDEXING_TOP_K_OUT_OF_RANGE",
+            "top_k",
+          );
+        }
+        throw error;
+      }
     }
 
-    const relevanceThreshold = normalizeFraction("relevanceThreshold", patch.relevanceThreshold, { min: 0, max: 1 });
-    if (relevanceThreshold !== undefined) {
-      sanitizedPatch.relevanceThreshold = relevanceThreshold;
+    if (patch.relevanceThreshold !== undefined) {
+      try {
+        const relevanceThreshold = normalizeFraction("relevanceThreshold", patch.relevanceThreshold, {
+          min: MIN_RELEVANCE_THRESHOLD,
+          max: MAX_RELEVANCE_THRESHOLD,
+        });
+        sanitizedPatch.relevanceThreshold = relevanceThreshold;
+      } catch (error) {
+        if (error instanceof IndexingRulesError) {
+          throw new IndexingRulesDomainError(
+            `Порог релевантности должен быть в диапазоне ${MIN_RELEVANCE_THRESHOLD}..${MAX_RELEVANCE_THRESHOLD}`,
+            "INDEXING_THRESHOLD_OUT_OF_RANGE",
+            "relevance_threshold",
+          );
+        }
+        throw error;
+      }
     }
 
     if (typeof patch.citationsEnabled === "boolean") {

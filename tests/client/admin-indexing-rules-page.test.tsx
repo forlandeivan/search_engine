@@ -5,7 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import AdminIndexingRulesPage from "@/pages/AdminIndexingRulesPage";
-import { DEFAULT_INDEXING_RULES, MIN_CHUNK_SIZE } from "@shared/indexing-rules";
+import {
+  DEFAULT_INDEXING_RULES,
+  MAX_RELEVANCE_THRESHOLD,
+  MAX_TOP_K,
+  MIN_CHUNK_SIZE,
+  MIN_TOP_K,
+} from "@shared/indexing-rules";
 
 const mockApiRequest = vi.fn();
 
@@ -114,5 +120,31 @@ describe("AdminIndexingRulesPage", () => {
       );
       expect(patchCalls.length).toBe(0);
     });
+  });
+
+  it("показывает ошибки и блокирует сохранение при некорректном topK", async () => {
+    const { findByText, findByLabelText, getByTestId } = renderWithClient(<AdminIndexingRulesPage />);
+
+    fireEvent.click(await findByText("Изменить"));
+
+    const topKInput = (await findByLabelText("Top K")) as HTMLInputElement;
+    fireEvent.change(topKInput, { target: { value: String(MIN_TOP_K - 1) } });
+
+    const saveButton = getByTestId("indexing-rules-save");
+    expect(saveButton).toBeDisabled();
+
+    fireEvent.change(topKInput, { target: { value: String(MAX_TOP_K + 1) } });
+    expect(saveButton).toBeDisabled();
+  });
+
+  it("предупреждает о слишком строгом пороге релевантности", async () => {
+    const { findByText, findByLabelText } = renderWithClient(<AdminIndexingRulesPage />);
+
+    fireEvent.click(await findByText("Изменить"));
+
+    const thresholdInput = (await findByLabelText("Порог релевантности")) as HTMLInputElement;
+    fireEvent.change(thresholdInput, { target: { value: String(MAX_RELEVANCE_THRESHOLD) } });
+
+    await findByText("Слишком строгий порог");
   });
 });

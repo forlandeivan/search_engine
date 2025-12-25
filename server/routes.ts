@@ -307,7 +307,16 @@ import {
   resolveEmbeddingProviderForWorkspace,
 } from "./indexing-rules";
 import { listEmbeddingProvidersWithStatus, resolveEmbeddingProviderModels } from "./embedding-provider-registry";
-import { MAX_CHUNK_SIZE, MIN_CHUNK_SIZE, updateIndexingRulesSchema } from "@shared/indexing-rules";
+import {
+  DEFAULT_INDEXING_RULES,
+  MAX_CHUNK_SIZE,
+  MAX_RELEVANCE_THRESHOLD,
+  MAX_TOP_K,
+  MIN_CHUNK_SIZE,
+  MIN_RELEVANCE_THRESHOLD,
+  MIN_TOP_K,
+  updateIndexingRulesSchema,
+} from "@shared/indexing-rules";
 import {
   speechProviderService,
   SpeechProviderServiceError,
@@ -3053,7 +3062,7 @@ const knowledgeSuggestQuerySchema = z.object({
 const knowledgeRagRequestSchema = z.object({
   q: z.string().trim().min(1, "Укажите запрос"),
   kb_id: z.string().trim().min(1, "Укажите базу знаний"),
-  top_k: z.coerce.number().int().min(1).max(20).default(6),
+  top_k: z.coerce.number().int().min(MIN_TOP_K).max(MAX_TOP_K).default(DEFAULT_INDEXING_RULES.topK),
   skill_id: z.string().trim().optional(),
   hybrid: z
     .object({
@@ -3086,7 +3095,7 @@ const knowledgeRagRequestSchema = z.object({
 
 type KnowledgeRagRequest = z.infer<typeof knowledgeRagRequestSchema>;
 
-interface KnowledgeBaseRagCombinedChunk {
+export interface KnowledgeBaseRagCombinedChunk {
   chunkId: string;
   documentId: string;
   docTitle: string;
@@ -3184,6 +3193,72 @@ type KnowledgeBaseRagPipelineStream = {
   onEvent: (eventName: string, payload?: unknown) => void;
 };
 
+export function resolveEffectiveRetrievalParams(options: {
+  bodyTopK?: number | null;
+  rulesTopK: number;
+  rulesRelevanceThreshold: number;
+  hasExplicitTopKOverride: boolean;
+  skillId?: string | null;
+}): { topK: number; minScore: number } {
+  const clampedRulesTopK = Math.min(Math.max(options.rulesTopK, MIN_TOP_K), MAX_TOP_K);
+  const allowRequestOverride = options.hasExplicitTopKOverride && !options.skillId;
+  const requestedTopK = typeof options.bodyTopK === "number" ? options.bodyTopK : null;
+  const resolvedTopK = allowRequestOverride ? requestedTopK ?? clampedRulesTopK : clampedRulesTopK;
+  const topK = Math.min(Math.max(resolvedTopK, MIN_TOP_K), MAX_TOP_K);
+  const minScore = Math.min(
+    Math.max(options.rulesRelevanceThreshold ?? MIN_RELEVANCE_THRESHOLD, MIN_RELEVANCE_THRESHOLD),
+    MAX_RELEVANCE_THRESHOLD,
+  );
+
+  return { topK, minScore };
+}
+
+export function applyRetrievalPostProcessing(options: {
+  combinedResults: KnowledgeBaseRagCombinedChunk[];
+  topK: number;
+  minScore: number;
+  maxContextTokens?: number | null;
+  estimateTokens: (text: string) => number;
+}): { combinedResults: KnowledgeBaseRagCombinedChunk[]; rawCombinedResults: KnowledgeBaseRagCombinedChunk[] } {
+  const rawCombinedResults = [...options.combinedResults];
+  let processedResults = [...options.combinedResults];
+
+  if (options.minScore > 0) {
+    const filtered = processedResults.filter((item) => item.combinedScore >= options.minScore);
+    if (filtered.length > 0) {
+      processedResults = filtered;
+    }
+  }
+
+  const clampedTopK = Math.min(Math.max(options.topK, MIN_TOP_K), MAX_TOP_K);
+  processedResults = processedResults.slice(0, clampedTopK);
+
+  if (processedResults.length === 0 && rawCombinedResults.length > 0) {
+    processedResults = rawCombinedResults.slice(0, Math.max(1, clampedTopK));
+  }
+
+  if (options.maxContextTokens && options.maxContextTokens > 0 && processedResults.length > 0) {
+    const limited: KnowledgeBaseRagCombinedChunk[] = [];
+    let usedTokens = 0;
+    for (const item of processedResults) {
+      const tokens = options.estimateTokens(item.text);
+      if (limited.length > 0 && usedTokens + tokens > options.maxContextTokens) {
+        break;
+      }
+      limited.push(item);
+      usedTokens += tokens;
+      if (usedTokens >= options.maxContextTokens) {
+        break;
+      }
+    }
+    if (limited.length > 0) {
+      processedResults = limited;
+    }
+  }
+
+  return { combinedResults: processedResults, rawCombinedResults };
+}
+
 function forwardLlmStreamEvents(
   iterator: AsyncIterable<LlmStreamEvent>,
   emit: (eventName: string, payload?: unknown) => void,
@@ -3223,12 +3298,12 @@ async function runKnowledgeBaseRagPipeline(options: {
   req: Request;
   body: KnowledgeRagRequest;
   stream?: KnowledgeBaseRagPipelineStream | null;
-}): Promise<KnowledgeBaseRagPipelineSuccess> {
-  const { req, body, stream } = options;
-  const skillIdCandidate = typeof body.skill_id === "string" ? body.skill_id.trim() : "";
-  const normalizedSkillId = skillIdCandidate.length > 0 ? skillIdCandidate : null;
-
-  const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+  }): Promise<KnowledgeBaseRagPipelineSuccess> {
+    const { req, body, stream } = options;
+    const skillIdCandidate = typeof body.skill_id === "string" ? body.skill_id.trim() : "";
+    const normalizedSkillId = skillIdCandidate.length > 0 ? skillIdCandidate : null;
+  
+    const estimateTokens = (text: string) => Math.ceil(text.length / 4);
   const normalizeCollectionList = (list?: readonly string[] | null): string[] => {
     if (!list) {
       return [];
@@ -3241,16 +3316,26 @@ async function runKnowledgeBaseRagPipeline(options: {
       const trimmed = entry.trim();
       if (trimmed.length > 0) {
         unique.add(trimmed);
+        }
       }
-    }
-    return Array.from(unique);
-  };
+      return Array.from(unique);
+    };
+  
+    const hasExplicitTopKOverride = Object.prototype.hasOwnProperty.call(req.body ?? {}, "top_k");
+    const indexingRules = await indexingRulesService.getIndexingRules();
+    const retrievalParams = resolveEffectiveRetrievalParams({
+      bodyTopK: body.top_k,
+      rulesTopK: indexingRules.topK,
+      rulesRelevanceThreshold: indexingRules.relevanceThreshold,
+      hasExplicitTopKOverride,
+      skillId: normalizedSkillId,
+    });
 
-  let effectiveTopK = body.top_k;
-  let effectiveMinScore = 0;
-  let effectiveMaxContextTokens: number | null = null;
-  let allowSources = true;
-  let skillCollectionFilter: string[] = [];
+    let effectiveTopK = retrievalParams.topK;
+    let effectiveMinScore = retrievalParams.minScore;
+    let effectiveMaxContextTokens: number | null = null;
+    let allowSources = true;
+    let skillCollectionFilter: string[] = [];
 
   const pipelineLog: KnowledgeBaseAskAiPipelineStepLog[] = [];
   const emitStreamEvent = (eventName: string, payload?: unknown) => {
@@ -3491,8 +3576,9 @@ async function runKnowledgeBaseRagPipeline(options: {
 
 
 
-      effectiveTopK = skill.ragConfig.topK;
-      effectiveMinScore = skill.ragConfig.minScore ?? 0;
+      if (typeof skill.ragConfig.minScore === "number") {
+        effectiveMinScore = Math.max(effectiveMinScore, skill.ragConfig.minScore);
+      }
       effectiveMaxContextTokens = skill.ragConfig.maxContextTokens ?? null;
       allowSources = skill.ragConfig.showSources;
       if (skill.ragConfig.mode === "selected_collections") {
@@ -3500,11 +3586,11 @@ async function runKnowledgeBaseRagPipeline(options: {
       } else {
         skillCollectionFilter = [];
       }
-      recomputeLimits();
+        recomputeLimits();
 
-      console.log("[RAG PIPELINE] Skill config applied", {
-        skillId: skill.id,
-        topK: effectiveTopK,
+        console.log("[RAG PIPELINE] Skill config applied", {
+          skillId: skill.id,
+          topK: effectiveTopK,
         minScore: effectiveMinScore,
         maxContextTokens: effectiveMaxContextTokens,
         showSources: allowSources,
@@ -4015,47 +4101,18 @@ async function runKnowledgeBaseRagPipeline(options: {
           combinedScore,
           bm25Normalized,
           vectorNormalized,
-        } satisfies KnowledgeBaseRagCombinedChunk;
-      })
-      .sort((a, b) => b.combinedScore - a.combinedScore);
+          } satisfies KnowledgeBaseRagCombinedChunk;
+        })
+        .sort((a, b) => b.combinedScore - a.combinedScore);
 
-    const rawCombinedResults = combinedResults;
-
-    if (effectiveMinScore > 0) {
-      const filtered = combinedResults.filter((item) => item.combinedScore >= effectiveMinScore);
-      if (filtered.length > 0) {
-        combinedResults = filtered;
-      }
-    }
-
-    combinedResults = combinedResults.slice(0, effectiveTopK);
-
-    if (combinedResults.length === 0 && rawCombinedResults.length > 0) {
-      combinedResults = rawCombinedResults.slice(0, Math.max(1, effectiveTopK));
-    }
-
-    if (effectiveMaxContextTokens && effectiveMaxContextTokens > 0 && combinedResults.length > 0) {
-      const limited: typeof combinedResults = [];
-      let usedTokens = 0;
-      for (const item of combinedResults) {
-        const tokens = estimateTokens(item.text);
-        if (limited.length > 0 && usedTokens + tokens > effectiveMaxContextTokens) {
-          break;
-        }
-        limited.push(item);
-        usedTokens += tokens;
-        if (usedTokens >= effectiveMaxContextTokens) {
-          break;
-        }
-      }
-      if (limited.length > 0) {
-        combinedResults = limited;
-      }
-      console.log('[RAG PIPELINE] Applied maxContextTokens limit', {
-        limit: effectiveMaxContextTokens,
-        chunks: combinedResults.length,
-      });
-    }
+    const { combinedResults: processedResults } = applyRetrievalPostProcessing({
+      combinedResults,
+      topK: effectiveTopK,
+      minScore: effectiveMinScore,
+      maxContextTokens: effectiveMaxContextTokens,
+      estimateTokens,
+    });
+    combinedResults = processedResults;
 
     if (allowSources) {
       combinedResults.forEach((item, index) => {
@@ -7919,6 +7976,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.patch("/api/admin/indexing-rules", requireAdmin, async (req, res, next) => {
     try {
       const chunkSizeProvided = typeof (req.body as any)?.chunkSize !== "undefined";
+      const topKProvided = typeof (req.body as any)?.topK !== "undefined";
+      const relevanceThresholdProvided = typeof (req.body as any)?.relevanceThreshold !== "undefined";
       const parsed = updateIndexingRulesSchema.safeParse(req.body);
       if (!parsed.success) {
         if (chunkSizeProvided) {
@@ -7929,18 +7988,32 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           });
         }
         const chunkOverlapProvided = typeof (req.body as any)?.chunkOverlap !== "undefined";
-        if (chunkOverlapProvided) {
+          if (chunkOverlapProvided) {
+            return res.status(400).json({
+              message: "Перекрытие должно быть неотрицательным и меньше размера чанка",
+              code: "INDEXING_CHUNK_OVERLAP_OUT_OF_RANGE",
+              field: "chunk_overlap",
+            });
+          }
+          if (topKProvided) {
+            return res.status(400).json({
+              message: `Top K должно быть в диапазоне ${MIN_TOP_K}..${MAX_TOP_K}`,
+              code: "INDEXING_TOP_K_OUT_OF_RANGE",
+              field: "top_k",
+            });
+          }
+          if (relevanceThresholdProvided) {
+            return res.status(400).json({
+              message: `Порог релевантности должен быть в диапазоне ${MIN_RELEVANCE_THRESHOLD}..${MAX_RELEVANCE_THRESHOLD}`,
+              code: "INDEXING_THRESHOLD_OUT_OF_RANGE",
+              field: "relevance_threshold",
+            });
+          }
           return res.status(400).json({
-            message: "Перекрытие должно быть неотрицательным и меньше размера чанка",
-            code: "INDEXING_CHUNK_OVERLAP_OUT_OF_RANGE",
-            field: "chunk_overlap",
+            message: "Invalid indexing rules",
+            code: "INDEXING_RULES_INVALID",
+            details: parsed.error.format(),
           });
-        }
-        return res.status(400).json({
-          message: "Invalid indexing rules",
-          code: "INDEXING_RULES_INVALID",
-          details: parsed.error.format(),
-        });
       }
 
       const admin = getSessionUser(req);
