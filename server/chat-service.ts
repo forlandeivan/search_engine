@@ -11,7 +11,6 @@ import type {
   LlmRequestConfig,
   Model,
   AssistantActionType,
-  ChatMessageRole,
 } from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
@@ -215,6 +214,7 @@ export async function clearAssistantActionForChat(opts: {
 export const mapMessage = (message: ChatMessage) => {
   const metadata = message.metadata ?? {};
   const type = (message as any).messageType ?? "text";
+  const cardId = (message as any).cardId ?? (metadata as any)?.cardId ?? null;
   const fileMeta = (metadata as any).file ?? null;
   const file =
     type === "file"
@@ -234,6 +234,7 @@ export const mapMessage = (message: ChatMessage) => {
     chatId: message.chatId,
     role: message.role,
     type,
+    cardId,
     content: message.content,
     metadata,
     file,

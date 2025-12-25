@@ -30,6 +30,7 @@ export type ChatMessage = {
   chatId: string;
   role: "user" | "assistant" | "system";
   type?: "text" | "file" | string;
+  cardId?: string | null;
   content: string;
   createdAt: string;
   metadata?: {

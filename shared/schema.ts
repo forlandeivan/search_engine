@@ -1176,7 +1176,7 @@ export const skillActions = pgTable(
 
 export const chatMessageRoles = ["user", "assistant", "system"] as const;
 export type ChatMessageRole = (typeof chatMessageRoles)[number];
-export const chatMessageTypes = ["text", "file"] as const;
+export const chatMessageTypes = ["text", "file", "card"] as const;
 export type ChatMessageType = (typeof chatMessageTypes)[number];
 
 export const chatStatuses = ["active", "archived"] as const;
@@ -1217,6 +1217,34 @@ export const chatSessions = pgTable(
   }),
 );
 
+export const chatCardTypes = ["transcript"] as const;
+export type ChatCardType = (typeof chatCardTypes)[number];
+
+export const chatCards = pgTable(
+  "chat_cards",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()::text`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    chatId: varchar("chat_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    type: text("type").$type<ChatCardType>().notNull(),
+    title: text("title"),
+    previewText: text("preview_text"),
+    transcriptId: varchar("transcript_id"),
+    createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("chat_cards_workspace_idx").on(table.workspaceId, table.createdAt),
+    chatIdx: index("chat_cards_chat_idx").on(table.chatId, table.createdAt),
+  }),
+);
+export type ChatCard = typeof chatCards.$inferSelect;
+export type ChatCardInsert = typeof chatCards.$inferInsert;
+
 export const chatMessages = pgTable(
   "chat_messages",
   {
@@ -1224,6 +1252,7 @@ export const chatMessages = pgTable(
     chatId: varchar("chat_id")
       .notNull()
       .references(() => chatSessions.id, { onDelete: "cascade" }),
+    cardId: varchar("card_id").references(() => chatCards.id, { onDelete: "set null" }),
     messageType: text("message_type").$type<ChatMessageType>().notNull().default("text"),
     role: text("role").$type<ChatMessageRole>().notNull(),
     content: text("content").notNull(),

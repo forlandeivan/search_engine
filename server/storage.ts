@@ -23,6 +23,7 @@ import {
   knowledgeBaseAskAiRuns,
   unicaChatConfig,
   chatSessions,
+  chatCards,
   chatMessages,
   chatAttachments,
   transcripts,
@@ -60,8 +61,8 @@ import {
   type ChatSessionInsert,
   type ChatMessage,
   type ChatMessageInsert,
-  type ChatAttachment,
-  type ChatAttachmentInsert,
+  type ChatCard,
+  type ChatCardInsert,
   type Transcript,
   type TranscriptInsert,
   type TranscriptView,
@@ -70,8 +71,6 @@ import {
   type CanvasDocumentInsert,
   type TranscriptStatus,
   type ChatMessageMetadata,
-  type ChatAttachment,
-  type ChatAttachmentInsert,
   type SpeechProvider,
   type SpeechProviderInsert,
   type SpeechProviderSecret,
@@ -931,6 +930,12 @@ export interface IStorage {
   ): Promise<ChatSession | null>;
   touchChatSession(chatId: string): Promise<void>;
   softDeleteChatSession(chatId: string): Promise<boolean>;
+  createChatCard(values: ChatCardInsert): Promise<ChatCard>;
+  getChatCardById(id: string): Promise<ChatCard | undefined>;
+  updateChatCard(
+    id: string,
+    updates: Partial<Pick<ChatCardInsert, "title" | "previewText" | "transcriptId">>,
+  ): Promise<ChatCard | undefined>;
   listChatMessages(chatId: string): Promise<ChatMessage[]>;
   createChatMessage(values: ChatMessageInsert): Promise<ChatMessage>;
   getChatMessage(id: string): Promise<ChatMessage | undefined>;
@@ -968,6 +973,8 @@ const UNICA_CHAT_CONFIG_ID = "singleton";
 
 let chatSessionsTableEnsured = false;
 let ensuringChatSessionsTable: Promise<void> | null = null;
+let chatCardsTableEnsured = false;
+let ensuringChatCardsTable: Promise<void> | null = null;
 let chatMessagesTableEnsured = false;
 let ensuringChatMessagesTable: Promise<void> | null = null;
 let chatAttachmentsTableEnsured = false;
@@ -1241,6 +1248,90 @@ async function ensureChatSessionsTable(): Promise<void> {
   ensuringChatSessionsTable = null;
 }
 
+async function ensureChatCardsTable(): Promise<void> {
+  if (chatCardsTableEnsured) {
+    return;
+  }
+
+  if (ensuringChatCardsTable) {
+    await ensuringChatCardsTable;
+    return;
+  }
+
+  ensuringChatCardsTable = (async () => {
+    await ensureChatSessionsTable();
+    await ensureWorkspacesTable();
+    await ensureUsersTable();
+    await ensureTranscriptsTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "chat_cards" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        "workspace_id" varchar NOT NULL,
+        "chat_id" varchar NOT NULL,
+        "type" text NOT NULL,
+        "title" text,
+        "preview_text" text,
+        "transcript_id" varchar,
+        "created_by_user_id" varchar,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "chat_cards",
+      "chat_cards_workspace_id_fkey",
+      sql`
+        ALTER TABLE "chat_cards"
+        ADD CONSTRAINT "chat_cards_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "chat_cards",
+      "chat_cards_chat_id_fkey",
+      sql`
+        ALTER TABLE "chat_cards"
+        ADD CONSTRAINT "chat_cards_chat_id_fkey"
+        FOREIGN KEY ("chat_id") REFERENCES "chat_sessions"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "chat_cards",
+      "chat_cards_created_by_user_id_fkey",
+      sql`
+        ALTER TABLE "chat_cards"
+        ADD CONSTRAINT "chat_cards_created_by_user_id_fkey"
+        FOREIGN KEY ("created_by_user_id") REFERENCES "users"("id") ON DELETE SET NULL
+      `,
+    );
+
+    await ensureConstraint(
+      "chat_cards",
+      "chat_cards_transcript_id_fkey",
+      sql`
+        ALTER TABLE "chat_cards"
+        ADD CONSTRAINT "chat_cards_transcript_id_fkey"
+        FOREIGN KEY ("transcript_id") REFERENCES "transcripts"("id") ON DELETE SET NULL
+      `,
+    );
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "chat_cards_workspace_idx" ON "chat_cards" ("workspace_id", "created_at")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "chat_cards_chat_idx" ON "chat_cards" ("chat_id", "created_at")
+    `);
+
+    chatCardsTableEnsured = true;
+  })();
+
+  await ensuringChatCardsTable;
+  ensuringChatCardsTable = null;
+}
+
 async function ensureChatMessagesTable(): Promise<void> {
   if (chatMessagesTableEnsured) {
     return;
@@ -1253,6 +1344,7 @@ async function ensureChatMessagesTable(): Promise<void> {
 
   ensuringChatMessagesTable = (async () => {
     await ensureChatSessionsTable();
+    await ensureChatCardsTable();
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "chat_messages" (
         "id" varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -1269,6 +1361,21 @@ async function ensureChatMessagesTable(): Promise<void> {
       ALTER TABLE "chat_messages"
       ADD COLUMN IF NOT EXISTS "message_type" text NOT NULL DEFAULT 'text'
     `);
+
+    await db.execute(sql`
+      ALTER TABLE "chat_messages"
+      ADD COLUMN IF NOT EXISTS "card_id" varchar
+    `);
+
+    await ensureConstraint(
+      "chat_messages",
+      "chat_messages_card_id_fkey",
+      sql`
+        ALTER TABLE "chat_messages"
+        ADD CONSTRAINT "chat_messages_card_id_fkey"
+        FOREIGN KEY ("card_id") REFERENCES "chat_cards"("id") ON DELETE SET NULL
+      `,
+    );
 
     await ensureConstraint(
       "chat_messages",
@@ -5227,6 +5334,31 @@ export class DatabaseStorage implements IStorage {
       .returning({ id: chatSessions.id });
 
     return result.length > 0;
+  }
+
+  async createChatCard(values: ChatCardInsert): Promise<ChatCard> {
+    await ensureChatTables();
+    const [created] = await this.db.insert(chatCards).values(values).returning();
+    return created;
+  }
+
+  async getChatCardById(id: string): Promise<ChatCard | undefined> {
+    await ensureChatTables();
+    const [card] = await this.db.select().from(chatCards).where(eq(chatCards.id, id)).limit(1);
+    return card ?? undefined;
+  }
+
+  async updateChatCard(
+    id: string,
+    updates: Partial<Pick<ChatCardInsert, "title" | "previewText" | "transcriptId">>,
+  ): Promise<ChatCard | undefined> {
+    if (!updates || Object.keys(updates).length === 0) {
+      return await this.getChatCardById(id);
+    }
+
+    await ensureChatTables();
+    const [updated] = await this.db.update(chatCards).set(updates).where(eq(chatCards.id, id)).returning();
+    return updated ?? undefined;
   }
 
   async listChatMessages(chatId: string): Promise<ChatMessage[]> {

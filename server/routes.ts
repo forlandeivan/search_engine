@@ -110,15 +110,11 @@ import {
   setNoCodeAssistantAction,
   ChatServiceError,
   getChatById,
-  addNoCodeCallbackMessage,
-  addNoCodeStreamChunk,
-  setNoCodeAssistantAction,
-  ChatServiceError,
-  getChatById,
   ensureChatAndSkillAreActive,
   ensureSkillIsActive,
   mapMessage,
 } from "./chat-service";
+import { getCardById } from "./card-service";
 import { offChatEvent, onChatEvent } from "./chat-events";
 import {
   buildMessageCreatedEventPayload,
@@ -127,7 +123,7 @@ import {
   scheduleNoCodeEventDelivery,
 } from "./no-code-events";
 import { buildContextPack } from "./context-pack";
-import { assistantActionTypes, type AssistantActionType } from "@shared/schema";
+import { assistantActionTypes, type AssistantActionType, type ChatMessageMetadata } from "@shared/schema";
 type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
 const NO_CODE_FLOW_MESSAGES: Record<NoCodeFlowFailureReason, string> = {
   NOT_CONFIGURED: "No-code сценарий недоступен. Проверьте подключение или попробуйте позже.",
@@ -11614,6 +11610,33 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  app.get("/api/cards/:cardId", requireAuth, async (req, res, next) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
+    try {
+      const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+      const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+      const isMember = await storage.isWorkspaceMember(workspaceId, user.id);
+      if (!isMember) {
+        return res.status(403).json({ message: "Нет доступа к этому workspace" });
+      }
+
+      const card = await getCardById(req.params.cardId, workspaceId);
+      if (!card) {
+        return res.status(404).json({ message: "Карточка не найдена" });
+      }
+
+      res.json({ card });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
   // Available system actions (for preview before creating skill)
   app.get("/api/actions/available", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
@@ -12779,16 +12802,31 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         `[transcribe/complete] chat=${chat.id} skill=${skill?.id ?? "none"} mode=${skill?.onTranscriptionMode ?? "n/a"} autoAction=${skill?.onTranscriptionAutoActionId ?? "none"} enabled=${autoActionEnabled}`,
       );
       const initialTranscriptStatus = autoActionEnabled ? "postprocessing" : "ready";
+      const previewText = transcriptText.substring(0, 200);
+      const transcriptRecord = result.transcriptId ? await storage.getTranscriptById?.(result.transcriptId) : null;
+
+      const card = await storage.createChatCard({
+        workspaceId: chat.workspaceId,
+        chatId: chat.id,
+        type: "transcript",
+        title: transcriptRecord?.title ?? "Стенограмма",
+        previewText,
+        transcriptId: result.transcriptId ?? null,
+        createdByUserId: user.id,
+      });
 
       let createdMessage = await storage.createChatMessage({
         chatId: result.chatId,
         role: 'assistant',
-        content: transcriptText,
+        messageType: 'card',
+        cardId: card.id,
+        content: previewText,
         metadata: {
           type: 'transcript',
           transcriptId: result.transcriptId,
           transcriptStatus: initialTranscriptStatus,
-          previewText: transcriptText.substring(0, 200),
+          previewText,
+          cardId: card.id,
           asrExecutionId,
         },
       });
@@ -12883,6 +12921,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           console.info(
             `[transcribe/complete] auto-action success chat=${chat.id} action=${action.id} preview="${previewText.slice(0, 80)}"`,
           );
+          await storage.updateChatCard(card.id, { previewText });
           if (asrExecutionId) {
             await asrExecutionLogService.addEvent(asrExecutionId, {
               stage: "auto_action_completed",
@@ -12935,6 +12974,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             autoActionFailed: true,
             previewText: transcriptText.substring(0, 200),
           };
+          await storage.updateChatCard(card.id, { previewText: transcriptText.substring(0, 200) });
           await storage.updateChatMessage(createdMessage.id, {
             metadata: failedMetadata,
           });
@@ -12971,6 +13011,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             previewText: transcriptText.substring(0, 200),
           });
         }
+        await storage.updateChatCard(card.id, { previewText: transcriptText.substring(0, 200) });
         if (asrExecutionId) {
           await asrExecutionLogService.addEvent(asrExecutionId, {
             stage: "transcript_saved",
@@ -12994,6 +13035,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         message: {
           id: createdMessage.id,
           chatId: createdMessage.chatId,
+          type: (createdMessage as any).messageType ?? "text",
+          cardId: (createdMessage as any).cardId ?? null,
           role: createdMessage.role,
           content: createdMessage.content,
           metadata: createdMessage.metadata ?? {},
