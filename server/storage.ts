@@ -4135,10 +4135,26 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
+    const sanitizeCollectionName = (source: string): string => {
+      const normalized = source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+      return normalized.length > 0 ? normalized.slice(0, 60) : "default";
+    };
+
+    const buildWorkspaceScopedCollectionName = (workspace: string, project: string, collection: string): string => {
+      const workspaceSlug = sanitizeCollectionName(workspace);
+      const projectSlug = sanitizeCollectionName(project);
+      const collectionSlug = sanitizeCollectionName(collection);
+      return `ws_${workspaceSlug}__proj_${projectSlug}__coll_${collectionSlug}`;
+    };
+
+    const buildSkillFileCollectionName = (workspace: string, providerId: string): string => {
+      return buildWorkspaceScopedCollectionName(workspace, "skill_files", providerId || "skill_files");
+    };
+
     await ensureEmbeddingProvidersTable();
 
     const providerRows = await this.db
-      .select({ qdrantConfig: embeddingProviders.qdrantConfig })
+      .select({ id: embeddingProviders.id, qdrantConfig: embeddingProviders.qdrantConfig })
       .from(embeddingProviders)
       .where(eq(embeddingProviders.workspaceId, workspaceId));
 
@@ -4153,6 +4169,12 @@ export class DatabaseStorage implements IStorage {
         if (normalized.length > 0 && normalized.toLowerCase() !== "auto") {
           collectionNames.add(normalized);
         }
+      }
+    }
+
+    for (const { id } of providerRows) {
+      if (id) {
+        collectionNames.add(buildSkillFileCollectionName(workspaceId, id));
       }
     }
 
