@@ -1,3 +1,4 @@
+import fetch, { Headers } from "node-fetch";
 import { EmbeddingProvider } from "@shared/schema";
 import { fetchAccessToken } from "./llm-access-token";
 import { applyTlsPreferences, type NodeFetchOptions } from "./http-utils";

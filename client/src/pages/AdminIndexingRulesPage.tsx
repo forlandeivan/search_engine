@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2, RefreshCw, Pencil, XCircle } from "lucide-react";
+import { Loader2, RefreshCw, XCircle } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,7 @@ export default function AdminIndexingRulesPage() {
   }, [data, form]);
 
   const selectedProviderId = form.watch("embeddingsProvider");
+  const selectedModel = form.watch("embeddingsModel");
   const modelsQuery = useEmbeddingProviderModels(selectedProviderId, { enabled: Boolean(selectedProviderId) });
   const modelsInfo = modelsQuery.data;
   const supportsModelSelection = modelsInfo?.supportsModelSelection ?? true;
@@ -74,6 +75,30 @@ export default function AdminIndexingRulesPage() {
   const modelsLoading = modelsQuery.isLoading || modelsQuery.isFetching;
   const modelsError = modelsQuery.isError;
   const chunkSizeValue = form.watch("chunkSize") ?? 0;
+  const providerOptions = useMemo(() => {
+    const options = providersQuery.data ?? [];
+    if (!selectedProviderId) {
+      return options;
+    }
+
+    const alreadyInList = options.some((provider) => provider.id === selectedProviderId);
+    if (alreadyInList) {
+      return options;
+    }
+
+    return [
+      {
+        id: selectedProviderId,
+        displayName: "Выбранный провайдер",
+        providerType: "custom",
+        model: selectedModel ?? "—",
+        isActive: true,
+        isConfigured: true,
+        statusReason: providersQuery.isError ? "Не удалось загрузить провайдеры" : undefined,
+      },
+      ...options,
+    ];
+  }, [providersQuery.data, providersQuery.isError, selectedModel, selectedProviderId]);
   const overlapMax = Math.max(0, chunkSizeValue - 1);
   const relevanceThresholdValue = form.watch("relevanceThreshold");
   const showStrictThresholdWarning =
@@ -165,7 +190,7 @@ export default function AdminIndexingRulesPage() {
   }
 
   const disableInputs = updateMutation.isPending;
-  const providerFieldDisabled = disableInputs || providersQuery.isLoading || providersQuery.isError;
+  const providerFieldDisabled = disableInputs || providersQuery.isLoading;
   const modelRequiredMissing =
     supportsModelSelection && modelOptions.length > 0 && !(form.watch("embeddingsModel") ?? "").trim();
   const saveDisabled =
@@ -278,7 +303,7 @@ export default function AdminIndexingRulesPage() {
                               />
                             </SelectTrigger>
                             <SelectContent>
-                              {(providersQuery.data ?? []).map((provider) => (
+                              {providerOptions.map((provider) => (
                                 <SelectItem
                                   key={provider.id}
                                   value={provider.id}

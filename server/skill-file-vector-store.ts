@@ -1,4 +1,6 @@
 import type { Schemas } from "@qdrant/js-client-rest";
+import { createHash } from "crypto";
+
 import { EmbeddingProvider } from "@shared/schema";
 import { getQdrantClient } from "./qdrant";
 import { storage } from "./storage";
@@ -32,6 +34,17 @@ function buildWorkspaceScopedCollectionName(workspaceId: string, projectId: stri
   const projectSlug = sanitizeCollectionName(projectId);
   const collectionSlug = sanitizeCollectionName(collectionId);
   return `ws_${workspaceSlug}__proj_${projectSlug}__coll_${collectionSlug}`;
+}
+
+function toDeterministicUuid(input: string): string {
+  const hex = createHash("sha256").update(input, "utf8").digest("hex");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join("-");
 }
 
 function buildSkillFileCollectionName(workspaceId: string, provider: EmbeddingProvider): string {
@@ -156,7 +169,7 @@ export function buildSkillFilePoints(params: {
   } = params;
 
   return vectors.map((entry) => ({
-    id: entry.chunkId,
+    id: toDeterministicUuid(`${fileId}:${fileVersion}:${entry.chunkId}:${entry.chunkIndex}`),
     vector: buildVectorPayload(entry.vector, vectorFieldName),
     payload: buildSkillFileChunkPayload({
       workspaceId,
