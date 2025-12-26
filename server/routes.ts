@@ -319,6 +319,7 @@ import {
   MIN_CHUNK_SIZE,
   MIN_RELEVANCE_THRESHOLD,
   MIN_TOP_K,
+  indexingRulesSchema,
   updateIndexingRulesSchema,
 } from "@shared/indexing-rules";
 import {
@@ -10582,6 +10583,49 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  app.get(
+    "/api/workspaces/:workspaceId/skills/:skillId/files",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
+    async (req, res, next) => {
+      try {
+        const workspaceId = req.params.workspaceId || req.workspaceContext?.workspaceId || getRequestWorkspace(req).id;
+        const skillId = req.params.skillId;
+        if (!workspaceId || !skillId) {
+          return res.status(400).json({ message: "Не указан workspaceId или skillId" });
+        }
+
+        const memberships = getRequestWorkspaceMemberships(req);
+        if (memberships.length > 0 && !memberships.some((entry) => entry.id === workspaceId)) {
+          return res.status(403).json({ message: "Нет доступа к рабочему пространству" });
+        }
+
+        const skill = await getSkillById(workspaceId, skillId);
+        if (!skill) {
+          return res.status(404).json({ message: "Навык не найден" });
+        }
+
+        const files = await storage.listSkillFiles(workspaceId, skillId);
+        const response = files.map((item) => ({
+          id: item.id,
+          name: item.originalName,
+          contentType: item.mimeType ?? null,
+          size: item.sizeBytes ?? null,
+          status: item.status as "uploaded" | "error",
+          processingStatus: (item as any).processingStatus ?? null,
+          processingErrorMessage: (item as any).processingErrorMessage ?? null,
+          errorMessage: item.errorMessage ?? null,
+          version: item.version ?? 1,
+          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : (item.createdAt as any),
+        }));
+
+        res.json({ files: response });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
   app.post(
     "/api/workspaces/:workspaceId/skills/:skillId/files",
     requireAuth,
@@ -16377,45 +16421,3 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   return httpServer;
 }
-  app.get(
-    "/api/workspaces/:workspaceId/skills/:skillId/files",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
-    async (req, res, next) => {
-      try {
-        const workspaceId = req.params.workspaceId || req.workspaceContext?.workspaceId || getRequestWorkspace(req).id;
-        const skillId = req.params.skillId;
-        if (!workspaceId || !skillId) {
-          return res.status(400).json({ message: "Не указан workspaceId или skillId" });
-        }
-
-        const memberships = getRequestWorkspaceMemberships(req);
-        if (memberships.length > 0 && !memberships.some((entry) => entry.id === workspaceId)) {
-          return res.status(403).json({ message: "Нет доступа к рабочему пространству" });
-        }
-
-        const skill = await getSkillById(workspaceId, skillId);
-        if (!skill) {
-          return res.status(404).json({ message: "Навык не найден" });
-        }
-
-        const files = await storage.listSkillFiles(workspaceId, skillId);
-        const response = files.map((item) => ({
-          id: item.id,
-          name: item.originalName,
-          contentType: item.mimeType ?? null,
-          size: item.sizeBytes ?? null,
-          status: item.status as "uploaded" | "error",
-          processingStatus: (item as any).processingStatus ?? null,
-          processingErrorMessage: (item as any).processingErrorMessage ?? null,
-          errorMessage: item.errorMessage ?? null,
-          version: item.version ?? 1,
-          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : (item.createdAt as any),
-        }));
-
-        res.json({ files: response });
-      } catch (error) {
-        next(error);
-      }
-    },
-  );

@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { listModels } from "./model-service";
 import type { EmbeddingProvider } from "@shared/schema";
 
 export type EmbeddingProviderStatus = {
@@ -99,13 +100,26 @@ export async function resolveEmbeddingProviderModels(
   }
 
   const status = computeStatus(provider);
-  const requestConfig = provider.requestConfig as Record<string, unknown> | null | undefined;
-  const supportsModelSelection = Boolean((requestConfig as { supportsModelSelection?: unknown })?.supportsModelSelection ?? true);
+  const catalogModels = await listModels({
+    includeInactive: false,
+    type: "EMBEDDINGS",
+    providerId: provider.id,
+    providerType: provider.providerType?.toUpperCase() ?? provider.providerType,
+  });
+
+  const models = Array.from(
+    new Set(
+      catalogModels
+        .map((model) => (model.providerModelKey || model.modelKey || "").trim())
+        .filter((key) => key.length > 0),
+    ),
+  );
+
   const defaultModel =
-    typeof provider.model === "string" && provider.model.trim().length > 0 ? provider.model.trim() : null;
-  const configModels = normalizeModelList((requestConfig as { models?: unknown })?.models);
-  const supportedModels = normalizeModelList((requestConfig as { supportedModels?: unknown })?.supportedModels);
-  const models = configModels.length > 0 ? configModels : supportedModels;
+    (typeof provider.model === "string" && provider.model.trim().length > 0 ? provider.model.trim() : null) ||
+    models[0] ||
+    null;
+  const supportsModelSelection = models.length > 0;
 
   return {
     providerId: provider.id,

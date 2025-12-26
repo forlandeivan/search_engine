@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType } from "react";
 import { Link, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 
@@ -35,8 +35,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { UploadCloud } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { useQueryClient } from "@tanstack/react-query";
-import { useQuery } from "@tanstack/react-query";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -396,7 +394,6 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     (isNew ? false : isSkillsLoading) ||
     workspacePlanQuery.isLoading ||
     knowledgeBaseQuery.isLoading ||
-    vectorCollectionsQuery.isLoading ||
     isEmbeddingProvidersLoading ||
     isLlmLoading ||
     isModelsLoading;
@@ -405,7 +402,6 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     (isNew ? null : skillsError) ||
     workspacePlanQuery.error ||
     knowledgeBaseQuery.error ||
-    vectorCollectionsError ||
     embeddingProvidersError ||
     llmError ||
     modelsError;
@@ -733,8 +729,6 @@ export function SkillFilesSection({
     setPendingDeleteId(null);
   };
 
-  const combinedFiles = [...uploads.map((item) => ({ ...item, isPending: true })), ...persistedFiles];
-
   return (
     <Card data-testid="skill-files-section">
       <CardHeader>
@@ -784,7 +778,6 @@ export function SkillFilesSection({
             </div>
           </div>
 
-          {uploads.length > 0 ? (
           {skillFilesQuery.isLoading ? (
             <div className="text-sm text-muted-foreground">Загружаем список файлов…</div>
           ) : skillFilesQuery.isError ? (
@@ -831,7 +824,9 @@ export function SkillFilesSection({
                 </div>
               ))}
             </div>
-          ) : null}
+          ) : (
+            <div className="text-sm text-muted-foreground">Файлов пока нет</div>
+          )}
         </div>
       </CardContent>
       <AlertDialog open={Boolean(pendingDeleteId)} onOpenChange={(open) => !open && setPendingDeleteId(null)}>
