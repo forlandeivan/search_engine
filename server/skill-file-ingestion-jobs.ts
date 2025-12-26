@@ -7,7 +7,7 @@ import { embedSkillFileChunks, EmbeddingError } from "./skill-file-embeddings";
 import { upsertSkillFileVectors, deleteSkillFileVectors, VectorStoreError } from "./skill-file-vector-store";
 import { getSkillById } from "./skills";
 import type { Workspace } from "@shared/schema";
-import { resolveEmbeddingProviderForWorkspace } from "./embedding-provider-registry";
+import { resolveEmbeddingProviderForWorkspace } from "./indexing-rules";
 
 const POLL_INTERVAL_MS = 5_000;
 const BASE_RETRY_DELAY_MS = 30_000;

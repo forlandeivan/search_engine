@@ -85,8 +85,6 @@ function AdminRouter() {
   );
 }
 
-const KB_FEATURE_ENABLED = (import.meta as any)?.env?.VITE_ENABLE_KB === "true";
-
 function MainRouter() {
   const Redirect = ({ to }: { to: string }) => {
     const [, navigate] = useLocation();
@@ -100,25 +98,9 @@ function MainRouter() {
     <Switch>
       <Route path="/workspaces/:workspaceId/chat/:chatId" component={ChatPage} />
       <Route path="/workspaces/:workspaceId/chat" component={ChatPage} />
-      {KB_FEATURE_ENABLED ? (
-        <>
-          <Route path="/knowledge/:knowledgeBaseId/node/:nodeId" component={KnowledgeBasePage} />
-          <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
-          <Route path="/knowledge" component={KnowledgeBasePage} />
-        </>
-      ) : (
-        <>
-          <Route path="/knowledge/:knowledgeBaseId/node/:nodeId">
-            <Redirect to="/" />
-          </Route>
-          <Route path="/knowledge/:knowledgeBaseId">
-            <Redirect to="/" />
-          </Route>
-          <Route path="/knowledge">
-            <Redirect to="/" />
-          </Route>
-        </>
-      )}
+      <Route path="/knowledge/:knowledgeBaseId/node/:nodeId" component={KnowledgeBasePage} />
+      <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
+      <Route path="/knowledge" component={KnowledgeBasePage} />
       <Route path="/skills/new">
         <SkillSettingsPage isNew />
       </Route>

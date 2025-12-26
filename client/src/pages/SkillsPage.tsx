@@ -1325,7 +1325,6 @@ export function SkillFormContent({
       form.setValue("llmMaxTokens", "", { shouldDirty: true });
     }
   }, [executionMode, form]);
-  const executionMode = form.watch("executionMode");
 
   const effectiveLlmOptions = useMemo(() => {
     if (!skill?.llmProviderConfigId || !skill?.modelId) {

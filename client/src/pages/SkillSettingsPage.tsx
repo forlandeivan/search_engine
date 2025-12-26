@@ -584,6 +584,22 @@ export function SkillFilesSection({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const generateId = () => (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2));
 
+  const mergeFiles = (
+    existing: Array<{ id?: string; name: string; size?: number | null; contentType?: string | null; status?: string; errorMessage?: string | null; createdAt?: string | null }>,
+    added: Array<{ id?: string; name: string; size?: number | null; contentType?: string | null; status?: string; errorMessage?: string | null; createdAt?: string | null }>,
+  ) => {
+    const seen = new Set<string>();
+    const merged: typeof existing = [];
+    [...added, ...existing].forEach((item) => {
+      const key = item.id ? `id:${item.id}` : `name:${item.name}-size:${item.size ?? 0}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(item);
+      }
+    });
+    return merged;
+  };
+
   const doUpload = uploadFiles
     ? uploadFiles
     : async (params: { workspaceId: string; skillId: string; files: File[] }) => {
@@ -675,7 +691,7 @@ export function SkillFilesSection({
           createdAt: item.createdAt ?? null,
         }));
       if (persisted.length > 0) {
-        setPersistedFiles((prev) => [...persisted, ...prev]);
+        setPersistedFiles((prev) => mergeFiles(prev, persisted));
       }
       setUploads((prev) => [...prev.filter((item) => !pendingIds.includes(item.id)), ...updated]);
       toast({ title: "Файлы загружены" });
