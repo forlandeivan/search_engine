@@ -7192,6 +7192,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     return safe.length > 0 ? safe : "file";
   };
 
+  const decodeFilename = (name: string): string => {
+    if (!name) return "file";
+    const hasCyrillic = /[\u0400-\u04FF]/.test(name);
+    const looksMojibake = /[\u00C0-\u024F]/.test(name) && !hasCyrillic;
+    if (looksMojibake) {
+      try {
+        const decoded = Buffer.from(name, "latin1").toString("utf8");
+        return decoded || name;
+      } catch {
+        return name;
+      }
+    }
+    return name;
+  };
+
   const ALLOWED_SKILL_FILE_EXTENSIONS = new Set([".pdf", ".docx", ".doc", ".txt"]);
 
   const buildAttachmentKey = (chatId: string, filename: string): string => {
@@ -10692,10 +10707,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const uploadedKeys: UploadedSkillFileDescriptor[] = [];
 
         for (const [index, file] of files.entries()) {
-          const ext = extname(file.originalname || "").toLowerCase();
+          const originalName = decodeFilename(file.originalname || "");
+          const ext = extname(originalName).toLowerCase();
           if (!ALLOWED_SKILL_FILE_EXTENSIONS.has(ext)) {
             results.push({
-              name: file.originalname || "file",
+              name: originalName || "file",
               size: file.size ?? null,
               contentType: file.mimetype || null,
               status: "error",
@@ -10705,7 +10721,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           }
           if (file.size > MAX_SKILL_FILE_SIZE_BYTES) {
             results.push({
-              name: file.originalname || "file",
+              name: originalName || "file",
               size: file.size ?? null,
               contentType: file.mimetype || null,
               status: "error",
@@ -10715,7 +10731,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           }
           if (file.size > MAX_DOC_SIZE_FOR_TOKENS) {
             results.push({
-              name: file.originalname || "file",
+              name: originalName || "file",
               size: file.size ?? null,
               contentType: file.mimetype || null,
               status: "error",
@@ -10724,7 +10740,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             continue;
           }
 
-          const safeName = sanitizeFilename(file.originalname || "file");
+          const safeName = sanitizeFilename(originalName || "file");
           const objectKey = `files/skills/${skillId}/${randomUUID()}-${safeName}`;
           try {
             await uploadWorkspaceFile(workspaceId, objectKey, file.buffer, file.mimetype, file.size);
@@ -10732,7 +10748,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               workspaceId,
               skillId,
               storageKey: objectKey,
-              originalName: file.originalname || safeName,
+              originalName: originalName || safeName,
               mimeType: file.mimetype || null,
               sizeBytes: file.size,
               status: "uploaded",
@@ -10742,19 +10758,30 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             validIndices.push(index);
             uploadedKeys.push({ key: objectKey, resultIndex: results.length });
             results.push({
-              name: file.originalname || safeName,
+              name: originalName || safeName,
               size: file.size ?? null,
               contentType: file.mimetype || null,
               status: "uploaded",
               processingStatus: "processing",
             });
           } catch (error) {
+            const fallbackMessage =
+              typeof (error as Error)?.message === "string" && (error as Error).message.trim().length > 0
+                ? (error as Error).message
+                : String(error);
             results.push({
-              name: file.originalname || safeName,
+              name: originalName || safeName,
               size: file.size ?? null,
               contentType: file.mimetype || null,
               status: "error",
-              errorMessage: "Не удалось сохранить файл. Попробуйте ещё раз.",
+              errorMessage: fallbackMessage || "Не удалось сохранить файл. Попробуйте ещё раз.",
+            });
+            console.error("[skill-files] upload failed", {
+              workspaceId,
+              skillId,
+              fileName: originalName || safeName,
+              message: fallbackMessage,
+              stack: error instanceof Error ? error.stack : undefined,
             });
           }
         }
