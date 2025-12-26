@@ -7,6 +7,7 @@ import { embedSkillFileChunks, EmbeddingError } from "./skill-file-embeddings";
 import { upsertSkillFileVectors, deleteSkillFileVectors, VectorStoreError } from "./skill-file-vector-store";
 import { getSkillById } from "./skills";
 import type { Workspace } from "@shared/schema";
+import { resolveEmbeddingProviderForWorkspace } from "./embedding-provider-registry";
 
 const POLL_INTERVAL_MS = 5_000;
 const BASE_RETRY_DELAY_MS = 30_000;
@@ -25,7 +26,7 @@ async function processJob(job: SkillFileIngestionJob): Promise<void> {
     return;
   }
 
-  let embeddingProvider: Awaited<ReturnType<typeof storage.getEmbeddingProvider>> | null = null;
+  let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"] | null = null;
   let workspace: Workspace | undefined;
 
   const file = await storage.getSkillFile(job.fileId, job.workspaceId, job.skillId);
@@ -68,34 +69,12 @@ async function processJob(job: SkillFileIngestionJob): Promise<void> {
       return;
     }
 
-    const embeddingProviderId = skill.ragConfig.embeddingProviderId;
-    if (!embeddingProviderId) {
-      const message = "Для навыка не выбран сервис эмбеддингов";
-      await storage.failSkillFileIngestionJob(job.id, message);
-      await storage.updateSkillFileStatus(file.id, file.workspaceId, file.skillId, {
-        status: "error",
-        processingStatus: "error",
-        processingErrorMessage: message,
-        errorMessage: message,
-      });
-      return;
-    }
-
-    embeddingProvider = await storage.getEmbeddingProvider(embeddingProviderId, file.workspaceId);
-    if (!embeddingProvider) {
-      const message = "Сервис эмбеддингов не найден";
-      await storage.failSkillFileIngestionJob(job.id, message);
-      await storage.updateSkillFileStatus(file.id, file.workspaceId, file.skillId, {
-        status: "error",
-        processingStatus: "error",
-        processingErrorMessage: message,
-        errorMessage: message,
-      });
-      return;
-    }
-
-    if (!embeddingProvider.isActive) {
-      const message = "Сервис эмбеддингов отключён";
+    try {
+      const resolved = await resolveEmbeddingProviderForWorkspace({ workspaceId: file.workspaceId });
+      embeddingProvider = resolved.provider;
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message ? error.message : "Сервис эмбеддингов недоступен в админ-настройках";
       await storage.failSkillFileIngestionJob(job.id, message);
       await storage.updateSkillFileStatus(file.id, file.workspaceId, file.skillId, {
         status: "error",

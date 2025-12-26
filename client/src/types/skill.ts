@@ -23,7 +23,7 @@ export interface Skill {
   executionMode: SkillExecutionMode;
   mode: SkillMode;
   knowledgeBaseIds?: string[];
-  ragConfig: SkillRagConfig;
+  ragConfig?: SkillRagConfig | null;
   transcriptionFlowMode: SkillTranscriptionFlowMode;
   onTranscriptionMode: SkillTranscriptionMode;
   onTranscriptionAutoActionId: string | null;
@@ -44,7 +44,7 @@ export interface SkillPayload {
   mode?: SkillMode;
   executionMode?: SkillExecutionMode;
   knowledgeBaseIds?: string[];
-  ragConfig?: SkillRagConfig;
+  ragConfig?: SkillRagConfig | null;
   transcriptionFlowMode?: SkillTranscriptionFlowMode;
   onTranscriptionMode?: SkillTranscriptionMode;
   onTranscriptionAutoActionId?: string | null;

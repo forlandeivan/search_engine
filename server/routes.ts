@@ -3595,30 +3595,8 @@ async function runKnowledgeBaseRagPipeline(options: {
 
 
 
-      if (typeof skill.ragConfig.minScore === "number") {
-        effectiveMinScore = Math.max(effectiveMinScore, skill.ragConfig.minScore);
-      }
-      effectiveMaxContextTokens = skill.ragConfig.maxContextTokens ?? null;
-      allowSources = resolveAllowSources({
-        rulesCitationsEnabled: indexingRules.citationsEnabled,
-        skillShowSources: skill.ragConfig.showSources,
-      });
-      if (skill.ragConfig.mode === "selected_collections") {
-        skillCollectionFilter = normalizeCollectionList(skill.ragConfig.collectionIds);
-      } else {
-        skillCollectionFilter = [];
-      }
-        recomputeLimits();
-
-        console.log("[RAG PIPELINE] Skill config applied", {
-          skillId: skill.id,
-          topK: effectiveTopK,
-        minScore: effectiveMinScore,
-        maxContextTokens: effectiveMaxContextTokens,
-        showSources: allowSources,
-        mode: skill.ragConfig.mode,
-        collections: skillCollectionFilter,
-      });
+      // Стандартный режим: не подмешиваем ragConfig из навыка, используем только правила/входные параметры.
+      skillCollectionFilter = [];
     }
 
     vectorCollectionsToSearch =
@@ -7192,6 +7170,19 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     return safe.length > 0 ? safe : "file";
   };
 
+  const toStorageSafeName = (name: string): string => {
+    const sanitized = sanitizeFilename(name);
+    // S3-compatible: strip exotic symbols, collapse separators, keep extension readable
+    const ascii = sanitized
+      .normalize("NFKD")
+      .replace(/[^\w.-]+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .trim();
+    const clipped = ascii.length > 180 ? ascii.slice(-180) : ascii;
+    return clipped || "file";
+  };
+
   const decodeFilename = (name: string): string => {
     if (!name) return "file";
     const hasCyrillic = /[\u0400-\u04FF]/.test(name);
@@ -10708,6 +10699,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
         for (const [index, file] of files.entries()) {
           const originalName = decodeFilename(file.originalname || "");
+          const storageSafeName = toStorageSafeName(originalName || "file");
           const ext = extname(originalName).toLowerCase();
           if (!ALLOWED_SKILL_FILE_EXTENSIONS.has(ext)) {
             results.push({
@@ -10740,15 +10732,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             continue;
           }
 
-          const safeName = sanitizeFilename(originalName || "file");
-          const objectKey = `files/skills/${skillId}/${randomUUID()}-${safeName}`;
+          const objectKey = `files/skills/${skillId}/${randomUUID()}-${storageSafeName}`;
           try {
             await uploadWorkspaceFile(workspaceId, objectKey, file.buffer, file.mimetype, file.size);
             toInsert.push({
               workspaceId,
               skillId,
               storageKey: objectKey,
-              originalName: originalName || safeName,
+              originalName: originalName || storageSafeName,
               mimeType: file.mimetype || null,
               sizeBytes: file.size,
               status: "uploaded",
@@ -10758,30 +10749,34 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             validIndices.push(index);
             uploadedKeys.push({ key: objectKey, resultIndex: results.length });
             results.push({
-              name: originalName || safeName,
+              name: originalName || storageSafeName,
               size: file.size ?? null,
               contentType: file.mimetype || null,
               status: "uploaded",
               processingStatus: "processing",
             });
           } catch (error) {
-            const fallbackMessage =
-              typeof (error as Error)?.message === "string" && (error as Error).message.trim().length > 0
-                ? (error as Error).message
-                : String(error);
+            const errObj = error as any;
+            const code = typeof errObj?.Code === "string" ? errObj.Code : typeof errObj?.code === "string" ? errObj.code : undefined;
+            const rawMessage =
+              typeof errObj?.message === "string" && errObj.message.trim().length > 0
+                ? errObj.message.trim()
+                : undefined;
+            const fallbackMessage = [rawMessage, code].filter(Boolean).join(": ") || "Не удалось сохранить файл. Попробуйте ещё раз.";
             results.push({
-              name: originalName || safeName,
+              name: originalName || storageSafeName,
               size: file.size ?? null,
               contentType: file.mimetype || null,
               status: "error",
-              errorMessage: fallbackMessage || "Не удалось сохранить файл. Попробуйте ещё раз.",
+              errorMessage: fallbackMessage,
             });
             console.error("[skill-files] upload failed", {
               workspaceId,
               skillId,
-              fileName: originalName || safeName,
+              fileName: originalName || storageSafeName,
               message: fallbackMessage,
               stack: error instanceof Error ? error.stack : undefined,
+              code: code || errObj?.name,
             });
           }
         }
@@ -10852,16 +10847,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
 
         try {
-          const embeddingProviderId =
-            typeof skill.ragConfig.embeddingProviderId === "string"
-              ? skill.ragConfig.embeddingProviderId.trim()
-              : "";
-          if (!embeddingProviderId) {
-            return res.status(400).json({ message: "Для навыка не выбран сервис эмбеддингов" });
-          }
-          const embeddingProvider = await storage.getEmbeddingProvider(embeddingProviderId, workspaceId);
-          if (!embeddingProvider || !embeddingProvider.isActive) {
-            return res.status(400).json({ message: "Сервис эмбеддингов недоступен для удаления файла" });
+          let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"];
+          try {
+            ({ provider: embeddingProvider } = await resolveEmbeddingProviderForWorkspace({ workspaceId }));
+          } catch (error) {
+            const message =
+              error instanceof Error && error.message
+                ? error.message
+                : "Сервис эмбеддингов недоступен для удаления файла";
+            return res.status(400).json({ message });
           }
 
           try {

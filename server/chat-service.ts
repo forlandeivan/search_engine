@@ -509,7 +509,18 @@ async function buildSkillRetrievalContext(options: {
     return null;
   }
 
+  const appliedConfigLog = {
+    workspaceId,
+    skillId: skill.id,
+    providerId: provider.id,
+    model: provider.model || null,
+    topK: rules.topK ?? null,
+    threshold: rules.relevanceThreshold ?? null,
+    results: searchResult.results?.length ?? 0,
+  };
+
   if (!searchResult || searchResult.guardrailTriggered) {
+    console.warn("[chat-retrieval] blocked", { ...appliedConfigLog, guardrail: searchResult?.guardrailReason ?? "unknown" });
     return null;
   }
 
@@ -539,13 +550,7 @@ async function buildSkillRetrievalContext(options: {
   }
 
   if (fragments.length > 0) {
-    console.info("[chat-retrieval] scope", {
-      workspaceId,
-      skillId: skill.id,
-      topK: rules.topK ?? null,
-      threshold: rules.relevanceThreshold ?? null,
-      results: fragments.length,
-    });
+    console.info("[chat-retrieval] scope", { ...appliedConfigLog, results: fragments.length });
   }
 
   return fragments.length > 0 ? fragments : null;
@@ -668,16 +673,7 @@ export async function buildChatLlmContext(
       requestOverrides.maxTokens = unicaConfig.maxTokens;
     }
   }
-  if (!isUnica) {
-    const skillTemperature = clampTemperature(skill.ragConfig?.llmTemperature ?? null);
-    if (skillTemperature !== null) {
-      requestOverrides.temperature = skillTemperature;
-    }
-    const skillMaxTokens = clampMaxTokens(skill.ragConfig?.llmMaxTokens ?? null);
-    if (skillMaxTokens !== null) {
-      requestOverrides.maxTokens = skillMaxTokens;
-    }
-  }
+  // RAG-настройки навыка больше не применяются в стандартном режиме.
 
   const providerLogInput = {
     chatId,

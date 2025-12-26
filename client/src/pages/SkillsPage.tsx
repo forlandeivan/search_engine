@@ -134,6 +134,9 @@ export const skillFormSchema = z.object({
   noCodeAuthType: z.enum(["none", "bearer"]).default("none"),
   noCodeBearerToken: z.string().optional().or(z.literal("")),
 }).superRefine((val, ctx) => {
+  if (val.executionMode === "standard") {
+    return;
+  }
   // В режиме no-code внутренние RAG-настройки не обязательны.
   if (val.executionMode === "no_code") {
     return;
@@ -1306,6 +1309,23 @@ export function SkillFormContent({
   const sortedKnowledgeBases = useMemo(() => {
     return [...knowledgeBases].sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" }));
   }, [knowledgeBases]);
+  const executionMode = form.watch("executionMode");
+
+  useEffect(() => {
+    if (executionMode === "standard") {
+      form.setValue("knowledgeBaseIds", [], { shouldDirty: true });
+      form.setValue("ragMode", "all_collections", { shouldDirty: true });
+      form.setValue("ragCollectionIds", [], { shouldDirty: true });
+      form.setValue("ragTopK", "", { shouldDirty: true });
+      form.setValue("ragMinScore", "", { shouldDirty: true });
+      form.setValue("ragMaxContextTokens", "", { shouldDirty: true });
+      form.setValue("ragShowSources", true, { shouldDirty: true });
+      form.setValue("ragEmbeddingProviderId", NO_EMBEDDING_PROVIDER_VALUE, { shouldDirty: true });
+      form.setValue("llmTemperature", "", { shouldDirty: true });
+      form.setValue("llmMaxTokens", "", { shouldDirty: true });
+    }
+  }, [executionMode, form]);
+  const executionMode = form.watch("executionMode");
 
   const effectiveLlmOptions = useMemo(() => {
     if (!skill?.llmProviderConfigId || !skill?.modelId) {
@@ -1419,14 +1439,30 @@ export function SkillFormContent({
       return;
     }
     try {
-      const didSave = await onSubmit(values);
+      const cleanedValues =
+        values.executionMode === "standard"
+          ? {
+              ...values,
+              knowledgeBaseIds: [],
+              ragMode: "all_collections",
+              ragCollectionIds: [],
+              ragTopK: "",
+              ragMinScore: "",
+              ragMaxContextTokens: "",
+              ragShowSources: true,
+              ragEmbeddingProviderId: NO_EMBEDDING_PROVIDER_VALUE,
+              llmTemperature: "",
+              llmMaxTokens: "",
+            }
+          : values;
+      const didSave = await onSubmit(cleanedValues);
       if (didSave) {
         const normalized: SkillFormValues = {
-          ...values,
-          name: values.name.trim(),
-          description: values.description?.trim() ?? "",
-          systemPrompt: values.systemPrompt?.trim() ?? "",
-          icon: values.icon?.trim() ?? "",
+          ...cleanedValues,
+          name: cleanedValues.name.trim(),
+          description: cleanedValues.description?.trim() ?? "",
+          systemPrompt: cleanedValues.systemPrompt?.trim() ?? "",
+          icon: cleanedValues.icon?.trim() ?? "",
         };
         lastSavedRef.current = normalized;
         form.reset(normalized);
@@ -1717,7 +1753,8 @@ export function SkillFormContent({
                           )}
                         />
 
-                        <Accordion type="single" collapsible>
+                        {executionMode !== "standard" && (
+                          <Accordion type="single" collapsible>
                           <AccordionItem value="llm-advanced" className="border-none">
                             <AccordionTrigger className="py-2" data-testid="llm-advanced-accordion">
                               Параметры LLM
@@ -1779,7 +1816,8 @@ export function SkillFormContent({
                               </div>
                             </AccordionContent>
                           </AccordionItem>
-                        </Accordion>
+                          </Accordion>
+                        )}
                       </CardContent>
                     </Card>
                     <Card className="md:col-span-2">
@@ -1790,101 +1828,103 @@ export function SkillFormContent({
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="px-6 pb-6 space-y-6">
-                        <div className="grid gap-6 md:grid-cols-2">
-                          <div className="space-y-6">
-                            <FormField
-                              control={form.control}
-                              name="knowledgeBaseIds"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Базы знаний</FormLabel>
-                                  <FormControl>
-                                    <KnowledgeBaseMultiSelect
-                                      value={field.value}
-                                      onChange={field.onChange}
-                                      knowledgeBases={sortedKnowledgeBases}
-                                      disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
-                                    />
-                                  </FormControl>
-                                  <FormMessage className="text-xs text-destructive leading-tight" />
-                                </FormItem>
-                              )}
-                            />
-                          </div>
-                          <div className="space-y-6">
-                            <FormField
-                              control={form.control}
-                              name="ragMode"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Режим использования коллекций</FormLabel>
-                                  <FormControl>
-                                    <RadioGroup
-                                      value={field.value}
-                                      onValueChange={controlsDisabled ? undefined : field.onChange}
-                                      className="grid gap-3"
-                                    >
-                                      <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
-                                        <RadioGroupItem value="all_collections" className="peer sr-only" disabled={controlsDisabled} />
-                                        <div className="flex items-start gap-3">
-                                          <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
-                                          <div>
-                                            <p className="text-sm font-medium">Все коллекции</p>
-                                            <p className="text-xs text-muted-foreground">
-                                              Навык автоматически ищет во всех коллекциях рабочего пространства.
-                                            </p>
-                                          </div>
-                                        </div>
-                                        <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
-                                      </label>
-                                      <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
-                                        <RadioGroupItem value="selected_collections" className="peer sr-only" disabled={controlsDisabled} />
-                                        <div className="flex items-start gap-3">
-                                          <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
-                                          <div>
-                                            <p className="text-sm font-medium">Выбрать вручную</p>
-                                            <p className="text-xs text-muted-foreground">
-                                              Укажите конкретные коллекции, в которых навык может искать ответы.
-                                            </p>
-                                          </div>
-                                        </div>
-                                        <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
-                                      </label>
-                                    </RadioGroup>
-                                  </FormControl>
-                                  <FormMessage className="text-xs text-destructive leading-tight" />
-                                </FormItem>
-                              )}
-                            />
-                            {isManualRagMode ? (
+                        {executionMode !== "standard" && (
+                          <div className="grid gap-6 md:grid-cols-2">
+                            <div className="space-y-6">
                               <FormField
                                 control={form.control}
-                                name="ragCollectionIds"
+                                name="knowledgeBaseIds"
                                 render={({ field }) => (
                                   <FormItem>
-                                    <FormLabel>Коллекции для навыка</FormLabel>
+                                    <FormLabel>Базы знаний</FormLabel>
                                     <FormControl>
-                                      <VectorCollectionMultiSelect
+                                      <KnowledgeBaseMultiSelect
                                         value={field.value}
                                         onChange={field.onChange}
-                                        collections={vectorCollections}
-                                        disabled={vectorCollectionsDisabled}
+                                        knowledgeBases={sortedKnowledgeBases}
+                                        disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
                                       />
                                     </FormControl>
-                                    <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                      {isVectorCollectionsLoading
-                                        ? "Загружаем список коллекций..."
-                                        : vectorCollectionsEmpty
-                                          ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
-                                          : "Можно выбрать одну или несколько коллекций рабочего пространства."}
-                                    </FormDescription>
                                     <FormMessage className="text-xs text-destructive leading-tight" />
                                   </FormItem>
                                 )}
                               />
-                            ) : null}
+                            </div>
+                            <div className="space-y-6">
+                              <FormField
+                                control={form.control}
+                                name="ragMode"
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>Режим использования коллекций</FormLabel>
+                                    <FormControl>
+                                      <RadioGroup
+                                        value={field.value}
+                                        onValueChange={controlsDisabled ? undefined : field.onChange}
+                                        className="grid gap-3"
+                                      >
+                                        <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
+                                          <RadioGroupItem value="all_collections" className="peer sr-only" disabled={controlsDisabled} />
+                                          <div className="flex items-start gap-3">
+                                            <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                                            <div>
+                                              <p className="text-sm font-medium">Все коллекции</p>
+                                              <p className="text-xs text-muted-foreground">
+                                                Навык автоматически ищет во всех коллекциях рабочего пространства.
+                                              </p>
+                                            </div>
+                                          </div>
+                                          <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
+                                        </label>
+                                        <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
+                                          <RadioGroupItem value="selected_collections" className="peer sr-only" disabled={controlsDisabled} />
+                                          <div className="flex items-start gap-3">
+                                            <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
+                                            <div>
+                                              <p className="text-sm font-medium">Выбрать вручную</p>
+                                              <p className="text-xs text-muted-foreground">
+                                                Укажите конкретные коллекции, в которых навык может искать ответы.
+                                              </p>
+                                            </div>
+                                          </div>
+                                          <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
+                                        </label>
+                                      </RadioGroup>
+                                    </FormControl>
+                                    <FormMessage className="text-xs text-destructive leading-tight" />
+                                  </FormItem>
+                                )}
+                              />
+                              {isManualRagMode ? (
+                                <FormField
+                                  control={form.control}
+                                  name="ragCollectionIds"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>Коллекции для навыка</FormLabel>
+                                      <FormControl>
+                                        <VectorCollectionMultiSelect
+                                          value={field.value}
+                                          onChange={field.onChange}
+                                          collections={vectorCollections}
+                                          disabled={vectorCollectionsDisabled}
+                                        />
+                                      </FormControl>
+                                      <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                        {isVectorCollectionsLoading
+                                          ? "Загружаем список коллекций..."
+                                          : vectorCollectionsEmpty
+                                            ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
+                                            : "Можно выбрать одну или несколько коллекций рабочего пространства."}
+                                      </FormDescription>
+                                      <FormMessage className="text-xs text-destructive leading-tight" />
+                                    </FormItem>
+                                  )}
+                                />
+                              ) : null}
+                            </div>
                           </div>
-                        </div>
+                        )}
                         <Accordion type="single" collapsible>
                           <AccordionItem value="rag-advanced" className="border-none">
                             <AccordionTrigger className="py-2">RAG (дополнительно)</AccordionTrigger>

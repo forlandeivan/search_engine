@@ -104,7 +104,7 @@ const DEFAULT_RAG_CONFIG: SkillRagConfig = {
 };
 // Режим выполнения фиксируем отдельным полем в skills, чтобы менять маршрут без изменения остальных настроек.
 const DEFAULT_SKILL_EXECUTION_MODE: SkillExecutionMode = "standard";
-const DEFAULT_SKILL_MODE: SkillMode = "rag";
+const DEFAULT_SKILL_MODE: SkillMode = "llm";
 const DEFAULT_TRANSCRIPTION_FLOW_MODE: SkillTranscriptionFlowMode = "standard";
 const DEFAULT_TRANSCRIPTION_MODE: SkillTranscriptionMode = "raw_only";
 const DEFAULT_CONTEXT_INPUT_LIMIT: number | null = null;
@@ -214,7 +214,8 @@ function assertRagRequirements(
   knowledgeBaseIds: readonly string[],
   executionMode?: SkillExecutionMode,
 ): void {
-  if (executionMode === "no_code") {
+  // Стандартный режим больше не требует rag-настроек в навыке.
+  if (executionMode !== "no_code") {
     return;
   }
 
@@ -634,13 +635,16 @@ export async function createSkill(
   }
 
   const ragConfig = normalized.ragConfig ?? { ...DEFAULT_RAG_CONFIG };
+  const isStandardMode = (normalized.mode ?? DEFAULT_SKILL_MODE) === "llm";
+  const effectiveKnowledgeBases = isStandardMode ? [] : validKnowledgeBases;
+  const effectiveRagConfig = isStandardMode ? { ...DEFAULT_RAG_CONFIG } : ragConfig;
   const transcriptionFlowMode = normalized.transcriptionFlowMode ?? DEFAULT_TRANSCRIPTION_FLOW_MODE;
   const transcriptionMode = normalized.onTranscriptionMode ?? DEFAULT_TRANSCRIPTION_MODE;
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
   const executionMode = normalized.executionMode ?? DEFAULT_SKILL_EXECUTION_MODE;
   const mode = normalized.mode ?? DEFAULT_SKILL_MODE;
   const callbackKey = executionMode === "no_code" ? generateCallbackKey() : null;
-  assertRagRequirements(ragConfig, validKnowledgeBases, executionMode);
+  assertRagRequirements(effectiveRagConfig, effectiveKnowledgeBases, executionMode);
   let resolvedModelId: string | null = normalized.modelId ?? null;
   if (normalized.modelId) {
     try {
@@ -668,19 +672,19 @@ export async function createSkill(
       mode,
       icon: normalized.icon,
       ragMode: ragConfig.mode,
-      ragCollectionIds: ragConfig.collectionIds,
-      ragTopK: ragConfig.topK,
-      ragMinScore: ragConfig.minScore,
-      ragMaxContextTokens: ragConfig.maxContextTokens,
-      ragShowSources: ragConfig.showSources,
-      ragBm25Weight: ragConfig.bm25Weight,
-      ragBm25Limit: ragConfig.bm25Limit,
-      ragVectorWeight: ragConfig.vectorWeight,
-      ragVectorLimit: ragConfig.vectorLimit,
-      ragEmbeddingProviderId: ragConfig.embeddingProviderId,
-      ragLlmTemperature: ragConfig.llmTemperature,
-      ragLlmMaxTokens: ragConfig.llmMaxTokens,
-      ragLlmResponseFormat: ragConfig.llmResponseFormat,
+      ragCollectionIds: effectiveRagConfig.collectionIds,
+      ragTopK: effectiveRagConfig.topK,
+      ragMinScore: effectiveRagConfig.minScore,
+      ragMaxContextTokens: effectiveRagConfig.maxContextTokens,
+      ragShowSources: effectiveRagConfig.showSources,
+      ragBm25Weight: effectiveRagConfig.bm25Weight,
+      ragBm25Limit: effectiveRagConfig.bm25Limit,
+      ragVectorWeight: effectiveRagConfig.vectorWeight,
+      ragVectorLimit: effectiveRagConfig.vectorLimit,
+      ragEmbeddingProviderId: effectiveRagConfig.embeddingProviderId,
+      ragLlmTemperature: effectiveRagConfig.llmTemperature,
+      ragLlmMaxTokens: effectiveRagConfig.llmMaxTokens,
+      ragLlmResponseFormat: effectiveRagConfig.llmResponseFormat,
       transcriptionFlowMode,
       onTranscriptionMode: transcriptionMode,
       onTranscriptionAutoActionId: transcriptionAutoActionId,
@@ -695,7 +699,7 @@ export async function createSkill(
     })
     .returning();
 
-  const knowledgeBaseIds = await replaceSkillKnowledgeBases(inserted.id, workspaceId, validKnowledgeBases);
+  const knowledgeBaseIds = await replaceSkillKnowledgeBases(inserted.id, workspaceId, effectiveKnowledgeBases);
 
   if (!inserted.isSystem && inserted.status === "active") {
     const period = getUsagePeriodForDate(inserted.createdAt ? new Date(inserted.createdAt) : new Date());
@@ -809,15 +813,15 @@ export async function updateSkill(
   };
   const ragUpdates = normalized.ragConfig;
   const hasRagUpdates = ragUpdates !== undefined;
-  const nextRagConfig = ragUpdates ?? currentRagConfig;
   const effectiveMode = normalized.mode ?? normalizeSkillMode(row.mode);
+  const isStandardMode = effectiveMode === "llm";
+  const nextRagConfig = isStandardMode ? { ...DEFAULT_RAG_CONFIG } : ragUpdates ?? currentRagConfig;
 
   let knowledgeBaseIdsForValidation: string[];
-  if (normalized.knowledgeBaseIds !== undefined) {
-    const validKnowledgeBases = await filterWorkspaceKnowledgeBases(
-      workspaceId,
-      normalized.knowledgeBaseIds,
-    );
+  if (isStandardMode) {
+    knowledgeBaseIdsForValidation = [];
+  } else if (normalized.knowledgeBaseIds !== undefined) {
+    const validKnowledgeBases = await filterWorkspaceKnowledgeBases(workspaceId, normalized.knowledgeBaseIds);
 
     if (validKnowledgeBases.length !== normalized.knowledgeBaseIds.length) {
       throw new SkillServiceError("Некоторые базы знаний не найдены в рабочем пространстве", 400);
@@ -880,7 +884,9 @@ export async function updateSkill(
   }
 
   let knowledgeBaseIds: string[];
-  if (normalized.knowledgeBaseIds !== undefined) {
+  if (isStandardMode) {
+    knowledgeBaseIds = await replaceSkillKnowledgeBases(skillId, workspaceId, []);
+  } else if (normalized.knowledgeBaseIds !== undefined) {
     knowledgeBaseIds = await replaceSkillKnowledgeBases(skillId, workspaceId, knowledgeBaseIdsForValidation);
   } else {
     knowledgeBaseIds = knowledgeBaseIdsForValidation;

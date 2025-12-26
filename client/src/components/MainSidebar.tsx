@@ -16,19 +16,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import {
-  BookOpen,
-  Boxes,
-  Brain,
-  Shield,
-  Zap,
-  Users,
-  LayoutDashboard,
-  Sparkles,
-  MessageCircle,
-  PanelLeft,
-  PanelRight,
-} from "lucide-react";
+import { BookOpen, Shield, Zap, Users, LayoutDashboard, Sparkles, MessageCircle, PanelLeft, PanelRight } from "lucide-react";
 import type { PublicUser } from "@shared/schema";
 import {
   KNOWLEDGE_BASE_EVENT,
@@ -121,13 +109,6 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
           icon: LayoutDashboard,
         },
         {
-          title: "Базы знаний",
-          url: "/knowledge",
-          icon: Brain,
-          badge: knowledgeBaseCount.toString(),
-          badgeVariant: "secondary",
-        },
-        {
           title: "Навыки",
           url: "/skills",
           icon: Sparkles,
@@ -147,11 +128,6 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
     {
       label: "Данные",
       items: [
-        {
-          title: "Коллекции",
-          url: "/vector/collections",
-          icon: Boxes,
-        },
         {
           title: "Документация API",
           url: "/integrations/api",

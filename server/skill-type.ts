@@ -17,15 +17,6 @@ export function isUnicaChatSkill(skill: SkillLike | null | undefined): boolean {
 
 export function isRagSkill(skill: SkillLike | null | undefined): boolean {
   if (isUnicaChatSkill(skill)) return false;
-  const hasKnowledgeBases = Array.isArray(skill?.knowledgeBaseIds) && skill.knowledgeBaseIds.length > 0;
-  const hasCollections =
-    Array.isArray(skill?.ragConfig?.collectionIds) && (skill?.ragConfig?.collectionIds?.length ?? 0) > 0;
-  if (hasKnowledgeBases || hasCollections) {
-    return true;
-  }
-  if ("knowledgeBaseIds" in (skill ?? {}) || "ragConfig" in (skill ?? {})) {
-    return false;
-  }
   const mode = (skill as SkillDto | undefined)?.mode ?? (skill as any)?.mode;
-  return mode !== "llm";
+  return mode === "rag";
 }
