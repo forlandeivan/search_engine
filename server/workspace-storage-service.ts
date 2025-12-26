@@ -127,6 +127,11 @@ export async function deleteObject(workspaceId: string, key: string): Promise<vo
       }),
     );
   } catch (error) {
+    const code = (error as any)?.name || (error as any)?.Code || (error as any)?.code;
+    if (code === "NoSuchKey" || code === "NotFound") {
+      console.warn("[workspace-storage] deleteObject: object missing (idempotent)", { bucket, key });
+      return;
+    }
     console.error("[workspace-storage] deleteObject failed", { bucket, key, error });
     throw error;
   }

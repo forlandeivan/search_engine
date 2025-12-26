@@ -27,11 +27,13 @@ import {
   chatMessages,
   chatAttachments,
   skillFiles,
+  skillFileIngestionJobs,
   transcripts,
   transcriptViews,
   canvasDocuments,
   speechProviders,
   speechProviderSecrets,
+  indexingRules,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
   type KnowledgeBaseRagSearchSettings,
@@ -64,6 +66,8 @@ import {
   type ChatAttachmentInsert,
   type SkillFile,
   type SkillFileInsert,
+  type SkillFileIngestionJob,
+  type SkillFileIngestionJobInsert,
   type ChatMessage,
   type ChatMessageInsert,
   type ChatCard,
@@ -81,6 +85,8 @@ import {
   type SpeechProviderSecret,
   type WorkspaceMemberRole,
 } from "@shared/schema";
+import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
+import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import { db } from "./db";
 import { createUnicaChatSkillForWorkspace } from "./skills";
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
@@ -96,6 +102,7 @@ import type {
   KnowledgeBaseAskAiRunSummary,
   KnowledgeBaseRagConfig,
 } from "@shared/knowledge-base";
+import { getQdrantClient } from "./qdrant";
 
 let globalUserAuthSchemaReady = false;
 
@@ -125,6 +132,118 @@ export type KnowledgeChunkSearchEntry = {
 function getRowString(row: Record<string, unknown>, key: string): string {
   const value = row[key];
   return typeof value === "string" ? value : "";
+}
+
+function parseRowNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export class WorkspaceVectorInitError extends Error {
+  constructor(message: string, public retryable: boolean) {
+    super(message);
+    this.name = "WorkspaceVectorInitError";
+  }
+}
+
+function sanitizeVectorCollectionName(source: string): string {
+  const normalized = source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+  return normalized.length > 0 ? normalized.slice(0, 60) : "default";
+}
+
+function buildWorkspaceVectorCollectionName(workspaceId: string, providerId: string): string {
+  const workspaceSlug = sanitizeVectorCollectionName(workspaceId);
+  const providerSlug = sanitizeVectorCollectionName(providerId);
+  return `ws_${workspaceSlug}__proj_workspace__coll_${providerSlug}`;
+}
+
+function parseVectorSizeValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) {
+      const parsed = Number.parseInt(trimmed, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
+}
+
+function isQdrantNotFoundError(error: unknown): boolean {
+  const status = (error as any)?.status ?? (error as any)?.response?.status ?? null;
+  return status === 404;
+}
+
+function isQdrantAlreadyExistsError(error: unknown): boolean {
+  const status = (error as any)?.status ?? (error as any)?.response?.status ?? null;
+  return status === 409;
+}
+
+function isQdrantRetryableError(error: unknown): boolean {
+  const code = (error as any)?.code;
+  if (typeof code === "string") {
+    const retryableCodes = ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "EAI_AGAIN"];
+    if (retryableCodes.includes(code)) {
+      return true;
+    }
+  }
+
+  const status = (error as any)?.status ?? (error as any)?.response?.status ?? null;
+  if (typeof status === "number") {
+    return status >= 500 || status === 429 || status === 408;
+  }
+
+  return true;
+}
+
+function parseRowDate(value: unknown): Date {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return new Date();
+}
+
+function mapSkillFileIngestionJobRow(row: Record<string, unknown>): SkillFileIngestionJob {
+  const jobType = getRowString(row, "job_type") || getRowString(row, "jobType") || "skill_file_ingestion";
+  const nextRetryCandidate = (row as any)?.next_retry_at ?? (row as any)?.nextRetryAt;
+  const createdAtCandidate = (row as any)?.created_at ?? (row as any)?.createdAt;
+  const updatedAtCandidate = (row as any)?.updated_at ?? (row as any)?.updatedAt;
+
+  return {
+    id: getRowString(row, "id"),
+    jobType,
+    workspaceId: getRowString(row, "workspace_id") || getRowString(row, "workspaceId"),
+    skillId: getRowString(row, "skill_id") || getRowString(row, "skillId"),
+    fileId: getRowString(row, "file_id") || getRowString(row, "fileId"),
+    fileVersion: parseRowNumber((row as any)?.file_version ?? (row as any)?.fileVersion ?? 1, 1),
+    status: (getRowString(row, "status") as SkillFileIngestionJob["status"]) || "pending",
+    attempts: parseRowNumber((row as any)?.attempts ?? 0, 0),
+    nextRetryAt: nextRetryCandidate ? parseRowDate(nextRetryCandidate) : null,
+    lastError: getRowString(row, "last_error") || getRowString(row, "lastError") || null,
+    chunkCount: parseRowNumber((row as any)?.chunk_count ?? (row as any)?.chunkCount ?? null, 0) || null,
+    totalChars: parseRowNumber((row as any)?.total_chars ?? (row as any)?.totalChars ?? null, 0) || null,
+    totalTokens: parseRowNumber((row as any)?.total_tokens ?? (row as any)?.totalTokens ?? null, 0) || null,
+    createdAt: parseRowDate(createdAtCandidate),
+    updatedAt: parseRowDate(updatedAtCandidate),
+  };
 }
 
 function sanitizedChunkTextExpression(source: SQL): SQL {
@@ -823,6 +942,7 @@ export interface IStorage {
   isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean>;
   getWorkspaceMember(userId: string, workspaceId: string): Promise<WorkspaceMembership | undefined>;
   ensurePersonalWorkspace(user: User): Promise<Workspace>;
+  ensureWorkspaceVectorCollection(workspaceId: string): Promise<string>;
   listUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
   getOrCreateUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]>;
   getWorkspaceKnowledgeBaseCounts(workspaceIds: readonly string[]): Promise<Map<string, number>>;
@@ -948,7 +1068,35 @@ export interface IStorage {
   createChatAttachment(values: ChatAttachmentInsert): Promise<ChatAttachment>;
   findChatAttachmentByMessageId(messageId: string): Promise<ChatAttachment | undefined>;
   getChatAttachment(id: string): Promise<ChatAttachment | undefined>;
-  createSkillFiles(values: SkillFileInsert[]): Promise<SkillFile[]>;
+  createSkillFiles(values: SkillFileInsert[], options?: { createIngestionJobs?: boolean }): Promise<SkillFile[]>;
+  updateSkillFileStatus(
+    id: string,
+    workspaceId: string,
+    skillId: string,
+    patch: {
+      status?: SkillFile["status"];
+      errorMessage?: string | null;
+      processingStatus?: SkillFile["status"];
+      processingErrorMessage?: string | null;
+    },
+  ): Promise<void>;
+  createSkillFileIngestionJob(value: SkillFileIngestionJobInsert): Promise<SkillFileIngestionJob | null>;
+  findSkillFileIngestionJobByFile(
+    fileId: string,
+    fileVersion: number,
+  ): Promise<SkillFileIngestionJob | undefined>;
+  claimNextSkillFileIngestionJob(now?: Date): Promise<SkillFileIngestionJob | null>;
+  markSkillFileIngestionJobDone(
+    jobId: string,
+    stats?: { chunkCount?: number | null; totalChars?: number | null; totalTokens?: number | null },
+  ): Promise<void>;
+  rescheduleSkillFileIngestionJob(jobId: string, nextRetryAt: Date, errorMessage?: string | null): Promise<void>;
+  failSkillFileIngestionJob(jobId: string, errorMessage?: string | null): Promise<void>;
+  listSkillFiles(workspaceId: string, skillId: string): Promise<SkillFile[]>;
+  getSkillFile(id: string, workspaceId: string, skillId: string): Promise<SkillFile | undefined>;
+  deleteSkillFile(id: string, workspaceId: string, skillId: string): Promise<boolean>;
+  listReadySkillFileIds(workspaceId: string, skillId: string): Promise<string[]>;
+  hasReadySkillFiles(workspaceId: string, skillId: string): Promise<boolean>;
   updateChatTitleIfEmpty(chatId: string, title: string): Promise<boolean>;
 }
 
@@ -1006,6 +1154,8 @@ let knowledgeBasePathUsesLtree: boolean | null = null;
 
 let skillFilesTableEnsured = false;
 let ensuringSkillFilesTable: Promise<void> | null = null;
+let skillFileIngestionJobsTableEnsured = false;
+let ensuringSkillFileIngestionJobsTable: Promise<void> | null = null;
 
 function coerceDatabaseBoolean(value: unknown): boolean {
   if (typeof value === "boolean") {
@@ -1513,34 +1663,49 @@ async function ensureSkillFilesTable(): Promise<void> {
         "original_name" text NOT NULL,
         "mime_type" text,
         "size_bytes" bigint,
+        "version" integer NOT NULL DEFAULT 1,
         "status" text NOT NULL DEFAULT 'uploaded',
+        "processing_status" text NOT NULL DEFAULT 'processing',
+        "processing_error_message" text,
+        "error_message" text,
         "created_by_user_id" varchar,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
-    await ensureConstraint("skill_files", "skill_files_workspace_id_fkey", () =>
-      db.execute(sql`
+    await db.execute(sql`
+      ALTER TABLE "skill_files"
+      ADD COLUMN IF NOT EXISTS "version" integer NOT NULL DEFAULT 1
+    `);
+
+    await ensureConstraint(
+      "skill_files",
+      "skill_files_workspace_id_fkey",
+      sql`
         ALTER TABLE "skill_files"
         ADD CONSTRAINT "skill_files_workspace_id_fkey"
         FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
-      `),
+      `,
     );
 
-    await ensureConstraint("skill_files", "skill_files_skill_id_fkey", () =>
-      db.execute(sql`
+    await ensureConstraint(
+      "skill_files",
+      "skill_files_skill_id_fkey",
+      sql`
         ALTER TABLE "skill_files"
         ADD CONSTRAINT "skill_files_skill_id_fkey"
         FOREIGN KEY ("skill_id") REFERENCES "skills"("id") ON DELETE CASCADE
-      `),
+      `,
     );
 
-    await ensureConstraint("skill_files", "skill_files_created_by_user_id_fkey", () =>
-      db.execute(sql`
+    await ensureConstraint(
+      "skill_files",
+      "skill_files_created_by_user_id_fkey",
+      sql`
         ALTER TABLE "skill_files"
         ADD CONSTRAINT "skill_files_created_by_user_id_fkey"
         FOREIGN KEY ("created_by_user_id") REFERENCES "users"("id") ON DELETE SET NULL
-      `),
+      `,
     );
 
     await db.execute(sql`
@@ -1550,11 +1715,114 @@ async function ensureSkillFilesTable(): Promise<void> {
       CREATE INDEX IF NOT EXISTS skill_files_skill_idx ON "skill_files" ("skill_id", "created_at")
     `);
 
+    await db.execute(sql`
+      ALTER TABLE "skill_files"
+      ADD COLUMN IF NOT EXISTS "processing_status" text NOT NULL DEFAULT 'processing'
+    `);
+    await db.execute(sql`
+      ALTER TABLE "skill_files"
+      ADD COLUMN IF NOT EXISTS "processing_error_message" text
+    `);
+
     skillFilesTableEnsured = true;
   })();
 
   await ensuringSkillFilesTable;
   ensuringSkillFilesTable = null;
+}
+
+async function ensureSkillFileIngestionJobsTable(): Promise<void> {
+  if (skillFileIngestionJobsTableEnsured) {
+    return;
+  }
+  if (ensuringSkillFileIngestionJobsTable) {
+    await ensuringSkillFileIngestionJobsTable;
+    return;
+  }
+
+  ensuringSkillFileIngestionJobsTable = (async () => {
+    await ensureSkillFilesTable();
+    await ensureWorkspacesTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "skill_file_ingestion_jobs" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "job_type" text NOT NULL DEFAULT 'skill_file_ingestion',
+        "workspace_id" varchar NOT NULL,
+        "skill_id" varchar NOT NULL,
+        "file_id" uuid NOT NULL,
+        "file_version" integer NOT NULL,
+        "status" text NOT NULL DEFAULT 'pending',
+        "attempts" integer NOT NULL DEFAULT 0,
+        "next_retry_at" timestamp,
+        "last_error" text,
+        "chunk_count" integer,
+        "total_chars" integer,
+        "total_tokens" integer,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "skill_file_ingestion_jobs",
+      "skill_file_ingestion_jobs_workspace_id_fkey",
+      sql`
+        ALTER TABLE "skill_file_ingestion_jobs"
+        ADD CONSTRAINT "skill_file_ingestion_jobs_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "skill_file_ingestion_jobs",
+      "skill_file_ingestion_jobs_skill_id_fkey",
+      sql`
+        ALTER TABLE "skill_file_ingestion_jobs"
+        ADD CONSTRAINT "skill_file_ingestion_jobs_skill_id_fkey"
+        FOREIGN KEY ("skill_id") REFERENCES "skills"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "skill_file_ingestion_jobs",
+      "skill_file_ingestion_jobs_file_id_fkey",
+      sql`
+        ALTER TABLE "skill_file_ingestion_jobs"
+        ADD CONSTRAINT "skill_file_ingestion_jobs_file_id_fkey"
+        FOREIGN KEY ("file_id") REFERENCES "skill_files"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS skill_file_ingestion_jobs_unique_job_idx
+      ON "skill_file_ingestion_jobs" ("job_type", "file_id", "file_version")
+    `);
+
+    await ensureIndex(
+      "skill_file_ingestion_jobs_workspace_idx",
+      sql`CREATE INDEX IF NOT EXISTS skill_file_ingestion_jobs_workspace_idx ON "skill_file_ingestion_jobs" ("workspace_id", "status", "next_retry_at")`,
+    );
+    await ensureIndex(
+      "skill_file_ingestion_jobs_skill_idx",
+      sql`CREATE INDEX IF NOT EXISTS skill_file_ingestion_jobs_skill_idx ON "skill_file_ingestion_jobs" ("skill_id", "status", "next_retry_at")`,
+    );
+
+    await db.execute(sql`
+      ALTER TABLE "skill_file_ingestion_jobs" ADD COLUMN IF NOT EXISTS "chunk_count" integer
+    `);
+    await db.execute(sql`
+      ALTER TABLE "skill_file_ingestion_jobs" ADD COLUMN IF NOT EXISTS "total_chars" integer
+    `);
+    await db.execute(sql`
+      ALTER TABLE "skill_file_ingestion_jobs" ADD COLUMN IF NOT EXISTS "total_tokens" integer
+    `);
+
+    skillFileIngestionJobsTableEnsured = true;
+  })();
+
+  await ensuringSkillFileIngestionJobsTable;
+  ensuringSkillFileIngestionJobsTable = null;
 }
 
 async function ensureTranscriptsTable(): Promise<void> {
@@ -5480,10 +5748,290 @@ export class DatabaseStorage implements IStorage {
     return rows[0];
   }
 
-  async createSkillFiles(values: SkillFileInsert[]): Promise<SkillFile[]> {
+  async createSkillFiles(
+    values: SkillFileInsert[],
+    options?: { createIngestionJobs?: boolean },
+  ): Promise<SkillFile[]> {
     await ensureSkillFilesTable();
-    const inserted = await this.db.insert(skillFiles).values(values).returning();
+    if (!values || values.length === 0) {
+      return [];
+    }
+
+    if (options?.createIngestionJobs) {
+      await ensureSkillFileIngestionJobsTable();
+    }
+
+    const inserted = await this.db.transaction(async (tx: typeof db) => {
+      const normalizedValues = values.map((entry) => ({
+        ...entry,
+        version: entry.version ?? 1,
+        processingStatus: (entry as any)?.processingStatus ?? "processing",
+        processingErrorMessage: (entry as any)?.processingErrorMessage ?? null,
+      }));
+      const createdFiles = await tx.insert(skillFiles).values(normalizedValues).returning();
+
+      if (options?.createIngestionJobs && createdFiles.length > 0) {
+        const jobs = createdFiles.map((file) => ({
+          jobType: "skill_file_ingestion" as const,
+          workspaceId: file.workspaceId,
+          skillId: file.skillId,
+          fileId: file.id,
+          fileVersion: file.version ?? 1,
+          status: "pending" as const,
+        }));
+
+        await tx
+          .insert(skillFileIngestionJobs)
+          .values(jobs)
+          .onConflictDoNothing({
+            target: [
+              skillFileIngestionJobs.jobType,
+              skillFileIngestionJobs.fileId,
+              skillFileIngestionJobs.fileVersion,
+            ],
+          });
+      }
+
+      return createdFiles;
+    });
     return inserted;
+  }
+
+  async updateSkillFileStatus(
+    id: string,
+    workspaceId: string,
+    skillId: string,
+    patch: {
+      status?: SkillFile["status"];
+      errorMessage?: string | null;
+      processingStatus?: SkillFile["status"];
+      processingErrorMessage?: string | null;
+    },
+  ): Promise<void> {
+    await ensureSkillFilesTable();
+    const normalizedPatch: Partial<SkillFileInsert> = {};
+    if (patch.status) {
+      normalizedPatch.status = patch.status;
+    }
+    if (patch.errorMessage !== undefined) {
+      normalizedPatch.errorMessage = patch.errorMessage;
+    }
+    if (patch.processingStatus) {
+      (normalizedPatch as any).processingStatus = patch.processingStatus;
+    }
+    if (patch.processingErrorMessage !== undefined) {
+      (normalizedPatch as any).processingErrorMessage = patch.processingErrorMessage;
+    }
+    if (Object.keys(normalizedPatch).length === 0) {
+      return;
+    }
+    await this.db
+      .update(skillFiles)
+      .set(normalizedPatch)
+      .where(and(eq(skillFiles.id, id), eq(skillFiles.workspaceId, workspaceId), eq(skillFiles.skillId, skillId)));
+  }
+
+  async createSkillFileIngestionJob(
+    value: SkillFileIngestionJobInsert,
+  ): Promise<SkillFileIngestionJob | null> {
+    await ensureSkillFileIngestionJobsTable();
+    const normalized: SkillFileIngestionJobInsert = {
+      jobType: value.jobType ?? "skill_file_ingestion",
+      workspaceId: value.workspaceId,
+      skillId: value.skillId,
+      fileId: value.fileId,
+      fileVersion: value.fileVersion ?? 1,
+      status: value.status ?? "pending",
+      attempts: value.attempts ?? 0,
+      nextRetryAt: value.nextRetryAt ?? null,
+      lastError: value.lastError ?? null,
+    };
+
+    const [created] = await this.db
+      .insert(skillFileIngestionJobs)
+      .values(normalized)
+      .onConflictDoNothing({
+        target: [
+          skillFileIngestionJobs.jobType,
+          skillFileIngestionJobs.fileId,
+          skillFileIngestionJobs.fileVersion,
+        ],
+      })
+      .returning();
+
+    if (created) {
+      return created;
+    }
+
+    const [existing] = await this.db
+      .select()
+      .from(skillFileIngestionJobs)
+      .where(
+        and(
+          eq(skillFileIngestionJobs.jobType, normalized.jobType ?? "skill_file_ingestion"),
+          eq(skillFileIngestionJobs.fileId, normalized.fileId),
+          eq(skillFileIngestionJobs.fileVersion, normalized.fileVersion ?? 1),
+        ),
+      )
+      .limit(1);
+
+    return existing ?? null;
+  }
+
+  async findSkillFileIngestionJobByFile(
+    fileId: string,
+    fileVersion: number,
+  ): Promise<SkillFileIngestionJob | undefined> {
+    await ensureSkillFileIngestionJobsTable();
+    const rows = await this.db
+      .select()
+      .from(skillFileIngestionJobs)
+      .where(
+        and(
+          eq(skillFileIngestionJobs.fileId, fileId),
+          eq(skillFileIngestionJobs.fileVersion, fileVersion),
+          eq(skillFileIngestionJobs.jobType, "skill_file_ingestion"),
+        ),
+      )
+      .limit(1);
+    return rows[0];
+  }
+
+  async claimNextSkillFileIngestionJob(now: Date = new Date()): Promise<SkillFileIngestionJob | null> {
+    await ensureSkillFileIngestionJobsTable();
+    const result = await this.db.execute(sql`
+      UPDATE "skill_file_ingestion_jobs" AS jobs
+      SET
+        "status" = 'running',
+        "attempts" = jobs."attempts" + 1,
+        "updated_at" = ${now}
+      WHERE jobs."id" = (
+        SELECT id
+        FROM "skill_file_ingestion_jobs"
+        WHERE "status" = 'pending'
+          AND ("next_retry_at" IS NULL OR "next_retry_at" <= ${now})
+          AND "job_type" = 'skill_file_ingestion'
+        ORDER BY "created_at"
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
+    `);
+
+    const row = (result.rows ?? [])[0] as Record<string, unknown> | undefined;
+    return row ? mapSkillFileIngestionJobRow(row) : null;
+  }
+
+  async markSkillFileIngestionJobDone(
+    jobId: string,
+    stats?: { chunkCount?: number | null; totalChars?: number | null; totalTokens?: number | null },
+  ): Promise<void> {
+    await ensureSkillFileIngestionJobsTable();
+    const now = new Date();
+    await this.db
+      .update(skillFileIngestionJobs)
+      .set({
+        status: "done",
+        nextRetryAt: null,
+        lastError: null,
+        chunkCount: stats?.chunkCount ?? null,
+        totalChars: stats?.totalChars ?? null,
+        totalTokens: stats?.totalTokens ?? null,
+        updatedAt: now,
+      })
+      .where(eq(skillFileIngestionJobs.id, jobId));
+  }
+
+  async rescheduleSkillFileIngestionJob(
+    jobId: string,
+    nextRetryAt: Date,
+    errorMessage?: string | null,
+  ): Promise<void> {
+    await ensureSkillFileIngestionJobsTable();
+    const now = new Date();
+    await this.db
+      .update(skillFileIngestionJobs)
+      .set({
+        status: "pending",
+        nextRetryAt,
+        lastError: errorMessage?.trim() || null,
+        updatedAt: now,
+      })
+      .where(eq(skillFileIngestionJobs.id, jobId));
+  }
+
+  async failSkillFileIngestionJob(jobId: string, errorMessage?: string | null): Promise<void> {
+    await ensureSkillFileIngestionJobsTable();
+    const now = new Date();
+    await this.db
+      .update(skillFileIngestionJobs)
+      .set({
+        status: "error",
+        nextRetryAt: null,
+        lastError: errorMessage?.trim() || null,
+        updatedAt: now,
+      })
+      .where(eq(skillFileIngestionJobs.id, jobId));
+  }
+
+  async listSkillFiles(workspaceId: string, skillId: string): Promise<SkillFile[]> {
+    await ensureSkillFilesTable();
+    const rows = await this.db
+      .select()
+      .from(skillFiles)
+      .where(and(eq(skillFiles.workspaceId, workspaceId), eq(skillFiles.skillId, skillId)))
+      .orderBy(desc(skillFiles.createdAt));
+    return rows;
+  }
+
+  async getSkillFile(id: string, workspaceId: string, skillId: string): Promise<SkillFile | undefined> {
+    await ensureSkillFilesTable();
+    const rows = await this.db
+      .select()
+      .from(skillFiles)
+      .where(and(eq(skillFiles.id, id), eq(skillFiles.workspaceId, workspaceId), eq(skillFiles.skillId, skillId)))
+      .limit(1);
+    return rows[0];
+  }
+
+  async deleteSkillFile(id: string, workspaceId: string, skillId: string): Promise<boolean> {
+    await ensureSkillFilesTable();
+    const result = await this.db
+      .delete(skillFiles)
+      .where(and(eq(skillFiles.id, id), eq(skillFiles.workspaceId, workspaceId), eq(skillFiles.skillId, skillId)))
+      .returning({ id: skillFiles.id });
+    return result.length > 0;
+  }
+
+  async listReadySkillFileIds(workspaceId: string, skillId: string): Promise<string[]> {
+    await ensureSkillFilesTable();
+    const rows = await this.db
+      .select({ id: skillFiles.id })
+      .from(skillFiles)
+      .where(
+        and(
+          eq(skillFiles.workspaceId, workspaceId),
+          eq(skillFiles.skillId, skillId),
+          eq(skillFiles.processingStatus, "ready"),
+        ),
+      );
+    return rows.map((entry) => entry.id);
+  }
+
+  async hasReadySkillFiles(workspaceId: string, skillId: string): Promise<boolean> {
+    await ensureSkillFilesTable();
+    const result = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(skillFiles)
+      .where(
+        and(
+          eq(skillFiles.workspaceId, workspaceId),
+          eq(skillFiles.skillId, skillId),
+          eq(skillFiles.processingStatus, "ready"),
+        ),
+      )
+      .limit(1);
+    return Number(result[0]?.count ?? 0) > 0;
   }
 
   async countChatMessages(chatId: string): Promise<number> {
@@ -6145,6 +6693,165 @@ export class DatabaseStorage implements IStorage {
     return Boolean(row);
   }
 
+  private async resolveWorkspaceEmbeddingProviderForVectors(workspaceId: string): Promise<EmbeddingProvider> {
+    await ensureEmbeddingProvidersTable();
+
+    let providerId: string | null = null;
+    try {
+      const [rules] = await this.db.select().from(indexingRules).limit(1);
+      const candidate = rules?.embeddingsProvider;
+      if (candidate && typeof candidate === "string" && candidate.trim()) {
+        providerId = candidate.trim();
+      }
+    } catch {
+      providerId = null;
+    }
+
+    if (!providerId && DEFAULT_INDEXING_RULES.embeddingsProvider) {
+      providerId = DEFAULT_INDEXING_RULES.embeddingsProvider;
+    }
+
+    let provider: EmbeddingProvider | undefined;
+    if (providerId) {
+      provider = await this.getEmbeddingProvider(providerId, workspaceId);
+    }
+
+    if (!provider) {
+      const providers = await this.listEmbeddingProviders(workspaceId);
+      provider = providers.find((entry) => entry.isActive) ?? providers[0];
+    }
+
+    if (!provider) {
+      throw new WorkspaceVectorInitError(
+        "Для рабочего пространства не настроен сервис эмбеддингов. Укажите провайдера в админке.",
+        false,
+      );
+    }
+
+    return provider;
+  }
+
+  private resolveWorkspaceVectorSize(provider: EmbeddingProvider): number {
+    const configured = parseVectorSizeValue((provider as any)?.qdrantConfig?.vectorSize);
+    if (configured) {
+      return configured;
+    }
+
+    if (provider.providerType === "gigachat") {
+      return GIGACHAT_EMBEDDING_VECTOR_SIZE;
+    }
+
+    if (provider.providerType === "openai") {
+      return 1536;
+    }
+
+    throw new WorkspaceVectorInitError(
+      "Не удалось определить размер вектора для коллекции. Укажите vectorSize в настройках сервиса эмбеддингов.",
+      false,
+    );
+  }
+
+  async ensureWorkspaceVectorCollection(workspaceId: string): Promise<string> {
+    if (!workspaceId || workspaceId.trim().length === 0) {
+      throw new WorkspaceVectorInitError("Не указан workspaceId для инициализации коллекции", false);
+    }
+
+    await ensureWorkspacesTable();
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new WorkspaceVectorInitError("Рабочее пространство не найдено", false);
+    }
+
+    const isTestEnv = process.env.NODE_ENV === "test";
+    const enforceBootstrap = process.env.ENFORCE_WORKSPACE_VECTOR_BOOTSTRAP === "true";
+    const allowSoftFail = isTestEnv && !enforceBootstrap;
+
+    if (!process.env.QDRANT_URL && !allowSoftFail) {
+      throw new WorkspaceVectorInitError("Переменная окружения QDRANT_URL не задана", false);
+    }
+
+    let provider: EmbeddingProvider;
+    try {
+      provider = await this.resolveWorkspaceEmbeddingProviderForVectors(workspaceId);
+    } catch (error) {
+      if (allowSoftFail) {
+        console.warn(
+          "[WORKSPACES] Пропускаю инициализацию векторной коллекции в тестовом окружении: провайдер не настроен",
+        );
+        const fallbackCollection = buildWorkspaceVectorCollectionName(workspaceId, "default");
+        await this.upsertCollectionWorkspace(fallbackCollection, workspaceId);
+        return fallbackCollection;
+      }
+      throw error;
+    }
+
+    const collectionName = buildWorkspaceVectorCollectionName(workspaceId, provider.id);
+    let client;
+    try {
+      client = getQdrantClient();
+    } catch (error) {
+      if (allowSoftFail) {
+        console.warn(
+          "[WORKSPACES] Пропускаю инициализацию векторной коллекции в тестовом окружении: клиент Qdrant недоступен",
+          error instanceof Error ? error.message : error,
+        );
+        await this.upsertCollectionWorkspace(collectionName, workspaceId);
+        return collectionName;
+      }
+      throw new WorkspaceVectorInitError(
+        "Не удалось подготовить векторное хранилище для workspace: Qdrant недоступен",
+        true,
+      );
+    }
+
+    let collectionExists = false;
+    try {
+      await client.getCollection(collectionName);
+      collectionExists = true;
+    } catch (error) {
+      if (!isQdrantNotFoundError(error)) {
+        if (allowSoftFail) {
+          console.warn(
+            "[WORKSPACES] Пропускаю проверку векторной коллекции в тестовом окружении",
+            error instanceof Error ? error.message : error,
+          );
+          await this.upsertCollectionWorkspace(collectionName, workspaceId);
+          return collectionName;
+        }
+        throw new WorkspaceVectorInitError(
+          "Не удалось проверить наличие векторной коллекции workspace",
+          isQdrantRetryableError(error),
+        );
+      }
+    }
+
+    if (!collectionExists) {
+      const vectorSize = this.resolveWorkspaceVectorSize(provider);
+      try {
+        await client.createCollection(collectionName, {
+          vectors: { size: vectorSize, distance: "Cosine" },
+        });
+      } catch (error) {
+        if (!isQdrantAlreadyExistsError(error)) {
+          if (allowSoftFail) {
+            console.warn(
+              "[WORKSPACES] Пропускаю создание векторной коллекции в тестовом окружении",
+              error instanceof Error ? error.message : error,
+            );
+          } else {
+            throw new WorkspaceVectorInitError(
+              "Не удалось создать векторное хранилище для workspace. Проверьте доступность векторной БД.",
+              isQdrantRetryableError(error),
+            );
+          }
+        }
+      }
+    }
+
+    await this.upsertCollectionWorkspace(collectionName, workspaceId);
+    return collectionName;
+  }
+
   async ensurePersonalWorkspace(user: User): Promise<Workspace> {
     await ensureWorkspaceMembersTable();
 
@@ -6209,6 +6916,22 @@ export class DatabaseStorage implements IStorage {
 
     if (!member) {
       throw new Error("Не удалось сохранить участника рабочего пространства");
+    }
+
+    try {
+      await this.ensureWorkspaceVectorCollection(workspace.id);
+    } catch (error) {
+      console.error("[WORKSPACES] Failed to ensure vector collection for workspace", {
+        workspaceId: workspace.id,
+        error: error instanceof Error ? error.message : error,
+      });
+      if (error instanceof WorkspaceVectorInitError) {
+        throw error;
+      }
+      throw new WorkspaceVectorInitError(
+        "Не удалось подготовить векторное хранилище для рабочего пространства",
+        true,
+      );
     }
 
     try {

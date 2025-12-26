@@ -1372,7 +1372,7 @@ export const chatAttachments = pgTable(
 export type ChatAttachment = typeof chatAttachments.$inferSelect;
 export type ChatAttachmentInsert = typeof chatAttachments.$inferInsert;
 
-export const skillFileStatuses = ["uploaded", "processing", "error"] as const;
+export const skillFileStatuses = ["uploaded", "processing", "ready", "error"] as const;
 export type SkillFileStatus = (typeof skillFileStatuses)[number];
 
 export const skillFiles = pgTable(
@@ -1389,8 +1389,12 @@ export const skillFiles = pgTable(
     originalName: text("original_name").notNull(),
     mimeType: text("mime_type"),
     sizeBytes: bigint("size_bytes", { mode: "number" }),
+    version: integer("version").notNull().default(1),
     status: text("status").$type<SkillFileStatus>().notNull().default("uploaded"),
+    processingStatus: text("processing_status").$type<SkillFileStatus>().notNull().default("processing"),
+    processingErrorMessage: text("processing_error_message"),
     createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    errorMessage: text("error_message"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
   (table) => ({
@@ -1401,6 +1405,52 @@ export const skillFiles = pgTable(
 
 export type SkillFile = typeof skillFiles.$inferSelect;
 export type SkillFileInsert = typeof skillFiles.$inferInsert;
+
+export const skillFileIngestionJobStatuses = ["pending", "running", "done", "error"] as const;
+export type SkillFileIngestionJobStatus = (typeof skillFileIngestionJobStatuses)[number];
+
+export const skillFileIngestionJobs = pgTable(
+  "skill_file_ingestion_jobs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    jobType: text("job_type").notNull().default("skill_file_ingestion"),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    skillId: varchar("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    fileId: uuid("file_id")
+      .notNull()
+      .references(() => skillFiles.id, { onDelete: "cascade" }),
+    fileVersion: integer("file_version").notNull(),
+    status: text("status").$type<SkillFileIngestionJobStatus>().notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextRetryAt: timestamp("next_retry_at"),
+    lastError: text("last_error"),
+    chunkCount: integer("chunk_count"),
+    totalChars: integer("total_chars"),
+    totalTokens: integer("total_tokens"),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    uniqueJob: uniqueIndex("skill_file_ingestion_jobs_unique_job_idx").on(
+      table.jobType,
+      table.fileId,
+      table.fileVersion,
+    ),
+    workspaceIdx: index("skill_file_ingestion_jobs_workspace_idx").on(
+      table.workspaceId,
+      table.status,
+      table.nextRetryAt,
+    ),
+    skillIdx: index("skill_file_ingestion_jobs_skill_idx").on(table.skillId, table.status, table.nextRetryAt),
+  }),
+);
+
+export type SkillFileIngestionJob = typeof skillFileIngestionJobs.$inferSelect;
+export type SkillFileIngestionJobInsert = typeof skillFileIngestionJobs.$inferInsert;
 
 export const canvasDocumentTypes = ["source", "derived", "summary", "cleaned", "custom"] as const;
 export type CanvasDocumentType = (typeof canvasDocumentTypes)[number];

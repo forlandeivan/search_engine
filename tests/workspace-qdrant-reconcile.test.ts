@@ -22,10 +22,8 @@ vi.mock("../server/qdrant", async () => {
   };
 });
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { __setMockQdrantClient } = require("../server/qdrant") as {
-  __setMockQdrantClient: (client: Partial<QdrantClient>) => void;
-};
+// @ts-expect-error mock helper is injected by vi.mock
+import { __setMockQdrantClient } from "../server/qdrant";
 
 async function createUser(email: string) {
   const passwordHash = await bcrypt.hash("Password123!", 10);

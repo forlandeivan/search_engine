@@ -35,6 +35,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { UploadCloud } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const parseTab = (search: string | null | undefined): SkillSettingsTab | null => {
   if (!search) return null;
@@ -508,6 +520,7 @@ export function SkillFilesSection({
   workspaceId,
   skillId,
   uploadFiles,
+  initialFiles,
 }: {
   canEdit: boolean;
   workspaceId: string | null;
@@ -515,17 +528,63 @@ export function SkillFilesSection({
   uploadFiles?: (params: { workspaceId: string; skillId: string; files: File[] }) => Promise<{
     files: Array<{ id?: string; name?: string; size?: number | null; contentType?: string | null; status?: string }>;
   }>;
+  initialFiles?: Array<{
+    id?: string;
+    name: string;
+    size?: number | null;
+    contentType?: string | null;
+    status?: string;
+    errorMessage?: string | null;
+    createdAt?: string | null;
+  }>;
 }) {
   if (!canEdit) {
     return null;
   }
 
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [persistedFiles, setPersistedFiles] = useState<
+    Array<{
+      id?: string;
+      name: string;
+      size?: number | null;
+      contentType?: string | null;
+      status?: string;
+      errorMessage?: string | null;
+      createdAt?: string | null;
+    }>
+  >(initialFiles ?? []);
+  const skillFilesQuery = useQuery({
+    queryKey: ["/api/workspaces", workspaceId, "skills", skillId, "files"],
+    enabled: Boolean(workspaceId && skillId),
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/workspaces/${workspaceId}/skills/${skillId}/files`);
+      return (await res.json()) as {
+        files: Array<{
+          id?: string;
+          name: string;
+          size?: number | null;
+          contentType?: string | null;
+          status?: string;
+          errorMessage?: string | null;
+          createdAt?: string | null;
+        }>;
+      };
+    },
+  });
+
+  useEffect(() => {
+    if (skillFilesQuery.data?.files) {
+      setPersistedFiles(skillFilesQuery.data.files);
+    }
+  }, [skillFilesQuery.data]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploads, setUploads] = useState<
     Array<{ id: string; name: string; size?: number | null; status: string; error?: string }>
   >([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const generateId = () => (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2));
 
@@ -540,7 +599,15 @@ export function SkillFilesSection({
           formData,
         );
         return (await res.json()) as {
-          files: Array<{ id?: string; name?: string; size?: number | null; contentType?: string | null; status?: string }>;
+          files: Array<{
+            id?: string;
+            name?: string;
+            size?: number | null;
+            contentType?: string | null;
+            status?: string;
+            errorMessage?: string | null;
+            createdAt?: string | null;
+          }>;
         };
       };
 
@@ -548,7 +615,7 @@ export function SkillFilesSection({
     if (files.length > 10) {
       return { valid: [], error: "За один раз можно загрузить до 10 файлов" };
     }
-    const allowedExt = [".pdf", ".docx", ".txt"];
+    const allowedExt = [".pdf", ".docx", ".doc", ".txt"];
     const oversized = files.find((file) => file.size > 512 * 1024 * 1024);
     if (oversized) {
       return { valid: [], error: "Файл слишком большой (максимум 512MB)" };
@@ -558,7 +625,7 @@ export function SkillFilesSection({
       return !allowedExt.includes(ext);
     });
     if (unsupported) {
-      return { valid: [], error: "Формат не поддерживается. Загрузите PDF, DOCX или TXT." };
+      return { valid: [], error: "Формат не поддерживается. Загрузите PDF, DOC, DOCX или TXT." };
     }
     return { valid: files };
   };
@@ -597,9 +664,23 @@ export function SkillFilesSection({
           name: fromApi?.name || pending.name,
           size: fromApi?.size ?? pending.size,
           status: fromApi?.status || "uploaded",
-          error: undefined,
+          error: fromApi?.status === "error" ? fromApi.errorMessage || "Не удалось загрузить файл" : undefined,
         };
       });
+      const persisted = (response?.files ?? [])
+        .filter((item) => item.status !== "error")
+        .map((item) => ({
+          id: item.id,
+          name: item.name ?? "",
+          size: item.size ?? null,
+          contentType: item.contentType ?? null,
+          status: item.status ?? "uploaded",
+          errorMessage: item.errorMessage ?? null,
+          createdAt: item.createdAt ?? null,
+        }));
+      if (persisted.length > 0) {
+        setPersistedFiles((prev) => [...persisted, ...prev]);
+      }
       setUploads((prev) => [...prev.filter((item) => !pendingIds.includes(item.id)), ...updated]);
       toast({ title: "Файлы загружены" });
     } catch (error) {
@@ -612,6 +693,11 @@ export function SkillFilesSection({
       toast({ title: "Ошибка загрузки", description: message, variant: "destructive" });
     } finally {
       setIsUploading(false);
+      if (workspaceId && skillId) {
+        void queryClient.invalidateQueries({
+          queryKey: ["/api/workspaces", workspaceId, "skills", skillId, "files"],
+        });
+      }
     }
   };
 
@@ -631,6 +717,23 @@ export function SkillFilesSection({
   const triggerFileDialog = () => {
     fileInputRef.current?.click();
   };
+
+  const combinedFiles = [...uploads.map((item) => ({ ...item, isPending: true })), ...persistedFiles];
+
+  const handleDeleteConfirmed = async (fileId?: string) => {
+    if (!fileId || !workspaceId || !skillId) return;
+    try {
+      await apiRequest("DELETE", `/api/workspaces/${workspaceId}/skills/${skillId}/files/${fileId}`);
+      setPersistedFiles((prev) => prev.filter((item) => item.id !== fileId));
+      toast({ title: "Файл удалён" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось удалить файл";
+      toast({ title: "Ошибка удаления", description: message, variant: "destructive" });
+    }
+    setPendingDeleteId(null);
+  };
+
+  const combinedFiles = [...uploads.map((item) => ({ ...item, isPending: true })), ...persistedFiles];
 
   return (
     <Card data-testid="skill-files-section">
@@ -682,25 +785,78 @@ export function SkillFilesSection({
           </div>
 
           {uploads.length > 0 ? (
+          {skillFilesQuery.isLoading ? (
+            <div className="text-sm text-muted-foreground">Загружаем список файлов…</div>
+          ) : skillFilesQuery.isError ? (
+            <div className="text-sm text-destructive">Не удалось загрузить список файлов</div>
+          ) : combinedFiles.length > 0 ? (
             <div className="space-y-2">
-              {uploads.map((item) => (
+              {combinedFiles.map((item) => (
                 <div key={item.id} className="flex items-center justify-between gap-2 rounded-md border p-2">
                   <div className="flex flex-col">
                     <span className="text-sm font-medium">{item.name}</span>
                     {item.size ? (
                       <span className="text-xs text-muted-foreground">{(item.size / 1024).toFixed(1)} KB</span>
                     ) : null}
-                    {item.error ? <span className="text-xs text-destructive">{item.error}</span> : null}
+                    {item.error || item.errorMessage ? (
+                      <span className="text-xs text-destructive">{item.error ?? item.errorMessage}</span>
+                    ) : null}
+                    {item.createdAt ? (
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(item.createdAt).toLocaleString("ru-RU")}
+                      </span>
+                    ) : null}
                   </div>
-                  <Badge variant={item.status === "error" ? "destructive" : "outline"}>
-                    {item.status === "uploading" ? "Загружается" : item.status === "error" ? "Ошибка" : "Загружен"}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant={item.status === "error" ? "destructive" : item.status === "uploading" ? "outline" : "default"}
+                    >
+                      {item.status === "uploading"
+                        ? "Загружается"
+                        : item.status === "error"
+                          ? "Ошибка"
+                          : "Загружен"}
+                    </Badge>
+                    {item.status !== "uploading" && item.id ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setPendingDeleteId(item.id ?? null)}
+                        data-testid={`skill-file-delete-${item.id}`}
+                      >
+                        Удалить
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
           ) : null}
         </div>
       </CardContent>
+      <AlertDialog open={Boolean(pendingDeleteId)} onOpenChange={(open) => !open && setPendingDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить файл?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Файл будет удалён из навыка и перестанет использоваться в ответах. Действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isUploading} onClick={() => setPendingDeleteId(null)}>
+              Отмена
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isUploading}
+              onClick={() => {
+                void handleDeleteConfirmed(pendingDeleteId ?? undefined);
+              }}
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

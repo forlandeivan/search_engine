@@ -28,6 +28,9 @@ import {
   ModelValidationError,
   tryResolveModel,
 } from "./model-service";
+import { resolveEmbeddingProviderForWorkspace } from "./indexing-rules";
+import { searchSkillFileVectors } from "./skill-file-vector-store";
+import { embedTextWithProvider } from "./skill-file-embeddings";
 import type { SyncFinalResult } from "./no-code-events";
 
 export class ChatServiceError extends Error {
@@ -420,6 +423,136 @@ export type ChatLlmContext = {
   modelInfo: Model | null;
   messages: ChatConversationMessage[];
   contextInputLimit: number | null;
+  retrievedContext?: string[];
+};
+
+class RetrievalTimeoutError extends Error {
+  constructor(public readonly operation: string, public readonly timeoutMs: number) {
+    super(`Retrieval timeout: ${operation} exceeded ${timeoutMs}ms`);
+    this.name = "RetrievalTimeoutError";
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promise;
+  }
+
+  let timer: NodeJS.Timeout | null = null;
+  return Promise.race([
+    promise.finally(() => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }),
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new RetrievalTimeoutError(operation, timeoutMs));
+      }, timeoutMs);
+    }),
+  ]);
+}
+
+const EMBED_TIMEOUT_MS = Number(process.env.CHAT_RETRIEVAL_EMBED_TIMEOUT_MS ?? "800");
+const VECTOR_TIMEOUT_MS = Number(process.env.CHAT_RETRIEVAL_VECTOR_TIMEOUT_MS ?? "800");
+
+async function buildSkillRetrievalContext(options: {
+  workspaceId: string;
+  skill: SkillDto;
+  userMessage: string;
+}): Promise<string[] | null> {
+  const { workspaceId, skill, userMessage } = options;
+  const readyFileIds = await storage.listReadySkillFileIds(workspaceId, skill.id);
+  if (readyFileIds.length === 0) {
+    return null;
+  }
+
+  let provider;
+  let rules;
+  try {
+    const resolved = await resolveEmbeddingProviderForWorkspace({ workspaceId });
+    provider = resolved.provider;
+    rules = resolved.rules;
+  } catch (error) {
+    console.warn("[chat-retrieval] embedding provider not available", { workspaceId, skillId: skill.id, error });
+    return null;
+  }
+
+  let embedding;
+  try {
+    embedding = await withTimeout(
+      embedTextWithProvider(provider, userMessage),
+      EMBED_TIMEOUT_MS,
+      "query_embedding",
+    );
+  } catch (error) {
+    console.warn("[chat-retrieval] failed to embed user message", { workspaceId, skillId: skill.id, error });
+    return null;
+  }
+
+  let searchResult;
+  try {
+    searchResult = await withTimeout(
+      searchSkillFileVectors({
+        workspaceId,
+        skillId: skill.id,
+        provider,
+        vector: embedding.vector,
+        limit: rules.topK ?? 6,
+        caller: "chat_runtime",
+      }),
+      VECTOR_TIMEOUT_MS,
+      "vector_search",
+    );
+  } catch (error) {
+    console.warn("[chat-retrieval] vector search failed", { workspaceId, skillId: skill.id, error });
+    return null;
+  }
+
+  if (!searchResult || searchResult.guardrailTriggered) {
+    return null;
+  }
+
+  const threshold = rules.relevanceThreshold ?? 0;
+  const filtered = (searchResult.results ?? []).filter((item) => {
+    const score = typeof item.score === "number" ? item.score : null;
+    if (score !== null && score < threshold) {
+      return false;
+    }
+    const docId = typeof (item.payload as any)?.doc_id === "string" ? (item.payload as any).doc_id : null;
+    if (docId && !readyFileIds.includes(docId)) {
+      return false;
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    return null;
+  }
+
+  const fragments: string[] = [];
+  for (const entry of filtered.slice(0, rules.topK ?? 6)) {
+    const textCandidate = (entry.payload as any)?.chunk_text ?? (entry.payload as any)?.text ?? null;
+    if (typeof textCandidate === "string" && textCandidate.trim()) {
+      fragments.push(textCandidate.trim());
+    }
+  }
+
+  if (fragments.length > 0) {
+    console.info("[chat-retrieval] scope", {
+      workspaceId,
+      skillId: skill.id,
+      topK: rules.topK ?? null,
+      threshold: rules.relevanceThreshold ?? null,
+      results: fragments.length,
+    });
+  }
+
+  return fragments.length > 0 ? fragments : null;
+}
+
+export const __chatServiceTestUtils = {
+  buildSkillRetrievalContext,
 };
 
 export type BuildChatLlmContextOptions = {
@@ -690,9 +823,29 @@ export async function buildChatLlmContext(
     content: entry.content,
   }));
 
-  // TODO: for skillContext.isRagSkill, enrich conversation with RAG context before calling LLM.
   const contextLimit = skill.contextInputLimit ?? null;
   const limitedConversation = applyContextLimitByCharacters(conversation, contextLimit);
+  let retrievedContext: string[] | undefined;
+
+  const lastUserMessage = [...limitedConversation].reverse().find((entry) => entry.role === "user");
+  if (lastUserMessage?.content) {
+    try {
+      const fragments = await buildSkillRetrievalContext({
+        workspaceId,
+        skill,
+        userMessage: lastUserMessage.content,
+      });
+      if (fragments && fragments.length > 0) {
+        retrievedContext = fragments;
+      }
+    } catch (error) {
+      console.warn("[chat-retrieval] unexpected error while building context", {
+        workspaceId,
+        skillId: skill.id,
+        error,
+      });
+    }
+  }
 
   return {
     chat,
@@ -704,6 +857,7 @@ export async function buildChatLlmContext(
     modelInfo,
     messages: limitedConversation,
     contextInputLimit: contextLimit,
+    retrievedContext,
   };
 }
 
@@ -720,6 +874,17 @@ export function buildChatCompletionRequestBody(
 
   if (systemPrompt) {
     llmMessages.push({ role: "system", content: systemPrompt });
+  }
+
+  if (context.retrievedContext && context.retrievedContext.length > 0) {
+    const contextLines = context.retrievedContext
+      .slice(0, requestConfig.maxTokens ? Math.max(1, Math.min(context.retrievedContext.length, 8)) : 8)
+      .map((entry, index) => `${index + 1}. ${entry}`)
+      .join("\n");
+    llmMessages.push({
+      role: "system",
+      content: `Контекст из документов навыка (используй только как фактологическую опору, не придумывай новое):\n${contextLines}`,
+    });
   }
 
   for (const message of context.messages) {

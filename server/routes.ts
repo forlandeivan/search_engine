@@ -10,7 +10,8 @@ import { createHash, randomUUID, randomBytes } from "crypto";
 import { extname } from "path";
 import { performance } from "perf_hooks";
 import { storage } from "./storage";
-import { uploadWorkspaceFile } from "./workspace-storage-service";
+import { uploadWorkspaceFile, deleteObject as deleteWorkspaceObject } from "./workspace-storage-service";
+import { cleanupFailedSkillFileUpload, type UploadedSkillFileDescriptor } from "./skill-file-upload-utils";
 import type { KnowledgeChunkSearchEntry, WorkspaceMemberWithUser } from "./storage";
 import {
   startKnowledgeBaseCrawl,
@@ -81,6 +82,7 @@ import { emailConfirmationTokenService, EmailConfirmationTokenError } from "./em
 import { registrationEmailService } from "./email-sender-registry";
 import { SmtpSendError } from "./smtp-email-sender";
 import { EmailValidationError } from "./email";
+import { searchSkillFileVectors, deleteSkillFileVectors, VectorStoreError } from "./skill-file-vector-store";
 import { systemNotificationLogService } from "./system-notification-log-service";
 import {
   clearWorkspaceIcon,
@@ -3630,6 +3632,11 @@ async function runKnowledgeBaseRagPipeline(options: {
       vectorCollectionsToSearch.length > 0 ? vectorCollectionsToSearch.join(", ") : null;
 
     vectorConfigured = Boolean(vectorCollectionsToSearch.length > 0 && embeddingProviderId);
+    if (normalizedSkillId && vectorCollectionsToSearch.length === 0 && embeddingProviderId) {
+      vectorCollectionsToSearch = ["__skill_file_autoselect__"];
+      vectorCollection = vectorCollectionsToSearch[0];
+      vectorConfigured = true;
+    }
     if (vectorConfigured) {
       if (!hasVectorWeightOverride) {
         vectorWeight = 0.5;
@@ -3801,140 +3808,189 @@ async function runKnowledgeBaseRagPipeline(options: {
           throw new Error("Не удалось определить workspaceId для запроса к публичному API коллекций");
         }
 
-        const apiBaseUrl = resolvePublicApiBaseUrl(req);
-        const requestUrl = new URL(
-          "/api/public/collections/search/vector",
-          `${apiBaseUrl}/`,
-        ).toString();
-
         const vectorPayload = buildVectorPayload(
           embeddingResult.vector,
           embeddingProvider.qdrantConfig?.vectorFieldName,
         );
 
         let lastVectorResponseStatus = 200;
+        const aggregatedVectorResults: Array<{ collection: string; record: Record<string, unknown> }> = [];
 
-        for (const collectionName of vectorCollectionsToSearch) {
-          const embedKey = await storage.getOrCreateWorkspaceEmbedKey(
+        if (normalizedSkillId) {
+        const searchResult = await searchSkillFileVectors({
+          workspaceId,
+          skillId: normalizedSkillId,
+          provider: embeddingProvider,
+          vector: vectorPayload,
+          limit: vectorLimit,
+          caller: "rag_pipeline",
+        });
+
+        if (searchResult.guardrailTriggered) {
+          vectorCollectionsToSearch = [];
+          vectorCollection = null;
+          vectorConfigured = false;
+          console.warn("[RAG VECTOR] guardrail triggered, vector search skipped", {
+            reason: searchResult.guardrailReason,
             workspaceId,
-            collectionName,
-            knowledgeBaseId,
-          );
-          const embedDomains = await storage.listWorkspaceEmbedKeyDomains(embedKey.id, workspaceId);
-          const embedOriginDomain =
-            embedDomains.find((entry) => typeof entry.domain === "string" && entry.domain.trim().length > 0)
-              ?.domain?.trim() ?? null;
-          const embedOriginHeader = embedOriginDomain ? `https://${embedOriginDomain}` : null;
-
-          const vectorRequestPayload = removeUndefinedDeep({
-            collection: collectionName,
-            workspace_id: workspaceId,
-            vector: cloneVectorPayload(vectorPayload),
-            limit: vectorLimit,
-            withPayload: true,
-            withVector: false,
+            skillId: normalizedSkillId,
           });
-
-          vectorStep.setInput({
-            limit: vectorLimit,
-            collections: vectorCollectionsToSearch,
-            collection: collectionName,
-            embeddingProviderId,
-            request: {
-              url: requestUrl,
-              headers: {
-                "Content-Type": "application/json",
-                "X-API-Key": "***",
-              },
-              payload: vectorRequestPayload,
-            },
-          });
-
-          let vectorResponse: FetchResponse;
-          try {
-            vectorResponse = await fetch(requestUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-API-Key": embedKey.publicKey,
-                ...(embedOriginHeader
-                  ? { "X-Embed-Origin": embedOriginHeader, Origin: embedOriginHeader }
-                  : {}),
-              },
-              body: JSON.stringify(vectorRequestPayload),
-            });
-          } catch (networkError) {
-            throw new Error(
-              "Vector search API request failed before reaching the workspace endpoint",
-            );
+        } else {
+          vectorCollectionsToSearch = [searchResult.collection!];
+          vectorCollection = searchResult.collection;
+          vectorConfigured = true;
+          if (!hasVectorWeightOverride && vectorWeight === 0) {
+            vectorWeight = 0.5;
+          }
+          if (!hasBm25WeightOverride && vectorWeight > 0 && bm25Weight === 1) {
+            bm25Weight = 0.5;
           }
 
-          lastVectorResponseStatus = vectorResponse.status;
-
-          const rawVectorResponse = await vectorResponse.text();
-          vectorDuration = performance.now() - vectorStart;
-          const parsedVectorResponse = parseJson(rawVectorResponse);
-
-          console.log(`[RAG VECTOR DEBUG] Response status: ${vectorResponse.status}`);
-          console.log(`[RAG VECTOR DEBUG] Response body: ${rawVectorResponse.slice(0, 500)}`);
-          console.log(`[RAG VECTOR DEBUG] Collection: ${collectionName}`);
-          console.log(`[RAG VECTOR DEBUG] Embed key: ${embedKey.publicKey.slice(0, 10)}...`);
-
-          if (!vectorResponse.ok) {
-            const errorMessage =
-              parsedVectorResponse && typeof parsedVectorResponse === "object" &&
-              typeof (parsedVectorResponse as Record<string, unknown>).error === "string"
-                ? ((parsedVectorResponse as Record<string, unknown>).error as string)
-                : `Vector API error (${vectorResponse.status}): ${rawVectorResponse.slice(0, 200)}`;
-            console.error(`[RAG VECTOR DEBUG] Error: ${errorMessage}`);
-            throw new HttpError(vectorResponse.status, errorMessage, parsedVectorResponse);
-          }
-
-          if (
-            !parsedVectorResponse ||
-            typeof parsedVectorResponse !== "object" ||
-            !Array.isArray((parsedVectorResponse as Record<string, unknown>).results)
-          ) {
-            throw new Error("Workspace vector search API returned a malformed response");
-          }
-
-          const vectorResults = (parsedVectorResponse as {
-            results: Array<Record<string, unknown>>;
-          }).results;
-
-          const formattedResults = vectorResults.map((item) => ({
-            collection: collectionName,
-            id: item.id ?? null,
-            score: normalizeVectorScore(item.score),
-            payload: (item.payload as Record<string, unknown> | undefined) ?? null,
-          }));
-
-          vectorSearchDetails = [
-            ...(vectorSearchDetails ?? []),
-            ...formattedResults,
-          ];
-
-          sanitizedVectorResults.push(
-            ...vectorResults.map((item) => ({
-              id: item.id ?? null,
-              payload: (item.payload as Record<string, unknown> | undefined) ?? null,
-              score: normalizeVectorScore(item.score),
-              shard_key: (item as Record<string, unknown>).shard_key ?? null,
-              order_value: (item as Record<string, unknown>).order_value ?? null,
+          aggregatedVectorResults.push(
+            ...searchResult.results.map((item) => ({
+              collection: searchResult.collection!,
+              record: item as Record<string, unknown>,
             })),
           );
+        }
 
-          for (const item of vectorResults) {
-            const payload = (item.payload as Record<string, unknown> | undefined) ?? null;
-            const rawScore = normalizeVectorScore(item.score);
+        vectorDuration = performance.now() - vectorStart;
+      } else {
+        const apiBaseUrl = resolvePublicApiBaseUrl(req);
+          const requestUrl = new URL(
+            "/api/public/collections/search/vector",
+            `${apiBaseUrl}/`,
+          ).toString();
 
-            vectorChunks.push({
-              chunkId: typeof payload?.chunk_id === "string" ? payload.chunk_id : "",
-              score: rawScore ?? 0,
-              recordId: typeof item.id === "string" ? item.id : null,
-              payload,
+          for (const collectionName of vectorCollectionsToSearch) {
+            const embedKey = await storage.getOrCreateWorkspaceEmbedKey(
+              workspaceId,
+              collectionName,
+              knowledgeBaseId,
+            );
+            const embedDomains = await storage.listWorkspaceEmbedKeyDomains(embedKey.id, workspaceId);
+            const embedOriginDomain =
+              embedDomains.find((entry) => typeof entry.domain === "string" && entry.domain.trim().length > 0)
+                ?.domain?.trim() ?? null;
+            const embedOriginHeader = embedOriginDomain ? `https://${embedOriginDomain}` : null;
+
+            const vectorRequestPayload = removeUndefinedDeep({
+              collection: collectionName,
+              workspace_id: workspaceId,
+              vector: cloneVectorPayload(vectorPayload),
+              limit: vectorLimit,
+              withPayload: true,
+              withVector: false,
             });
+
+            vectorStep.setInput({
+              limit: vectorLimit,
+              collections: vectorCollectionsToSearch,
+              collection: collectionName,
+              embeddingProviderId,
+              request: {
+                url: requestUrl,
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-API-Key": "***",
+                },
+                payload: vectorRequestPayload,
+              },
+            });
+
+            let vectorResponse: FetchResponse;
+            try {
+              vectorResponse = await fetch(requestUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-API-Key": embedKey.publicKey,
+                  ...(embedOriginHeader
+                    ? { "X-Embed-Origin": embedOriginHeader, Origin: embedOriginHeader }
+                    : {}),
+                },
+                body: JSON.stringify(vectorRequestPayload),
+              });
+            } catch (networkError) {
+              throw new Error(
+                "Vector search API request failed before reaching the workspace endpoint",
+              );
+            }
+
+            lastVectorResponseStatus = vectorResponse.status;
+
+            const rawVectorResponse = await vectorResponse.text();
+            vectorDuration = performance.now() - vectorStart;
+            const parsedVectorResponse = parseJson(rawVectorResponse);
+
+            console.log(`[RAG VECTOR DEBUG] Response status: ${vectorResponse.status}`);
+            console.log(`[RAG VECTOR DEBUG] Response body: ${rawVectorResponse.slice(0, 500)}`);
+            console.log(`[RAG VECTOR DEBUG] Collection: ${collectionName}`);
+            console.log(`[RAG VECTOR DEBUG] Embed key: ${embedKey.publicKey.slice(0, 10)}...`);
+
+            if (!vectorResponse.ok) {
+              const errorMessage =
+                parsedVectorResponse && typeof parsedVectorResponse === "object" &&
+                typeof (parsedVectorResponse as Record<string, unknown>).error === "string"
+                  ? ((parsedVectorResponse as Record<string, unknown>).error as string)
+                  : `Vector API error (${vectorResponse.status}): ${rawVectorResponse.slice(0, 200)}`;
+              console.error(`[RAG VECTOR DEBUG] Error: ${errorMessage}`);
+              throw new HttpError(vectorResponse.status, errorMessage, parsedVectorResponse);
+            }
+
+            if (
+              !parsedVectorResponse ||
+              typeof parsedVectorResponse !== "object" ||
+              !Array.isArray((parsedVectorResponse as Record<string, unknown>).results)
+            ) {
+              throw new Error("Workspace vector search API returned a malformed response");
+            }
+
+            const vectorResults = (parsedVectorResponse as {
+              results: Array<Record<string, unknown>>;
+            }).results;
+
+            aggregatedVectorResults.push(
+              ...vectorResults.map((item) => ({
+                collection: collectionName,
+                record: item,
+              })),
+            );
           }
+        }
+
+        const formattedResults = aggregatedVectorResults.map(({ collection, record }) => ({
+          collection,
+          id: record.id ?? null,
+          score: normalizeVectorScore((record as any).score),
+          payload: (record.payload as Record<string, unknown> | undefined) ?? null,
+        }));
+
+        vectorSearchDetails = [
+          ...(vectorSearchDetails ?? []),
+          ...formattedResults,
+        ];
+
+        sanitizedVectorResults.push(
+          ...aggregatedVectorResults.map(({ record }) => ({
+            id: record.id ?? null,
+            payload: (record.payload as Record<string, unknown> | undefined) ?? null,
+            score: normalizeVectorScore((record as any).score),
+            shard_key: (record as Record<string, unknown>).shard_key ?? null,
+            order_value: (record as Record<string, unknown>).order_value ?? null,
+          })),
+        );
+
+        for (const { record } of aggregatedVectorResults) {
+          const payload = (record.payload as Record<string, unknown> | undefined) ?? null;
+          const rawScore = normalizeVectorScore((record as any).score);
+
+          vectorChunks.push({
+            chunkId: typeof payload?.chunk_id === "string" ? payload.chunk_id : "",
+            score: rawScore ?? 0,
+            recordId: typeof record.id === "string" ? record.id : null,
+            payload,
+          });
         }
 
         vectorResultCount = vectorChunks.length;
@@ -3960,6 +4016,36 @@ async function runKnowledgeBaseRagPipeline(options: {
         "Векторный поиск отключён",
       );
       skipPipelineStep("vector_search", "Векторный поиск", "Векторный поиск отключён");
+    }
+
+    if (normalizedSkillId && vectorChunks.length > 0) {
+      const files = await storage.listSkillFiles(workspaceId, normalizedSkillId);
+      const readyIds = new Set(
+        files
+          .filter((entry) => (entry as any)?.processingStatus === "ready")
+          .map((entry) => entry.id)
+          .filter(Boolean),
+      );
+
+      if (readyIds.size === 0) {
+        vectorChunks.length = 0;
+        sanitizedVectorResults.length = 0;
+      } else {
+        const filteredVectorChunks = vectorChunks.filter((entry) => {
+          const docId = typeof entry.payload?.doc_id === "string" ? entry.payload.doc_id : null;
+          return docId ? readyIds.has(docId) : true;
+        });
+        const filteredSanitized = sanitizedVectorResults.filter((entry) => {
+          const docId = typeof entry.payload?.doc_id === "string" ? entry.payload.doc_id : null;
+          return docId ? readyIds.has(docId) : true;
+        });
+
+        vectorChunks.length = 0;
+        vectorChunks.push(...filteredVectorChunks);
+
+        sanitizedVectorResults.length = 0;
+        sanitizedVectorResults.push(...filteredSanitized);
+      }
     }
 
     const chunkDetailsFromVector = await storage.getKnowledgeChunksByIds(
@@ -7087,10 +7173,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   });
 
+  const MAX_SKILL_FILE_SIZE_BYTES = 512 * 1024 * 1024;
+  const MAX_DOC_TOKENS = 2_000_000;
+  const APPROX_BYTES_PER_TOKEN = 4;
+  const MAX_DOC_SIZE_FOR_TOKENS = MAX_DOC_TOKENS * APPROX_BYTES_PER_TOKEN;
+
   const skillFilesUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: 512 * 1024 * 1024,
+      fileSize: MAX_SKILL_FILE_SIZE_BYTES,
       files: 10,
     },
   });
@@ -7100,7 +7191,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     return safe.length > 0 ? safe : "file";
   };
 
-  const ALLOWED_SKILL_FILE_EXTENSIONS = new Set([".pdf", ".docx", ".txt"]);
+  const ALLOWED_SKILL_FILE_EXTENSIONS = new Set([".pdf", ".docx", ".doc", ".txt"]);
 
   const buildAttachmentKey = (chatId: string, filename: string): string => {
     return `attachments/${chatId}/${randomUUID()}-${filename}`;
@@ -10527,46 +10618,214 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(400).json({ message: "За один раз можно загрузить до 10 файлов" });
         }
 
-        for (const file of files) {
+        const results: Array<{
+          id?: string;
+          name: string;
+          size: number | null;
+          contentType: string | null;
+          status: "uploaded" | "error";
+          errorMessage?: string | null;
+          createdAt?: string;
+          version?: number;
+          ingestionStatus?: "pending" | "running" | "done" | "error";
+          processingStatus?: "processing" | "ready" | "error";
+          processingErrorMessage?: string | null;
+        }> = [];
+        const toInsert: Array<{
+          workspaceId: string;
+          skillId: string;
+          storageKey: string;
+          originalName: string;
+          mimeType: string | null;
+          sizeBytes: number | null;
+          status: "uploaded" | "error";
+          createdByUserId: string | null;
+          errorMessage?: string | null;
+          processingStatus?: "processing" | "ready" | "error";
+          processingErrorMessage?: string | null;
+        }> = [];
+        const validIndices: number[] = [];
+        const uploadedKeys: UploadedSkillFileDescriptor[] = [];
+
+        for (const [index, file] of files.entries()) {
           const ext = extname(file.originalname || "").toLowerCase();
           if (!ALLOWED_SKILL_FILE_EXTENSIONS.has(ext)) {
-            return res.status(400).json({
-              message: "Формат файла не поддерживается. Загрузите PDF, DOCX или TXT.",
-              code: "UNSUPPORTED_FILE_TYPE",
+            results.push({
+              name: file.originalname || "file",
+              size: file.size ?? null,
+              contentType: file.mimetype || null,
+              status: "error",
+              errorMessage: "Формат файла не поддерживается. Загрузите PDF, DOC, DOCX или TXT.",
+            });
+            continue;
+          }
+          if (file.size > MAX_SKILL_FILE_SIZE_BYTES) {
+            results.push({
+              name: file.originalname || "file",
+              size: file.size ?? null,
+              contentType: file.mimetype || null,
+              status: "error",
+              errorMessage: "Слишком большой файл. Максимум 512MB. Уменьшите или разбейте файл на части.",
+            });
+            continue;
+          }
+          if (file.size > MAX_DOC_SIZE_FOR_TOKENS) {
+            results.push({
+              name: file.originalname || "file",
+              size: file.size ?? null,
+              contentType: file.mimetype || null,
+              status: "error",
+              errorMessage: "Слишком большой документ. Разбейте файл на несколько частей или уменьшите объём текста.",
+            });
+            continue;
+          }
+
+          const safeName = sanitizeFilename(file.originalname || "file");
+          const objectKey = `files/skills/${skillId}/${randomUUID()}-${safeName}`;
+          try {
+            await uploadWorkspaceFile(workspaceId, objectKey, file.buffer, file.mimetype, file.size);
+            toInsert.push({
+              workspaceId,
+              skillId,
+              storageKey: objectKey,
+              originalName: file.originalname || safeName,
+              mimeType: file.mimetype || null,
+              sizeBytes: file.size,
+              status: "uploaded",
+              processingStatus: "processing",
+              createdByUserId: user.id,
+            });
+            validIndices.push(index);
+            uploadedKeys.push({ key: objectKey, resultIndex: results.length });
+            results.push({
+              name: file.originalname || safeName,
+              size: file.size ?? null,
+              contentType: file.mimetype || null,
+              status: "uploaded",
+              processingStatus: "processing",
+            });
+          } catch (error) {
+            results.push({
+              name: file.originalname || safeName,
+              size: file.size ?? null,
+              contentType: file.mimetype || null,
+              status: "error",
+              errorMessage: "Не удалось сохранить файл. Попробуйте ещё раз.",
             });
           }
         }
 
-        const toInsert = [];
-        for (const file of files) {
-          const safeName = sanitizeFilename(file.originalname || "file");
-          const objectKey = `files/skills/${skillId}/${randomUUID()}-${safeName}`;
-          await uploadWorkspaceFile(workspaceId, objectKey, file.buffer, file.mimetype, file.size);
-          toInsert.push({
-            workspaceId,
-            skillId,
-            storageKey: objectKey,
-            originalName: file.originalname || safeName,
-            mimeType: file.mimetype || null,
-            sizeBytes: file.size,
-            status: "uploaded",
-            createdByUserId: user.id,
-          });
+        if (toInsert.length > 0) {
+          try {
+            const saved = await storage.createSkillFiles(toInsert, { createIngestionJobs: true });
+            saved.forEach((item, idx) => {
+              const resultIndex = validIndices[idx];
+              if (typeof resultIndex === "number" && results[resultIndex]) {
+                results[resultIndex] = {
+                  ...results[resultIndex],
+                  id: item.id,
+                  createdAt: item.createdAt?.toISOString?.() ?? (item.createdAt as any),
+                  status: item.status as "uploaded" | "error",
+                  errorMessage: item.errorMessage ?? undefined,
+                  version: item.version ?? 1,
+                  ingestionStatus: "pending",
+                  processingStatus: (item as any).processingStatus ?? "processing",
+                  processingErrorMessage: (item as any).processingErrorMessage ?? null,
+                };
+              }
+            });
+          } catch (error) {
+            await cleanupFailedSkillFileUpload({ workspaceId, uploadedKeys, results });
+            throw error;
+          }
         }
 
-        const saved = await storage.createSkillFiles(toInsert);
-        const result = saved.map((item) => ({
-          id: item.id,
-          name: item.originalName,
-          size: item.sizeBytes ?? null,
-          contentType: item.mimeType ?? null,
-          status: item.status,
-        }));
-
-        res.json({ files: result });
+        res.json({ files: results });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Не удалось загрузить файлы";
         res.status(400).json({ message });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/workspaces/:workspaceId/skills/:skillId/files/:fileId",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
+    async (req, res, next) => {
+      try {
+        const user = getSessionUser(req);
+        if (!user) {
+          return res.status(401).json({ message: "Unauthorized" });
+        }
+        const workspaceId = req.params.workspaceId || req.workspaceContext?.workspaceId || getRequestWorkspace(req).id;
+        const skillId = req.params.skillId;
+        const fileId = req.params.fileId;
+        if (!workspaceId || !skillId || !fileId) {
+          return res.status(400).json({ message: "Не указан workspaceId, skillId или fileId" });
+        }
+
+        const memberships = getRequestWorkspaceMemberships(req);
+        if (memberships.length > 0 && !memberships.some((entry) => entry.id === workspaceId)) {
+          return res.status(403).json({ message: "Нет доступа к рабочему пространству" });
+        }
+
+        const skill = await getSkillById(workspaceId, skillId);
+        if (!skill) {
+          return res.status(404).json({ message: "Навык не найден" });
+        }
+
+        const file = await storage.getSkillFile(fileId, workspaceId, skillId);
+        if (!file) {
+          return res.status(204).end();
+        }
+
+        try {
+          const embeddingProviderId =
+            typeof skill.ragConfig.embeddingProviderId === "string"
+              ? skill.ragConfig.embeddingProviderId.trim()
+              : "";
+          if (!embeddingProviderId) {
+            return res.status(400).json({ message: "Для навыка не выбран сервис эмбеддингов" });
+          }
+          const embeddingProvider = await storage.getEmbeddingProvider(embeddingProviderId, workspaceId);
+          if (!embeddingProvider || !embeddingProvider.isActive) {
+            return res.status(400).json({ message: "Сервис эмбеддингов недоступен для удаления файла" });
+          }
+
+          try {
+            await deleteSkillFileVectors({
+              workspaceId,
+              skillId,
+              fileId,
+              provider: embeddingProvider,
+              caller: "api:skill-file-delete",
+            });
+          } catch (error) {
+            const vectorError = error instanceof VectorStoreError ? error : null;
+            console.error("[skill-files] failed to delete vectors", {
+              error: vectorError?.message ?? String(error),
+              workspaceId,
+              skillId,
+              fileId,
+            });
+            return res
+              .status(500)
+              .json({ message: "Не удалось удалить векторы файла. Попробуйте ещё раз.", code: "VECTOR_DELETE_FAILED" });
+          }
+
+          await deleteWorkspaceObject(workspaceId, file.storageKey);
+        } catch (error) {
+          console.error("[skill-files] failed to delete object from storage", error);
+          return res
+            .status(500)
+            .json({ message: "Не удалось удалить файл из хранилища. Попробуйте ещё раз.", code: "FILE_DELETE_FAILED" });
+        }
+
+        await storage.deleteSkillFile(fileId, workspaceId, skillId);
+        res.status(204).end();
+      } catch (error) {
+        next(error);
       }
     },
   );
@@ -16118,3 +16377,45 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   return httpServer;
 }
+  app.get(
+    "/api/workspaces/:workspaceId/skills/:skillId/files",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
+    async (req, res, next) => {
+      try {
+        const workspaceId = req.params.workspaceId || req.workspaceContext?.workspaceId || getRequestWorkspace(req).id;
+        const skillId = req.params.skillId;
+        if (!workspaceId || !skillId) {
+          return res.status(400).json({ message: "Не указан workspaceId или skillId" });
+        }
+
+        const memberships = getRequestWorkspaceMemberships(req);
+        if (memberships.length > 0 && !memberships.some((entry) => entry.id === workspaceId)) {
+          return res.status(403).json({ message: "Нет доступа к рабочему пространству" });
+        }
+
+        const skill = await getSkillById(workspaceId, skillId);
+        if (!skill) {
+          return res.status(404).json({ message: "Навык не найден" });
+        }
+
+        const files = await storage.listSkillFiles(workspaceId, skillId);
+        const response = files.map((item) => ({
+          id: item.id,
+          name: item.originalName,
+          contentType: item.mimeType ?? null,
+          size: item.sizeBytes ?? null,
+          status: item.status as "uploaded" | "error",
+          processingStatus: (item as any).processingStatus ?? null,
+          processingErrorMessage: (item as any).processingErrorMessage ?? null,
+          errorMessage: item.errorMessage ?? null,
+          version: item.version ?? 1,
+          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : (item.createdAt as any),
+        }));
+
+        res.json({ files: response });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
