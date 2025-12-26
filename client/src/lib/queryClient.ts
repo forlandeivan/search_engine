@@ -85,10 +85,16 @@ export async function apiRequest(
   options?: { signal?: AbortSignal; workspaceId?: string },
 ): Promise<Response> {
   const resolvedWorkspaceId = options?.workspaceId ?? resolveWorkspaceIdFromCache();
+  const isFormData = typeof FormData !== "undefined" && data instanceof FormData;
   const resolvedHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
+    "Content-Type": isFormData ? undefined! : "application/json",
     ...headers,
   };
+
+  if (isFormData) {
+    // Let the browser set correct multipart boundaries
+    delete resolvedHeaders["Content-Type"];
+  }
 
   if (
     resolvedWorkspaceId &&
@@ -101,7 +107,11 @@ export async function apiRequest(
   const res = await fetch(url, {
     method,
     headers: resolvedHeaders,
-    body: data ? JSON.stringify(data) : undefined,
+    body: data
+      ? isFormData
+        ? (data as BodyInit)
+        : JSON.stringify(data)
+      : undefined,
     credentials: "include",
     signal: options?.signal,
   });

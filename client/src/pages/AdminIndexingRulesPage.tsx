@@ -51,7 +51,7 @@ export default function AdminIndexingRulesPage() {
   const updateMutation = useUpdateIndexingRules();
   const providersQuery = useEmbeddingProviders();
   const { toast } = useToast();
-  const [isEditing, setIsEditing] = useState(false);
+  const [baseline, setBaseline] = useState<IndexingRulesDto | null>(data ?? null);
 
   const form = useForm<IndexingRulesDto>({
     resolver: zodResolver(formSchema),
@@ -60,13 +60,14 @@ export default function AdminIndexingRulesPage() {
   });
 
   useEffect(() => {
-    if (data) {
+    if (data && !form.formState.isDirty) {
+      setBaseline(data);
       form.reset(data);
     }
   }, [data, form]);
 
   const selectedProviderId = form.watch("embeddingsProvider");
-  const modelsQuery = useEmbeddingProviderModels(selectedProviderId, { enabled: isEditing && Boolean(selectedProviderId) });
+  const modelsQuery = useEmbeddingProviderModels(selectedProviderId, { enabled: Boolean(selectedProviderId) });
   const modelsInfo = modelsQuery.data;
   const supportsModelSelection = modelsInfo?.supportsModelSelection ?? true;
   const modelOptions = modelsInfo?.models ?? [];
@@ -76,10 +77,10 @@ export default function AdminIndexingRulesPage() {
   const overlapMax = Math.max(0, chunkSizeValue - 1);
   const relevanceThresholdValue = form.watch("relevanceThreshold");
   const showStrictThresholdWarning =
-    isEditing && typeof relevanceThresholdValue === "number" && relevanceThresholdValue > STRICT_THRESHOLD_WARNING;
+    typeof relevanceThresholdValue === "number" && relevanceThresholdValue > STRICT_THRESHOLD_WARNING;
 
   useEffect(() => {
-    if (!isEditing || !selectedProviderId) {
+    if (!selectedProviderId) {
       return;
     }
     if (modelsLoading || !modelsInfo) {
@@ -103,13 +104,13 @@ export default function AdminIndexingRulesPage() {
     } else if (!form.getValues("embeddingsModel") && modelsInfo.defaultModel) {
       form.setValue("embeddingsModel", modelsInfo.defaultModel, { shouldValidate: true, shouldDirty: true });
     }
-  }, [form, isEditing, modelOptions, modelsInfo, modelsLoading, selectedProviderId]);
+  }, [form, modelOptions, modelsInfo, modelsLoading, selectedProviderId]);
 
   const onSubmit = form.handleSubmit(async (values) => {
     try {
       const updated = await updateMutation.mutateAsync(values);
+      setBaseline(updated);
       form.reset(updated);
-      setIsEditing(false);
       toast({ title: "Сохранено", description: "Правила индексации обновлены" });
     } catch (err: unknown) {
       const apiErr = err as ApiError;
@@ -163,11 +164,34 @@ export default function AdminIndexingRulesPage() {
     );
   }
 
-  const disableInputs = !isEditing || updateMutation.isPending;
+  const disableInputs = updateMutation.isPending;
   const providerFieldDisabled = disableInputs || providersQuery.isLoading || providersQuery.isError;
   const modelRequiredMissing =
     supportsModelSelection && modelOptions.length > 0 && !(form.watch("embeddingsModel") ?? "").trim();
-  const saveDisabled = updateMutation.isPending || modelRequiredMissing || !form.formState.isValid;
+  const saveDisabled =
+    updateMutation.isPending || modelRequiredMissing || !form.formState.isValid || !form.formState.isDirty;
+  const canCancel = form.formState.isDirty && !updateMutation.isPending;
+
+  const normalizeNumber = (value: string): number | "" => {
+    const trimmed = value.replace(",", ".").trim();
+    if (!trimmed) return "";
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : "";
+  };
+
+  const handleRefresh = async () => {
+    if (form.formState.isDirty) {
+      const confirmReload = window.confirm("Есть несохранённые изменения. Обновить и потерять правки?");
+      if (!confirmReload) return;
+    }
+    await refetch();
+  };
+
+  const handleCancel = () => {
+    const fallback = baseline ?? data ?? { ...DEFAULT_INDEXING_RULES };
+    form.reset(fallback);
+    form.clearErrors();
+  };
 
   return (
     <div className="p-6 space-y-4">
@@ -186,50 +210,31 @@ export default function AdminIndexingRulesPage() {
               <CardDescription>Редактирование применится ко всем новым и переиндексируемым документам</CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              {!isEditing ? (
-                <>
-                  <Button variant="outline" size="sm" type="button" onClick={() => refetch()}>
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Обновить
-                  </Button>
-                  <Button
-                    size="sm"
-                    type="button"
-                    onClick={() => setIsEditing(true)}
-                    data-testid="indexing-rules-edit"
-                  >
-                    <Pencil className="h-4 w-4 mr-2" />
-                    Изменить
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    onClick={() => {
-                      form.reset(data ?? { ...DEFAULT_INDEXING_RULES });
-                      setIsEditing(false);
-                    }}
-                    data-testid="indexing-rules-cancel"
-                    disabled={updateMutation.isPending}
-                  >
-                    <XCircle className="h-4 w-4 mr-2" />
-                    Отмена
-                  </Button>
-                  <Button
-                    size="sm"
-                    type="button"
-                    onClick={onSubmit}
-                    disabled={saveDisabled}
-                    data-testid="indexing-rules-save"
-                  >
-                    {updateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    Сохранить
-                  </Button>
-                </>
-              )}
+              <Button variant="outline" size="sm" type="button" onClick={handleRefresh}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Обновить
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={handleCancel}
+                data-testid="indexing-rules-cancel"
+                disabled={!canCancel}
+              >
+                <XCircle className="h-4 w-4 mr-2" />
+                Отменить
+              </Button>
+              <Button
+                size="sm"
+                type="button"
+                onClick={onSubmit}
+                disabled={saveDisabled}
+                data-testid="indexing-rules-save"
+              >
+                {updateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Сохранить
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -404,7 +409,8 @@ export default function AdminIndexingRulesPage() {
                             value={field.value ?? ""}
                             onChange={(event) => {
                               const raw = event.target.value;
-                              field.onChange(raw === "" ? undefined : Number(raw));
+                              const normalized = normalizeNumber(raw);
+                              field.onChange(normalized === "" ? undefined : normalized);
                             }}
                           />
                         </FormControl>
@@ -433,7 +439,8 @@ export default function AdminIndexingRulesPage() {
                             value={field.value ?? ""}
                             onChange={(event) => {
                               const raw = event.target.value;
-                              field.onChange(raw === "" ? undefined : Number(raw));
+                              const normalized = normalizeNumber(raw);
+                              field.onChange(normalized === "" ? undefined : normalized);
                             }}
                           />
                         </FormControl>
@@ -473,7 +480,8 @@ export default function AdminIndexingRulesPage() {
                             value={field.value ?? ""}
                             onChange={(event) => {
                               const raw = event.target.value;
-                              field.onChange(raw === "" ? undefined : Number(raw));
+                              const normalized = normalizeNumber(raw);
+                              field.onChange(normalized === "" ? undefined : normalized);
                             }}
                           />
                         </FormControl>
@@ -502,7 +510,8 @@ export default function AdminIndexingRulesPage() {
                             value={field.value ?? ""}
                             onChange={(event) => {
                               const raw = event.target.value;
-                              field.onChange(raw === "" ? undefined : Number(raw));
+                              const normalized = normalizeNumber(raw);
+                              field.onChange(normalized === "" ? undefined : normalized);
                             }}
                           />
                         </FormControl>
