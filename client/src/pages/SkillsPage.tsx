@@ -1193,6 +1193,7 @@ export function SkillFormContent({
   const embeddingProviderSelectDisabled = embeddingProvidersUnavailable || controlsDisabled;
   const isNoCodeMode = form.watch("executionMode") === "no_code";
   const isStandardMode = !isNoCodeMode;
+  const showRagUi = false;
   const noCodeAuthType = form.watch("noCodeAuthType");
   const noCodeBearerTokenValue = form.watch("noCodeBearerToken");
   const hasBearerTokenDraft = Boolean(noCodeBearerTokenValue?.trim());
@@ -1819,6 +1820,7 @@ export function SkillFormContent({
                         )}
                       </CardContent>
                     </Card>
+                    {showRagUi ? (
                     <Card className="md:col-span-2">
                       <CardHeader className="px-6 grid gap-2">
                         <CardTitle className="text-base font-semibold">Источники и коллекции</CardTitle>
@@ -2078,6 +2080,7 @@ export function SkillFormContent({
                         </Accordion>
                       </CardContent>
                     </Card>
+                    ) : null}
                   </div>
                 ) : null}
                 {isNoCodeMode ? (

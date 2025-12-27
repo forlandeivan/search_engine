@@ -196,7 +196,7 @@ const normalizeSkillExecutionMode = (value: unknown): SkillExecutionMode =>
   isSkillExecutionMode(value) ? value : DEFAULT_SKILL_EXECUTION_MODE;
 
 const normalizeSkillMode = (value: unknown): SkillMode =>
-  value === "llm" ? "llm" : DEFAULT_SKILL_MODE;
+  value === "rag" ? "rag" : "llm";
 
 const isNoCodeAuthType = (value: unknown): value is NoCodeAuthType =>
   typeof value === "string" && noCodeAuthTypes.includes(value as NoCodeAuthType);
@@ -635,14 +635,16 @@ export async function createSkill(
   }
 
   const ragConfig = normalized.ragConfig ?? { ...DEFAULT_RAG_CONFIG };
-  const isStandardMode = (normalized.mode ?? DEFAULT_SKILL_MODE) === "llm";
+  const hasRagSources = Boolean(validKnowledgeBases.length);
+  const inferredMode: SkillMode = hasRagSources ? "rag" : "llm";
+  const mode = normalized.mode ?? inferredMode;
+  const isStandardMode = mode === "llm";
   const effectiveKnowledgeBases = isStandardMode ? [] : validKnowledgeBases;
   const effectiveRagConfig = isStandardMode ? { ...DEFAULT_RAG_CONFIG } : ragConfig;
   const transcriptionFlowMode = normalized.transcriptionFlowMode ?? DEFAULT_TRANSCRIPTION_FLOW_MODE;
   const transcriptionMode = normalized.onTranscriptionMode ?? DEFAULT_TRANSCRIPTION_MODE;
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
   const executionMode = normalized.executionMode ?? DEFAULT_SKILL_EXECUTION_MODE;
-  const mode = normalized.mode ?? DEFAULT_SKILL_MODE;
   const callbackKey = executionMode === "no_code" ? generateCallbackKey() : null;
   assertRagRequirements(effectiveRagConfig, effectiveKnowledgeBases, executionMode);
   let resolvedModelId: string | null = normalized.modelId ?? null;
@@ -813,7 +815,11 @@ export async function updateSkill(
   };
   const ragUpdates = normalized.ragConfig;
   const hasRagUpdates = ragUpdates !== undefined;
-  const effectiveMode = normalized.mode ?? normalizeSkillMode(row.mode);
+  const hasKnowledgeBases = normalized.knowledgeBaseIds
+    ? normalized.knowledgeBaseIds.length > 0
+    : Boolean(row.ragCollectionIds && row.ragCollectionIds.length > 0);
+  const inferredMode: SkillMode = hasKnowledgeBases ? "rag" : "llm";
+  const effectiveMode = normalized.mode ?? normalizeSkillMode(row.mode) ?? inferredMode;
   const isStandardMode = effectiveMode === "llm";
   const nextRagConfig = isStandardMode ? { ...DEFAULT_RAG_CONFIG } : ragUpdates ?? currentRagConfig;
 
