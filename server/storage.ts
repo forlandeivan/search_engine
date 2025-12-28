@@ -34,6 +34,7 @@ import {
   speechProviders,
   speechProviderSecrets,
   fileStorageProviders,
+  files,
   indexingRules,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
@@ -60,6 +61,8 @@ import {
   type AssistantActionType,
   type WorkspaceEmbedKey,
   type WorkspaceEmbedKeyDomain,
+  type File,
+  type FileInsert,
   type KnowledgeBaseRagRequest,
   type ChatSession,
   type ChatSessionInsert,
@@ -993,6 +996,11 @@ export interface IStorage {
   ): Promise<LlmProvider | undefined>;
   deleteLlmProvider(id: string, workspaceId?: string): Promise<boolean>;
 
+  // Files
+  createFile(file: FileInsert): Promise<File>;
+  getFile(id: string, workspaceId?: string): Promise<File | undefined>;
+  updateFile(id: string, updates: Partial<FileInsert>): Promise<File | undefined>;
+
   // File storage providers
   listFileStorageProviders(options?: { limit?: number; offset?: number; activeOnly?: boolean }): Promise<{
     items: FileStorageProvider[];
@@ -1139,6 +1147,9 @@ let ensuringSpeechProvidersTable: Promise<void> | null = null;
 
 let fileStorageProvidersTableEnsured = false;
 let ensuringFileStorageProvidersTable: Promise<void> | null = null;
+
+let filesTableEnsured = false;
+let ensuringFilesTable: Promise<void> | null = null;
 
 let workspacesTableEnsured = false;
 let ensuringWorkspacesTable: Promise<void> | null = null;
@@ -3609,6 +3620,63 @@ async function ensureFileStorageProvidersTable(): Promise<void> {
   }
 }
 
+async function ensureFilesTable(): Promise<void> {
+  if (filesTableEnsured) {
+    return;
+  }
+
+  if (ensuringFilesTable) {
+    await ensuringFilesTable;
+    return;
+  }
+
+  ensuringFilesTable = (async () => {
+    await ensureWorkspacesTable();
+    await ensureUsersTable();
+    await ensureFileStorageProvidersTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "files" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "workspace_id" varchar NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+        "skill_id" varchar,
+        "chat_id" varchar,
+        "message_id" varchar,
+        "user_id" varchar REFERENCES "users"("id") ON DELETE SET NULL,
+        "kind" file_kind NOT NULL,
+        "name" text NOT NULL,
+        "mime_type" text,
+        "size_bytes" bigint,
+        "storage_type" file_storage_type NOT NULL,
+        "bucket" text,
+        "object_key" text,
+        "object_version" text,
+        "external_uri" text,
+        "provider_id" varchar REFERENCES "file_storage_providers"("id") ON DELETE SET NULL,
+        "provider_file_id" text,
+        "status" file_status NOT NULL DEFAULT 'ready',
+        "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS files_workspace_idx ON "files" ("workspace_id", "created_at" DESC)
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS files_skill_idx ON "files" ("skill_id")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS files_chat_idx ON "files" ("chat_id")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS files_message_idx ON "files" ("message_id")`);
+  })();
+
+  try {
+    await ensuringFilesTable;
+    filesTableEnsured = true;
+  } finally {
+    ensuringFilesTable = null;
+  }
+}
+
 async function ensureAuthProvidersTable(): Promise<void> {
   if (authProvidersTableEnsured) {
     return;
@@ -5537,6 +5605,40 @@ export class DatabaseStorage implements IStorage {
     await this.db
       .delete(speechProviderSecrets)
       .where(and(eq(speechProviderSecrets.providerId, providerId), eq(speechProviderSecrets.secretKey, secretKey)));
+  }
+
+  async createFile(file: FileInsert): Promise<File> {
+    await ensureFilesTable();
+    const [created] = await this.db.insert(files).values(file).returning();
+    if (!created) {
+      throw new Error("Failed to create file record");
+    }
+    return created;
+  }
+
+  async getFile(id: string, workspaceId?: string): Promise<File | undefined> {
+    await ensureFilesTable();
+    const condition = workspaceId
+      ? and(eq(files.id, id), eq(files.workspaceId, workspaceId))
+      : eq(files.id, id);
+    const [row] = await this.db.select().from(files).where(condition).limit(1);
+    return row ?? undefined;
+  }
+
+  async updateFile(id: string, updates: Partial<FileInsert>): Promise<File | undefined> {
+    await ensureFilesTable();
+    const sanitized = Object.fromEntries(
+      Object.entries(updates ?? {}).filter(([, value]) => value !== undefined),
+    ) as Partial<FileInsert>;
+    if (Object.keys(sanitized).length === 0) {
+      return await this.getFile(id);
+    }
+    const [updated] = await this.db
+      .update(files)
+      .set({ ...sanitized, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(files.id, id))
+      .returning();
+    return updated ?? undefined;
   }
 
   async listFileStorageProviders(options: {

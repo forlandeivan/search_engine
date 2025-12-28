@@ -167,6 +167,53 @@ export const fileStorageProviders = pgTable(
   }),
 );
 
+export const fileKinds = ["attachment", "audio", "skill_doc"] as const;
+export type FileKind = (typeof fileKinds)[number];
+export const fileKindsEnum = pgEnum("file_kind", fileKinds);
+
+export const fileStorageTypes = ["standard_minio", "yandex_object_storage", "external_provider"] as const;
+export type FileStorageType = (typeof fileStorageTypes)[number];
+export const fileStorageTypeEnum = pgEnum("file_storage_type", fileStorageTypes);
+
+export const fileStatuses = ["uploading", "ready", "failed"] as const;
+export type FileStatus = (typeof fileStatuses)[number];
+export const fileStatusEnum = pgEnum("file_status", fileStatuses);
+
+export const files = pgTable(
+  "files",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    skillId: varchar("skill_id"),
+    chatId: varchar("chat_id"),
+    messageId: varchar("message_id"),
+    userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+    kind: fileKindsEnum("kind").notNull(),
+    name: text("name").notNull(),
+    mimeType: text("mime_type"),
+    sizeBytes: bigint("size_bytes", { mode: "bigint" }),
+    storageType: fileStorageTypeEnum("storage_type").notNull(),
+    bucket: text("bucket"),
+    objectKey: text("object_key"),
+    objectVersion: text("object_version"),
+    externalUri: text("external_uri"),
+    providerId: varchar("provider_id").references(() => fileStorageProviders.id, { onDelete: "set null" }),
+    providerFileId: text("provider_file_id"),
+    status: fileStatusEnum("status").notNull().default("ready"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    workspaceIdx: index("files_workspace_idx").on(table.workspaceId, table.createdAt),
+    skillIdx: index("files_skill_idx").on(table.skillId),
+    chatIdx: index("files_chat_idx").on(table.chatId),
+    messageIdx: index("files_message_idx").on(table.messageId),
+  }),
+);
+
 // TODO(usage): workspace_usage_month will become the single usage aggregate keyed by workspace_id + period_code (see docs/workspace-usage-foundation.md)
 export const workspaces = pgTable("workspaces", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1375,21 +1422,23 @@ export const chatAttachments = pgTable(
     workspaceId: varchar("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    chatId: varchar("chat_id")
-      .notNull()
-      .references(() => chatSessions.id, { onDelete: "cascade" }),
-    messageId: varchar("message_id").references(() => chatMessages.id, { onDelete: "set null" }),
-    uploaderUserId: varchar("uploader_user_id").references(() => users.id, { onDelete: "set null" }),
-    filename: text("filename").notNull(),
-    mimeType: text("mime_type"),
-    sizeBytes: bigint("size_bytes", { mode: "number" }),
-    storageKey: text("storage_key").notNull(),
+  chatId: varchar("chat_id")
+    .notNull()
+    .references(() => chatSessions.id, { onDelete: "cascade" }),
+  messageId: varchar("message_id").references(() => chatMessages.id, { onDelete: "set null" }),
+  fileId: uuid("file_id").references(() => files.id, { onDelete: "set null" }),
+  uploaderUserId: varchar("uploader_user_id").references(() => users.id, { onDelete: "set null" }),
+  filename: text("filename").notNull(),
+  mimeType: text("mime_type"),
+  sizeBytes: bigint("size_bytes", { mode: "number" }),
+  storageKey: text("storage_key").notNull(),
     createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => ({
     workspaceIdx: index("chat_attachments_workspace_idx").on(table.workspaceId, table.createdAt),
     chatIdx: index("chat_attachments_chat_idx").on(table.chatId, table.createdAt),
-  messageIdx: index("chat_attachments_message_idx").on(table.messageId),
+    messageIdx: index("chat_attachments_message_idx").on(table.messageId),
+    fileIdx: index("chat_attachments_file_idx").on(table.fileId),
   }),
 );
 
@@ -1971,6 +2020,8 @@ export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type WorkspaceMemberInsert = typeof workspaceMembers.$inferInsert;
 export type FileStorageProvider = typeof fileStorageProviders.$inferSelect;
 export type FileStorageProviderInsert = typeof fileStorageProviders.$inferInsert;
+export type File = typeof files.$inferSelect;
+export type FileInsert = typeof files.$inferInsert;
 export type WorkspaceUsageMonth = typeof workspaceUsageMonth.$inferSelect;
 export type WorkspaceUsageMonthInsert = typeof workspaceUsageMonth.$inferInsert;
 export type WorkspaceLlmUsageLedger = typeof workspaceLlmUsageLedger.$inferSelect;

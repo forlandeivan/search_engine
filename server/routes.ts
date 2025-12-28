@@ -11387,6 +11387,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
         await uploadWorkspaceFile(workspaceId, storageKey, file.buffer, mimeType, sizeBytes);
 
+        const workspace = await storage.getWorkspace(workspaceId);
+        const bucket = workspace?.storageBucket ?? null;
+
         const baseMetadata = {
           file: {
             filename,
@@ -11405,10 +11408,26 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           messageType: "file",
         });
 
+        const fileRecord = await storage.createFile({
+          workspaceId,
+          chatId: chat.id,
+          messageId: message.id,
+          userId: user.id,
+          kind: "attachment",
+          name: filename,
+          mimeType,
+          sizeBytes,
+          storageType: "standard_minio",
+          bucket: bucket ?? undefined,
+          objectKey: storageKey,
+          status: "ready",
+        });
+
         const attachment = await storage.createChatAttachment({
           workspaceId,
           chatId: chat.id,
           messageId: message.id,
+          fileId: fileRecord.id,
           uploaderUserId: user.id,
           filename,
           mimeType,
@@ -11438,6 +11457,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             file: {
               ...(enriched.metadata as any)?.file,
               attachmentId: attachment.id,
+              fileId: fileRecord.id,
               downloadUrl: presigned.url,
               expiresAt: presigned.expiresAt,
             },
@@ -11464,6 +11484,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             actorUserId: user.id,
             file: {
               attachmentId: attachment.id,
+              fileId: fileRecord.id,
               filename,
               mimeType,
               sizeBytes,
