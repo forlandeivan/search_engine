@@ -30,6 +30,8 @@ import AdminUsageChargesPage from "@/pages/AdminUsageChargesPage";
 import GuardBlockEventsPage from "@/pages/GuardBlockEventsPage";
 import SkillsPage from "@/pages/SkillsPage";
 import ChatPage from "@/pages/ChatPage";
+import FileStorageProvidersPage from "@/pages/FileStorageProvidersPage";
+import FileStorageProviderDetailsPage from "@/pages/FileStorageProviderDetailsPage";
 import NotFound from "@/pages/not-found";
 import AuthPage from "@/pages/AuthPage";
 import VerifyEmailPage from "@/pages/VerifyEmailPage";
@@ -67,6 +69,10 @@ function AdminRouter() {
         <AsrExecutionsPage />
       </Route>
       <Route path="/admin/llm" component={LlmProvidersPage} />
+      <Route path="/admin/file-storage/providers/:providerId">
+        {(params) => <FileStorageProviderDetailsPage providerId={params.providerId} />}
+      </Route>
+      <Route path="/admin/file-storage" component={FileStorageProvidersPage} />
       <Route path="/admin/guard-blocks" component={GuardBlockEventsPage} />
       <Route path="/admin/tts-stt/providers/:providerId">
         {(params) => <SpeechProviderDetailsPage providerId={params.providerId} />}

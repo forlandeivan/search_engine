@@ -1,0 +1,181 @@
+import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "wouter";
+import { Loader2, ArrowLeft } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import {
+  createFileStorageProvider,
+  updateFileStorageProvider,
+  useFileStorageProviderDetails,
+} from "@/hooks/useFileStorageProviders";
+
+type ProviderFormState = {
+  name: string;
+  baseUrl: string;
+  description: string;
+  authType: "none" | "bearer";
+  isActive: boolean;
+};
+
+const defaultState: ProviderFormState = {
+  name: "",
+  baseUrl: "",
+  description: "",
+  authType: "none",
+  isActive: true,
+};
+
+interface Props {
+  providerId: string;
+}
+
+export default function FileStorageProviderDetailsPage({ providerId }: Props) {
+  const isCreate = providerId === "new";
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+
+  const { provider, isLoading, isError, error, refetch } = useFileStorageProviderDetails(providerId, {
+    enabled: !isCreate,
+  });
+
+  const [form, setForm] = useState<ProviderFormState>(defaultState);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (provider) {
+      setForm({
+        name: provider.name ?? "",
+        baseUrl: provider.baseUrl ?? "",
+        description: provider.description ?? "",
+        authType: (provider.authType as ProviderFormState["authType"]) ?? "none",
+        isActive: provider.isActive ?? true,
+      });
+    }
+  }, [provider]);
+
+  const title = useMemo(() => (isCreate ? "Создать файловый провайдер" : `Провайдер: ${provider?.name ?? ""}`), [isCreate, provider]);
+
+  const handleChange = (key: keyof ProviderFormState, value: any) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      if (isCreate) {
+        await createFileStorageProvider(form);
+        toast({ title: "Провайдер создан" });
+      } else {
+        await updateFileStorageProvider(providerId, form);
+        toast({ title: "Изменения сохранены" });
+      }
+      navigate("/admin/file-storage");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Не удалось сохранить провайдера";
+      toast({ variant: "destructive", title: "Ошибка", description: message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isCreate && isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center p-10 text-muted-foreground">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+        Загрузка провайдера...
+      </div>
+    );
+  }
+
+  if (!isCreate && isError) {
+    const message = error instanceof Error ? error.message : "Не удалось загрузить провайдера";
+    return (
+      <div className="p-6 space-y-3">
+        <h1 className="text-2xl font-semibold">Провайдер</h1>
+        <p className="text-destructive">{message}</p>
+        <Button variant="secondary" onClick={() => refetch()}>
+          Повторить
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-6 max-w-3xl">
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" onClick={() => navigate("/admin/file-storage")}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <div className="space-y-1">
+          <h1 className="text-3xl font-semibold">{title}</h1>
+          <p className="text-muted-foreground">Укажите параметры внешнего хранилища файлов.</p>
+        </div>
+      </div>
+
+      <div className="space-y-5">
+        <div className="grid gap-2">
+          <Label htmlFor="name">Название</Label>
+          <Input
+            id="name"
+            value={form.name}
+            onChange={(e) => handleChange("name", e.target.value)}
+            placeholder="Например, Unica AI Storage"
+          />
+        </div>
+
+        <div className="grid gap-2">
+          <Label htmlFor="baseUrl">Base URL</Label>
+          <Input
+            id="baseUrl"
+            value={form.baseUrl}
+            onChange={(e) => handleChange("baseUrl", e.target.value)}
+            placeholder="https://files.example.com/api"
+          />
+        </div>
+
+        <div className="grid gap-2">
+          <Label htmlFor="description">Описание</Label>
+          <Textarea
+            id="description"
+            value={form.description}
+            onChange={(e) => handleChange("description", e.target.value)}
+            placeholder="Кратко опишите провайдера (опционально)"
+          />
+        </div>
+
+        <div className="grid gap-2">
+          <Label>Аутентификация</Label>
+          <Select value={form.authType} onValueChange={(value: ProviderFormState["authType"]) => handleChange("authType", value)}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="Выберите тип" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">None</SelectItem>
+              <SelectItem value="bearer">Bearer</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Switch checked={form.isActive} onCheckedChange={(value) => handleChange("isActive", value)} id="isActive" />
+          <Label htmlFor="isActive">Активен</Label>
+        </div>
+      </div>
+
+      <div className="flex gap-3">
+        <Button onClick={handleSave} disabled={saving}>
+          {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Сохранить
+        </Button>
+        <Button variant="outline" onClick={() => navigate("/admin/file-storage")}>
+          Отмена
+        </Button>
+      </div>
+    </div>
+  );
+}

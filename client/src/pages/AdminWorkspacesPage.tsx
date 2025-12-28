@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatCredits } from "@shared/credits";
+import { useFileStorageProvidersList, updateWorkspaceDefaultFileStorageProvider } from "@/hooks/useFileStorageProviders";
 
 interface WorkspaceSummary {
   id: string;
@@ -21,6 +22,8 @@ interface WorkspaceSummary {
   tariffPlanId: string | null;
   tariffPlanCode: string | null;
   tariffPlanName: string | null;
+  defaultFileStorageProviderId: string | null;
+  defaultFileStorageProviderName: string | null;
 }
 
 interface WorkspacesResponse {
@@ -71,7 +74,9 @@ export default function AdminWorkspacesPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>({});
+  const [selectedDefaults, setSelectedDefaults] = useState<Record<string, string>>({});
   const [updatingWorkspaceId, setUpdatingWorkspaceId] = useState<string | null>(null);
+  const [updatingDefaultWorkspaceId, setUpdatingDefaultWorkspaceId] = useState<string | null>(null);
   const [adjustTarget, setAdjustTarget] = useState<{ id: string; name: string } | null>(null);
   const [adjustAmount, setAdjustAmount] = useState<string>("0");
   const [adjustReason, setAdjustReason] = useState<string>("");
@@ -113,6 +118,8 @@ export default function AdminWorkspacesPage() {
     queryKey: ["/api/admin/workspaces"],
   });
 
+  const fileStorageProvidersQuery = useFileStorageProvidersList({ limit: 200, offset: 0 });
+
   const updatePlanMutation = useMutation({
     mutationFn: async ({ workspaceId, planCode }: { workspaceId: string; planCode: string }) => {
       await apiRequest("PUT", `/api/admin/workspaces/${workspaceId}/plan`, { planCode });
@@ -133,6 +140,24 @@ export default function AdminWorkspacesPage() {
     },
     onSettled: () => {
       setUpdatingWorkspaceId(null);
+    },
+  });
+
+  const updateDefaultProviderMutation = useMutation({
+    mutationFn: async ({ workspaceId, providerId }: { workspaceId: string; providerId: string | null }) => {
+      return updateWorkspaceDefaultFileStorageProvider(workspaceId, providerId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/workspaces"] });
+      toast({ title: "Провайдер сохранён" });
+    },
+    onError: (err) => {
+      const message =
+        err instanceof Error ? err.message : "Не удалось сохранить файловый провайдер по умолчанию";
+      toast({ variant: "destructive", title: "Ошибка", description: message });
+    },
+    onSettled: () => {
+      setUpdatingDefaultWorkspaceId(null);
     },
   });
 
@@ -210,6 +235,7 @@ export default function AdminWorkspacesPage() {
               <TableHead className="w-[220px]">Менеджер РП</TableHead>
               <TableHead className="w-[180px]">Дата создания</TableHead>
               <TableHead className="w-[260px]">Тариф</TableHead>
+              <TableHead className="w-[260px]">Файловый провайдер (по умолчанию)</TableHead>
               <TableHead className="w-[200px]">Кредиты</TableHead>
             </TableRow>
           </TableHeader>
@@ -287,6 +313,65 @@ export default function AdminWorkspacesPage() {
                         )}
                       </Button>
                     </div>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="space-y-2">
+                    <div className="text-sm text-muted-foreground">
+                      Текущий: {workspace.defaultFileStorageProviderName ?? "Не выбран"}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Select
+                        value={selectedDefaults[workspace.id] ?? workspace.defaultFileStorageProviderId ?? ""}
+                        onValueChange={(value) =>
+                          setSelectedDefaults((prev) => ({
+                            ...prev,
+                            [workspace.id]: value,
+                          }))
+                        }
+                        disabled={fileStorageProvidersQuery.isLoading || updatingDefaultWorkspaceId === workspace.id}
+                      >
+                        <SelectTrigger className="w-[190px]">
+                          <SelectValue placeholder="Выберите провайдер" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">Не выбран</SelectItem>
+                          {fileStorageProvidersQuery.providers
+                            .filter((provider) => provider.isActive)
+                            .map((provider) => (
+                              <SelectItem key={provider.id} value={provider.id}>
+                                {provider.name}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={updatingDefaultWorkspaceId === workspace.id}
+                        onClick={() => {
+                          setUpdatingDefaultWorkspaceId(workspace.id);
+                          const value = selectedDefaults[workspace.id] ?? workspace.defaultFileStorageProviderId ?? "";
+                          updateDefaultProviderMutation.mutate({
+                            workspaceId: workspace.id,
+                            providerId: value || null,
+                          });
+                        }}
+                      >
+                        {updatingDefaultWorkspaceId === workspace.id && (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        )}
+                        Сохранить
+                      </Button>
+                    </div>
+                    {fileStorageProvidersQuery.isError && (
+                      <div className="text-xs text-destructive">
+                        Не удалось загрузить провайдеры:{" "}
+                        {fileStorageProvidersQuery.error instanceof Error
+                          ? fileStorageProvidersQuery.error.message
+                          : "ошибка запроса"}
+                      </div>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell>

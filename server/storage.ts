@@ -33,6 +33,7 @@ import {
   canvasDocuments,
   speechProviders,
   speechProviderSecrets,
+  fileStorageProviders,
   indexingRules,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
@@ -83,6 +84,8 @@ import {
   type SpeechProvider,
   type SpeechProviderInsert,
   type SpeechProviderSecret,
+  type FileStorageProvider,
+  type FileStorageProviderInsert,
   type WorkspaceMemberRole,
 } from "@shared/schema";
 import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
@@ -811,6 +814,8 @@ export interface WorkspaceAdminSummary {
   tariffPlanId: string | null;
   tariffPlanCode: string | null;
   tariffPlanName: string | null;
+  defaultFileStorageProviderId: string | null;
+  defaultFileStorageProviderName: string | null;
 }
 
 export type KnowledgeBaseAskAiRunRecordInput = {
@@ -988,6 +993,21 @@ export interface IStorage {
   ): Promise<LlmProvider | undefined>;
   deleteLlmProvider(id: string, workspaceId?: string): Promise<boolean>;
 
+  // File storage providers
+  listFileStorageProviders(options?: { limit?: number; offset?: number; activeOnly?: boolean }): Promise<{
+    items: FileStorageProvider[];
+    total: number;
+    limit: number;
+    offset: number;
+  }>;
+  getFileStorageProvider(id: string): Promise<FileStorageProvider | undefined>;
+  createFileStorageProvider(provider: FileStorageProviderInsert): Promise<FileStorageProvider>;
+  updateFileStorageProvider(
+    id: string,
+    updates: Partial<FileStorageProviderInsert>,
+  ): Promise<FileStorageProvider | undefined>;
+  deleteFileStorageProvider(id: string): Promise<boolean>;
+
   // Unica Chat configuration
   getUnicaChatConfig(): Promise<UnicaChatConfig>;
   updateUnicaChatConfig(
@@ -1098,6 +1118,8 @@ export interface IStorage {
   listReadySkillFileIds(workspaceId: string, skillId: string): Promise<string[]>;
   hasReadySkillFiles(workspaceId: string, skillId: string): Promise<boolean>;
   updateChatTitleIfEmpty(chatId: string, title: string): Promise<boolean>;
+  getWorkspaceDefaultFileStorageProvider(workspaceId: string): Promise<FileStorageProvider | null>;
+  setWorkspaceDefaultFileStorageProvider(workspaceId: string, providerId: string | null): Promise<void>;
 }
 
 let usersTableEnsured = false;
@@ -1114,6 +1136,9 @@ let ensuringAuthProvidersTable: Promise<void> | null = null;
 
 let speechProvidersTableEnsured = false;
 let ensuringSpeechProvidersTable: Promise<void> | null = null;
+
+let fileStorageProvidersTableEnsured = false;
+let ensuringFileStorageProvidersTable: Promise<void> | null = null;
 
 let workspacesTableEnsured = false;
 let ensuringWorkspacesTable: Promise<void> | null = null;
@@ -1211,6 +1236,7 @@ async function ensureWorkspacesTable(): Promise<void> {
 
   ensuringWorkspacesTable = (async () => {
     const uuidExpression = await getUuidGenerationExpression();
+    await ensureFileStorageProvidersTable();
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "workspaces" (
         "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
@@ -1219,7 +1245,8 @@ async function ensureWorkspacesTable(): Promise<void> {
         "plan" text NOT NULL DEFAULT 'free',
         "settings" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "default_file_storage_provider_id" varchar REFERENCES "file_storage_providers"("id") ON DELETE SET NULL
       )
     `);
 
@@ -3538,6 +3565,50 @@ async function ensureSpeechProvidersTables(): Promise<void> {
   }
 }
 
+async function ensureFileStorageProvidersTable(): Promise<void> {
+  if (fileStorageProvidersTableEnsured) {
+    return;
+  }
+
+  if (ensuringFileStorageProvidersTable) {
+    await ensuringFileStorageProvidersTable;
+    return;
+  }
+
+  ensuringFileStorageProvidersTable = (async () => {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "file_storage_providers" (
+        "id" varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name" text NOT NULL,
+        "base_url" text NOT NULL,
+        "description" text,
+        "auth_type" text NOT NULL DEFAULT 'none',
+        "is_active" boolean NOT NULL DEFAULT TRUE,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT file_storage_providers_auth_type_chk CHECK ("auth_type" IN ('none', 'bearer'))
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS file_storage_providers_name_idx
+      ON "file_storage_providers" (lower(name))
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS file_storage_providers_active_idx
+      ON "file_storage_providers" (is_active, updated_at DESC)
+    `);
+  })();
+
+  try {
+    await ensuringFileStorageProvidersTable;
+    fileStorageProvidersTableEnsured = true;
+  } finally {
+    ensuringFileStorageProvidersTable = null;
+  }
+}
+
 async function ensureAuthProvidersTable(): Promise<void> {
   if (authProvidersTableEnsured) {
     return;
@@ -5468,6 +5539,107 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(speechProviderSecrets.providerId, providerId), eq(speechProviderSecrets.secretKey, secretKey)));
   }
 
+  async listFileStorageProviders(options: {
+    limit?: number;
+    offset?: number;
+    activeOnly?: boolean;
+  } = {}): Promise<{ items: FileStorageProvider[]; total: number; limit: number; offset: number }> {
+    await ensureFileStorageProvidersTable();
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    const offset = Math.max(options.offset ?? 0, 0);
+    const whereClause = options.activeOnly ? eq(fileStorageProviders.isActive, true) : undefined;
+
+    const [countRow] = await this.db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(fileStorageProviders)
+      .where(whereClause ?? sql`true`);
+
+    const items = await this.db
+      .select()
+      .from(fileStorageProviders)
+      .where(whereClause ?? sql`true`)
+      .orderBy(desc(fileStorageProviders.updatedAt))
+      .limit(limit)
+      .offset(offset);
+
+    return {
+      items,
+      total: Number(countRow?.count ?? 0),
+      limit,
+      offset,
+    };
+  }
+
+  async getFileStorageProvider(id: string): Promise<FileStorageProvider | undefined> {
+    await ensureFileStorageProvidersTable();
+    const [provider] = await this.db
+      .select()
+      .from(fileStorageProviders)
+      .where(eq(fileStorageProviders.id, id))
+      .limit(1);
+    return provider ?? undefined;
+  }
+
+  async createFileStorageProvider(provider: FileStorageProviderInsert): Promise<FileStorageProvider> {
+    await ensureFileStorageProvidersTable();
+    const [created] = await this.db
+      .insert(fileStorageProviders)
+      .values(provider)
+      .returning();
+    return created;
+  }
+
+  async updateFileStorageProvider(
+    id: string,
+    updates: Partial<FileStorageProviderInsert>,
+  ): Promise<FileStorageProvider | undefined> {
+    await ensureFileStorageProvidersTable();
+    const sanitizedEntries = Object.entries(updates ?? {}).filter(([, value]) => value !== undefined);
+    if (sanitizedEntries.length === 0) {
+      return await this.getFileStorageProvider(id);
+    }
+
+    const [updated] = await this.db
+      .update(fileStorageProviders)
+      .set({
+        ...Object.fromEntries(sanitizedEntries),
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(fileStorageProviders.id, id))
+      .returning();
+
+    return updated ?? undefined;
+  }
+
+  async deleteFileStorageProvider(id: string): Promise<boolean> {
+    await ensureFileStorageProvidersTable();
+    const deleted = await this.db.delete(fileStorageProviders).where(eq(fileStorageProviders.id, id)).returning({
+      id: fileStorageProviders.id,
+    });
+    return deleted.length > 0;
+  }
+
+  async getWorkspaceDefaultFileStorageProvider(workspaceId: string): Promise<FileStorageProvider | null> {
+    await ensureWorkspacesTable();
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace?.defaultFileStorageProviderId) {
+      return null;
+    }
+    const provider = await this.getFileStorageProvider(workspace.defaultFileStorageProviderId);
+    return provider ?? null;
+  }
+
+  async setWorkspaceDefaultFileStorageProvider(workspaceId: string, providerId: string | null): Promise<void> {
+    await ensureWorkspacesTable();
+    await this.db
+      .update(workspaces)
+      .set({
+        defaultFileStorageProviderId: providerId ?? null,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(workspaces.id, workspaceId));
+  }
+
   private buildWorkspaceMembershipCacheKey(userId: string, workspaceId: string): string {
     return `${userId}::${workspaceId}`;
   }
@@ -7128,11 +7300,14 @@ export class DatabaseStorage implements IStorage {
         tariffPlanId: workspaces.tariffPlanId,
         tariffPlanCode: tariffPlans.code,
         tariffPlanName: tariffPlans.name,
+        defaultFileStorageProviderId: workspaces.defaultFileStorageProviderId,
+        defaultFileStorageProviderName: fileStorageProviders.name,
       })
       .from(workspaces)
       .leftJoin(workspaceMembers, eq(workspaceMembers.workspaceId, workspaces.id))
       .leftJoin(tariffPlans, eq(tariffPlans.id, workspaces.tariffPlanId))
-      .groupBy(workspaces.id, tariffPlans.id)
+      .leftJoin(fileStorageProviders, eq(fileStorageProviders.id, workspaces.defaultFileStorageProviderId))
+      .groupBy(workspaces.id, tariffPlans.id, fileStorageProviders.id)
       .orderBy(desc(workspaces.createdAt));
 
     type WorkspaceRow = (typeof workspaceRows)[number];
@@ -7173,6 +7348,8 @@ export class DatabaseStorage implements IStorage {
         tariffPlanId: row.tariffPlanId ?? null,
         tariffPlanCode: row.tariffPlanCode ?? null,
         tariffPlanName: row.tariffPlanName ?? null,
+        defaultFileStorageProviderId: row.defaultFileStorageProviderId ?? null,
+        defaultFileStorageProviderName: row.defaultFileStorageProviderName ?? null,
       };
     });
   }

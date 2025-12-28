@@ -148,6 +148,7 @@ export default function AdminSidebar({ user }: AdminSidebarProps) {
     {
       label: "Настройки",
       items: [
+        { title: "Файловые провайдеры", url: "/admin/file-storage", icon: HardDrive },
         { title: "Правила индексации", url: "/admin/indexing-rules", icon: SlidersHorizontal },
         { title: "SMTP", url: "/admin/settings/smtp", icon: Mail },
       ],

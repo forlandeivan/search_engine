@@ -146,6 +146,27 @@ export const models = pgTable(
   }),
 );
 
+export const fileStorageAuthTypes = ["none", "bearer"] as const;
+export type FileStorageAuthType = (typeof fileStorageAuthTypes)[number];
+
+export const fileStorageProviders = pgTable(
+  "file_storage_providers",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    baseUrl: text("base_url").notNull(),
+    description: text("description"),
+    authType: text("auth_type").$type<FileStorageAuthType>().notNull().default("none"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    nameUniqueIdx: uniqueIndex("file_storage_providers_name_idx").on(sql`lower(${table.name})`),
+    activeIdx: index("file_storage_providers_active_idx").on(table.isActive, table.updatedAt),
+  }),
+);
+
 // TODO(usage): workspace_usage_month will become the single usage aggregate keyed by workspace_id + period_code (see docs/workspace-usage-foundation.md)
 export const workspaces = pgTable("workspaces", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -166,6 +187,9 @@ export const workspaces = pgTable("workspaces", {
   qdrantCollectionsCount: integer("qdrant_collections_count").notNull().default(0),
   qdrantPointsCount: bigint("qdrant_points_count", { mode: "bigint" }).notNull().default(0n),
   qdrantStorageBytes: bigint("qdrant_storage_bytes", { mode: "bigint" }).notNull().default(0n),
+  defaultFileStorageProviderId: varchar("default_file_storage_provider_id").references(() => fileStorageProviders.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -1945,6 +1969,8 @@ export type Workspace = typeof workspaces.$inferSelect;
 export type WorkspaceInsert = typeof workspaces.$inferInsert;
 export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
 export type WorkspaceMemberInsert = typeof workspaceMembers.$inferInsert;
+export type FileStorageProvider = typeof fileStorageProviders.$inferSelect;
+export type FileStorageProviderInsert = typeof fileStorageProviders.$inferInsert;
 export type WorkspaceUsageMonth = typeof workspaceUsageMonth.$inferSelect;
 export type WorkspaceUsageMonthInsert = typeof workspaceUsageMonth.$inferInsert;
 export type WorkspaceLlmUsageLedger = typeof workspaceLlmUsageLedger.$inferSelect;

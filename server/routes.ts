@@ -332,6 +332,11 @@ import {
   type SpeechProviderSecretsPatch,
 } from "./speech-provider-service";
 import {
+  fileStorageProviderService,
+  FileStorageProviderServiceError,
+  FileStorageProviderNotFoundError,
+} from "./file-storage-provider-service";
+import {
   yandexSttService,
   YandexSttError,
   YandexSttConfigError,
@@ -354,14 +359,14 @@ process.on("uncaughtException", (err: any) => {
     console.warn("[process] swallowed write EOF:", err);
     return;
   }
-  throw err;
+  console.error("[process] uncaughtException:", err);
 });
 process.on("unhandledRejection", (reason: any) => {
   if (reason?.code === "EOF" && reason?.syscall === "write") {
     console.warn("[process] swallowed write EOF (promise):", reason);
     return;
   }
-  throw reason;
+  console.error("[process] unhandledRejection:", reason);
 });
 
 function getErrorDetails(error: unknown): string {
@@ -1439,6 +1444,12 @@ function parseSpeechProviderListParams(req: Request):
     limit: (limitCandidate ?? 50) as number,
     offset: (offsetCandidate ?? 0) as number,
   };
+}
+
+function parseFileStorageProviderListParams(req: Request):
+  | { limit: number; offset: number }
+  | { error: string } {
+  return parseSpeechProviderListParams(req);
 }
 
 async function buildSpeechProviderListItem(summary: SpeechProviderSummary) {
@@ -7816,12 +7827,62 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           tariffPlanId: workspace.tariffPlanId,
           tariffPlanCode: workspace.tariffPlanCode,
           tariffPlanName: workspace.tariffPlanName,
+          defaultFileStorageProviderId: workspace.defaultFileStorageProviderId,
+          defaultFileStorageProviderName: workspace.defaultFileStorageProviderName,
         })),
       });
     } catch (error) {
       next(error);
     }
   });
+
+  const workspaceDefaultProviderSchema = z.object({
+    providerId: z
+      .string()
+      .trim()
+      .min(1)
+      .nullable()
+      .optional(),
+  });
+
+  app.get(
+    "/api/admin/workspaces/:workspaceId/default-file-storage-provider",
+    requireAdmin,
+    async (req, res) => {
+      try {
+        const provider = await fileStorageProviderService.getWorkspaceDefault(req.params.workspaceId);
+        res.json({ provider: provider ? mapFileStorageProvider(provider) : null });
+      } catch (error) {
+        if (error instanceof FileStorageProviderServiceError) {
+          return res.status(error.status).json({ message: error.message });
+        }
+        console.error("[file-storage-providers] get workspace default failed", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    },
+  );
+
+  app.put(
+    "/api/admin/workspaces/:workspaceId/default-file-storage-provider",
+    requireAdmin,
+    async (req, res) => {
+      try {
+        const parsed = workspaceDefaultProviderSchema.parse(req.body ?? {});
+        const providerId = parsed.providerId ?? null;
+        const provider = await fileStorageProviderService.setWorkspaceDefault(req.params.workspaceId, providerId);
+        res.json({ provider: provider ? mapFileStorageProvider(provider) : null });
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ message: error.issues?.[0]?.message ?? "Invalid payload", details: error.issues });
+        }
+        if (error instanceof FileStorageProviderServiceError) {
+          return res.status(error.status).json({ message: error.message });
+        }
+        console.error("[file-storage-providers] set workspace default failed", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    },
+  );
 
   app.get("/api/admin/users", requireAdmin, async (_req, res, next) => {
     try {
@@ -9213,6 +9274,96 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(504).json({ message: "Request timeout" });
       }
       next(error);
+    }
+  });
+
+  // File storage providers (admin)
+  const mapFileStorageProvider = (provider: any) => ({
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    description: provider.description ?? null,
+    authType: provider.authType,
+    isActive: provider.isActive,
+    createdAt: provider.createdAt,
+    updatedAt: provider.updatedAt,
+  });
+
+  app.get("/api/admin/file-storage/providers", requireAdmin, async (req, res) => {
+    const pagination = parseFileStorageProviderListParams(req);
+    if ("error" in pagination) {
+      return res.status(400).json({ message: pagination.error });
+    }
+
+    try {
+      const { items, total, limit, offset } = await fileStorageProviderService.listProviders(pagination);
+      res.json({
+        providers: items.map(mapFileStorageProvider),
+        total,
+        limit,
+        offset,
+      });
+    } catch (error) {
+      console.error("[file-storage-providers] list failed", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/admin/file-storage/providers/:id", requireAdmin, async (req, res) => {
+    try {
+      const provider = await fileStorageProviderService.getProviderById(req.params.id);
+      res.json({ provider: mapFileStorageProvider(provider) });
+    } catch (error) {
+      if (error instanceof FileStorageProviderNotFoundError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      console.error("[file-storage-providers] get failed", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/admin/file-storage/providers", requireAdmin, async (req, res) => {
+    try {
+      const provider = await fileStorageProviderService.createProvider(req.body ?? {});
+      res.status(201).json({ provider: mapFileStorageProvider(provider) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: error.issues?.[0]?.message ?? "Invalid payload", details: error.issues });
+      }
+      if (error instanceof FileStorageProviderServiceError) {
+        return res.status(error.status).json({ message: error.message, details: error.details });
+      }
+      console.error("[file-storage-providers] create failed", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/admin/file-storage/providers/:id", requireAdmin, async (req, res) => {
+    try {
+      const provider = await fileStorageProviderService.updateProvider(req.params.id, req.body ?? {});
+      res.json({ provider: mapFileStorageProvider(provider) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: error.issues?.[0]?.message ?? "Invalid payload", details: error.issues });
+      }
+      if (error instanceof FileStorageProviderServiceError) {
+        return res.status(error.status).json({ message: error.message, details: error.details });
+      }
+      console.error("[file-storage-providers] update failed", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/admin/file-storage/providers/:id", requireAdmin, async (req, res) => {
+    try {
+      await fileStorageProviderService.deleteProvider(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      if (error instanceof FileStorageProviderNotFoundError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      console.error("[file-storage-providers] delete failed", error);
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 

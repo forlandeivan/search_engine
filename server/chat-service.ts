@@ -866,10 +866,11 @@ export function buildChatCompletionRequestBody(
   const modelField = requestConfig.modelField;
 
   const llmMessages: Array<{ role: string; content: string }> = [];
+  const systemParts: string[] = [];
   const systemPrompt = requestConfig.systemPrompt?.trim();
 
   if (systemPrompt) {
-    llmMessages.push({ role: "system", content: systemPrompt });
+    systemParts.push(systemPrompt);
   }
 
   if (context.retrievedContext && context.retrievedContext.length > 0) {
@@ -877,13 +878,20 @@ export function buildChatCompletionRequestBody(
       .slice(0, requestConfig.maxTokens ? Math.max(1, Math.min(context.retrievedContext.length, 8)) : 8)
       .map((entry, index) => `${index + 1}. ${entry}`)
       .join("\n");
-    llmMessages.push({
-      role: "system",
-      content: `Контекст из документов навыка (используй только как фактологическую опору, не придумывай новое):\n${contextLines}`,
-    });
+    systemParts.push(
+      `Контекст из документов навыка (используй только как фактологическую опору, не придумывай новое):\n${contextLines}`,
+    );
   }
 
+  const finalSystemPrompt =
+    systemParts.length > 0 ? systemParts.join("\n\n") : "You are a helpful assistant. Answer concisely and factually.";
+  llmMessages.push({ role: "system", content: finalSystemPrompt });
+
   for (const message of context.messages) {
+    if (message.role === "system") {
+      // Уже добавили системное сообщение первым, дополнительные system из истории пропускаем, чтобы не ломать порядок.
+      continue;
+    }
     const content = message.content?.trim();
     if (!content) {
       continue;
