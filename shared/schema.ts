@@ -1458,6 +1458,7 @@ export const skillFiles = pgTable(
     skillId: varchar("skill_id")
       .notNull()
       .references(() => skills.id, { onDelete: "cascade" }),
+    fileId: uuid("file_id").references(() => files.id, { onDelete: "set null" }),
     storageKey: text("storage_key").notNull(),
     originalName: text("original_name").notNull(),
     mimeType: text("mime_type"),
@@ -2085,6 +2086,7 @@ export const asrExecutions = pgTable(
     transcriptId: uuid("transcript_id"),
     provider: text("provider"),
     mode: text("mode"),
+    fileId: uuid("file_id").references(() => files.id, { onDelete: "set null" }),
     status: text("status").notNull().default("pending"),
     language: text("language"),
     fileName: text("file_name"),

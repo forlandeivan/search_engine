@@ -13,6 +13,7 @@ import { storage } from "./storage";
 import { uploadWorkspaceFile, deleteObject as deleteWorkspaceObject } from "./workspace-storage-service";
 import { cleanupFailedSkillFileUpload, type UploadedSkillFileDescriptor } from "./skill-file-upload-utils";
 import type { KnowledgeChunkSearchEntry, WorkspaceMemberWithUser } from "./storage";
+import { resolveStorageTarget, ExternalStorageNotImplementedError } from "./storage-routing";
 import {
   startKnowledgeBaseCrawl,
   getKnowledgeBaseCrawlJob,
@@ -7155,15 +7156,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     operationId: z.string().trim().max(200).optional(),
   });
 
+  const MAX_UPLOAD_FILE_SIZE_BYTES = 512 * 1024 * 1024;
+
   const fileUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: 500 * 1024 * 1024,
+      fileSize: MAX_UPLOAD_FILE_SIZE_BYTES,
       files: 1,
     },
   });
 
-  const MAX_SKILL_FILE_SIZE_BYTES = 512 * 1024 * 1024;
+  const MAX_SKILL_FILE_SIZE_BYTES = MAX_UPLOAD_FILE_SIZE_BYTES;
   const MAX_DOC_TOKENS = 2_000_000;
   const APPROX_BYTES_PER_TOKEN = 4;
   const MAX_DOC_SIZE_FOR_TOKENS = MAX_DOC_TOKENS * APPROX_BYTES_PER_TOKEN;
@@ -10810,6 +10813,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         if (!skill) {
           return res.status(404).json({ message: "Навык не найден" });
         }
+        const storageTarget = await resolveStorageTarget({
+          workspaceId,
+          skillExecutionMode: skill.executionMode ?? null,
+        });
+
+        if (storageTarget.storageType === "external_provider") {
+          throw new ExternalStorageNotImplementedError(storageTarget.reason);
+        }
 
         const files = (req.files as Express.Multer.File[]) ?? [];
         if (files.length === 0) {
@@ -10844,9 +10855,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           errorMessage?: string | null;
           processingStatus?: "processing" | "ready" | "error";
           processingErrorMessage?: string | null;
+          fileId?: string | null;
         }> = [];
         const validIndices: number[] = [];
         const uploadedKeys: UploadedSkillFileDescriptor[] = [];
+        let workspaceBucket: string | null =
+          (await storage.getWorkspace(workspaceId))?.storageBucket ?? null;
+        const isNoCodeSkill = skill.executionMode === "no_code";
+        const createIngestionJobs = !isNoCodeSkill;
 
         for (const [index, file] of files.entries()) {
           const originalName = decodeFilename(file.originalname || "");
@@ -10886,6 +10902,44 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           const objectKey = `files/skills/${skillId}/${randomUUID()}-${storageSafeName}`;
           try {
             await uploadWorkspaceFile(workspaceId, objectKey, file.buffer, file.mimetype, file.size);
+            if (!workspaceBucket) {
+              workspaceBucket = (await storage.getWorkspace(workspaceId))?.storageBucket ?? null;
+            }
+
+            let fileRecordId: string | null = null;
+            try {
+              const fileRecord = await storage.createFile({
+                workspaceId,
+                skillId,
+                userId: user.id,
+                kind: "skill_doc",
+                name: originalName || storageSafeName,
+                mimeType: file.mimetype || null,
+                sizeBytes: typeof file.size === "number" ? BigInt(file.size) : null,
+                storageType: "standard_minio",
+                bucket: workspaceBucket ?? undefined,
+                objectKey,
+                status: "ready",
+              });
+              fileRecordId = fileRecord.id;
+            } catch (err) {
+              console.error("[skill-files] failed to create file record", {
+                workspaceId,
+                skillId,
+                objectKey,
+                error: err instanceof Error ? err.message : err,
+              });
+              await deleteObject(workspaceId, objectKey).catch(() => undefined);
+              results.push({
+                name: originalName || storageSafeName,
+                size: file.size ?? null,
+                contentType: file.mimetype || null,
+                status: "error",
+                errorMessage: "Не удалось сохранить файл. Попробуйте ещё раз.",
+              });
+              continue;
+            }
+
             toInsert.push({
               workspaceId,
               skillId,
@@ -10894,8 +10948,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               mimeType: file.mimetype || null,
               sizeBytes: file.size,
               status: "uploaded",
-              processingStatus: "processing",
+              processingStatus: isNoCodeSkill ? "ready" : "processing",
               createdByUserId: user.id,
+              fileId: fileRecordId,
             });
             validIndices.push(index);
             uploadedKeys.push({ key: objectKey, resultIndex: results.length });
@@ -10904,7 +10959,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               size: file.size ?? null,
               contentType: file.mimetype || null,
               status: "uploaded",
-              processingStatus: "processing",
+              processingStatus: isNoCodeSkill ? "ready" : "processing",
             });
           } catch (error) {
             const errObj = error as any;
@@ -10934,7 +10989,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
         if (toInsert.length > 0) {
           try {
-            const saved = await storage.createSkillFiles(toInsert, { createIngestionJobs: true });
+            const saved = await storage.createSkillFiles(toInsert, { createIngestionJobs });
             saved.forEach((item, idx) => {
               const resultIndex = validIndices[idx];
               if (typeof resultIndex === "number" && results[resultIndex]) {
@@ -10945,8 +11000,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                   status: item.status as "uploaded" | "error",
                   errorMessage: item.errorMessage ?? undefined,
                   version: item.version ?? 1,
-                  ingestionStatus: "pending",
-                  processingStatus: (item as any).processingStatus ?? "processing",
+                  ingestionStatus: createIngestionJobs ? "pending" : undefined,
+                  processingStatus:
+                    (item as any).processingStatus ??
+                    (createIngestionJobs ? "processing" : "ready"),
                   processingErrorMessage: (item as any).processingErrorMessage ?? null,
                 };
               }
@@ -10959,6 +11016,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
         res.json({ files: results });
       } catch (error) {
+        if (error instanceof ExternalStorageNotImplementedError) {
+          return res.status(501).json({ message: error.message });
+        }
         const message = error instanceof Error ? error.message : "Не удалось загрузить файлы";
         res.status(400).json({ message });
       }
@@ -13362,7 +13422,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   const audioUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
-      fileSize: 500 * 1024 * 1024, // 500 MB for async API (large files)
+      fileSize: MAX_UPLOAD_FILE_SIZE_BYTES, // unified max size
       files: 1,
     },
     fileFilter: (_req, file, cb) => {
@@ -13427,6 +13487,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         if (!file) {
           return res.status(400).json({ message: "Аудиофайл не предоставлен" });
         }
+        if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+          return res.status(400).json({
+            message: "Слишком большой файл. Максимум 512MB. Уменьшите или разбейте файл на части.",
+          });
+        }
 
         const lang = typeof req.body.lang === "string" ? req.body.lang : undefined;
         const chatId = pickFirstString(req.body?.chatId, req.body?.chat_id, req.query.chatId, req.query.chat_id);
@@ -13444,13 +13509,82 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           skillIdForChat && workspaceId
             ? await getSkillById(workspaceId, skillIdForChat)
             : null;
-        if (skill?.executionMode === "no_code") {
-          return res.status(409).json({
-            message: "Для No-code навыков ASR выполняется внешним сценарием.",
-          });
-        }
+        const storageTarget = await resolveStorageTarget({
+          workspaceId,
+          skillExecutionMode: skill?.executionMode ?? null,
+        });
 
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
+
+        if (skill?.executionMode === "no_code") {
+          const fileName = decodeUploadFileName(file.originalname);
+          const audioMetadata: ChatMessageMetadata = {
+            type: "audio",
+            fileName,
+            mimeType: file.mimetype,
+            size: file.size,
+          };
+
+          const audioMessage = await storage.createChatMessage({
+            chatId,
+            role: "user",
+            content: fileName,
+            metadata: audioMetadata,
+          });
+          scheduleChatTitleGenerationIfNeeded({
+            chatId,
+            workspaceId,
+            userId: user.id,
+            messageText: fileName ?? "",
+            messageMetadata: audioMetadata,
+            chatTitle: chat.title,
+          });
+
+          let fileRecordId: string | null = null;
+          try {
+            const fileRecord = await storage.createFile({
+              workspaceId,
+              skillId: skillIdForChat ?? null,
+              chatId,
+              messageId: audioMessage.id,
+              userId: user.id,
+              kind: "audio",
+              name: fileName,
+              mimeType: file.mimetype,
+              sizeBytes: BigInt(file.size),
+              storageType: storageTarget.storageType,
+              providerId: storageTarget.providerId ?? null,
+              status: "uploading",
+              metadata: {
+                ...(storageTarget.reason ? { note: storageTarget.reason } : {}),
+              },
+            });
+            fileRecordId = fileRecord.id;
+          } catch (err) {
+            console.error("[transcribe] failed to create file record for no-code audio", err);
+          }
+
+          audioMessage.metadata = {
+            ...(audioMessage.metadata ?? {}),
+            fileId: fileRecordId ?? undefined,
+          };
+
+          return res.status(202).json({
+            status: "pending_external_storage",
+            message:
+              storageTarget.reason ??
+              "No-code навыки ожидают внешнее хранилище и обработку аудио (эпики 3–5).",
+            fileId: fileRecordId,
+            audioMessage: {
+              id: audioMessage.id,
+              chatId: audioMessage.chatId,
+              role: audioMessage.role,
+              content: audioMessage.content,
+              metadata: audioMessage.metadata ?? {},
+              createdAt: audioMessage.createdAt,
+            },
+          });
+        }
 
         let audioDurationSeconds: number | null = null;
         try {
@@ -13528,6 +13662,28 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         });
         ensureNotAborted();
 
+        // Create unified File record (storage_type = yandex_object_storage)
+        let fileRecordId: string | null = null;
+        try {
+          const fileRecord = await storage.createFile({
+            workspaceId,
+            chatId,
+            messageId: audioMessage.id,
+            userId: user.id,
+            kind: "audio",
+            name: fileName,
+            mimeType: file.mimetype,
+            sizeBytes: BigInt(file.size),
+            storageType: "yandex_object_storage",
+            externalUri: sttResponse.uploadResult?.uri ?? null,
+            objectKey: sttResponse.uploadResult?.objectKey ?? null,
+            status: "ready",
+          });
+          fileRecordId = fileRecord.id;
+        } catch (err) {
+          console.error("[transcribe] failed to create file record", err);
+        }
+
         const transcript = await storage.createTranscript({
           workspaceId,
           chatId,
@@ -13549,6 +13705,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           transcriptId: transcript.id,
           transcriptStatus: "processing",
           asrExecutionId: asrExecution.id,
+          fileId: fileRecordId ?? undefined,
         };
 
         const placeholderMessage = await storage.createChatMessage({
@@ -13565,6 +13722,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           stage: "asr_request_sent",
           details: { provider: "yandex_speechkit", operationId: sttResponse.operationId, language: lang ?? null },
         });
+        if (fileRecordId) {
+          try {
+            await db
+              .update(asrExecutions)
+              .set({ fileId: fileRecordId })
+              .where(eq(asrExecutions.id, asrExecution.id));
+          } catch (err) {
+            console.error("[transcribe] failed to link asr execution to file", err);
+          }
+        }
 
         ensureNotAborted();
         res.json({
