@@ -11030,6 +11030,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 skillContext: {
                   executionMode: skill.executionMode ?? null,
                   noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
+                  noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
                   noCodeAuthType: skill.noCodeConnection?.authType ?? null,
                   noCodeBearerToken: bearerToken,
                 },
@@ -11812,6 +11813,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           skillContext: {
             executionMode: skill.executionMode ?? null,
             noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
+            noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
             noCodeAuthType: skill.noCodeConnection?.authType ?? null,
             noCodeBearerToken: bearerToken,
           },
@@ -13862,6 +13864,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           if (!effectiveProvider) {
             return res.status(400).json({ message: "Для навыка не настроено внешнее файловое хранилище" });
           }
+          const connection = await getNoCodeConnectionInternal({ workspaceId, skillId: skill.id });
+          if (!connection?.endpointUrl) {
+            throw createNoCodeFlowError("NOT_CONFIGURED");
+          }
+          if (connection.authType === "bearer" && !connection.bearerToken) {
+            throw createNoCodeFlowError("NOT_CONFIGURED");
+          }
 
           let bearerToken: string | null = null;
           if (effectiveProvider.authType === "bearer") {
@@ -13937,6 +13946,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               skillContext: {
                 executionMode: skill.executionMode ?? null,
                 noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
+                noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
                 noCodeAuthType: skill.noCodeConnection?.authType ?? null,
                 noCodeBearerToken: bearerToken,
               },
@@ -13967,6 +13977,56 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             ...(audioMessage.metadata ?? {}),
             fileId: fileRecordId ?? undefined,
           };
+
+          const mappedAudioMessage = mapMessage({
+            ...audioMessage,
+            messageType: "audio",
+            metadata: audioMessage.metadata ?? {},
+          });
+          const messagePayload = buildMessageCreatedEventPayload({
+            workspaceId,
+            chatId,
+            skillId: skill.id,
+            message: { ...mappedAudioMessage, metadata: mappedAudioMessage.metadata },
+            actorUserId: user.id,
+          });
+          const downloadUrl =
+            (uploadedFile?.metadata as any)?.providerUpload?.downloadUrl ??
+            (uploadedFile as any)?.metadata?.providerUpload?.downloadUrl ??
+            null;
+          const normalizedDownloadUrl =
+            typeof downloadUrl === "string" && downloadUrl.trim().length > 0 ? downloadUrl.trim() : null;
+          const fileUploadedPayload = buildFileUploadedEventPayload({
+            workspaceId,
+            chatId,
+            skillId: skill.id,
+            message: { id: audioMessage.id, createdAt: audioMessage.createdAt },
+            actorUserId: user.id,
+            file: {
+              attachmentId: null,
+              filename: fileName,
+              mimeType: file.mimetype,
+              sizeBytes: typeof file.size === "number" ? file.size : null,
+              downloadUrl: normalizedDownloadUrl,
+              expiresAt: null,
+              uploadedByUserId: user.id,
+            },
+            meta: { transcriptionFlowMode: skill.transcriptionFlowMode ?? "standard" },
+          });
+          scheduleNoCodeEventDelivery({
+            endpointUrl: connection.endpointUrl,
+            authType: connection.authType,
+            bearerToken: connection.bearerToken,
+            payload: messagePayload,
+            idempotencyKey: messagePayload.eventId,
+          });
+          scheduleNoCodeEventDelivery({
+            endpointUrl: connection.endpointUrl,
+            authType: connection.authType,
+            bearerToken: connection.bearerToken,
+            payload: fileUploadedPayload,
+            idempotencyKey: `file.uploaded:${audioMessage.id}`,
+          });
 
           console.info(
             `[transcribe] no-code skip internal transcription audio_no_code_skip_transcription=true chat=${chat.id} skill=${skill.id} file=${fileRecordId ?? "none"}`,
@@ -14182,6 +14242,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
         if (error instanceof FileUploadToProviderError) {
           return res.status(error.status ?? 500).json({ message: error.message });
+        }
+        if (error instanceof ChatServiceError) {
+          return res.status(error.status).json(buildChatServiceErrorPayload(error));
         }
         if (error instanceof OperationBlockedError) {
           return res.status(error.status).json(error.toJSON());

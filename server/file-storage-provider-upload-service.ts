@@ -34,6 +34,7 @@ type UploadParams = {
   skillContext?: {
     executionMode?: string | null;
     noCodeFileEventsUrl?: string | null;
+    noCodeEndpointUrl?: string | null;
     noCodeAuthType?: NoCodeAuthType | null;
     noCodeBearerToken?: string | null;
   };
@@ -115,6 +116,7 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
         skill: {
           executionMode: params.skillContext?.executionMode ?? null,
           noCodeFileEventsUrl: params.skillContext?.noCodeFileEventsUrl ?? null,
+          noCodeEndpointUrl: params.skillContext?.noCodeEndpointUrl ?? null,
           noCodeAuthType: params.skillContext?.noCodeAuthType ?? null,
           noCodeBearerToken: bearerToken ?? null,
         },

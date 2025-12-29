@@ -59,13 +59,23 @@ export async function enqueueFileEventForSkill(opts: {
   skill: {
     executionMode?: string | null;
     noCodeFileEventsUrl?: string | null;
+    noCodeEndpointUrl?: string | null;
     noCodeAuthType?: NoCodeAuthType | null;
     noCodeBearerToken?: string | null;
   };
 }): Promise<void> {
   const isNoCode = opts.skill.executionMode === "no_code";
-  const targetUrl = opts.skill.noCodeFileEventsUrl ?? null;
-  if (!isNoCode || !targetUrl) return;
+  const targetUrl = opts.skill.noCodeFileEventsUrl ?? opts.skill.noCodeEndpointUrl ?? null;
+  if (!isNoCode || !targetUrl) {
+    if (isNoCode) {
+      console.warn("[file-events] skip enqueue: no target URL for no-code skill", {
+        skillId: opts.file.skillId ?? null,
+        workspaceId: opts.file.workspaceId,
+        action: opts.action,
+      });
+    }
+    return;
+  }
 
   const payload = buildFileEventPayload({ file: opts.file, action: opts.action });
   const bearerToken = decryptSecret(opts.skill.noCodeBearerToken ?? null);
