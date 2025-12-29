@@ -11194,41 +11194,50 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
 
         const fileRecord = file.fileId ? await storage.getFile(file.fileId, workspaceId) : null;
+        const isNoCodeSkill = skill.executionMode === "no_code";
+        const isExternalFile = (fileRecord as any)?.storageType === "external_provider";
 
         try {
-          let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"];
-          try {
-            ({ provider: embeddingProvider } = await resolveEmbeddingProviderForWorkspace({ workspaceId }));
-          } catch (error) {
-            const message =
-              error instanceof Error && error.message
-                ? error.message
-                : "Сервис эмбеддингов недоступен для удаления файла";
-            return res.status(400).json({ message });
-          }
+          if (!isNoCodeSkill && !isExternalFile) {
+            let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"];
+            try {
+              ({ provider: embeddingProvider } = await resolveEmbeddingProviderForWorkspace({ workspaceId }));
+            } catch (error) {
+              const message =
+                error instanceof Error && error.message
+                  ? error.message
+                  : "Сервис эмбеддингов недоступен для удаления файла";
+              return res.status(400).json({ message });
+            }
 
-          try {
-            await deleteSkillFileVectors({
-              workspaceId,
-              skillId,
-              fileId,
-              provider: embeddingProvider,
-              caller: "api:skill-file-delete",
-            });
-          } catch (error) {
-            const vectorError = error instanceof VectorStoreError ? error : null;
-            console.error("[skill-files] failed to delete vectors", {
-              error: vectorError?.message ?? String(error),
-              workspaceId,
-              skillId,
-              fileId,
-            });
-            return res
-              .status(500)
-              .json({ message: "Не удалось удалить векторы файла. Попробуйте ещё раз.", code: "VECTOR_DELETE_FAILED" });
-          }
+            try {
+              await deleteSkillFileVectors({
+                workspaceId,
+                skillId,
+                fileId,
+                provider: embeddingProvider,
+                caller: "api:skill-file-delete",
+              });
+            } catch (error) {
+              const vectorError = error instanceof VectorStoreError ? error : null;
+              console.error("[skill-files] failed to delete vectors", {
+                error: vectorError?.message ?? String(error),
+                workspaceId,
+                skillId,
+                fileId,
+              });
+              return res.status(500).json({
+                message: "Не удалось удалить векторы файла. Попробуйте ещё раз.",
+                code: "VECTOR_DELETE_FAILED",
+              });
+            }
 
-          await deleteWorkspaceObject(workspaceId, file.storageKey);
+            await deleteWorkspaceObject(workspaceId, file.storageKey);
+          } else {
+            console.info(
+              `[skill-files] skip physical delete for no-code file fileId=${fileId} skill=${skillId} storage=${(fileRecord as any)?.storageType ?? "unknown"}`,
+            );
+          }
         } catch (error) {
           console.error("[skill-files] failed to delete object from storage", error);
           return res
@@ -11598,26 +11607,118 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(404).json({ message: "Skill not found" });
         }
         ensureSkillIsActive(skill);
+        const isNoCodeSkill = skill.executionMode === "no_code";
 
         const filename = sanitizeFilename(file.originalname || "file");
         const mimeType = file.mimetype || "application/octet-stream";
         const sizeBytes = typeof file.size === "number" ? file.size : file.buffer.length;
-        const storageKey = buildAttachmentKey(chat.id, filename);
-
-        await uploadWorkspaceFile(workspaceId, storageKey, file.buffer, mimeType, sizeBytes);
-
-        const workspace = await storage.getWorkspace(workspaceId);
-        const bucket = workspace?.storageBucket ?? null;
-
         const baseMetadata = {
           file: {
             filename,
             mimeType,
             sizeBytes,
-            storageKey,
             uploadedByUserId: user.id,
           },
         };
+
+        let mapped: any;
+
+        if (!isNoCodeSkill) {
+          const storageKey = buildAttachmentKey(chat.id, filename);
+          await uploadWorkspaceFile(workspaceId, storageKey, file.buffer, mimeType, sizeBytes);
+
+          const workspace = await storage.getWorkspace(workspaceId);
+          const bucket = workspace?.storageBucket ?? null;
+
+          const message = await storage.createChatMessage({
+            chatId: chat.id,
+            role: "user",
+            content: filename,
+            metadata: { ...baseMetadata, file: { ...baseMetadata.file, storageKey } },
+            messageType: "file",
+          });
+
+          const fileRecord = await storage.createFile({
+            workspaceId,
+            chatId: chat.id,
+            messageId: message.id,
+            userId: user.id,
+            kind: "attachment",
+            name: filename,
+            mimeType,
+            sizeBytes,
+            storageType: "standard_minio",
+            bucket: bucket ?? undefined,
+            objectKey: storageKey,
+            status: "ready",
+          });
+
+          const attachment = await storage.createChatAttachment({
+            workspaceId,
+            chatId: chat.id,
+            messageId: message.id,
+            fileId: fileRecord.id,
+            uploaderUserId: user.id,
+            filename,
+            mimeType,
+            sizeBytes,
+            storageKey,
+          });
+
+          await storage.updateChatMessage(message.id, {
+            metadata: {
+              ...baseMetadata,
+              file: {
+                ...baseMetadata.file,
+                storageKey,
+                attachmentId: attachment.id,
+              },
+            },
+          });
+
+          await storage.touchChatSession(chat.id);
+
+          const latest = await storage.getChatMessage(message.id);
+          const presigned = await generateWorkspaceFileDownloadUrl(workspaceId, storageKey, ATTACHMENT_URL_TTL_SECONDS);
+          const enriched = latest ?? message;
+          mapped = mapMessage({
+            ...enriched,
+            metadata: {
+              ...(enriched.metadata ?? {}),
+              file: {
+                ...(enriched.metadata as any)?.file,
+                attachmentId: attachment.id,
+                fileId: fileRecord.id,
+                downloadUrl: presigned.url,
+                expiresAt: presigned.expiresAt,
+              },
+            },
+          });
+
+          res.status(201).json({ message: mapped });
+          return;
+        }
+
+        const effectiveProvider = skill.noCodeConnection?.effectiveFileStorageProvider ?? null;
+        if (!effectiveProvider) {
+          return res
+            .status(400)
+            .json({ message: "File storage provider is not configured for this no-code skill" });
+        }
+        const connection = await getNoCodeConnectionInternal({ workspaceId, skillId: skill.id });
+        if (!connection?.endpointUrl) {
+          throw createNoCodeFlowError("NOT_CONFIGURED");
+        }
+        if (connection.authType === "bearer" && !connection.bearerToken) {
+          throw createNoCodeFlowError("NOT_CONFIGURED");
+        }
+        let bearerToken: string | null = null;
+        if (effectiveProvider.authType === "bearer") {
+          bearerToken = await getSkillBearerToken({ workspaceId, skillId: skill.id }).catch(() => null);
+          if (!bearerToken) {
+            return res.status(400).json({ message: "Bearer token is not configured" });
+          }
+        }
 
         const message = await storage.createChatMessage({
           chatId: chat.id,
@@ -11636,9 +11737,41 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           name: filename,
           mimeType,
           sizeBytes,
-          storageType: "standard_minio",
-          bucket: bucket ?? undefined,
+          storageType: "external_provider",
+          providerId: effectiveProvider.id,
+          status: "uploading",
+        });
+
+        const uploaded = await uploadFileToProvider({
+          fileId: fileRecord.id,
+          providerId: effectiveProvider.id,
+          bearerToken,
+          data: file.buffer,
+          mimeType,
+          fileName: filename,
+          sizeBytes,
+          context: {
+            workspaceId,
+            skillId: skill.id,
+            chatId: chat.id,
+            userId: user.id,
+            messageId: message.id,
+          },
+          skillContext: {
+            executionMode: skill.executionMode ?? null,
+            noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
+            noCodeAuthType: skill.noCodeConnection?.authType ?? null,
+            noCodeBearerToken: bearerToken,
+          },
+        });
+
+        const storageKey =
+          uploaded.providerFileId ?? uploaded.objectKey ?? uploaded.externalUri ?? uploaded.id ?? filename;
+
+        await storage.updateFile(uploaded.id, {
           objectKey: storageKey,
+          storageType: "external_provider",
+          providerId: effectiveProvider.id,
           status: "ready",
         });
 
@@ -11646,7 +11779,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           workspaceId,
           chatId: chat.id,
           messageId: message.id,
-          fileId: fileRecord.id,
+          fileId: uploaded.id,
           uploaderUserId: user.id,
           filename,
           mimeType,
@@ -11659,7 +11792,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             ...baseMetadata,
             file: {
               ...baseMetadata.file,
+              storageKey,
               attachmentId: attachment.id,
+              fileId: uploaded.id,
             },
           },
         });
@@ -11667,73 +11802,69 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         await storage.touchChatSession(chat.id);
 
         const latest = await storage.getChatMessage(message.id);
-        const presigned = await generateWorkspaceFileDownloadUrl(workspaceId, storageKey, ATTACHMENT_URL_TTL_SECONDS);
         const enriched = latest ?? message;
-        const mapped = mapMessage({
+        mapped = mapMessage({
           ...enriched,
           metadata: {
             ...(enriched.metadata ?? {}),
             file: {
               ...(enriched.metadata as any)?.file,
               attachmentId: attachment.id,
-              fileId: fileRecord.id,
-              downloadUrl: presigned.url,
-              expiresAt: presigned.expiresAt,
+              fileId: uploaded.id,
+              downloadUrl: null,
+              expiresAt: null,
             },
           },
         });
 
-        if (skill && skill.executionMode === "no_code") {
-          const connection = await getNoCodeConnectionInternal({ workspaceId, skillId: skill.id });
-          if (!connection?.endpointUrl) {
-            throw createNoCodeFlowError("NOT_CONFIGURED");
-          }
-          const messagePayload = buildMessageCreatedEventPayload({
-            workspaceId,
-            chatId: chat.id,
-            skillId: skill.id,
-            message: { ...mapped, metadata: mapped.metadata },
-            actorUserId: user.id,
-          });
-          const fileUploadedPayload = buildFileUploadedEventPayload({
-            workspaceId,
-            chatId: chat.id,
-            skillId: skill.id,
-            message: { id: mapped.id, createdAt: mapped.createdAt },
-            actorUserId: user.id,
-            file: {
-              attachmentId: attachment.id,
-              fileId: fileRecord.id,
-              filename,
-              mimeType,
-              sizeBytes,
-              downloadUrl: presigned.url,
-              expiresAt: presigned.expiresAt,
-              uploadedByUserId: user.id,
-            },
-            meta: { transcriptionFlowMode: skill.transcriptionFlowMode ?? "standard" },
-          });
+        const messagePayload = buildMessageCreatedEventPayload({
+          workspaceId,
+          chatId: chat.id,
+          skillId: skill.id,
+          message: { ...mapped, metadata: mapped.metadata },
+          actorUserId: user.id,
+        });
+        const fileUploadedPayload = buildFileUploadedEventPayload({
+          workspaceId,
+          chatId: chat.id,
+          skillId: skill.id,
+          message: { id: mapped.id, createdAt: mapped.createdAt },
+          actorUserId: user.id,
+          file: {
+            attachmentId: attachment.id,
+            fileId: uploaded.id,
+            filename,
+            mimeType,
+            sizeBytes,
+            downloadUrl: null,
+            expiresAt: null,
+            uploadedByUserId: user.id,
+          },
+          meta: { transcriptionFlowMode: skill.transcriptionFlowMode ?? "standard" },
+        });
 
-          scheduleNoCodeEventDelivery({
-            endpointUrl: connection.endpointUrl,
-            authType: connection.authType,
-            bearerToken: connection.bearerToken,
-            payload: messagePayload,
-            idempotencyKey: messagePayload.eventId,
-          });
-          scheduleNoCodeEventDelivery({
-            endpointUrl: connection.endpointUrl,
-            authType: connection.authType,
-            bearerToken: connection.bearerToken,
-            payload: fileUploadedPayload,
-            idempotencyKey: `file.uploaded:${mapped.id}`,
-          });
-        }
+        scheduleNoCodeEventDelivery({
+          endpointUrl: connection.endpointUrl,
+          authType: connection.authType,
+          bearerToken: connection.bearerToken,
+          payload: messagePayload,
+          idempotencyKey: messagePayload.eventId,
+        });
+        scheduleNoCodeEventDelivery({
+          endpointUrl: connection.endpointUrl,
+          authType: connection.authType,
+          bearerToken: connection.bearerToken,
+          payload: fileUploadedPayload,
+          idempotencyKey: `file.uploaded:${mapped.id}`,
+        });
 
         res.status(201).json({ message: mapped });
       } catch (error) {
         if (error instanceof ChatServiceError) {
           return res.status(error.status).json(buildChatServiceErrorPayload(error));
+        }
+        if (error instanceof FileUploadToProviderError) {
+          return res.status(error.status ?? 500).json({ message: error.message });
         }
         if (error instanceof HttpError) {
           return res.status(error.status).json({ message: error.message });
@@ -13668,14 +13799,22 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           skillIdForChat && workspaceId
             ? await getSkillById(workspaceId, skillIdForChat)
             : null;
-        const storageTarget = await resolveStorageTarget({
-          workspaceId,
-          skillExecutionMode: skill?.executionMode ?? null,
-        });
-
         console.info(`[transcribe] user=${user.id} file=${file.originalname} size=${file.size} mimeType=${file.mimetype}`);
 
         if (skill?.executionMode === "no_code") {
+          const effectiveProvider = skill.noCodeConnection?.effectiveFileStorageProvider ?? null;
+          if (!effectiveProvider) {
+            return res.status(400).json({ message: "Для навыка не настроено внешнее файловое хранилище" });
+          }
+
+          let bearerToken: string | null = null;
+          if (effectiveProvider.authType === "bearer") {
+            bearerToken = await getSkillBearerToken({ workspaceId, skillId: skill.id }).catch(() => null);
+            if (!bearerToken) {
+              return res.status(400).json({ message: "Bearer token is not configured" });
+            }
+          }
+
           const fileName = decodeUploadFileName(file.originalname);
           const audioMetadata: ChatMessageMetadata = {
             type: "audio",
@@ -13700,6 +13839,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           });
 
           let fileRecordId: string | null = null;
+          let uploadedFile: any | null = null;
           try {
             const fileRecord = await storage.createFile({
               workspaceId,
@@ -13711,16 +13851,55 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               name: fileName,
               mimeType: file.mimetype,
               sizeBytes: BigInt(file.size),
-              storageType: storageTarget.storageType,
-              providerId: storageTarget.providerId ?? null,
+              storageType: "external_provider",
+              providerId: effectiveProvider.id,
               status: "uploading",
-              metadata: {
-                ...(storageTarget.reason ? { note: storageTarget.reason } : {}),
-              },
+              metadata: {},
             });
             fileRecordId = fileRecord.id;
+
+            uploadedFile = await uploadFileToProvider({
+              fileId: fileRecord.id,
+              providerId: effectiveProvider.id,
+              bearerToken,
+              data: file.buffer,
+              mimeType: file.mimetype,
+              fileName,
+              sizeBytes: file.size ?? null,
+              context: {
+                workspaceId,
+                skillId: skillIdForChat ?? null,
+                chatId,
+                userId: user.id,
+                messageId: audioMessage.id,
+              },
+              skillContext: {
+                executionMode: skill.executionMode ?? null,
+                noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
+                noCodeAuthType: skill.noCodeConnection?.authType ?? null,
+                noCodeBearerToken: bearerToken,
+              },
+            });
+
+            const storageKey =
+              uploadedFile?.providerFileId ??
+              uploadedFile?.objectKey ??
+              uploadedFile?.externalUri ??
+              uploadedFile?.id ??
+              fileName;
+
+            await storage.updateFile(fileRecord.id, {
+              objectKey: storageKey,
+              storageType: "external_provider",
+              providerId: effectiveProvider.id,
+              status: "ready",
+            });
           } catch (err) {
-            console.error("[transcribe] failed to create file record for no-code audio", err);
+            console.error("[transcribe] failed to upload audio to external provider", err);
+            if (err instanceof FileUploadToProviderError) {
+              return res.status(err.status ?? 500).json({ message: err.message });
+            }
+            throw err;
           }
 
           audioMessage.metadata = {
@@ -13728,11 +13907,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             fileId: fileRecordId ?? undefined,
           };
 
-          return res.status(202).json({
-            status: "pending_external_storage",
-            message:
-              storageTarget.reason ??
-              "No-code навыки ожидают внешнее хранилище и обработку аудио (эпики 3–5).",
+          console.info(
+            `[transcribe] no-code skip internal transcription audio_no_code_skip_transcription=true chat=${chat.id} skill=${skill.id} file=${fileRecordId ?? "none"}`,
+          );
+
+          ensureNotAborted();
+          return res.status(201).json({
+            status: "uploaded",
             fileId: fileRecordId,
             audioMessage: {
               id: audioMessage.id,
@@ -13741,6 +13922,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               content: audioMessage.content,
               metadata: audioMessage.metadata ?? {},
               createdAt: audioMessage.createdAt,
+            },
+            storage: {
+              providerId: effectiveProvider.id,
+              providerFileId: uploadedFile?.providerFileId ?? null,
             },
           });
         }
@@ -13933,6 +14118,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
         if (error instanceof YandexSttError) {
           return res.status(error.status).json({ message: error.message, code: error.code });
+        }
+        if (error instanceof FileUploadToProviderError) {
+          return res.status(error.status ?? 500).json({ message: error.message });
         }
         if (error instanceof OperationBlockedError) {
           return res.status(error.status).json(error.toJSON());

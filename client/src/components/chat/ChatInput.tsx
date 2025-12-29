@@ -12,17 +12,20 @@ import type { ChatMessage } from "@/types/chat";
 export type TranscribePayload =
   | string
   | {
-      operationId: string;
+      operationId?: string | null;
       fileName: string;
       chatId: string;
       audioMessage?: ChatMessage;
       placeholderMessage?: ChatMessage;
+      status?: "uploaded";
+      fileId?: string | null;
     };
 
 type ChatInputProps = {
   onSend: (message: string) => Promise<void> | void;
   onTranscribe?: (payload: TranscribePayload) => void;
   onSendFile?: (file: File) => Promise<void> | void;
+  onCancelFileUpload?: () => void;
   onEnsureChat?: () => Promise<string | null> | string | null;
   disabled?: boolean;
   readOnlyHint?: string;
@@ -30,6 +33,7 @@ type ChatInputProps = {
   showAudioAttach?: boolean;
   chatId?: string | null;
   disableAudioTranscription?: boolean;
+  fileUploadState?: { fileName: string; size: number | null; status: "uploading" | "error" } | null;
 };
 
 const ACCEPTED_AUDIO_TYPES = ".ogg,.webm,.wav,.mp3,.m4a,.aac,.flac";
@@ -49,6 +53,7 @@ export default function ChatInput({
   onSend,
   onTranscribe,
   onSendFile,
+  onCancelFileUpload,
   onEnsureChat,
   disabled,
   readOnlyHint,
@@ -56,6 +61,7 @@ export default function ChatInput({
   showAudioAttach = true,
   chatId = null,
   disableAudioTranscription = false,
+  fileUploadState = null,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [sttAvailable, setSttAvailable] = useState<boolean | null>(null);
@@ -128,14 +134,6 @@ export default function ChatInput({
 
   const handleUploadAudio = useCallback(
     async (file: File): Promise<TranscribePayload | null> => {
-      if (disableAudioTranscription) {
-        // В No-code режиме не запускаем внутреннюю транскрибацию: просто показываем превью файла.
-        setAttachedFile(file);
-        setPendingTranscribe(null);
-        setIsUploading(false);
-        setIsUploadingFile(false);
-        return null;
-      }
       const targetChatId = await ensureChatId();
       if (!targetChatId) {
         toast({
@@ -180,7 +178,7 @@ export default function ChatInput({
         } catch (error) {
           const friendlyMessage = formatApiErrorMessage(error);
           toast({
-            title: isInsufficientCreditsError(error) ? "Недостаточно кредитов" : "Ошибка транскрибации",
+            title: isInsufficientCreditsError(error) ? "Недостаточно кредитов" : "Не удалось отправить аудио",
             description: friendlyMessage,
             variant: "destructive",
           });
@@ -188,6 +186,19 @@ export default function ChatInput({
         }
 
         const result = await response.json();
+
+        if (result.status === "uploaded") {
+          const payload: TranscribePayload = {
+            operationId: null,
+            status: "uploaded",
+            fileName: file.name,
+            chatId: targetChatId,
+            audioMessage: result.audioMessage,
+            fileId: result.fileId ?? null,
+          };
+          setPendingTranscribe(payload);
+          return payload;
+        }
 
         if (result.operationId) {
           const payload: TranscribePayload = {
@@ -210,7 +221,7 @@ export default function ChatInput({
       } catch (error) {
         console.error("[ChatInput] Transcription error:", error);
         toast({
-          title: "Ошибка транскрибации",
+          title: "Не удалось отправить аудио",
           description: formatApiErrorMessage(error),
           variant: "destructive",
         });
@@ -347,7 +358,8 @@ export default function ChatInput({
     isSending ||
     (value.trim().length === 0 && !attachedFile) ||
     (attachedFile && !disableAudioTranscription && !pendingTranscribe);
-  const isAttachDisabled = disabled || isUploading || isUploadingFile || !!attachedFile;
+  const isAttachDisabled =
+    disabled || isUploading || isUploadingFile || fileUploadState?.status === "uploading" || !!attachedFile;
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -376,6 +388,35 @@ export default function ChatInput({
             }}
             disabled={isUploading}
             data-testid="button-remove-audio"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+      {fileUploadState && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30">
+          {fileUploadState.status === "uploading" ? (
+            <Loader2 className="h-5 w-5 shrink-0 animate-spin text-blue-600 dark:text-blue-400" />
+          ) : (
+            <X className="h-5 w-5 shrink-0 text-red-500" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-blue-900 dark:text-blue-100">
+              {fileUploadState.fileName}
+            </p>
+            <p className="text-xs text-blue-700 dark:text-blue-300">
+              {fileUploadState.status === "uploading"
+                ? "Загружаем..."
+                : "Не удалось отправить файл"}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={() => onCancelFileUpload?.()}
+            data-testid="button-cancel-file-upload"
           >
             <X className="h-4 w-4" />
           </Button>

@@ -382,7 +382,7 @@ function ChatBubble({
   const renderFileBubble = () => {
     const name = fileMeta?.filename || message.content || "Файл";
     const sizeLabel = formatSize(fileMeta?.sizeBytes ?? null);
-    const downloadUrl = fileMeta?.downloadUrl || `/api/chat/messages/${message.id}/file`;
+    const downloadUrl = fileMeta?.downloadUrl || null;
     return (
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 text-white">
@@ -393,17 +393,19 @@ function ChatBubble({
           <div className="text-xs text-white/70">
             {sizeLabel ? <span>{sizeLabel}</span> : null}
           </div>
-          <div className="pt-1">
-            <a
-              href={downloadUrl}
-              className="inline-flex items-center gap-2 text-sm font-medium text-white hover:underline"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <Download className="h-4 w-4" />
-              Скачать
-            </a>
-          </div>
+          {downloadUrl ? (
+            <div className="pt-1">
+              <a
+                href={downloadUrl}
+                className="inline-flex items-center gap-2 text-sm font-medium text-white hover:underline"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Download className="h-4 w-4" />
+                Скачать
+              </a>
+            </div>
+          ) : null}
         </div>
       </div>
     );

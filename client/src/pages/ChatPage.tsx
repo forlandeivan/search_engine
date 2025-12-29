@@ -72,6 +72,10 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [fileUploadState, setFileUploadState] = useState<
+    { fileName: string; size: number | null; status: "uploading" | "error" }
+  > | null>(null);
+  const fileUploadAbortRef = useRef<AbortController | null>(null);
   const { toast } = useToast();
   const resolveArchiveErrorMessage = (error: unknown): string | null => {
     if (isApiError(error) && error.code) {
@@ -364,6 +368,10 @@ export default function ChatPage({ params }: ChatPageProps) {
   const handleSendFile = useCallback(
     async (file: File) => {
       if (!workspaceId) return;
+      const controller = new AbortController();
+      fileUploadAbortRef.current?.abort();
+      fileUploadAbortRef.current = controller;
+      setFileUploadState({ fileName: file.name, size: file.size ?? null, status: "uploading" });
       let targetChatId = effectiveChatId;
       if (!targetChatId) {
         if (!defaultSkill) {
@@ -380,20 +388,43 @@ export default function ChatPage({ params }: ChatPageProps) {
       formData.append("file", file);
       formData.append("workspaceId", workspaceId);
 
-      const response = await fetch(
-        `/api/chat/sessions/${targetChatId}/messages/file?workspaceId=${encodeURIComponent(
-          workspaceId,
-        )}`,
-        {
-        method: "POST",
-        credentials: "include",
-        body: formData,
-      });
-      await throwIfResNotOk(response);
-      await refetchMessages();
+      try {
+        const response = await fetch(
+          `/api/chat/sessions/${targetChatId}/messages/file?workspaceId=${encodeURIComponent(
+            workspaceId,
+          )}`,
+          {
+            method: "POST",
+            credentials: "include",
+            body: formData,
+            signal: controller.signal,
+          },
+        );
+        await throwIfResNotOk(response);
+        setFileUploadState(null);
+        await refetchMessages();
+      } catch (error) {
+        if (controller.signal.aborted) {
+          setFileUploadState(null);
+          return;
+        }
+        const message = formatApiErrorMessage(error);
+        setFileUploadState({ fileName: file.name, size: file.size ?? null, status: "error" });
+        setStreamError(message);
+        toast({
+          title: "Не удалось отправить файл",
+          description: message,
+          variant: "destructive",
+        });
+      }
     },
     [workspaceId, effectiveChatId, defaultSkill, createChat, handleSelectChat, refetchMessages],
   );
+
+  const handleCancelFileUpload = useCallback(() => {
+    fileUploadAbortRef.current?.abort();
+    setFileUploadState(null);
+  }, []);
 
   const handleTranscription = useCallback(
     async (input: TranscribePayload) => {
@@ -405,6 +436,7 @@ export default function ChatPage({ params }: ChatPageProps) {
       let providedChatId: string | null = null;
       let serverAudioMessage: ChatMessage | null = null;
       let serverPlaceholder: ChatMessage | null = null;
+      const isUploadedFlow = typeof input !== "string" && input.status === "uploaded";
 
       if (typeof input === "string") {
         if (!input.startsWith("__PENDING_OPERATION:")) {
@@ -415,16 +447,11 @@ export default function ChatPage({ params }: ChatPageProps) {
         operationId = parts[0] ?? null;
         fileName = parts[1] ? decodeURIComponent(parts[1]) : "audio";
       } else {
-        operationId = input.operationId;
+        operationId = input.operationId ?? null;
         fileName = input.fileName || "audio";
         providedChatId = input.chatId ?? null;
         serverAudioMessage = input.audioMessage ?? null;
         serverPlaceholder = input.placeholderMessage ?? null;
-      }
-
-      if (!operationId) {
-        setIsTranscribing(false);
-        return;
       }
 
       let targetChatId = effectiveChatId;
@@ -448,6 +475,32 @@ export default function ChatPage({ params }: ChatPageProps) {
           setIsTranscribing(false);
           return;
         }
+      }
+
+      if (isUploadedFlow) {
+        if (targetChatId) {
+          setLocalChatId(targetChatId);
+          if (serverAudioMessage) {
+            const audioMessageTime = serverAudioMessage.createdAt ? new Date(serverAudioMessage.createdAt) : new Date();
+            const audioMessage: ChatMessage = {
+              ...serverAudioMessage,
+              createdAt: audioMessageTime.toISOString(),
+            };
+            setLocalMessages((prev) => {
+              const filtered = prev.filter((msg) => msg.id !== audioMessage.id);
+              return [...filtered, audioMessage];
+            });
+          }
+          await queryClient.invalidateQueries({ queryKey: ["chat-messages"] }).catch(() => {});
+          await queryClient.invalidateQueries({ queryKey: ["chats"] }).catch(() => {});
+        }
+        setIsTranscribing(false);
+        return;
+      }
+
+      if (!operationId) {
+        setIsTranscribing(false);
+        return;
       }
 
       if (targetChatId) {
@@ -682,13 +735,15 @@ export default function ChatPage({ params }: ChatPageProps) {
             onSend={handleSend}
             onTranscribe={handleTranscription}
             onSendFile={handleSendFile}
+            onCancelFileUpload={handleCancelFileUpload}
+            fileUploadState={fileUploadState}
             disabled={disableInput}
             readOnlyHint={readOnlyHint}
             chatId={effectiveChatId ?? null}
             placeholder={
               placeholder
             }
-            disableAudioTranscription={activeSkill?.executionMode === "no_code"}
+            disableAudioTranscription={false}
           />
           </div>
         </div>

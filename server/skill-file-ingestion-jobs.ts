@@ -69,6 +69,27 @@ async function processJob(job: SkillFileIngestionJob): Promise<void> {
       return;
     }
 
+    const fileRecord = file.fileId ? await storage.getFile(file.fileId, file.workspaceId) : null;
+    const skipNoCode =
+      skill.executionMode === "no_code" || (fileRecord as any)?.storageType === "external_provider";
+    if (skipNoCode) {
+      console.info(
+        `[${JOB_TYPE}] skip_no_code_ingestion file=${file.id} skill=${file.skillId} storage=${(fileRecord as any)?.storageType ?? "unknown"}`,
+      );
+      await storage.markSkillFileIngestionJobDone(job.id, {
+        chunkCount: 0,
+        totalChars: 0,
+        totalTokens: 0,
+      });
+      await storage.updateSkillFileStatus(file.id, file.workspaceId, file.skillId, {
+        status: "uploaded",
+        processingStatus: "ready",
+        errorMessage: null,
+        processingErrorMessage: null,
+      });
+      return;
+    }
+
     try {
       const resolved = await resolveEmbeddingProviderForWorkspace({ workspaceId: file.workspaceId });
       embeddingProvider = resolved.provider;
