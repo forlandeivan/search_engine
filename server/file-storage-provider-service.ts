@@ -26,7 +26,7 @@ const providerConfigSchema = z
     multipartFieldName: z.string().trim().min(1, "multipartFieldName is required").max(100).optional(),
     metadataFieldName: z.string().trim().max(100).nullable().optional(),
     responseFileIdPath: z.string().trim().min(1, "responseFileIdPath is required").max(200).optional(),
-    defaultTimeoutMs: z.number().int().positive().max(120_000).optional(),
+    defaultTimeoutMs: z.number().int().min(0).max(600_000).optional(), // 0 — без таймаута, до 10 минут
   })
   .optional();
 
@@ -75,6 +75,7 @@ export const defaultProviderConfig = {
 
 export function normalizeFileProviderConfig(input: z.infer<typeof providerConfigSchema> | undefined | null) {
   const cfg = input ?? {};
+  const hasTimeout = cfg.defaultTimeoutMs !== undefined && cfg.defaultTimeoutMs !== null;
   return {
     uploadMethod: (cfg.uploadMethod ?? defaultProviderConfig.uploadMethod) as "POST" | "PUT",
     pathTemplate: cfg.pathTemplate ?? defaultProviderConfig.pathTemplate,
@@ -82,7 +83,7 @@ export function normalizeFileProviderConfig(input: z.infer<typeof providerConfig
     metadataFieldName:
       cfg.metadataFieldName === undefined ? defaultProviderConfig.metadataFieldName : cfg.metadataFieldName,
     responseFileIdPath: cfg.responseFileIdPath ?? defaultProviderConfig.responseFileIdPath,
-    defaultTimeoutMs: cfg.defaultTimeoutMs ?? defaultProviderConfig.defaultTimeoutMs,
+    defaultTimeoutMs: hasTimeout ? cfg.defaultTimeoutMs : defaultProviderConfig.defaultTimeoutMs,
   };
 }
 

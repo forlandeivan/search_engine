@@ -90,6 +90,8 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
   const handleSave = async () => {
     setSaving(true);
     try {
+      const parsedTimeout = Number(form.defaultTimeoutMs);
+      const timeoutValue = Number.isFinite(parsedTimeout) ? parsedTimeout : undefined;
       const payload = {
         ...form,
         config: {
@@ -98,7 +100,7 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
           multipartFieldName: form.multipartFieldName.trim(),
           metadataFieldName: form.metadataFieldName.trim() === "" ? null : form.metadataFieldName.trim(),
           responseFileIdPath: form.responseFileIdPath.trim(),
-          defaultTimeoutMs: Number(form.defaultTimeoutMs) || undefined,
+          defaultTimeoutMs: timeoutValue,
         },
       };
       if (isCreate) {
@@ -262,10 +264,13 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
             id="defaultTimeoutMs"
             type="number"
             min={0}
+            max={600000}
+            step={1000}
             value={form.defaultTimeoutMs}
             onChange={(e) => handleChange("defaultTimeoutMs", e.target.value)}
             placeholder="15000"
           />
+          <p className="text-xs text-muted-foreground">0 — без таймаута, максимум 600000 мс (10 минут).</p>
         </div>
 
         <div className="flex items-center gap-3">
