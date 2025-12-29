@@ -6,6 +6,7 @@ import { applyTlsPreferences } from "./http-utils";
 import type { NoCodeAuthType } from "@shared/schema";
 import { z } from "zod";
 import { addNoCodeSyncFinalResults } from "./chat-service";
+import { decryptSecret } from "./secret-storage";
 
 export type NoCodeConnectionInternal = {
   endpointUrl: string | null;
@@ -126,11 +127,12 @@ export async function getNoCodeConnectionInternal(opts: {
   const endpointUrl = typeof row.endpointUrl === "string" ? row.endpointUrl.trim() : null;
   const authType = (row.authType as NoCodeAuthType) ?? "none";
   const bearerToken = typeof row.bearerToken === "string" ? row.bearerToken : null;
+  const decryptedToken = decryptSecret(bearerToken);
 
   return {
     endpointUrl: endpointUrl && endpointUrl.length > 0 ? endpointUrl : null,
     authType,
-    bearerToken: bearerToken && bearerToken.trim().length > 0 ? bearerToken : null,
+    bearerToken: decryptedToken && decryptedToken.trim().length > 0 ? decryptedToken.trim() : null,
   };
 }
 

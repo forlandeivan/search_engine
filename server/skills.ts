@@ -28,6 +28,7 @@ import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { mapDecisionToPayload, OperationBlockedError } from "./guards/errors";
 import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } from "./model-service";
 import { workspacePlanService } from "./workspace-plan-service";
+import { decryptSecret, encryptSecret } from "./secret-storage";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -107,6 +108,7 @@ type FileStorageProviderLookup = {
 };
 
 let storageSingleton: typeof import("./storage").storage | null = null;
+const SECRET_PLACEHOLDER = "__secret__";
 
 async function getStorage() {
   if (!storageSingleton) {
@@ -114,6 +116,16 @@ async function getStorage() {
     storageSingleton = module.storage;
   }
   return storageSingleton;
+}
+
+function encodeBearerToken(token: string | null): string | null {
+  if (!token) return null;
+  return encryptSecret(token);
+}
+
+function decodeBearerToken(token: string | null): string | null {
+  if (!token) return null;
+  return decryptSecret(token);
 }
 
 const toProviderShort = (provider: {
@@ -440,6 +452,8 @@ function mapSkillRow(
     responseFormatRaw === "text" || responseFormatRaw === "markdown" || responseFormatRaw === "html"
       ? responseFormatRaw
       : DEFAULT_RAG_CONFIG.llmResponseFormat;
+  const effectiveProvider = providerInfo?.effective ?? (row as any).effectiveFileStorageProvider ?? null;
+  const authType = effectiveProvider?.authType ?? normalizeNoCodeAuthType(row.noCodeAuthType);
 
   const payload: SkillDto = {
     id: row.id,
@@ -461,12 +475,9 @@ function mapSkillRow(
       fileEventsUrl: row.noCodeFileEventsUrl ?? null,
       fileStorageProviderId: row.noCodeFileStorageProviderId ?? null,
       selectedFileStorageProviderId: providerInfo?.selectedProviderId ?? row.noCodeFileStorageProviderId ?? null,
-      effectiveFileStorageProvider:
-        providerInfo?.effective ??
-        (row as any).effectiveFileStorageProvider ??
-        null,
+      effectiveFileStorageProvider: effectiveProvider,
       effectiveFileStorageProviderSource: providerInfo?.source ?? "none",
-      authType: normalizeNoCodeAuthType(row.noCodeAuthType),
+      authType,
       tokenIsSet: Boolean(row.noCodeBearerToken?.trim()),
       callbackTokenIsSet: callbackTokenHash.length > 0,
       callbackTokenLastRotatedAt: row.noCodeCallbackTokenRotatedAt ? toIso(row.noCodeCallbackTokenRotatedAt) : null,
@@ -622,7 +633,8 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
     next.noCodeAuthType = normalizeNoCodeAuthType(input.noCodeAuthType);
   }
   if (input.noCodeBearerToken !== undefined) {
-    next.noCodeBearerToken = normalizeNullableString(input.noCodeBearerToken);
+    next.noCodeBearerToken =
+      input.noCodeBearerToken === "" ? "" : normalizeNullableString(input.noCodeBearerToken);
   }
   if (input.contextInputLimit !== undefined) {
     const value =
@@ -731,43 +743,54 @@ export async function createSkill(
   }
 
   const normalized = buildEditableColumns(input);
+  const executionMode = normalized.executionMode ?? DEFAULT_SKILL_EXECUTION_MODE;
+  const isNoCodeMode = executionMode === "no_code";
   const submittedNoCodeEndpoint = normalized.noCodeEndpointUrl ?? null;
   const submittedNoCodeFileEvents = normalized.noCodeFileEventsUrl ?? null;
-  const submittedNoCodeAuth = normalizeNoCodeAuthType(normalized.noCodeAuthType ?? "none");
-  if (submittedNoCodeAuth === "bearer" && !submittedNoCodeEndpoint) {
-    throw new SkillServiceError("Укажите URL для no-code подключения", 400);
+  const selectedFileStorageProviderId = normalized.noCodeFileStorageProviderId ?? null;
+  await assertFileStorageProviderActive(selectedFileStorageProviderId);
+  if (isNoCodeMode) {
+    await assertNoCodeFlowAllowed(workspaceId);
   }
-  const submittedBearerCandidate = Boolean(normalized.noCodeBearerToken);
-  if (submittedNoCodeAuth === "bearer" && !submittedBearerCandidate) {
-    throw new SkillServiceError("Введите токен для Bearer-авторизации", 400);
-  }
-  let nextBearerToken = normalized.noCodeBearerToken ?? null;
-  if (submittedNoCodeAuth === "none" || !submittedNoCodeEndpoint) {
-    nextBearerToken = null;
-  }
-  const normalizedEndpointUrl = normalized.noCodeEndpointUrl ?? null;
-  const normalizedAuthType = submittedNoCodeAuth;
-  let normalizedBearerToken = normalized.noCodeBearerToken ?? null;
+  let providerInfo = await resolveSkillFileStorageProvider({
+    workspaceId,
+    selectedProviderId: selectedFileStorageProviderId,
+  });
+  const effectiveProvider = providerInfo.effective;
+  const normalizedAuthType = effectiveProvider?.authType ?? "none";
+  const isBearerProvider = normalizedAuthType === "bearer";
+  const needsBearer = isNoCodeMode && isBearerProvider;
+  const bearerInput = normalized.noCodeBearerToken;
+  const isClearingBearer = bearerInput === "";
+  const hasBearerUpdate = bearerInput !== undefined && bearerInput !== "" && bearerInput !== null;
+  let normalizedBearerToken = hasBearerUpdate ? bearerInput : null;
 
-  if (normalizedAuthType === "bearer") {
-    if (!normalizedEndpointUrl) {
-      throw new SkillServiceError("Укажите URL для no-code подключения", 400);
+  if (isNoCodeMode) {
+    if (!submittedNoCodeEndpoint) {
+      throw new SkillServiceError("Укажите URL для no-code подключения", 400, "NO_CODE_ENDPOINT_REQUIRED");
     }
+    if (!submittedNoCodeFileEvents) {
+      throw new SkillServiceError("Укажите URL для событий файлов no-code", 400, "NO_CODE_FILE_EVENTS_REQUIRED");
+    }
+    if (!effectiveProvider) {
+      throw new SkillServiceError(
+        "File storage provider is not configured for this no-code skill",
+        400,
+        "NO_CODE_PROVIDER_REQUIRED",
+      );
+    }
+  }
+
+  if (needsBearer && !isClearingBearer) {
     if (!normalizedBearerToken) {
       throw new SkillServiceError("Введите токен для Bearer-авторизации", 400);
     }
-  } else {
-    normalizedBearerToken = null;
   }
 
-  if (!normalizedEndpointUrl) {
+  if (!needsBearer || !submittedNoCodeEndpoint || isClearingBearer) {
     normalizedBearerToken = null;
   }
-  const selectedFileStorageProviderId = normalized.noCodeFileStorageProviderId ?? null;
-  await assertFileStorageProviderActive(selectedFileStorageProviderId);
-  if (normalized.executionMode === "no_code") {
-    await assertNoCodeFlowAllowed(workspaceId);
-  }
+  const normalizedEndpointUrl = normalized.noCodeEndpointUrl ?? null;
   const validKnowledgeBases = normalized.knowledgeBaseIds
     ? await filterWorkspaceKnowledgeBases(workspaceId, normalized.knowledgeBaseIds)
     : [];
@@ -786,7 +809,6 @@ export async function createSkill(
   const transcriptionFlowMode = normalized.transcriptionFlowMode ?? DEFAULT_TRANSCRIPTION_FLOW_MODE;
   const transcriptionMode = normalized.onTranscriptionMode ?? DEFAULT_TRANSCRIPTION_MODE;
   const transcriptionAutoActionId = normalized.onTranscriptionAutoActionId ?? null;
-  const executionMode = normalized.executionMode ?? DEFAULT_SKILL_EXECUTION_MODE;
   const callbackKey = executionMode === "no_code" ? generateCallbackKey() : null;
   assertRagRequirements(effectiveRagConfig, effectiveKnowledgeBases, executionMode);
   let resolvedModelId: string | null = normalized.modelId ?? null;
@@ -836,7 +858,7 @@ export async function createSkill(
       noCodeFileEventsUrl: submittedNoCodeFileEvents,
       noCodeFileStorageProviderId: selectedFileStorageProviderId,
       noCodeAuthType: normalizedAuthType,
-      noCodeBearerToken: normalizedBearerToken,
+      noCodeBearerToken: encodeBearerToken(normalizedBearerToken),
       contextInputLimit: normalized.contextInputLimit ?? DEFAULT_CONTEXT_INPUT_LIMIT,
       noCodeCallbackTokenHash: null,
       noCodeCallbackTokenLastFour: null,
@@ -846,11 +868,6 @@ export async function createSkill(
     .returning();
 
   const knowledgeBaseIds = await replaceSkillKnowledgeBases(inserted.id, workspaceId, effectiveKnowledgeBases);
-
-  const providerInfo = await resolveSkillFileStorageProvider({
-    workspaceId,
-    selectedProviderId: selectedFileStorageProviderId,
-  });
 
   if (!inserted.isSystem && inserted.status === "active") {
     const period = getUsagePeriodForDate(inserted.createdAt ? new Date(inserted.createdAt) : new Date());
@@ -886,33 +903,66 @@ export async function updateSkill(
 
   const normalized = buildEditableColumns(input);
   const submittedExecutionMode = normalized.executionMode ?? normalizeSkillExecutionMode(row.executionMode);
+  const isNoCodeMode = submittedExecutionMode === "no_code";
   const existingNoCodeEndpoint = row.noCodeEndpointUrl ?? null;
-  const existingNoCodeAuth = normalizeNoCodeAuthType(row.noCodeAuthType);
-  const existingBearerToken = row.noCodeBearerToken ?? null;
   const submittedNoCodeEndpoint =
     normalized.noCodeEndpointUrl !== undefined ? normalized.noCodeEndpointUrl : existingNoCodeEndpoint;
   const submittedNoCodeFileEvents =
     normalized.noCodeFileEventsUrl !== undefined ? normalized.noCodeFileEventsUrl : row.noCodeFileEventsUrl ?? null;
-  const submittedNoCodeAuth =
-    normalized.noCodeAuthType !== undefined ? normalizeNoCodeAuthType(normalized.noCodeAuthType) : existingNoCodeAuth;
-  if (submittedExecutionMode === "no_code" && submittedNoCodeAuth === "bearer" && !submittedNoCodeEndpoint) {
-    throw new SkillServiceError("Укажите URL для no-code подключения", 400);
-  }
-  const submittedBearerCandidate =
-    normalized.noCodeBearerToken !== undefined ? Boolean(normalized.noCodeBearerToken) : Boolean(existingBearerToken);
-  if (submittedExecutionMode === "no_code" && submittedNoCodeAuth === "bearer" && !submittedBearerCandidate) {
-    throw new SkillServiceError("Введите токен для Bearer-авторизации", 400);
-  }
-  let nextBearerToken =
-    normalized.noCodeBearerToken !== undefined ? normalized.noCodeBearerToken : existingBearerToken;
-  if (submittedExecutionMode === "no_code" && (submittedNoCodeAuth === "none" || !submittedNoCodeEndpoint)) {
-    nextBearerToken = null;
-  }
-  if (submittedExecutionMode === "no_code") {
-    await assertNoCodeFlowAllowed(workspaceId);
-  }
+  const selectedFileStorageProviderId =
+    normalized.noCodeFileStorageProviderId !== undefined
+      ? normalized.noCodeFileStorageProviderId
+      : normalizeNullableString(row.noCodeFileStorageProviderId);
   if (normalized.noCodeFileStorageProviderId !== undefined) {
     await assertFileStorageProviderActive(normalized.noCodeFileStorageProviderId ?? null);
+  }
+  const providerInfo = await resolveSkillFileStorageProvider({
+    workspaceId,
+    selectedProviderId: selectedFileStorageProviderId,
+  });
+  const effectiveProvider = providerInfo.effective;
+  const submittedNoCodeAuth = effectiveProvider?.authType ?? "none";
+  const isBearerProvider = submittedNoCodeAuth === "bearer";
+  const needsBearer = isNoCodeMode && isBearerProvider;
+  const existingBearerToken = row.noCodeBearerToken ?? null;
+  const bearerInput = normalized.noCodeBearerToken;
+  const isClearingBearer = bearerInput === "";
+  const hasBearerUpdate = bearerInput !== undefined && bearerInput !== "" && bearerInput !== null;
+  let nextBearerToken: string | null | undefined = undefined;
+  if (isClearingBearer) {
+    nextBearerToken = null;
+  } else if (hasBearerUpdate) {
+    nextBearerToken = bearerInput;
+  }
+  if (isNoCodeMode) {
+    if (!submittedNoCodeEndpoint) {
+      throw new SkillServiceError("Укажите URL для no-code подключения", 400, "NO_CODE_ENDPOINT_REQUIRED");
+    }
+    if (!submittedNoCodeFileEvents) {
+      throw new SkillServiceError("Укажите URL для событий файлов no-code", 400, "NO_CODE_FILE_EVENTS_REQUIRED");
+    }
+    if (!effectiveProvider) {
+      throw new SkillServiceError(
+        "File storage provider is not configured for this no-code skill",
+        400,
+        "NO_CODE_PROVIDER_REQUIRED",
+      );
+    }
+  }
+  if (needsBearer && !isClearingBearer) {
+    if (!submittedNoCodeEndpoint) {
+      throw new SkillServiceError("Укажите URL для no-code подключения", 400);
+    }
+    const candidateToken = nextBearerToken === undefined ? existingBearerToken : nextBearerToken;
+    if (!candidateToken || !candidateToken.trim()) {
+      throw new SkillServiceError("Введите токен для Bearer-авторизации", 400);
+    }
+  }
+  if (!needsBearer || !submittedNoCodeEndpoint) {
+    nextBearerToken = null;
+  }
+  if (isNoCodeMode) {
+    await assertNoCodeFlowAllowed(workspaceId);
   }
   const previousExecutionMode = normalizeSkillExecutionMode(row.executionMode);
   const isSwitchingExecutionMode = normalized.executionMode !== undefined;
@@ -947,7 +997,9 @@ export async function updateSkill(
     updates.noCodeFileStorageProviderId = normalized.noCodeFileStorageProviderId;
   }
   updates.noCodeAuthType = submittedNoCodeAuth;
-  updates.noCodeBearerToken = nextBearerToken;
+  if (nextBearerToken !== undefined) {
+    updates.noCodeBearerToken = nextBearerToken ? encodeBearerToken(nextBearerToken) : null;
+  }
   if (normalized.contextInputLimit !== undefined) {
     updates.contextInputLimit = normalized.contextInputLimit;
   }
@@ -1057,7 +1109,7 @@ export async function updateSkill(
   }
 
   const selectedProviderId = normalizeNullableString(updatedRow.noCodeFileStorageProviderId);
-  const providerInfo = await resolveSkillFileStorageProvider({
+  providerInfo = await resolveSkillFileStorageProvider({
     workspaceId,
     selectedProviderId,
   });
@@ -1143,6 +1195,19 @@ export async function getSkillById(
     selectedProviderId: normalizeNullableString(row.noCodeFileStorageProviderId),
   });
   return mapSkillRow(row, knowledgeBaseIds, providerInfo);
+}
+
+export async function getSkillBearerToken(opts: { workspaceId: string; skillId: string }): Promise<string | null> {
+  const rows = await db
+    .select({ bearerToken: skills.noCodeBearerToken })
+    .from(skills)
+    .where(and(eq(skills.id, opts.skillId), eq(skills.workspaceId, opts.workspaceId)))
+    .limit(1);
+
+  const tokenRaw = rows[0]?.bearerToken ?? null;
+  const decoded = decodeBearerToken(tokenRaw);
+  const normalized = typeof decoded === "string" ? decoded.trim() : "";
+  return normalized.length > 0 ? normalized : null;
 }
 
 export async function generateNoCodeCallbackToken(opts: {

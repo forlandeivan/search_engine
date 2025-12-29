@@ -140,14 +140,15 @@ export const skillFormSchema = z.object({
     .or(z.literal(""))
     .refine(
       (value) =>
-        value === undefined ||
-        value === "" ||
-        value.startsWith("http://") ||
-        value.startsWith("https://"),
-      { message: "Разрешены только http/https URL" },
-    ),
+      value === undefined ||
+      value === "" ||
+      value.startsWith("http://") ||
+      value.startsWith("https://"),
+    { message: "Разрешены только http/https URL" },
+  ),
   noCodeAuthType: z.enum(["none", "bearer"]).default("none"),
   noCodeBearerToken: z.string().optional().or(z.literal("")),
+  noCodeBearerTokenAction: z.enum(["keep", "replace", "clear"]).default("replace"),
   noCodeFileStorageProviderId: z.string().optional().or(z.literal("")).nullable(),
 }).superRefine((val, ctx) => {
   if (val.executionMode === "standard") {
@@ -210,6 +211,7 @@ export const defaultFormValues = {
   noCodeFileStorageProviderId: WORKSPACE_DEFAULT_PROVIDER_VALUE,
   noCodeAuthType: "none" as "none" | "bearer",
   noCodeBearerToken: "",
+  noCodeBearerTokenAction: "replace" as "keep" | "replace" | "clear",
 };
 
 export type SkillFormValues = z.infer<typeof skillFormSchema>;
@@ -1220,10 +1222,6 @@ export function SkillFormContent({
   const isNoCodeMode = form.watch("executionMode") === "no_code";
   const isStandardMode = !isNoCodeMode;
   const showRagUi = false;
-  const noCodeAuthType = form.watch("noCodeAuthType");
-  const noCodeBearerTokenValue = form.watch("noCodeBearerToken");
-  const hasBearerTokenDraft = Boolean(noCodeBearerTokenValue?.trim());
-  const storedNoCodeTokenIsSet = skill?.noCodeConnection?.tokenIsSet ?? false;
   const canManageCallbackToken = Boolean(skill?.id && isNoCodeMode && allowNoCodeFlow && onGenerateCallbackToken);
   const formatDateTime = (value: string | null | undefined): string | null => {
     if (!value) return null;
@@ -1255,8 +1253,34 @@ export function SkillFormContent({
       : !form.formState.isDirty
         ? backendEffectiveSource ?? "none"
         : "none";
+  const isBearerProvider = effectiveProvider?.authType === "bearer";
+  const noCodeAuthType = isBearerProvider ? "bearer" : "none";
+  const noCodeBearerTokenValue = form.watch("noCodeBearerToken");
+  const bearerTokenAction = form.watch("noCodeBearerTokenAction");
+  const hasBearerTokenDraft = Boolean(noCodeBearerTokenValue?.trim());
+  const storedNoCodeTokenIsSet = skill?.noCodeConnection?.tokenIsSet ?? false;
+  const isClearingBearerToken = bearerTokenAction === "clear";
+  const isReplacingBearerToken = bearerTokenAction === "replace" || (!storedNoCodeTokenIsSet && bearerTokenAction !== "clear");
+  useEffect(() => {
+    const nextAuthType = isBearerProvider ? "bearer" : "none";
+    if (form.getValues("noCodeAuthType") !== nextAuthType) {
+      form.setValue("noCodeAuthType", nextAuthType, { shouldDirty: false });
+    }
+  }, [form, isBearerProvider]);
   const providerNotFound =
     normalizedProviderSelection && !selectedProvider ? normalizedProviderSelection : null;
+  const handleReplaceBearerToken = () => {
+    form.setValue("noCodeBearerTokenAction", "replace", { shouldDirty: true });
+    form.setValue("noCodeBearerToken", "", { shouldDirty: true });
+  };
+  const handleClearBearerToken = () => {
+    form.setValue("noCodeBearerTokenAction", "clear", { shouldDirty: true });
+    form.setValue("noCodeBearerToken", "", { shouldDirty: true });
+  };
+  const handleCancelBearerTokenChange = () => {
+    form.setValue("noCodeBearerTokenAction", storedNoCodeTokenIsSet ? "keep" : "replace", { shouldDirty: true });
+    form.setValue("noCodeBearerToken", "", { shouldDirty: true });
+  };
   const handleGenerateCallbackToken = async () => {
     if (!skill?.id || !onGenerateCallbackToken) {
       return;
@@ -1481,6 +1505,7 @@ export function SkillFormContent({
         noCodeFileEventsUrl: noCodeConnection.fileEventsUrl ?? "",
         noCodeAuthType: noCodeConnection.authType ?? "none",
         noCodeBearerToken: "",
+        noCodeBearerTokenAction: noCodeConnection.tokenIsSet ? "keep" : "replace",
       };
       form.reset(nextValues);
       lastSavedRef.current = nextValues;
@@ -1496,6 +1521,42 @@ export function SkillFormContent({
   const handleSubmit = form.handleSubmit(async (values) => {
     if (isSystemSkill) {
       return;
+    }
+    form.clearErrors();
+    if (values.executionMode === "no_code") {
+      let hasValidationErrors = false;
+      const endpoint = (values.noCodeEndpointUrl ?? "").trim();
+      const fileEvents = (values.noCodeFileEventsUrl ?? "").trim();
+      if (!endpoint) {
+        form.setError("noCodeEndpointUrl", { type: "manual", message: "Укажите message URL для no-code" });
+        hasValidationErrors = true;
+      }
+      if (!fileEvents) {
+        form.setError("noCodeFileEventsUrl", { type: "manual", message: "Укажите URL событий файлов" });
+        hasValidationErrors = true;
+      }
+      if (!effectiveProvider) {
+        form.setError("noCodeFileStorageProviderId", {
+          type: "manual",
+          message: "Выберите файловый провайдер или задайте дефолт в воркспейсе",
+        });
+        hasValidationErrors = true;
+      }
+      if (isBearerProvider) {
+        const action = form.getValues("noCodeBearerTokenAction");
+        const tokenDraft = (form.getValues("noCodeBearerToken") ?? "").trim();
+        const hasToken = action === "keep" ? storedNoCodeTokenIsSet || Boolean(tokenDraft) : Boolean(tokenDraft);
+        if (!hasToken) {
+          form.setError("noCodeBearerToken", {
+            type: "manual",
+            message: "Bearer токен обязателен для выбранного провайдера",
+          });
+          hasValidationErrors = true;
+        }
+      }
+      if (hasValidationErrors) {
+        return;
+      }
     }
     try {
       const cleanedValues =
@@ -1514,16 +1575,28 @@ export function SkillFormContent({
               llmMaxTokens: "",
             }
           : values;
-      const didSave = await onSubmit(cleanedValues);
+      const nextValues: SkillFormValues = {
+        ...cleanedValues,
+        noCodeAuthType: noCodeAuthType,
+        noCodeBearerTokenAction:
+          cleanedValues.noCodeBearerTokenAction ?? (storedNoCodeTokenIsSet ? "keep" : "replace"),
+      };
+      if (!isBearerProvider) {
+        nextValues.noCodeBearerTokenAction = "clear";
+        nextValues.noCodeBearerToken = "";
+      }
+      const didSave = await onSubmit(nextValues);
       if (didSave) {
         const normalized: SkillFormValues = {
-          ...cleanedValues,
+          ...nextValues,
           name: cleanedValues.name.trim(),
           description: cleanedValues.description?.trim() ?? "",
           systemPrompt: cleanedValues.systemPrompt?.trim() ?? "",
           icon: cleanedValues.icon?.trim() ?? "",
           noCodeFileStorageProviderId:
             cleanedValues.noCodeFileStorageProviderId ?? WORKSPACE_DEFAULT_PROVIDER_VALUE,
+          noCodeBearerToken: "",
+          noCodeBearerTokenAction: nextValues.noCodeBearerTokenAction === "clear" ? "replace" : "keep",
         };
         lastSavedRef.current = normalized;
         form.reset(normalized);
@@ -2280,27 +2353,31 @@ export function SkillFormContent({
                             <FormField
                               control={form.control}
                               name="noCodeAuthType"
-                              render={({ field }) => (
+                              render={() => (
                                 <FormItem>
                                   <FormLabel>Авторизация</FormLabel>
+                                  <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                    Тип авторизации определяется выбранным файловым провайдером.
+                                  </FormDescription>
                                   <FormControl>
                                     <RadioGroup
-                                      value={field.value}
-                                      onValueChange={noCodeDisabled ? undefined : field.onChange}
+                                      value={noCodeAuthType}
+                                      onValueChange={() => undefined}
                                       className="grid gap-3 md:grid-cols-2"
+                                      disabled
                                     >
                                       <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
                                         <RadioGroupItem
                                           value="none"
                                           className="peer sr-only"
-                                          disabled={noCodeDisabled}
+                                          disabled
                                           data-testid="no-code-auth-none"
                                         />
                                         <div className="flex items-start gap-3">
                                           <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
                                           <div>
                                             <p className="text-sm font-medium">Без авторизации</p>
-                                            <p className="text-xs text-muted-foreground">Сценарий без токена.</p>
+                                            <p className="text-xs text-muted-foreground">Провайдер не требует токен.</p>
                                           </div>
                                         </div>
                                         <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
@@ -2309,14 +2386,14 @@ export function SkillFormContent({
                                         <RadioGroupItem
                                           value="bearer"
                                           className="peer sr-only"
-                                          disabled={noCodeDisabled}
+                                          disabled
                                           data-testid="no-code-auth-bearer"
                                         />
                                         <div className="flex items-start gap-3">
                                           <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
                                           <div>
                                             <p className="text-sm font-medium">Bearer token</p>
-                                            <p className="text-xs text-muted-foreground">Отправляем токен в заголовке Authorization.</p>
+                                            <p className="text-xs text-muted-foreground">Требуется провайдером, передаём в Authorization.</p>
                                           </div>
                                         </div>
                                         <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
@@ -2326,32 +2403,86 @@ export function SkillFormContent({
                                 </FormItem>
                               )}
                             />
-                            {noCodeAuthType === "bearer" && (
+                            {isBearerProvider && (
                               <FormField
                                 control={form.control}
                                 name="noCodeBearerToken"
                                 render={({ field }) => (
-                                  <FormItem className="grid gap-1.5">
-                                    <FormLabel>Bearer токен</FormLabel>
-                                    <FormControl>
-                                      <Input
-                                        {...field}
-                                        type="password"
-                                        placeholder="Введите токен"
-                                        disabled={noCodeDisabled}
-                                        autoComplete="new-password"
-                                        data-testid="skill-no-code-token-input"
-                                        className="h-9"
-                                      />
-                                    </FormControl>
-                                    <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                      {hasBearerTokenDraft
-                                        ? "После сохранения токен будет заменён."
-                                        : storedNoCodeTokenIsSet
-                                        ? "Токен задан. Введите новый, чтобы заменить."
-                                        : "Токен не сохраняется и не отображается после сохранения."}
-                                    </FormDescription>
-                                    <FormMessage className="text-xs text-destructive leading-tight" />
+                                  <FormItem className="grid gap-2">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div className="space-y-1">
+                                        <FormLabel>Bearer токен</FormLabel>
+                                        <p className="text-xs text-muted-foreground">Токен хранится на уровне навыка и не отображается после сохранения.</p>
+                                      </div>
+                                      <Badge variant={storedNoCodeTokenIsSet ? "default" : "outline"}>
+                                        {storedNoCodeTokenIsSet ? "Задан" : "Не задан"}
+                                      </Badge>
+                                    </div>
+                                    {isClearingBearerToken && storedNoCodeTokenIsSet ? (
+                                      <Alert variant="destructive">
+                                        <AlertTitle>Токен будет очищен</AlertTitle>
+                                        <AlertDescription>Сохраните изменения, чтобы удалить токен.</AlertDescription>
+                                      </Alert>
+                                    ) : null}
+                                    {isReplacingBearerToken && (
+                                      <div className="grid gap-1.5">
+                                        <FormControl>
+                                          <Input
+                                            {...field}
+                                            type="password"
+                                            placeholder="Введите токен"
+                                            disabled={noCodeDisabled}
+                                            autoComplete="off"
+                                            data-testid="skill-no-code-token-input"
+                                            className="h-9"
+                                          />
+                                        </FormControl>
+                                        <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                          {storedNoCodeTokenIsSet
+                                            ? hasBearerTokenDraft
+                                              ? "После сохранения токен будет заменён."
+                                              : "Токен задан. Введите новый, чтобы заменить."
+                                            : "Токен будет сохранён и скрыт после сохранения."}
+                                        </FormDescription>
+                                        <FormMessage className="text-xs text-destructive leading-tight" />
+                                      </div>
+                                    )}
+                                    {storedNoCodeTokenIsSet ? (
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-9"
+                                          disabled={noCodeDisabled}
+                                          onClick={handleReplaceBearerToken}
+                                        >
+                                          Заменить
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-9"
+                                          disabled={noCodeDisabled}
+                                          onClick={handleClearBearerToken}
+                                        >
+                                          Очистить
+                                        </Button>
+                                        {bearerTokenAction !== "keep" ? (
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-9"
+                                            disabled={noCodeDisabled}
+                                            onClick={handleCancelBearerTokenChange}
+                                          >
+                                            Отмена
+                                          </Button>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
                                   </FormItem>
                                 )}
                               />

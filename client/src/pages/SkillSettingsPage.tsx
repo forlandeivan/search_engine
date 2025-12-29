@@ -381,7 +381,9 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       noCodeAuthType: values.noCodeAuthType,
     };
 
-    if (values.noCodeBearerToken?.trim()) {
+    if (values.noCodeBearerTokenAction === "clear" || values.noCodeAuthType === "none") {
+      payload.noCodeBearerToken = "";
+    } else if (values.noCodeBearerToken?.trim()) {
       payload.noCodeBearerToken = values.noCodeBearerToken.trim();
     }
 

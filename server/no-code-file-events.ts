@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { File, FileKind, NoCodeAuthType } from "@shared/schema";
-import { randomUUID } from "crypto";
 import { storage } from "./storage";
+import { decryptSecret } from "./secret-storage";
 
 export type FileEventAction = "file_uploaded" | "file_deleted";
 
@@ -68,6 +68,8 @@ export async function enqueueFileEventForSkill(opts: {
   if (!isNoCode || !targetUrl) return;
 
   const payload = buildFileEventPayload({ file: opts.file, action: opts.action });
+  const bearerToken = decryptSecret(opts.skill.noCodeBearerToken ?? null);
+  const normalizedBearerToken = bearerToken && bearerToken.trim().length > 0 ? bearerToken.trim() : null;
   await storage.enqueueFileEvent({
     eventId: payload.eventId,
     action: opts.action,
@@ -79,7 +81,7 @@ export async function enqueueFileEventForSkill(opts: {
     messageId: (opts.file as any).messageId ?? null,
     targetUrl,
     authType: opts.skill.noCodeAuthType ?? "none",
-    bearerToken: opts.skill.noCodeBearerToken ?? null,
+    bearerToken: normalizedBearerToken,
     payload,
   });
 }

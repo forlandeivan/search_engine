@@ -3,6 +3,7 @@ import { storage } from "./storage";
 import { createFileStorageProviderClient, ProviderUploadError, type FileUploadContext } from "./file-storage-provider-client";
 import { fileStorageProviderService, FileStorageProviderServiceError } from "./file-storage-provider-service";
 import { enqueueFileEventForSkill } from "./no-code-file-events";
+import { decryptSecret } from "./secret-storage";
 
 export class FileUploadToProviderError extends Error {
   constructor(message: string, public status: number = 500, public details?: unknown) {
@@ -60,6 +61,8 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
   });
 
   try {
+    const bearerToken =
+      decryptSecret(params.bearerToken ?? null) ?? decryptSecret(params.skillContext?.noCodeBearerToken ?? null);
     const result = await client.uploadFile({
       workspaceId: params.context.workspaceId,
       skillId: params.context.skillId ?? null,
@@ -70,7 +73,7 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
       mimeType: params.mimeType ?? file.mimeType ?? null,
       sizeBytes: params.sizeBytes ?? Number(file.sizeBytes ?? 0),
       data: params.data,
-      bearerToken: params.bearerToken ?? null,
+      bearerToken: bearerToken ?? null,
     });
 
     const nextMetadata = {
@@ -96,7 +99,7 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
           executionMode: params.skillContext?.executionMode ?? null,
           noCodeFileEventsUrl: params.skillContext?.noCodeFileEventsUrl ?? null,
           noCodeAuthType: params.skillContext?.noCodeAuthType ?? null,
-          noCodeBearerToken: params.skillContext?.noCodeBearerToken ?? null,
+          noCodeBearerToken: bearerToken ?? null,
         },
       });
     }

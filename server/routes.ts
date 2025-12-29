@@ -11,6 +11,7 @@ import { extname } from "path";
 import { performance } from "perf_hooks";
 import { storage } from "./storage";
 import { uploadWorkspaceFile, deleteObject as deleteWorkspaceObject } from "./workspace-storage-service";
+import { uploadFileToProvider, FileUploadToProviderError } from "./file-storage-provider-upload-service";
 import { cleanupFailedSkillFileUpload, type UploadedSkillFileDescriptor } from "./skill-file-upload-utils";
 import type { KnowledgeChunkSearchEntry, WorkspaceMemberWithUser } from "./storage";
 import { resolveStorageTarget, ExternalStorageNotImplementedError } from "./storage-routing";
@@ -61,6 +62,7 @@ import {
   updateSkill,
   archiveSkill,
   getSkillById,
+  getSkillBearerToken,
   SkillServiceError,
   UNICA_CHAT_SYSTEM_KEY,
   createUnicaChatSkillForWorkspace,
@@ -10832,12 +10834,27 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         if (!skill) {
           return res.status(404).json({ message: "Навык не найден" });
         }
+        const isNoCodeSkill = skill.executionMode === "no_code";
+        const effectiveProvider = skill.noCodeConnection?.effectiveFileStorageProvider ?? null;
+        let bearerToken: string | null = null;
         const storageTarget = await resolveStorageTarget({
           workspaceId,
           skillExecutionMode: skill.executionMode ?? null,
         });
 
-        if (storageTarget.storageType === "external_provider") {
+        if (isNoCodeSkill) {
+          if (!effectiveProvider) {
+            return res
+              .status(400)
+              .json({ message: "File storage provider is not configured for this no-code skill" });
+          }
+          if (effectiveProvider.authType === "bearer") {
+            bearerToken = await getSkillBearerToken({ workspaceId, skillId }).catch(() => null);
+            if (!bearerToken) {
+              return res.status(400).json({ message: "Bearer token is not configured" });
+            }
+          }
+        } else if (storageTarget.storageType === "external_provider") {
           throw new ExternalStorageNotImplementedError(storageTarget.reason);
         }
 
@@ -10880,7 +10897,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const uploadedKeys: UploadedSkillFileDescriptor[] = [];
         let workspaceBucket: string | null =
           (await storage.getWorkspace(workspaceId))?.storageBucket ?? null;
-        const isNoCodeSkill = skill.executionMode === "no_code";
         const createIngestionJobs = !isNoCodeSkill;
 
         for (const [index, file] of files.entries()) {
@@ -10915,6 +10931,107 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               status: "error",
               errorMessage: "Слишком большой документ. Разбейте файл на несколько частей или уменьшите объём текста.",
             });
+            continue;
+          }
+
+          if (isNoCodeSkill) {
+            const baseResult = {
+              name: originalName || "file",
+              size: file.size ?? null,
+              contentType: file.mimetype || null,
+            };
+            if (!effectiveProvider) {
+              results.push({
+                ...baseResult,
+                status: "error",
+                errorMessage: "File storage provider is not configured for this no-code skill",
+              });
+              continue;
+            }
+            try {
+              const fileRecord = await storage.createFile({
+                workspaceId,
+                skillId,
+                userId: user.id,
+                kind: "skill_doc",
+                name: originalName || storageSafeName,
+                mimeType: file.mimetype || null,
+                sizeBytes:
+                  typeof file.size === "number"
+                    ? BigInt(file.size)
+                    : file.buffer
+                      ? BigInt(file.buffer.length)
+                      : null,
+                storageType: "external_provider",
+                providerId: effectiveProvider.id,
+                status: "uploading",
+                metadata: {},
+              });
+
+              const uploaded = await uploadFileToProvider({
+                fileId: fileRecord.id,
+                providerId: effectiveProvider.id,
+                bearerToken,
+                data: file.buffer,
+                mimeType: file.mimetype || null,
+                fileName: originalName || storageSafeName,
+                sizeBytes: file.size ?? null,
+                context: {
+                  workspaceId,
+                  skillId,
+                  chatId: null,
+                  userId: user.id,
+                  messageId: null,
+                },
+                skillContext: {
+                  executionMode: skill.executionMode ?? null,
+                  noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
+                  noCodeAuthType: skill.noCodeConnection?.authType ?? null,
+                  noCodeBearerToken: bearerToken,
+                },
+              });
+
+              const storageKey =
+                uploaded.providerFileId ??
+                uploaded.objectKey ??
+                uploaded.externalUri ??
+                uploaded.id;
+
+              toInsert.push({
+                workspaceId,
+                skillId,
+                storageKey: storageKey ?? uploaded.id,
+                originalName: originalName || storageSafeName,
+                mimeType: file.mimetype || null,
+                sizeBytes: file.size,
+                status: "uploaded",
+                processingStatus: "ready",
+                createdByUserId: user.id,
+                fileId: uploaded.id,
+              });
+              validIndices.push(index);
+              results.push({
+                ...baseResult,
+                status: "uploaded",
+                processingStatus: "ready",
+              });
+            } catch (error) {
+              const message =
+                error instanceof FileUploadToProviderError
+                  ? error.message
+                  : "Не удалось загрузить файл во внешний провайдер";
+              results.push({
+                ...baseResult,
+                status: "error",
+                errorMessage: message,
+              });
+              console.error("[skill-files] upload to external provider failed", {
+                workspaceId,
+                skillId,
+                providerId: effectiveProvider?.id,
+                error: error instanceof Error ? error.message : error,
+              });
+            }
             continue;
           }
 
@@ -11122,6 +11239,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         await storage.deleteSkillFile(fileId, workspaceId, skillId);
 
         if (fileRecord) {
+          const bearerToken = await getSkillBearerToken({ workspaceId, skillId }).catch(() => null);
           await enqueueFileEventForSkill({
             file: fileRecord,
             action: "file_deleted",
@@ -11129,7 +11247,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               executionMode: skill.executionMode ?? null,
               noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? (skill as any).noCodeFileEventsUrl ?? null,
               noCodeAuthType: skill.noCodeConnection?.authType ?? skill.noCodeAuthType ?? null,
-              noCodeBearerToken: skill.noCodeConnection?.tokenIsSet ? skill.noCodeConnection?.bearerToken : null,
+              noCodeBearerToken: bearerToken,
             },
           }).catch((err) => {
             console.warn("[skill-files] failed to enqueue file_deleted event", {
