@@ -144,7 +144,7 @@ export class FileStorageProviderClient {
 
   private buildUrl(input: FileUploadInput): string {
     const objectKey = input.objectKeyHint ?? input.fileName ?? "file";
-    const resolvedPath = buildPathFromTemplate(this.uploadPath, {
+    const pathContext = {
       bucket: this.bucket ?? input.bucket ?? null,
       workspaceId: input.workspaceId ?? "",
       workspaceName: input.workspaceName ?? null,
@@ -155,7 +155,8 @@ export class FileStorageProviderClient {
       userId: input.userId ?? "",
       messageId: input.messageId ?? "",
       fileName: input.fileNameOriginal ?? input.fileName ?? objectKey,
-    });
+    };
+    const resolvedPath = buildPathFromTemplate(this.uploadPath, pathContext);
     return new URL(resolvedPath.replace(/^\//, ""), this.baseUrl + "/").toString();
   }
 
