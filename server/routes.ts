@@ -1453,7 +1453,40 @@ function parseSpeechProviderListParams(req: Request):
 function parseFileStorageProviderListParams(req: Request):
   | { limit: number; offset: number }
   | { error: string } {
-  return parseSpeechProviderListParams(req);
+  const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+  const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+
+  const parseNumber = (value: unknown): number | undefined => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return NaN;
+  };
+
+  const limitCandidate = parseNumber(limitRaw);
+  if (limitCandidate !== undefined) {
+    if (!Number.isInteger(limitCandidate) || limitCandidate < 1 || limitCandidate > 500) {
+      return { error: "Invalid value for field 'limit'" };
+    }
+  }
+
+  const offsetCandidate = parseNumber(offsetRaw);
+  if (offsetCandidate !== undefined) {
+    if (!Number.isInteger(offsetCandidate) || offsetCandidate < 0 || offsetCandidate > 5000) {
+      return { error: "Invalid value for field 'offset'" };
+    }
+  }
+
+  return {
+    limit: (limitCandidate ?? 50) as number,
+    offset: (offsetCandidate ?? 0) as number,
+  };
 }
 
 async function buildSpeechProviderListItem(summary: SpeechProviderSummary) {
