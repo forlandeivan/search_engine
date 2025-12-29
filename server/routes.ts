@@ -126,10 +126,10 @@ import { offChatEvent, onChatEvent } from "./chat-events";
 import {
   buildMessageCreatedEventPayload,
   buildFileUploadedEventPayload,
-  enqueueFileEventForSkill,
   getNoCodeConnectionInternal,
   scheduleNoCodeEventDelivery,
 } from "./no-code-events";
+import { enqueueFileEventForSkill } from "./no-code-file-events";
 import { buildContextPack } from "./context-pack";
 import {
   assistantActionTypes,
