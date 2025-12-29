@@ -124,6 +124,7 @@ import { offChatEvent, onChatEvent } from "./chat-events";
 import {
   buildMessageCreatedEventPayload,
   buildFileUploadedEventPayload,
+  enqueueFileEventForSkill,
   getNoCodeConnectionInternal,
   scheduleNoCodeEventDelivery,
 } from "./no-code-events";
@@ -11057,6 +11058,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(204).end();
         }
 
+        const fileRecord = file.fileId ? await storage.getFile(file.fileId, workspaceId) : null;
+
         try {
           let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"];
           try {
@@ -11099,6 +11102,26 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
 
         await storage.deleteSkillFile(fileId, workspaceId, skillId);
+
+        if (fileRecord) {
+          await enqueueFileEventForSkill({
+            file: fileRecord,
+            action: "file_deleted",
+            skill: {
+              executionMode: skill.executionMode ?? null,
+              noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? (skill as any).noCodeFileEventsUrl ?? null,
+              noCodeAuthType: skill.noCodeConnection?.authType ?? skill.noCodeAuthType ?? null,
+              noCodeBearerToken: skill.noCodeConnection?.tokenIsSet ? skill.noCodeConnection?.bearerToken : null,
+            },
+          }).catch((err) => {
+            console.warn("[skill-files] failed to enqueue file_deleted event", {
+              fileId,
+              skillId,
+              err: err instanceof Error ? err.message : err,
+            });
+          });
+        }
+
         res.status(204).end();
       } catch (error) {
         next(error);

@@ -1,7 +1,8 @@
-import type { File } from "@shared/schema";
+import type { File, NoCodeAuthType } from "@shared/schema";
 import { storage } from "./storage";
 import { createFileStorageProviderClient, ProviderUploadError, type FileUploadContext } from "./file-storage-provider-client";
 import { fileStorageProviderService, FileStorageProviderServiceError } from "./file-storage-provider-service";
+import { enqueueFileEventForSkill } from "./no-code-file-events";
 
 export class FileUploadToProviderError extends Error {
   constructor(message: string, public status: number = 500, public details?: unknown) {
@@ -19,6 +20,12 @@ type UploadParams = {
   fileName?: string | null;
   sizeBytes?: number | null;
   context: FileUploadContext;
+  skillContext?: {
+    executionMode?: string | null;
+    noCodeFileEventsUrl?: string | null;
+    noCodeAuthType?: NoCodeAuthType | null;
+    noCodeBearerToken?: string | null;
+  };
 };
 
 export async function uploadFileToProvider(params: UploadParams): Promise<File> {
@@ -80,6 +87,19 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
       status: "ready",
       metadata: nextMetadata,
     });
+
+    if (updated) {
+      await enqueueFileEventForSkill({
+        file: updated,
+        action: "file_uploaded",
+        skill: {
+          executionMode: params.skillContext?.executionMode ?? null,
+          noCodeFileEventsUrl: params.skillContext?.noCodeFileEventsUrl ?? null,
+          noCodeAuthType: params.skillContext?.noCodeAuthType ?? null,
+          noCodeBearerToken: params.skillContext?.noCodeBearerToken ?? null,
+        },
+      });
+    }
 
     return updated || (await storage.getFile(params.fileId))!;
   } catch (error) {

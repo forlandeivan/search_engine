@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
-import type { File, FileKind } from "@shared/schema";
+import type { File, FileKind, NoCodeAuthType } from "@shared/schema";
+import { randomUUID } from "crypto";
+import { storage } from "./storage";
 
 export type FileEventAction = "file_uploaded" | "file_deleted";
 
@@ -49,4 +51,35 @@ export function buildFileEventPayload(opts: {
     userId: opts.file.userId ?? null,
     messageId: (opts.file as any).messageId ?? null,
   };
+}
+
+export async function enqueueFileEventForSkill(opts: {
+  file: File;
+  action: FileEventAction;
+  skill: {
+    executionMode?: string | null;
+    noCodeFileEventsUrl?: string | null;
+    noCodeAuthType?: NoCodeAuthType | null;
+    noCodeBearerToken?: string | null;
+  };
+}): Promise<void> {
+  const isNoCode = opts.skill.executionMode === "no_code";
+  const targetUrl = opts.skill.noCodeFileEventsUrl ?? null;
+  if (!isNoCode || !targetUrl) return;
+
+  const payload = buildFileEventPayload({ file: opts.file, action: opts.action });
+  await storage.enqueueFileEvent({
+    eventId: payload.eventId,
+    action: opts.action,
+    fileId: opts.file.id,
+    workspaceId: opts.file.workspaceId,
+    skillId: opts.file.skillId ?? null,
+    chatId: opts.file.chatId ?? null,
+    userId: opts.file.userId ?? null,
+    messageId: (opts.file as any).messageId ?? null,
+    targetUrl,
+    authType: opts.skill.noCodeAuthType ?? "none",
+    bearerToken: opts.skill.noCodeBearerToken ?? null,
+    payload,
+  });
 }
