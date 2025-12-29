@@ -65,6 +65,7 @@ type EditableSkillColumns = Pick<
   | "noCodeAuthType"
   | "noCodeBearerToken"
   | "noCodeCallbackKey"
+  | "noCodeFileStorageProviderId"
   | "contextInputLimit"
 >;
 
@@ -363,6 +364,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     noCodeConnection: {
       endpointUrl: row.noCodeEndpointUrl ?? null,
       fileEventsUrl: row.noCodeFileEventsUrl ?? null,
+      fileStorageProviderId: row.noCodeFileStorageProviderId ?? null,
       authType: normalizeNoCodeAuthType(row.noCodeAuthType),
       tokenIsSet: Boolean(row.noCodeBearerToken?.trim()),
       callbackTokenIsSet: callbackTokenHash.length > 0,
@@ -499,6 +501,9 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   }
   if (input.noCodeFileEventsUrl !== undefined) {
     next.noCodeFileEventsUrl = normalizeNullableString(input.noCodeFileEventsUrl);
+  }
+  if (input.noCodeFileStorageProviderId !== undefined) {
+    next.noCodeFileStorageProviderId = normalizeNullableString(input.noCodeFileStorageProviderId);
   }
   if (input.noCodeAuthType !== undefined) {
     next.noCodeAuthType = normalizeNoCodeAuthType(input.noCodeAuthType);
@@ -801,8 +806,14 @@ export async function updateSkill(
 
   updates.noCodeEndpointUrl = submittedNoCodeEndpoint;
   updates.noCodeFileEventsUrl = submittedNoCodeFileEvents;
+  if (normalized.noCodeFileStorageProviderId !== undefined) {
+    updates.noCodeFileStorageProviderId = normalized.noCodeFileStorageProviderId;
+  }
   updates.noCodeAuthType = submittedNoCodeAuth;
   updates.noCodeBearerToken = nextBearerToken;
+  if (normalized.noCodeFileStorageProviderId !== undefined) {
+    updates.noCodeFileStorageProviderId = normalized.noCodeFileStorageProviderId;
+  }
   if (normalized.contextInputLimit !== undefined) {
     updates.contextInputLimit = normalized.contextInputLimit;
   }

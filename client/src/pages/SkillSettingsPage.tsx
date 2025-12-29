@@ -319,6 +319,10 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     const noCodeEndpointUrl = trimmedNoCodeEndpoint.length > 0 ? trimmedNoCodeEndpoint : null;
     const trimmedNoCodeFileEvents = (values.noCodeFileEventsUrl ?? "").trim();
     const noCodeFileEventsUrl = trimmedNoCodeFileEvents.length > 0 ? trimmedNoCodeFileEvents : null;
+    const noCodeFileStorageProviderId =
+      values.noCodeFileStorageProviderId && values.noCodeFileStorageProviderId !== "__none"
+        ? values.noCodeFileStorageProviderId
+        : null;
     const contextInputLimitValue = values.contextInputLimit?.trim();
     let contextInputLimit: number | null = null;
     if (contextInputLimitValue) {
@@ -365,6 +369,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       contextInputLimit,
       noCodeEndpointUrl,
       noCodeFileEventsUrl,
+      noCodeFileStorageProviderId,
       noCodeAuthType: values.noCodeAuthType,
     };
 

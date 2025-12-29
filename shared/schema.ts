@@ -1198,6 +1198,9 @@ export const skills = pgTable(
     ragLlmResponseFormat: text("rag_llm_response_format"),
     noCodeEndpointUrl: text("no_code_endpoint_url"),
     noCodeFileEventsUrl: text("no_code_file_events_url"),
+    noCodeFileStorageProviderId: varchar("no_code_file_storage_provider_id").references(() => fileStorageProviders.id, {
+      onDelete: "set null",
+    }),
     noCodeAuthType: text("no_code_auth_type").$type<NoCodeAuthType>().notNull().default("none"),
     noCodeBearerToken: text("no_code_bearer_token"),
     noCodeCallbackTokenHash: text("no_code_callback_token_hash"),

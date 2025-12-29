@@ -146,6 +146,7 @@ export const skillFormSchema = z.object({
     ),
   noCodeAuthType: z.enum(["none", "bearer"]).default("none"),
   noCodeBearerToken: z.string().optional().or(z.literal("")),
+  noCodeFileStorageProviderId: z.string().optional().or(z.literal("")).nullable(),
   noCodeFileEventsUrl: z
     .string()
     .url({ message: "Некорректный URL" })
@@ -217,6 +218,7 @@ export const defaultFormValues = {
   contextInputLimit: "",
   noCodeEndpointUrl: "",
   noCodeFileEventsUrl: "",
+  noCodeFileStorageProviderId: "",
   noCodeAuthType: "none" as "none" | "bearer",
   noCodeBearerToken: "",
 };
@@ -2172,6 +2174,27 @@ export function SkillFormContent({
                               )}
                             />
                             <Separator className="border-border" />
+                            <FormField
+                              control={form.control}
+                              name="noCodeFileStorageProviderId"
+                              render={({ field }) => (
+                                <FormItem className="grid gap-1.5">
+                                  <FormLabel>File Storage Provider</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      {...field}
+                                      placeholder="Провайдер из админки (ID)"
+                                      disabled={noCodeDisabled}
+                                      className="h-9"
+                                    />
+                                  </FormControl>
+                                  <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                    Выберите провайдера хранения файлов, настроенного администратором.
+                                  </FormDescription>
+                                  <FormMessage className="text-xs text-destructive leading-tight" />
+                                </FormItem>
+                              )}
+                            />
                             <FormField
                               control={form.control}
                               name="noCodeAuthType"

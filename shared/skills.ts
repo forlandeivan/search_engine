@@ -92,6 +92,7 @@ const skillEditableFieldsSchema = z.object({
   noCodeFileEventsUrl: noCodeEndpointUrlSchema.optional(),
   noCodeAuthType: z.enum(noCodeAuthTypes).optional(),
   noCodeBearerToken: noCodeBearerTokenSchema.optional(),
+  noCodeFileStorageProviderId: optionalString(200),
   contextInputLimit: contextInputLimitSchema,
 });
 
@@ -104,6 +105,7 @@ export type UpdateSkillPayload = z.infer<typeof updateSkillSchema>;
 export type SkillNoCodeConnection = {
   endpointUrl: string | null;
   fileEventsUrl: string | null;
+  fileStorageProviderId: string | null;
   authType: NoCodeAuthType;
   tokenIsSet: boolean;
   callbackTokenIsSet: boolean;
