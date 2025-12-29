@@ -1,7 +1,16 @@
 import type { File, NoCodeAuthType } from "@shared/schema";
 import { storage } from "./storage";
-import { createFileStorageProviderClient, ProviderUploadError, type FileUploadContext } from "./file-storage-provider-client";
-import { fileStorageProviderService, FileStorageProviderServiceError } from "./file-storage-provider-service";
+import {
+  createFileStorageProviderClient,
+  ProviderUploadError,
+  type FileUploadContext,
+} from "./file-storage-provider-client";
+import {
+  fileStorageProviderService,
+  FileStorageProviderServiceError,
+  normalizeFileProviderConfig,
+  defaultProviderConfig,
+} from "./file-storage-provider-service";
 import { enqueueFileEventForSkill } from "./no-code-file-events";
 import { decryptSecret } from "./secret-storage";
 
@@ -20,6 +29,7 @@ type UploadParams = {
   mimeType?: string | null;
   fileName?: string | null;
   sizeBytes?: number | null;
+  objectKeyHint?: string | null;
   context: FileUploadContext;
   skillContext?: {
     executionMode?: string | null;
@@ -49,9 +59,11 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
       throw err;
     });
 
+  const providerConfig = normalizeFileProviderConfig((provider as any).config ?? defaultProviderConfig);
   const client = createFileStorageProviderClient({
     baseUrl: provider.baseUrl,
     authType: provider.authType as "none" | "bearer",
+    config: providerConfig,
   });
 
   // Mark uploading
@@ -74,6 +86,7 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
       sizeBytes: params.sizeBytes ?? Number(file.sizeBytes ?? 0),
       data: params.data,
       bearerToken: bearerToken ?? null,
+      objectKeyHint: params.objectKeyHint ?? undefined,
     });
 
     const nextMetadata = {

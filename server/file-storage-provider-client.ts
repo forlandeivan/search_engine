@@ -9,6 +9,14 @@ export type ProviderClientOptions = {
   authType: ProviderAuthType;
   uploadPath?: string;
   defaultTimeoutMs?: number;
+  config?: {
+    uploadMethod?: "POST" | "PUT";
+    pathTemplate?: string;
+    multipartFieldName?: string;
+    metadataFieldName?: string | null;
+    responseFileIdPath?: string;
+    defaultTimeoutMs?: number | null;
+  };
 };
 
 export type FileUploadContext = {
@@ -71,6 +79,7 @@ function extractProviderFileId(payload: any): string | null {
   if (!payload || typeof payload !== "object") return null;
   if (typeof payload.provider_file_id === "string") return payload.provider_file_id;
   if (typeof payload.providerFileId === "string") return payload.providerFileId;
+  if (typeof payload.fileUri === "string") return payload.fileUri;
   if (typeof payload.fileId === "string") return payload.fileId;
   return null;
 }
@@ -92,6 +101,10 @@ export class FileStorageProviderClient {
   private readonly authType: ProviderAuthType;
   private readonly uploadPath: string;
   private readonly defaultTimeoutMs: number;
+  private readonly uploadMethod: "POST" | "PUT";
+  private readonly multipartFieldName: string;
+  private readonly metadataFieldName: string | null;
+  private readonly responseFileIdPath: string;
 
   // Future extension point: signed download link
   async getDownloadLink(
@@ -112,8 +125,29 @@ export class FileStorageProviderClient {
   constructor(options: ProviderClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.authType = options.authType;
-    this.uploadPath = options.uploadPath ?? "/files/upload";
-    this.defaultTimeoutMs = options.defaultTimeoutMs ?? 15_000;
+    const cfg = options.config ?? {};
+    this.uploadMethod = cfg.uploadMethod ?? "POST";
+    this.uploadPath = options.uploadPath ?? cfg.pathTemplate ?? "/{workspaceId}/{objectKey}";
+    this.multipartFieldName = cfg.multipartFieldName ?? "file";
+    this.metadataFieldName = cfg.metadataFieldName ?? "metadata";
+    this.responseFileIdPath = cfg.responseFileIdPath ?? "fileUri";
+    this.defaultTimeoutMs = cfg.defaultTimeoutMs ?? options.defaultTimeoutMs ?? 15_000;
+  }
+
+  private buildUrl(input: FileUploadInput): string {
+    const objectKey = input.objectKeyHint ?? input.fileName ?? "file";
+    const replacements: Record<string, string> = {
+      workspaceId: input.workspaceId ?? "",
+      objectKey,
+      skillId: input.skillId ?? "",
+      chatId: input.chatId ?? "",
+      userId: input.userId ?? "",
+      messageId: input.messageId ?? "",
+    };
+    const resolvedPath = this.uploadPath.replace(/\{(workspaceId|objectKey|skillId|chatId|userId|messageId)\}/g, (_, key) => {
+      return replacements[key] ?? "";
+    });
+    return new URL(resolvedPath.replace(/^\//, ""), this.baseUrl + "/").toString();
   }
 
   async uploadFile(input: FileUploadInput): Promise<FileUploadResult> {
@@ -127,30 +161,32 @@ export class FileStorageProviderClient {
     }
 
     const form = new FormData();
-    form.append("file", input.data as any, {
+    form.append(this.multipartFieldName, input.data as any, {
       filename: input.fileName,
       contentType: input.mimeType ?? undefined,
       knownLength: typeof input.sizeBytes === "number" ? input.sizeBytes : undefined,
     });
 
-    form.append(
-      "metadata",
-      JSON.stringify({
-        fileName: input.fileName,
-        mimeType: input.mimeType,
-        sizeBytes: input.sizeBytes,
-        context: {
-          workspaceId: input.workspaceId,
-          skillId: input.skillId ?? null,
-          chatId: input.chatId ?? null,
-          userId: input.userId ?? null,
-          messageId: input.messageId ?? null,
-          objectKeyHint: input.objectKeyHint ?? null,
-        },
-      }),
-    );
+    if (this.metadataFieldName) {
+      form.append(
+        this.metadataFieldName,
+        JSON.stringify({
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+          context: {
+            workspaceId: input.workspaceId,
+            skillId: input.skillId ?? null,
+            chatId: input.chatId ?? null,
+            userId: input.userId ?? null,
+            messageId: input.messageId ?? null,
+            objectKeyHint: input.objectKeyHint ?? null,
+          },
+        }),
+      );
+    }
 
-    const url = new URL(this.uploadPath, this.baseUrl).toString();
+    const url = this.buildUrl(input);
     const requestId = randomUUID();
     const timeoutSignal = buildTimeoutSignal(this.defaultTimeoutMs, input.abortSignal);
 
@@ -171,7 +207,7 @@ export class FileStorageProviderClient {
       attempt += 1;
       try {
         return await fetch(url, {
-          method: "POST",
+          method: this.uploadMethod,
           headers,
           body: form as any,
           signal: timeoutSignal,
@@ -228,7 +264,13 @@ export class FileStorageProviderClient {
       });
     }
 
-    const providerFileId = extractProviderFileId(payload);
+    const providerFileId =
+      typeof this.responseFileIdPath === "string" && this.responseFileIdPath.trim().length > 0
+        ? this.responseFileIdPath
+            .split(".")
+            .reduce<any>((acc, key) => (acc && typeof acc === "object" ? (acc as any)[key] : undefined), payload) ??
+          extractProviderFileId(payload)
+        : extractProviderFileId(payload);
     if (!providerFileId) {
       throw new ProviderUploadError("В ответе провайдера нет provider_file_id", 502, "MALFORMED_RESPONSE", {
         status: res.status,

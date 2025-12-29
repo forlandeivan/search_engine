@@ -19,6 +19,17 @@ export class FileStorageProviderNotFoundError extends FileStorageProviderService
 
 const authTypeSchema = z.enum(["none", "bearer"]);
 
+const providerConfigSchema = z
+  .object({
+    uploadMethod: z.enum(["POST", "PUT"]).optional(),
+    pathTemplate: z.string().trim().min(1, "pathTemplate is required").max(500).optional(),
+    multipartFieldName: z.string().trim().min(1, "multipartFieldName is required").max(100).optional(),
+    metadataFieldName: z.string().trim().max(100).nullable().optional(),
+    responseFileIdPath: z.string().trim().min(1, "responseFileIdPath is required").max(200).optional(),
+    defaultTimeoutMs: z.number().int().positive().max(120_000).optional(),
+  })
+  .optional();
+
 const baseProviderSchema = z.object({
   name: z
     .string()
@@ -45,12 +56,35 @@ const baseProviderSchema = z.object({
   description: z.string().max(2000).optional().nullable(),
   isActive: z.boolean().optional(),
   authType: authTypeSchema.default("none"),
+  config: providerConfigSchema,
 });
 
 const createProviderSchema = baseProviderSchema;
 const updateProviderSchema = baseProviderSchema
   .partial()
   .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" });
+
+export const defaultProviderConfig = {
+  uploadMethod: "POST",
+  pathTemplate: "/{workspaceId}/{objectKey}",
+  multipartFieldName: "file",
+  metadataFieldName: "metadata",
+  responseFileIdPath: "fileUri",
+  defaultTimeoutMs: 15000,
+} as const;
+
+export function normalizeFileProviderConfig(input: z.infer<typeof providerConfigSchema> | undefined | null) {
+  const cfg = input ?? {};
+  return {
+    uploadMethod: (cfg.uploadMethod ?? defaultProviderConfig.uploadMethod) as "POST" | "PUT",
+    pathTemplate: cfg.pathTemplate ?? defaultProviderConfig.pathTemplate,
+    multipartFieldName: cfg.multipartFieldName ?? defaultProviderConfig.multipartFieldName,
+    metadataFieldName:
+      cfg.metadataFieldName === undefined ? defaultProviderConfig.metadataFieldName : cfg.metadataFieldName,
+    responseFileIdPath: cfg.responseFileIdPath ?? defaultProviderConfig.responseFileIdPath,
+    defaultTimeoutMs: cfg.defaultTimeoutMs ?? defaultProviderConfig.defaultTimeoutMs,
+  };
+}
 
 function normalizePayload(input: z.infer<typeof createProviderSchema>): FileStorageProviderInsert {
   return {
@@ -59,6 +93,7 @@ function normalizePayload(input: z.infer<typeof createProviderSchema>): FileStor
     description: input.description?.trim() || null,
     isActive: input.isActive ?? true,
     authType: input.authType ?? "none",
+    config: normalizeFileProviderConfig(input.config),
   };
 }
 
@@ -89,12 +124,21 @@ class FileStorageProviderService {
 
   async updateProvider(id: string, payload: unknown): Promise<FileStorageProvider> {
     const parsed = updateProviderSchema.parse(payload);
+    const existing = await storage.getFileStorageProvider(id);
+    if (!existing) {
+      throw new FileStorageProviderNotFoundError();
+    }
+    const nextConfig =
+      parsed.config !== undefined
+        ? normalizeFileProviderConfig(parsed.config)
+        : normalizeFileProviderConfig((existing as any).config ?? {});
     const provider = await storage.updateFileStorageProvider(id, {
       name: parsed.name?.trim(),
       baseUrl: parsed.baseUrl?.trim(),
       description: parsed.description === undefined ? undefined : parsed.description?.trim() || null,
       isActive: parsed.isActive,
       authType: parsed.authType,
+      config: nextConfig,
     });
     if (!provider) {
       throw new FileStorageProviderNotFoundError();

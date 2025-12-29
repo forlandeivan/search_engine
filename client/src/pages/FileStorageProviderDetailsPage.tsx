@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   createFileStorageProvider,
   updateFileStorageProvider,
@@ -20,6 +21,12 @@ type ProviderFormState = {
   description: string;
   authType: "none" | "bearer";
   isActive: boolean;
+  uploadMethod: "POST" | "PUT";
+  pathTemplate: string;
+  multipartFieldName: string;
+  metadataFieldName: string;
+  responseFileIdPath: string;
+  defaultTimeoutMs: string;
 };
 
 const defaultState: ProviderFormState = {
@@ -28,6 +35,12 @@ const defaultState: ProviderFormState = {
   description: "",
   authType: "none",
   isActive: true,
+  uploadMethod: "POST",
+  pathTemplate: "/{workspaceId}/{objectKey}",
+  multipartFieldName: "file",
+  metadataFieldName: "metadata",
+  responseFileIdPath: "fileUri",
+  defaultTimeoutMs: "15000",
 };
 
 interface Props {
@@ -38,6 +51,7 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
   const isCreate = providerId === "new";
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const { provider, isLoading, isError, error, refetch } = useFileStorageProviderDetails(providerId, {
     enabled: !isCreate,
@@ -54,6 +68,15 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
         description: provider.description ?? "",
         authType: (provider.authType as ProviderFormState["authType"]) ?? "none",
         isActive: provider.isActive ?? true,
+        uploadMethod: (provider.config?.uploadMethod as ProviderFormState["uploadMethod"]) ?? defaultState.uploadMethod,
+        pathTemplate: provider.config?.pathTemplate ?? defaultState.pathTemplate,
+        multipartFieldName: provider.config?.multipartFieldName ?? defaultState.multipartFieldName,
+        metadataFieldName: provider.config?.metadataFieldName ?? defaultState.metadataFieldName,
+        responseFileIdPath: provider.config?.responseFileIdPath ?? defaultState.responseFileIdPath,
+        defaultTimeoutMs:
+          provider.config?.defaultTimeoutMs !== undefined && provider.config?.defaultTimeoutMs !== null
+            ? String(provider.config.defaultTimeoutMs)
+            : defaultState.defaultTimeoutMs,
       });
     }
   }, [provider]);
@@ -67,13 +90,25 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
   const handleSave = async () => {
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        config: {
+          uploadMethod: form.uploadMethod,
+          pathTemplate: form.pathTemplate.trim(),
+          multipartFieldName: form.multipartFieldName.trim(),
+          metadataFieldName: form.metadataFieldName.trim() === "" ? null : form.metadataFieldName.trim(),
+          responseFileIdPath: form.responseFileIdPath.trim(),
+          defaultTimeoutMs: Number(form.defaultTimeoutMs) || undefined,
+        },
+      };
       if (isCreate) {
-        await createFileStorageProvider(form);
+        await createFileStorageProvider(payload);
         toast({ title: "Провайдер создан" });
       } else {
-        await updateFileStorageProvider(providerId, form);
+        await updateFileStorageProvider(providerId, payload);
         toast({ title: "Изменения сохранены" });
       }
+      await queryClient.invalidateQueries({ queryKey: ["admin", "file-storage", "providers"] });
       navigate("/admin/file-storage");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Не удалось сохранить провайдера";
@@ -159,6 +194,78 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
               <SelectItem value="bearer">Bearer</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-2">
+            <Label>HTTP метод</Label>
+            <Select
+              value={form.uploadMethod}
+              onValueChange={(value: ProviderFormState["uploadMethod"]) => handleChange("uploadMethod", value)}
+            >
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Метод" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="POST">POST</SelectItem>
+                <SelectItem value="PUT">PUT</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="pathTemplate">Path template</Label>
+            <Input
+              id="pathTemplate"
+              value={form.pathTemplate}
+              onChange={(e) => handleChange("pathTemplate", e.target.value)}
+              placeholder="/{workspaceId}/{objectKey}"
+            />
+            <p className="text-xs text-muted-foreground">Поддерживаются плейсхолдеры: workspaceId, objectKey, skillId, chatId, userId, messageId.</p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-2">
+            <Label htmlFor="multipartFieldName">Поле файла</Label>
+            <Input
+              id="multipartFieldName"
+              value={form.multipartFieldName}
+              onChange={(e) => handleChange("multipartFieldName", e.target.value)}
+              placeholder="file"
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="metadataFieldName">Поле metadata (опционально)</Label>
+            <Input
+              id="metadataFieldName"
+              value={form.metadataFieldName}
+              onChange={(e) => handleChange("metadataFieldName", e.target.value)}
+              placeholder="metadata"
+            />
+            <p className="text-xs text-muted-foreground">Оставьте пустым, чтобы не отправлять metadata.</p>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="responseFileIdPath">Ключ ответа</Label>
+            <Input
+              id="responseFileIdPath"
+              value={form.responseFileIdPath}
+              onChange={(e) => handleChange("responseFileIdPath", e.target.value)}
+              placeholder="fileUri"
+            />
+            <p className="text-xs text-muted-foreground">Поле/путь в JSON с providerFileId.</p>
+          </div>
+        </div>
+
+        <div className="grid gap-2 md:w-1/3">
+          <Label htmlFor="defaultTimeoutMs">Таймаут, мс</Label>
+          <Input
+            id="defaultTimeoutMs"
+            type="number"
+            min={0}
+            value={form.defaultTimeoutMs}
+            onChange={(e) => handleChange("defaultTimeoutMs", e.target.value)}
+            placeholder="15000"
+          />
         </div>
 
         <div className="flex items-center gap-3">

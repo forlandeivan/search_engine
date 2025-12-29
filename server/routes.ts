@@ -337,6 +337,8 @@ import {
 } from "./speech-provider-service";
 import {
   fileStorageProviderService,
+  normalizeFileProviderConfig,
+  defaultProviderConfig,
   FileStorageProviderServiceError,
   FileStorageProviderNotFoundError,
 } from "./file-storage-provider-service";
@@ -9325,6 +9327,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     isActive: provider.isActive,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
+    config: normalizeFileProviderConfig((provider as any).config ?? defaultProviderConfig),
   });
 
   app.get("/api/file-storage/providers", requireAuth, async (req, res) => {
@@ -11783,6 +11786,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           mimeType,
           fileName: filename,
           sizeBytes,
+          objectKeyHint: storageSafeName,
           context: {
             workspaceId,
             skillId: skill.id,
@@ -13899,6 +13903,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               mimeType: file.mimetype,
               fileName,
               sizeBytes: file.size ?? null,
+              objectKeyHint: fileName,
               context: {
                 workspaceId,
                 skillId: skillIdForChat ?? null,

@@ -158,6 +158,7 @@ export const fileStorageProviders = pgTable(
     description: text("description"),
     authType: text("auth_type").$type<FileStorageAuthType>().notNull().default("none"),
     isActive: boolean("is_active").notNull().default(true),
+    config: jsonb("config").notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },

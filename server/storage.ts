@@ -3601,10 +3601,17 @@ async function ensureFileStorageProvidersTable(): Promise<void> {
         "description" text,
         "auth_type" text NOT NULL DEFAULT 'none',
         "is_active" boolean NOT NULL DEFAULT TRUE,
+        "config" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT file_storage_providers_auth_type_chk CHECK ("auth_type" IN ('none', 'bearer'))
       )
+    `);
+
+    // migrate existing tables missing config column
+    await db.execute(sql`
+      ALTER TABLE "file_storage_providers"
+      ADD COLUMN IF NOT EXISTS "config" jsonb NOT NULL DEFAULT '{}'::jsonb
     `);
 
     await db.execute(sql`
