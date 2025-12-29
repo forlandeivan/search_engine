@@ -3697,7 +3697,13 @@ async function ensureFileEventOutboxTable(): Promise<void> {
     await ensureFilesTable();
 
     await db.execute(sql`
-      CREATE TYPE IF NOT EXISTS file_event_status AS ENUM ('queued', 'retrying', 'sent', 'failed')
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'file_event_status') THEN
+          CREATE TYPE file_event_status AS ENUM ('queued', 'retrying', 'sent', 'failed');
+        END IF;
+      END
+      $$;
     `);
 
     await db.execute(sql`
