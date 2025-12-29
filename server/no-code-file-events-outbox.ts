@@ -1,11 +1,26 @@
 import fetch from "node-fetch";
 import { storage } from "./storage";
 import type { FileEventOutbox } from "@shared/schema";
+import { URL } from "url";
 
 const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 2_000;
 const MAX_BACKOFF_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 5_000;
+
+function sanitizeTargetUrl(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const cleaned = trimmed.replace(/[\s\r\n\t]+/g, "");
+  try {
+    // Validate URL shape
+    new URL(cleaned);
+    return cleaned;
+  } catch {
+    return null;
+  }
+}
 
 function computeNextAttempt(attempts: number): Date {
   const delay = Math.min(MAX_BACKOFF_MS, BASE_DELAY_MS * Math.max(1, attempts));
@@ -27,10 +42,16 @@ function buildHeaders(event: FileEventOutbox): Record<string, string> {
 async function deliver(
   event: FileEventOutbox,
 ): Promise<{ ok: boolean; status: number; retryable: boolean; errorMessage?: string }> {
+  const rawUrl = (event as any).targetUrl ?? (event as any).target_url ?? null;
+  const targetUrl = sanitizeTargetUrl(rawUrl);
+  if (!targetUrl) {
+    return { ok: false, status: 0, retryable: false, errorMessage: "Invalid URL" };
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(event.targetUrl, {
+    const res = await fetch(targetUrl, {
       method: "POST",
       headers: buildHeaders(event),
       body: JSON.stringify(event.payload),

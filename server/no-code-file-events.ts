@@ -5,6 +5,20 @@ import { decryptSecret } from "./secret-storage";
 
 export type FileEventAction = "file_uploaded" | "file_deleted";
 
+function sanitizeTargetUrl(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  // Remove whitespace/control chars inside URL that break fetch/URL parsing.
+  const cleaned = trimmed.replace(/[\s\r\n\t]+/g, "");
+  try {
+    new URL(cleaned);
+    return cleaned;
+  } catch {
+    return null;
+  }
+}
+
 export type FileEventPayload = {
   schemaVersion: 1;
   eventId: string;
@@ -65,7 +79,7 @@ export async function enqueueFileEventForSkill(opts: {
   };
 }): Promise<void> {
   const isNoCode = opts.skill.executionMode === "no_code";
-  const targetUrl = opts.skill.noCodeFileEventsUrl ?? opts.skill.noCodeEndpointUrl ?? null;
+  const targetUrl = sanitizeTargetUrl(opts.skill.noCodeFileEventsUrl ?? opts.skill.noCodeEndpointUrl ?? null);
   if (!isNoCode || !targetUrl) {
     if (isNoCode) {
       console.warn("[file-events] skip enqueue: no target URL for no-code skill", {

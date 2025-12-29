@@ -11821,6 +11821,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
         const storageKey =
           uploaded.providerFileId ?? uploaded.objectKey ?? uploaded.externalUri ?? uploaded.id ?? filename;
+        const providerFileId = uploaded.providerFileId ?? null;
+        const providerDownloadUrl =
+          ((uploaded.metadata as any)?.providerUpload as any)?.downloadUrl ??
+          (uploaded as any)?.metadata?.providerUpload?.downloadUrl ??
+          null;
 
         await storage.updateFile(uploaded.id, {
           objectKey: storageKey,
@@ -11849,6 +11854,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               storageKey,
               attachmentId: attachment.id,
               fileId: uploaded.id,
+              providerFileId,
+              providerDownloadUrl,
             },
           },
         });
@@ -11865,7 +11872,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               ...(enriched.metadata as any)?.file,
               attachmentId: attachment.id,
               fileId: uploaded.id,
-              downloadUrl: null,
+              providerFileId,
+              downloadUrl: providerDownloadUrl ?? null,
               expiresAt: null,
             },
           },
@@ -11890,7 +11898,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             filename,
             mimeType,
             sizeBytes,
-            downloadUrl: null,
+            downloadUrl: providerDownloadUrl ?? null,
             expiresAt: null,
             uploadedByUserId: user.id,
           },
