@@ -13,6 +13,8 @@ import { useToast } from "@/hooks/use-toast";
 import { formatCredits } from "@shared/credits";
 import { useFileStorageProvidersList, updateWorkspaceDefaultFileStorageProvider } from "@/hooks/useFileStorageProviders";
 
+const NO_PROVIDER_VALUE = "__none__";
+
 interface WorkspaceSummary {
   id: string;
   name: string;
@@ -322,7 +324,7 @@ export default function AdminWorkspacesPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <Select
-                        value={selectedDefaults[workspace.id] ?? workspace.defaultFileStorageProviderId ?? ""}
+                        value={selectedDefaults[workspace.id] ?? workspace.defaultFileStorageProviderId ?? NO_PROVIDER_VALUE}
                         onValueChange={(value) =>
                           setSelectedDefaults((prev) => ({
                             ...prev,
@@ -335,7 +337,7 @@ export default function AdminWorkspacesPage() {
                           <SelectValue placeholder="Выберите провайдер" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">Не выбран</SelectItem>
+                          <SelectItem value={NO_PROVIDER_VALUE}>Не выбран</SelectItem>
                           {fileStorageProvidersQuery.providers
                             .filter((provider) => provider.isActive)
                             .map((provider) => (
@@ -351,10 +353,13 @@ export default function AdminWorkspacesPage() {
                         disabled={updatingDefaultWorkspaceId === workspace.id}
                         onClick={() => {
                           setUpdatingDefaultWorkspaceId(workspace.id);
-                          const value = selectedDefaults[workspace.id] ?? workspace.defaultFileStorageProviderId ?? "";
+                          const value =
+                            selectedDefaults[workspace.id] ??
+                            workspace.defaultFileStorageProviderId ??
+                            NO_PROVIDER_VALUE;
                           updateDefaultProviderMutation.mutate({
                             workspaceId: workspace.id,
-                            providerId: value || null,
+                            providerId: value === NO_PROVIDER_VALUE ? null : value,
                           });
                         }}
                       >
