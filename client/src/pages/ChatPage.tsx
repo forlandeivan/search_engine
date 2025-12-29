@@ -73,8 +73,8 @@ export default function ChatPage({ params }: ChatPageProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [fileUploadState, setFileUploadState] = useState<
-    { fileName: string; size: number | null; status: "uploading" | "error" }
-  > | null>(null);
+    { fileName: string; size: number | null; status: "uploading" | "error" } | null
+  >(null);
   const fileUploadAbortRef = useRef<AbortController | null>(null);
   const { toast } = useToast();
   const resolveArchiveErrorMessage = (error: unknown): string | null => {

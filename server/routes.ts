@@ -10931,8 +10931,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }> = [];
         const validIndices: number[] = [];
         const uploadedKeys: UploadedSkillFileDescriptor[] = [];
-        let workspaceBucket: string | null =
-          (await storage.getWorkspace(workspaceId))?.storageBucket ?? null;
+        const workspaceInfo = await storage.getWorkspace(workspaceId);
+        if (!workspaceInfo) {
+          return res.status(404).json({ message: "Workspace not found" });
+        }
+        let workspaceBucket: string | null = workspaceInfo.storageBucket ?? null;
+        const workspaceName = workspaceInfo.name ?? null;
         const createIngestionJobs = !isNoCodeSkill;
 
         for (const [index, file] of files.entries()) {
@@ -11014,10 +11018,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 sizeBytes: file.size ?? null,
                 context: {
                   workspaceId,
+                  workspaceName,
                   skillId,
+                  skillName: skill.name ?? null,
                   chatId: null,
                   userId: user.id,
                   messageId: null,
+                  bucket: workspaceBucket ?? null,
+                  fileNameOriginal: originalName || storageSafeName,
                 },
                 skillContext: {
                   executionMode: skill.executionMode ?? null,
@@ -11636,6 +11644,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           req.query.workspace_id,
         );
         const workspaceId = req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, workspaceCandidate);
+        const workspace = await storage.getWorkspace(workspaceId);
+        if (!workspace) {
+          return res.status(404).json({ message: "Workspace not found" });
+        }
         const chat = await getChatById(req.params.chatId, workspaceId, user.id);
         ensureChatAndSkillAreActive(chat);
         const skill = await getSkillById(workspaceId, chat.skillId);
@@ -11663,8 +11675,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           const storageKey = buildAttachmentKey(chat.id, filename);
           await uploadWorkspaceFile(workspaceId, storageKey, file.buffer, mimeType, sizeBytes);
 
-          const workspace = await storage.getWorkspace(workspaceId);
-          const bucket = workspace?.storageBucket ?? null;
+          const bucket = workspace.storageBucket ?? null;
 
           const message = await storage.createChatMessage({
             chatId: chat.id,
@@ -11789,10 +11800,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           objectKeyHint: storageSafeName,
           context: {
             workspaceId,
+            workspaceName: workspace.name ?? null,
             skillId: skill.id,
+            skillName: skill.name ?? null,
             chatId: chat.id,
             userId: user.id,
             messageId: message.id,
+            bucket: workspace.storageBucket ?? null,
+            fileNameOriginal: file.originalname ?? filename,
           },
           skillContext: {
             executionMode: skill.executionMode ?? null,
@@ -13831,6 +13846,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(404).json({ message: "Чат не найден или недоступен" });
         }
         const workspaceId = chat.workspaceId;
+        const workspace = workspaceId ? await storage.getWorkspace(workspaceId) : null;
+        if (!workspace) {
+          return res.status(404).json({ message: "Workspace not found" });
+        }
         const skillIdForChat = chat.skillId ?? null;
         const skill =
           skillIdForChat && workspaceId
@@ -13906,10 +13925,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               objectKeyHint: fileName,
               context: {
                 workspaceId,
+                workspaceName: workspace.name ?? null,
                 skillId: skillIdForChat ?? null,
+                skillName: skill?.name ?? null,
                 chatId,
                 userId: user.id,
                 messageId: audioMessage.id,
+                bucket: workspace.storageBucket ?? null,
+                fileNameOriginal: file.originalname ?? fileName,
               },
               skillContext: {
                 executionMode: skill.executionMode ?? null,

@@ -1,6 +1,7 @@
 import fetch, { type Response } from "node-fetch";
 import FormData from "form-data";
 import { randomUUID } from "crypto";
+import { buildPathFromTemplate } from "./file-storage-path";
 
 export type ProviderAuthType = "none" | "bearer";
 
@@ -16,15 +17,20 @@ export type ProviderClientOptions = {
     metadataFieldName?: string | null;
     responseFileIdPath?: string;
     defaultTimeoutMs?: number | null;
+    bucket?: string | null;
   };
 };
 
 export type FileUploadContext = {
   workspaceId: string;
+  workspaceName?: string | null;
   skillId?: string | null;
+  skillName?: string | null;
   chatId?: string | null;
   userId?: string | null;
   messageId?: string | null;
+  bucket?: string | null;
+  fileNameOriginal?: string | null;
 };
 
 export type FileUploadInput = FileUploadContext & {
@@ -105,6 +111,7 @@ export class FileStorageProviderClient {
   private readonly multipartFieldName: string;
   private readonly metadataFieldName: string | null;
   private readonly responseFileIdPath: string;
+  private readonly bucket: string | null;
 
   // Future extension point: signed download link
   async getDownloadLink(
@@ -132,20 +139,22 @@ export class FileStorageProviderClient {
     this.metadataFieldName = cfg.metadataFieldName ?? "metadata";
     this.responseFileIdPath = cfg.responseFileIdPath ?? "fileUri";
     this.defaultTimeoutMs = cfg.defaultTimeoutMs ?? options.defaultTimeoutMs ?? 15_000;
+    this.bucket = cfg.bucket ?? null;
   }
 
   private buildUrl(input: FileUploadInput): string {
     const objectKey = input.objectKeyHint ?? input.fileName ?? "file";
-    const replacements: Record<string, string> = {
+    const resolvedPath = buildPathFromTemplate(this.uploadPath, {
+      bucket: this.bucket ?? input.bucket ?? null,
       workspaceId: input.workspaceId ?? "",
+      workspaceName: input.workspaceName ?? null,
       objectKey,
       skillId: input.skillId ?? "",
+      skillName: input.skillName ?? null,
       chatId: input.chatId ?? "",
       userId: input.userId ?? "",
       messageId: input.messageId ?? "",
-    };
-    const resolvedPath = this.uploadPath.replace(/\{(workspaceId|objectKey|skillId|chatId|userId|messageId)\}/g, (_, key) => {
-      return replacements[key] ?? "";
+      fileName: input.fileNameOriginal ?? input.fileName ?? objectKey,
     });
     return new URL(resolvedPath.replace(/^\//, ""), this.baseUrl + "/").toString();
   }

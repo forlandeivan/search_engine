@@ -77,10 +77,14 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
       decryptSecret(params.bearerToken ?? null) ?? decryptSecret(params.skillContext?.noCodeBearerToken ?? null);
     const result = await client.uploadFile({
       workspaceId: params.context.workspaceId,
+      workspaceName: params.context.workspaceName ?? null,
       skillId: params.context.skillId ?? null,
+      skillName: params.context.skillName ?? null,
       chatId: params.context.chatId ?? null,
       userId: params.context.userId ?? null,
       messageId: params.context.messageId ?? null,
+      bucket: params.context.bucket ?? null,
+      fileNameOriginal: params.context.fileNameOriginal ?? null,
       fileName: params.fileName ?? file.name ?? "file",
       mimeType: params.mimeType ?? file.mimeType ?? null,
       sizeBytes: params.sizeBytes ?? Number(file.sizeBytes ?? 0),

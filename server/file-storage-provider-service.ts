@@ -1,6 +1,7 @@
 import { storage } from "./storage";
 import type { FileStorageProvider, FileStorageProviderInsert } from "@shared/schema";
 import { z } from "zod";
+import { validatePathTemplate } from "./file-storage-path";
 import { isPgError } from "./pg-utils";
 
 export class FileStorageProviderServiceError extends Error {
@@ -27,6 +28,7 @@ const providerConfigSchema = z
     metadataFieldName: z.string().trim().max(100).nullable().optional(),
     responseFileIdPath: z.string().trim().min(1, "responseFileIdPath is required").max(200).optional(),
     defaultTimeoutMs: z.number().int().min(0).max(600_000).optional(), // 0 — без таймаута, до 10 минут
+    bucket: z.string().trim().max(200).nullable().optional(),
   })
   .optional();
 
@@ -71,19 +73,28 @@ export const defaultProviderConfig = {
   metadataFieldName: "metadata",
   responseFileIdPath: "fileUri",
   defaultTimeoutMs: 15000,
+  bucket: null,
 } as const;
 
 export function normalizeFileProviderConfig(input: z.infer<typeof providerConfigSchema> | undefined | null) {
   const cfg = input ?? {};
   const hasTimeout = cfg.defaultTimeoutMs !== undefined && cfg.defaultTimeoutMs !== null;
+  const pathTemplate = cfg.pathTemplate ?? defaultProviderConfig.pathTemplate;
+  try {
+    validatePathTemplate(pathTemplate);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid pathTemplate";
+    throw new FileStorageProviderServiceError(message, 400);
+  }
   return {
     uploadMethod: (cfg.uploadMethod ?? defaultProviderConfig.uploadMethod) as "POST" | "PUT",
-    pathTemplate: cfg.pathTemplate ?? defaultProviderConfig.pathTemplate,
+    pathTemplate,
     multipartFieldName: cfg.multipartFieldName ?? defaultProviderConfig.multipartFieldName,
     metadataFieldName:
       cfg.metadataFieldName === undefined ? defaultProviderConfig.metadataFieldName : cfg.metadataFieldName,
     responseFileIdPath: cfg.responseFileIdPath ?? defaultProviderConfig.responseFileIdPath,
     defaultTimeoutMs: hasTimeout ? cfg.defaultTimeoutMs : defaultProviderConfig.defaultTimeoutMs,
+    bucket: cfg.bucket ?? defaultProviderConfig.bucket,
   };
 }
 

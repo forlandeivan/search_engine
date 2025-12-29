@@ -7,6 +7,7 @@ export interface FileStorageProviderConfig {
   metadataFieldName: string | null;
   responseFileIdPath: string;
   defaultTimeoutMs?: number | null;
+  bucket?: string | null;
 }
 
 export interface FileStorageProviderSummary {

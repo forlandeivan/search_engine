@@ -15,6 +15,19 @@ import {
   useFileStorageProviderDetails,
 } from "@/hooks/useFileStorageProviders";
 
+const ALLOWED_PLACEHOLDERS = [
+  "bucket",
+  "workspaceName",
+  "workspaceId",
+  "skillName",
+  "skillId",
+  "chatId",
+  "userId",
+  "messageId",
+  "fileName",
+  "objectKey",
+] as const;
+
 type ProviderFormState = {
   name: string;
   baseUrl: string;
@@ -27,6 +40,7 @@ type ProviderFormState = {
   metadataFieldName: string;
   responseFileIdPath: string;
   defaultTimeoutMs: string;
+  bucket: string;
 };
 
 const defaultState: ProviderFormState = {
@@ -41,6 +55,7 @@ const defaultState: ProviderFormState = {
   metadataFieldName: "metadata",
   responseFileIdPath: "fileUri",
   defaultTimeoutMs: "15000",
+  bucket: "",
 };
 
 interface Props {
@@ -77,11 +92,24 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
           provider.config?.defaultTimeoutMs !== undefined && provider.config?.defaultTimeoutMs !== null
             ? String(provider.config.defaultTimeoutMs)
             : defaultState.defaultTimeoutMs,
+        bucket: provider.config?.bucket ?? defaultState.bucket,
       });
     }
   }, [provider]);
 
   const title = useMemo(() => (isCreate ? "Создать файловый провайдер" : `Провайдер: ${provider?.name ?? ""}`), [isCreate, provider]);
+
+  const validateTemplate = (template: string): string | null => {
+    const tokens = Array.from(template.matchAll(/\{([^}]+)\}/g)).map(([, key]) => key.trim()).filter(Boolean);
+    const invalid = tokens.filter((token) => !ALLOWED_PLACEHOLDERS.includes(token as (typeof ALLOWED_PLACEHOLDERS)[number]));
+    if (invalid.length > 0) {
+      return `Неподдерживаемые плейсхолдеры: ${invalid.join(", ")}`;
+    }
+    if (template.trim().length === 0) {
+      return "Path template не может быть пустым";
+    }
+    return null;
+  };
 
   const handleChange = (key: keyof ProviderFormState, value: any) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -90,6 +118,12 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
   const handleSave = async () => {
     setSaving(true);
     try {
+      const templateError = validateTemplate(form.pathTemplate);
+      if (templateError) {
+        toast({ variant: "destructive", title: "Некорректный шаблон пути", description: templateError });
+        setSaving(false);
+        return;
+      }
       const parsedTimeout = Number(form.defaultTimeoutMs);
       const timeoutValue = Number.isFinite(parsedTimeout) ? parsedTimeout : undefined;
       const payload = {
@@ -101,6 +135,7 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
           metadataFieldName: form.metadataFieldName.trim() === "" ? null : form.metadataFieldName.trim(),
           responseFileIdPath: form.responseFileIdPath.trim(),
           defaultTimeoutMs: timeoutValue,
+          bucket: form.bucket.trim() === "" ? null : form.bucket.trim(),
         },
       };
       if (isCreate) {
@@ -222,7 +257,22 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
               onChange={(e) => handleChange("pathTemplate", e.target.value)}
               placeholder="/{workspaceId}/{objectKey}"
             />
-            <p className="text-xs text-muted-foreground">Поддерживаются плейсхолдеры: workspaceId, objectKey, skillId, chatId, userId, messageId.</p>
+            <p className="text-xs text-muted-foreground">
+              Плейсхолдеры: bucket, workspaceName, workspaceId, skillName, skillId, chatId, userId, messageId, fileName, objectKey.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-2">
+            <Label htmlFor="bucket">Bucket (опционально)</Label>
+            <Input
+              id="bucket"
+              value={form.bucket}
+              onChange={(e) => handleChange("bucket", e.target.value)}
+              placeholder="unica-cloud"
+            />
+            <p className="text-xs text-muted-foreground">Используйте {`{bucket}`} в шаблоне, если хотите подставлять это значение.</p>
           </div>
         </div>
 
