@@ -24,7 +24,9 @@ function buildHeaders(event: FileEventOutbox): Record<string, string> {
   return headers;
 }
 
-async function deliver(event: FileEventOutbox): Promise<{ ok: boolean; status: number; retryable: boolean }> {
+async function deliver(
+  event: FileEventOutbox,
+): Promise<{ ok: boolean; status: number; retryable: boolean; errorMessage?: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -38,7 +40,8 @@ async function deliver(event: FileEventOutbox): Promise<{ ok: boolean; status: n
     return { ok: res.ok, status: res.status, retryable };
   } catch (error) {
     const retryable = true;
-    return { ok: false, status: 0, retryable };
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, status: 0, retryable, errorMessage: message };
   } finally {
     clearTimeout(timeout);
   }
@@ -65,10 +68,10 @@ export function startFileEventOutboxWorker() {
       const retryable = result.retryable;
       if (retryable && job.attempts < MAX_ATTEMPTS) {
         const next = computeNextAttempt(job.attempts);
-        await storage.rescheduleFileEvent(job.id, next, `HTTP ${result.status}`);
+        await storage.rescheduleFileEvent(job.id, next, result.errorMessage ?? `HTTP ${result.status}`);
         return;
       }
-      await storage.failFileEvent(job.id, `HTTP ${result.status}`);
+      await storage.failFileEvent(job.id, result.errorMessage ?? `HTTP ${result.status}`);
     } catch (error) {
       const retryable = job.attempts < MAX_ATTEMPTS;
       const next = retryable ? computeNextAttempt(job.attempts) : null;
