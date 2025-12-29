@@ -171,6 +171,10 @@ export const fileKinds = ["attachment", "audio", "skill_doc"] as const;
 export type FileKind = (typeof fileKinds)[number];
 export const fileKindsEnum = pgEnum("file_kind", fileKinds);
 
+export const fileEventStatuses = ["queued", "retrying", "sent", "failed"] as const;
+export type FileEventStatus = (typeof fileEventStatuses)[number];
+export const fileEventStatusEnum = pgEnum("file_event_status", fileEventStatuses);
+
 export const fileStorageTypes = ["standard_minio", "yandex_object_storage", "external_provider"] as const;
 export type FileStorageType = (typeof fileStorageTypes)[number];
 export const fileStorageTypeEnum = pgEnum("file_storage_type", fileStorageTypes);
@@ -211,6 +215,38 @@ export const files = pgTable(
     skillIdx: index("files_skill_idx").on(table.skillId),
     chatIdx: index("files_chat_idx").on(table.chatId),
     messageIdx: index("files_message_idx").on(table.messageId),
+  }),
+);
+
+export const fileEventOutbox = pgTable(
+  "file_event_outbox",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    eventId: uuid("event_id").notNull(),
+    action: text("action").notNull(),
+    fileId: uuid("file_id")
+      .notNull()
+      .references(() => files.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull(),
+    skillId: uuid("skill_id"),
+    chatId: uuid("chat_id"),
+    userId: varchar("user_id"),
+    messageId: varchar("message_id"),
+    targetUrl: text("target_url").notNull(),
+    authType: text("auth_type").$type<NoCodeAuthType>().notNull().default("none"),
+    bearerToken: text("bearer_token"),
+    payload: jsonb("payload").notNull(),
+    status: fileEventStatusEnum("status").notNull().default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    eventIdx: uniqueIndex("file_event_outbox_event_idx").on(table.eventId),
+    dedupIdx: uniqueIndex("file_event_outbox_dedup_idx").on(table.fileId, table.action),
+    statusIdx: index("file_event_outbox_status_idx").on(table.status, table.nextAttemptAt, table.createdAt),
   }),
 );
 
@@ -1161,6 +1197,7 @@ export const skills = pgTable(
     ragLlmMaxTokens: integer("rag_llm_max_tokens"),
     ragLlmResponseFormat: text("rag_llm_response_format"),
     noCodeEndpointUrl: text("no_code_endpoint_url"),
+    noCodeFileEventsUrl: text("no_code_file_events_url"),
     noCodeAuthType: text("no_code_auth_type").$type<NoCodeAuthType>().notNull().default("none"),
     noCodeBearerToken: text("no_code_bearer_token"),
     noCodeCallbackTokenHash: text("no_code_callback_token_hash"),
@@ -2023,6 +2060,8 @@ export type FileStorageProvider = typeof fileStorageProviders.$inferSelect;
 export type FileStorageProviderInsert = typeof fileStorageProviders.$inferInsert;
 export type File = typeof files.$inferSelect;
 export type FileInsert = typeof files.$inferInsert;
+export type FileEventOutbox = typeof fileEventOutbox.$inferSelect;
+export type FileEventOutboxInsert = typeof fileEventOutbox.$inferInsert;
 export type WorkspaceUsageMonth = typeof workspaceUsageMonth.$inferSelect;
 export type WorkspaceUsageMonthInsert = typeof workspaceUsageMonth.$inferInsert;
 export type WorkspaceLlmUsageLedger = typeof workspaceLlmUsageLedger.$inferSelect;

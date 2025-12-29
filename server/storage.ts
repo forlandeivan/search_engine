@@ -34,6 +34,9 @@ import {
   speechProviders,
   speechProviderSecrets,
   fileStorageProviders,
+  fileEventOutbox,
+  type FileEventOutbox,
+  type FileEventOutboxInsert,
   files,
   indexingRules,
   type KnowledgeBaseSearchSettingsRow,
@@ -1147,6 +1150,9 @@ let ensuringSpeechProvidersTable: Promise<void> | null = null;
 
 let fileStorageProvidersTableEnsured = false;
 let ensuringFileStorageProvidersTable: Promise<void> | null = null;
+
+let fileEventOutboxTableEnsured = false;
+let ensuringFileEventOutboxTable: Promise<void> | null = null;
 
 let filesTableEnsured = false;
 let ensuringFilesTable: Promise<void> | null = null;
@@ -3677,6 +3683,62 @@ async function ensureFilesTable(): Promise<void> {
   }
 }
 
+async function ensureFileEventOutboxTable(): Promise<void> {
+  if (fileEventOutboxTableEnsured) {
+    return;
+  }
+
+  if (ensuringFileEventOutboxTable) {
+    await ensuringFileEventOutboxTable;
+    return;
+  }
+
+  ensuringFileEventOutboxTable = (async () => {
+    await ensureFilesTable();
+
+    await db.execute(sql`
+      CREATE TYPE IF NOT EXISTS file_event_status AS ENUM ('queued', 'retrying', 'sent', 'failed')
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "file_event_outbox" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "event_id" uuid NOT NULL UNIQUE,
+        "action" text NOT NULL,
+        "file_id" uuid NOT NULL REFERENCES "files"("id") ON DELETE CASCADE,
+        "workspace_id" uuid NOT NULL,
+        "skill_id" uuid,
+        "chat_id" uuid,
+        "user_id" varchar,
+        "message_id" varchar,
+        "target_url" text NOT NULL,
+        "auth_type" text NOT NULL DEFAULT 'none',
+        "bearer_token" text,
+        "payload" jsonb NOT NULL,
+        "status" file_event_status NOT NULL DEFAULT 'queued',
+        "attempts" integer NOT NULL DEFAULT 0,
+        "next_attempt_at" timestamptz,
+        "last_error" text,
+        "created_at" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE("file_id", "action")
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS file_event_outbox_status_idx
+      ON "file_event_outbox"(status, next_attempt_at NULLS FIRST, created_at)
+    `);
+  })();
+
+  try {
+    await ensuringFileEventOutboxTable;
+    fileEventOutboxTableEnsured = true;
+  } finally {
+    ensuringFileEventOutboxTable = null;
+  }
+}
+
 async function ensureAuthProvidersTable(): Promise<void> {
   if (authProvidersTableEnsured) {
     return;
@@ -5639,6 +5701,87 @@ export class DatabaseStorage implements IStorage {
       .where(eq(files.id, id))
       .returning();
     return updated ?? undefined;
+  }
+
+  async enqueueFileEvent(event: FileEventOutboxInsert): Promise<FileEventOutbox> {
+    await ensureFileEventOutboxTable();
+    const [created] = await this.db
+      .insert(fileEventOutbox)
+      .values(event)
+      .onConflictDoNothing({
+        target: [fileEventOutbox.fileId, fileEventOutbox.action],
+      })
+      .returning();
+    if (created) return created as FileEventOutbox;
+    const rows = await this.db
+      .select()
+      .from(fileEventOutbox)
+      .where(and(eq(fileEventOutbox.fileId, event.fileId), eq(fileEventOutbox.action, event.action)))
+      .limit(1);
+    if (!rows[0]) {
+      throw new Error("Failed to enqueue file event");
+    }
+    return rows[0] as FileEventOutbox;
+  }
+
+  async claimNextFileEventOutbox(now: Date = new Date()): Promise<FileEventOutbox | null> {
+    await ensureFileEventOutboxTable();
+    const result = await this.db.execute(sql`
+      UPDATE "file_event_outbox" AS jobs
+      SET
+        "status" = 'retrying',
+        "attempts" = jobs."attempts" + 1,
+        "updated_at" = ${now}
+      WHERE jobs."id" = (
+        SELECT id
+        FROM "file_event_outbox"
+        WHERE "status" IN ('queued','retrying')
+          AND ("next_attempt_at" IS NULL OR "next_attempt_at" <= ${now})
+        ORDER BY "next_attempt_at" NULLS FIRST, "created_at"
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
+    `);
+    const row = (result.rows ?? [])[0] as Record<string, unknown> | undefined;
+    return row ? (row as unknown as FileEventOutbox) : null;
+  }
+
+  async markFileEventSent(id: string): Promise<void> {
+    await ensureFileEventOutboxTable();
+    const now = new Date();
+    await this.db
+      .update(fileEventOutbox)
+      .set({ status: "sent", nextAttemptAt: null, lastError: null, updatedAt: now })
+      .where(eq(fileEventOutbox.id, id));
+  }
+
+  async rescheduleFileEvent(id: string, nextAttemptAt: Date, error?: string | null): Promise<void> {
+    await ensureFileEventOutboxTable();
+    const now = new Date();
+    await this.db
+      .update(fileEventOutbox)
+      .set({
+        status: "retrying",
+        nextAttemptAt,
+        lastError: error ?? null,
+        updatedAt: now,
+      })
+      .where(eq(fileEventOutbox.id, id));
+  }
+
+  async failFileEvent(id: string, error?: string | null): Promise<void> {
+    await ensureFileEventOutboxTable();
+    const now = new Date();
+    await this.db
+      .update(fileEventOutbox)
+      .set({
+        status: "failed",
+        nextAttemptAt: null,
+        lastError: error ?? null,
+        updatedAt: now,
+      })
+      .where(eq(fileEventOutbox.id, id));
   }
 
   async listFileStorageProviders(options: {

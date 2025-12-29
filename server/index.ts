@@ -12,6 +12,8 @@ import { configureAuth } from "./auth";
 import { startSkillExecutionLogRetentionJob } from "./skill-execution-log-retention";
 import { startSystemNotificationLogRetentionJob } from "./system-notification-log-retention";
 import { startSkillFileIngestionWorker } from "./skill-file-ingestion-jobs";
+import { startFileEventOutboxWorker } from "./no-code-file-events-outbox";
+import { startFileEventOutboxWorker } from "./no-code-file-events-outbox";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -188,6 +190,7 @@ void configureAuth(app);
 const retentionJob = startSkillExecutionLogRetentionJob();
 const notificationRetentionJob = startSystemNotificationLogRetentionJob();
 const skillFileIngestionWorker = startSkillFileIngestionWorker();
+const fileEventOutboxWorker = startFileEventOutboxWorker();
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -367,7 +370,9 @@ function validateProductionSecrets(): void {
 
     try {
       retentionJob?.stop?.();
+      notificationRetentionJob?.stop?.();
       skillFileIngestionWorker?.stop?.();
+      fileEventOutboxWorker?.stop?.();
       // Close HTTP server
       await new Promise<void>((resolve, reject) => {
         server.close((err) => {

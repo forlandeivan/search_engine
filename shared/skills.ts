@@ -89,6 +89,7 @@ const skillEditableFieldsSchema = z.object({
   onTranscriptionAutoActionId: optionalString(200),
   transcriptionFlowMode: z.enum(skillTranscriptionFlowModes).optional(),
   noCodeEndpointUrl: noCodeEndpointUrlSchema.optional(),
+  noCodeFileEventsUrl: noCodeEndpointUrlSchema.optional(),
   noCodeAuthType: z.enum(noCodeAuthTypes).optional(),
   noCodeBearerToken: noCodeBearerTokenSchema.optional(),
   contextInputLimit: contextInputLimitSchema,
@@ -102,6 +103,7 @@ export type UpdateSkillPayload = z.infer<typeof updateSkillSchema>;
 
 export type SkillNoCodeConnection = {
   endpointUrl: string | null;
+  fileEventsUrl: string | null;
   authType: NoCodeAuthType;
   tokenIsSet: boolean;
   callbackTokenIsSet: boolean;

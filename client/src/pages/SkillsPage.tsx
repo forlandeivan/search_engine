@@ -131,8 +131,34 @@ export const skillFormSchema = z.object({
         value.startsWith("https://"),
       { message: "Разрешены только http/https URL" },
     ),
+  noCodeFileEventsUrl: z
+    .string()
+    .url({ message: "Некорректный URL" })
+    .optional()
+    .or(z.literal(""))
+    .refine(
+      (value) =>
+        value === undefined ||
+        value === "" ||
+        value.startsWith("http://") ||
+        value.startsWith("https://"),
+      { message: "Разрешены только http/https URL" },
+    ),
   noCodeAuthType: z.enum(["none", "bearer"]).default("none"),
   noCodeBearerToken: z.string().optional().or(z.literal("")),
+  noCodeFileEventsUrl: z
+    .string()
+    .url({ message: "Некорректный URL" })
+    .optional()
+    .or(z.literal(""))
+    .refine(
+      (value) =>
+        value === undefined ||
+        value === "" ||
+        value.startsWith("http://") ||
+        value.startsWith("https://"),
+      { message: "Разрешены только http/https URL" },
+    ),
 }).superRefine((val, ctx) => {
   if (val.executionMode === "standard") {
     return;
@@ -190,6 +216,7 @@ export const defaultFormValues = {
   onTranscriptionAutoActionId: "",
   contextInputLimit: "",
   noCodeEndpointUrl: "",
+  noCodeFileEventsUrl: "",
   noCodeAuthType: "none" as "none" | "bearer",
   noCodeBearerToken: "",
 };
@@ -1382,6 +1409,7 @@ export function SkillFormContent({
       const llmKey = buildLlmKey(skill.llmProviderConfigId ?? "", skill.modelId ?? "");
       const noCodeConnection = skill.noCodeConnection ?? {
         endpointUrl: null,
+        fileEventsUrl: null,
         authType: "none" as "none" | "bearer",
         tokenIsSet: false,
         callbackTokenIsSet: false,
@@ -1420,6 +1448,7 @@ export function SkillFormContent({
             ? ""
             : String(skill.contextInputLimit),
         noCodeEndpointUrl: noCodeConnection.endpointUrl ?? "",
+        noCodeFileEventsUrl: noCodeConnection.fileEventsUrl ?? "",
         noCodeAuthType: noCodeConnection.authType ?? "none",
         noCodeBearerToken: "",
       };
@@ -2116,6 +2145,27 @@ export function SkillFormContent({
                                     {noCodeDisabled
                                       ? "Доступно только на премиум-тарифе."
                                       : "Сюда будет приходить запрос, когда выбранно выполнение в no-code режиме."}
+                                  </FormDescription>
+                                  <FormMessage className="text-xs text-destructive leading-tight" />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="noCodeFileEventsUrl"
+                              render={({ field }) => (
+                                <FormItem className="grid gap-1.5">
+                                  <FormLabel>File Events URL</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      {...field}
+                                      placeholder="https://example.com/file-events"
+                                      disabled={noCodeDisabled}
+                                      className="h-9"
+                                    />
+                                  </FormControl>
+                                  <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                    Отдельный endpoint для событий файлов (может совпадать с URL сценария).
                                   </FormDescription>
                                   <FormMessage className="text-xs text-destructive leading-tight" />
                                 </FormItem>

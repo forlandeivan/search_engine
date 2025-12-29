@@ -317,6 +317,8 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
         : null;
     const trimmedNoCodeEndpoint = (values.noCodeEndpointUrl ?? "").trim();
     const noCodeEndpointUrl = trimmedNoCodeEndpoint.length > 0 ? trimmedNoCodeEndpoint : null;
+    const trimmedNoCodeFileEvents = (values.noCodeFileEventsUrl ?? "").trim();
+    const noCodeFileEventsUrl = trimmedNoCodeFileEvents.length > 0 ? trimmedNoCodeFileEvents : null;
     const contextInputLimitValue = values.contextInputLimit?.trim();
     let contextInputLimit: number | null = null;
     if (contextInputLimitValue) {
@@ -362,6 +364,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       onTranscriptionAutoActionId: autoActionId,
       contextInputLimit,
       noCodeEndpointUrl,
+      noCodeFileEventsUrl,
       noCodeAuthType: values.noCodeAuthType,
     };
 

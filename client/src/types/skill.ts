@@ -49,6 +49,7 @@ export interface SkillPayload {
   onTranscriptionMode?: SkillTranscriptionMode;
   onTranscriptionAutoActionId?: string | null;
   noCodeEndpointUrl?: string | null;
+  noCodeFileEventsUrl?: string | null;
   noCodeAuthType?: NoCodeAuthType;
   noCodeBearerToken?: string | null;
   contextInputLimit?: number | null;

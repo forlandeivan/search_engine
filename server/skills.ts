@@ -61,6 +61,7 @@ type EditableSkillColumns = Pick<
   | "onTranscriptionMode"
   | "onTranscriptionAutoActionId"
   | "noCodeEndpointUrl"
+  | "noCodeFileEventsUrl"
   | "noCodeAuthType"
   | "noCodeBearerToken"
   | "noCodeCallbackKey"
@@ -361,6 +362,7 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
     icon: row.icon ?? null,
     noCodeConnection: {
       endpointUrl: row.noCodeEndpointUrl ?? null,
+      fileEventsUrl: row.noCodeFileEventsUrl ?? null,
       authType: normalizeNoCodeAuthType(row.noCodeAuthType),
       tokenIsSet: Boolean(row.noCodeBearerToken?.trim()),
       callbackTokenIsSet: callbackTokenHash.length > 0,
@@ -495,6 +497,9 @@ function buildEditableColumns(input: SkillEditableInput): NormalizedSkillEditabl
   if (input.noCodeEndpointUrl !== undefined) {
     next.noCodeEndpointUrl = normalizeNullableString(input.noCodeEndpointUrl);
   }
+  if (input.noCodeFileEventsUrl !== undefined) {
+    next.noCodeFileEventsUrl = normalizeNullableString(input.noCodeFileEventsUrl);
+  }
   if (input.noCodeAuthType !== undefined) {
     next.noCodeAuthType = normalizeNoCodeAuthType(input.noCodeAuthType);
   }
@@ -593,6 +598,7 @@ export async function createSkill(
 
   const normalized = buildEditableColumns(input);
   const submittedNoCodeEndpoint = normalized.noCodeEndpointUrl ?? null;
+  const submittedNoCodeFileEvents = normalized.noCodeFileEventsUrl ?? null;
   const submittedNoCodeAuth = normalizeNoCodeAuthType(normalized.noCodeAuthType ?? "none");
   if (submittedNoCodeAuth === "bearer" && !submittedNoCodeEndpoint) {
     throw new SkillServiceError("Укажите URL для no-code подключения", 400);
@@ -606,6 +612,7 @@ export async function createSkill(
     nextBearerToken = null;
   }
   const normalizedEndpointUrl = normalized.noCodeEndpointUrl ?? null;
+  const normalizedFileEventsUrl = normalized.noCodeFileEventsUrl ?? null;
   const normalizedAuthType = submittedNoCodeAuth;
   let normalizedBearerToken = normalized.noCodeBearerToken ?? null;
 
@@ -623,6 +630,8 @@ export async function createSkill(
   if (!normalizedEndpointUrl) {
     normalizedBearerToken = null;
   }
+  const normalizedFileEventsUrl =
+    normalized.noCodeFileEventsUrl !== undefined ? normalized.noCodeFileEventsUrl : submittedNoCodeFileEvents;
   if (normalized.executionMode === "no_code") {
     await assertNoCodeFlowAllowed(workspaceId);
   }
@@ -691,6 +700,7 @@ export async function createSkill(
       onTranscriptionMode: transcriptionMode,
       onTranscriptionAutoActionId: transcriptionAutoActionId,
       noCodeEndpointUrl: normalizedEndpointUrl,
+      noCodeFileEventsUrl: submittedNoCodeFileEvents,
       noCodeAuthType: normalizedAuthType,
       noCodeBearerToken: normalizedBearerToken,
       contextInputLimit: normalized.contextInputLimit ?? DEFAULT_CONTEXT_INPUT_LIMIT,
@@ -742,6 +752,8 @@ export async function updateSkill(
   const existingBearerToken = row.noCodeBearerToken ?? null;
   const submittedNoCodeEndpoint =
     normalized.noCodeEndpointUrl !== undefined ? normalized.noCodeEndpointUrl : existingNoCodeEndpoint;
+  const submittedNoCodeFileEvents =
+    normalized.noCodeFileEventsUrl !== undefined ? normalized.noCodeFileEventsUrl : row.noCodeFileEventsUrl ?? null;
   const submittedNoCodeAuth =
     normalized.noCodeAuthType !== undefined ? normalizeNoCodeAuthType(normalized.noCodeAuthType) : existingNoCodeAuth;
   if (submittedExecutionMode === "no_code" && submittedNoCodeAuth === "bearer" && !submittedNoCodeEndpoint) {
@@ -788,6 +800,7 @@ export async function updateSkill(
   });
 
   updates.noCodeEndpointUrl = submittedNoCodeEndpoint;
+  updates.noCodeFileEventsUrl = submittedNoCodeFileEvents;
   updates.noCodeAuthType = submittedNoCodeAuth;
   updates.noCodeBearerToken = nextBearerToken;
   if (normalized.contextInputLimit !== undefined) {
