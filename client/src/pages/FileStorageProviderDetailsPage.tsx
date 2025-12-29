@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ArrowLeft } from "lucide-react";
+import { Loader2, ArrowLeft, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -250,7 +251,25 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
             </Select>
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="pathTemplate">Path template</Label>
+            <div className="flex items-center gap-1">
+              <Label htmlFor="pathTemplate">Path template</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 p-0 text-muted-foreground">
+                    <Info className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" align="start" className="max-w-xs space-y-1">
+                  <p className="font-semibold text-xs">Доступные плейсхолдеры</p>
+                  <p className="text-xs leading-snug">
+                    bucket, workspaceName, workspaceId, skillName, skillId, chatId, userId, messageId, fileName, objectKey
+                  </p>
+                  <p className="font-semibold text-xs pt-1">Пример</p>
+                  <p className="text-xs leading-snug">/{`{bucket}`}/{`{workspaceName}`}/{`{skillName}`}/{`{fileName}`}</p>
+                  <p className="text-[11px] text-muted-foreground">→ /unica-cloud/acme/qa-bot/report.pdf</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
             <Input
               id="pathTemplate"
               value={form.pathTemplate}
