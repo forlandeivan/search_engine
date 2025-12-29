@@ -106,6 +106,14 @@ export type SkillNoCodeConnection = {
   endpointUrl: string | null;
   fileEventsUrl: string | null;
   fileStorageProviderId: string | null;
+  selectedFileStorageProviderId?: string | null;
+  effectiveFileStorageProvider?: {
+    id: string;
+    name: string;
+    baseUrl: string;
+    authType: NoCodeAuthType;
+  } | null;
+  effectiveFileStorageProviderSource?: "skill" | "workspace_default" | "none";
   authType: NoCodeAuthType;
   tokenIsSet: boolean;
   callbackTokenIsSet: boolean;

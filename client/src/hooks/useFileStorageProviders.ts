@@ -4,6 +4,7 @@ import type {
   FileStorageProviderDetailResponse,
   FileStorageProviderSummary,
   FileStorageProvidersListResponse,
+  WorkspaceFileStorageProvidersResponse,
 } from "@/types/file-storage-providers";
 
 const QUERY_KEY = ["admin", "file-storage", "providers"] as const;
@@ -89,6 +90,35 @@ export async function updateWorkspaceDefaultFileStorageProvider(
     throw error;
   }
   return body as { provider: FileStorageProviderSummary | null };
+}
+
+export async function fetchWorkspaceFileStorageProviders(options?: { workspaceId?: string | null }) {
+  const res = await apiRequest("GET", "/api/file-storage/providers", undefined, undefined, {
+    workspaceId: options?.workspaceId ?? undefined,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Не удалось загрузить провайдеры");
+  }
+  return (await res.json()) as WorkspaceFileStorageProvidersResponse;
+}
+
+export function useWorkspaceFileStorageProviders(workspaceId?: string | null) {
+  const query = useQuery<WorkspaceFileStorageProvidersResponse, Error>({
+    queryKey: ["workspace-file-storage-providers", workspaceId ?? "none"],
+    queryFn: () => fetchWorkspaceFileStorageProviders({ workspaceId }),
+    enabled: workspaceId !== null && workspaceId !== undefined,
+  });
+
+  return {
+    providers: query.data?.providers ?? [],
+    workspaceDefaultProvider: query.data?.workspaceDefaultProvider ?? null,
+    isLoading: query.isLoading,
+    isFetching: query.isFetching,
+    isError: query.isError,
+    error: query.error,
+    refetch: query.refetch,
+  };
 }
 
 export function useFileStorageProvidersList(params: { limit?: number; offset?: number } = {}) {

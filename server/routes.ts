@@ -9281,7 +9281,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  // File storage providers (admin)
   const mapFileStorageProvider = (provider: any) => ({
     id: provider.id,
     name: provider.name,
@@ -9293,6 +9292,25 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     updatedAt: provider.updatedAt,
   });
 
+  app.get("/api/file-storage/providers", requireAuth, async (req, res) => {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const { items } = await storage.listFileStorageProviders({ activeOnly: true, limit: 200, offset: 0 });
+      const workspaceDefaultRaw = await storage.getWorkspaceDefaultFileStorageProvider(workspaceId);
+      const workspaceDefault =
+        workspaceDefaultRaw && workspaceDefaultRaw.isActive ? mapFileStorageProvider(workspaceDefaultRaw) : null;
+
+      res.json({
+        providers: items.map(mapFileStorageProvider),
+        workspaceDefaultProvider: workspaceDefault,
+      });
+    } catch (error) {
+      console.error("[file-storage-providers] list public failed", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // File storage providers (admin)
   app.get("/api/admin/file-storage/providers", requireAdmin, async (req, res) => {
     const pagination = parseFileStorageProviderListParams(req);
     if ("error" in pagination) {

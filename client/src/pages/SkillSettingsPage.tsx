@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useCreateSkill, useGenerateCallbackToken, useSkills, useUpdateSkill } from "@/hooks/useSkills";
 import { useModels, type PublicModel } from "@/hooks/useModels";
+import { useWorkspaceFileStorageProviders } from "@/hooks/useFileStorageProviders";
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
 import type { Skill, SkillPayload } from "@/types/skill";
@@ -30,6 +31,7 @@ import {
   type SkillSettingsTab,
   buildLlmKey,
   catalogModelMap,
+  WORKSPACE_DEFAULT_PROVIDER_VALUE,
 } from "./SkillsPage";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { UploadCloud } from "lucide-react";
@@ -194,6 +196,12 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   const vectorCollectionsError = vectorCollectionsQuery.error as Error | undefined;
   const embeddingProviders = embeddingProvidersResponse?.providers ?? [];
   const embeddingProvidersError = embeddingProvidersErrorRaw as Error | undefined;
+  const {
+    providers: fileStorageProviders,
+    workspaceDefaultProvider: workspaceDefaultFileStorageProvider,
+    isLoading: isFileStorageProvidersLoading,
+    error: fileStorageProvidersError,
+  } = useWorkspaceFileStorageProviders(workspaceId);
   const allowNoCodeFlow = Boolean(workspacePlanQuery.data?.plan?.noCodeFlowEnabled);
 
   const llmOptions = useMemo<LlmSelectionOption[]>(() => {
@@ -320,7 +328,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     const trimmedNoCodeFileEvents = (values.noCodeFileEventsUrl ?? "").trim();
     const noCodeFileEventsUrl = trimmedNoCodeFileEvents.length > 0 ? trimmedNoCodeFileEvents : null;
     const noCodeFileStorageProviderId =
-      values.noCodeFileStorageProviderId && values.noCodeFileStorageProviderId !== "__none"
+      values.noCodeFileStorageProviderId && values.noCodeFileStorageProviderId !== WORKSPACE_DEFAULT_PROVIDER_VALUE
         ? values.noCodeFileStorageProviderId
         : null;
     const contextInputLimitValue = values.contextInputLimit?.trim();
@@ -411,6 +419,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     workspacePlanQuery.error ||
     knowledgeBaseQuery.error ||
     embeddingProvidersError ||
+    fileStorageProvidersError ||
     llmError ||
     modelsError;
 
@@ -490,6 +499,10 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
               isVectorCollectionsLoading={vectorCollectionsQuery.isLoading}
               embeddingProviders={embeddingProviders}
               isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
+              fileStorageProviders={fileStorageProviders}
+              workspaceDefaultFileStorageProvider={workspaceDefaultFileStorageProvider}
+              isFileStorageProvidersLoading={isFileStorageProvidersLoading}
+              fileStorageProvidersError={fileStorageProvidersError ?? null}
               llmOptions={llmOptions}
               onSubmit={handleSubmit}
               isSubmitting={isUpdating || isCreating}

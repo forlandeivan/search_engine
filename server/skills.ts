@@ -88,6 +88,97 @@ type NormalizedSkillEditableInput = Omit<SkillEditableInput, "ragConfig"> & {
   contextInputLimit?: number | null;
 };
 
+type FileStorageProviderShort = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  authType: NoCodeAuthType;
+};
+
+type FileStorageProviderResolution = {
+  selectedProviderId: string | null;
+  effective: FileStorageProviderShort | null;
+  source: "skill" | "workspace_default" | "none";
+};
+
+type FileStorageProviderLookup = {
+  defaultProvider: FileStorageProviderShort | null;
+  selectedProviders: Map<string, FileStorageProviderShort | null>;
+};
+
+let storageSingleton: typeof import("./storage").storage | null = null;
+
+async function getStorage() {
+  if (!storageSingleton) {
+    const module = await import("./storage");
+    storageSingleton = module.storage;
+  }
+  return storageSingleton;
+}
+
+const toProviderShort = (provider: {
+  id: string;
+  name: string;
+  baseUrl: string;
+  authType: string;
+}): FileStorageProviderShort => ({
+  id: provider.id,
+  name: provider.name,
+  baseUrl: provider.baseUrl,
+  authType: normalizeNoCodeAuthType(provider.authType),
+});
+
+async function buildFileStorageProviderLookup(
+  workspaceId: string,
+  providerIds: Set<string>,
+): Promise<FileStorageProviderLookup> {
+  const storage = await getStorage();
+  const defaultProviderRow = await storage.getWorkspaceDefaultFileStorageProvider(workspaceId);
+  const defaultProvider =
+    defaultProviderRow && defaultProviderRow.isActive ? toProviderShort(defaultProviderRow) : null;
+
+  const selectedProviders = new Map<string, FileStorageProviderShort | null>();
+  await Promise.all(
+    Array.from(providerIds).map(async (id) => {
+      const provider = await storage.getFileStorageProvider(id);
+      selectedProviders.set(id, provider && provider.isActive ? toProviderShort(provider) : null);
+    }),
+  );
+
+  return { defaultProvider, selectedProviders };
+}
+
+function resolveProviderForSkill(
+  selectedProviderId: string | null,
+  lookup: FileStorageProviderLookup,
+): FileStorageProviderResolution {
+  const selected = selectedProviderId ? lookup.selectedProviders.get(selectedProviderId) ?? null : null;
+
+  if (selectedProviderId && selected) {
+    return { selectedProviderId, effective: selected, source: "skill" };
+  }
+
+  if (lookup.defaultProvider) {
+    return { selectedProviderId, effective: lookup.defaultProvider, source: "workspace_default" };
+  }
+
+  return { selectedProviderId, effective: null, source: "none" };
+}
+
+async function assertFileStorageProviderActive(providerId: string | null): Promise<void> {
+  if (!providerId) {
+    return;
+  }
+  const storage = await getStorage();
+  const provider = await storage.getFileStorageProvider(providerId);
+  if (!provider) {
+    throw new SkillServiceError("Выбранный файловый провайдер не найден", 400, "FILE_STORAGE_PROVIDER_NOT_FOUND");
+  }
+  if (!provider.isActive) {
+    throw new SkillServiceError("Выбранный файловый провайдер отключён", 400, "FILE_STORAGE_PROVIDER_INACTIVE");
+  }
+}
+
 const DEFAULT_RAG_CONFIG: SkillRagConfig = {
   mode: "all_collections",
   collectionIds: [],
@@ -334,7 +425,11 @@ function normalizeRagConfigInput(input?: RagConfigInput | null): SkillRagConfig 
   };
 }
 
-function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
+function mapSkillRow(
+  row: SkillRow,
+  knowledgeBaseIds: string[],
+  providerInfo?: FileStorageProviderResolution,
+): SkillDto {
   const toIso = (value: Date | string): string =>
     value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 
@@ -365,6 +460,12 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
       endpointUrl: row.noCodeEndpointUrl ?? null,
       fileEventsUrl: row.noCodeFileEventsUrl ?? null,
       fileStorageProviderId: row.noCodeFileStorageProviderId ?? null,
+      selectedFileStorageProviderId: providerInfo?.selectedProviderId ?? row.noCodeFileStorageProviderId ?? null,
+      effectiveFileStorageProvider:
+        providerInfo?.effective ??
+        (row as any).effectiveFileStorageProvider ??
+        null,
+      effectiveFileStorageProviderSource: providerInfo?.source ?? "none",
       authType: normalizeNoCodeAuthType(row.noCodeAuthType),
       tokenIsSet: Boolean(row.noCodeBearerToken?.trim()),
       callbackTokenIsSet: callbackTokenHash.length > 0,
@@ -398,6 +499,18 @@ function mapSkillRow(row: SkillRow, knowledgeBaseIds: string[]): SkillDto {
   };
 
   return payload;
+}
+
+async function resolveSkillFileStorageProvider(opts: {
+  workspaceId: string;
+  selectedProviderId: string | null;
+}): Promise<FileStorageProviderResolution> {
+  const providerIds = new Set<string>();
+  if (opts.selectedProviderId) {
+    providerIds.add(opts.selectedProviderId);
+  }
+  const lookup = await buildFileStorageProviderLookup(opts.workspaceId, providerIds);
+  return resolveProviderForSkill(opts.selectedProviderId, lookup);
 }
 
 async function getSkillKnowledgeBaseIds(skillId: string, workspaceId: string): Promise<string[]> {
@@ -578,7 +691,23 @@ export async function listSkills(
     grouped.get(relation.skillId)!.push(relation.knowledgeBaseId);
   }
 
-  return rows.map((row) => mapSkillRow(row, grouped.get(row.id) ?? []));
+  const selectedProviderIds = new Set<string>();
+  for (const row of rows) {
+    const providerId = normalizeNullableString(row.noCodeFileStorageProviderId);
+    if (providerId) {
+      selectedProviderIds.add(providerId);
+    }
+  }
+
+  const providerLookup = await buildFileStorageProviderLookup(workspaceId, selectedProviderIds);
+
+  return rows.map((row) =>
+    mapSkillRow(
+      row,
+      grouped.get(row.id) ?? [],
+      resolveProviderForSkill(normalizeNullableString(row.noCodeFileStorageProviderId), providerLookup),
+    ),
+  );
 }
 
 export async function createSkill(
@@ -617,7 +746,6 @@ export async function createSkill(
     nextBearerToken = null;
   }
   const normalizedEndpointUrl = normalized.noCodeEndpointUrl ?? null;
-  const normalizedFileEventsUrl = normalized.noCodeFileEventsUrl ?? null;
   const normalizedAuthType = submittedNoCodeAuth;
   let normalizedBearerToken = normalized.noCodeBearerToken ?? null;
 
@@ -635,8 +763,8 @@ export async function createSkill(
   if (!normalizedEndpointUrl) {
     normalizedBearerToken = null;
   }
-  const normalizedFileEventsUrl =
-    normalized.noCodeFileEventsUrl !== undefined ? normalized.noCodeFileEventsUrl : submittedNoCodeFileEvents;
+  const selectedFileStorageProviderId = normalized.noCodeFileStorageProviderId ?? null;
+  await assertFileStorageProviderActive(selectedFileStorageProviderId);
   if (normalized.executionMode === "no_code") {
     await assertNoCodeFlowAllowed(workspaceId);
   }
@@ -706,6 +834,7 @@ export async function createSkill(
       onTranscriptionAutoActionId: transcriptionAutoActionId,
       noCodeEndpointUrl: normalizedEndpointUrl,
       noCodeFileEventsUrl: submittedNoCodeFileEvents,
+      noCodeFileStorageProviderId: selectedFileStorageProviderId,
       noCodeAuthType: normalizedAuthType,
       noCodeBearerToken: normalizedBearerToken,
       contextInputLimit: normalized.contextInputLimit ?? DEFAULT_CONTEXT_INPUT_LIMIT,
@@ -718,12 +847,17 @@ export async function createSkill(
 
   const knowledgeBaseIds = await replaceSkillKnowledgeBases(inserted.id, workspaceId, effectiveKnowledgeBases);
 
+  const providerInfo = await resolveSkillFileStorageProvider({
+    workspaceId,
+    selectedProviderId: selectedFileStorageProviderId,
+  });
+
   if (!inserted.isSystem && inserted.status === "active") {
     const period = getUsagePeriodForDate(inserted.createdAt ? new Date(inserted.createdAt) : new Date());
     await adjustWorkspaceObjectCounters(workspaceId, { skillsDelta: 1 }, period);
   }
 
-  return mapSkillRow(inserted, knowledgeBaseIds);
+  return mapSkillRow(inserted, knowledgeBaseIds, providerInfo);
 }
 
 export async function updateSkill(
@@ -777,6 +911,9 @@ export async function updateSkill(
   if (submittedExecutionMode === "no_code") {
     await assertNoCodeFlowAllowed(workspaceId);
   }
+  if (normalized.noCodeFileStorageProviderId !== undefined) {
+    await assertFileStorageProviderActive(normalized.noCodeFileStorageProviderId ?? null);
+  }
   const previousExecutionMode = normalizeSkillExecutionMode(row.executionMode);
   const isSwitchingExecutionMode = normalized.executionMode !== undefined;
   let callbackKeyUpdate: string | null | undefined;
@@ -811,9 +948,6 @@ export async function updateSkill(
   }
   updates.noCodeAuthType = submittedNoCodeAuth;
   updates.noCodeBearerToken = nextBearerToken;
-  if (normalized.noCodeFileStorageProviderId !== undefined) {
-    updates.noCodeFileStorageProviderId = normalized.noCodeFileStorageProviderId;
-  }
   if (normalized.contextInputLimit !== undefined) {
     updates.contextInputLimit = normalized.contextInputLimit;
   }
@@ -922,7 +1056,13 @@ export async function updateSkill(
     knowledgeBaseIds = knowledgeBaseIdsForValidation;
   }
 
-  return mapSkillRow(updatedRow, knowledgeBaseIds);
+  const selectedProviderId = normalizeNullableString(updatedRow.noCodeFileStorageProviderId);
+  const providerInfo = await resolveSkillFileStorageProvider({
+    workspaceId,
+    selectedProviderId,
+  });
+
+  return mapSkillRow(updatedRow, knowledgeBaseIds, providerInfo);
 }
 
 export async function archiveSkill(
@@ -947,7 +1087,11 @@ export async function archiveSkill(
 
   if (row.status === "archived") {
     const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
-    return { skill: mapSkillRow(row, knowledgeBaseIds), archivedChats: 0 };
+    const providerInfo = await resolveSkillFileStorageProvider({
+      workspaceId,
+      selectedProviderId: normalizeNullableString(row.noCodeFileStorageProviderId),
+    });
+    return { skill: mapSkillRow(row, knowledgeBaseIds, providerInfo), archivedChats: 0 };
   }
 
   const [updatedSkill] = await db
@@ -963,11 +1107,15 @@ export async function archiveSkill(
     .returning({ id: chatSessions.id });
 
   const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
+  const providerInfo = await resolveSkillFileStorageProvider({
+    workspaceId,
+    selectedProviderId: normalizeNullableString(updatedSkill.noCodeFileStorageProviderId),
+  });
   const period = getUsagePeriodForDate(updatedSkill.updatedAt ? new Date(updatedSkill.updatedAt) : new Date());
   await adjustWorkspaceObjectCounters(workspaceId, { skillsDelta: -1 }, period);
 
   return {
-    skill: mapSkillRow(updatedSkill, knowledgeBaseIds),
+    skill: mapSkillRow(updatedSkill, knowledgeBaseIds, providerInfo),
     archivedChats: archivedChatsResult.length,
   };
 }
@@ -990,7 +1138,11 @@ export async function getSkillById(
   }
 
   const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
-  return mapSkillRow(row, knowledgeBaseIds);
+  const providerInfo = await resolveSkillFileStorageProvider({
+    workspaceId,
+    selectedProviderId: normalizeNullableString(row.noCodeFileStorageProviderId),
+  });
+  return mapSkillRow(row, knowledgeBaseIds, providerInfo);
 }
 
 export async function generateNoCodeCallbackToken(opts: {
@@ -1038,7 +1190,12 @@ export async function generateNoCodeCallbackToken(opts: {
     .returning();
 
   const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
-  const skill = mapSkillRow(updated ?? existing, knowledgeBaseIds);
+  const targetRow = updated ?? existing;
+  const providerInfo = await resolveSkillFileStorageProvider({
+    workspaceId,
+    selectedProviderId: normalizeNullableString(targetRow.noCodeFileStorageProviderId),
+  });
+  const skill = mapSkillRow(targetRow, knowledgeBaseIds, providerInfo);
 
   return {
     token: secrets.token,
@@ -1165,7 +1322,11 @@ export async function createUnicaChatSkillForWorkspace(
   const existingRow = existing[0];
   if (existingRow) {
     const knowledgeBaseIds = await getSkillKnowledgeBaseIds(existingRow.id, workspaceId);
-    return mapSkillRow(existingRow, knowledgeBaseIds);
+    const providerInfo = await resolveSkillFileStorageProvider({
+      workspaceId,
+      selectedProviderId: normalizeNullableString(existingRow.noCodeFileStorageProviderId),
+    });
+    return mapSkillRow(existingRow, knowledgeBaseIds, providerInfo);
   }
 
   const ragConfig = { ...DEFAULT_RAG_CONFIG };
@@ -1186,5 +1347,10 @@ export async function createUnicaChatSkillForWorkspace(
     })
     .returning();
 
-  return mapSkillRow(inserted, []);
+  const providerInfo = await resolveSkillFileStorageProvider({
+    workspaceId,
+    selectedProviderId: normalizeNullableString(inserted.noCodeFileStorageProviderId),
+  });
+
+  return mapSkillRow(inserted, [], providerInfo);
 }

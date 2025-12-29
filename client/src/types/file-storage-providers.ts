@@ -21,3 +21,8 @@ export interface FileStorageProvidersListResponse {
 export interface FileStorageProviderDetailResponse {
   provider: FileStorageProviderSummary;
 }
+
+export interface WorkspaceFileStorageProvidersResponse {
+  providers: FileStorageProviderSummary[];
+  workspaceDefaultProvider: FileStorageProviderSummary | null;
+}

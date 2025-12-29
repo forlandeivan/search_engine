@@ -83,10 +83,12 @@ import type { ActionDto, SkillActionDto, SkillCallbackTokenResponse } from "@sha
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import type { Skill } from "@/types/skill";
 import type { SessionResponse } from "@/types/session";
+import type { FileStorageProviderSummary } from "@/types/file-storage-providers";
 
 const ICON_OPTIONS = SKILL_ICON_OPTIONS;
 
 const NO_EMBEDDING_PROVIDER_VALUE = "__none";
+export const WORKSPACE_DEFAULT_PROVIDER_VALUE = "__workspace_default";
 
 export const skillFormSchema = z.object({
   name: z.string().trim().min(1, "Название обязательно").max(200, "Не более 200 символов"),
@@ -147,19 +149,6 @@ export const skillFormSchema = z.object({
   noCodeAuthType: z.enum(["none", "bearer"]).default("none"),
   noCodeBearerToken: z.string().optional().or(z.literal("")),
   noCodeFileStorageProviderId: z.string().optional().or(z.literal("")).nullable(),
-  noCodeFileEventsUrl: z
-    .string()
-    .url({ message: "Некорректный URL" })
-    .optional()
-    .or(z.literal(""))
-    .refine(
-      (value) =>
-        value === undefined ||
-        value === "" ||
-        value.startsWith("http://") ||
-        value.startsWith("https://"),
-      { message: "Разрешены только http/https URL" },
-    ),
 }).superRefine((val, ctx) => {
   if (val.executionMode === "standard") {
     return;
@@ -218,7 +207,7 @@ export const defaultFormValues = {
   contextInputLimit: "",
   noCodeEndpointUrl: "",
   noCodeFileEventsUrl: "",
-  noCodeFileStorageProviderId: "",
+  noCodeFileStorageProviderId: WORKSPACE_DEFAULT_PROVIDER_VALUE,
   noCodeAuthType: "none" as "none" | "bearer",
   noCodeBearerToken: "",
 };
@@ -998,6 +987,10 @@ type SkillFormProps = {
   isVectorCollectionsLoading: boolean;
   embeddingProviders: PublicEmbeddingProvider[];
   isEmbeddingProvidersLoading: boolean;
+  fileStorageProviders: FileStorageProviderSummary[];
+  workspaceDefaultFileStorageProvider: FileStorageProviderSummary | null;
+  isFileStorageProvidersLoading?: boolean;
+  fileStorageProvidersError?: Error | null;
   llmOptions: LlmSelectionOption[];
   onSubmit: (values: SkillFormValues) => Promise<boolean>;
   isSubmitting: boolean;
@@ -1122,6 +1115,10 @@ export function SkillFormContent({
   isVectorCollectionsLoading,
   embeddingProviders,
   isEmbeddingProvidersLoading,
+  fileStorageProviders,
+  workspaceDefaultFileStorageProvider,
+  isFileStorageProvidersLoading = false,
+  fileStorageProvidersError,
   llmOptions,
   onSubmit,
   isSubmitting,
@@ -1237,6 +1234,29 @@ export function SkillFormContent({
     }
   };
   const callbackTokenRotatedLabel = formatDateTime(callbackTokenStatus.lastRotatedAt);
+  const providerSelection = form.watch("noCodeFileStorageProviderId") ?? WORKSPACE_DEFAULT_PROVIDER_VALUE;
+  const normalizedProviderSelection =
+    providerSelection && providerSelection !== WORKSPACE_DEFAULT_PROVIDER_VALUE ? providerSelection : null;
+  const selectedProvider =
+    normalizedProviderSelection &&
+    fileStorageProviders.find((provider) => provider.id === normalizedProviderSelection);
+  const workspaceDefaultProvider = workspaceDefaultFileStorageProvider ?? null;
+  const resolvedProvider = selectedProvider ?? (normalizedProviderSelection ? null : workspaceDefaultProvider);
+  const resolvedProviderSource: "skill" | "workspace_default" | "none" =
+    selectedProvider ? "skill" : resolvedProvider ? "workspace_default" : "none";
+  const backendEffectiveProvider = skill?.noCodeConnection?.effectiveFileStorageProvider ?? null;
+  const backendEffectiveSource = skill?.noCodeConnection?.effectiveFileStorageProviderSource ?? "none";
+  const effectiveProvider =
+    resolvedProvider ??
+    (!form.formState.isDirty ? backendEffectiveProvider ?? null : null);
+  const effectiveProviderSource =
+    resolvedProviderSource !== "none"
+      ? resolvedProviderSource
+      : !form.formState.isDirty
+        ? backendEffectiveSource ?? "none"
+        : "none";
+  const providerNotFound =
+    normalizedProviderSelection && !selectedProvider ? normalizedProviderSelection : null;
   const handleGenerateCallbackToken = async () => {
     if (!skill?.id || !onGenerateCallbackToken) {
       return;
@@ -1412,6 +1432,10 @@ export function SkillFormContent({
       const noCodeConnection = skill.noCodeConnection ?? {
         endpointUrl: null,
         fileEventsUrl: null,
+        fileStorageProviderId: null,
+        selectedFileStorageProviderId: null,
+        effectiveFileStorageProvider: null,
+        effectiveFileStorageProviderSource: "none" as const,
         authType: "none" as "none" | "bearer",
         tokenIsSet: false,
         callbackTokenIsSet: false,
@@ -1449,6 +1473,10 @@ export function SkillFormContent({
           skill.contextInputLimit === null || skill.contextInputLimit === undefined
             ? ""
             : String(skill.contextInputLimit),
+        noCodeFileStorageProviderId:
+          noCodeConnection.selectedFileStorageProviderId ??
+          noCodeConnection.fileStorageProviderId ??
+          WORKSPACE_DEFAULT_PROVIDER_VALUE,
         noCodeEndpointUrl: noCodeConnection.endpointUrl ?? "",
         noCodeFileEventsUrl: noCodeConnection.fileEventsUrl ?? "",
         noCodeAuthType: noCodeConnection.authType ?? "none",
@@ -1494,6 +1522,8 @@ export function SkillFormContent({
           description: cleanedValues.description?.trim() ?? "",
           systemPrompt: cleanedValues.systemPrompt?.trim() ?? "",
           icon: cleanedValues.icon?.trim() ?? "",
+          noCodeFileStorageProviderId:
+            cleanedValues.noCodeFileStorageProviderId ?? WORKSPACE_DEFAULT_PROVIDER_VALUE,
         };
         lastSavedRef.current = normalized;
         form.reset(normalized);
@@ -2180,18 +2210,70 @@ export function SkillFormContent({
                               render={({ field }) => (
                                 <FormItem className="grid gap-1.5">
                                   <FormLabel>File Storage Provider</FormLabel>
-                                  <FormControl>
-                                    <Input
-                                      {...field}
-                                      placeholder="Провайдер из админки (ID)"
-                                      disabled={noCodeDisabled}
-                                      className="h-9"
-                                    />
-                                  </FormControl>
+                                  <Select
+                                    value={field.value ?? WORKSPACE_DEFAULT_PROVIDER_VALUE}
+                                    onValueChange={noCodeDisabled ? undefined : field.onChange}
+                                    disabled={noCodeDisabled || isFileStorageProvidersLoading}
+                                  >
+                                    <FormControl>
+                                      <SelectTrigger className="h-9">
+                                        <SelectValue placeholder="Выберите провайдера" />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value={WORKSPACE_DEFAULT_PROVIDER_VALUE}>
+                                        {workspaceDefaultProvider
+                                          ? `Использовать дефолт воркспейса (${workspaceDefaultProvider.name})`
+                                          : "Использовать дефолт воркспейса (не задан)"}
+                                      </SelectItem>
+                                      {fileStorageProviders.map((provider) => (
+                                        <SelectItem key={provider.id} value={provider.id}>
+                                          {provider.name} · {provider.authType === "bearer" ? "Bearer" : "Без авторизации"}
+                                        </SelectItem>
+                                      ))}
+                                      {providerNotFound ? (
+                                        <SelectItem value={providerNotFound}>
+                                          Неизвестный провайдер ({providerNotFound})
+                                        </SelectItem>
+                                      ) : null}
+                                    </SelectContent>
+                                  </Select>
                                   <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                    Выберите провайдера хранения файлов, настроенного администратором.
+                                    Выберите провайдера хранения файлов или оставьте дефолт воркспейса.
                                   </FormDescription>
                                   <FormMessage className="text-xs text-destructive leading-tight" />
+                                  {isFileStorageProvidersLoading ? (
+                                    <p className="text-xs text-muted-foreground">Загружаем провайдеры…</p>
+                                  ) : null}
+                                  {fileStorageProvidersError ? (
+                                    <p className="text-xs text-destructive">{fileStorageProvidersError.message}</p>
+                                  ) : null}
+                                  {providerNotFound && !isFileStorageProvidersLoading ? (
+                                    <Alert variant="destructive">
+                                      <AlertTitle>Сохранённый провайдер недоступен</AlertTitle>
+                                      <AlertDescription>
+                                        Выберите активный провайдер или дефолт воркспейса, чтобы продолжить.
+                                      </AlertDescription>
+                                    </Alert>
+                                  ) : null}
+                                  {effectiveProvider ? (
+                                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                      <Badge variant="secondary" className="text-[10px] uppercase">
+                                        {effectiveProviderSource === "workspace_default" ? "Дефолт воркспейса" : "Выбран в навыке"}
+                                      </Badge>
+                                      <span>
+                                        {effectiveProvider.name} · {effectiveProvider.authType === "bearer" ? "Bearer" : "Без авторизации"}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {effectiveProviderSource === "none" && !isFileStorageProvidersLoading ? (
+                                    <Alert variant="destructive">
+                                      <AlertTitle>Нет активного провайдера</AlertTitle>
+                                      <AlertDescription>
+                                        Воркспейс не имеет дефолта, выберите провайдера вручную.
+                                      </AlertDescription>
+                                    </Alert>
+                                  ) : null}
                                 </FormItem>
                               )}
                             />
