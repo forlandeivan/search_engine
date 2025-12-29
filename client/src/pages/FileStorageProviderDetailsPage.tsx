@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ArrowLeft, Info } from "lucide-react";
+import { Loader2, ArrowLeft, Info, Copy } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,6 +28,19 @@ const ALLOWED_PLACEHOLDERS = [
   "fileName",
   "objectKey",
 ] as const;
+
+const PLACEHOLDER_HINTS: Array<{ key: (typeof ALLOWED_PLACEHOLDERS)[number]; description: string }> = [
+  { key: "bucket", description: "Bucket из конфигурации провайдера" },
+  { key: "workspaceName", description: "Название рабочего пространства" },
+  { key: "workspaceId", description: "ID рабочего пространства" },
+  { key: "skillName", description: "Название навыка чата" },
+  { key: "skillId", description: "ID навыка" },
+  { key: "chatId", description: "ID чата" },
+  { key: "userId", description: "ID пользователя, загрузившего файл" },
+  { key: "messageId", description: "ID сообщения, к которому прикреплён файл" },
+  { key: "fileName", description: "Оригинальное имя файла" },
+  { key: "objectKey", description: "Уникальный slug имени (fallback)" },
+];
 
 type ProviderFormState = {
   name: string;
@@ -259,14 +272,40 @@ export default function FileStorageProviderDetailsPage({ providerId }: Props) {
                     <Info className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="top" align="start" className="max-w-xs space-y-1">
+                <TooltipContent side="top" align="start" className="max-w-sm space-y-2">
                   <p className="font-semibold text-xs">Доступные плейсхолдеры</p>
-                  <p className="text-xs leading-snug">
-                    bucket, workspaceName, workspaceId, skillName, skillId, chatId, userId, messageId, fileName, objectKey
-                  </p>
-                  <p className="font-semibold text-xs pt-1">Пример</p>
-                  <p className="text-xs leading-snug">/{`{bucket}`}/{`{workspaceName}`}/{`{skillName}`}/{`{fileName}`}</p>
-                  <p className="text-[11px] text-muted-foreground">→ /unica-cloud/acme/qa-bot/report.pdf</p>
+                  <div className="space-y-1">
+                    {PLACEHOLDER_HINTS.map((item) => (
+                      <div key={item.key} className="flex items-center gap-2 text-xs leading-snug">
+                        <span className="font-mono text-slate-700 dark:text-slate-200">{`{${item.key}}`}</span>
+                        <span className="text-muted-foreground flex-1">{item.description}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 p-0 text-muted-foreground"
+                          onClick={() => {
+                            const value = `{${item.key}}`;
+                            if (navigator?.clipboard?.writeText) {
+                              navigator.clipboard.writeText(value).then(
+                                () => toast({ title: "Скопировано", description: value }),
+                                () => toast({ title: "Не удалось скопировать", variant: "destructive" }),
+                              );
+                            } else {
+                              toast({ title: "Копирование недоступно", variant: "destructive" });
+                            }
+                          }}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="pt-1 space-y-1">
+                    <p className="font-semibold text-xs">Пример</p>
+                    <p className="text-xs leading-snug">/{`{bucket}`}/{`{workspaceName}`}/{`{skillName}`}/{`{fileName}`}</p>
+                    <p className="text-[11px] text-muted-foreground">→ /unica-cloud/acme/qa-bot/report.pdf</p>
+                  </div>
                 </TooltipContent>
               </Tooltip>
             </div>
