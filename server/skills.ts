@@ -916,7 +916,7 @@ export async function updateSkill(
   if (normalized.noCodeFileStorageProviderId !== undefined) {
     await assertFileStorageProviderActive(normalized.noCodeFileStorageProviderId ?? null);
   }
-  const providerInfo = await resolveSkillFileStorageProvider({
+  let providerInfo = await resolveSkillFileStorageProvider({
     workspaceId,
     selectedProviderId: selectedFileStorageProviderId,
   });
