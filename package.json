@@ -9,7 +9,7 @@
         "start": "NODE_ENV=production node dist/index.js",
         "check": "tsc",
         "test": "vitest run",
-        "db:push": "node -e \"BigInt.prototype.toJSON=function(){return this.toString();}; process.argv=[process.argv[0],process.argv[1],'push']; require('./node_modules/drizzle-kit/bin.cjs');\"",
+        "db:push": "node -e \"BigInt.prototype.toJSON=function(){return this.toString();}; process.argv=['node','drizzle-kit','push','--config=drizzle.config.ts']; require('./node_modules/drizzle-kit/bin.cjs');\"",
         "seed:tariffs": "tsx server/tariff-seed.ts"
     },
     "dependencies": {
