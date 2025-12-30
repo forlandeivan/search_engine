@@ -20,7 +20,6 @@ type ChatMessagesAreaProps = {
   isLoading: boolean;
   isNewChat: boolean;
   isStreaming: boolean;
-  isTranscribing: boolean;
   streamError: string | null;
   errorMessage: string | null;
   onReset?: () => void;
@@ -41,7 +40,6 @@ export default function ChatMessagesArea({
   isLoading,
   isNewChat,
   isStreaming,
-  isTranscribing,
   streamError,
   errorMessage,
   onReset,
@@ -270,7 +268,11 @@ export default function ChatMessagesArea({
                     message.role === "assistant" &&
                     (!message.content || message.content.trim().length === 0) &&
                     message.id?.startsWith("local-assistant");
-                  return !isEmptyAssistant;
+                  const isTranscriptPlaceholder =
+                    message.metadata?.type === "transcript" &&
+                    (message.metadata?.transcriptStatus === "processing" ||
+                      message.metadata?.transcriptStatus === "postprocessing");
+                  return !isEmptyAssistant && !isTranscriptPlaceholder;
                 })
                 .map((message, index) => (
                   <ChatBubble
@@ -278,12 +280,6 @@ export default function ChatMessagesArea({
                     message={message}
                     previousRole={index > 0 ? sortedMessages[index - 1]?.role : undefined}
                     isStreamingBubble={streamingAssistantId === message.id || message.metadata?.streaming === true}
-                    isTranscribingBubble={
-                      isTranscribing &&
-                      index === messages.length - 1 &&
-                      message.role === "assistant" &&
-                      !message.content
-                    }
                     onOpenTranscript={onOpenTranscript}
                     onOpenCard={onOpenCard}
                   />
@@ -314,7 +310,6 @@ type ChatBubbleProps = {
   message: ChatMessage;
   previousRole?: ChatMessage["role"];
   isStreamingBubble?: boolean;
-  isTranscribingBubble?: boolean;
   onOpenTranscript?: (transcriptId: string, defaultTabId?: string | null) => void;
   onOpenCard?: (cardId: string, fallbackTranscriptId?: string | null, defaultTabId?: string | null) => void;
 };
@@ -323,7 +318,6 @@ function ChatBubble({
   message,
   previousRole,
   isStreamingBubble = false,
-  isTranscribingBubble = false,
   onOpenTranscript,
   onOpenCard,
 }: ChatBubbleProps) {
@@ -492,11 +486,6 @@ function ChatBubble({
               />
           ) : isFileMessage ? (
             renderFileBubble()
-          ) : isTranscribingBubble ? (
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm text-slate-900 dark:text-slate-100">Идёт расшифровка ответа</span>
-            </div>
           ) : (
             <>
               <MarkdownRenderer

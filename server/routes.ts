@@ -114,6 +114,9 @@ import {
   addAssistantMessage,
   addNoCodeCallbackMessage,
   addNoCodeStreamChunk,
+  upsertBotActionForChat,
+  listBotActionsForChat,
+  sanitizeDisplayText,
   setNoCodeAssistantAction,
   ChatServiceError,
   getChatById,
@@ -133,9 +136,11 @@ import { enqueueFileEventForSkill } from "./no-code-file-events";
 import { buildContextPack } from "./context-pack";
 import {
   assistantActionTypes,
+  botActionStatuses,
   chatCardTypes,
   transcriptStatuses,
   type AssistantActionType,
+  type BotActionStatus,
   type TranscriptStatus,
 } from "@shared/schema";
 type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
@@ -7331,6 +7336,29 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     .transform((val) => val.toUpperCase())
     .refine((val) => assistantActionTypes.includes(val as any), { message: "Недопустимый actionType" });
 
+  const displayTextSchema = z
+    .string()
+    .max(300)
+    .transform((val) => sanitizeDisplayText(val, 300))
+    .refine((val) => val === null || val.length > 0, { message: "displayText пустой" })
+    .optional();
+
+  const botActionTypeSchema = z.string().trim().min(1);
+  const botActionStatusSchema = z.enum(botActionStatuses);
+
+  const botActionStartSchema = z.object({
+    workspaceId: z.string().trim().optional(),
+    chatId: z.string().trim().min(1, "Укажите чат"),
+    actionId: z.string().trim().min(1, "Укажите actionId"),
+    actionType: botActionTypeSchema,
+    displayText: displayTextSchema,
+    payload: z.record(z.any()).optional(),
+  });
+
+  const botActionUpdateSchema = botActionStartSchema.extend({
+    status: botActionStatusSchema,
+  });
+
   const noCodeCallbackAssistantActionSchema = z.object({
     workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
     chatId: z.string().trim().min(1, "Укажите чат"),
@@ -11458,7 +11486,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         res.flushHeaders();
         res.write(`retry: 3000\n\n`);
 
-        const listener = (payload: { type: "message"; message: unknown }) => {
+        const listener = (payload: { type: string; message?: unknown; action?: unknown }) => {
           res.write(`data: ${JSON.stringify(payload)}\n\n`);
         };
 
@@ -11470,6 +11498,122 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         res.on("close", cleanup);
         req.on("close", cleanup);
       } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/chat/actions",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
+      try {
+        const workspaceId =
+          req.workspaceContext?.workspaceId ??
+          resolveWorkspaceIdForRequest(req, pickFirstString(req.query.workspaceId, req.query.workspace_id));
+        const chatId = pickFirstString(req.query.chatId, req.query.chat_id);
+        if (!chatId) {
+          return res.status(400).json({ message: "Не указан chatId" });
+        }
+        const statusParam = typeof req.query.status === "string" ? req.query.status.trim() : "";
+        const status: BotActionStatus | null =
+          statusParam && botActionStatuses.includes(statusParam as any)
+            ? (statusParam as BotActionStatus)
+            : null;
+
+        const actions = await listBotActionsForChat({
+          workspaceId,
+          chatId,
+          userId: user.id,
+          status: status ?? "processing",
+        });
+        res.json({ actions });
+      } catch (error) {
+        if (error instanceof ChatServiceError) {
+          return res.status(error.status).json(buildChatServiceErrorPayload(error));
+        }
+        if (error instanceof HttpError) {
+          return res.status(error.status).json({ message: error.message });
+        }
+        next(error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/chat/actions/start",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
+      try {
+        const payload = botActionStartSchema.parse(req.body ?? {});
+        const workspaceId =
+          req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, payload.workspaceId ?? null);
+
+        const action = await upsertBotActionForChat({
+          workspaceId,
+          chatId: payload.chatId,
+          actionId: payload.actionId,
+          actionType: payload.actionType,
+          status: "processing",
+          displayText: payload.displayText ?? undefined,
+          payload: payload.payload ?? null,
+          userId: user.id,
+        });
+        res.status(200).json({ action });
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        }
+        if (error instanceof ChatServiceError) {
+          return res.status(error.status).json(buildChatServiceErrorPayload(error));
+        }
+        if (error instanceof HttpError) {
+          return res.status(error.status).json({ message: error.message });
+        }
+        next(error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/chat/actions/update",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) return;
+      try {
+        const payload = botActionUpdateSchema.parse(req.body ?? {});
+        const workspaceId =
+          req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, payload.workspaceId ?? null);
+
+        const action = await upsertBotActionForChat({
+          workspaceId,
+          chatId: payload.chatId,
+          actionId: payload.actionId,
+          actionType: payload.actionType,
+          status: payload.status,
+          displayText: payload.displayText ?? undefined,
+          payload: payload.payload ?? null,
+          userId: user.id,
+        });
+        res.status(200).json({ action });
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        }
+        if (error instanceof ChatServiceError) {
+          return res.status(error.status).json(buildChatServiceErrorPayload(error));
+        }
+        if (error instanceof HttpError) {
+          return res.status(error.status).json({ message: error.message });
+        }
         next(error);
       }
     },
@@ -13043,6 +13187,92 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res
           .status(error.status)
           .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/no-code/callback/actions/start", async (req, res, next) => {
+    try {
+      const payload = botActionStartSchema.parse(req.body ?? {});
+      const authorizationHeader = Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization;
+      let callbackToken: string | null = null;
+      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
+        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
+        if (scheme && scheme.toLowerCase() === "bearer") {
+          const candidate = rest.join(" ").trim();
+          callbackToken = candidate.length > 0 ? candidate : null;
+        }
+      }
+
+      await verifyNoCodeCallbackToken({
+        workspaceId: payload.workspaceId,
+        chatId: payload.chatId,
+        token: callbackToken,
+      });
+
+      const action = await upsertBotActionForChat({
+        workspaceId: payload.workspaceId!,
+        chatId: payload.chatId,
+        actionId: payload.actionId,
+        actionType: payload.actionType,
+        status: "processing",
+        displayText: payload.displayText ?? undefined,
+        payload: payload.payload ?? null,
+      });
+
+      return res.status(200).json({ action });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
+      }
+      next(error);
+    }
+  });
+
+  app.post("/api/no-code/callback/actions/update", async (req, res, next) => {
+    try {
+      const payload = botActionUpdateSchema.parse(req.body ?? {});
+      const authorizationHeader = Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization;
+      let callbackToken: string | null = null;
+      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
+        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
+        if (scheme && scheme.toLowerCase() === "bearer") {
+          const candidate = rest.join(" ").trim();
+          callbackToken = candidate.length > 0 ? candidate : null;
+        }
+      }
+
+      await verifyNoCodeCallbackToken({
+        workspaceId: payload.workspaceId,
+        chatId: payload.chatId,
+        token: callbackToken,
+      });
+
+      const action = await upsertBotActionForChat({
+        workspaceId: payload.workspaceId!,
+        chatId: payload.chatId,
+        actionId: payload.actionId,
+        actionType: payload.actionType,
+        status: payload.status,
+        displayText: payload.displayText ?? undefined,
+        payload: payload.payload ?? null,
+      });
+
+      return res.status(200).json({ action });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
       }
       if (error instanceof ChatServiceError) {
         return res.status(error.status).json(buildChatServiceErrorPayload(error));

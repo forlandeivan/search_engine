@@ -1,8 +1,9 @@
 import EventEmitter from "events";
 export type ChatEventPayload = {
-  type: "message";
+  type: "message" | "bot_action";
   // При передачах наружу сериализуем сами, поэтому допускаем любые поля.
-  message: any;
+  message?: any;
+  action?: any;
 };
 
 class ChatEvents extends EventEmitter {
@@ -16,6 +17,10 @@ export const chatEvents = new ChatEvents();
 
 export function emitChatMessage(chatId: string, message: any): void {
   chatEvents.emit(chatId, { type: "message", message });
+}
+
+export function emitBotAction(chatId: string, action: any): void {
+  chatEvents.emit(chatId, { type: "bot_action", action });
 }
 
 export function onChatEvent(chatId: string, listener: (payload: ChatEventPayload) => void): void {

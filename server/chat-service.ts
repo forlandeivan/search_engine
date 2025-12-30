@@ -1,5 +1,5 @@
 import { storage } from "./storage";
-import { emitChatMessage } from "./chat-events";
+import { emitBotAction, emitChatMessage } from "./chat-events";
 import type { SkillDto } from "@shared/skills";
 import { getSkillById, UNICA_CHAT_SYSTEM_KEY } from "./skills";
 import { isRagSkill, isUnicaChatSkill } from "./skill-type";
@@ -12,6 +12,9 @@ import type {
   LlmRequestConfig,
   Model,
   AssistantActionType,
+  type BotAction,
+  type BotActionStatus,
+  botActionStatuses,
 } from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
@@ -32,6 +35,7 @@ import { resolveEmbeddingProviderForWorkspace } from "./indexing-rules";
 import { searchSkillFileVectors } from "./skill-file-vector-store";
 import { embedTextWithProvider } from "./skill-file-embeddings";
 import type { SyncFinalResult } from "./no-code-events";
+import { botActionTypes } from "@shared/schema";
 
 export class ChatServiceError extends Error {
   public status: number;
@@ -72,6 +76,14 @@ export type ChatSummary = {
     updatedAt: string | null;
   } | null;
 };
+
+export function sanitizeDisplayText(input?: string | null, maxLen = 300): string | null {
+  if (!input || typeof input !== "string") return null;
+  const noTags = input.replace(/<[^>]*>/g, " ");
+  const trimmed = noTags.replace(/\s+/g, " ").trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, maxLen);
+}
 
 const sanitizeTitle = (title?: string | null) => title?.trim() ?? "";
 const clampTemperature = (value: number | null | undefined) => {
@@ -1253,4 +1265,155 @@ export async function setNoCodeAssistantAction(opts: {
     skillSystemKey: chat.skillSystemKey,
     skillStatus: chat.skillStatus,
   } as any);
+}
+
+function mapBotActionRecord(action: any): BotAction {
+  return {
+    workspaceId: action.workspaceId ?? action.workspace_id,
+    chatId: action.chatId ?? action.chat_id,
+    actionId: action.actionId ?? action.action_id,
+    actionType: action.actionType ?? action.action_type,
+    status: (action.status ?? "processing") as BotActionStatus,
+    displayText: action.displayText ?? action.display_text ?? null,
+    payload: action.payload ?? null,
+    createdAt: action.startedAt
+      ? (action.startedAt instanceof Date ? action.startedAt.toISOString() : new Date(action.startedAt).toISOString())
+      : action.started_at
+        ? new Date(action.started_at).toISOString()
+        : null,
+    updatedAt: action.updatedAt
+      ? (action.updatedAt instanceof Date ? action.updatedAt.toISOString() : new Date(action.updatedAt).toISOString())
+      : action.updated_at
+        ? new Date(action.updated_at).toISOString()
+        : null,
+  };
+}
+
+export async function upsertBotActionForChat(opts: {
+  workspaceId: string;
+  chatId: string;
+  actionId: string;
+  actionType: string;
+  status: BotActionStatus;
+  displayText?: string | null | undefined;
+  payload?: Record<string, unknown> | null;
+  userId?: string | null;
+}): Promise<BotAction> {
+  if (opts.userId) {
+    await getOwnedChat(opts.chatId, opts.workspaceId, opts.userId);
+  } else {
+    const chatRecord = await storage.getChatSessionById(opts.chatId);
+    if (!chatRecord || chatRecord.workspaceId !== opts.workspaceId) {
+      throw new ChatServiceError("Чат не найден", 404);
+    }
+  }
+
+  // Get current state for state machine
+  const currentState = await storage.getBotActionByActionId({
+    workspaceId: opts.workspaceId,
+    chatId: opts.chatId,
+    actionId: opts.actionId,
+  });
+
+  // Apply state machine rules
+  const { computeBotActionTransition, shouldPublishBotActionEvent } = await import("./bot-action-state-machine");
+  const transitionResult = computeBotActionTransition(
+    currentState,
+    opts.status,
+    opts.actionId,
+    opts.displayText,
+    opts.payload ?? null,
+  );
+
+  // Out-of-order protection: update before start
+  if (transitionResult.ignored && transitionResult.reason === "update_before_start") {
+    throw new ChatServiceError(`Действие с actionId "${opts.actionId}" не найдено. Сначала вызовите start.`, 404);
+  }
+
+  // Log ignored transitions for debugging
+  if (transitionResult.ignored && transitionResult.reason) {
+    const isDev = process.env.NODE_ENV !== "production";
+    if (isDev || process.env.DEBUG_BOT_ACTION === "1") {
+      console.log(
+        `[BotAction] Ignored transition: ${transitionResult.reason}, actionId: ${opts.actionId}, currentStatus: ${currentState?.status}, incomingStatus: ${opts.status}`,
+      );
+    }
+  }
+
+  // If transition is ignored and no state change, return current state
+  if (transitionResult.ignored && !transitionResult.stateChanged && currentState) {
+    // Check if we should publish event (e.g., displayText/payload changed)
+    const shouldPublish = shouldPublishBotActionEvent(currentState, currentState, transitionResult);
+    if (shouldPublish) {
+      emitBotAction(opts.chatId, currentState);
+    }
+    return currentState;
+  }
+
+  // Apply the transition: create or update state
+  let finalState: BotAction | null = null;
+  if (transitionResult.stateChanged) {
+    if (transitionResult.newState) {
+      // Update existing state with new values
+      finalState = await storage.upsertBotActionState({
+        workspaceId: opts.workspaceId,
+        chatId: opts.chatId,
+        actionId: opts.actionId,
+        actionType: opts.actionType,
+        status: transitionResult.newState.status,
+        displayText: transitionResult.newState.displayText,
+        payload: transitionResult.newState.payload ?? null,
+      });
+    } else {
+      // Create new state (processing) - newState is null but stateChanged is true
+      finalState = await storage.upsertBotActionState({
+        workspaceId: opts.workspaceId,
+        chatId: opts.chatId,
+        actionId: opts.actionId,
+        actionType: opts.actionType,
+        status: opts.status,
+        displayText: opts.displayText,
+        payload: opts.payload ?? null,
+      });
+    }
+  }
+
+  if (!finalState) {
+    throw new ChatServiceError("Не удалось сохранить действие", 500);
+  }
+
+  const mapped = mapBotActionRecord(finalState);
+
+  // Only publish if state actually changed
+  const shouldPublish = shouldPublishBotActionEvent(currentState, mapped, transitionResult);
+  if (shouldPublish) {
+    emitBotAction(opts.chatId, mapped);
+  }
+
+  return mapped;
+}
+
+export async function listBotActionsForChat(opts: {
+  workspaceId: string;
+  chatId: string;
+  userId?: string | null;
+  status?: BotActionStatus | null;
+  limit?: number | null;
+}): Promise<BotAction[]> {
+  if (opts.userId) {
+    await getOwnedChat(opts.chatId, opts.workspaceId, opts.userId);
+  } else {
+    const chatRecord = await storage.getChatSessionById(opts.chatId);
+    if (!chatRecord || chatRecord.workspaceId !== opts.workspaceId) {
+      throw new ChatServiceError("Чат не найден", 404);
+    }
+  }
+
+  const actions = await storage.listBotActionsByChat({
+    workspaceId: opts.workspaceId,
+    chatId: opts.chatId,
+    status: opts.status ?? null,
+    limit: opts.limit ?? null,
+  });
+  return actions.map(mapBotActionRecord);
 }

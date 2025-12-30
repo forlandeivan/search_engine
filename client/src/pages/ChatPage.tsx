@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput, { type TranscribePayload } from "@/components/chat/ChatInput";
+import { BotActionIndicatorRow } from "@/components/chat/BotActionIndicatorRow";
+import type { BotAction } from "@shared/schema";
 import { TranscriptCanvas } from "@/components/chat/TranscriptCanvas";
 import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { throwIfResNotOk } from "@/lib/queryClient";
@@ -83,8 +85,9 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
     return null;
   };
-  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [botActionIndicator, setBotActionIndicator] = useState<BotAction | null>(null);
   const [openTranscript, setOpenTranscript] = useState<{ id: string; tabId?: string | null } | null>(null);
+  const botActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { createChat } = useCreateChat();
   const [creatingSkillId, setCreatingSkillId] = useState<string | null>(null);
@@ -141,6 +144,37 @@ export default function ChatPage({ params }: ChatPageProps) {
     setOpenTranscript(null);
   }, [effectiveChatId]);
 
+  // Initial fetch of active bot_action on mount / chatId change (cold start recovery)
+  useEffect(() => {
+    if (!workspaceId || !effectiveChatId) {
+      setBotActionIndicator(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = `/api/chat/actions?workspaceId=${encodeURIComponent(workspaceId)}&chatId=${encodeURIComponent(effectiveChatId)}`;
+        const response = await fetch(url, { credentials: "include" });
+        if (!response.ok) {
+          debugLog("[BotAction] Failed to fetch active actions", response.status);
+          return;
+        }
+        const data = (await response.json()) as { actions: BotAction[] };
+        if (cancelled) return;
+        // Server returns only processing actions by default, sorted by updatedAt desc
+        // Take the first (latest) one if available
+        const active = data.actions.length > 0 ? data.actions[0] : null;
+        setBotActionIndicator(active);
+      } catch (error) {
+        debugLog("[BotAction] Error fetching active actions", error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, effectiveChatId]);
+
+  // SSE connection: listen for messages and bot_action events
   useEffect(() => {
     if (!workspaceId || !effectiveChatId) {
       return;
@@ -150,12 +184,44 @@ export default function ChatPage({ params }: ChatPageProps) {
       url.searchParams.set("workspaceId", workspaceId);
     }
     const source = new EventSource(url.toString(), { withCredentials: true });
+    let reconnectRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
     source.onopen = () => {
       setStreamError(null);
+      // Reconnect recovery: fetch active bot_action after reconnect
+      if (reconnectRecoveryTimer) {
+        clearTimeout(reconnectRecoveryTimer);
+      }
+      reconnectRecoveryTimer = setTimeout(async () => {
+        try {
+          const url = `/api/chat/actions?workspaceId=${encodeURIComponent(workspaceId)}&chatId=${encodeURIComponent(effectiveChatId)}`;
+          const response = await fetch(url, { credentials: "include" });
+          if (!response.ok) return;
+          const data = (await response.json()) as { actions: BotAction[] };
+          // Server returns only processing actions by default, sorted by updatedAt desc
+          const active = data.actions.length > 0 ? data.actions[0] : null;
+          setBotActionIndicator((prev) => {
+            // Avoid overwriting newer local state
+            if (prev && active && prev.actionId === active.actionId) {
+              const prevTime = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
+              const activeTime = active.updatedAt ? new Date(active.updatedAt).getTime() : 0;
+              return activeTime >= prevTime ? active : prev;
+            }
+            return active;
+          });
+        } catch (error) {
+          debugLog("[BotAction] Reconnect recovery failed", error);
+        }
+      }, 300);
     };
+
     source.onmessage = (event) => {
       try {
-        const payload = JSON.parse(event.data) as { type: string; message?: ChatMessage };
+        const payload = JSON.parse(event.data) as {
+          type: string;
+          message?: ChatMessage;
+          action?: BotAction;
+        };
         if (payload?.type === "message" && payload.message) {
           setLocalMessages((prev) => {
             if (prev.some((local) => areMessagesEquivalent(local, payload.message!))) {
@@ -164,16 +230,74 @@ export default function ChatPage({ params }: ChatPageProps) {
             return [...prev, payload.message!];
           });
           queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey });
+        } else if (payload?.type === "bot_action" && payload.action) {
+          const action = payload.action;
+          setBotActionIndicator((prev) => {
+            // Anti-duplicate and out-of-order protection
+            if (!prev) {
+              // No current state: accept any action
+              return action;
+            }
+
+            // Different actionId: only accept if newer, and don't let old terminal hide new processing
+            if (action.actionId !== prev.actionId) {
+              const prevTime = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
+              const actionTime = action.updatedAt ? new Date(action.updatedAt).getTime() : 0;
+
+              // If current is processing and incoming is terminal (done/error) for different actionId
+              // Only accept if incoming is newer (shouldn't happen, but protect against it)
+              if (prev.status === "processing" && (action.status === "done" || action.status === "error")) {
+                // Don't let old terminal update hide new processing
+                if (actionTime < prevTime) {
+                  return prev; // Ignore older terminal update
+                }
+              }
+
+              // Accept if newer or if current is terminal and incoming is processing (new action)
+              if (actionTime > prevTime || (prev.status !== "processing" && action.status === "processing")) {
+                return action;
+              }
+
+              return prev; // Keep current if incoming is older
+            }
+
+            // Same actionId: apply only if incoming.updatedAt >= current.updatedAt
+            const prevTime = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
+            const actionTime = action.updatedAt ? new Date(action.updatedAt).getTime() : 0;
+
+            if (actionTime >= prevTime) {
+              // Check for exact duplicates (same actionId, status, updatedAt) to avoid unnecessary re-renders
+              const isDuplicate =
+                prev.status === action.status &&
+                prevTime === actionTime &&
+                prev.displayText === action.displayText &&
+                JSON.stringify(prev.payload) === JSON.stringify(action.payload);
+
+              if (isDuplicate) {
+                return prev; // Return same reference to avoid re-render
+              }
+
+              return action; // Accept newer or same timestamp
+            }
+
+            // Ignore older event for same actionId
+            return prev;
+          });
         }
       } catch (error) {
         debugLog("Failed to parse SSE event", error);
       }
     };
+
     source.onerror = () => {
       setStreamError("Не удалось подключиться к каналу чата.");
     };
+
     return () => {
       source.close();
+      if (reconnectRecoveryTimer) {
+        clearTimeout(reconnectRecoveryTimer);
+      }
     };
   }, [effectiveChatId, workspaceId, queryClient, chatMessagesQueryKey]);
 
@@ -429,7 +553,28 @@ export default function ChatPage({ params }: ChatPageProps) {
   const handleTranscription = useCallback(
     async (input: TranscribePayload) => {
       if (!workspaceId) return;
-      setIsTranscribing(true);
+      const showBotAction = (text: string, status: BotAction["status"], actionType: BotAction["actionType"] = "transcribe_audio") => {
+        if (botActionTimerRef.current) {
+          clearTimeout(botActionTimerRef.current);
+          botActionTimerRef.current = null;
+        }
+        const targetChat = (typeof input !== "string" && input.chatId) || effectiveChatId || "local-chat";
+        setBotActionIndicator({
+          workspaceId: workspaceId || "local-workspace",
+          chatId: targetChat || "local-chat",
+          actionId: (typeof input !== "string" && input.operationId) || `local-${Date.now()}`,
+          actionType,
+          status,
+          displayText: text,
+          updatedAt: new Date().toISOString(),
+        });
+        if (status === "done" || status === "error") {
+          botActionTimerRef.current = setTimeout(() => {
+            setBotActionIndicator(null);
+          }, 1800);
+        }
+      };
+      showBotAction("Готовим стенограмму…", "processing", "transcribe_audio");
 
       let operationId: string | null = null;
       let fileName = "audio";
@@ -440,7 +585,7 @@ export default function ChatPage({ params }: ChatPageProps) {
 
       if (typeof input === "string") {
         if (!input.startsWith("__PENDING_OPERATION:")) {
-          setIsTranscribing(false);
+          setBotActionIndicator(null);
           return;
         }
         const parts = input.substring("__PENDING_OPERATION:".length).split(":");
@@ -462,7 +607,7 @@ export default function ChatPage({ params }: ChatPageProps) {
         const skillId = activeChat?.skillId ?? activeSkill?.id ?? defaultSkill?.id;
         if (!skillId) {
           setStreamError('Unica Chat skill is not configured. Please contact the administrator.');
-          setIsTranscribing(false);
+          showBotAction("Не удалось подготовить стенограмму", "error");
           return;
         }
         try {
@@ -472,7 +617,7 @@ export default function ChatPage({ params }: ChatPageProps) {
           handleSelectChat(newChat.id);
         } catch (error) {
           setStreamError(formatApiErrorMessage(error));
-          setIsTranscribing(false);
+          showBotAction("Не удалось подготовить стенограмму", "error");
           return;
         }
       }
@@ -494,12 +639,12 @@ export default function ChatPage({ params }: ChatPageProps) {
           await queryClient.invalidateQueries({ queryKey: ["chat-messages"] }).catch(() => {});
           await queryClient.invalidateQueries({ queryKey: ["chats"] }).catch(() => {});
         }
-        setIsTranscribing(false);
+        showBotAction("Готово", "done");
         return;
       }
 
       if (!operationId) {
-        setIsTranscribing(false);
+        setBotActionIndicator(null);
         return;
       }
 
@@ -586,11 +731,13 @@ export default function ChatPage({ params }: ChatPageProps) {
                     setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                     await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
                     await queryClient.invalidateQueries({ queryKey: ["chats"] });
+                    showBotAction("Готово", "done");
                   }
                 } else {
                   setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                   await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
                   await queryClient.invalidateQueries({ queryKey: ["chats"] });
+                  showBotAction("Готово", "done");
                 }
                 return;
               }
@@ -598,6 +745,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               if (status.status === 'failed') {
                 setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                 setStreamError(status.error || 'Транскрибация не удалась. Попробуйте снова.');
+                showBotAction("Ошибка при стенограмме", "error");
                 await queryClient.invalidateQueries({ queryKey: ["chats"] });
                 return;
               }
@@ -617,11 +765,12 @@ export default function ChatPage({ params }: ChatPageProps) {
 
           setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
           setStreamError('Транскрибация заняла слишком много времени. Попробуйте снова.');
+          showBotAction("Стенограмма заняла слишком много времени", "error");
         };
 
         await pollOperation();
       }
-      setIsTranscribing(false);
+      showBotAction("Готово", "done");
     },
     [
       activeChat?.skillId,
@@ -666,6 +815,25 @@ export default function ChatPage({ params }: ChatPageProps) {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (botActionTimerRef.current) {
+        clearTimeout(botActionTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isDev) return;
+    (window as typeof window & { __setMockBotActionIndicator?: (payload: typeof botActionIndicator) => void }).__setMockBotActionIndicator =
+      (payload) => setBotActionIndicator(payload);
+    return () => {
+      if ((window as any).__setMockBotActionIndicator) {
+        delete (window as any).__setMockBotActionIndicator;
+      }
+    };
+  }, [isDev]);
+
   return (
     <div className="flex h-full overflow-hidden" data-testid="chat-page">
       <ChatSidebar
@@ -693,7 +861,6 @@ export default function ChatPage({ params }: ChatPageProps) {
               isLoading={isMessagesLoading && !isNewChat}
               isNewChat={isNewChat}
               isStreaming={isStreaming}
-              isTranscribing={isTranscribing}
               streamError={streamError}
               errorMessage={normalizedMessagesError}
               scrollContainerRef={messagesScrollRef}
@@ -731,6 +898,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               readOnlyReason={readOnlyReason}
             />
           <div className="shrink-0">
+            <BotActionIndicatorRow action={botActionIndicator} />
           <ChatInput
             onSend={handleSend}
             onTranscribe={handleTranscription}

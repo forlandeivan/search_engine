@@ -1313,6 +1313,67 @@ export type ChatStatus = (typeof chatStatuses)[number];
 export const assistantActionTypes = ["ANALYZING", "TRANSCRIBING", "TYPING"] as const;
 export type AssistantActionType = (typeof assistantActionTypes)[number];
 
+export const botActionTypes = ["transcribe_audio", "summarize", "generate_image", "process_file"] as const;
+export type BotActionType = (typeof botActionTypes)[number];
+
+export const botActionStatuses = ["processing", "done", "error"] as const;
+export type BotActionStatus = (typeof botActionStatuses)[number];
+
+// Telegram-style событие активности бота. actionType допускает string, чтобы не падать на новых типах.
+export type BotAction = {
+  workspaceId: string;
+  chatId: string;
+  actionId: string;
+  actionType: BotActionType | string;
+  status: BotActionStatus;
+  displayText?: string | null;
+  payload?: Record<string, unknown> | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export const botActionSchema = z.object({
+  workspaceId: z.string().min(1),
+  chatId: z.string().min(1),
+  actionId: z.string().min(1),
+  actionType: z.string().min(1), // допускаем произвольный тип, фронт обрабатывает через displayText/fallback
+  status: z.enum(botActionStatuses),
+  displayText: z.string().nullable().optional(),
+  payload: z.record(z.any()).nullable().optional(),
+  createdAt: z.string().datetime().nullable().optional(),
+  updatedAt: z.string().datetime().nullable().optional(),
+});
+
+export const botActions = pgTable(
+  "bot_actions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    chatId: varchar("chat_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    actionId: text("action_id").notNull(),
+    actionType: text("action_type").notNull(),
+    status: text("status").$type<BotActionStatus>().notNull().default("processing"),
+    displayText: text("display_text"),
+    payload: jsonb("payload").$type<Record<string, unknown> | null>().default(sql`'{}'::jsonb`),
+    startedAt: timestamp("started_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    chatIdx: index("bot_actions_chat_idx").on(table.workspaceId, table.chatId, table.updatedAt),
+    statusIdx: index("bot_actions_status_idx").on(table.workspaceId, table.chatId, table.status),
+    uniqueAction: uniqueIndex("bot_actions_action_unique_idx").on(
+      table.workspaceId,
+      table.chatId,
+      table.actionId,
+    ),
+  }),
+);
+export type BotActionRecord = typeof botActions.$inferSelect;
+
 export const chatSessions = pgTable(
   "chat_sessions",
   {

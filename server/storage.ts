@@ -25,6 +25,7 @@ import {
   chatSessions,
   chatCards,
   chatMessages,
+  botActions,
   chatAttachments,
   skillFiles,
   skillFileIngestionJobs,
@@ -93,12 +94,14 @@ import {
   type FileStorageProvider,
   type FileStorageProviderInsert,
   type WorkspaceMemberRole,
+  type BotAction,
+  type BotActionStatus,
 } from "@shared/schema";
 import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import { db } from "./db";
 import { createUnicaChatSkillForWorkspace } from "./skills";
-import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
@@ -1948,6 +1951,9 @@ async function ensureTranscriptsTable(): Promise<void> {
 let transcriptViewsEnsured = false;
 let ensuringTranscriptViewsTable: Promise<void> | null = null;
 
+let botActionsEnsured = false;
+let ensuringBotActionsTable: Promise<void> | null = null;
+
 let canvasDocumentsEnsured = false;
 let ensuringCanvasDocumentsTable: Promise<void> | null = null;
 
@@ -1982,6 +1988,77 @@ async function ensureTranscriptViewsTable(): Promise<void> {
 
   await ensuringTranscriptViewsTable;
   ensuringTranscriptViewsTable = null;
+}
+
+async function ensureBotActionsTable(): Promise<void> {
+  if (botActionsEnsured) {
+    return;
+  }
+  if (ensuringBotActionsTable) {
+    await ensuringBotActionsTable;
+    return;
+  }
+
+  ensuringBotActionsTable = (async () => {
+    await ensureWorkspacesTable();
+    await ensureChatSessionsTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "bot_actions" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "workspace_id" varchar NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        "chat_id" varchar NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+        "action_id" text NOT NULL,
+        "action_type" text NOT NULL,
+        "status" text NOT NULL DEFAULT 'processing',
+        "display_text" text,
+        "payload" jsonb DEFAULT '{}'::jsonb,
+        "started_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await db.execute(
+      sql`
+        CREATE UNIQUE INDEX IF NOT EXISTS "bot_actions_action_unique_idx"
+        ON "bot_actions" ("workspace_id", "chat_id", "action_id")
+      `,
+    );
+
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "bot_actions_chat_idx" ON "bot_actions" ("workspace_id", "chat_id", "updated_at")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS "bot_actions_status_idx" ON "bot_actions" ("workspace_id", "chat_id", "status")`,
+    );
+
+    botActionsEnsured = true;
+  })();
+
+  await ensuringBotActionsTable;
+  ensuringBotActionsTable = null;
+}
+
+function mapBotAction(record: any): BotAction {
+  return {
+    workspaceId: record.workspaceId ?? record.workspace_id,
+    chatId: record.chatId ?? record.chat_id,
+    actionId: record.actionId ?? record.action_id,
+    actionType: record.actionType ?? record.action_type,
+    status: (record.status ?? "processing") as BotActionStatus,
+    displayText: record.displayText ?? record.display_text ?? null,
+    payload: record.payload ?? null,
+    createdAt: record.startedAt
+      ? new Date(record.startedAt).toISOString()
+      : record.started_at
+        ? new Date(record.started_at).toISOString()
+        : null,
+    updatedAt: record.updatedAt
+      ? new Date(record.updatedAt).toISOString()
+      : record.updated_at
+        ? new Date(record.updated_at).toISOString()
+        : null,
+  };
 }
 
 async function ensureCanvasDocumentsTable(): Promise<void> {
@@ -2030,6 +2107,7 @@ async function ensureChatTables(): Promise<void> {
   await ensureChatAttachmentsTable();
   await ensureTranscriptsTable();
   await ensureTranscriptViewsTable();
+  await ensureBotActionsTable();
 }
 
 export async function ensureKnowledgeBaseTables(): Promise<void> {
@@ -6108,6 +6186,142 @@ export class DatabaseStorage implements IStorage {
       .returning();
 
     return updated ?? null;
+  }
+
+  async upsertBotActionState(values: {
+    workspaceId: string;
+    chatId: string;
+    actionId: string;
+    actionType: string;
+    status: BotActionStatus;
+    displayText?: string | null;
+    payload?: Record<string, unknown> | null;
+    // Optional: only update these fields if provided (for partial updates)
+    updateOnly?: {
+      status?: boolean;
+      displayText?: boolean;
+      payload?: boolean;
+    };
+  }): Promise<BotAction | null> {
+    await ensureBotActionsTable();
+    const now = sql`CURRENT_TIMESTAMP`;
+
+    const payloadValue =
+      values.payload && Object.keys(values.payload).length > 0 ? values.payload : null;
+
+    const updateSet: Record<string, unknown> = {
+      actionType: values.actionType,
+      updatedAt: now,
+    };
+
+    // Only update status if explicitly allowed or if it's a new record
+    if (!values.updateOnly || values.updateOnly.status !== false) {
+      updateSet.status = values.status;
+    }
+
+    // Only update payload if explicitly allowed or if it's a new record
+    if (!values.updateOnly || values.updateOnly.payload !== false) {
+      updateSet.payload = payloadValue;
+    }
+
+    // Only update displayText if explicitly provided
+    if (values.displayText !== undefined) {
+      if (!values.updateOnly || values.updateOnly.displayText !== false) {
+        updateSet.displayText = values.displayText ?? null;
+      }
+    }
+
+    const insertValues: Record<string, unknown> = {
+      workspaceId: values.workspaceId,
+      chatId: values.chatId,
+      actionId: values.actionId,
+      actionType: values.actionType,
+      status: values.status,
+      payload: payloadValue,
+      displayText: values.displayText ?? null,
+    };
+
+    const [inserted] = await this.db
+      .insert(botActions)
+      .values(insertValues)
+      .onConflictDoUpdate({
+        target: [botActions.workspaceId, botActions.chatId, botActions.actionId],
+        set: updateSet,
+      })
+      .returning();
+
+    if (!inserted) {
+      return null;
+    }
+
+    return mapBotAction(inserted);
+  }
+
+  async getBotActionByActionId(options: {
+    workspaceId: string;
+    chatId: string;
+    actionId: string;
+  }): Promise<BotAction | null> {
+    await ensureBotActionsTable();
+    const [row] = await this.db
+      .select()
+      .from(botActions)
+      .where(
+        and(
+          eq(botActions.workspaceId, options.workspaceId),
+          eq(botActions.chatId, options.chatId),
+          eq(botActions.actionId, options.actionId),
+        ),
+      )
+      .limit(1);
+
+    return row ? mapBotAction(row) : null;
+  }
+
+  async listBotActionsByChat(options: {
+    workspaceId: string;
+    chatId: string;
+    status?: BotActionStatus | null;
+    limit?: number | null;
+  }): Promise<BotAction[]> {
+    await ensureBotActionsTable();
+    const conditions: any[] = [
+      eq(botActions.workspaceId, options.workspaceId),
+      eq(botActions.chatId, options.chatId),
+    ];
+    if (options.status) {
+      conditions.push(eq(botActions.status, options.status));
+    }
+
+    const query = this.db
+      .select()
+      .from(botActions)
+      .where(and(...conditions))
+      .orderBy(desc(botActions.updatedAt));
+
+    if (options.limit && options.limit > 0) {
+      (query as any).limit(options.limit);
+    }
+
+    const rows = await query;
+    return rows.map(mapBotAction);
+  }
+
+  async expireStuckBotActions(cutoffDate: Date): Promise<BotAction[]> {
+    await ensureBotActionsTable();
+    const rows = await this.db
+      .update(botActions)
+      .set({
+        status: "error",
+        payload: sql`
+          COALESCE(payload, '{}'::jsonb) || '{"reason": "timeout"}'::jsonb
+        `,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(and(eq(botActions.status, "processing"), lt(botActions.updatedAt, cutoffDate)))
+      .returning();
+
+    return rows.map(mapBotAction);
   }
 
   async touchChatSession(chatId: string): Promise<void> {
