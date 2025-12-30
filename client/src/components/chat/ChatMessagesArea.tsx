@@ -524,12 +524,7 @@ function TranscriptCard({
         </p>
       </div>
       
-      {isProcessing ? (
-        <div className="flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <p className="text-sm text-muted-foreground">Подождите, готовим стенограмму</p>
-        </div>
-      ) : isFailed ? (
+      {isFailed ? (
         <p className="text-sm text-muted-foreground">Попробуйте позже или загрузите другой файл.</p>
       ) : (
         <>

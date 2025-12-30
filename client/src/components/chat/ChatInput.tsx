@@ -16,7 +16,6 @@ export type TranscribePayload =
       fileName: string;
       chatId: string;
       audioMessage?: ChatMessage;
-      placeholderMessage?: ChatMessage;
       status?: "uploaded";
       fileId?: string | null;
     };
@@ -206,7 +205,6 @@ export default function ChatInput({
             fileName: file.name,
             chatId: targetChatId,
             audioMessage: result.audioMessage,
-            placeholderMessage: result.placeholderMessage,
           };
           setPendingTranscribe(payload);
           return payload;

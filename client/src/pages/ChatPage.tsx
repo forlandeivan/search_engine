@@ -623,7 +623,6 @@ export default function ChatPage({ params }: ChatPageProps) {
       let fileName = "audio";
       let providedChatId: string | null = null;
       let serverAudioMessage: ChatMessage | null = null;
-      let serverPlaceholder: ChatMessage | null = null;
       const isUploadedFlow = typeof input !== "string" && input.status === "uploaded";
 
       if (typeof input === "string") {
@@ -647,7 +646,6 @@ export default function ChatPage({ params }: ChatPageProps) {
         fileName = input.fileName || "audio";
         providedChatId = input.chatId ?? null;
         serverAudioMessage = input.audioMessage ?? null;
-        serverPlaceholder = input.placeholderMessage ?? null;
       }
 
       let targetChatId = effectiveChatId;
@@ -711,7 +709,6 @@ export default function ChatPage({ params }: ChatPageProps) {
         const audioMessageTime = serverAudioMessage?.createdAt
           ? new Date(serverAudioMessage.createdAt)
           : new Date();
-        const placeholderId = serverPlaceholder?.id ?? `local-transcript-${Date.now()}`;
         const audioMessage: ChatMessage =
           serverAudioMessage ?? {
             id: `local-audio-${Date.now()}`,
@@ -725,25 +722,11 @@ export default function ChatPage({ params }: ChatPageProps) {
             createdAt: audioMessageTime.toISOString(),
           };
 
-        const placeholderMessage: ChatMessage =
-          serverPlaceholder ?? {
-            id: placeholderId,
-            chatId: targetChatId,
-            role: "assistant",
-            content: "Идёт расшифровка аудиозаписи...",
-            metadata: {
-              type: "transcript",
-              transcriptId: placeholderId,
-              transcriptStatus: "processing",
-            },
-            createdAt: new Date(audioMessageTime.getTime() + 1000).toISOString(),
-          };
+        // Не создаём placeholder message - показываем активность через bot_action
         setLocalChatId(targetChatId);
         setLocalMessages((prev) => {
-          const filtered = prev.filter(
-            (msg) => msg.id !== audioMessage.id && msg.id !== placeholderMessage.id,
-          );
-          return [...filtered, audioMessage, placeholderMessage];
+          const filtered = prev.filter((msg) => msg.id !== audioMessage.id);
+          return [...filtered, audioMessage];
         });
         // Обновляем список чатов: название может смениться после загрузки аудио
         queryClient.invalidateQueries({ queryKey: ["chats"] }).catch(() => {});
@@ -773,27 +756,11 @@ export default function ChatPage({ params }: ChatPageProps) {
                 });
                 
                 if (completeRes.ok) {
-                  const completeData = await completeRes.json();
-                  if (completeData.message) {
-                    setLocalMessages((prev) =>
-                      prev.map((msg) =>
-                        msg.id === placeholderMessage.id
-                          ? {
-                              ...completeData.message,
-                              createdAt: completeData.message.createdAt,
-                            }
-                          : msg,
-                      )
-                    );
-                    await queryClient.invalidateQueries({ queryKey: ["chats"] });
-                  } else {
-                    setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
-                    await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
-                    await queryClient.invalidateQueries({ queryKey: ["chats"] });
-                    showBotAction("Готово", "done");
-                  }
+                  // Обновляем сообщения через invalidateQueries - готовый transcript появится автоматически
+                  await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
+                  await queryClient.invalidateQueries({ queryKey: ["chats"] });
+                  showBotAction("Готово", "done");
                 } else {
-                  setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                   await queryClient.invalidateQueries({ queryKey: ['chat-messages'] });
                   await queryClient.invalidateQueries({ queryKey: ["chats"] });
                   showBotAction("Готово", "done");
@@ -802,7 +769,6 @@ export default function ChatPage({ params }: ChatPageProps) {
               }
 
               if (status.status === 'failed') {
-                setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
                 setStreamError(status.error || 'Транскрибация не удалась. Попробуйте снова.');
                 showBotAction("Ошибка при стенограмме", "error");
                 await queryClient.invalidateQueries({ queryKey: ["chats"] });
@@ -822,7 +788,6 @@ export default function ChatPage({ params }: ChatPageProps) {
             }
           }
 
-          setLocalMessages((prev) => prev.filter((msg) => msg.id !== placeholderMessage.id));
           setStreamError('Транскрибация заняла слишком много времени. Попробуйте снова.');
           showBotAction("Стенограмма заняла слишком много времени", "error");
         };

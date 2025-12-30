@@ -14585,24 +14585,27 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           executionId: asrExecution.id,
         });
 
-        const placeholderMetadata: ChatMessageMetadata = {
-          type: "transcript",
-          transcriptId: transcript.id,
-          transcriptStatus: "processing",
-          asrExecutionId: asrExecution.id,
-          fileId: fileRecordId ?? undefined,
-        };
-
-        const placeholderMessage = await storage.createChatMessage({
-          chatId,
-          role: "assistant",
-          content: "Аудиозапись загружена. Идёт расшифровка...",
-          metadata: placeholderMetadata,
-        });
-        await asrExecutionLogService.addEvent(asrExecution.id, {
-          stage: "transcript_placeholder_message_created",
-          details: { transcriptId: transcript.id, placeholderMessageId: placeholderMessage.id },
-        });
+        // Создаём bot_action для показа активности (вместо placeholder message)
+        const actionId = `transcribe-${transcript.id}`;
+        try {
+          await upsertBotActionForChat({
+            workspaceId,
+            chatId,
+            actionId,
+            actionType: "transcribe_audio",
+            status: "processing",
+            displayText: null, // Используем дефолтный текст "Готовим стенограмму…"
+            payload: {
+              transcriptId: transcript.id,
+              asrExecutionId: asrExecution.id,
+              fileName: fileName,
+            },
+            userId: user.id,
+          });
+        } catch (error) {
+          console.error("[transcribe] failed to create bot_action", error);
+          // Не блокируем транскрипцию, если bot_action не создался
+        }
         await asrExecutionLogService.addEvent(asrExecution.id, {
           stage: "asr_request_sent",
           details: { provider: "yandex_speechkit", operationId: sttResponse.operationId, language: lang ?? null },
@@ -14631,14 +14634,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             content: audioMessage.content,
             metadata: audioMessage.metadata ?? {},
             createdAt: audioMessage.createdAt,
-          },
-          placeholderMessage: {
-            id: placeholderMessage.id,
-            chatId: placeholderMessage.chatId,
-            role: placeholderMessage.role,
-            content: placeholderMessage.content,
-            metadata: placeholderMessage.metadata ?? {},
-            createdAt: placeholderMessage.createdAt,
           },
         });
       } catch (error) {

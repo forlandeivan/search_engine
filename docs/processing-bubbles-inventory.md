@@ -1,21 +1,55 @@
 # Processing bubbles в чате — инвентаризация и план замены
 
-## Где сейчас рисуются “processing-баблы”
-- `client/src/pages/ChatPage.tsx`: при загрузке аудио создаётся placeholder-сообщение ассистента с `metadata.type="transcript"` и `transcriptStatus="processing"`, контент `"Идёт расшифровка аудиозаписи..."`.
-- `client/src/components/chat/ChatMessagesArea.tsx` → `TranscriptCard`: если `metadata.transcriptStatus` в `processing/postprocessing`, рендерился блок «Транскрипция аудиофайла / Подождите, готовим стенограмму».
-- `ChatMessagesArea` (ранее): ветка `isTranscribingBubble` показывала Loader с текстом «Идёт расшифровка ответа» на последнем ассистентском сообщении без контента.
-- Дополнительно: верхний баннер ассистентского действия (`assistantAction.type === "TRANSCRIBING"`) — это не бабл, остаётся как статус ассистента, но не используется для показа процесса транскрипции.
+## ✅ Статус: Выполнено
 
-## План замены (этот эпик)
-- Убрать рендер processing-веток в ленте (transcript placeholders, isTranscribing bubble).
-- Оставить реальные результаты (готовые transcripts/cards) без изменений.
-- Показ ожидания переносим в строку активности `BotActionIndicatorRow` (см. `client/src/components/chat/BotActionIndicatorRow.tsx`), размещённую рядом с input.
-- Управление на этом шаге локальное (в `ChatPage`), далее подключаемся к bot_action событиям.
+Все processing-баблы удалены. Процесс показывается только через `bot_action` → `BotActionIndicatorRow`.
 
-## Где показываем новую строку
-- `ChatPage` над `ChatInput` (внизу экрана чата), вне ленты сообщений, не влияет на прокрутку истории.
+## Где были "processing-баблы" (удалено)
 
-## Чеклист воспроизведения текущих сценариев (до/во время миграции)
-- Загрузка аудио → появляется placeholder transcript с `transcriptStatus=processing` (было баблом, теперь скрываем).
-- Долгая транскрипция → раньше показывался `isTranscribing` bubble «Идёт расшифровка ответа» на последнем сообщении; теперь ожидание должно отображаться строкой активности.
-- Баннер ассистента `TRANSCRIBING` остаётся (информирует о состоянии ассистента, но не рисует bubble в ленте).
+### Фронтенд (удалено):
+- ❌ `client/src/pages/ChatPage.tsx`: создание placeholder-сообщения с `transcriptStatus="processing"` — **удалено**
+- ❌ `client/src/components/chat/ChatMessagesArea.tsx` → `TranscriptCard`: показ "Подождите, готовим стенограмму" для processing — **удалено**
+- ✅ `ChatMessagesArea`: фильтрация processing/postprocessing messages — **работает**
+
+### Бэкенд (удалено):
+- ❌ `server/routes.ts` POST `/api/transcribe`: создание placeholder message — **удалено, заменено на bot_action start**
+
+## Текущее состояние
+
+### Единственный паттерн: bot_action → BotActionIndicatorRow
+- Процесс показывается только через строку активности `BotActionIndicatorRow` (над `ChatInput`)
+- Лента сообщений содержит только реальные сообщения/карточки результатов
+- Готовые transcripts (status="ready") показываются как раньше
+
+### Правила:
+1. **Никаких placeholder messages** в ленте для processing/postprocessing статусов
+2. **BotActionIndicatorRow** показывает активность через `bot_action` события
+3. **Готовые результаты** (transcripts, cards) отображаются в ленте как раньше
+
+## Чеклист проверки
+
+### ✅ Ручная проверка:
+- [x] Загрузка аудио → нет bubble в ленте, есть строка активности
+- [x] Долгая транскрипция → строка активности висит, bubble нет
+- [x] Готовая транскрипция → карточка появляется как раньше
+- [x] Ошибка транскрипции → строка активности показывает ошибку, bubble нет
+- [x] Refresh/reconnect → строка активности восстанавливается
+- [x] История сообщений чистая (нет processing messages)
+
+### ✅ Тесты:
+- [x] `tests/client/chat-messages-area-transcript-placeholder.test.tsx` — проверяет, что processing/postprocessing не рендерятся
+- [x] `tests/transcribe-no-placeholder-message.test.ts` — проверяет, что бэкенд не создаёт placeholder messages
+
+## Регресс-гарды
+
+1. **Фронтенд тест**: processing/postprocessing messages фильтруются и не рендерятся
+2. **Бэкенд тест**: транскрипция не создаёт placeholder messages, только bot_action
+3. **Строковой гард**: комментарии в коде и документации предупреждают о запрете placeholder messages
+
+## Документация
+
+См. также:
+- `docs/bot-action-indicator.md` — описание BotActionIndicatorRow
+- `docs/bot-action-contract.md` — контракт bot_action
+- `docs/bot-action-competition-design.md` — правило конкуренции активностей
+- `docs/processing-bubbles-cleanup-plan.md` — план вычищения (выполнен)
