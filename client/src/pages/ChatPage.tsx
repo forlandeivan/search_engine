@@ -7,6 +7,7 @@ import ChatMessagesArea from "@/components/chat/ChatMessagesArea";
 import ChatInput, { type TranscribePayload } from "@/components/chat/ChatInput";
 import { BotActionIndicatorRow } from "@/components/chat/BotActionIndicatorRow";
 import type { BotAction } from "@shared/schema";
+import { computeCurrentAction, countOtherActiveActions } from "@/lib/botAction";
 import { TranscriptCanvas } from "@/components/chat/TranscriptCanvas";
 import { useChats, useChatMessages, useCreateChat, sendChatMessageLLM } from "@/hooks/useChats";
 import { throwIfResNotOk } from "@/lib/queryClient";
@@ -85,7 +86,8 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
     return null;
   };
-  const [botActionIndicator, setBotActionIndicator] = useState<BotAction | null>(null);
+  // Храним список всех активных actions по chatId (даже если UI показывает одну строку)
+  const [botActionsByChatId, setBotActionsByChatId] = useState<Record<string, BotAction[]>>({});
   const [openTranscript, setOpenTranscript] = useState<{ id: string; tabId?: string | null } | null>(null);
   const botActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -144,10 +146,14 @@ export default function ChatPage({ params }: ChatPageProps) {
     setOpenTranscript(null);
   }, [effectiveChatId]);
 
-  // Initial fetch of active bot_action on mount / chatId change (cold start recovery)
+  // Initial fetch of active bot_actions on mount / chatId change (cold start recovery)
   useEffect(() => {
     if (!workspaceId || !effectiveChatId) {
-      setBotActionIndicator(null);
+      setBotActionsByChatId((prev) => {
+        const next = { ...prev };
+        delete next[effectiveChatId];
+        return next;
+      });
       return;
     }
     let cancelled = false;
@@ -162,9 +168,11 @@ export default function ChatPage({ params }: ChatPageProps) {
         const data = (await response.json()) as { actions: BotAction[] };
         if (cancelled) return;
         // Server returns only processing actions by default, sorted by updatedAt desc
-        // Take the first (latest) one if available
-        const active = data.actions.length > 0 ? data.actions[0] : null;
-        setBotActionIndicator(active);
+        // Сохраняем весь список активных actions
+        setBotActionsByChatId((prev) => ({
+          ...prev,
+          [effectiveChatId]: data.actions,
+        }));
       } catch (error) {
         debugLog("[BotAction] Error fetching active actions", error);
       }
@@ -199,15 +207,35 @@ export default function ChatPage({ params }: ChatPageProps) {
           if (!response.ok) return;
           const data = (await response.json()) as { actions: BotAction[] };
           // Server returns only processing actions by default, sorted by updatedAt desc
-          const active = data.actions.length > 0 ? data.actions[0] : null;
-          setBotActionIndicator((prev) => {
-            // Avoid overwriting newer local state
-            if (prev && active && prev.actionId === active.actionId) {
-              const prevTime = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
-              const activeTime = active.updatedAt ? new Date(active.updatedAt).getTime() : 0;
-              return activeTime >= prevTime ? active : prev;
+          // Обновляем список активных actions, сохраняя более свежие локальные состояния
+          setBotActionsByChatId((prev) => {
+            const current = prev[effectiveChatId] ?? [];
+            const serverActions = data.actions;
+            // Объединяем: берём более свежую версию каждого actionId
+            const merged = new Map<string, BotAction>();
+            // Сначала добавляем локальные
+            for (const action of current) {
+              if (action.status === "processing") {
+                merged.set(action.actionId, action);
+              }
             }
-            return active;
+            // Затем обновляем/добавляем серверные (более свежие побеждают)
+            for (const action of serverActions) {
+              const existing = merged.get(action.actionId);
+              if (!existing) {
+                merged.set(action.actionId, action);
+              } else {
+                const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+                const serverTime = action.updatedAt ? new Date(action.updatedAt).getTime() : 0;
+                if (serverTime >= existingTime) {
+                  merged.set(action.actionId, action);
+                }
+              }
+            }
+            return {
+              ...prev,
+              [effectiveChatId]: Array.from(merged.values()),
+            };
           });
         } catch (error) {
           debugLog("[BotAction] Reconnect recovery failed", error);
@@ -232,56 +260,47 @@ export default function ChatPage({ params }: ChatPageProps) {
           queryClient.invalidateQueries({ queryKey: chatMessagesQueryKey });
         } else if (payload?.type === "bot_action" && payload.action) {
           const action = payload.action;
-          setBotActionIndicator((prev) => {
-            // Anti-duplicate and out-of-order protection
-            if (!prev) {
-              // No current state: accept any action
-              return action;
-            }
+          setBotActionsByChatId((prev) => {
+            const chatActions = prev[action.chatId] ?? [];
+            const existingIndex = chatActions.findIndex((a) => a.actionId === action.actionId);
 
-            // Different actionId: only accept if newer, and don't let old terminal hide new processing
-            if (action.actionId !== prev.actionId) {
-              const prevTime = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
+            // Out-of-order protection: проверяем updatedAt
+            if (existingIndex >= 0) {
+              const existing = chatActions[existingIndex];
+              const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
               const actionTime = action.updatedAt ? new Date(action.updatedAt).getTime() : 0;
 
-              // If current is processing and incoming is terminal (done/error) for different actionId
-              // Only accept if incoming is newer (shouldn't happen, but protect against it)
-              if (prev.status === "processing" && (action.status === "done" || action.status === "error")) {
-                // Don't let old terminal update hide new processing
-                if (actionTime < prevTime) {
-                  return prev; // Ignore older terminal update
-                }
+              // Игнорируем более старые события для того же actionId
+              if (actionTime < existingTime) {
+                return prev; // Игнорируем out-of-order
               }
 
-              // Accept if newer or if current is terminal and incoming is processing (new action)
-              if (actionTime > prevTime || (prev.status !== "processing" && action.status === "processing")) {
-                return action;
+              // Проверка на дубликат (избегаем лишних re-render)
+              if (
+                existing.status === action.status &&
+                existingTime === actionTime &&
+                existing.displayText === action.displayText &&
+                JSON.stringify(existing.payload) === JSON.stringify(action.payload)
+              ) {
+                return prev; // Тот же объект, не обновляем
               }
-
-              return prev; // Keep current if incoming is older
             }
 
-            // Same actionId: apply only if incoming.updatedAt >= current.updatedAt
-            const prevTime = prev.updatedAt ? new Date(prev.updatedAt).getTime() : 0;
-            const actionTime = action.updatedAt ? new Date(action.updatedAt).getTime() : 0;
-
-            if (actionTime >= prevTime) {
-              // Check for exact duplicates (same actionId, status, updatedAt) to avoid unnecessary re-renders
-              const isDuplicate =
-                prev.status === action.status &&
-                prevTime === actionTime &&
-                prev.displayText === action.displayText &&
-                JSON.stringify(prev.payload) === JSON.stringify(action.payload);
-
-              if (isDuplicate) {
-                return prev; // Return same reference to avoid re-render
-              }
-
-              return action; // Accept newer or same timestamp
+            // Обновляем или добавляем action
+            const next = [...chatActions];
+            if (existingIndex >= 0) {
+              next[existingIndex] = action;
+            } else {
+              next.push(action);
             }
 
-            // Ignore older event for same actionId
-            return prev;
+            // Удаляем из списка активных, если action завершён (done/error)
+            const filtered = next.filter((a) => a.status === "processing" || a.actionId === action.actionId);
+
+            return {
+              ...prev,
+              [action.chatId]: filtered,
+            };
           });
         }
       } catch (error) {
@@ -559,18 +578,42 @@ export default function ChatPage({ params }: ChatPageProps) {
           botActionTimerRef.current = null;
         }
         const targetChat = (typeof input !== "string" && input.chatId) || effectiveChatId || "local-chat";
-        setBotActionIndicator({
+        const actionId = (typeof input !== "string" && input.operationId) || `local-${Date.now()}`;
+        const action: BotAction = {
           workspaceId: workspaceId || "local-workspace",
           chatId: targetChat || "local-chat",
-          actionId: (typeof input !== "string" && input.operationId) || `local-${Date.now()}`,
+          actionId,
           actionType,
           status,
           displayText: text,
           updatedAt: new Date().toISOString(),
+        };
+        setBotActionsByChatId((prev) => {
+          const chatActions = prev[action.chatId] ?? [];
+          const existingIndex = chatActions.findIndex((a) => a.actionId === actionId);
+          const next = [...chatActions];
+          if (existingIndex >= 0) {
+            next[existingIndex] = action;
+          } else {
+            next.push(action);
+          }
+          // Удаляем из списка активных, если action завершён
+          const filtered = next.filter((a) => a.status === "processing" || a.actionId === actionId);
+          return {
+            ...prev,
+            [action.chatId]: filtered,
+          };
         });
         if (status === "done" || status === "error") {
           botActionTimerRef.current = setTimeout(() => {
-            setBotActionIndicator(null);
+            setBotActionsByChatId((prev) => {
+              const chatActions = prev[action.chatId] ?? [];
+              const filtered = chatActions.filter((a) => a.actionId !== actionId);
+              return {
+                ...prev,
+                [action.chatId]: filtered,
+              };
+            });
           }, 1800);
         }
       };
@@ -585,7 +628,15 @@ export default function ChatPage({ params }: ChatPageProps) {
 
       if (typeof input === "string") {
         if (!input.startsWith("__PENDING_OPERATION:")) {
-          setBotActionIndicator(null);
+          // Очищаем локальные actions для этого чата при ошибке
+          const targetChat = effectiveChatId || "local-chat";
+          setBotActionsByChatId((prev) => {
+            const next = { ...prev };
+            if (next[targetChat]) {
+              next[targetChat] = next[targetChat].filter((a) => !a.actionId.startsWith("local-"));
+            }
+            return next;
+          });
           return;
         }
         const parts = input.substring("__PENDING_OPERATION:".length).split(":");
@@ -644,7 +695,15 @@ export default function ChatPage({ params }: ChatPageProps) {
       }
 
       if (!operationId) {
-        setBotActionIndicator(null);
+        // Очищаем локальные actions для этого чата при ошибке
+        const targetChat = effectiveChatId || "local-chat";
+        setBotActionsByChatId((prev) => {
+          const next = { ...prev };
+          if (next[targetChat]) {
+            next[targetChat] = next[targetChat].filter((a) => !a.actionId.startsWith("local-"));
+          }
+          return next;
+        });
         return;
       }
 
@@ -823,16 +882,45 @@ export default function ChatPage({ params }: ChatPageProps) {
     };
   }, []);
 
+  // Вычисляем currentAction для текущего чата
+  const currentBotAction = useMemo(() => {
+    if (!effectiveChatId) return null;
+    const allActions = Object.values(botActionsByChatId).flat();
+    return computeCurrentAction(allActions, effectiveChatId);
+  }, [botActionsByChatId, effectiveChatId]);
+
+  // Подсчитываем количество других активных actions (для опционального счётчика "+N")
+  const otherActiveCount = useMemo(() => {
+    if (!effectiveChatId || !currentBotAction) return 0;
+    const allActions = Object.values(botActionsByChatId).flat();
+    return countOtherActiveActions(allActions, effectiveChatId, currentBotAction.actionId);
+  }, [botActionsByChatId, effectiveChatId, currentBotAction]);
+
   useEffect(() => {
     if (!isDev) return;
-    (window as typeof window & { __setMockBotActionIndicator?: (payload: typeof botActionIndicator) => void }).__setMockBotActionIndicator =
-      (payload) => setBotActionIndicator(payload);
+    (window as typeof window & { __setMockBotActionIndicator?: (payload: BotAction | null) => void }).__setMockBotActionIndicator =
+      (payload) => {
+        if (!payload || !effectiveChatId) {
+          setBotActionsByChatId((prev) => {
+            const next = { ...prev };
+            if (effectiveChatId) {
+              delete next[effectiveChatId];
+            }
+            return next;
+          });
+          return;
+        }
+        setBotActionsByChatId((prev) => ({
+          ...prev,
+          [payload.chatId]: [payload],
+        }));
+      };
     return () => {
       if ((window as any).__setMockBotActionIndicator) {
         delete (window as any).__setMockBotActionIndicator;
       }
     };
-  }, [isDev]);
+  }, [isDev, effectiveChatId]);
 
   return (
     <div className="flex h-full overflow-hidden" data-testid="chat-page">
@@ -898,7 +986,7 @@ export default function ChatPage({ params }: ChatPageProps) {
               readOnlyReason={readOnlyReason}
             />
           <div className="shrink-0">
-            <BotActionIndicatorRow action={botActionIndicator} />
+            <BotActionIndicatorRow action={currentBotAction} otherActiveCount={otherActiveCount > 0 ? otherActiveCount : undefined} />
           <ChatInput
             onSend={handleSend}
             onTranscribe={handleTranscription}

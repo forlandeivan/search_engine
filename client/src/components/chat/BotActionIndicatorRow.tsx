@@ -7,11 +7,12 @@ import { resolveBotActionText } from "@/lib/botAction";
 type BotActionIndicatorRowProps = {
   action: BotAction | null;
   fallbackText?: string;
+  otherActiveCount?: number; // Количество других активных actions (для счётчика "+N")
 };
 
 const AUTO_HIDE_MS = 1800;
 
-export function BotActionIndicatorRow({ action, fallbackText }: BotActionIndicatorRowProps) {
+export function BotActionIndicatorRow({ action, fallbackText, otherActiveCount }: BotActionIndicatorRowProps) {
   const [hidden, setHidden] = useState(false);
 
   const text = useMemo(() => resolveBotActionText(action) ?? fallbackText ?? null, [action, fallbackText]);
@@ -48,6 +49,11 @@ export function BotActionIndicatorRow({ action, fallbackText }: BotActionIndicat
     >
       {icon}
       <span className="truncate">{text}</span>
+      {otherActiveCount !== undefined && otherActiveCount > 0 && (
+        <span className="ml-1 shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+          +{otherActiveCount}
+        </span>
+      )}
     </div>
   );
 }

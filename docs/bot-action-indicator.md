@@ -29,7 +29,9 @@ type BotActionEvent = {
 };
 ```
 - Событие приходит как отдельный `bot_action`, фронт не создаёт сообщение/карточку.
-- Для одного `chatId` показываем только последний action по `updatedAt`; `actionId` обязателен для start/update.
+- Для одного `chatId` может быть несколько активных `processing` actions одновременно (разные `actionId`).
+- UI показывает одну строку — самую "свежую" активность (по `updatedAt`), остальные остаются в состоянии.
+- Подробнее: см. `docs/bot-action-competition-design.md`.
 
 ## actionType и тексты в UI
 - `transcribe_audio` → «Готовим стенограмму…»
@@ -43,8 +45,10 @@ type BotActionEvent = {
 - Отображение:
   - `processing` — строка со спиннером + текст по `actionType`.
   - `done`/`error` — короткое подтверждение «Готово»/«Ошибка» ~1.5–2 c, затем скрываем.
-- Состояние: `currentBotAction` для активного `chatId` (store/React Query), обновляется из bot_action событий (SSE) или через GET `/api/chat/actions?workspaceId&chatId` (polling fallback).
-- Новый action (по `actionId` или более свежему `updatedAt`) замещает старый; после скрытия state очищаем.
+  - Опционально: счётчик "+N" если активных actions больше одного.
+- Состояние: храним список всех активных `processing` actions по `chatId`, вычисляем `currentAction` селектором по правилу конкуренции (самый свежий `updatedAt`).
+- Обновляется из bot_action событий (SSE) или через GET `/api/chat/actions?workspaceId&chatId` (polling fallback).
+- Правило конкуренции: показываем одну строку — самую "свежую" активность; остальные остаются в состоянии для переключения при завершении текущей.
 
 ## No-code правило (маппинг типов входа → actionType)
 - `audio/*` → `transcribe_audio`

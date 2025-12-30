@@ -46,9 +46,10 @@ type BotAction = {
 - UI спиннер крутится сам, серверное состояние хранится в БД.
 
 ### Восстановление после refresh/reconnect
-- **Cold start recovery**: при монтировании чата фронт делает `GET /api/chat/actions?workspaceId&chatId` и восстанавливает активный processing.
+- **Cold start recovery**: при монтировании чата фронт делает `GET /api/chat/actions?workspaceId&chatId` и восстанавливает список активных processing.
 - **Reconnect recovery**: при переподключении SSE фронт повторяет GET, чтобы "догнать" пропущенные update.
 - GET возвращает список активных `processing` actions, отсортированных по `updatedAt desc`.
+- Фронт хранит весь список активных actions и вычисляет текущую по правилу конкуренции (см. `docs/bot-action-competition-design.md`).
 
 ### Идемпотентность и out-of-order
 
