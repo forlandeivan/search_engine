@@ -4,12 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Copy, ExternalLink, Sparkles, Workflow } from "lucide-react";
+import { Copy, ExternalLink, Sparkles, Workflow, Activity } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const FALLBACK_EXTERNAL_API_HOST = "https://aiknowledge.ru";
 
-type DocId = "vector-search" | "rag-search" | "chat-message" | "transcript-callback" | "card-message";
+type DocId = "vector-search" | "rag-search" | "chat-message" | "transcript-callback" | "card-message" | "bot-action";
 
 type RequestField = {
   name: string;
@@ -355,6 +355,146 @@ const DOC_SECTIONS: DocSection[] = [
       "Контент открытки подтягивается через GET /api/cards/{cardId} и затем /api/transcripts/{id} (Bearer пользователя).",
       "Callback-токен/ключ проверяется по workspace/skill; без него вернётся 401/403.",
       "При передаче transcriptId бэкенд проверяет существование и принадлежность чату/workspace; создайте его заранее через callback/transcripts.",
+    ],
+  },
+  {
+    id: "bot-action",
+    title: "Индикатор активности (bot_action)",
+    description: "Покажите пользователю, что идёт фоновая обработка (транскрибация, генерация и т.д.) через строку активности вне ленты сообщений.",
+    icon: Activity,
+    method: "POST",
+    endpointPath: "/api/no-code/callback/actions/start",
+    steps: [
+      "Получите callback-токен или callbackKey навыка из настроек no-code (как в других callback endpoints).",
+      "Для начала активности отправьте POST /api/no-code/callback/actions/start с Authorization: Bearer <callbackToken> или ?callbackKey=<ключ>.",
+      "Передайте workspaceId, chatId, actionId (уникальный UUID), actionType (transcribe_audio, summarize, generate_image, process_file) и опционально displayText.",
+      "После завершения задачи отправьте POST /api/no-code/callback/actions/update с тем же actionId и status: \"done\" или \"error\".",
+      "Индикатор автоматически появится в чате при start и скроется при update — без создания сообщений в ленте.",
+    ],
+    requestFields: [
+      {
+        name: "workspaceId",
+        type: "string",
+        required: true,
+        description: "Рабочее пространство навыка (UUID). Обязателен для no-code callbacks.",
+      },
+      {
+        name: "chatId",
+        type: "string",
+        required: true,
+        description: "Чат, в котором показывается индикатор активности.",
+      },
+      {
+        name: "actionId",
+        type: "string",
+        required: true,
+        description: "Уникальный идентификатор операции (UUID). Используется для корреляции start/update. Генерируйте новый UUID для каждой новой операции.",
+      },
+      {
+        name: "actionType",
+        type: "\"transcribe_audio\" | \"summarize\" | \"generate_image\" | \"process_file\" | string",
+        required: true,
+        description: "Тип действия. Поддерживаются: transcribe_audio (транскрибация), summarize (саммари), generate_image (генерация изображения), process_file (обработка файла). Можно передать произвольную строку для forward-compat.",
+      },
+      {
+        name: "displayText",
+        type: "string",
+        required: false,
+        description: "Кастомный текст для индикатора (макс. ~300 символов, plain text). Если не указан, используется дефолтный текст по actionType. Приоритет над дефолтом.",
+      },
+      {
+        name: "payload",
+        type: "object",
+        required: false,
+        description: "Дополнительные данные в формате JSON (например, transcriptId, fileName). Сохраняются в action и доступны при update.",
+      },
+      {
+        name: "status",
+        type: "\"done\" | \"error\"",
+        required: false,
+        description: "Статус завершения (только для update, не передавайте в start). Используйте \"done\" при успешном завершении, \"error\" при ошибке. В start статус автоматически устанавливается в \"processing\".",
+      },
+    ],
+    requestExample: (host) => `# 1. Start (начало активности)
+POST ${host}/api/no-code/callback/actions/start
+Authorization: Bearer <callback_token>
+Content-Type: application/json
+
+{
+  "workspaceId": "5aededcf-84fc-4b39-ba3d-28a338ba5107",
+  "chatId": "ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1",
+  "actionId": "550e8400-e29b-41d4-a716-446655440000",
+  "actionType": "transcribe_audio",
+  "displayText": "Готовим стенограмму…",
+  "payload": {
+    "transcriptId": "transcript-123",
+    "fileName": "audio.mp3"
+  }
+}
+
+# 2. Update (завершение активности)
+POST ${host}/api/no-code/callback/actions/update
+Authorization: Bearer <callback_token>
+Content-Type: application/json
+
+{
+  "workspaceId": "5aededcf-84fc-4b39-ba3d-28a338ba5107",
+  "chatId": "ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1",
+  "actionId": "550e8400-e29b-41d4-a716-446655440000",
+  "actionType": "transcribe_audio",
+  "status": "done",
+  "payload": {
+    "transcriptId": "transcript-456",
+    "result": "success"
+  }
+}
+
+# Альтернатива с callbackKey:
+# POST ${host}/api/no-code/callback/actions/start?callbackKey=<ваш_callback_key>`,
+    responseExample: `# Ответ на start (200 OK)
+{
+  "action": {
+    "workspaceId": "5aededcf-84fc-4b39-ba3d-28a338ba5107",
+    "chatId": "ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1",
+    "actionId": "550e8400-e29b-41d4-a716-446655440000",
+    "actionType": "transcribe_audio",
+    "status": "processing",
+    "displayText": "Готовим стенограмму…",
+    "payload": {
+      "transcriptId": "transcript-123",
+      "fileName": "audio.mp3"
+    },
+    "createdAt": "2025-01-15T10:00:00.000Z",
+    "updatedAt": "2025-01-15T10:00:00.000Z"
+  }
+}
+
+# Ответ на update (200 OK)
+{
+  "action": {
+    "workspaceId": "5aededcf-84fc-4b39-ba3d-28a338ba5107",
+    "chatId": "ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1",
+    "actionId": "550e8400-e29b-41d4-a716-446655440000",
+    "actionType": "transcribe_audio",
+    "status": "done",
+    "displayText": "Готовим стенограмму…",
+    "payload": {
+      "transcriptId": "transcript-456",
+      "result": "success"
+    },
+    "createdAt": "2025-01-15T10:00:00.000Z",
+    "updatedAt": "2025-01-15T10:05:00.000Z"
+  }
+}`,
+    tips: [
+      "bot_action НЕ создаёт сообщение в ленте — это отдельная строка активности над лентой с спиннером и текстом.",
+      "Вызовите start один раз в начале задачи, затем update(done|error) один раз в конце. НЕ переотправляйте start каждые 5 секунд (это не heartbeat-модель).",
+      "Action может висеть в processing сколько нужно (хоть 30 минут). UI крутит спиннер сам, серверное состояние хранится в БД.",
+      "Генерируйте новый UUID для actionId при каждой новой операции. Не переиспользуйте один actionId для разных задач.",
+      "Если displayText не указан, используется дефолтный текст по actionType: transcribe_audio → \"Готовим стенограмму…\", summarize → \"Готовим саммари…\" и т.д.",
+      "Если update вызван до start (out-of-order), вернётся 404. Всегда вызывайте start перед update.",
+      "Идемпотентность: повторные start/update с тем же actionId безопасны и не создают дублей. Если action уже done/error, повторный start не откатывает назад.",
+      "Для восстановления индикатора после refresh фронт делает GET /api/chat/actions?workspaceId=...&chatId=...&status=processing (требует user auth, не callback token).",
     ],
   },
 ];
