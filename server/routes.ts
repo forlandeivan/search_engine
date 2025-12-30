@@ -134,7 +134,9 @@ import { buildContextPack } from "./context-pack";
 import {
   assistantActionTypes,
   chatCardTypes,
+  transcriptStatuses,
   type AssistantActionType,
+  type TranscriptStatus,
 } from "@shared/schema";
 type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
 const NO_CODE_FLOW_MESSAGES: Record<NoCodeFlowFailureReason, string> = {
@@ -7291,6 +7293,38 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     });
 
+  type TranscriptStatusEnum = (typeof transcriptStatuses)[number];
+  const transcriptStatusSchema = z.enum(
+    transcriptStatuses as [TranscriptStatusEnum, ...TranscriptStatusEnum[]],
+  );
+  const TRANSCRIPT_MAX_LENGTH = 500_000;
+
+  const noCodeCallbackTranscriptCreateSchema = z.object({
+    workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
+    chatId: z.string().trim().min(1, "Укажите чат"),
+    fullText: z
+      .string()
+      .trim()
+      .min(1, "fullText обязателен")
+      .max(TRANSCRIPT_MAX_LENGTH, `fullText слишком длинный (макс ${TRANSCRIPT_MAX_LENGTH} символов)`),
+    title: z.string().trim().max(500).optional(),
+    previewText: z.string().trim().max(20000).optional(),
+    status: transcriptStatusSchema.optional(),
+  });
+
+  const noCodeCallbackTranscriptUpdateSchema = z.object({
+    workspaceId: z.string().trim().min(1, "Укажите рабочее пространство"),
+    chatId: z.string().trim().min(1, "Укажите чат"),
+    fullText: z
+      .string()
+      .trim()
+      .min(1, "fullText обязателен")
+      .max(TRANSCRIPT_MAX_LENGTH, `fullText слишком длинный (макс ${TRANSCRIPT_MAX_LENGTH} символов)`),
+    title: z.string().trim().max(500).optional(),
+    previewText: z.string().trim().max(20000).optional(),
+    status: transcriptStatusSchema.optional(),
+  });
+
   const assistantActionTypeSchema = z
     .string()
     .trim()
@@ -12686,6 +12720,143 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  app.post("/api/no-code/callback/transcripts", async (req, res, next) => {
+    try {
+      const payload = noCodeCallbackTranscriptCreateSchema.parse(req.body ?? {});
+      const authorizationHeader = Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization;
+      let callbackToken: string | null = null;
+      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
+        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
+        if (scheme && scheme.toLowerCase() === "bearer") {
+          const candidate = rest.join(" ").trim();
+          callbackToken = candidate.length > 0 ? candidate : null;
+        }
+      }
+
+      const { id: workspaceId } = getRequestWorkspace(req) as { id: string };
+      if (payload.workspaceId && payload.workspaceId !== workspaceId) {
+        throw new SkillServiceError("Invalid workspaceId", 400);
+      }
+
+      const callbackKey =
+        typeof req.query?.callbackKey === "string" ? req.query.callbackKey.trim() : "";
+      if (callbackKey) {
+        await verifyNoCodeCallbackKey({ workspaceId, callbackKey });
+      } else {
+        await verifyNoCodeCallbackToken({
+          workspaceId,
+          chatId: payload.chatId,
+          token: callbackToken,
+        });
+      }
+
+      const chat = await storage.getChatSessionById(payload.chatId);
+      if (!chat || chat.workspaceId !== workspaceId) {
+        throw new SkillServiceError("Чат не найден или принадлежит другому workspace", 404, "CHAT_NOT_FOUND");
+      }
+
+      const fullText = payload.fullText.trim();
+      const previewText = (payload.previewText ?? buildTranscriptPreview(fullText, 60)).trim();
+      const transcript = await storage.createTranscript({
+        workspaceId,
+        chatId: payload.chatId,
+        status: payload.status ?? ("ready" as TranscriptStatus),
+        title: payload.title ?? null,
+        previewText: previewText || null,
+        fullText,
+        sourceFileId: null,
+      });
+
+      return res.status(201).json({ transcript });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      if (error instanceof SkillServiceError) {
+        return res
+          .status(error.status)
+          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
+      }
+      next(error);
+    }
+  });
+
+  app.patch("/api/no-code/callback/transcripts/:transcriptId", async (req, res, next) => {
+    try {
+      const payload = noCodeCallbackTranscriptUpdateSchema.parse(req.body ?? {});
+      const authorizationHeader = Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization;
+      let callbackToken: string | null = null;
+      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
+        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
+        if (scheme && scheme.toLowerCase() === "bearer") {
+          const candidate = rest.join(" ").trim();
+          callbackToken = candidate.length > 0 ? candidate : null;
+        }
+      }
+
+      const { id: workspaceId } = getRequestWorkspace(req) as { id: string };
+      if (payload.workspaceId && payload.workspaceId !== workspaceId) {
+        throw new SkillServiceError("Invalid workspaceId", 400);
+      }
+
+      const callbackKey =
+        typeof req.query?.callbackKey === "string" ? req.query.callbackKey.trim() : "";
+      if (callbackKey) {
+        await verifyNoCodeCallbackKey({ workspaceId, callbackKey });
+      } else {
+        await verifyNoCodeCallbackToken({
+          workspaceId,
+          chatId: payload.chatId,
+          token: callbackToken,
+        });
+      }
+
+      const transcriptId = req.params.transcriptId;
+      const transcript = await storage.getTranscriptById?.(transcriptId);
+      if (!transcript || transcript.workspaceId !== workspaceId) {
+        throw new SkillServiceError("Стенограмма не найдена", 404, "TRANSCRIPT_NOT_FOUND");
+      }
+      if (transcript.chatId !== payload.chatId) {
+        throw new SkillServiceError("Стенограмма принадлежит другому чату", 400, "CHAT_MISMATCH");
+      }
+
+      const fullText = payload.fullText.trim();
+      const previewText = (payload.previewText ?? buildTranscriptPreview(fullText, 60)).trim();
+      const updated = await storage.updateTranscript(transcriptId, {
+        fullText,
+        previewText: previewText || null,
+        title: payload.title ?? transcript.title,
+        status: payload.status ?? transcript.status,
+      });
+
+      if (!updated) {
+        return res.status(404).json({ message: "Стенограмма не найдена" });
+      }
+
+      return res.json({ transcript: updated });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+      }
+      if (error instanceof SkillServiceError) {
+        return res
+          .status(error.status)
+          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
+      }
+      if (error instanceof ChatServiceError) {
+        return res.status(error.status).json(buildChatServiceErrorPayload(error));
+      }
+      next(error);
+    }
+  });
+
   app.post("/api/no-code/callback/messages", async (req, res, next) => {
     try {
       const payload = noCodeCallbackCreateMessageSchema.parse(req.body ?? {});
@@ -12720,6 +12891,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           chatId: payload.chatId,
           token: callbackToken,
         });
+      }
+
+      const transcriptId =
+        typeof payload.card?.transcriptId === "string" && payload.card.transcriptId.trim().length > 0
+          ? payload.card.transcriptId.trim()
+          : null;
+      if (transcriptId) {
+        const transcript = await storage.getTranscriptById?.(transcriptId);
+        if (!transcript || transcript.workspaceId !== workspaceId || transcript.chatId !== payload.chatId) {
+          throw new SkillServiceError("Некорректный transcriptId", 400, "TRANSCRIPT_NOT_FOUND");
+        }
       }
 
       let cardId: string | null = null;

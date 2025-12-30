@@ -21,6 +21,8 @@
 - `POST /api/chat/sessions/:chatId/messages/file` — загрузка файла (multipart/form-data, поле `file`, workspaceId в body/query). Возвращает message `{ type: "file", file: { attachmentId, filename, mimeType, sizeBytes, downloadUrl, expiresAt } }`.
 - `GET /api/chat/messages/:messageId/file?workspaceId=...` — скачать файл сообщения (auth, workspace scope). downloadUrl из ответа — presigned с TTL `ATTACHMENT_URL_TTL_SECONDS` (по умолчанию 15 минут).
 - No-code входящие callbacks:
+  - `POST /api/no-code/callback/transcripts` body `{ workspaceId, chatId, fullText, title?, previewText?, status? }` + `Authorization: Bearer <callback_token>` или `?callbackKey=...` (лимит fullText 500k). Создаёт запись стенограммы.
+  - `PATCH /api/no-code/callback/transcripts/:transcriptId` body `{ workspaceId, chatId, fullText, title?, previewText?, status? }` + bearer/ключ — обновляет стенограмму.
   - `POST /api/no-code/callback/messages` body `{ workspaceId, chatId, role, content|text, triggerMessageId?, metadata? }` + `Authorization: Bearer <callback_token>`.
   - `POST /api/no-code/callback/stream` body `{ workspaceId, chatId, triggerMessageId, streamId, chunkId, delta|text, seq?, isFinal? }` + bearer-токен навыка.
   - `POST /api/no-code/callback/assistant-action` body `{ workspaceId, chatId, actionType, actionText?, triggerMessageId?, occurredAt? }` + bearer-токен навыка.

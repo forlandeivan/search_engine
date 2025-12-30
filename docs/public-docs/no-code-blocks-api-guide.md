@@ -42,7 +42,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 - Assistant Action
 - ASR/Transcription
 - LLM stream (через chat message)
-- No-code callbacks (message/stream/action)
+- No-code callbacks (transcript/message/stream/action)
 
 ## Chats & Messages
 ### Создать чат
@@ -97,15 +97,17 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Callback: `POST /api/no-code/callback/assistant-action` (Bearer callback токен навыка) с `actionType` (ANALYZING|TRANSCRIBING|TYPING, uppercase), `actionText?`, `triggerMessageId?`.
 - Выдача: поле `currentAssistantAction` в `GET /api/chat/sessions`. Гасится на первом результате (message/stream).
 
-## No-code callbacks (messages/stream)
-- Создать сообщение: `POST /api/no-code/callback/messages` с `role`, `text|content`, `triggerMessageId?`, `metadata?`; требует callback Bearer.
+## No-code callbacks (transcript/message/stream)
+- Сохранить стенограмму: `POST /api/no-code/callback/transcripts` body `{ workspaceId, chatId, fullText, title?, previewText?, status? }` + bearer callback-токен или `?callbackKey=`. Лимит `fullText` — 500 000 символов, статус по умолчанию `ready`. Ответ: `{ transcript: { id, ... } }`.
+- Обновить стенограмму: `PATCH /api/no-code/callback/transcripts/{transcriptId}` с теми же полями (fullText обязателен). Проверяется принадлежность чат/воркспейсу.
+- Создать сообщение: `POST /api/no-code/callback/messages` с `role`, `text|content`, `triggerMessageId?`, `metadata?`; требует callback Bearer/ключ. Для карточек нужно передавать `card.type="transcript"` + `card.transcriptId` на существующую стенограмму (иначе 400).
 - Стрим: `POST /api/no-code/callback/stream` с `streamId`, `chunkId`, `delta|text`, `isFinal?`, `triggerMessageId`; идемпотентность по chunkId.
 - Исходящее событие: webhook `message.created` содержит `contextPack` (history в пределах `contextInputLimit` навыка).
 
 ## ASR/Transcription
 - Пуллинг статуса: `GET /api/chat/transcribe/operations/{operationId}`.
 - Завершение: `POST /api/chat/transcribe/complete/{operationId}` (UI вызывает после готовности).
-- Старт/загрузка аудио — в UI (отдельный upload endpoint не экспонирован в routes.ts; требуется уточнение). Статусы: processing/postprocessing/ready/failed (по metadata сообщений).
+- Старт/загрузка аудио — в UI (отдельный upload endpoint не экспонирован в routes.ts; требуется уточнение). Статусы: processing/postprocessing/ready/failed (по metadata сообщений). Для сторонних сценариев можно писать готовый текст сразу через `POST /api/no-code/callback/transcripts`.
 
 ## LLM/Embeddings/RAG
 - LLM: через `/api/chat/sessions/{chatId}/messages/llm` (stream SSE). Ошибки: 400 валидация, 403 архив/квоты, 500 внутренняя.

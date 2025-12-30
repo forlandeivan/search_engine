@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 
 const FALLBACK_EXTERNAL_API_HOST = "https://aiknowledge.ru";
 
-type DocId = "vector-search" | "rag-search" | "chat-message" | "card-message";
+type DocId = "vector-search" | "rag-search" | "chat-message" | "transcript-callback" | "card-message";
 
 type RequestField = {
   name: string;
@@ -266,6 +266,49 @@ const DOC_SECTIONS: DocSection[] = [
     ],
   },
   {
+    id: "transcript-callback",
+    title: "Сохранение транскрипта (callback)",
+    description: "Создайте или обновите стенограмму по callback-токену/ключу, чтобы потом отдать её через карточку чата.",
+    icon: Sparkles,
+    method: "POST",
+    endpointPath: "/api/no-code/callback/transcripts",
+    steps: [
+      "Получите callbackKey или callbackToken навыка (как в примере выше).",
+      "Сформируйте POST /api/no-code/callback/transcripts с Authorization: Bearer <callbackToken> или ?callbackKey=<ключ>.",
+      "Передайте workspaceId, chatId и fullText (до 500 000 символов); title, previewText и status (ready|processing|postprocessing|failed|auto_action_failed) — опциональны.",
+      "Сохраните transcriptId из ответа — его нужно передавать в карточке чата или открывать через /api/transcripts/{id}.",
+      "Чтобы обновить текст, отправьте PATCH /api/no-code/callback/transcripts/{id} с тем же токеном/ключом и новым fullText.",
+    ],
+    requestFields: [
+      { name: "workspaceId", type: "string", required: true, description: "Рабочее пространство навыка (UUID)." },
+      { name: "chatId", type: "string", required: true, description: "Чат, которому принадлежит транскрипт." },
+      { name: "fullText", type: "string", required: true, description: "Полный текст стенограммы (max 500000 символов, trim)." },
+      { name: "title", type: "string", required: false, description: "Заголовок стенограммы (опционально)." },
+      { name: "previewText", type: "string", required: false, description: "Превью для ленты; если не указано, берётся из fullText." },
+      { name: "status", type: "\"ready\" | \"processing\" | \"postprocessing\" | \"failed\" | \"auto_action_failed\"", required: false, description: "Статус стенограммы, по умолчанию ready." },
+    ],
+    requestExample: (host) => `POST ${host}/api/no-code/callback/transcripts\nAuthorization: Bearer <callback_token>\nContent-Type: application/json\n\n{\n  \"workspaceId\": \"5aededcf-84fc-4b39-ba3d-28a338ba5107\",\n  \"chatId\": \"ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1\",\n  \"title\": \"Стенограмма звонка\",\n  \"fullText\": \"Полный текст звонка...\",\n  \"previewText\": \"Краткое резюме беседы...\"\n}\n\n# Альтернатива с callbackKey:\n# POST ${host}/api/no-code/callback/transcripts?callbackKey=<ваш_callback_key>`,
+    responseExample: `{
+  "transcript": {
+    "id": "b7a1c1c8-1234-4567-89ab-00f0a0a0a0a0",
+    "workspaceId": "5aededcf-84fc-4b39-ba3d-28a338ba5107",
+    "chatId": "ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1",
+    "status": "ready",
+    "title": "Стенограмма звонка",
+    "previewText": "Краткое резюме беседы...",
+    "fullText": "Полный текст звонка...",
+    "createdAt": "2025-12-25T10:00:00.000Z",
+    "updatedAt": "2025-12-25T10:00:00.000Z"
+  }
+}`,
+    tips: [
+      "Если previewText не передан, бэкенд сформирует превью из первых ~60 слов fullText.",
+      "Максимальная длина fullText — 500 000 символов; больше вернёт 400.",
+      "PATCH /api/no-code/callback/transcripts/{id} принимает те же поля (fullText обязателен) и валидирует принадлежность чату/workspace.",
+      "Создавайте транскрипт перед отправкой карточки с transcriptId, иначе карточка вернёт 400.",
+    ],
+  },
+  {
     id: "card-message",
     title: "Карточка в чате (no-code callback)",
     description: "Создайте сообщение типа card с превью и контентом транскрипта, чтобы открыть его в холсте.",
@@ -273,9 +316,10 @@ const DOC_SECTIONS: DocSection[] = [
     method: "POST",
     endpointPath: "/api/no-code/callback/messages",
     steps: [
+      "Сохраните стенограмму через POST /api/no-code/callback/transcripts и получите transcriptId.",
       "Получите callback-токен или ключ no-code навыка (по инструкции интеграции).",
       "Сформируйте POST на /api/no-code/callback/messages, добавьте Authorization: Bearer <callbackToken>.",
-      "Передайте workspaceId, chatId, role и блок card { type, title?, previewText?, transcriptId? }.",
+      "Передайте workspaceId, chatId, role и блок card { type, title?, previewText?, transcriptId }.",
       "Отправьте запрос — в ответ придёт сообщение с messageType=card и cardId.",
       "Для открытия контента загрузите сообщение ленты и вызовите GET /api/cards/{cardId}, затем /api/transcripts/{id}.",
     ],
@@ -286,7 +330,7 @@ const DOC_SECTIONS: DocSection[] = [
       { name: "card.type", type: "string", required: true, description: "Тип карточки. Сейчас используется \"transcript\"." },
       { name: "card.title", type: "string", required: false, description: "Заголовок превью (опционально)." },
       { name: "card.previewText", type: "string", required: false, description: "Краткий текст превью для ленты." },
-      { name: "card.transcriptId", type: "string", required: false, description: "ID транскрипта для кнопки «Читать целиком»." },
+      { name: "card.transcriptId", type: "string", required: false, description: "ID транскрипта для кнопки «Читать целиком» (должен существовать)." },
       { name: "metadata", type: "object", required: false, description: "Любые дополнительные поля (сохраняются в metadata)." },
     ],
     requestExample: (host) => `POST ${host}/api/no-code/callback/messages\nAuthorization: Bearer <callback_token>\nContent-Type: application/json\n\n{\n  \"workspaceId\": \"5aededcf-84fc-4b39-ba3d-28a338ba5107\",\n  \"chatId\": \"ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1\",\n  \"role\": \"assistant\",\n  \"card\": {\n    \"type\": \"transcript\",\n    \"title\": \"Стенограмма звонка\",\n    \"previewText\": \"Краткое резюме беседы...\",\n    \"transcriptId\": \"b7a1c1c8-1234-4567-89ab-00f0a0a0a0a0\"\n  },\n  \"metadata\": {\n    \"defaultTabId\": \"transcript\"\n  }\n}`,
@@ -310,6 +354,7 @@ const DOC_SECTIONS: DocSection[] = [
       "card.type сейчас поддерживает транскрипты; для других типов используйте свою валидацию на бэкенде.",
       "Контент открытки подтягивается через GET /api/cards/{cardId} и затем /api/transcripts/{id} (Bearer пользователя).",
       "Callback-токен/ключ проверяется по workspace/skill; без него вернётся 401/403.",
+      "При передаче transcriptId бэкенд проверяет существование и принадлежность чату/workspace; создайте его заранее через callback/transcripts.",
     ],
   },
 ];

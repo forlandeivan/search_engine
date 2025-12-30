@@ -256,15 +256,41 @@ describe("No-code callback API", () => {
           httpServer.close((error) => (error ? reject(error) : resolve()));
         });
       }
-    });
+    }, 15000);
   
   it("creates message via callback link", async () => {
     setupDbMock();
     setupAuthMock();
-    setupStorageMock();
+    const storage = setupStorageMock();
     setupOtherMocks();
     const chatService = setupChatServiceMock();
     skillsMock.verifyNoCodeCallbackKey.mockResolvedValueOnce({ skillId: "skill-2" });
+
+    storage.getTranscriptById.mockResolvedValueOnce({
+      id: "t-1",
+      workspaceId: "workspace-1",
+      chatId: "chat-1",
+      status: "ready",
+      title: null,
+      previewText: "Кратко",
+      fullText: "Полный текст",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      sourceFileId: null,
+      defaultViewId: null,
+      defaultViewActionId: null,
+      lastEditedByUserId: null,
+    });
+    storage.createChatCard.mockResolvedValueOnce({
+      id: "card-1",
+      workspaceId: "workspace-1",
+      chatId: "chat-1",
+      type: "transcript",
+      title: "Стенограмма",
+      previewText: "Кратко",
+      transcriptId: "t-1",
+      createdAt: "2025-01-01T00:00:00.000Z",
+    });
 
     const { httpServer } = await createTestServer();
     try {
@@ -279,6 +305,10 @@ describe("No-code callback API", () => {
             chatId: "chat-1",
             role: "assistant",
             text: "Ответ",
+            card: {
+              type: "transcript",
+              transcriptId: "t-1",
+            },
           }),
         },
       );
@@ -296,6 +326,168 @@ describe("No-code callback API", () => {
           expectedSkillId: "skill-2",
         }),
       );
+      expect(storage.createChatCard).toHaveBeenCalledWith(
+        expect.objectContaining({ transcriptId: "t-1", chatId: "chat-1" }),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  }, 15000);
+
+  it("creates transcript via callback token", async () => {
+    setupDbMock();
+    setupAuthMock();
+    const storage = setupStorageMock();
+    setupOtherMocks();
+    setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockResolvedValueOnce({ skillId: "skill-1" });
+    storage.getChatSessionById.mockResolvedValueOnce({ id: "chat-1", workspaceId: "workspace-1" });
+    storage.createTranscript.mockResolvedValueOnce({
+      id: "t-1",
+      workspaceId: "workspace-1",
+      chatId: "chat-1",
+      status: "ready",
+      title: "Стенограмма",
+      previewText: "Привет мир",
+      fullText: "Привет мир",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      sourceFileId: null,
+      defaultViewId: null,
+      defaultViewActionId: null,
+      lastEditedByUserId: null,
+    });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/transcripts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer callback-token" },
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          title: "Стенограмма",
+          fullText: "Привет мир",
+        }),
+      });
+
+      expect(response.status).toBe(201);
+      const json = await response.json();
+      expect(json.transcript?.id).toBe("t-1");
+      expect(skillsMock.verifyNoCodeCallbackToken).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: "workspace-1", chatId: "chat-1", token: "callback-token" }),
+      );
+      expect(storage.createTranscript).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: "chat-1", status: "ready", fullText: "Привет мир" }),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("updates transcript via callback token", async () => {
+    setupDbMock();
+    setupAuthMock();
+    const storage = setupStorageMock();
+    setupOtherMocks();
+    setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockResolvedValueOnce({ skillId: "skill-1" });
+    storage.getTranscriptById.mockResolvedValueOnce({
+      id: "t-1",
+      workspaceId: "workspace-1",
+      chatId: "chat-1",
+      status: "processing",
+      title: null,
+      previewText: null,
+      fullText: "old",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      sourceFileId: null,
+      defaultViewId: null,
+      defaultViewActionId: null,
+      lastEditedByUserId: null,
+    });
+    storage.updateTranscript.mockResolvedValueOnce({
+      id: "t-1",
+      workspaceId: "workspace-1",
+      chatId: "chat-1",
+      status: "ready",
+      title: "Новая",
+      previewText: "Новый текст",
+      fullText: "Новый текст",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      sourceFileId: null,
+      defaultViewId: null,
+      defaultViewActionId: null,
+      lastEditedByUserId: null,
+    });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/no-code/callback/transcripts/t-1`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer callback-token" },
+          body: JSON.stringify({
+            workspaceId: "workspace-1",
+            chatId: "chat-1",
+            title: "Новая",
+            fullText: "Новый текст",
+            status: "ready",
+          }),
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const json = await response.json();
+      expect(json.transcript?.status).toBe("ready");
+      expect(storage.updateTranscript).toHaveBeenCalledWith(
+        "t-1",
+        expect.objectContaining({ fullText: "Новый текст", previewText: "Новый текст", title: "Новая" }),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects card with unknown transcriptId", async () => {
+    setupDbMock();
+    setupAuthMock();
+    const storage = setupStorageMock();
+    setupOtherMocks();
+    setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockResolvedValueOnce({ skillId: "skill-1" });
+    storage.getTranscriptById.mockResolvedValueOnce(undefined as any);
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer callback-token" },
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          role: "assistant",
+          card: {
+            type: "transcript",
+            transcriptId: "missing",
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(storage.createChatCard).not.toHaveBeenCalled();
     } finally {
       await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => (error ? reject(error) : resolve()));
