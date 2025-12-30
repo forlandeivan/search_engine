@@ -1194,6 +1194,20 @@ export function SkillFormContent({
     url.searchParams.set("callbackKey", callbackKey);
     return url.toString();
   }, [skill?.noCodeConnection?.callbackKey, skill?.workspaceId]);
+  const transcriptCallbackLink = useMemo(() => {
+    const callbackKey = skill?.noCodeConnection?.callbackKey;
+    const workspaceId = skill?.workspaceId;
+    if (!callbackKey || !workspaceId) {
+      return null;
+    }
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const url = new URL("/api/no-code/callback/transcripts", window.location.origin);
+    url.searchParams.set("workspaceId", workspaceId);
+    url.searchParams.set("callbackKey", callbackKey);
+    return url.toString();
+  }, [skill?.noCodeConnection?.callbackKey, skill?.workspaceId]);
   const handleCopyCallbackLink = async () => {
     if (!callbackLink || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
       return;
@@ -1205,12 +1219,25 @@ export function SkillFormContent({
       toast({ title: "Не удалось скопировать ссылку", variant: "destructive" });
     }
   };
+  const handleCopyTranscriptCallbackLink = async () => {
+    if (!transcriptCallbackLink || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(transcriptCallbackLink);
+      toast({ title: "Ссылка для транскриптов скопирована" });
+    } catch {
+      toast({ title: "Не удалось скопировать ссылку", variant: "destructive" });
+    }
+  };
   const isSystemSkill = Boolean(skill?.isSystem);
   const ragMode = form.watch("ragMode");
   const isManualRagMode = ragMode === "selected_collections";
   const iconValue = form.watch("icon") ?? "";
   const transcriptionMode = form.watch("onTranscriptionMode");
   const isAutoActionMode = transcriptionMode === "auto_action";
+  const transcriptionFlowMode = form.watch("transcriptionFlowMode");
+  const isTranscriptionNoCode = transcriptionFlowMode === "no_code";
   const vectorCollectionsEmpty = vectorCollections.length === 0;
   const vectorCollectionsUnavailable = isVectorCollectionsLoading || vectorCollectionsEmpty;
   const controlsDisabled = isSubmitting || isSystemSkill;
@@ -2636,6 +2663,52 @@ export function SkillFormContent({
                       />
                     </CardContent>
                   </Card>
+
+                  {isTranscriptionNoCode ? (
+                    <Card>
+                      <CardHeader className="px-6 grid gap-2">
+                        <CardTitle className="text-base font-semibold">Callback для транскриптов</CardTitle>
+                        <CardDescription className="text-sm text-muted-foreground">
+                          Ссылка для no-code сценария: отправляйте POST на /api/no-code/callback/transcripts с fullText,
+                          а затем используйте transcriptId в карточке чата.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="px-6 pb-6 space-y-3">
+                        <div className="rounded-lg border border-border bg-background/60 p-4 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-semibold">Callback-ссылка для транскриптов</p>
+                            <Badge variant={transcriptCallbackLink ? "default" : "outline"}>
+                              {transcriptCallbackLink ? "Генерируется" : "Не создана"}
+                            </Badge>
+                          </div>
+                          {transcriptCallbackLink ? (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Input value={transcriptCallbackLink} readOnly className="flex-1 min-w-0 text-xs" />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-9"
+                                disabled={!transcriptCallbackLink}
+                                onClick={handleCopyTranscriptCallbackLink}
+                              >
+                                <Copy className="mr-1 h-4 w-4" />
+                                Скопировать
+                              </Button>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              Сохраните навык в режиме No-code, чтобы получить ссылку. Используется тот же callbackKey, что и для сообщений.
+                            </p>
+                          )}
+                          <p className="text-xs text-muted-foreground">
+                            Пример: POST /api/no-code/callback/transcripts?callbackKey=&lt;ключ&gt; с JSON{" "}
+                            {`{ "workspaceId": "...", "chatId": "...", "fullText": "...", "title": "...", "previewText": "..." }`}.
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : null}
 
                   <Card>
                     <CardHeader className="px-6 grid gap-2">
