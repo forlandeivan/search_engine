@@ -1181,33 +1181,27 @@ export function SkillFormContent({
     skill?.noCodeConnection?.callbackTokenLastFour,
   ]);
   const callbackLink = useMemo(() => {
-    const callbackKey = skill?.noCodeConnection?.callbackKey;
     const workspaceId = skill?.workspaceId;
-    if (!callbackKey || !workspaceId) {
+    if (!workspaceId) {
       return null;
     }
     if (typeof window === "undefined") {
       return null;
     }
     const url = new URL("/api/no-code/callback/messages", window.location.origin);
-    url.searchParams.set("workspaceId", workspaceId);
-    url.searchParams.set("callbackKey", callbackKey);
     return url.toString();
-  }, [skill?.noCodeConnection?.callbackKey, skill?.workspaceId]);
+  }, [skill?.workspaceId]);
   const transcriptCallbackLink = useMemo(() => {
-    const callbackKey = skill?.noCodeConnection?.callbackKey;
     const workspaceId = skill?.workspaceId;
-    if (!callbackKey || !workspaceId) {
+    if (!workspaceId) {
       return null;
     }
     if (typeof window === "undefined") {
       return null;
     }
     const url = new URL("/api/no-code/callback/transcripts", window.location.origin);
-    url.searchParams.set("workspaceId", workspaceId);
-    url.searchParams.set("callbackKey", callbackKey);
     return url.toString();
-  }, [skill?.noCodeConnection?.callbackKey, skill?.workspaceId]);
+  }, [skill?.workspaceId]);
   const handleCopyCallbackLink = async () => {
     if (!callbackLink || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
       return;
@@ -2698,11 +2692,11 @@ export function SkillFormContent({
                             </div>
                           ) : (
                             <p className="text-xs text-muted-foreground">
-                              Сохраните навык в режиме No-code, чтобы получить ссылку. Используется тот же callbackKey, что и для сообщений.
+                              Сохраните навык в режиме No-code и сгенерируйте callback token, чтобы использовать API.
                             </p>
                           )}
                           <p className="text-xs text-muted-foreground">
-                            Пример: POST /api/no-code/callback/transcripts?callbackKey=&lt;ключ&gt; с JSON{" "}
+                            Пример: POST /api/no-code/callback/transcripts с заголовком Authorization: Bearer &lt;token&gt; и JSON{" "}
                             {`{ "workspaceId": "...", "chatId": "...", "fullText": "...", "title": "...", "previewText": "..." }`}.
                           </p>
                         </div>

@@ -183,7 +183,7 @@
 - `POST /api/no-code/callback/actions/start`
 - `POST /api/no-code/callback/actions/update`
 
-**Авторизация:** `Authorization: Bearer <callback_token>` или `?callbackKey=...`
+**Авторизация:** `Authorization: Bearer <callback_token>`
 
 **Request Body:** такой же, как для обычных endpoints, но `workspaceId` обязателен
 

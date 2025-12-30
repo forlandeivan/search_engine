@@ -98,7 +98,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Выдача: поле `currentAssistantAction` в `GET /api/chat/sessions`. Гасится на первом результате (message/stream).
 
 ## No-code callbacks (transcript/message/stream)
-- Сохранить стенограмму: `POST /api/no-code/callback/transcripts` body `{ workspaceId, chatId, fullText, title?, previewText?, status? }` + bearer callback-токен или `?callbackKey=`. Лимит `fullText` — 500 000 символов, статус по умолчанию `ready`. Ответ: `{ transcript: { id, ... } }`.
+- Сохранить стенограмму: `POST /api/no-code/callback/transcripts` body `{ workspaceId, chatId, fullText, title?, previewText?, status? }` + `Authorization: Bearer <callback_token>`. Лимит `fullText` — 500 000 символов, статус по умолчанию `ready`. Ответ: `{ transcript: { id, ... } }`.
 - Обновить стенограмму: `PATCH /api/no-code/callback/transcripts/{transcriptId}` с теми же полями (fullText обязателен). Проверяется принадлежность чат/воркспейсу.
 - Создать сообщение: `POST /api/no-code/callback/messages` с `role`, `text|content`, `triggerMessageId?`, `metadata?`; требует callback Bearer/ключ. Для карточек нужно передавать `card.type="transcript"` + `card.transcriptId` на существующую стенограмму (иначе 400).
 - Стрим: `POST /api/no-code/callback/stream` с `streamId`, `chunkId`, `delta|text`, `isFinal?`, `triggerMessageId`; идемпотентность по chunkId.

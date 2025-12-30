@@ -3,9 +3,9 @@
 Карточка — это отдельный объект чата с превью в ленте и контентом для “Читать целиком”. Сообщение типа `card` ссылается на карточку через `cardId`.
 
 ## Эндпоинты и DTO (инвентаризация)
-- `POST /api/no-code/callback/transcripts` — создать стенограмму по callback токену/ключу. Авторизация: `Authorization: Bearer <callbackToken>` или `?callbackKey=`. Поля `workspaceId`, `chatId`, `fullText` (обяз.), `title?`, `previewText?`, `status?` (`ready` по умолчанию).
-- `PATCH /api/no-code/callback/transcripts/:transcriptId` — обновить текст/метаданные стенограммы (тот же токен/ключ, те же поля; `fullText` обязателен).
-- `POST /api/no-code/callback/messages` — создать сообщение (в том числе `messageType=card`) из no-code сценария. Авторизация: `Authorization: Bearer <callbackToken>` или `?callbackKey=`. Поля `card.type`, `card.title?`, `card.previewText?`, `card.transcriptId?`; если `card` передан — создаётся `chat_card` и сообщение с `cardId`.
+- `POST /api/no-code/callback/transcripts` — создать стенограмму по callback токену. Авторизация: `Authorization: Bearer <callbackToken>`. Поля `workspaceId`, `chatId`, `fullText` (обяз.), `title?`, `previewText?`, `status?` (`ready` по умолчанию).
+- `PATCH /api/no-code/callback/transcripts/:transcriptId` — обновить текст/метаданные стенограммы (тот же токен, те же поля; `fullText` обязателен).
+- `POST /api/no-code/callback/messages` — создать сообщение (в том числе `messageType=card`) из no-code сценария. Авторизация: `Authorization: Bearer <callbackToken>`. Поля `card.type`, `card.title?`, `card.previewText?`, `card.transcriptId?`; если `card` передан — создаётся `chat_card` и сообщение с `cardId`.
 - `GET /api/chat/sessions/:chatId/messages` — список сообщений чата (preview в ленте). Авторизация: Bearer пользователя, `workspaceId` в query. Card-DTO: `messageType: "card"`, `cardId`, `metadata.cardId`, `metadata.transcriptId`, `content` = preview.
 - `GET /api/cards/:cardId` — получить карточку для открытия контента. Авторизация: Bearer пользователя, членство в workspace. Ответ: `{ card: { id, workspaceId, chatId, type, title, previewText, transcriptId, createdAt } }`.
 - Контент для транскрипта: `GET /api/transcripts/:id` и `/api/transcripts/:id/canvas-documents` (как и раньше), auth Bearer пользователя.
@@ -17,10 +17,10 @@
 - UX: превью берётся из `message.content`/`metadata.previewText`; кнопка “Читать целиком” делает `GET /api/cards/:id`, берёт `transcriptId` и открывает `/api/transcripts/:id`.
 
 ## Создание карточки (no-code callback)
-1) Сначала сохраните стенограмму: `POST /api/no-code/callback/transcripts` (Bearer токен навыка или `?callbackKey=`) с полями `workspaceId`, `chatId`, `fullText` (+опционально `title/previewText/status`). Ограничение `fullText` — до 500 000 символов. Запомните `transcript.id`.
+1) Сначала сохраните стенограмму: `POST /api/no-code/callback/transcripts` с заголовком `Authorization: Bearer <callbackToken>` и полями `workspaceId`, `chatId`, `fullText` (+опционально `title/previewText/status`). Ограничение `fullText` — до 500 000 символов. Запомните `transcript.id`.
 2) Затем отправьте карточку:
 - Метод: `POST /api/no-code/callback/messages`
-- Заголовки: `Authorization: Bearer <callbackToken>` или `?callbackKey=`; `Content-Type: application/json`
+- Заголовки: `Authorization: Bearer <callbackToken>`; `Content-Type: application/json`
 - Тело (пример транскрипт-карточки):
 ```json
 {

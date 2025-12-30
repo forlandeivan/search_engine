@@ -230,8 +230,8 @@ const DOC_SECTIONS: DocSection[] = [
     method: "POST",
     endpointPath: "/api/no-code/callback/messages",
     steps: [
-      "Получите callback-ключ (callbackKey) навыка или его callback-токен из настроек no-code.",
-      "Сформируйте URL: /api/no-code/callback/messages?callbackKey=<ключ> (без Bearer) ИЛИ добавьте Authorization: Bearer <callbackToken>.",
+      "Получите callback-токен навыка из настроек no-code (сгенерируйте через кнопку в интерфейсе).",
+      "Добавьте заголовок Authorization: Bearer <callbackToken> в запрос.",
       "Передайте workspaceId, chatId, role и текст в полях content или text (до 20 000 символов).",
       "При необходимости добавьте metadata, triggerMessageId (для связки с исходным сообщением) и correlationId.",
       "Отправьте запрос — в ответ получите созданное сообщение (messageType=text).",
@@ -245,7 +245,7 @@ const DOC_SECTIONS: DocSection[] = [
       { name: "correlationId", type: "string", required: false, description: "Произвольный идентификатор запроса (не сохраняется отдельно в API)." },
       { name: "metadata", type: "object", required: false, description: "Дополнительные поля, сохраняются в message.metadata." },
     ],
-    requestExample: (host) => `POST ${host}/api/no-code/callback/messages?callbackKey=<ваш_callback_key>\nContent-Type: application/json\n\n{\n  \"workspaceId\": \"5aededcf-84fc-4b39-ba3d-28a338ba5107\",\n  \"chatId\": \"ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1\",\n  \"role\": \"assistant\",\n  \"content\": \"Готовая транскрипция загружена. Нажмите 'Читать целиком' в карточке.\",\n  \"metadata\": {\n    \"severity\": \"info\"\n  }\n}\n\n# Альтернатива с токеном навыка:\n# POST ${host}/api/no-code/callback/messages\n# Authorization: Bearer <callback_token>`,
+    requestExample: (host) => `POST ${host}/api/no-code/callback/messages\nAuthorization: Bearer <callback_token>\nContent-Type: application/json\n\n{\n  \"workspaceId\": \"5aededcf-84fc-4b39-ba3d-28a338ba5107\",\n  \"chatId\": \"ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1\",\n  \"role\": \"assistant\",\n  \"content\": \"Готовая транскрипция загружена. Нажмите 'Читать целиком' в карточке.\",\n  \"metadata\": {\n    \"severity\": \"info\"\n  }\n}`,
     responseExample: `{
   "message": {
     "id": "msg_abc",
@@ -260,7 +260,7 @@ const DOC_SECTIONS: DocSection[] = [
   }
 }`,
     tips: [
-      "Можно авторизоваться двумя способами: query ?callbackKey=<ключ навыка> (без заголовков) или Authorization: Bearer <callback_token навыка>.",
+      "Авторизация через Authorization: Bearer <callback_token> обязательна. Токен генерируется в настройках навыка.",
       "Максимальная длина контента — 20 000 символов (валидация на бэкенде).",
       "card поле опционально; если не передавать card, сообщение будет обычным текстом (messageType=text). Bearer из профиля пользователя здесь не используется.",
     ],
@@ -273,11 +273,11 @@ const DOC_SECTIONS: DocSection[] = [
     method: "POST",
     endpointPath: "/api/no-code/callback/transcripts",
     steps: [
-      "Получите callbackKey или callbackToken навыка (как в примере выше).",
-      "Сформируйте POST /api/no-code/callback/transcripts с Authorization: Bearer <callbackToken> или ?callbackKey=<ключ>.",
+      "Получите callback-токен навыка из настроек no-code (сгенерируйте через кнопку в интерфейсе).",
+      "Сформируйте POST /api/no-code/callback/transcripts с заголовком Authorization: Bearer <callbackToken>.",
       "Передайте workspaceId, chatId и fullText (до 500 000 символов); title, previewText и status (ready|processing|postprocessing|failed|auto_action_failed) — опциональны.",
       "Сохраните transcriptId из ответа — его нужно передавать в карточке чата или открывать через /api/transcripts/{id}.",
-      "Чтобы обновить текст, отправьте PATCH /api/no-code/callback/transcripts/{id} с тем же токеном/ключом и новым fullText.",
+      "Чтобы обновить текст, отправьте PATCH /api/no-code/callback/transcripts/{id} с тем же токеном и новым fullText.",
     ],
     requestFields: [
       { name: "workspaceId", type: "string", required: true, description: "Рабочее пространство навыка (UUID)." },
@@ -287,7 +287,7 @@ const DOC_SECTIONS: DocSection[] = [
       { name: "previewText", type: "string", required: false, description: "Превью для ленты; если не указано, берётся из fullText." },
       { name: "status", type: "\"ready\" | \"processing\" | \"postprocessing\" | \"failed\" | \"auto_action_failed\"", required: false, description: "Статус стенограммы, по умолчанию ready." },
     ],
-    requestExample: (host) => `POST ${host}/api/no-code/callback/transcripts\nAuthorization: Bearer <callback_token>\nContent-Type: application/json\n\n{\n  \"workspaceId\": \"5aededcf-84fc-4b39-ba3d-28a338ba5107\",\n  \"chatId\": \"ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1\",\n  \"title\": \"Стенограмма звонка\",\n  \"fullText\": \"Полный текст звонка...\",\n  \"previewText\": \"Краткое резюме беседы...\"\n}\n\n# Альтернатива с callbackKey:\n# POST ${host}/api/no-code/callback/transcripts?callbackKey=<ваш_callback_key>`,
+    requestExample: (host) => `POST ${host}/api/no-code/callback/transcripts\nAuthorization: Bearer <callback_token>\nContent-Type: application/json\n\n{\n  \"workspaceId\": \"5aededcf-84fc-4b39-ba3d-28a338ba5107\",\n  \"chatId\": \"ebf66dd6-1d2f-4b1b-a918-13dd7235a1d1\",\n  \"title\": \"Стенограмма звонка\",\n  \"fullText\": \"Полный текст звонка...\",\n  \"previewText\": \"Краткое резюме беседы...\"\n}`,
     responseExample: `{
   "transcript": {
     "id": "b7a1c1c8-1234-4567-89ab-00f0a0a0a0a0",
@@ -365,8 +365,8 @@ const DOC_SECTIONS: DocSection[] = [
     method: "POST",
     endpointPath: "/api/no-code/callback/actions/start",
     steps: [
-      "Получите callback-токен или callbackKey навыка из настроек no-code (как в других callback endpoints).",
-      "Для начала активности отправьте POST /api/no-code/callback/actions/start с Authorization: Bearer <callbackToken> или ?callbackKey=<ключ>.",
+      "Получите callback-токен навыка из настроек no-code (сгенерируйте через кнопку в интерфейсе).",
+      "Для начала активности отправьте POST /api/no-code/callback/actions/start с заголовком Authorization: Bearer <callbackToken>.",
       "Передайте workspaceId, chatId, actionId (уникальный UUID), actionType (transcribe_audio, summarize, generate_image, process_file) и опционально displayText.",
       "После завершения задачи отправьте POST /api/no-code/callback/actions/update с тем же actionId и status: \"done\" или \"error\".",
       "Индикатор автоматически появится в чате при start и скроется при update — без создания сообщений в ленте.",
@@ -449,8 +449,7 @@ Content-Type: application/json
   }
 }
 
-# Альтернатива с callbackKey:
-# POST ${host}/api/no-code/callback/actions/start?callbackKey=<ваш_callback_key>`,
+`,
     responseExample: `# Ответ на start (200 OK)
 {
   "action": {

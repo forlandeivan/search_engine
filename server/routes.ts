@@ -68,7 +68,6 @@ import {
   createUnicaChatSkillForWorkspace,
   generateNoCodeCallbackToken,
   verifyNoCodeCallbackToken,
-  verifyNoCodeCallbackKey,
 } from "./skills";
 import { asrExecutionLogService } from "./asr-execution-log-context";
 import {
@@ -12884,17 +12883,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         throw new SkillServiceError("Invalid workspaceId", 400);
       }
 
-      const callbackKey =
-        typeof req.query?.callbackKey === "string" ? req.query.callbackKey.trim() : "";
-      if (callbackKey) {
-        await verifyNoCodeCallbackKey({ workspaceId, callbackKey });
-      } else {
-        await verifyNoCodeCallbackToken({
-          workspaceId,
-          chatId: payload.chatId,
-          token: callbackToken,
-        });
-      }
+      await verifyNoCodeCallbackToken({
+        workspaceId,
+        chatId: payload.chatId,
+        token: callbackToken,
+      });
 
       const chat = await storage.getChatSessionById(payload.chatId);
       if (!chat || chat.workspaceId !== workspaceId) {
@@ -12950,17 +12943,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         throw new SkillServiceError("Invalid workspaceId", 400);
       }
 
-      const callbackKey =
-        typeof req.query?.callbackKey === "string" ? req.query.callbackKey.trim() : "";
-      if (callbackKey) {
-        await verifyNoCodeCallbackKey({ workspaceId, callbackKey });
-      } else {
-        await verifyNoCodeCallbackToken({
-          workspaceId,
-          chatId: payload.chatId,
-          token: callbackToken,
-        });
-      }
+      await verifyNoCodeCallbackToken({
+        workspaceId,
+        chatId: payload.chatId,
+        token: callbackToken,
+      });
 
       const transcriptId = req.params.transcriptId;
       const transcript = await storage.getTranscriptById?.(transcriptId);
@@ -13024,18 +13011,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         throw new SkillServiceError("Invalid workspaceId", 400);
       }
 
-      const callbackKey =
-        typeof req.query?.callbackKey === "string" ? req.query.callbackKey.trim() : "";
-      let skillReference: { skillId: string };
-      if (callbackKey) {
-        skillReference = await verifyNoCodeCallbackKey({ workspaceId, callbackKey });
-      } else {
-        skillReference = await verifyNoCodeCallbackToken({
-          workspaceId: workspaceIdStrict,
-          chatId: payload.chatId,
-          token: callbackToken,
-        });
-      }
+      const skillReference = await verifyNoCodeCallbackToken({
+        workspaceId: workspaceIdStrict,
+        chatId: payload.chatId,
+        token: callbackToken,
+      });
 
       const transcriptId =
         typeof payload.card?.transcriptId === "string" && payload.card.transcriptId.trim().length > 0

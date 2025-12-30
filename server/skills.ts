@@ -1280,6 +1280,7 @@ export async function verifyNoCodeCallbackToken(opts: {
     throw new SkillServiceError("API-токен для callback не указан", 401, CALLBACK_UNAUTHORIZED_CODE);
   }
 
+  // Проверить, что chatId принадлежит workspaceId
   const chatRows = await db
     .select({
       id: chatSessions.id,
@@ -1295,6 +1296,8 @@ export async function verifyNoCodeCallbackToken(opts: {
     throw new SkillServiceError("Чат не найден", 404);
   }
 
+  // Найти навык по workspaceId + хешу токена
+  const providedHash = hashCallbackToken(token).hash;
   const skillRows = await db
     .select({
       id: skills.id,
@@ -1303,74 +1306,39 @@ export async function verifyNoCodeCallbackToken(opts: {
       callbackTokenHash: skills.noCodeCallbackTokenHash,
     })
     .from(skills)
-    .where(and(eq(skills.id, chat.skillId), eq(skills.workspaceId, chat.workspaceId)))
-    .limit(1);
-
-  const skill = skillRows[0];
-  if (!skill) {
-    throw new SkillServiceError("Навык не найден", 404);
-  }
-
-  if ((skill.status as SkillStatus) === "archived") {
-    throw new SkillServiceError("Навык архивирован", 409);
-  }
-
-  if (skill.executionMode !== "no_code") {
-    throw new SkillServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
-  }
-
-  const expectedHash = typeof skill.callbackTokenHash === "string" ? skill.callbackTokenHash.trim() : "";
-  if (!expectedHash) {
-    throw new SkillServiceError(
-      "API-токен для callback не задан",
-      401,
-      CALLBACK_UNAUTHORIZED_CODE,
+    .where(
+      and(
+        eq(skills.workspaceId, opts.workspaceId),
+        eq(skills.executionMode, "no_code"),
+        sql`${skills.noCodeCallbackTokenHash} IS NOT NULL`,
+      ),
     );
+
+  let skill: (typeof skillRows)[0] | undefined;
+  for (const candidate of skillRows) {
+    const expectedHash = typeof candidate.callbackTokenHash === "string" ? candidate.callbackTokenHash.trim() : "";
+    if (expectedHash && timingSafeHashEquals(expectedHash, providedHash)) {
+      skill = candidate;
+      break;
+    }
   }
 
-  const providedHash = hashCallbackToken(token).hash;
-  const tokenMatches = timingSafeHashEquals(expectedHash, providedHash);
-  if (!tokenMatches) {
+  if (!skill) {
     throw new SkillServiceError("Некорректный API-токен", 401, CALLBACK_UNAUTHORIZED_CODE);
   }
 
-  return { skillId: skill.id };
-}
-
-export async function verifyNoCodeCallbackKey(opts: {
-  workspaceId: string;
-  callbackKey: string;
-}): Promise<{ skillId: string }> {
-  const callbackKey = typeof opts.callbackKey === "string" ? opts.callbackKey.trim() : "";
-  if (!callbackKey) {
-    throw new SkillServiceError("Callback-ключ не указан", 401, CALLBACK_UNAUTHORIZED_CODE);
-  }
-
-  const rows = await db
-    .select({
-      id: skills.id,
-      status: skills.status,
-      executionMode: skills.executionMode,
-    })
-    .from(skills)
-    .where(and(eq(skills.workspaceId, opts.workspaceId), eq(skills.noCodeCallbackKey, callbackKey)))
-    .limit(1);
-
-  const skill = rows[0];
-  if (!skill) {
-    throw new SkillServiceError("Навык не найден", 404);
-  }
-
   if ((skill.status as SkillStatus) === "archived") {
     throw new SkillServiceError("Навык архивирован", 409);
   }
 
-  if (normalizeSkillExecutionMode(skill.executionMode) !== "no_code") {
-    throw new SkillServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
+  // Проверить, что чат связан с найденным навыком (для дополнительной безопасности)
+  if (chat.skillId !== skill.id) {
+    throw new SkillServiceError("Чат не принадлежит навыку с указанным токеном", 403);
   }
 
   return { skillId: skill.id };
 }
+
 
 export const UNICA_CHAT_SYSTEM_KEY = "UNICA_CHAT";
 const UNICA_CHAT_DEFAULT_NAME = "Unica Chat";
