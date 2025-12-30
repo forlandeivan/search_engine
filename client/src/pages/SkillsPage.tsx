@@ -2510,79 +2510,41 @@ export function SkillFormContent({
                             )}
                           </div>
                           <div className="space-y-6">
-                            <div className="rounded-lg border bg-muted/40 p-4 space-y-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="space-y-1">
-                                  <p className="text-sm font-semibold">Токен для входящих callback</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Передавайте в заголовке Authorization: Bearer &#123;token&#125;.
-                                  </p>
-                                  {callbackTokenRotatedLabel && (
-                                    <p className="text-xs text-muted-foreground">
-                                      Обновлён {callbackTokenRotatedLabel}
-                                      {callbackTokenStatus.lastFour ? ` · окончание ${callbackTokenStatus.lastFour}` : ""}
-                                    </p>
-                                  )}
-                                </div>
-                                <Badge variant={callbackTokenStatus.isSet ? "default" : "outline"}>
-                                  {callbackTokenStatus.isSet ? "Задан" : "Не задан"}
+                            <div className="rounded-lg border border-border bg-background/60 p-4 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-semibold">Callback-ссылка</p>
+                                <Badge variant={callbackLink ? "default" : "outline"}>
+                                  {callbackLink ? "Генерируется" : "Не создана"}
                                 </Badge>
                               </div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-9"
-                                  disabled={!canManageCallbackToken || isGeneratingCallbackToken}
-                                  onClick={handleGenerateCallbackToken}
-                                >
-                                  {isGeneratingCallbackToken && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                  {callbackTokenStatus.isSet ? "Сменить токен" : "Сгенерировать токен"}
-                                </Button>
-                                {!skill?.id && (
-                                  <span className="text-xs text-muted-foreground">Сохраните навык, чтобы выдать токен.</span>
-                                )}
-                                {!isNoCodeMode && (
-                                  <span className="text-xs text-muted-foreground">Доступно в режиме No-code.</span>
-                                )}
-                                {!allowNoCodeFlow && (
-                                  <span className="text-xs text-muted-foreground">Доступно на премиум-тарифе.</span>
-                                )}
-                              </div>
-                              <div className="rounded-lg border border-border bg-background/60 p-4 space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <p className="text-sm font-semibold">Callback-ссылка</p>
-                                  <Badge variant={callbackLink ? "default" : "outline"}>
-                                    {callbackLink ? "Генерируется" : "Не создана"}
-                                  </Badge>
+                              {callbackLink ? (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Input
+                                    value={callbackLink}
+                                    readOnly
+                                    className="flex-1 min-w-0 text-xs"
+                                    data-testid="callback-link-input"
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-9"
+                                    disabled={!callbackLink}
+                                    onClick={handleCopyCallbackLink}
+                                  >
+                                    <Copy className="mr-1 h-4 w-4" />
+                                    Скопировать
+                                  </Button>
                                 </div>
-                                {callbackLink ? (
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <Input
-                                      value={callbackLink}
-                                      readOnly
-                                      className="flex-1 min-w-0 text-xs"
-                                      data-testid="callback-link-input"
-                                    />
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-9"
-                                      disabled={!callbackLink}
-                                      onClick={handleCopyCallbackLink}
-                                    >
-                                      <Copy className="mr-1 h-4 w-4" />
-                                      Скопировать
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <p className="text-xs text-muted-foreground">
-                                    Сохраните навык в режиме No-code, чтобы получить ссылку.
-                                  </p>
-                                )}
-                              </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">
+                                  Сохраните навык в режиме No-code, чтобы получить ссылку.
+                                </p>
+                              )}
+                              <p className="text-xs text-muted-foreground">
+                                Используйте ваш bearer token из профиля в заголовке <code className="text-xs bg-muted px-1 py-0.5 rounded">Authorization: Bearer &lt;ваш_token&gt;</code> для авторизации запросов.
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -2692,11 +2654,11 @@ export function SkillFormContent({
                             </div>
                           ) : (
                             <p className="text-xs text-muted-foreground">
-                              Сохраните навык в режиме No-code и сгенерируйте callback token, чтобы использовать API.
+                              Сохраните навык в режиме No-code, чтобы получить ссылку.
                             </p>
                           )}
                           <p className="text-xs text-muted-foreground">
-                            Пример: POST /api/no-code/callback/transcripts с заголовком Authorization: Bearer &lt;token&gt; и JSON{" "}
+                            Пример: POST /api/no-code/callback/transcripts с заголовком Authorization: Bearer &lt;ваш_token_из_профиля&gt; и JSON{" "}
                             {`{ "workspaceId": "...", "chatId": "...", "fullText": "...", "title": "...", "previewText": "..." }`}.
                           </p>
                         </div>
