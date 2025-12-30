@@ -1280,7 +1280,26 @@ export async function verifyNoCodeCallbackToken(opts: {
     throw new SkillServiceError("API-токен для callback не указан", 401, CALLBACK_UNAUTHORIZED_CODE);
   }
 
-  // Проверить, что chatId принадлежит workspaceId
+  // Проверить bearer token пользователя
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const storage = await getStorage();
+  const user = await storage.getUserByPersonalApiTokenHash(tokenHash);
+  if (!user) {
+    throw new SkillServiceError("Некорректный API-токен", 401, CALLBACK_UNAUTHORIZED_CODE);
+  }
+
+  // Проверить доступ пользователя к workspace
+  const workspace = await storage.getWorkspace(opts.workspaceId);
+  if (!workspace) {
+    throw new SkillServiceError("Рабочее пространство не найдено", 404);
+  }
+
+  const membership = await storage.getWorkspaceMember(user.id, opts.workspaceId);
+  if (!membership || membership.status !== "active") {
+    throw new SkillServiceError("Нет доступа к рабочему пространству", 403);
+  }
+
+  // Проверить, что chatId принадлежит workspaceId и получить навык
   const chatRows = await db
     .select({
       id: chatSessions.id,
@@ -1296,44 +1315,28 @@ export async function verifyNoCodeCallbackToken(opts: {
     throw new SkillServiceError("Чат не найден", 404);
   }
 
-  // Найти навык по workspaceId + хешу токена
-  const providedHash = hashCallbackToken(token).hash;
+  // Проверить, что навык существует и находится в no-code режиме
   const skillRows = await db
     .select({
       id: skills.id,
       status: skills.status,
       executionMode: skills.executionMode,
-      callbackTokenHash: skills.noCodeCallbackTokenHash,
     })
     .from(skills)
-    .where(
-      and(
-        eq(skills.workspaceId, opts.workspaceId),
-        eq(skills.executionMode, "no_code"),
-        sql`${skills.noCodeCallbackTokenHash} IS NOT NULL`,
-      ),
-    );
+    .where(and(eq(skills.id, chat.skillId), eq(skills.workspaceId, opts.workspaceId)))
+    .limit(1);
 
-  let skill: (typeof skillRows)[0] | undefined;
-  for (const candidate of skillRows) {
-    const expectedHash = typeof candidate.callbackTokenHash === "string" ? candidate.callbackTokenHash.trim() : "";
-    if (expectedHash && timingSafeHashEquals(expectedHash, providedHash)) {
-      skill = candidate;
-      break;
-    }
+  const skill = skillRows[0];
+  if (!skill) {
+    throw new SkillServiceError("Навык не найден", 404);
   }
 
-  if (!skill) {
-    throw new SkillServiceError("Некорректный API-токен", 401, CALLBACK_UNAUTHORIZED_CODE);
+  if (normalizeSkillExecutionMode(skill.executionMode) !== "no_code") {
+    throw new SkillServiceError("Навык не находится в no-code режиме", 409, "NO_CODE_MODE_REQUIRED");
   }
 
   if ((skill.status as SkillStatus) === "archived") {
     throw new SkillServiceError("Навык архивирован", 409);
-  }
-
-  // Проверить, что чат связан с найденным навыком (для дополнительной безопасности)
-  if (chat.skillId !== skill.id) {
-    throw new SkillServiceError("Чат не принадлежит навыку с указанным токеном", 403);
   }
 
   return { skillId: skill.id };
