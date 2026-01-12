@@ -12935,28 +12935,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.post("/api/no-code/callback/transcripts", async (req, res, next) => {
     try {
       const payload = noCodeCallbackTranscriptCreateSchema.parse(req.body ?? {});
-      const authorizationHeader = Array.isArray(req.headers.authorization)
-        ? req.headers.authorization[0]
-        : req.headers.authorization;
-      let callbackToken: string | null = null;
-      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
-        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
-        if (scheme && scheme.toLowerCase() === "bearer") {
-          const candidate = rest.join(" ").trim();
-          callbackToken = candidate.length > 0 ? candidate : null;
-        }
-      }
 
       if (!payload.workspaceId || typeof payload.workspaceId !== "string" || payload.workspaceId.trim().length === 0) {
         throw new SkillServiceError("workspaceId обязателен", 400);
       }
       const workspaceId = payload.workspaceId.trim();
-
-      await verifyNoCodeCallbackToken({
-        workspaceId,
-        chatId: payload.chatId,
-        token: callbackToken,
-      });
 
       const chat = await storage.getChatSessionById(payload.chatId);
       if (!chat || chat.workspaceId !== workspaceId) {
@@ -12995,28 +12978,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.patch("/api/no-code/callback/transcripts/:transcriptId", async (req, res, next) => {
     try {
       const payload = noCodeCallbackTranscriptUpdateSchema.parse(req.body ?? {});
-      const authorizationHeader = Array.isArray(req.headers.authorization)
-        ? req.headers.authorization[0]
-        : req.headers.authorization;
-      let callbackToken: string | null = null;
-      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
-        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
-        if (scheme && scheme.toLowerCase() === "bearer") {
-          const candidate = rest.join(" ").trim();
-          callbackToken = candidate.length > 0 ? candidate : null;
-        }
-      }
 
       if (!payload.workspaceId || typeof payload.workspaceId !== "string" || payload.workspaceId.trim().length === 0) {
         throw new SkillServiceError("workspaceId обязателен", 400);
       }
       const workspaceId = payload.workspaceId.trim();
-
-      await verifyNoCodeCallbackToken({
-        workspaceId,
-        chatId: payload.chatId,
-        token: callbackToken,
-      });
 
       const transcriptId = req.params.transcriptId;
       const transcript = await storage.getTranscriptById?.(transcriptId);
@@ -13062,28 +13028,19 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const payload = noCodeCallbackCreateMessageSchema.parse(req.body ?? {});
       const content = (payload.content ?? payload.text ?? "").trim();
       const triggerMessageId = (payload.triggerMessageId ?? payload.correlationId ?? "").trim() || null;
-      const authorizationHeader = Array.isArray(req.headers.authorization)
-        ? req.headers.authorization[0]
-        : req.headers.authorization;
-      let callbackToken: string | null = null;
-      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
-        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
-        if (scheme && scheme.toLowerCase() === "bearer") {
-          const candidate = rest.join(" ").trim();
-          callbackToken = candidate.length > 0 ? candidate : null;
-        }
-      }
 
       if (!payload.workspaceId || typeof payload.workspaceId !== "string" || payload.workspaceId.trim().length === 0) {
         throw new SkillServiceError("workspaceId обязателен", 400);
       }
       const workspaceId = payload.workspaceId.trim();
 
-      const skillReference = await verifyNoCodeCallbackToken({
-        workspaceId,
-        chatId: payload.chatId,
-        token: callbackToken,
-      });
+      const chat = await storage.getChatSessionById(payload.chatId);
+      if (!chat || chat.workspaceId !== workspaceId) {
+        throw new SkillServiceError("Чат не найден или принадлежит другому workspace", 404, "CHAT_NOT_FOUND");
+      }
+      if (!chat.skillId) {
+        throw new SkillServiceError("У чата не указан навык", 400);
+      }
 
       const transcriptId =
         typeof payload.card?.transcriptId === "string" && payload.card.transcriptId.trim().length > 0
@@ -13119,7 +13076,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         content: content || payload.card?.previewText || payload.card?.title || "Карточка",
         triggerMessageId,
         metadata: { ...(payload.metadata ?? {}), ...(cardId ? { cardId, transcriptId: payload.card?.transcriptId } : {}) },
-        expectedSkillId: skillReference.skillId,
+        expectedSkillId: chat.skillId,
         messageType,
         cardId,
       });
@@ -13144,23 +13101,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.post("/api/no-code/callback/stream", async (req, res, next) => {
     try {
       const payload = noCodeCallbackStreamSchema.parse(req.body ?? {});
-      const authorizationHeader = Array.isArray(req.headers.authorization)
-        ? req.headers.authorization[0]
-        : req.headers.authorization;
-      let callbackToken: string | null = null;
-      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
-        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
-        if (scheme && scheme.toLowerCase() === "bearer") {
-          const candidate = rest.join(" ").trim();
-          callbackToken = candidate.length > 0 ? candidate : null;
-        }
-      }
-
-      await verifyNoCodeCallbackToken({
-        workspaceId: payload.workspaceId,
-        chatId: payload.chatId,
-        token: callbackToken,
-      });
 
       const delta = (payload.delta ?? payload.text ?? "") ?? "";
       const message = await addNoCodeStreamChunk({
@@ -13195,23 +13135,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.post("/api/no-code/callback/assistant-action", async (req, res, next) => {
     try {
       const payload = noCodeCallbackAssistantActionSchema.parse(req.body ?? {});
-      const authorizationHeader = Array.isArray(req.headers.authorization)
-        ? req.headers.authorization[0]
-        : req.headers.authorization;
-      let callbackToken: string | null = null;
-      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
-        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
-        if (scheme && scheme.toLowerCase() === "bearer") {
-          const candidate = rest.join(" ").trim();
-          callbackToken = candidate.length > 0 ? candidate : null;
-        }
-      }
-
-      await verifyNoCodeCallbackToken({
-        workspaceId: payload.workspaceId,
-        chatId: payload.chatId,
-        token: callbackToken,
-      });
 
       const action = await setNoCodeAssistantAction({
         workspaceId: payload.workspaceId,
@@ -13246,23 +13169,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.post("/api/no-code/callback/actions/start", async (req, res, next) => {
     try {
       const payload = botActionStartSchema.parse(req.body ?? {});
-      const authorizationHeader = Array.isArray(req.headers.authorization)
-        ? req.headers.authorization[0]
-        : req.headers.authorization;
-      let callbackToken: string | null = null;
-      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
-        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
-        if (scheme && scheme.toLowerCase() === "bearer") {
-          const candidate = rest.join(" ").trim();
-          callbackToken = candidate.length > 0 ? candidate : null;
-        }
-      }
-
-      await verifyNoCodeCallbackToken({
-        workspaceId: payload.workspaceId,
-        chatId: payload.chatId,
-        token: callbackToken,
-      });
 
       const action = await upsertBotActionForChat({
         workspaceId: payload.workspaceId!,
@@ -13289,23 +13195,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.post("/api/no-code/callback/actions/update", async (req, res, next) => {
     try {
       const payload = botActionUpdateSchema.parse(req.body ?? {});
-      const authorizationHeader = Array.isArray(req.headers.authorization)
-        ? req.headers.authorization[0]
-        : req.headers.authorization;
-      let callbackToken: string | null = null;
-      if (typeof authorizationHeader === "string" && authorizationHeader.trim().length > 0) {
-        const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
-        if (scheme && scheme.toLowerCase() === "bearer") {
-          const candidate = rest.join(" ").trim();
-          callbackToken = candidate.length > 0 ? candidate : null;
-        }
-      }
-
-      await verifyNoCodeCallbackToken({
-        workspaceId: payload.workspaceId,
-        chatId: payload.chatId,
-        token: callbackToken,
-      });
 
       const action = await upsertBotActionForChat({
         workspaceId: payload.workspaceId!,
