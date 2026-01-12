@@ -230,6 +230,7 @@ import bcrypt from "bcryptjs";
 import {
   registerUserSchema,
   type PublicUser,
+  type User,
   type PersonalApiToken,
   userRoles,
   insertEmbeddingProviderSchema,
@@ -6904,14 +6905,35 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       const passwordHash = await bcrypt.hash(passwordRaw, 12);
       const { firstName, lastName } = splitFullName(fullName);
-      const user = await storage.createUser({
-        email,
-        fullName,
-        firstName,
-        lastName,
-        phone: "",
-        passwordHash,
-      });
+      
+      let user: User;
+      try {
+        user = await storage.createUser({
+          email,
+          fullName,
+          firstName,
+          lastName,
+          phone: "",
+          passwordHash,
+        });
+      } catch (createUserError) {
+        // Если пользователь уже создан (например, race condition), но произошла ошибка
+        // при создании workspace, проверяем, существует ли пользователь
+        const existingUser = await storage.getUserByEmail(email);
+        if (existingUser) {
+          console.error("[auth/register] user created but workspace creation failed", {
+            userId: existingUser.id,
+            email: existingUser.email,
+            error: createUserError instanceof Error ? createUserError.message : String(createUserError),
+            stack: createUserError instanceof Error ? createUserError.stack : undefined,
+          });
+          // Возвращаем успешный ответ, чтобы не раскрывать проблему безопасности
+          // Пользователь сможет запросить повторную отправку через /api/auth/resend-confirmation
+          return res.status(201).json(neutralResponse);
+        }
+        // Если пользователь не создан, пробрасываем ошибку дальше
+        throw createUserError;
+      }
 
       // Создаём токен подтверждения
       let token: string;
