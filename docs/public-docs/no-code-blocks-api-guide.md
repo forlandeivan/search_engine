@@ -115,37 +115,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Модерация/классификация: публичных точек не найдено.
 
 ## File upload → no-code
-- Вход: пользователь загружает файл в чат `POST /api/chat/sessions/{chatId}/messages/file` (multipart, поле `file`, `workspaceId` в body/query). Возвращает message с `type=file` и блоком `file` (attachmentId, filename, mimeType, sizeBytes, downloadUrl, expiresAt).
+- Вход: пользователь загружает файл в чат `POST /api/chat/sessions/{chatId}/messages/file` (multipart, поле `file`, `workspaceId` в body/query). Возвращает message с `type=file` и блоком `file` (attachmentId, fileId, filename, mimeType, sizeBytes, downloadUrl, expiresAt, uploadedByUserId).
 - Download: `downloadUrl` — presigned ссылка (TTL по умолчанию 15 мин, env `ATTACHMENT_URL_TTL_SECONDS`). Storage key наружу не отдаётся.
-- Webhook `message.created`: если skill в no_code, отправляется с `type=file` и file-блоком.
-- Webhook `file.uploaded`: отдельное событие после создания file-message.
-
-### Webhook file.uploaded (no-code)
-Событие уходит только при включённом no-code (skill.executionMode=no_code).
-```json
-{
-  "schemaVersion": 1,
-  "event": "file.uploaded",
-  "eventId": "message-id",
-  "occurredAt": "2025-01-01T12:00:00.000Z",
-  "workspace": { "id": "ws-1" },
-  "chat": { "id": "chat-1" },
-  "skill": { "id": "skill-1" },
-  "message": { "id": "message-id", "createdAt": "2025-01-01T12:00:00.000Z", "type": "file" },
-  "actor": { "userId": "user-1" },
-  "file": {
-    "attachmentId": "attach-1",
-    "filename": "report.pdf",
-    "mimeType": "application/pdf",
-    "sizeBytes": 123456,
-    "downloadUrl": "https://...presigned...",
-    "expiresAt": "2025-01-01T12:15:00.000Z",
-    "uploadedByUserId": "user-1"
-  },
-  "meta": { "transcriptionFlowMode": "no_code" }
-}
-```
-Идемпотентность: header `Idempotency-Key` = `file.uploaded:<messageId>`. Секреты и storageKey не передаются.
+- Webhook `message.created`: если skill в no_code, отправляется с `type=file` или `type=audio` и полным file-блоком в поле `message.file`.
 
 ## Нерешённые вопросы
 - Canvas: нет отдельного публичного API, используется transcript metadata. Если появится, добавить раздел.

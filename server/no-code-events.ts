@@ -159,10 +159,11 @@ export function buildMessageCreatedEventPayload(args: {
     fileMeta && typeof fileMeta === "object"
       ? {
           attachmentId: (fileMeta as any).attachmentId ?? null,
+          fileId: (fileMeta as any).fileId ?? null,
           filename: (fileMeta as any).filename ?? null,
           mimeType: (fileMeta as any).mimeType ?? null,
           sizeBytes: typeof (fileMeta as any).sizeBytes === "number" ? (fileMeta as any).sizeBytes : null,
-          downloadUrl: (fileMeta as any).downloadUrl ?? `/api/chat/messages/${args.message.id}/file`,
+          downloadUrl: (fileMeta as any).downloadUrl ?? (fileMeta as any).providerDownloadUrl ?? `/api/chat/messages/${args.message.id}/file`,
           expiresAt: (fileMeta as any).expiresAt ?? null,
           uploadedByUserId: (fileMeta as any).uploadedByUserId ?? null,
         }

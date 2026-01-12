@@ -12063,24 +12063,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           message: { ...mapped, metadata: mapped.metadata },
           actorUserId: user.id,
         });
-        const fileUploadedPayload = buildFileUploadedEventPayload({
-          workspaceId,
-          chatId: chat.id,
-          skillId: skill.id,
-          message: { id: mapped.id, createdAt: mapped.createdAt },
-          actorUserId: user.id,
-          file: {
-            attachmentId: attachment.id,
-            fileId: uploaded.id,
-            filename,
-            mimeType,
-            sizeBytes,
-            downloadUrl: providerDownloadUrl ?? null,
-            expiresAt: null,
-            uploadedByUserId: user.id,
-          },
-          meta: { transcriptionFlowMode: skill.transcriptionFlowMode ?? "standard" },
-        });
 
         scheduleNoCodeEventDelivery({
           endpointUrl: connection.endpointUrl,
@@ -12088,13 +12070,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           bearerToken: connection.bearerToken,
           payload: messagePayload,
           idempotencyKey: messagePayload.eventId,
-        });
-        scheduleNoCodeEventDelivery({
-          endpointUrl: connection.endpointUrl,
-          authType: connection.authType,
-          bearerToken: connection.bearerToken,
-          payload: fileUploadedPayload,
-          idempotencyKey: `file.uploaded:${mapped.id}`,
         });
 
         res.status(201).json({ message: mapped });
@@ -14392,37 +14367,18 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             throw err;
           }
 
-          audioMessage.metadata = {
-            ...(audioMessage.metadata ?? {}),
-            fileId: fileRecordId ?? undefined,
-          };
-
-          const mappedAudioMessage = mapMessage({
-            ...audioMessage,
-            messageType: "audio",
-            metadata: audioMessage.metadata ?? {},
-          });
-          const messagePayload = buildMessageCreatedEventPayload({
-            workspaceId,
-            chatId,
-            skillId: skill.id,
-            message: { ...mappedAudioMessage, metadata: mappedAudioMessage.metadata },
-            actorUserId: user.id,
-          });
           const downloadUrl =
             (uploadedFile?.metadata as any)?.providerUpload?.downloadUrl ??
             (uploadedFile as any)?.metadata?.providerUpload?.downloadUrl ??
             null;
           const normalizedDownloadUrl =
             typeof downloadUrl === "string" && downloadUrl.trim().length > 0 ? downloadUrl.trim() : null;
-          const fileUploadedPayload = buildFileUploadedEventPayload({
-            workspaceId,
-            chatId,
-            skillId: skill.id,
-            message: { id: audioMessage.id, createdAt: audioMessage.createdAt },
-            actorUserId: user.id,
+
+          audioMessage.metadata = {
+            ...(audioMessage.metadata ?? {}),
+            fileId: fileRecordId ?? undefined,
             file: {
-              attachmentId: null,
+              fileId: fileRecordId ?? null,
               filename: fileName,
               mimeType: file.mimetype,
               sizeBytes: typeof file.size === "number" ? file.size : null,
@@ -14430,7 +14386,25 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               expiresAt: null,
               uploadedByUserId: user.id,
             },
-            meta: { transcriptionFlowMode: skill.transcriptionFlowMode ?? "standard" },
+          };
+
+          // Обновляем сообщение с полными метаданными файла
+          await storage.updateChatMessage(audioMessage.id, {
+            metadata: audioMessage.metadata,
+          });
+
+          // Отправляем событие message.created при создании сообщения в чат
+          const mappedAudioMessage = mapMessage({
+            ...audioMessage,
+            messageType: "audio",
+            metadata: audioMessage.metadata,
+          });
+          const messagePayload = buildMessageCreatedEventPayload({
+            workspaceId,
+            chatId,
+            skillId: skill.id,
+            message: mappedAudioMessage,
+            actorUserId: user.id,
           });
           scheduleNoCodeEventDelivery({
             endpointUrl: connection.endpointUrl,
@@ -14438,13 +14412,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             bearerToken: connection.bearerToken,
             payload: messagePayload,
             idempotencyKey: messagePayload.eventId,
-          });
-          scheduleNoCodeEventDelivery({
-            endpointUrl: connection.endpointUrl,
-            authType: connection.authType,
-            bearerToken: connection.bearerToken,
-            payload: fileUploadedPayload,
-            idempotencyKey: `file.uploaded:${audioMessage.id}`,
           });
 
           console.info(

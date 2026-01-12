@@ -27,8 +27,7 @@
   - `POST /api/no-code/callback/stream` body `{ workspaceId, chatId, triggerMessageId, streamId, chunkId, delta|text, seq?, isFinal? }` + bearer-токен навыка.
   - `POST /api/no-code/callback/assistant-action` body `{ workspaceId, chatId, actionType, actionText?, triggerMessageId?, occurredAt? }` + bearer-токен навыка.
 - Исходящие события no-code:
-  - `message.created` webhook (POST на сконфигурированный endpoint навыка) с полями message + `contextPack` (history в пределах contextInputLimit).
-  - `file.uploaded` webhook (для no-code навыков): файл метаданные + presigned downloadUrl/expiresAt, idempotency-key `file.uploaded:<messageId>`.
+  - `message.created` webhook (POST на сконфигурированный endpoint навыка) с полями message + `contextPack` (history в пределах contextInputLimit). Для файлов и аудио содержит полный блок `message.file` с метаданными (attachmentId, fileId, filename, mimeType, sizeBytes, downloadUrl, expiresAt, uploadedByUserId).
 
 ## Assistant action
 - Поле `currentAssistantAction` отдаётся в `GET /api/chat/sessions`. Callback для установки см. выше.
