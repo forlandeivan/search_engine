@@ -150,10 +150,23 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
     });
 
     if (error instanceof ProviderUploadError) {
-      throw error;
+      // Обертываем ProviderUploadError в FileUploadToProviderError с дополнительной информацией о провайдере
+      const providerInfo = {
+        providerId: params.providerId,
+        providerBaseUrl: provider.baseUrl,
+        providerName: (provider as any).name ?? null,
+      };
+      const enhancedDetails = {
+        ...(typeof error.details === "object" && error.details !== null ? error.details : {}),
+        ...providerInfo,
+      };
+      throw new FileUploadToProviderError(error.message, error.status, enhancedDetails);
     }
     throw new FileUploadToProviderError("Не удалось загрузить файл во внешний провайдер", 502, {
       cause: message,
+      providerId: params.providerId,
+      providerBaseUrl: provider.baseUrl,
+      providerName: (provider as any).name ?? null,
     });
   }
 }

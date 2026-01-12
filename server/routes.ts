@@ -12103,7 +12103,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(error.status).json(buildChatServiceErrorPayload(error));
         }
         if (error instanceof FileUploadToProviderError) {
-          return res.status(error.status ?? 500).json({ message: error.message });
+          const payload: Record<string, unknown> = { message: error.message };
+          if (error.details !== undefined) {
+            payload.details = error.details;
+          }
+          return res.status(error.status ?? 500).json(payload);
         }
         if (error instanceof HttpError) {
           return res.status(error.status).json({ message: error.message });
@@ -14368,7 +14372,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           } catch (err) {
             console.error("[transcribe] failed to upload audio to external provider", err);
             if (err instanceof FileUploadToProviderError) {
-              return res.status(err.status ?? 500).json({ message: err.message });
+              const payload: Record<string, unknown> = { message: err.message };
+              if (err.details !== undefined) {
+                payload.details = err.details;
+              }
+              return res.status(err.status ?? 500).json(payload);
             }
             throw err;
           }
@@ -14636,7 +14644,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(error.status).json({ message: error.message, code: error.code });
         }
         if (error instanceof FileUploadToProviderError) {
-          return res.status(error.status ?? 500).json({ message: error.message });
+          const payload: Record<string, unknown> = { message: error.message };
+          if (error.details !== undefined) {
+            payload.details = error.details;
+          }
+          return res.status(error.status ?? 500).json(payload);
         }
         if (error instanceof ChatServiceError) {
           return res.status(error.status).json(buildChatServiceErrorPayload(error));
