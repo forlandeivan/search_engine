@@ -164,6 +164,103 @@ function buildChatServiceErrorPayload(error: ChatServiceError) {
   }
   return payload;
 }
+
+function formatZodValidationError(error: z.ZodError, endpoint?: string): {
+  message: string;
+  details: Array<{
+    field: string;
+    message: string;
+    received: string;
+    expected?: string;
+    example?: string;
+  }>;
+  example?: Record<string, unknown>;
+} {
+  const details = error.issues.map((issue) => {
+    const path = issue.path.join(".");
+    const field = path || "body";
+    let message = issue.message;
+    let expected: string | undefined;
+    let example: string | undefined;
+
+    // Улучшаем сообщения для разных типов ошибок
+    if (issue.code === "invalid_type") {
+      if (issue.received === "undefined") {
+        message = `Поле "${field}" обязательно для заполнения`;
+        if (field === "status") {
+          expected = "Одно из: 'processing', 'done', 'error'";
+          example = '"done"';
+        } else if (field === "actionId") {
+          message = `Поле "${field}" обязательно. Используйте actionId, полученный из ответа start`;
+        } else if (field === "chatId") {
+          message = `Поле "${field}" обязательно. Укажите идентификатор чата`;
+        } else if (field === "actionType") {
+          message = `Поле "${field}" обязательно. Укажите тип действия (например: 'transcribe_audio', 'summarize', 'generate_image', 'process_file')`;
+          example = '"transcribe_audio"';
+        }
+      } else {
+        message = `Поле "${field}" имеет неверный тип. Получено: ${issue.received}, ожидается: ${issue.expected}`;
+        expected = issue.expected;
+      }
+    } else if (issue.code === "invalid_enum_value") {
+      message = `Поле "${field}" содержит недопустимое значение. Получено: "${issue.received}"`;
+      if (issue.options && issue.options.length > 0) {
+        expected = `Одно из: ${issue.options.map((opt) => `'${opt}'`).join(", ")}`;
+        example = `"${issue.options[0]}"`;
+      }
+    } else if (issue.code === "too_small" && issue.type === "string") {
+      message = `Поле "${field}" слишком короткое. Минимальная длина: ${issue.minimum}`;
+    } else if (issue.code === "too_big" && issue.type === "string") {
+      message = `Поле "${field}" слишком длинное. Максимальная длина: ${issue.maximum}`;
+    }
+
+    return {
+      field,
+      message,
+      received: issue.received || "undefined",
+      ...(expected ? { expected } : {}),
+      ...(example ? { example } : {}),
+    };
+  });
+
+  // Формируем пример правильного запроса
+  let exampleRequest: Record<string, unknown> | undefined;
+  if (endpoint?.includes("actions/start")) {
+    exampleRequest = {
+      workspaceId: "5aededcf-84fc-4b39-ba3d-28a338ba5107",
+      chatId: "867001b6-6a30-4f63-87d5-4c25956b16a3",
+      actionType: "transcribe_audio",
+      displayText: "Готовим стенограмму...",
+      payload: {
+        transcriptId: "",
+        fileName: "audio.mp3",
+      },
+    };
+  } else if (endpoint?.includes("actions/update")) {
+    exampleRequest = {
+      workspaceId: "5aededcf-84fc-4b39-ba3d-28a338ba5107",
+      chatId: "867001b6-6a30-4f63-87d5-4c25956b16a3",
+      actionId: "5501885d-19be-4249-b5f4-636a30a9c6c3",
+      actionType: "transcribe_audio",
+      status: "done",
+      displayText: "Стенограмма готова",
+      payload: {
+        transcriptId: "1291febd-9f69-4c32-93e7-f41ca92da867",
+      },
+    };
+  }
+
+  const mainMessage =
+    details.length === 1
+      ? details[0].message
+      : `Обнаружено ${details.length} ошибок в данных запроса`;
+
+  return {
+    message: mainMessage,
+    details,
+    ...(exampleRequest ? { example: exampleRequest } : {}),
+  };
+}
 import { callRagForSkillChat, SkillRagConfigurationError } from "./chat-rag";
 import {
   fetchLlmCompletion,
@@ -7419,12 +7516,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     .refine((val) => val === null || val.length > 0, { message: "displayText пустой" })
     .optional();
 
-  const botActionTypeSchema = z.string().trim().min(1);
-  const botActionStatusSchema = z.enum(botActionStatuses);
+  const botActionTypeSchema = z.string().trim().min(1, "Укажите тип действия (actionType)");
+  const botActionStatusSchema = z.enum(botActionStatuses, {
+    errorMap: () => ({
+      message: `Статус (status) должен быть одним из: ${botActionStatuses.join(", ")}`,
+    }),
+  });
 
   const botActionStartSchema = z.object({
     workspaceId: z.string().trim().optional(),
-    chatId: z.string().trim().min(1, "Укажите чат"),
+    chatId: z.string().trim().min(1, "Укажите идентификатор чата (chatId)"),
     actionType: botActionTypeSchema,
     displayText: displayTextSchema,
     payload: z.record(z.any()).optional(),
@@ -7432,8 +7533,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   const botActionUpdateSchema = z.object({
     workspaceId: z.string().trim().optional(),
-    chatId: z.string().trim().min(1, "Укажите чат"),
-    actionId: z.string().trim().min(1, "Укажите actionId"),
+    chatId: z.string().trim().min(1, "Укажите идентификатор чата (chatId)"),
+    actionId: z
+      .string()
+      .trim()
+      .min(1, "Укажите идентификатор действия (actionId), полученный из ответа start"),
     actionType: botActionTypeSchema,
     status: botActionStatusSchema,
     displayText: displayTextSchema,
@@ -13288,7 +13392,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return res.status(200).json({ action });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        const formatted = formatZodValidationError(error, "/api/no-code/callback/actions/start");
+        return res.status(400).json(formatted);
       }
       if (error instanceof ChatServiceError) {
         return res.status(error.status).json(buildChatServiceErrorPayload(error));
@@ -13314,7 +13419,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return res.status(200).json({ action });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Некорректные данные", details: error.issues });
+        const formatted = formatZodValidationError(error, "/api/no-code/callback/actions/update");
+        return res.status(400).json(formatted);
       }
       if (error instanceof ChatServiceError) {
         return res.status(error.status).json(buildChatServiceErrorPayload(error));
