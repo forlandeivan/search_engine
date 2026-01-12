@@ -389,7 +389,7 @@ export default function AuthPage() {
                   <Label htmlFor="register-name">Имя и фамилия</Label>
                   <Input
                     id="register-name"
-                    placeholder="Иван Фролов"
+                    placeholder="Иван Иванов"
                     {...registerForm.register("fullName")}
                   />
                   {registerForm.formState.errors.fullName && (

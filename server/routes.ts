@@ -6914,26 +6914,66 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
 
       // Создаём токен подтверждения
-      const token = await emailConfirmationTokenService.createToken(user.id, 24);
+      let token: string;
+      try {
+        token = await emailConfirmationTokenService.createToken(user.id, 24);
+      } catch (tokenError) {
+        // Если пользователь уже создан, но токен не создан,
+        // логируем ошибку, но возвращаем успешный ответ для безопасности
+        if (tokenError instanceof EmailConfirmationTokenError) {
+          console.error("[auth/register] token creation failed", {
+            userId: user.id,
+            email: user.email,
+            error: tokenError.message,
+            stack: tokenError.stack,
+          });
+          // Возвращаем успешный ответ, чтобы не раскрывать проблему безопасности
+          // Пользователь сможет запросить повторную отправку через /api/auth/resend-confirmation
+          return res.status(201).json(neutralResponse);
+        }
+        // Если это другая ошибка при создании токена, пробрасываем дальше
+        throw tokenError;
+      }
 
       const baseUrl = resolveFrontendBaseUrl(req);
       const confirmationUrl = new URL("/auth/verify-email", baseUrl);
       confirmationUrl.searchParams.set("token", token);
 
-      await registrationEmailService.sendRegistrationConfirmationEmail(
-        email,
-        fullName,
-        confirmationUrl.toString(),
-      );
+      try {
+        await registrationEmailService.sendRegistrationConfirmationEmail(
+          email,
+          fullName,
+          confirmationUrl.toString(),
+        );
+      } catch (emailError) {
+        // Если пользователь уже создан, но письмо не отправилось,
+        // логируем ошибку, но возвращаем успешный ответ для безопасности
+        if (emailError instanceof EmailValidationError || emailError instanceof SmtpSendError) {
+          console.error("[auth/register] email send failed", {
+            userId: user.id,
+            email: user.email,
+            error: emailError.message,
+            stack: emailError.stack,
+          });
+          // Возвращаем успешный ответ, чтобы не раскрывать проблему безопасности
+          // Пользователь сможет запросить повторную отправку через /api/auth/resend-confirmation
+          return res.status(201).json(neutralResponse);
+        }
+        // Если это другая ошибка при отправке письма, пробрасываем дальше
+        throw emailError;
+      }
 
       return res.status(201).json(neutralResponse);
     } catch (error) {
       console.error("[auth/register] failed", {
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid data", details: error.issues });
       }
+      // Ошибки создания токена и отправки письма уже обработаны выше
+      // Здесь обрабатываем только критические ошибки (создание пользователя, БД и т.д.)
       return res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -7348,14 +7388,19 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   const botActionStartSchema = z.object({
     workspaceId: z.string().trim().optional(),
     chatId: z.string().trim().min(1, "Укажите чат"),
-    actionId: z.string().trim().min(1, "Укажите actionId"),
     actionType: botActionTypeSchema,
     displayText: displayTextSchema,
     payload: z.record(z.any()).optional(),
   });
 
-  const botActionUpdateSchema = botActionStartSchema.extend({
+  const botActionUpdateSchema = z.object({
+    workspaceId: z.string().trim().optional(),
+    chatId: z.string().trim().min(1, "Укажите чат"),
+    actionId: z.string().trim().min(1, "Укажите actionId"),
+    actionType: botActionTypeSchema,
     status: botActionStatusSchema,
+    displayText: displayTextSchema,
+    payload: z.record(z.any()).optional(),
   });
 
   const noCodeCallbackAssistantActionSchema = z.object({
@@ -11573,10 +11618,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         const workspaceId =
           req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, payload.workspaceId ?? null);
 
+        const actionId = randomUUID();
+
         const action = await upsertBotActionForChat({
           workspaceId,
           chatId: payload.chatId,
-          actionId: payload.actionId,
+          actionId,
           actionType: payload.actionType,
           status: "processing",
           displayText: payload.displayText ?? undefined,
@@ -13189,10 +13236,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     try {
       const payload = botActionStartSchema.parse(req.body ?? {});
 
+      const actionId = randomUUID();
+
       const action = await upsertBotActionForChat({
         workspaceId: payload.workspaceId!,
         chatId: payload.chatId,
-        actionId: payload.actionId,
+        actionId,
         actionType: payload.actionType,
         status: "processing",
         displayText: payload.displayText ?? undefined,
