@@ -617,7 +617,6 @@ export default function ChatPage({ params }: ChatPageProps) {
           }, 1800);
         }
       };
-      showBotAction("Готовим стенограмму…", "processing", "transcribe_audio");
 
       let operationId: string | null = null;
       let fileName = "audio";

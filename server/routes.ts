@@ -14584,27 +14584,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           executionId: asrExecution.id,
         });
 
-        // Создаём bot_action для показа активности (вместо placeholder message)
-        const actionId = `transcribe-${transcript.id}`;
-        try {
-          await upsertBotActionForChat({
-            workspaceId,
-            chatId,
-            actionId,
-            actionType: "transcribe_audio",
-            status: "processing",
-            displayText: null, // Используем дефолтный текст "Готовим стенограмму…"
-            payload: {
-              transcriptId: transcript.id,
-              asrExecutionId: asrExecution.id,
-              fileName: fileName,
-            },
-            userId: user.id,
-          });
-        } catch (error) {
-          console.error("[transcribe] failed to create bot_action", error);
-          // Не блокируем транскрипцию, если bot_action не создался
-        }
         await asrExecutionLogService.addEvent(asrExecution.id, {
           stage: "asr_request_sent",
           details: { provider: "yandex_speechkit", operationId: sttResponse.operationId, language: lang ?? null },

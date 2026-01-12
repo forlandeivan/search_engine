@@ -1,7 +1,6 @@
 import type { BotAction, BotActionType } from "@shared/schema";
 
-const actionTypeTexts: Record<BotActionType, string> = {
-  transcribe_audio: "Готовим стенограмму…",
+const actionTypeTexts: Partial<Record<BotActionType, string>> = {
   summarize: "Готовим саммари…",
   generate_image: "Создаём изображение…",
   process_file: "Обрабатываем файл…",
