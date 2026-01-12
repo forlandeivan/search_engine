@@ -102,6 +102,9 @@ export class RegistrationEmailServiceImpl implements RegistrationEmailService {
         product: this.productName,
         type: message.type,
         error: err instanceof Error ? err.message : String(err),
+        errorName: err instanceof Error ? err.name : undefined,
+        stack: err instanceof Error ? err.stack : undefined,
+        fullError: err,
       });
       throw err;
     }

@@ -6971,17 +6971,32 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         // Если пользователь уже создан, но письмо не отправилось,
         // логируем ошибку, но возвращаем успешный ответ для безопасности
         if (emailError instanceof EmailValidationError || emailError instanceof SmtpSendError) {
-          console.error("[auth/register] email send failed", {
+          console.error("[auth/register] email send failed - DETAILED ERROR", {
             userId: user.id,
             email: user.email,
-            error: emailError.message,
+            errorType: emailError.constructor.name,
+            errorMessage: emailError.message,
+            errorName: emailError.name,
             stack: emailError.stack,
+            fullError: emailError,
+            // Дополнительная информация для диагностики
+            isEmailValidationError: emailError instanceof EmailValidationError,
+            isSmtpSendError: emailError instanceof SmtpSendError,
           });
           // Возвращаем успешный ответ, чтобы не раскрывать проблему безопасности
           // Пользователь сможет запросить повторную отправку через /api/auth/resend-confirmation
           return res.status(201).json(neutralResponse);
         }
         // Если это другая ошибка при отправке письма, пробрасываем дальше
+        console.error("[auth/register] email send failed - UNEXPECTED ERROR", {
+          userId: user.id,
+          email: user.email,
+          errorType: emailError instanceof Error ? emailError.constructor.name : typeof emailError,
+          errorMessage: emailError instanceof Error ? emailError.message : String(emailError),
+          errorName: emailError instanceof Error ? emailError.name : undefined,
+          stack: emailError instanceof Error ? emailError.stack : undefined,
+          fullError: emailError,
+        });
         throw emailError;
       }
 

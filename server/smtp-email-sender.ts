@@ -22,6 +22,13 @@ export class SmtpEmailSender implements EmailSender {
     // Получаем настройки SMTP
     const settings = await this.settings.getSettingsWithSecret();
     if (!settings || !settings.host || !settings.port || !settings.fromEmail) {
+      console.error("[smtp-email] SMTP settings check failed", {
+        hasSettings: !!settings,
+        hasHost: !!settings?.host,
+        hasPort: !!settings?.port,
+        hasFromEmail: !!settings?.fromEmail,
+        settingsKeys: settings ? Object.keys(settings) : [],
+      });
       throw new SmtpSendError("SMTP settings are not configured");
     }
     if (settings.useTls && settings.useSsl) {
@@ -96,6 +103,19 @@ export class SmtpEmailSender implements EmailSender {
     }
 
     try {
+      console.info("[smtp-email] attempting to send", {
+        to: message.to,
+        subject: message.subject,
+        type,
+        from,
+        hasHtml: !!message.bodyHtml,
+        hasText: !!message.bodyText,
+        host: settings.host,
+        port: settings.port,
+        secure,
+        requireTLS,
+        hasAuth: !!auth,
+      });
       const info = await transport.sendMail({
         from,
         to: message.to,
@@ -130,12 +150,18 @@ export class SmtpEmailSender implements EmailSender {
           });
         }
       }
-      console.error("[smtp-email] send failed", {
+      console.error("[smtp-email] send failed - DETAILED ERROR", {
         to: message.to,
         subject: message.subject,
         error: safeMessage,
         type,
         system: Boolean(message.isSystemMessage),
+        originalError: err instanceof Error ? {
+          name: err.name,
+          message: err.message,
+          stack: err.stack,
+        } : String(err),
+        fullError: err,
       });
       throw new SmtpSendError(safeMessage);
     } finally {
