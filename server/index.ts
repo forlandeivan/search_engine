@@ -142,7 +142,7 @@ const restrictedCors = cors({
       }
 
       if (isLocalhost) {
-        log(`CORS: Allowed localhost for development: ${origin} (hostname: ${originHostname})`);
+        // Skip logging for localhost in development to reduce log noise
         return callback(null, true);
       }
 
