@@ -11360,7 +11360,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             action: "file_deleted",
             skill: {
               executionMode: skill.executionMode ?? null,
-              noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? (skill as any).noCodeFileEventsUrl ?? null,
+              noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
               noCodeAuthType: skill.noCodeConnection?.authType ?? skill.noCodeAuthType ?? null,
               noCodeBearerToken: bearerToken,
             },
@@ -14329,7 +14329,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               },
               skillContext: {
                 executionMode: skill.executionMode ?? null,
-                noCodeFileEventsUrl: skill.noCodeConnection?.fileEventsUrl ?? null,
                 noCodeEndpointUrl: skill.noCodeConnection?.endpointUrl ?? null,
                 noCodeAuthType: skill.noCodeConnection?.authType ?? null,
                 noCodeBearerToken: bearerToken,

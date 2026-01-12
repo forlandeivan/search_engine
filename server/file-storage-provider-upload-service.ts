@@ -32,7 +32,6 @@ type UploadParams = {
   context: FileUploadContext;
   skillContext?: {
     executionMode?: string | null;
-    noCodeFileEventsUrl?: string | null;
     noCodeEndpointUrl?: string | null;
     noCodeAuthType?: NoCodeAuthType | null;
     noCodeBearerToken?: string | null;

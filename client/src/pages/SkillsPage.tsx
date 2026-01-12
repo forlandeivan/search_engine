@@ -133,19 +133,6 @@ export const skillFormSchema = z.object({
         value.startsWith("https://"),
       { message: "Разрешены только http/https URL" },
     ),
-  noCodeFileEventsUrl: z
-    .string()
-    .url({ message: "Некорректный URL" })
-    .optional()
-    .or(z.literal(""))
-    .refine(
-      (value) =>
-      value === undefined ||
-      value === "" ||
-      value.startsWith("http://") ||
-      value.startsWith("https://"),
-    { message: "Разрешены только http/https URL" },
-  ),
   noCodeAuthType: z.enum(["none", "bearer"]).default("none"),
   noCodeBearerToken: z.string().optional().or(z.literal("")),
   noCodeBearerTokenAction: z.enum(["keep", "replace", "clear"]).default("replace"),
@@ -207,7 +194,6 @@ export const defaultFormValues = {
   onTranscriptionAutoActionId: "",
   contextInputLimit: "",
   noCodeEndpointUrl: "",
-  noCodeFileEventsUrl: "",
   noCodeFileStorageProviderId: WORKSPACE_DEFAULT_PROVIDER_VALUE,
   noCodeAuthType: "none" as "none" | "bearer",
   noCodeBearerToken: "",
@@ -1523,7 +1509,6 @@ export function SkillFormContent({
           noCodeConnection.fileStorageProviderId ??
           WORKSPACE_DEFAULT_PROVIDER_VALUE,
         noCodeEndpointUrl: noCodeConnection.endpointUrl ?? "",
-        noCodeFileEventsUrl: noCodeConnection.fileEventsUrl ?? "",
         noCodeAuthType: noCodeConnection.authType ?? "none",
         noCodeBearerToken: "",
         noCodeBearerTokenAction: noCodeConnection.tokenIsSet ? "keep" : "replace",
@@ -1547,13 +1532,8 @@ export function SkillFormContent({
     if (values.executionMode === "no_code") {
       let hasValidationErrors = false;
       const endpoint = (values.noCodeEndpointUrl ?? "").trim();
-      const fileEvents = (values.noCodeFileEventsUrl ?? "").trim();
       if (!endpoint) {
         form.setError("noCodeEndpointUrl", { type: "manual", message: "Укажите message URL для no-code" });
-        hasValidationErrors = true;
-      }
-      if (!fileEvents) {
-        form.setError("noCodeFileEventsUrl", { type: "manual", message: "Укажите URL событий файлов" });
         hasValidationErrors = true;
       }
       if (!effectiveProvider) {
@@ -2276,28 +2256,6 @@ export function SkillFormContent({
                                 </FormItem>
                               )}
                             />
-                            <FormField
-                              control={form.control}
-                              name="noCodeFileEventsUrl"
-                              render={({ field }) => (
-                                <FormItem className="grid gap-1.5">
-                                  <FormLabel>File Events URL</FormLabel>
-                                  <FormControl>
-                                    <Input
-                                      {...field}
-                                      placeholder="https://example.com/file-events"
-                                      disabled={noCodeDisabled}
-                                      className="h-9"
-                                    />
-                                  </FormControl>
-                                  <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                    Отдельный endpoint для событий файлов (может совпадать с URL сценария).
-                                  </FormDescription>
-                                  <FormMessage className="text-xs text-destructive leading-tight" />
-                                </FormItem>
-                              )}
-                            />
-                            <Separator className="border-border" />
                             <FormField
                               control={form.control}
                               name="noCodeFileStorageProviderId"
