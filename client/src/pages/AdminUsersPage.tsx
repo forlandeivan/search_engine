@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ShieldCheck, ShieldOff } from "lucide-react";
+import { Loader2, ShieldCheck, ShieldOff, CheckCircle2 } from "lucide-react";
 import type { PublicUser } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -63,6 +63,28 @@ export default function AdminUsersPage() {
     },
   });
 
+  const activateUserMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const response = await apiRequest("POST", `/api/admin/users/${userId}/activate`, {});
+      return (await response.json()) as { user: PublicUser };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({
+        title: "Пользователь активирован",
+        description: "Учетная запись успешно активирована",
+      });
+    },
+    onError: (mutationError: unknown) => {
+      const message = mutationError instanceof Error ? mutationError.message : "Неизвестная ошибка";
+      toast({
+        title: "Не удалось активировать пользователя",
+        description: message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const users = data?.users ?? [];
 
   const sortedUsers = useMemo(() => {
@@ -89,10 +111,19 @@ export default function AdminUsersPage() {
   }
 
   const pendingUserId = updateRoleMutation.variables?.userId;
+  const activatingUserId = activateUserMutation.variables;
 
   const handleToggleRole = (user: PublicUser) => {
     const nextRole = user.role === "admin" ? "user" : "admin";
     updateRoleMutation.mutate({ userId: user.id, role: nextRole });
+  };
+
+  const handleActivateUser = (user: PublicUser) => {
+    activateUserMutation.mutate(user.id);
+  };
+
+  const isUserActive = (user: PublicUser) => {
+    return user.status === "active" && user.isEmailConfirmed;
   };
 
   return (
@@ -111,6 +142,7 @@ export default function AdminUsersPage() {
               <TableHead className="w-[280px]">Имя</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Роль</TableHead>
+              <TableHead>Статус</TableHead>
               <TableHead>Последняя активность</TableHead>
               <TableHead className="text-right">Действия</TableHead>
             </TableRow>
@@ -118,7 +150,9 @@ export default function AdminUsersPage() {
           <TableBody>
             {sortedUsers.map((user) => {
               const isPending = updateRoleMutation.isPending && pendingUserId === user.id;
+              const isActivating = activateUserMutation.isPending && activatingUserId === user.id;
               const isAdmin = user.role === "admin";
+              const isActive = isUserActive(user);
 
               return (
                 <TableRow key={user.id}>
@@ -129,35 +163,66 @@ export default function AdminUsersPage() {
                       {isAdmin ? "Админ" : "Пользователь"}
                     </Badge>
                   </TableCell>
+                  <TableCell>
+                    {isActive ? (
+                      <Badge variant="default" className="capitalize">
+                        Активен
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="capitalize text-muted-foreground">
+                        Не активирован
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>{formatLastActivity(user.lastActiveAt)}</TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant={isAdmin ? "outline" : "default"}
-                      size="sm"
-                      onClick={() => handleToggleRole(user)}
-                      disabled={isPending}
-                    >
-                      {isPending ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Обновляем...
-                        </>
-                      ) : isAdmin ? (
-                        <>
-                          <ShieldOff className="mr-2 h-4 w-4" /> Снять роль
-                        </>
-                      ) : (
-                        <>
-                          <ShieldCheck className="mr-2 h-4 w-4" /> Назначить админом
-                        </>
+                    <div className="flex items-center justify-end gap-2">
+                      {!isActive && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleActivateUser(user)}
+                          disabled={isActivating}
+                        >
+                          {isActivating ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Активируем...
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="mr-2 h-4 w-4" /> Активировать
+                            </>
+                          )}
+                        </Button>
                       )}
-                    </Button>
+                      <Button
+                        variant={isAdmin ? "outline" : "default"}
+                        size="sm"
+                        onClick={() => handleToggleRole(user)}
+                        disabled={isPending}
+                      >
+                        {isPending ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Обновляем...
+                          </>
+                        ) : isAdmin ? (
+                          <>
+                            <ShieldOff className="mr-2 h-4 w-4" /> Снять роль
+                          </>
+                        ) : (
+                          <>
+                            <ShieldCheck className="mr-2 h-4 w-4" /> Назначить админом
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               );
             })}
             {sortedUsers.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                   Пока нет зарегистрированных пользователей
                 </TableCell>
               </TableRow>

@@ -8023,6 +8023,25 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  app.post("/api/admin/users/:userId/activate", requireAdmin, async (req, res, next) => {
+    try {
+      const { userId } = req.params;
+
+      if (!userId) {
+        return res.status(400).json({ message: "Не указан пользователь" });
+      }
+
+      const updatedUser = await storage.confirmUserEmail(userId);
+      if (!updatedUser) {
+        return res.status(404).json({ message: "Пользователь не найден" });
+      }
+
+      res.json({ user: toPublicUser(updatedUser) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/admin/auth/providers/google", requireAdmin, async (_req, res, next) => {
     try {
       const provider = await storage.getAuthProvider("google");
