@@ -1048,11 +1048,19 @@ function isSameTranscript(a?: ChatMessage, b?: ChatMessage): boolean {
 }
 
 function isSameAudio(a?: ChatMessage, b?: ChatMessage): boolean {
-  return (
-    a?.metadata?.type === "audio" &&
-    b?.metadata?.type === "audio" &&
-    Boolean(a?.metadata?.fileName) &&
-    Boolean(b?.metadata?.fileName) &&
-    a?.metadata?.fileName === b?.metadata?.fileName
-  );
+  // Не считаем аудиофайлы эквивалентными только по имени - разные отправки одного файла должны быть разными сообщениями
+  // Сравниваем только по ID сообщения или attachmentId, чтобы избежать реальных дубликатов
+  if (a?.id === b?.id) {
+    return true;
+  }
+  
+  // Если есть attachmentId, сравниваем по нему (один и тот же attachmentId = одно и то же сообщение)
+  const aAttachmentId = a?.file?.attachmentId ?? a?.metadata?.attachmentId;
+  const bAttachmentId = b?.file?.attachmentId ?? b?.metadata?.attachmentId;
+  if (aAttachmentId && bAttachmentId && aAttachmentId === bAttachmentId) {
+    return true;
+  }
+  
+  // Разные отправки одного файла - это разные сообщения, не считаем их эквивалентными
+  return false;
 }
