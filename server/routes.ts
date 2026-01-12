@@ -12104,8 +12104,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
         if (error instanceof FileUploadToProviderError) {
           const payload: Record<string, unknown> = { message: error.message };
-          if (error.details !== undefined) {
-            payload.details = error.details;
+          if (error.details !== undefined && typeof error.details === "object" && error.details !== null) {
+            const filteredDetails: Record<string, unknown> = {};
+            if ("providerName" in error.details && error.details.providerName) {
+              filteredDetails.providerName = error.details.providerName;
+            }
+            if (Object.keys(filteredDetails).length > 0) {
+              payload.details = filteredDetails;
+            }
           }
           return res.status(error.status ?? 500).json(payload);
         }
@@ -14373,8 +14379,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             console.error("[transcribe] failed to upload audio to external provider", err);
             if (err instanceof FileUploadToProviderError) {
               const payload: Record<string, unknown> = { message: err.message };
-              if (err.details !== undefined) {
-                payload.details = err.details;
+              if (err.details !== undefined && typeof err.details === "object" && err.details !== null) {
+                const filteredDetails: Record<string, unknown> = {};
+                if ("providerName" in err.details && err.details.providerName) {
+                  filteredDetails.providerName = err.details.providerName;
+                }
+                if (Object.keys(filteredDetails).length > 0) {
+                  payload.details = filteredDetails;
+                }
               }
               return res.status(err.status ?? 500).json(payload);
             }
@@ -14645,8 +14657,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
         if (error instanceof FileUploadToProviderError) {
           const payload: Record<string, unknown> = { message: error.message };
-          if (error.details !== undefined) {
-            payload.details = error.details;
+          if (error.details !== undefined && typeof error.details === "object" && error.details !== null) {
+            const filteredDetails: Record<string, unknown> = {};
+            if ("providerName" in error.details && error.details.providerName) {
+              filteredDetails.providerName = error.details.providerName;
+            }
+            if (Object.keys(filteredDetails).length > 0) {
+              payload.details = filteredDetails;
+            }
           }
           return res.status(error.status ?? 500).json(payload);
         }

@@ -227,8 +227,8 @@ export class FileStorageProviderClient {
         const code = isAbort ? "TIMEOUT" : "NETWORK_ERROR";
         const retryable = !isAbort;
         const message = isAbort
-          ? `Провайдер ${this.baseUrl} не ответил вовремя`
-          : `Не удалось отправить файл провайдеру ${this.baseUrl}`;
+          ? "Провайдер файлового хранилища не ответил вовремя"
+          : "Не удалось отправить файл провайдеру файлового хранилища";
         throw new ProviderUploadError(
           message,
           isAbort ? 504 : 502,
@@ -265,18 +265,20 @@ export class FileStorageProviderClient {
 
     const payload = await parseJsonSafe(res);
     if (!res.ok) {
-      const providerMessage = payload && (payload.error || payload.message);
-      const baseMessage = providerMessage
-        ? `Провайдер ${this.baseUrl} вернул ошибку ${res.status}: ${providerMessage}`
-        : `Провайдер ${this.baseUrl} вернул ошибку ${res.status}`;
       const retryable = isRetryableStatus(res.status);
-      throw new ProviderUploadError(baseMessage, res.status, "PROVIDER_ERROR", retryable, {
-        status: res.status,
-        requestId,
-        url,
-        providerBaseUrl: this.baseUrl,
-        response: payload ?? null,
-      });
+      throw new ProviderUploadError(
+        `Провайдер файлового хранилища вернул ошибку ${res.status}`,
+        res.status,
+        "PROVIDER_ERROR",
+        retryable,
+        {
+          status: res.status,
+          requestId,
+          url,
+          providerBaseUrl: this.baseUrl,
+          response: payload ?? null,
+        },
+      );
     }
 
     const providerFileId =
