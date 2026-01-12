@@ -16,7 +16,7 @@
 ### Базовый URL
 
 ```
-https://ваш-домен.replit.dev/api
+https://ваш-домен.com/api
 ```
 
 ## Публичный RAG-поиск с LLM
@@ -61,7 +61,7 @@ https://ваш-домен.replit.dev/api
 **Пример запроса:**
 
 ```bash
-curl -X POST "https://ваш-домен.replit.dev/api/public/collections/search/rag" \
+curl -X POST "https://ваш-домен.com/api/public/collections/search/rag" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: PUBLIC_API_KEY" \
   -d '{
@@ -590,7 +590,7 @@ class TildaSearchWidget {
 // Инициализация виджета
 document.addEventListener('DOMContentLoaded', function() {
   // ЗАМЕНИТЕ на ваш реальный endpoint
-  const searchWidget = new TildaSearchWidget('https://ваш-домен.replit.dev/api');
+  const searchWidget = new TildaSearchWidget('https://ваш-домен.com/api');
   
   // Глобальная переменная для доступа из консоли
   window.searchWidget = searchWidget;
@@ -647,7 +647,7 @@ document.head.appendChild(style);
 ```
 Создай современный поисковый виджет для Zero блока Тильды со следующими характеристиками:
 
-API: https://ваш-домен.replit.dev/api/search?q=ЗАПРОС&limit=10
+API: https://ваш-домен.com/api/search?q=ЗАПРОС&limit=10
 Ответ API: {results: [{title, url, content, metaDescription}], total, page, limit}
 
 Требования:
@@ -674,7 +674,7 @@ API: https://ваш-домен.replit.dev/api/search?q=ЗАПРОС&limit=10
 ```javascript
 // POST /api/webhook/crawl
 // Для автоматического обновления индекса после публикации в Тильде
-fetch('https://ваш-домен.replit.dev/api/webhook/crawl', {
+fetch('https://ваш-домен.com/api/webhook/crawl', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ url: 'https://ваш-сайт.com' })
@@ -706,8 +706,8 @@ searchWidget.onSearch = function(query, resultsCount) {
 - Время ответа API отслеживается
 
 ### Техническая Поддержка:
-Поисковый движок развернут на Replit с автоматическим масштабированием и резервным копированием данных.
+Поисковый движок развернут с автоматическим масштабированием и резервным копированием данных.
 
 ---
 
-**Готово к использованию!** Скопируйте код, замените `https://ваш-домен.replit.dev/api` на ваш реальный endpoint и интегрируйте в Тильду.
+**Готово к использованию!** Скопируйте код, замените `https://ваш-домен.com/api` на ваш реальный endpoint и интегрируйте в Тильду.

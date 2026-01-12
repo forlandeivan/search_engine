@@ -20,7 +20,8 @@ const CLEAN_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
 const MIN_TEXT_LENGTH = 8;
 
 pdfjsLib.GlobalWorkerOptions.disableWorker = true;
-pdfjsLib.GlobalWorkerOptions.standardFontDataUrl = "https://unpkg.com/pdfjs-dist@4.10.38/standard_fonts/";
+// Use system fonts instead of external CDN
+pdfjsLib.GlobalWorkerOptions.standardFontDataUrl = undefined;
 
 export class TextExtractionError extends Error {
   public code: "TEXT_EXTRACTION_FAILED" | "TEXT_EMPTY_AFTER_EXTRACTION" | "TEXT_UNSUPPORTED" | "STORAGE_UNAVAILABLE";

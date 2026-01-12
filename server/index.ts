@@ -127,19 +127,9 @@ const restrictedCors = cors({
         return callback(new Error('Invalid origin'));
       }
 
-      // SECURITY FIX: Use proper hostname checking instead of vulnerable includes()
-      // Allow cloud development platform domains with secure hostname parsing
-      const isCloudDevDomain = originHostname === 'replit.dev' || originHostname.endsWith('.replit.dev') ||
-                            originHostname === 'replit.app' || originHostname.endsWith('.replit.app');
-
       // Allow localhost for development
       const isLocalhost = originHostname === 'localhost' || originHostname === '127.0.0.1' || 
                          originHostname === '0.0.0.0';
-
-      if (isCloudDevDomain) {
-        log(`CORS: Allowed cloud dev domain: ${origin} (hostname: ${originHostname})`);
-        return callback(null, true);
-      }
 
       if (isLocalhost) {
         // Skip logging for localhost in development to reduce log noise
