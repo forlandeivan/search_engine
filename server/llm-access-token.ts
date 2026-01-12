@@ -178,3 +178,18 @@ export function clearAccessTokenCache() {
   oauthTokenCache.clear();
   oauthTokenPromises.clear();
 }
+
+/**
+ * Очищает кеш токена для конкретного провайдера
+ * Используется при ошибках аутентификации для принудительного обновления токена
+ */
+export function clearProviderAccessTokenCache(provider: OAuthProviderConfig): void {
+  // AITunnel использует API-ключ без OAuth, кеш не нужен
+  if ((provider as Partial<LlmProvider>).providerType === "aitunnel") {
+    return;
+  }
+
+  const cacheKey = buildOAuthCacheKey(provider);
+  oauthTokenCache.delete(cacheKey);
+  oauthTokenPromises.delete(cacheKey);
+}

@@ -14,6 +14,7 @@ import {
   type ApiRequestLog,
   type NodeFetchOptions,
 } from "./http-utils";
+import { fetchAccessToken, clearProviderAccessTokenCache, type OAuthProviderConfig } from "./llm-access-token";
 
 function parseEnvPositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -673,6 +674,24 @@ export function executeLlmCompletion(
         message = parsedBody.trim();
       }
 
+      // Проверяем, является ли ошибка связанной с истекшим токеном
+      const isTokenExpiredError =
+        completionResponse.status === 401 ||
+        completionResponse.status === 403 ||
+        (typeof message === "string" &&
+          (message.toLowerCase().includes("token has expired") ||
+            message.toLowerCase().includes("token expired") ||
+            message.toLowerCase().includes("invalid token") ||
+            message.toLowerCase().includes("unauthorized")));
+
+      if (isTokenExpiredError && provider.providerType !== "aitunnel") {
+        // Очищаем кеш токена для принудительного обновления
+        clearProviderAccessTokenCache(provider);
+        console.warn(
+          `[llm] provider=${provider.id} token expired error detected, cache cleared. Status: ${completionResponse.status}, Message: ${message}`,
+        );
+      }
+
       streamController?.fail(new Error(message));
       throw new Error(message);
     }
@@ -904,6 +923,58 @@ export function executeLlmCompletion(
   });
 }
 
+/**
+ * Проверяет, является ли ошибка связанной с истекшим токеном
+ */
+function isTokenExpiredError(error: unknown): boolean {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  return (
+    (typeof errorMessage === "string" &&
+      (errorMessage.toLowerCase().includes("token has expired") ||
+        errorMessage.toLowerCase().includes("token expired") ||
+        errorMessage.toLowerCase().includes("invalid token") ||
+        errorMessage.toLowerCase().includes("unauthorized") ||
+        errorMessage.toLowerCase().includes("401") ||
+        errorMessage.toLowerCase().includes("403"))) ||
+    (error instanceof Error && "status" in error && ((error as any).status === 401 || (error as any).status === 403))
+  );
+}
+
+/**
+ * Выполняет LLM completion с автоматическим обновлением токена при ошибках аутентификации
+ * Используется для не-стриминговых запросов
+ */
+export async function executeLlmCompletionWithTokenRefresh(
+  provider: LlmProvider,
+  accessToken: string,
+  requestBody: Record<string, unknown>,
+  options?: ExecuteOptions,
+): Promise<LlmCompletionResult> {
+  try {
+    return await executeLlmCompletion(provider, accessToken, requestBody, options);
+  } catch (error) {
+    // Если токен истек и это не AITunnel, пытаемся обновить токен и повторить запрос
+    if (isTokenExpiredError(error) && provider.providerType !== "aitunnel" && options?.stream !== true) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[llm] provider=${provider.id} token expired, attempting to refresh and retry. Error: ${errorMessage}`,
+      );
+
+      // Очищаем кеш токена
+      clearProviderAccessTokenCache(provider);
+
+      // Получаем новый токен
+      const newAccessToken = await fetchAccessToken(provider);
+
+      // Повторяем запрос с новым токеном
+      return executeLlmCompletion(provider, newAccessToken, requestBody, options);
+    }
+
+    // Если это не ошибка токена или это стриминг, пробрасываем ошибку дальше
+    throw error;
+  }
+}
+
 export function fetchLlmCompletion(
   provider: LlmProvider,
   accessToken: string,
@@ -915,7 +986,43 @@ export function fetchLlmCompletion(
   const requestBody = buildLlmRequestBody(provider, query, context, modelOverride, {
     stream: options?.stream === true ? true : undefined,
   });
-  return executeLlmCompletion(provider, accessToken, requestBody, options);
+
+  const completionPromise = executeLlmCompletion(provider, accessToken, requestBody, options);
+
+  // Оборачиваем в async функцию для обработки ошибок токена
+  const wrappedPromise = (async () => {
+    try {
+      return await completionPromise;
+    } catch (error) {
+      // Если токен истек и это не AITunnel, пытаемся обновить токен и повторить запрос
+      // НЕ делаем retry для стриминга, так как стриминг уже начался
+      if (isTokenExpiredError(error) && provider.providerType !== "aitunnel" && options?.stream !== true) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[llm] provider=${provider.id} token expired, attempting to refresh and retry. Error: ${errorMessage}`,
+        );
+
+        // Очищаем кеш токена
+        clearProviderAccessTokenCache(provider);
+
+        // Получаем новый токен
+        const newAccessToken = await fetchAccessToken(provider);
+
+        // Повторяем запрос с новым токеном
+        return executeLlmCompletion(provider, newAccessToken, requestBody, options);
+      }
+
+      // Если это не ошибка токена или это стриминг, пробрасываем ошибку дальше
+      throw error;
+    }
+  })();
+
+  // Сохраняем streamIterator из оригинального promise, если он есть
+  if (completionPromise.streamIterator) {
+    (wrappedPromise as any).streamIterator = completionPromise.streamIterator;
+  }
+
+  return wrappedPromise as LlmCompletionPromise;
 }
 
 type RetryOptions = {
