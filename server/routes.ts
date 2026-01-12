@@ -12091,6 +12091,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           objectKey: storageKey,
           storageType: "external_provider",
           providerId: effectiveProvider.id,
+          providerFileId: providerFileId,
           status: "ready",
         });
 
@@ -14429,6 +14430,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               objectKey: storageKey,
               storageType: "external_provider",
               providerId: effectiveProvider.id,
+              providerFileId: uploadedFile?.providerFileId ?? null,
               status: "ready",
             });
           } catch (err) {
@@ -14467,6 +14469,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               downloadUrl: normalizedDownloadUrl,
               expiresAt: null,
               uploadedByUserId: user.id,
+              providerFileId: uploadedFile?.providerFileId ?? null,
             },
           };
 

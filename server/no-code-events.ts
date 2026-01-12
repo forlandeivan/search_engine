@@ -166,6 +166,7 @@ export function buildMessageCreatedEventPayload(args: {
           downloadUrl: (fileMeta as any).downloadUrl ?? (fileMeta as any).providerDownloadUrl ?? `/api/chat/messages/${args.message.id}/file`,
           expiresAt: (fileMeta as any).expiresAt ?? null,
           uploadedByUserId: (fileMeta as any).uploadedByUserId ?? null,
+          providerFileId: (fileMeta as any).providerFileId ?? null,
         }
       : undefined;
 
