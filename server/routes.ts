@@ -12888,10 +12888,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
       }
 
-      const { id: workspaceId } = getRequestWorkspace(req) as { id: string };
-      if (payload.workspaceId && payload.workspaceId !== workspaceId) {
-        throw new SkillServiceError("Invalid workspaceId", 400);
+      if (!payload.workspaceId || typeof payload.workspaceId !== "string" || payload.workspaceId.trim().length === 0) {
+        throw new SkillServiceError("workspaceId обязателен", 400);
       }
+      const workspaceId = payload.workspaceId.trim();
 
       await verifyNoCodeCallbackToken({
         workspaceId,
@@ -12948,10 +12948,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
       }
 
-      const { id: workspaceId } = getRequestWorkspace(req) as { id: string };
-      if (payload.workspaceId && payload.workspaceId !== workspaceId) {
-        throw new SkillServiceError("Invalid workspaceId", 400);
+      if (!payload.workspaceId || typeof payload.workspaceId !== "string" || payload.workspaceId.trim().length === 0) {
+        throw new SkillServiceError("workspaceId обязателен", 400);
       }
+      const workspaceId = payload.workspaceId.trim();
 
       await verifyNoCodeCallbackToken({
         workspaceId,
@@ -13015,14 +13015,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
       }
 
-      const { id: workspaceId } = getRequestWorkspace(req) as { id: string };
-      const workspaceIdStrict = workspaceId as string;
-      if (payload.workspaceId && payload.workspaceId !== workspaceId) {
-        throw new SkillServiceError("Invalid workspaceId", 400);
+      if (!payload.workspaceId || typeof payload.workspaceId !== "string" || payload.workspaceId.trim().length === 0) {
+        throw new SkillServiceError("workspaceId обязателен", 400);
       }
+      const workspaceId = payload.workspaceId.trim();
 
       const skillReference = await verifyNoCodeCallbackToken({
-        workspaceId: workspaceIdStrict,
+        workspaceId,
         chatId: payload.chatId,
         token: callbackToken,
       });
