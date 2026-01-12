@@ -165,6 +165,78 @@ function buildChatServiceErrorPayload(error: ChatServiceError) {
   return payload;
 }
 
+/**
+ * Отправляет письмо подтверждения регистрации с повторными попытками.
+ * Делает до 3 попыток с экспоненциальной задержкой (1s, 2s, 4s).
+ * @returns true если письмо успешно отправлено, false если все попытки неудачны
+ */
+async function sendRegistrationEmailWithRetry(
+  userEmail: string,
+  userDisplayName: string | null,
+  confirmationLink: string,
+  userId: string,
+  maxAttempts: number = 3,
+): Promise<{ success: boolean; attempts: number; lastError?: Error }> {
+  const delays = [1000, 2000, 4000]; // Экспоненциальная задержка: 1s, 2s, 4s
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await registrationEmailService.sendRegistrationConfirmationEmail(
+        userEmail,
+        userDisplayName,
+        confirmationLink,
+      );
+      console.info("[auth/register] email sent successfully", {
+        userId,
+        email: userEmail,
+        attempt,
+        totalAttempts: maxAttempts,
+      });
+      return { success: true, attempts: attempt };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const isLastAttempt = attempt === maxAttempts;
+      const delay = delays[attempt - 1] ?? delays[delays.length - 1];
+
+      console.error(`[auth/register] email send attempt ${attempt}/${maxAttempts} failed`, {
+        userId,
+        email: userEmail,
+        attempt,
+        totalAttempts: maxAttempts,
+        willRetry: !isLastAttempt,
+        nextDelayMs: isLastAttempt ? undefined : delay,
+        errorType: lastError.constructor.name,
+        errorMessage: lastError.message,
+        errorName: lastError.name,
+        stack: lastError.stack,
+        isEmailValidationError: lastError instanceof EmailValidationError,
+        isSmtpSendError: lastError instanceof SmtpSendError,
+      });
+
+      if (isLastAttempt) {
+        console.error("[auth/register] email send failed after all retries - CRITICAL ERROR", {
+          userId,
+          email: userEmail,
+          totalAttempts: maxAttempts,
+          finalError: {
+            type: lastError.constructor.name,
+            message: lastError.message,
+            name: lastError.name,
+            stack: lastError.stack,
+          },
+        });
+        break;
+      }
+
+      // Ждем перед следующей попыткой
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  return { success: false, attempts: maxAttempts, lastError };
+}
+
 function formatZodValidationError(error: z.ZodError, endpoint?: string): {
   message: string;
   details: Array<{
@@ -7005,6 +7077,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       
       let user: User;
       try {
+        console.info("[auth/register] creating user", { email });
         user = await storage.createUser({
           email,
           fullName,
@@ -7013,96 +7086,150 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           phone: "",
           passwordHash,
         });
+        console.info("[auth/register] user created successfully", {
+          userId: user.id,
+          email: user.email,
+        });
       } catch (createUserError) {
         // Если пользователь уже создан (например, race condition), но произошла ошибка
         // при создании workspace, проверяем, существует ли пользователь
         const existingUser = await storage.getUserByEmail(email);
         if (existingUser) {
-          console.error("[auth/register] user created but workspace creation failed", {
+          console.error("[auth/register] user created but workspace creation failed - continuing with email send", {
             userId: existingUser.id,
             email: existingUser.email,
             error: createUserError instanceof Error ? createUserError.message : String(createUserError),
             stack: createUserError instanceof Error ? createUserError.stack : undefined,
           });
-          // Возвращаем успешный ответ, чтобы не раскрывать проблему безопасности
-          // Пользователь сможет запросить повторную отправку через /api/auth/resend-confirmation
-          return res.status(201).json(neutralResponse);
+          // Продолжаем процесс отправки письма, даже если workspace не создался
+          user = existingUser;
+        } else {
+          // Если пользователь не создан, пробрасываем ошибку дальше
+          console.error("[auth/register] user creation failed completely", {
+            email,
+            error: createUserError instanceof Error ? createUserError.message : String(createUserError),
+            stack: createUserError instanceof Error ? createUserError.stack : undefined,
+          });
+          throw createUserError;
         }
-        // Если пользователь не создан, пробрасываем ошибку дальше
-        throw createUserError;
       }
 
-      // Создаём токен подтверждения
+      // Создаём токен подтверждения с повторной попыткой
       let token: string;
+      let tokenCreated = false;
       try {
+        console.info("[auth/register] creating confirmation token", { userId: user.id, email: user.email });
         token = await emailConfirmationTokenService.createToken(user.id, 24);
+        tokenCreated = true;
+        console.info("[auth/register] confirmation token created successfully", {
+          userId: user.id,
+          email: user.email,
+        });
       } catch (tokenError) {
-        // Если пользователь уже создан, но токен не создан,
-        // логируем ошибку, но возвращаем успешный ответ для безопасности
+        // Если токен не создан, пытаемся создать повторно
         if (tokenError instanceof EmailConfirmationTokenError) {
-          console.error("[auth/register] token creation failed", {
+          console.error("[auth/register] token creation failed - attempting retry", {
             userId: user.id,
             email: user.email,
             error: tokenError.message,
             stack: tokenError.stack,
           });
-          // Возвращаем успешный ответ, чтобы не раскрывать проблему безопасности
-          // Пользователь сможет запросить повторную отправку через /api/auth/resend-confirmation
-          return res.status(201).json(neutralResponse);
+          try {
+            // Повторная попытка создания токена
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // Задержка 1 секунда
+            token = await emailConfirmationTokenService.createToken(user.id, 24);
+            tokenCreated = true;
+            console.info("[auth/register] confirmation token created on retry", {
+              userId: user.id,
+              email: user.email,
+            });
+          } catch (retryTokenError) {
+            console.error("[auth/register] token creation failed after retry - CRITICAL ERROR", {
+              userId: user.id,
+              email: user.email,
+              originalError: tokenError.message,
+              retryError: retryTokenError instanceof Error ? retryTokenError.message : String(retryTokenError),
+              stack: retryTokenError instanceof Error ? retryTokenError.stack : undefined,
+            });
+            // Если токен не создан после повтора, все равно пытаемся отправить письмо
+            // через механизм resend-confirmation (но для этого нужен токен)
+            // В этом случае возвращаем успешный ответ, пользователь сможет запросить повторную отправку
+            return res.status(201).json(neutralResponse);
+          }
+        } else {
+          // Если это другая ошибка при создании токена, пробрасываем дальше
+          console.error("[auth/register] token creation failed - unexpected error", {
+            userId: user.id,
+            email: user.email,
+            error: tokenError instanceof Error ? tokenError.message : String(tokenError),
+            stack: tokenError instanceof Error ? tokenError.stack : undefined,
+          });
+          throw tokenError;
         }
-        // Если это другая ошибка при создании токена, пробрасываем дальше
-        throw tokenError;
+      }
+
+      if (!tokenCreated || !token) {
+        console.error("[auth/register] token not available - cannot send email", {
+          userId: user.id,
+          email: user.email,
+        });
+        return res.status(201).json(neutralResponse);
       }
 
       const baseUrl = resolveFrontendBaseUrl(req);
       const confirmationUrl = new URL("/auth/verify-email", baseUrl);
       confirmationUrl.searchParams.set("token", token);
 
-      try {
-        await registrationEmailService.sendRegistrationConfirmationEmail(
-          email,
-          fullName,
-          confirmationUrl.toString(),
-        );
-      } catch (emailError) {
-        // Если пользователь уже создан, но письмо не отправилось,
-        // логируем ошибку, но возвращаем успешный ответ для безопасности
-        if (emailError instanceof EmailValidationError || emailError instanceof SmtpSendError) {
-          console.error("[auth/register] email send failed - DETAILED ERROR", {
-            userId: user.id,
-            email: user.email,
-            errorType: emailError.constructor.name,
-            errorMessage: emailError.message,
-            errorName: emailError.name,
-            stack: emailError.stack,
-            fullError: emailError,
-            // Дополнительная информация для диагностики
-            isEmailValidationError: emailError instanceof EmailValidationError,
-            isSmtpSendError: emailError instanceof SmtpSendError,
-          });
-          // Возвращаем успешный ответ, чтобы не раскрывать проблему безопасности
-          // Пользователь сможет запросить повторную отправку через /api/auth/resend-confirmation
-          return res.status(201).json(neutralResponse);
-        }
-        // Если это другая ошибка при отправке письма, пробрасываем дальше
-        console.error("[auth/register] email send failed - UNEXPECTED ERROR", {
+      // Отправляем письмо с повторными попытками
+      console.info("[auth/register] sending confirmation email", {
+        userId: user.id,
+        email: user.email,
+      });
+      const emailResult = await sendRegistrationEmailWithRetry(
+        email,
+        fullName,
+        confirmationUrl.toString(),
+        user.id,
+      );
+
+      if (!emailResult.success) {
+        // Если письмо не отправилось после всех попыток, логируем критическую ошибку
+        // но все равно возвращаем успешный ответ для безопасности
+        console.error("[auth/register] email send failed after all retries - CRITICAL", {
           userId: user.id,
           email: user.email,
-          errorType: emailError instanceof Error ? emailError.constructor.name : typeof emailError,
-          errorMessage: emailError instanceof Error ? emailError.message : String(emailError),
-          errorName: emailError instanceof Error ? emailError.name : undefined,
-          stack: emailError instanceof Error ? emailError.stack : undefined,
-          fullError: emailError,
+          attempts: emailResult.attempts,
+          lastError: emailResult.lastError
+            ? {
+                type: emailResult.lastError.constructor.name,
+                message: emailResult.lastError.message,
+                name: emailResult.lastError.name,
+                stack: emailResult.lastError.stack,
+              }
+            : undefined,
         });
-        throw emailError;
+        // Возвращаем успешный ответ для безопасности
+        // Пользователь сможет запросить повторную отправку через /api/auth/resend-confirmation
+        return res.status(201).json(neutralResponse);
       }
 
+      console.info("[auth/register] registration completed successfully", {
+        userId: user.id,
+        email: user.email,
+        emailSent: emailResult.success,
+        emailAttempts: emailResult.attempts,
+      });
       return res.status(201).json(neutralResponse);
     } catch (error) {
-      console.error("[auth/register] failed", {
+      const errorDetails = {
         error: error instanceof Error ? error.message : String(error),
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
+        errorName: error instanceof Error ? error.name : undefined,
         stack: error instanceof Error ? error.stack : undefined,
-      });
+        email: typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : undefined,
+      };
+      console.error("[auth/register] registration failed - CRITICAL ERROR", errorDetails);
+      
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid data", details: error.issues });
       }
@@ -11510,37 +11637,82 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
         try {
           if (!isNoCodeSkill && !isExternalFile) {
-            let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"];
+            let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"] | null = null;
             try {
               ({ provider: embeddingProvider } = await resolveEmbeddingProviderForWorkspace({ workspaceId }));
             } catch (error) {
-              const message =
-                error instanceof Error && error.message
-                  ? error.message
-                  : "Сервис эмбеддингов недоступен для удаления файла";
-              return res.status(400).json({ message });
+              // Если провайдер не найден, попробуем удалить векторы со всеми доступными провайдерами
+              console.warn("[skill-files] embedding provider not found, trying to delete vectors with all available providers", {
+                workspaceId,
+                skillId,
+                fileId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              
+              // Пытаемся удалить векторы со всеми доступными провайдерами
+              const allProviders = await storage.listEmbeddingProviders(workspaceId);
+              let vectorsDeleted = false;
+              for (const provider of allProviders) {
+                try {
+                  await deleteSkillFileVectors({
+                    workspaceId,
+                    skillId,
+                    fileId,
+                    provider,
+                    caller: "api:skill-file-delete-fallback",
+                  });
+                  vectorsDeleted = true;
+                  console.info("[skill-files] vectors deleted with fallback provider", {
+                    workspaceId,
+                    skillId,
+                    fileId,
+                    providerId: provider.id,
+                  });
+                  break;
+                } catch (vectorError) {
+                  // Продолжаем попытки с другими провайдерами
+                  console.debug("[skill-files] failed to delete vectors with provider, trying next", {
+                    workspaceId,
+                    skillId,
+                    fileId,
+                    providerId: provider.id,
+                    error: vectorError instanceof Error ? vectorError.message : String(vectorError),
+                  });
+                }
+              }
+              
+              if (!vectorsDeleted) {
+                // Если не удалось удалить векторы ни с одним провайдером, просто пропускаем это
+                // и удаляем файл из базы данных - это лучше, чем блокировать удаление файла
+                console.warn("[skill-files] could not delete vectors with any provider, proceeding with file deletion", {
+                  workspaceId,
+                  skillId,
+                  fileId,
+                });
+              }
             }
 
-            try {
-              await deleteSkillFileVectors({
-                workspaceId,
-                skillId,
-                fileId,
-                provider: embeddingProvider,
-                caller: "api:skill-file-delete",
-              });
-            } catch (error) {
-              const vectorError = error instanceof VectorStoreError ? error : null;
-              console.error("[skill-files] failed to delete vectors", {
-                error: vectorError?.message ?? String(error),
-                workspaceId,
-                skillId,
-                fileId,
-              });
-              return res.status(500).json({
-                message: "Не удалось удалить векторы файла. Попробуйте ещё раз.",
-                code: "VECTOR_DELETE_FAILED",
-              });
+            // Если провайдер найден, удаляем векторы с ним
+            if (embeddingProvider) {
+              try {
+                await deleteSkillFileVectors({
+                  workspaceId,
+                  skillId,
+                  fileId,
+                  provider: embeddingProvider,
+                  caller: "api:skill-file-delete",
+                });
+              } catch (error) {
+                const vectorError = error instanceof VectorStoreError ? error : null;
+                console.error("[skill-files] failed to delete vectors", {
+                  error: vectorError?.message ?? String(error),
+                  workspaceId,
+                  skillId,
+                  fileId,
+                });
+                // Не блокируем удаление файла, даже если не удалось удалить векторы
+                // Пользователь должен иметь возможность удалить файл в любом случае
+              }
             }
 
             await deleteWorkspaceObject(workspaceId, file.storageKey);

@@ -7053,7 +7053,22 @@ export class DatabaseStorage implements IStorage {
     if (!newUser) {
       throw new Error("Не удалось создать пользователя");
     }
-    await this.ensurePersonalWorkspace(newUser);
+    try {
+      await this.ensurePersonalWorkspace(newUser);
+    } catch (workspaceError) {
+      // Логируем ошибку создания workspace, но не прерываем процесс
+      // Пользователь уже создан, и это важнее для регистрации
+      console.error("[storage] user created but workspace creation failed", {
+        userId: newUser.id,
+        email: newUser.email,
+        error: workspaceError instanceof Error ? workspaceError.message : String(workspaceError),
+        stack: workspaceError instanceof Error ? workspaceError.stack : undefined,
+        note: "User will be created, but workspace creation will be retried later or user can use resend-confirmation",
+      });
+      // Пробрасываем ошибку дальше, чтобы endpoint мог обработать её
+      // и продолжить процесс отправки письма
+      throw workspaceError;
+    }
     return newUser;
   }
 

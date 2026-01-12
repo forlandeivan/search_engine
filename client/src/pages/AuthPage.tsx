@@ -64,8 +64,10 @@ async function postJson<TInput extends Record<string, unknown>>(url: string, pay
 export default function AuthPage() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [registerSuccess, setRegisterSuccess] = useState(false);
+  const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
   const [resendMessage, setResendMessage] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState<number>(0);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -131,8 +133,10 @@ export default function AuthPage() {
       const { confirmPassword, ...payload } = values;
       return postJson("/api/auth/register", payload);
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       setRegisterSuccess(true);
+      setRegisteredEmail(variables.email.trim().toLowerCase());
+      setResendCooldown(60); // Устанавливаем таймер на 60 секунд
       registerForm.reset();
     },
     onError: (error: Error) => {
@@ -171,6 +175,7 @@ export default function AuthPage() {
         (data as { message?: string })?.message ??
         "Если этот e-mail зарегистрирован и ещё не подтверждён, мы отправили новое письмо.";
       setResendMessage(message);
+      setResendCooldown(60); // Сбрасываем таймер на 60 секунд после успешной отправки
       toast({ title: "Письмо отправлено", description: message });
     },
     onError: (error: Error & { status?: number }) => {
@@ -204,6 +209,16 @@ export default function AuthPage() {
   const isGoogleEnabled = Boolean(providersQuery.data?.providers?.google?.enabled);
   const isYandexEnabled = Boolean(providersQuery.data?.providers?.yandex?.enabled);
   const showSocialLogin = isGoogleEnabled || isYandexEnabled;
+  // Таймер обратного отсчета для кнопки повторной отправки
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => {
+        setResendCooldown((prev) => Math.max(0, prev - 1));
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const authError = params.get("authError");
@@ -260,6 +275,9 @@ export default function AuthPage() {
               className="text-primary hover:underline"
               onClick={() => {
                 setRegisterSuccess(false);
+                setRegisteredEmail(null);
+                setResendCooldown(0);
+                setResendMessage(null);
                 setMode(isLogin ? "register" : "login");
               }}
             >
@@ -371,7 +389,39 @@ export default function AuthPage() {
                   Мы отправили письмо с подтверждением на указанный e-mail. Перейдите по ссылке в письме, чтобы
                   завершить регистрацию. После подтверждения используйте форму входа.
                 </p>
-                <Button className="w-full" onClick={() => setMode("login")}>
+                {registeredEmail && (
+                  <div className="rounded-md border border-blue-200 bg-blue-50 p-3 space-y-3 text-sm">
+                    <div className="flex flex-col gap-2">
+                      <p className="text-blue-900 font-medium">Не получили письмо?</p>
+                      <p className="text-xs text-blue-700 break-all">{registeredEmail}</p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        disabled={resendMutation.isPending || resendCooldown > 0}
+                        onClick={() => registeredEmail && resendMutation.mutate(registeredEmail)}
+                      >
+                        {resendMutation.isPending
+                          ? "Отправляем..."
+                          : resendCooldown > 0
+                            ? `Отправить письмо повторно (${resendCooldown}с)`
+                            : "Отправить письмо вручную"}
+                      </Button>
+                    </div>
+                    {resendMessage && <p className="text-xs text-blue-700">{resendMessage}</p>}
+                  </div>
+                )}
+                <Button
+                  className="w-full"
+                  onClick={() => {
+                    setRegisterSuccess(false);
+                    setRegisteredEmail(null);
+                    setResendCooldown(0);
+                    setResendMessage(null);
+                    setMode("login");
+                  }}
+                >
                   Перейти ко входу
                 </Button>
               </div>
