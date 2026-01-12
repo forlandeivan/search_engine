@@ -671,19 +671,36 @@ export default function ChatPage({ params }: ChatPageProps) {
       }
 
       if (isUploadedFlow) {
-        if (targetChatId) {
-          setLocalChatId(targetChatId);
-          if (serverAudioMessage) {
-            const audioMessageTime = serverAudioMessage.createdAt ? new Date(serverAudioMessage.createdAt) : new Date();
-            const audioMessage: ChatMessage = {
-              ...serverAudioMessage,
-              createdAt: audioMessageTime.toISOString(),
-            };
-            setLocalMessages((prev) => {
-              const filtered = prev.filter((msg) => msg.id !== audioMessage.id);
-              return [...filtered, audioMessage];
-            });
+        if (targetChatId && serverAudioMessage) {
+          // Отправляем событие для уже загруженного аудио в no-code режиме
+          try {
+            const response = await fetch(
+              `/api/chat/sessions/${targetChatId}/messages/${serverAudioMessage.id}/send?workspaceId=${encodeURIComponent(workspaceId)}`,
+              {
+                method: "POST",
+                credentials: "include",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ workspaceId }),
+              },
+            );
+            await throwIfResNotOk(response);
+          } catch (error) {
+            console.error("[ChatPage] Failed to send uploaded audio message", error);
+            // Не показываем ошибку пользователю, так как сообщение уже создано
           }
+
+          setLocalChatId(targetChatId);
+          const audioMessageTime = serverAudioMessage.createdAt ? new Date(serverAudioMessage.createdAt) : new Date();
+          const audioMessage: ChatMessage = {
+            ...serverAudioMessage,
+            createdAt: audioMessageTime.toISOString(),
+          };
+          setLocalMessages((prev) => {
+            const filtered = prev.filter((msg) => msg.id !== audioMessage.id);
+            return [...filtered, audioMessage];
+          });
           await queryClient.invalidateQueries({ queryKey: ["chat-messages"] }).catch(() => {});
           await queryClient.invalidateQueries({ queryKey: ["chats"] }).catch(() => {});
         }

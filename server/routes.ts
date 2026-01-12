@@ -11801,6 +11801,89 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   app.post(
+    "/api/chat/sessions/:chatId/messages/:messageId/send",
+    requireAuth,
+    ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
+    async (req, res, next) => {
+      const user = getAuthorizedUser(req, res);
+      if (!user) {
+        return;
+      }
+
+      try {
+        const workspaceCandidate = pickFirstString(
+          (req.body as any)?.workspaceId,
+          req.query.workspaceId,
+          req.query.workspace_id,
+        );
+        const workspaceId = req.workspaceContext?.workspaceId ?? resolveWorkspaceIdForRequest(req, workspaceCandidate);
+        const chat = await getChatById(req.params.chatId, workspaceId, user.id);
+        if (chat.status === "archived") {
+          return res.status(403).json({ message: "Чат архивирован и доступен только для чтения" });
+        }
+        const skill = await getSkillById(workspaceId, chat.skillId);
+        if (skill && skill.status === "archived") {
+          return res.status(403).json({ message: "Навык архивирован, чат только для чтения" });
+        }
+        if (skill?.executionMode !== "no_code") {
+          return res.status(400).json({ message: "Навык не находится в no-code режиме" });
+        }
+
+        const message = await storage.getChatMessage(req.params.messageId);
+        if (!message || message.chatId !== chat.id) {
+          return res.status(404).json({ message: "Сообщение не найдено" });
+        }
+        if (message.role !== "user") {
+          return res.status(400).json({ message: "Можно отправить только user-сообщения" });
+        }
+
+        const connection = await getNoCodeConnectionInternal({ workspaceId, skillId: skill.id });
+        if (!connection?.endpointUrl) {
+          throw createNoCodeFlowError("NOT_CONFIGURED");
+        }
+        if (connection.authType === "bearer" && !connection.bearerToken) {
+          throw createNoCodeFlowError("NOT_CONFIGURED");
+        }
+
+        const contextPack = await buildContextPack({
+          workspaceId,
+          chatId: req.params.chatId,
+          skillId: skill.id,
+          triggerMessageId: message.id,
+          userId: user.id,
+          limitCharacters: skill.contextInputLimit ?? null,
+        });
+
+        const mappedMessage = mapMessage(message);
+        const eventPayload = buildMessageCreatedEventPayload({
+          workspaceId,
+          chatId: req.params.chatId,
+          skillId: skill.id,
+          message: mappedMessage,
+          actorUserId: user.id,
+          contextPack,
+        });
+        scheduleNoCodeEventDelivery({
+          endpointUrl: connection.endpointUrl,
+          authType: connection.authType,
+          bearerToken: connection.bearerToken,
+          payload: eventPayload,
+        });
+
+        res.status(200).json({ message: mappedMessage });
+      } catch (error) {
+        if (error instanceof ChatServiceError) {
+          return res.status(error.status).json(buildChatServiceErrorPayload(error));
+        }
+        if (error instanceof HttpError) {
+          return res.status(error.status).json({ message: error.message, ...(error as any)?.code ? { errorCode: (error as any).code } : {} });
+        }
+        next(error);
+      }
+    },
+  );
+
+  app.post(
     "/api/chat/sessions/:chatId/messages/file",
     requireAuth,
     ensureWorkspaceContextMiddleware({ allowSessionFallback: true }),
@@ -14390,27 +14473,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           // Обновляем сообщение с полными метаданными файла
           await storage.updateChatMessage(audioMessage.id, {
             metadata: audioMessage.metadata,
-          });
-
-          // Отправляем событие message.created при создании сообщения в чат
-          const mappedAudioMessage = mapMessage({
-            ...audioMessage,
-            messageType: "audio",
-            metadata: audioMessage.metadata,
-          });
-          const messagePayload = buildMessageCreatedEventPayload({
-            workspaceId,
-            chatId,
-            skillId: skill.id,
-            message: mappedAudioMessage,
-            actorUserId: user.id,
-          });
-          scheduleNoCodeEventDelivery({
-            endpointUrl: connection.endpointUrl,
-            authType: connection.authType,
-            bearerToken: connection.bearerToken,
-            payload: messagePayload,
-            idempotencyKey: messagePayload.eventId,
           });
 
           console.info(
