@@ -7239,7 +7239,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  app.post("/api/auth/verify-email", async (req, res) => {
+  app.post("/api/auth/verify-email", async (req, res, next) => {
     try {
       const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
       if (!token || token.length > 512) {
@@ -7268,7 +7268,25 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         email: user.email,
       });
 
-      return res.json({ message: "Email has been successfully confirmed." });
+      // Автоматически авторизуем пользователя после подтверждения email
+      const safeUser = toPublicUser(user);
+      req.logIn(safeUser, (loginError) => {
+        if (loginError) {
+          return next(loginError);
+        }
+        void (async () => {
+          try {
+            const updatedUser = await storage.recordUserActivity(user.id);
+            const fullUser = updatedUser ?? (await storage.getUser(user.id));
+            const finalUser = fullUser ? toPublicUser(fullUser) : safeUser;
+            req.user = finalUser;
+            const context = await ensureWorkspaceContext(req, finalUser);
+            res.json(buildSessionResponse(finalUser, context));
+          } catch (workspaceError) {
+            next(workspaceError as Error);
+          }
+        })();
+      });
     } catch (err) {
       console.error("[auth/verify-email] failed", {
         error: err instanceof Error ? err.message : String(err),

@@ -170,7 +170,8 @@ function sanitizeVectorCollectionName(source: string): string {
 function buildWorkspaceVectorCollectionName(workspaceId: string, providerId: string): string {
   const workspaceSlug = sanitizeVectorCollectionName(workspaceId);
   const providerSlug = sanitizeVectorCollectionName(providerId);
-  return `ws_${workspaceSlug}__proj_workspace__coll_${providerSlug}`;
+  // Используем proj_skill_files для единообразия с файлами навыков
+  return `ws_${workspaceSlug}__proj_skill_files__coll_${providerSlug}`;
 }
 
 function parseVectorSizeValue(value: unknown): number | null {

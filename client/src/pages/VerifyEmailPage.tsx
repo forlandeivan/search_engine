@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,6 +33,7 @@ export default function VerifyEmailPage() {
   const [resendEmail, setResendEmail] = useState("");
   const [resendStatus, setResendStatus] = useState<string | null>(null);
   const [resendLoading, setResendLoading] = useState(false);
+  const queryClient = useQueryClient();
   const token = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("token")?.trim() ?? "";
@@ -47,9 +49,12 @@ export default function VerifyEmailPage() {
     setState("loading");
 
     postVerifyEmail(token)
-      .then(() => {
+      .then(async () => {
         if (isActive) {
           setState("success");
+          // Инвалидируем сессию для автоматического обновления состояния авторизации
+          // Это приведет к автоматическому перенаправлению в систему через App.tsx
+          await queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] });
         }
       })
       .catch((error: Error & { status?: number }) => {
@@ -69,7 +74,7 @@ export default function VerifyEmailPage() {
     return () => {
       isActive = false;
     };
-  }, [token]);
+  }, [token, queryClient]);
 
   const renderIcon = () => {
     if (state === "success") {
@@ -92,7 +97,7 @@ export default function VerifyEmailPage() {
 
   const descriptionMap: Record<VerifyState, string> = {
     loading: "Подождите, мы проверяем ссылку подтверждения.",
-    success: "Теперь вы можете войти в систему, используя свой e-mail и пароль.",
+    success: "Вы автоматически авторизованы и перенаправлены в систему.",
     invalid: "Ссылка недействительна или устарела. Запросите новое письмо с подтверждением.",
     used: "Эта ссылка уже была использована. Попробуйте войти или отправьте письмо повторно.",
     server: "Произошла ошибка на сервере. Попробуйте позже.",
@@ -154,6 +159,11 @@ export default function VerifyEmailPage() {
             <Button className="w-full" disabled>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               Проверяем…
+            </Button>
+          ) : state === "success" ? (
+            <Button className="w-full" disabled>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Перенаправляем…
             </Button>
           ) : (
             <div className="flex flex-col gap-2">
