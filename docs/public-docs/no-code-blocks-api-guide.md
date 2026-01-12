@@ -94,8 +94,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 3) Стрим LLM: Accept `text/event-stream` на `/api/chat/sessions/{chatId}/messages/llm`.
 
 ## Assistant Action
-- Callback: `POST /api/no-code/callback/assistant-action` (Bearer callback токен навыка) с `actionType` (ANALYZING|TRANSCRIBING|TYPING, uppercase), `actionText?`, `triggerMessageId?`.
+- Callback: `POST /api/no-code/callback/assistant-action` (Bearer callback токен навыка) с `actionType` (ANALYZING|TRANSCRIBING|TYPING, uppercase), `actionText?`, `triggerMessageId?`, `actionId?`. Если `actionId` не указан, генерируется автоматически на сервере (версия 1.55+).
 - Выдача: поле `currentAssistantAction` в `GET /api/chat/sessions`. Гасится на первом результате (message/stream).
+- Валидация: улучшенные сообщения об ошибках валидации с указанием конкретных полей и причин ошибок (версия 1.55+).
 
 ## No-code callbacks (transcript/message/stream)
 - Сохранить стенограмму: `POST /api/no-code/callback/transcripts` body `{ workspaceId, chatId, fullText, title?, previewText?, status? }` + `Authorization: Bearer <callback_token>`. Лимит `fullText` — 500 000 символов, статус по умолчанию `ready`. Ответ: `{ transcript: { id, ... } }`.
@@ -117,7 +118,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ## File upload → no-code
 - Вход: пользователь загружает файл в чат `POST /api/chat/sessions/{chatId}/messages/file` (multipart, поле `file`, `workspaceId` в body/query). Возвращает message с `type=file` и блоком `file` (attachmentId, fileId, filename, mimeType, sizeBytes, downloadUrl, expiresAt, uploadedByUserId).
 - Download: `downloadUrl` — presigned ссылка (TTL по умолчанию 15 мин, env `ATTACHMENT_URL_TTL_SECONDS`). Storage key наружу не отдаётся.
-- Webhook `message.created`: если skill в no_code, отправляется с `type=file` или `type=audio` и полным file-блоком в поле `message.file`.
+- Webhook `message.created`: если skill в no_code, отправляется с `type=file` или `type=audio` и полным file-блоком в поле `message.file`. 
+  - Если файл загружен во внешний File Storage Provider, блок `message.file` содержит `providerFileId` и `providerId` для идентификации файла во внешнем хранилище.
+  - Отдельное событие `file.uploaded` не отправляется (убрано в версии 1.55). Вся информация о файлах передается через `message.created`.
+  - Все события (сообщения и файлы) отправляются на единый Endpoint URL, указанный в настройках навыка.
 
 ## Нерешённые вопросы
 - Canvas: нет отдельного публичного API, используется transcript metadata. Если появится, добавить раздел.

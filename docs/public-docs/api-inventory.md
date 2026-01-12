@@ -25,7 +25,7 @@
   - `PATCH /api/no-code/callback/transcripts/:transcriptId` body `{ workspaceId, chatId, fullText, title?, previewText?, status? }` + bearer/ключ — обновляет стенограмму.
   - `POST /api/no-code/callback/messages` body `{ workspaceId, chatId, role, content|text, triggerMessageId?, metadata? }` + `Authorization: Bearer <callback_token>`.
   - `POST /api/no-code/callback/stream` body `{ workspaceId, chatId, triggerMessageId, streamId, chunkId, delta|text, seq?, isFinal? }` + bearer-токен навыка.
-  - `POST /api/no-code/callback/assistant-action` body `{ workspaceId, chatId, actionType, actionText?, triggerMessageId?, occurredAt? }` + bearer-токен навыка.
+  - `POST /api/no-code/callback/assistant-action` body `{ workspaceId, chatId, actionType, actionText?, triggerMessageId?, occurredAt?, actionId? }` + bearer-токен навыка. Если `actionId` не указан, генерируется автоматически на сервере (версия 1.55+).
 - Исходящие события no-code:
   - `message.created` webhook (POST на сконфигурированный endpoint навыка) с полями message + `contextPack` (history в пределах contextInputLimit). Для файлов и аудио содержит полный блок `message.file` с метаданными (attachmentId, fileId, filename, mimeType, sizeBytes, downloadUrl, expiresAt, uploadedByUserId).
 

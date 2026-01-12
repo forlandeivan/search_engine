@@ -15,7 +15,6 @@ test("Создание no-code навыка с провайдером файло
   // Данные для навыка
   const skillName = `E2E No-code ${Date.now()}`;
   const scenarioUrl = `https://example.com/no-code/${Date.now()}`;
-  const fileEventsUrl = `https://example.com/file-events/${Date.now()}`;
 
   // 2. Перейти на вкладку "Навыки"
   await page.goto("/skills");
@@ -28,7 +27,7 @@ test("Создание no-code навыка с провайдером файло
   await page.getByTestId("skill-description-input").fill("E2E тест no-code навыка с внешним файло-хранилищем");
   await page.getByRole("radio", { name: /No-code/i }).click({ force: true });
   await page.getByLabel("URL сценария").fill(scenarioUrl);
-  await page.getByLabel("File Events URL").fill(fileEventsUrl);
+  // Примечание: File Events URL удален в версии 1.55, все события отправляются на единый Endpoint URL
 
   // 4. Выбрать File Storage Provider - Unica AI dev
   await page.getByRole("combobox", { name: "File Storage Provider" }).click();

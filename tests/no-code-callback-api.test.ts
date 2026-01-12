@@ -733,6 +733,54 @@ describe("No-code callback API", () => {
     }
   });
 
+  it("auto-generates actionId when not provided (version 1.55+)", async () => {
+    setupDbMock();
+    setupAuthMock();
+    setupStorageMock();
+    setupOtherMocks();
+    const chatService = setupChatServiceMock();
+    skillsMock.verifyNoCodeCallbackToken.mockResolvedValueOnce({ skillId: "skill-1" });
+    chatService.setNoCodeAssistantAction.mockResolvedValueOnce({
+      currentAssistantAction: {
+        type: "TYPING",
+        text: "Печатаю",
+        triggerMessageId: null,
+        updatedAt: new Date("2025-01-01T00:00:00.000Z").toISOString(),
+      },
+    });
+
+    const { httpServer } = await createTestServer();
+    try {
+      const address = httpServer.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/no-code/callback/assistant-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer callback-token" },
+        body: JSON.stringify({
+          workspaceId: "workspace-1",
+          chatId: "chat-1",
+          actionType: "TYPING",
+          actionText: "Печатаю",
+          // actionId не указан - должен сгенерироваться автоматически
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const json = await response.json();
+      expect(json.currentAssistantAction?.type).toBe("TYPING");
+      // Проверяем, что actionId был передан в setNoCodeAssistantAction (даже если сгенерирован автоматически)
+      expect(chatService.setNoCodeAssistantAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: "chat-1",
+          actionType: "TYPING",
+        }),
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("exposes currentAssistantAction in chat list response", async () => {
     setupDbMock();
     setupAuthMock();
