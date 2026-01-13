@@ -346,6 +346,10 @@ export default function LlmProvidersPage() {
 
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/llm/providers"],
+    retry: false,
+    onError: (error) => {
+      console.error("[LlmProvidersPage] Failed to load LLM providers:", error);
+    },
   });
 
   const providers = useMemo(() => providersQuery.data?.providers ?? [], [providersQuery.data]);
@@ -357,6 +361,10 @@ export default function LlmProvidersPage() {
 
   const unicaChatQuery = useQuery<UnicaChatConfigResponse>({
     queryKey: ["/api/admin/unica-chat"],
+    retry: false,
+    onError: (error) => {
+      console.error("[LlmProvidersPage] Failed to load Unica Chat config:", error);
+    },
   });
 
   const selectedUnicaProviderId = unicaForm.watch("llmProviderConfigId");
