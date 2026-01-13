@@ -10651,7 +10651,20 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.put("/api/llm/providers/:id", requireAdmin, async (req, res, next) => {
     try {
       const providerId = req.params.id;
-      const payload = updateLlmProviderSchema.parse(req.body);
+      const { id: workspaceId } = getRequestWorkspace(req);
+      
+      // Получаем текущий провайдер для определения его типа при валидации
+      const currentProvider = await storage.getLlmProvider(providerId, workspaceId);
+      if (!currentProvider) {
+        return res.status(404).json({ message: "Провайдер не найден" });
+      }
+      
+      // Добавляем providerType в payload для валидации, если он не передан
+      const payloadWithType = {
+        ...req.body,
+        providerType: req.body.providerType ?? currentProvider.providerType,
+      };
+      const payload = updateLlmProviderSchema.parse(payloadWithType);
 
       const updates: Partial<LlmProvider> & { availableModels?: LlmModelOption[] } = {};
 
@@ -10682,7 +10695,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           ...(payload.responseConfig as Record<string, unknown>),
         } as LlmProvider["responseConfig"];
 
-      const { id: workspaceId } = getRequestWorkspace(req);
       const updated = await storage.updateLlmProvider(providerId, updates, workspaceId);
       if (!updated) {
         return res.status(404).json({ message: "Провайдер не найден" });

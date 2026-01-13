@@ -2057,19 +2057,15 @@ export const updateLlmProviderSchema = z
       .transform((value) => (value && value.length > 0 ? value : undefined)),
     isActive: z.boolean().optional(),
     isGlobal: z.boolean().optional(),
-    tokenUrl: z
-      .string()
-      .trim()
-      .url("Некорректный URL для получения Access Token")
-      .optional(),
+    tokenUrl: z.string().trim().optional().or(z.literal("")),
     completionUrl: z
       .string()
       .trim()
       .url("Некорректный URL сервиса LLM")
       .optional(),
-    authorizationKey: z.string().trim().min(1, "Укажите Authorization key").optional(),
-    scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")).optional(),
-    model: z.string().trim().min(1, "Укажите модель").optional(),
+    authorizationKey: z.string().trim().optional().or(z.literal("")),
+    scope: z.string().trim().optional().or(z.literal("")),
+    model: z.string().trim().optional().or(z.literal("")),
     availableModels: z
       .array(
         z.object({
@@ -2096,7 +2092,76 @@ export const updateLlmProviderSchema = z
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нет данных для обновления",
-  });
+  })
+  .refine(
+    (data) => {
+      // Для unica провайдера tokenUrl может быть пустым
+      if (data.providerType === "unica") {
+        return true;
+      }
+      // Если tokenUrl не передан в обновлении, это нормально (обновляются другие поля)
+      if (data.tokenUrl === undefined) {
+        return true;
+      }
+      // Если tokenUrl передан как пустая строка, разрешаем (может быть обновление unica без providerType)
+      if (data.tokenUrl.trim().length === 0) {
+        return true;
+      }
+      // Если tokenUrl передан и не пустой, проверяем валидность URL
+      try {
+        new URL(data.tokenUrl);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    {
+      message: "Некорректный URL для получения Access Token",
+      path: ["tokenUrl"],
+    },
+  )
+  .refine(
+    (data) => {
+      // Для unica провайдера model может быть пустым
+      if (data.providerType === "unica") {
+        return true;
+      }
+      // Если model не передан в обновлении, это нормально (обновляются другие поля)
+      if (data.model === undefined) {
+        return true;
+      }
+      // Если model передан как пустая строка, разрешаем (может быть обновление unica без providerType)
+      if (data.model.trim().length === 0) {
+        return true;
+      }
+      return true;
+    },
+    {
+      message: "Укажите модель",
+      path: ["model"],
+    },
+  )
+  .refine(
+    (data) => {
+      // Для unica провайдера authorizationKey может быть пустым
+      if (data.providerType === "unica") {
+        return true;
+      }
+      // Если authorizationKey не передан в обновлении, это нормально (обновляются другие поля)
+      if (data.authorizationKey === undefined) {
+        return true;
+      }
+      // Если authorizationKey передан как пустая строка для не-unica провайдера, это ошибка
+      if (data.authorizationKey.trim().length === 0) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "Укажите Authorization key",
+      path: ["authorizationKey"],
+    },
+  );
 
 const callbackUrlSchema = z
   .string()

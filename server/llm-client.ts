@@ -597,8 +597,8 @@ async function executeUnicaCompletion(
   headers.set("Content-Type", "application/json");
   headers.set("Accept", "text/event-stream");
 
-  // Для Unica AI аутентификация не требуется (пока нет bearer токена)
-  // Но если accessToken передан, можем его не использовать
+  // Для Unica AI аутентификация не требуется
+  // accessToken будет пустой строкой, так как у провайдера нет tokenUrl
 
   for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
     headers.set(key, value);
@@ -807,7 +807,7 @@ export function executeLlmCompletion(
     llmHeaders.set(key, value);
   }
 
-  if (!llmHeaders.has("Authorization")) {
+  if (!llmHeaders.has("Authorization") && accessToken.trim().length > 0) {
     llmHeaders.set("Authorization", `Bearer ${accessToken}`);
   }
 
@@ -1392,7 +1392,9 @@ export async function checkLlmProviderHealth(
       testHeaders = new Headers();
       testHeaders.set("Content-Type", "application/json");
       testHeaders.set("Accept", "application/json");
-      testHeaders.set("Authorization", `Bearer ${accessToken}`);
+      if (accessToken.trim().length > 0) {
+        testHeaders.set("Authorization", `Bearer ${accessToken}`);
+      }
 
       if (!testHeaders.has("RqUID")) {
         testHeaders.set("RqUID", randomUUID());

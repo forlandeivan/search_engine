@@ -20,6 +20,31 @@ const OAUTH_TOKEN_EXPIRY_FALLBACK_MS = 55 * 60 * 1000;
 const OAUTH_TOKEN_EXPIRY_MIN_MS = 30_000;
 const OAUTH_TOKEN_EXPIRY_SAFETY_MS = 10_000;
 
+/**
+ * Определяет, требуется ли аутентификация для провайдера.
+ * Проверяет тип провайдера и наличие валидного tokenUrl.
+ */
+function requiresAuthentication(provider: OAuthProviderConfig & Partial<LlmProvider>): boolean {
+  // AITunnel использует API-ключ без OAuth
+  if (provider.providerType === "aitunnel") {
+    return false;
+  }
+
+  // Проверяем наличие и валидность tokenUrl
+  const tokenUrl = provider.tokenUrl?.trim();
+  if (!tokenUrl || tokenUrl.length === 0) {
+    return false;
+  }
+
+  // Проверяем, что это валидный URL
+  try {
+    new URL(tokenUrl);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function buildOAuthCacheKey(provider: OAuthProviderConfig): string {
   const sortedHeaders = Object.entries(provider.requestHeaders ?? {})
     .sort(([a], [b]) => a.localeCompare(b))
@@ -38,6 +63,11 @@ export async function fetchAccessToken(provider: OAuthProviderConfig): Promise<s
   // AITunnel использует API-ключ без OAuth.
   if ((provider as Partial<LlmProvider>).providerType === "aitunnel") {
     return provider.authorizationKey.trim();
+  }
+
+  // Если аутентификация не требуется (нет валидного tokenUrl), возвращаем пустую строку
+  if (!requiresAuthentication(provider as OAuthProviderConfig & Partial<LlmProvider>)) {
+    return "";
   }
 
   const cacheKey = buildOAuthCacheKey(provider);
@@ -92,6 +122,18 @@ export async function fetchAccessToken(provider: OAuthProviderConfig): Promise<s
 async function requestAccessToken(
   provider: OAuthProviderConfig,
 ): Promise<{ token: string; expiresInSeconds?: number }> {
+  // Проверяем валидность tokenUrl перед выполнением запроса
+  const tokenUrl = provider.tokenUrl?.trim();
+  if (!tokenUrl || tokenUrl.length === 0) {
+    throw new Error("tokenUrl не настроен для провайдера");
+  }
+
+  try {
+    new URL(tokenUrl);
+  } catch {
+    throw new Error(`tokenUrl имеет невалидный формат: ${tokenUrl}`);
+  }
+
   const tokenHeaders = new Headers();
   const rawAuthorizationKey = provider.authorizationKey.trim();
   const hasAuthScheme = /^(?:[A-Za-z]+)\s+\S+/.test(rawAuthorizationKey);
@@ -126,7 +168,7 @@ async function requestAccessToken(
       provider.allowSelfSignedCertificate,
     );
 
-    tokenResponse = await fetch(provider.tokenUrl, requestOptions);
+    tokenResponse = await fetch(tokenUrl, requestOptions);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
