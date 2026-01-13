@@ -300,10 +300,12 @@ const getProviderModelOptions = (provider: PublicLlmProvider | null) => {
 };
 
 export default function LlmProvidersPage() {
+  console.log("[LlmProvidersPage] Component rendering started");
+  
   const { toast } = useToast();
-  const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+    const [isAuthorizationVisible, setIsAuthorizationVisible] = useState(false);
+    const [isCreating, setIsCreating] = useState(false);
+    const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
 
   const form = useForm<FormValues>({
     defaultValues: emptyFormValues,
@@ -322,6 +324,7 @@ export default function LlmProvidersPage() {
     [modelsArray.fields],
   );
   const isAitunnelProvider = providerTypeValue === "aitunnel";
+  const isUnicaProvider = providerTypeValue === "unica";
   const catalogModels = useModels("LLM").data ?? [];
   const providerCatalogOptions = useMemo(() => {
     if (!selectedProviderId) return [];
@@ -347,12 +350,20 @@ export default function LlmProvidersPage() {
   const providersQuery = useQuery<ProvidersResponse>({
     queryKey: ["/api/llm/providers"],
     retry: false,
-    onError: (error) => {
-      console.error("[LlmProvidersPage] Failed to load LLM providers:", error);
-    },
   });
 
-  const providers = useMemo(() => providersQuery.data?.providers ?? [], [providersQuery.data]);
+  useEffect(() => {
+    if (providersQuery.isError) {
+      console.error("[LlmProvidersPage] Failed to load LLM providers:", providersQuery.error);
+    }
+  }, [providersQuery.isError, providersQuery.error]);
+
+  const providers = useMemo(() => {
+    if (providersQuery.data && "providers" in providersQuery.data) {
+      return providersQuery.data.providers;
+    }
+    return [];
+  }, [providersQuery.data]);
 
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
@@ -362,10 +373,15 @@ export default function LlmProvidersPage() {
   const unicaChatQuery = useQuery<UnicaChatConfigResponse>({
     queryKey: ["/api/admin/unica-chat"],
     retry: false,
-    onError: (error) => {
-      console.error("[LlmProvidersPage] Failed to load Unica Chat config:", error);
-    },
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
   });
+
+  useEffect(() => {
+    if (unicaChatQuery.isError) {
+      console.error("[LlmProvidersPage] Failed to load Unica Chat config:", unicaChatQuery.error);
+    }
+  }, [unicaChatQuery.isError, unicaChatQuery.error]);
 
   const selectedUnicaProviderId = unicaForm.watch("llmProviderConfigId");
 
@@ -501,7 +517,7 @@ export default function LlmProvidersPage() {
       trimmedAuthorizationKey.length === 0;
 
     // Для unica провайдера workspace_id хранится в additionalBodyFields
-    const additionalBodyFields: Record<string, unknown> = {};
+    const additionalBodyFields: Record<string, string | number | boolean | any[] | Record<string, any> | null> = {};
     if (values.providerType === "unica") {
       // Получаем workspace_id из существующего провайдера или используем дефолт
       const existingRequestConfig = selectedProvider?.requestConfig;
@@ -582,7 +598,7 @@ export default function LlmProvidersPage() {
       return;
     }
 
-    if (selectedProviderId && providers.some((provider) => provider.id === selectedProviderId)) {
+    if (selectedProviderId && providers.some((provider: PublicLlmProvider) => provider.id === selectedProviderId)) {
       return;
     }
 
@@ -656,13 +672,23 @@ export default function LlmProvidersPage() {
   }, [isCreating, providerTypeValue]);
 
   useEffect(() => {
-    const config = unicaChatQuery.data?.config;
+    // Игнорируем ошибки unicaChatQuery, чтобы не блокировать рендеринг страницы
+    if (unicaChatQuery.isError || unicaChatQuery.isLoading) {
+      return;
+    }
+    
+    const config = unicaChatQuery.data && "config" in unicaChatQuery.data ? unicaChatQuery.data.config : undefined;
     if (!config) {
+      return;
+    }
+    
+    // Проверяем, что форма инициализирована
+    if (!unicaForm) {
       return;
     }
 
     const providerId = config.llmProviderConfigId ?? "";
-    const provider = providers.find((entry) => entry.id === providerId) ?? null;
+    const provider = providers.find((entry: PublicLlmProvider) => entry.id === providerId) ?? null;
     const providerModels = getProviderModelOptions(provider);
 
     const fallbackModel =
@@ -935,6 +961,12 @@ export default function LlmProvidersPage() {
     ? createProviderMutation.isPending
     : updateProviderMutation.isPending;
 
+  console.log("[LlmProvidersPage] About to render JSX", {
+    providersCount: providers.length,
+    isCreating,
+    selectedProviderId,
+  });
+
   return (
     <div className="space-y-6 p-6">
       <div className="space-y-1">
@@ -982,7 +1014,7 @@ export default function LlmProvidersPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                {providers.map((provider) => {
+                {providers.map((provider: PublicLlmProvider) => {
                   const isSelected = provider.id === selectedProviderId;
                   const requestConfig = {
                     ...DEFAULT_LLM_REQUEST_CONFIG,
@@ -1054,7 +1086,7 @@ export default function LlmProvidersPage() {
                       </div>
                       {provider.availableModels.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
-                          {provider.availableModels.slice(0, 4).map((model) => (
+                          {provider.availableModels.slice(0, 4).map((model: { label: string; value: string }) => (
                             <Badge
                               key={`${provider.id}-${model.value}`}
                               variant="secondary"
@@ -1392,13 +1424,21 @@ export default function LlmProvidersPage() {
                           </FormItem>
                         )}
                       />
+                      {/* Временно отключена секция availableModels для отладки */}
+                      {false && (
                       <div className="md:col-span-2 space-y-3">
                         <FormLabel>Доступные модели для выбора</FormLabel>
                         <FormDescription>
                           Отображаются в интерфейсе генеративного поиска. Добавьте варианты, которые будут доступны пользователю.
                         </FormDescription>
                         <div className="space-y-3">
-                          {modelsArray.fields.map((modelField, index) => (
+                          {modelsArray.fields && Array.isArray(modelsArray.fields) && modelsArray.fields.length > 0 ? modelsArray.fields.map((modelField, index) => {
+                            // Проверяем, что modelField существует и имеет правильную структуру
+                            if (!modelField || typeof modelField !== 'object' || !('id' in modelField)) {
+                              console.error('[LlmProvidersPage] Invalid modelField:', modelField);
+                              return null;
+                            }
+                            return (
                             <div
                               key={modelField.id}
                               className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
@@ -1448,8 +1488,9 @@ export default function LlmProvidersPage() {
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
-                          ))}
-                          {modelsArray.fields.length === 0 && (
+                            );
+                          }) : null}
+                          {(!modelsArray.fields || modelsArray.fields.length === 0) && (
                             <div className="rounded-md border border-dashed border-border/60 px-3 py-2 text-sm text-muted-foreground">
                               Добавьте хотя бы одну модель.
                             </div>
@@ -1465,6 +1506,7 @@ export default function LlmProvidersPage() {
                           Добавить модель
                         </Button>
                       </div>
+                      )}
                     </div>
 
                     <FormField
@@ -1620,6 +1662,8 @@ export default function LlmProvidersPage() {
         </Card>
       </div>
 
+      {/* Временно отключена секция Unica Chat для отладки */}
+      {false && (
       <Card>
         <CardHeader className="space-y-2">
           <div className="flex items-center gap-2">
@@ -1645,7 +1689,7 @@ export default function LlmProvidersPage() {
             <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
               Сначала добавьте хотя бы один провайдер LLM, чтобы выбрать его для Unica Chat.
             </div>
-          ) : (
+          ) : unicaForm ? (
             <Form {...unicaForm}>
               <form onSubmit={handleUnicaSubmit} className="space-y-5">
                 <div className="grid gap-4 md:grid-cols-2">
@@ -1665,7 +1709,7 @@ export default function LlmProvidersPage() {
                               <SelectValue placeholder="Выберите провайдера" />
                             </SelectTrigger>
                             <SelectContent>
-                              {providers.map((provider) => (
+                              {providers.map((provider: PublicLlmProvider) => (
                                 <SelectItem key={provider.id} value={provider.id}>
                                   {provider.name}
                                 </SelectItem>
@@ -1797,9 +1841,10 @@ export default function LlmProvidersPage() {
                 </div>
               </form>
             </Form>
-          )}
+          ) : null}
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }
