@@ -59,6 +59,79 @@ export function buildLlmRequestBody(
   options?: { stream?: boolean; responseFormat?: RagResponseFormat },
 ) {
   const requestConfig = mergeLlmRequestConfig(provider);
+  const effectiveModel = modelOverride && modelOverride.trim().length > 0 ? modelOverride.trim() : provider.model;
+
+  // Для провайдера Unica AI используется специальный формат {prompt, system}
+  if (provider.providerType === "unica") {
+    const systemParts: string[] = [];
+
+    if (requestConfig.systemPrompt && requestConfig.systemPrompt.trim()) {
+      systemParts.push(requestConfig.systemPrompt.trim());
+    }
+
+    const contextText = context
+      .map(({ index, score, payload }) => {
+        const scoreText = typeof score === "number" ? ` (score: ${score.toFixed(4)})` : "";
+        return `Источник ${index}${scoreText}:\n${stringifyPayloadForContext(payload)}`;
+      })
+      .join("\n\n");
+
+    const responseFormat = options?.responseFormat ?? "text";
+    let formatInstruction = "Ответ верни в виде обычного текста.";
+
+    if (responseFormat === "markdown") {
+      formatInstruction =
+        "Используй Markdown-разметку (заголовки, списки, ссылки) для структурирования ответа. Не добавляй внешний CSS.";
+    } else if (responseFormat === "html") {
+      formatInstruction =
+        "Верни ответ в виде чистого HTML без внешних стилей. Используй семантичные теги <p>, <ul>, <li>, <strong>, <a>.";
+    }
+
+    if (context.length > 0) {
+      systemParts.push(
+        `Контекст:\n${contextText}\n\nСформируй понятный ответ на русском языке, опираясь только на предоставленный контекст. Если ответ не найден, сообщи об этом. Не придумывай фактов. ${formatInstruction}`,
+      );
+    } else {
+      systemParts.push("Контекст отсутствует. Если ответ не найден, честно сообщи об этом.");
+    }
+
+    const system = systemParts.length > 0 ? systemParts.join("\n\n") : "You are a helpful assistant. Answer concisely and factually.";
+    const prompt = `Вопрос: ${query}`;
+
+    const body: Record<string, unknown> = {
+      model: effectiveModel,
+      system,
+      prompt,
+    };
+
+    // Добавляем workspace_id из additionalBodyFields
+    const additionalFields = requestConfig.additionalBodyFields ?? {};
+    if (typeof additionalFields.workspace_id === "string") {
+      body.workspace_id = additionalFields.workspace_id;
+    }
+
+    // Добавляем параметры
+    if (requestConfig.temperature !== undefined) {
+      body.temperature = requestConfig.temperature;
+    }
+    if (requestConfig.topP !== undefined) {
+      body.top_p = requestConfig.topP;
+    }
+    if (requestConfig.maxTokens !== undefined) {
+      body.max_tokens = requestConfig.maxTokens;
+    }
+
+    // Добавляем дополнительные поля (format, think, top_k, seed, repeat_penalty)
+    for (const [key, value] of Object.entries(additionalFields)) {
+      if (key !== "workspace_id" && body[key] === undefined) {
+        body[key] = value;
+      }
+    }
+
+    return body;
+  }
+
+  // Стандартный формат для других провайдеров
   const messages: Array<{ role: string; content: string }> = [];
 
   if (requestConfig.systemPrompt && requestConfig.systemPrompt.trim()) {
@@ -92,8 +165,6 @@ export function buildLlmRequestBody(
   ];
 
   messages.push({ role: "user", content: userParts.join("\n\n") });
-
-  const effectiveModel = modelOverride && modelOverride.trim().length > 0 ? modelOverride.trim() : provider.model;
 
   const body: Record<string, unknown> = {
     [requestConfig.modelField]: effectiveModel,

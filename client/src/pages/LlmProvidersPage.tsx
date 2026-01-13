@@ -167,6 +167,25 @@ const llmTemplates: Partial<Record<FormValues["providerType"], LlmTemplateFactor
       : "1024",
     allowSelfSignedCertificate: false,
   }),
+  unica: () => ({
+    providerType: "unica",
+    name: "Unica AI",
+    description: "LLM провайдер Unica AI",
+    isActive: true,
+    tokenUrl: "", // не используется, но поле требуется схемой
+    completionUrl: "", // администратор должен указать endpoint
+    scope: "",
+    model: "",
+    availableModels: [],
+    requestHeaders: formatJson(defaultRequestHeaders),
+    systemPrompt: DEFAULT_LLM_REQUEST_CONFIG.systemPrompt ?? "",
+    temperature: "0.3",
+    maxTokens: DEFAULT_LLM_REQUEST_CONFIG.maxTokens
+      ? String(DEFAULT_LLM_REQUEST_CONFIG.maxTokens)
+      : "1024",
+    topP: "100",
+    allowSelfSignedCertificate: false,
+  }),
 };
 
 type ProvidersResponse = { providers: PublicLlmProvider[] };
@@ -473,6 +492,19 @@ export default function LlmProvidersPage() {
       !selectedProvider?.hasAuthorizationKey &&
       trimmedAuthorizationKey.length === 0;
 
+    // Для unica провайдера workspace_id хранится в additionalBodyFields
+    const additionalBodyFields: Record<string, unknown> = {};
+    if (values.providerType === "unica") {
+      // Получаем workspace_id из существующего провайдера или используем дефолт
+      const existingRequestConfig = selectedProvider?.requestConfig;
+      const existingAdditionalFields =
+        existingRequestConfig && typeof existingRequestConfig === "object"
+          ? (existingRequestConfig as { additionalBodyFields?: Record<string, unknown> }).additionalBodyFields
+          : undefined;
+      additionalBodyFields.workspace_id =
+        (existingAdditionalFields?.workspace_id as string | undefined) ?? "GENERAL";
+    }
+
     const sharedFields = {
       providerType: values.providerType,
       name: values.name.trim(),
@@ -494,7 +526,7 @@ export default function LlmProvidersPage() {
         topP: topP && !Number.isNaN(topP) ? topP : undefined,
         presencePenalty: presencePenalty && !Number.isNaN(presencePenalty) ? presencePenalty : undefined,
         frequencyPenalty: frequencyPenalty && !Number.isNaN(frequencyPenalty) ? frequencyPenalty : undefined,
-        additionalBodyFields: {},
+        additionalBodyFields,
       },
       responseConfig: { ...DEFAULT_LLM_RESPONSE_CONFIG },
       availableModels: sanitizedAvailableModels,
@@ -1103,7 +1135,9 @@ export default function LlmProvidersPage() {
                                         ? "GigaChat"
                                         : type === "aitunnel"
                                           ? "AITunnel (GPT-5, DeepSeek, Claude, Gemini)"
-                                          : "Другой сервис"}
+                                          : type === "unica"
+                                            ? "Unica AI"
+                                            : "Другой сервис"}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
@@ -1219,17 +1253,17 @@ export default function LlmProvidersPage() {
                         render={({ field }) => (
                           <FormItem className="md:col-span-2">
                             <FormLabel>
-                              {isAitunnelProvider ? "API ключ AITunnel" : "Authorization key"}
+                              {isAitunnelProvider ? "API ключ AITunnel" : isUnicaProvider ? "Authorization key (не требуется)" : "Authorization key"}
                             </FormLabel>
                             <FormControl>
                               <div className="relative">
                                 <Input
                                   {...field}
                                   type={isAuthorizationVisible ? "text" : "password"}
-                                  placeholder={isAitunnelProvider ? "sk-aitunnel-..." : "Base64(client_id:client_secret)"}
+                                  placeholder={isAitunnelProvider ? "sk-aitunnel-..." : isUnicaProvider ? "Не требуется" : "Base64(client_id:client_secret)"}
                                   autoComplete="new-password"
                                   className="pr-10"
-                                  required={isCreating}
+                                  required={isCreating && !isUnicaProvider}
                                 />
                                 <Button
                                   type="button"
@@ -1256,7 +1290,9 @@ export default function LlmProvidersPage() {
                                 ? "Секрет сохранён. Оставьте поле пустым, если не требуется обновление."
                                 : isAitunnelProvider
                                   ? "Ключ из личного кабинета AITunnel. Используется напрямую (Bearer)."
-                                  : "Укажите ключ, который будет использоваться для запроса access_token."}
+                                  : isUnicaProvider
+                                    ? "Аутентификация не требуется. Провайдер работает в том же окружении."
+                                    : "Укажите ключ, который будет использоваться для запроса access_token."}
                             </FormDescription>
                             <FormMessage />
                           </FormItem>

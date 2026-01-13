@@ -796,7 +796,7 @@ export const insertUserSchema = createInsertSchema(users).omit({
 export const embeddingProviderTypes = ["gigachat", "custom"] as const;
 export type EmbeddingProviderType = (typeof embeddingProviderTypes)[number];
 
-export const llmProviderTypes = ["gigachat", "custom", "aitunnel"] as const;
+export const llmProviderTypes = ["gigachat", "custom", "aitunnel", "unica"] as const;
 export type LlmProviderType = (typeof llmProviderTypes)[number];
 
 export const authProviderTypes = ["google", "yandex"] as const;

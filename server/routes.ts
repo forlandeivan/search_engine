@@ -337,6 +337,7 @@ import { callRagForSkillChat, SkillRagConfigurationError } from "./chat-rag";
 import {
   fetchLlmCompletion,
   executeLlmCompletion,
+  checkLlmProviderHealth,
   type LlmCompletionResult,
   type LlmStreamEvent,
 } from "./llm-client";
@@ -10712,6 +10713,39 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
 
       res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/admin/llm-providers/:id/health-check", requireAdmin, async (req, res, next) => {
+    try {
+      const { id: workspaceId } = getRequestWorkspace(req);
+      const providerId = req.params.id;
+      
+      const provider = await storage.getLlmProvider(providerId, workspaceId);
+      if (!provider) {
+        return res.status(404).json({ message: "Провайдер не найден" });
+      }
+
+      const timeoutMs = typeof req.body?.timeoutMs === "number" && req.body.timeoutMs > 0 
+        ? Math.min(req.body.timeoutMs, 60000) // Максимум 60 секунд
+        : 10000; // Дефолт 10 секунд
+
+      const healthCheckResult = await checkLlmProviderHealth(provider, timeoutMs);
+      
+      if (healthCheckResult.available) {
+        res.json({
+          available: true,
+          responseTimeMs: healthCheckResult.responseTimeMs,
+        });
+      } else {
+        res.status(503).json({
+          available: false,
+          error: healthCheckResult.error,
+          responseTimeMs: healthCheckResult.responseTimeMs,
+        });
+      }
     } catch (error) {
       next(error);
     }

@@ -576,6 +576,197 @@ async function executeAitunnelCompletion(
   };
 }
 
+async function executeUnicaCompletion(
+  provider: LlmProvider,
+  accessToken: string,
+  rawBody: Record<string, unknown>,
+  options?: ExecuteOptions,
+): Promise<LlmCompletionResult> {
+  // Unica AI всегда использует стриминг
+  const wantsStream = true;
+
+  const body: Record<string, unknown> = { ...rawBody };
+
+  // Формируем endpoint для стриминга
+  let streamUrl = provider.completionUrl;
+  if (!streamUrl.endsWith("/stream")) {
+    streamUrl = streamUrl.endsWith("/") ? `${streamUrl}stream` : `${streamUrl}/stream`;
+  }
+
+  const headers = new Headers();
+  headers.set("Content-Type", "application/json");
+  headers.set("Accept", "text/event-stream");
+
+  // Для Unica AI аутентификация не требуется (пока нет bearer токена)
+  // Но если accessToken передан, можем его не использовать
+
+  for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+    headers.set(key, value);
+  }
+
+  options?.onBeforeRequest?.({
+    url: streamUrl,
+    headers: sanitizeHeadersForLog(headers),
+    body,
+  });
+
+  const streamController = createAsyncStreamController<LlmStreamEvent>();
+  const streamPromise = (async () => {
+    let response: FetchResponse;
+    try {
+      const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+        { method: "POST", headers, body: JSON.stringify(body) },
+        provider.allowSelfSignedCertificate,
+      );
+      response = await fetchWithRetries(streamUrl, requestOptions, {
+        providerId: provider.id,
+        maxAttempts: LLM_COMPLETION_MAX_ATTEMPTS,
+        retryDelayMs: LLM_COMPLETION_RETRY_DELAY_MS,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      streamController.fail(error);
+      throw new Error(`Не удалось выполнить запрос к Unica AI: ${message}`);
+    }
+
+    const rawEvents: Array<{ event: string; data: unknown }> = [];
+    const contentType = response.headers.get("content-type") ?? "";
+
+    if (!response.ok) {
+      const text = await response.text();
+      streamController.fail(new Error(text || `Unica AI вернул ошибку ${response.status}`));
+      throw new Error(text || `Unica AI вернул ошибку ${response.status}`);
+    }
+
+    if (!contentType.toLowerCase().includes("text/event-stream")) {
+      const text = await response.text();
+      streamController.fail(new Error("Unica AI не вернул поток событий"));
+      throw new Error("Unica AI не вернул поток событий");
+    }
+
+    const responseBody = response.body;
+    if (!responseBody) {
+      const err = new Error("Не удалось получить поток Unica AI");
+      streamController.fail(err);
+      throw err;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let aggregatedAnswer = "";
+    let usageTokens: number | null = null;
+    let currentEventName: string | null = null;
+
+    const handleSseEvent = (eventName: string, payload: string) => {
+      if (!payload || payload.trim().length === 0) {
+        return;
+      }
+
+      rawEvents.push({ event: eventName, data: payload });
+
+      try {
+        const json = JSON.parse(payload) as Record<string, unknown>;
+
+        if (eventName === "token") {
+          // Формат: {"index":0,"delta":"текст","model":"имя"}
+          const delta = typeof json.delta === "string" ? json.delta : "";
+          if (delta) {
+            aggregatedAnswer += delta;
+            streamController.push({ event: "delta", data: { text: delta } });
+          }
+        } else if (eventName === "warning") {
+          // Формат: {"message":"текст"}
+          const message = typeof json.message === "string" ? json.message : String(json.message || "");
+          console.warn(`[unica-ai] warning: ${message}`);
+        } else if (eventName === "done") {
+          // Формат: {"model":"имя","done":true,"done_reason":"stop|length","metrics":{...}}
+          const metrics = json.metrics as Record<string, unknown> | undefined;
+          if (metrics) {
+            const promptEvalCount = typeof metrics.prompt_eval_count === "number" ? metrics.prompt_eval_count : 0;
+            const evalCount = typeof metrics.eval_count === "number" ? metrics.eval_count : 0;
+            usageTokens = promptEvalCount + evalCount;
+          }
+        }
+      } catch (parseError) {
+        // Если не JSON, игнорируем
+        console.warn(`[unica-ai] failed to parse SSE payload for event ${eventName}:`, parseError);
+      }
+    };
+
+    try {
+      const bodyAny = responseBody as unknown as {
+        getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
+        [Symbol.asyncIterator]?: () => AsyncIterator<Uint8Array | Buffer>;
+      };
+
+      const processChunk = (chunk: Uint8Array | Buffer) => {
+        buffer += decoder.decode(chunk, { stream: true });
+        let boundary: number;
+        while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+          const segment = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const trimmed = segment.trim();
+          if (!trimmed) {
+            continue;
+          }
+
+          const lines = trimmed.split("\n");
+          currentEventName = null;
+          const dataLines: string[] = [];
+
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              currentEventName = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5).trim());
+            }
+          }
+
+          if (dataLines.length > 0) {
+            const payload = dataLines.join("\n");
+            const eventName = currentEventName || "message";
+            handleSseEvent(eventName, payload);
+          }
+        }
+      };
+
+      if (typeof bodyAny?.getReader === "function") {
+        const reader = bodyAny.getReader();
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          processChunk(chunk.value);
+        }
+      } else if (typeof bodyAny?.[Symbol.asyncIterator] === "function") {
+        for await (const chunk of responseBody as AsyncIterable<Uint8Array | Buffer>) {
+          processChunk(chunk);
+        }
+      } else {
+        throw new Error("Поток ответа Unica AI имеет неподдерживаемый формат");
+      }
+    } catch (error) {
+      streamController.fail(error);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Ошибка чтения SSE от Unica AI: ${message}`);
+    }
+
+    streamController.finish();
+
+    return {
+      answer: aggregatedAnswer,
+      usageTokens,
+      rawResponse: rawEvents,
+      request: {
+        url: streamUrl,
+        headers: sanitizeHeadersForLog(headers),
+        body,
+      },
+    };
+  })();
+
+  return Object.assign(streamPromise, { streamIterator: streamController.iterator }) as LlmCompletionPromise;
+}
+
 export function executeLlmCompletion(
   provider: LlmProvider,
   accessToken: string,
@@ -584,6 +775,10 @@ export function executeLlmCompletion(
 ): LlmCompletionPromise {
   if (provider.providerType === "aitunnel") {
     return executeAitunnelCompletion(provider, accessToken, rawBody, options) as LlmCompletionPromise;
+  }
+
+  if (provider.providerType === "unica") {
+    return executeUnicaCompletion(provider, accessToken, rawBody, options) as LlmCompletionPromise;
   }
 
   const body: Record<string, unknown> = { ...rawBody };
@@ -1086,4 +1281,260 @@ function computeRetryDelayMs(response: FetchResponse, fallback: number): number 
     }
   }
   return fallback;
+}
+
+export interface LlmProviderHealthCheckResult {
+  available: boolean;
+  error?: string;
+  responseTimeMs?: number;
+}
+
+/**
+ * Проверяет доступность LLM провайдера, отправляя минимальный тестовый запрос
+ */
+export async function checkLlmProviderHealth(
+  provider: LlmProvider,
+  timeoutMs: number = 10000,
+): Promise<LlmProviderHealthCheckResult> {
+  const startTime = Date.now();
+
+  try {
+    // Получаем access token для провайдеров, которые его требуют
+    let accessToken: string = "";
+    if (provider.providerType !== "aitunnel" && provider.providerType !== "unica") {
+      try {
+        accessToken = await fetchAccessToken(provider);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          available: false,
+          error: `Не удалось получить токен доступа: ${errorMessage}`,
+          responseTimeMs: Date.now() - startTime,
+        };
+      }
+    } else if (provider.providerType === "aitunnel") {
+      accessToken = provider.authorizationKey.trim();
+      if (!accessToken) {
+        return {
+          available: false,
+          error: "API ключ не настроен",
+          responseTimeMs: Date.now() - startTime,
+        };
+      }
+    }
+
+    // Формируем минимальный тестовый запрос в зависимости от типа провайдера
+    let testUrl: string;
+    let testBody: Record<string, unknown>;
+    let testHeaders: Headers;
+
+    if (provider.providerType === "unica") {
+      // Unica AI использует потоковый endpoint
+      testUrl = provider.completionUrl;
+      if (!testUrl.endsWith("/stream")) {
+        testUrl = testUrl.endsWith("/") ? `${testUrl}stream` : `${testUrl}/stream`;
+      }
+
+      const requestConfig = provider.requestConfig as Record<string, unknown> | undefined;
+      const additionalBodyFields = (requestConfig?.additionalBodyFields as Record<string, unknown> | undefined) ?? {};
+      const workspaceId = typeof additionalBodyFields.workspace_id === "string" ? additionalBodyFields.workspace_id : "";
+
+      if (!workspaceId) {
+        return {
+          available: false,
+          error: "workspace_id не настроен в additionalBodyFields",
+          responseTimeMs: Date.now() - startTime,
+        };
+      }
+
+      testBody = {
+        workspace_id: workspaceId,
+        model: provider.model,
+        prompt: "test",
+        system: "You are a helpful assistant.",
+        temperature: 0.3,
+        top_p: 100,
+      };
+
+      testHeaders = new Headers();
+      testHeaders.set("Content-Type", "application/json");
+      testHeaders.set("Accept", "text/event-stream");
+
+      for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+        testHeaders.set(key, value);
+      }
+    } else if (provider.providerType === "aitunnel") {
+      testUrl = provider.completionUrl;
+      testBody = {
+        model: provider.model,
+        messages: [{ role: "user", content: "test" }],
+        stream: false,
+        max_tokens: 10,
+      };
+
+      testHeaders = new Headers();
+      testHeaders.set("Content-Type", "application/json");
+      testHeaders.set("Accept", "application/json");
+      testHeaders.set("Authorization", `Bearer ${accessToken}`);
+
+      for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+        testHeaders.set(key, value);
+      }
+    } else {
+      // gigachat и custom провайдеры
+      testUrl = provider.completionUrl;
+      testBody = {
+        model: provider.model,
+        messages: [{ role: "user", content: "test" }],
+        max_tokens: 10,
+      };
+
+      testHeaders = new Headers();
+      testHeaders.set("Content-Type", "application/json");
+      testHeaders.set("Accept", "application/json");
+      testHeaders.set("Authorization", `Bearer ${accessToken}`);
+
+      if (!testHeaders.has("RqUID")) {
+        testHeaders.set("RqUID", randomUUID());
+      }
+
+      for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+        testHeaders.set(key, value);
+      }
+    }
+
+    // Отправляем тестовый запрос с таймаутом
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+        {
+          method: "POST",
+          headers: testHeaders,
+          body: JSON.stringify(testBody),
+          signal: controller.signal,
+        },
+        provider.allowSelfSignedCertificate,
+      );
+
+      const response = await fetch(testUrl, requestOptions);
+      clearTimeout(timeoutId);
+
+      const responseTimeMs = Date.now() - startTime;
+
+      if (!response.ok) {
+        const responseText = await response.text().catch(() => "");
+        let errorMessage = `Провайдер вернул ошибку ${response.status}`;
+        
+        try {
+          const parsed = JSON.parse(responseText) as Record<string, unknown>;
+          if (typeof parsed.error_description === "string") {
+            errorMessage = parsed.error_description;
+          } else if (typeof parsed.message === "string") {
+            errorMessage = parsed.message;
+          }
+        } catch {
+          if (responseText.trim().length > 0) {
+            errorMessage = responseText.trim();
+          }
+        }
+
+        return {
+          available: false,
+          error: errorMessage,
+          responseTimeMs,
+        };
+      }
+
+      // Для потоковых ответов (unica) проверяем, что получили SSE
+      if (provider.providerType === "unica") {
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!contentType.toLowerCase().includes("text/event-stream")) {
+          return {
+            available: false,
+            error: "Провайдер не вернул поток событий (SSE)",
+            responseTimeMs,
+          };
+        }
+        // Для health check достаточно проверить, что поток начался
+        // Читаем первые байты, чтобы убедиться, что соединение работает
+        try {
+          if (response.body) {
+            const reader = (response.body as any).getReader?.();
+            if (reader) {
+              const chunk = await Promise.race([
+                reader.read(),
+                new Promise<{ done: boolean }>((resolve) => {
+                  setTimeout(() => resolve({ done: true }), 1000);
+                }),
+              ]);
+              if (!chunk.done) {
+                reader.cancel().catch(() => {
+                  // Игнорируем ошибки при отмене
+                });
+              }
+            } else {
+              // Если нет getReader, просто отменяем body
+              (response.body as any).cancel?.();
+            }
+          }
+        } catch {
+          // Если не удалось прочитать поток, это не критично для health check
+          // Главное - проверили content-type
+        }
+      } else {
+        // Для не-потоковых ответов проверяем, что получили валидный JSON
+        try {
+          await response.json();
+        } catch {
+          return {
+            available: false,
+            error: "Провайдер вернул невалидный JSON",
+            responseTimeMs,
+          };
+        }
+      }
+
+      return {
+        available: true,
+        responseTimeMs,
+      };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      const responseTimeMs = Date.now() - startTime;
+
+      if (error instanceof Error && error.name === "AbortError") {
+        return {
+          available: false,
+          error: `Таймаут запроса (${timeoutMs}ms)`,
+          responseTimeMs,
+        };
+      }
+
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (!provider.allowSelfSignedCertificate && errorMessage.toLowerCase().includes("self-signed certificate")) {
+        return {
+          available: false,
+          error: "Сервер не доверяет сертификату. Разрешите самоподписанные сертификаты в настройках провайдера.",
+          responseTimeMs,
+        };
+      }
+
+      return {
+        available: false,
+        error: `Не удалось выполнить запрос: ${errorMessage}`,
+        responseTimeMs,
+      };
+    }
+  } catch (error) {
+    const responseTimeMs = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      available: false,
+      error: errorMessage,
+      responseTimeMs,
+    };
+  }
 }

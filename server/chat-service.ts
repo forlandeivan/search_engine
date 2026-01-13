@@ -873,10 +873,93 @@ export function buildChatCompletionRequestBody(
   context: ChatLlmContext,
   options?: { stream?: boolean },
 ) {
-  const { requestConfig } = context;
+  const { requestConfig, provider } = context;
   const messagesField = requestConfig.messagesField;
   const modelField = requestConfig.modelField;
 
+  // Для провайдера Unica AI используется специальный формат {prompt, system}
+  if (provider.providerType === "unica") {
+    const systemParts: string[] = [];
+    const systemPrompt = requestConfig.systemPrompt?.trim();
+
+    if (systemPrompt) {
+      systemParts.push(systemPrompt);
+    }
+
+    if (context.retrievedContext && context.retrievedContext.length > 0) {
+      const contextLines = context.retrievedContext
+        .slice(0, requestConfig.maxTokens ? Math.max(1, Math.min(context.retrievedContext.length, 8)) : 8)
+        .map((entry, index) => `${index + 1}. ${entry}`)
+        .join("\n");
+      systemParts.push(
+        `Контекст из документов навыка (используй только как фактологическую опору, не придумывай новое):\n${contextLines}`,
+      );
+    }
+
+    // Собираем системные сообщения
+    const systemMessages: string[] = [];
+    for (const message of context.messages) {
+      if (message.role === "system") {
+        const content = message.content?.trim();
+        if (content) {
+          systemMessages.push(content);
+        }
+      }
+    }
+
+    if (systemMessages.length > 0) {
+      systemParts.push(...systemMessages);
+    }
+
+    const system = systemParts.length > 0 ? systemParts.join("\n\n") : "You are a helpful assistant. Answer concisely and factually.";
+
+    // Собираем пользовательские и assistant сообщения в prompt
+    const promptParts: string[] = [];
+    for (const message of context.messages) {
+      if (message.role !== "system") {
+        const content = message.content?.trim();
+        if (content) {
+          const prefix = message.role === "user" ? "User" : "Assistant";
+          promptParts.push(`${prefix}: ${content}`);
+        }
+      }
+    }
+    const prompt = promptParts.join("\n\n");
+
+    const body: Record<string, unknown> = {
+      model: context.model ?? provider.model,
+      system,
+      prompt,
+    };
+
+    // Добавляем workspace_id из additionalBodyFields
+    const additionalFields = requestConfig.additionalBodyFields ?? {};
+    if (typeof additionalFields.workspace_id === "string") {
+      body.workspace_id = additionalFields.workspace_id;
+    }
+
+    // Добавляем параметры
+    if (requestConfig.temperature !== undefined) {
+      body.temperature = requestConfig.temperature;
+    }
+    if (requestConfig.topP !== undefined) {
+      body.top_p = requestConfig.topP;
+    }
+    if (requestConfig.maxTokens !== undefined) {
+      body.max_tokens = requestConfig.maxTokens;
+    }
+
+    // Добавляем дополнительные поля (format, think, top_k, seed, repeat_penalty)
+    for (const [key, value] of Object.entries(additionalFields)) {
+      if (key !== "workspace_id" && body[key] === undefined) {
+        body[key] = value;
+      }
+    }
+
+    return body;
+  }
+
+  // Стандартный формат для других провайдеров
   const llmMessages: Array<{ role: string; content: string }> = [];
   const systemParts: string[] = [];
   const systemPrompt = requestConfig.systemPrompt?.trim();
