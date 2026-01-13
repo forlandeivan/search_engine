@@ -265,6 +265,13 @@ export default function AdminModelsPage() {
     [form],
   );
 
+  const providerOptions = useMemo(() => {
+    const llm = Array.isArray(llmProvidersQuery.data) ? llmProvidersQuery.data : [];
+    const emb = Array.isArray(embeddingProvidersQuery.data) ? embeddingProvidersQuery.data : [];
+    const speech = Array.isArray(speechProvidersQuery.data) ? speechProvidersQuery.data : [];
+    return [...llm, ...emb, ...speech].sort((a, b) => a.name.localeCompare(b.name));
+  }, [llmProvidersQuery.data, embeddingProvidersQuery.data, speechProvidersQuery.data]);
+
   const createMutation = useMutation({
     mutationFn: async (values: ModelFormValues) => {
       const providerOption = providerOptions.find((p) => p.id === values.providerId);
@@ -351,9 +358,17 @@ export default function AdminModelsPage() {
 
   const onSubmit = useCallback(
     (values: ModelFormValues) => {
-      if (values.providerId && !values.providerModelKey?.trim()) {
-        form.setError("providerModelKey", { message: "Укажите ключ модели у провайдера" });
-        return;
+      if (values.providerId) {
+        const selectedProvider = providerOptions.find((p) => p.id === values.providerId);
+        const isUnicaProvider = selectedProvider?.providerType === "unica";
+        
+        if (!values.providerModelKey?.trim()) {
+          const errorMessage = isUnicaProvider
+            ? "Укажите ключ модели у провайдера Unica AI (обязательно для Unica AI)"
+            : "Укажите ключ модели у провайдера";
+          form.setError("providerModelKey", { message: errorMessage });
+          return;
+        }
       }
       if (values.id) {
         updateMutation.mutate({ ...values, creditsPerUnit: values.creditsPerUnit <= 0 ? 0 : values.creditsPerUnit });
@@ -361,7 +376,7 @@ export default function AdminModelsPage() {
         createMutation.mutate({ ...values, creditsPerUnit: values.creditsPerUnit <= 0 ? 0 : values.creditsPerUnit });
       }
     },
-    [createMutation, updateMutation, form],
+    [createMutation, updateMutation, form, providerOptions],
   );
 
   const openCreate = () => {
@@ -376,17 +391,11 @@ export default function AdminModelsPage() {
     setDialogOpen(true);
   };
 
-    const models = modelsQuery.data ?? [];
-    const archivedModelsCount = useMemo(() => models.filter((m) => !m.isActive).length, [models]);
-    const [sortField, setSortField] = useState<SortField>("order");
-    const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-    const providerOptions = useMemo(() => {
-    const llm = Array.isArray(llmProvidersQuery.data) ? llmProvidersQuery.data : [];
-    const emb = Array.isArray(embeddingProvidersQuery.data) ? embeddingProvidersQuery.data : [];
-    const speech = Array.isArray(speechProvidersQuery.data) ? speechProvidersQuery.data : [];
-    return [...llm, ...emb, ...speech].sort((a, b) => a.name.localeCompare(b.name));
-  }, [llmProvidersQuery.data, embeddingProvidersQuery.data, speechProvidersQuery.data]);
-    const providerKindById = useMemo(() => {
+  const models = modelsQuery.data ?? [];
+  const archivedModelsCount = useMemo(() => models.filter((m) => !m.isActive).length, [models]);
+  const [sortField, setSortField] = useState<SortField>("order");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const providerKindById = useMemo(() => {
       const map = new Map<string, AdminProviderType>();
       for (const option of providerOptions) {
         map.set(option.id, option.kind);
@@ -813,11 +822,28 @@ export default function AdminModelsPage() {
                   <Label htmlFor="providerModelKey">Ключ модели у провайдера</Label>
                   <Input
                     id="providerModelKey"
-                    placeholder="Напр. gpt-4o-mini"
+                    placeholder="Напр. gpt-4o-mini или модель Unica AI"
                     disabled={!form.watch("providerId")}
+                    required={!!form.watch("providerId")}
                     {...form.register("providerModelKey")}
                   />
-                  <p className="text-xs text-muted-foreground">Обязателен при выборе провайдера.</p>
+                  <p className="text-xs text-muted-foreground">
+                    {(() => {
+                      const selectedProviderId = form.watch("providerId");
+                      const selectedProvider = providerOptions.find((p) => p.id === selectedProviderId);
+                      const isUnicaProvider = selectedProvider?.providerType === "unica";
+                      return selectedProviderId
+                        ? isUnicaProvider
+                          ? "Обязателен для провайдера Unica AI. Укажите идентификатор модели у провайдера."
+                          : "Обязателен при выборе провайдера."
+                        : "Укажите после выбора провайдера.";
+                    })()}
+                  </p>
+                  {form.formState.errors.providerModelKey && (
+                    <p className="text-xs text-destructive">
+                      {form.formState.errors.providerModelKey.message}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">

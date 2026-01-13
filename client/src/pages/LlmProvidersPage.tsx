@@ -832,7 +832,7 @@ export default function LlmProvidersPage() {
       });
       toast({
         title: "Провайдер создан",
-        description: "GigaChat сразу готов к работе на dev-стенде.",
+        description: "Провайдер успешно создан",
       });
 
       const updatedValues = {

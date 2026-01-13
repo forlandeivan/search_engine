@@ -76,12 +76,21 @@ function normalizeProvider(input: ModelInput | Partial<ModelInput>) {
   const providerId = input.providerId?.trim() || null;
   const providerType = input.providerType?.trim() || null;
   const providerModelKey = input.providerModelKey?.trim() || null;
-  if (providerId && !providerModelKey) {
-    throw new ModelValidationError("providerModelKey обязателен при указании providerId");
-  }
+  
   if (providerId && !providerType) {
     throw new ModelValidationError("providerType обязателен при указании providerId");
   }
+  
+  // Для провайдера unica providerModelKey обязателен
+  if (providerId && providerType === "unica" && !providerModelKey) {
+    throw new ModelValidationError("providerModelKey обязателен для провайдера Unica AI");
+  }
+  
+  // Для всех остальных провайдеров providerModelKey также обязателен при указании providerId
+  if (providerId && !providerModelKey) {
+    throw new ModelValidationError("providerModelKey обязателен при указании providerId");
+  }
+  
   return { providerId, providerType, providerModelKey };
 }
 
