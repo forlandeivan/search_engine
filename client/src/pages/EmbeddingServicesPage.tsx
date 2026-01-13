@@ -137,7 +137,7 @@ const emptyFormValues: FormValues = {
   name: "",
   description: "",
   isActive: false,
-  isGlobal: false,
+  isGlobal: true,
   tokenUrl: "",
   embeddingsUrl: "",
   authorizationKey: "",
@@ -154,6 +154,7 @@ const embeddingTemplates: Record<EmbeddingProviderType, Partial<FormValues>> = {
     name: "GigaChat Embeddings",
     description: "Шаблон dev-стенда с готовыми URL и scope",
     isActive: true,
+    isGlobal: true,
     tokenUrl: "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
     embeddingsUrl: "https://gigachat.devices.sberbank.ru/api/v1/embeddings",
     scope: "GIGACHAT_API_PERS",
@@ -162,6 +163,7 @@ const embeddingTemplates: Record<EmbeddingProviderType, Partial<FormValues>> = {
   custom: {
     providerType: "custom",
     isActive: true,
+    isGlobal: true,
   },
 };
 

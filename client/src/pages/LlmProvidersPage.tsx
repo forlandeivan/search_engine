@@ -92,7 +92,7 @@ const emptyFormValues: FormValues = {
   name: "",
   description: "",
   isActive: false,
-  isGlobal: false,
+  isGlobal: true,
   tokenUrl: "",
   completionUrl: "",
   authorizationKey: "",
@@ -136,6 +136,7 @@ const llmTemplates: Partial<Record<FormValues["providerType"], LlmTemplateFactor
     name: "GigaChat",
     description: "Продовый доступ GigaChat от Сбера",
     isActive: true,
+    isGlobal: true,
     tokenUrl: "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
     completionUrl: "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
     scope: "GIGACHAT_API_PERS",
@@ -154,6 +155,7 @@ const llmTemplates: Partial<Record<FormValues["providerType"], LlmTemplateFactor
     name: "AITunnel",
     description: "OpenAI, DeepSeek, Claude, Gemini через единый API",
     isActive: true,
+    isGlobal: true,
     tokenUrl: "https://api.aitunnel.ru/v1", // не используется для OAuth, но поле требуется схемой
     completionUrl: "https://api.aitunnel.ru/v1/chat/completions",
     scope: "",
@@ -172,6 +174,7 @@ const llmTemplates: Partial<Record<FormValues["providerType"], LlmTemplateFactor
     name: "Unica AI",
     description: "LLM провайдер Unica AI",
     isActive: true,
+    isGlobal: true,
     tokenUrl: "", // не используется, но поле требуется схемой
     completionUrl: "", // администратор должен указать endpoint
     scope: "",

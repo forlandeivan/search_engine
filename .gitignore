@@ -32,3 +32,6 @@ attached_assets/stock_images/
 
 # MinIO local data
 minio-data/
+
+# Windows reserved names
+nul
