@@ -1890,17 +1890,14 @@ export const insertLlmProviderSchema = createInsertSchema(llmProviders)
       .max(1000, "Описание слишком длинное")
       .optional()
       .transform((value) => (value && value.length > 0 ? value : undefined)),
-    tokenUrl: z
-      .string()
-      .trim()
-      .url("Некорректный URL для получения Access Token"),
+    tokenUrl: z.string().trim().optional().or(z.literal("")),
     completionUrl: z
       .string()
       .trim()
       .url("Некорректный URL сервиса LLM"),
-    authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
-    scope: z.string().trim().min(1, "Укажите OAuth scope").or(z.literal("")),
-    model: z.string().trim().min(1, "Укажите модель"),
+    authorizationKey: z.string().trim().optional().or(z.literal("")),
+    scope: z.string().trim().optional().or(z.literal("")),
+    model: z.string().trim().optional().or(z.literal("")),
     availableModels: z
       .array(
         z.object({
@@ -1950,7 +1947,103 @@ export const insertLlmProviderSchema = createInsertSchema(llmProviders)
           ...config,
         } as LlmResponseConfig;
       }),
-  });
+  })
+  .refine(
+    (data) => {
+      // Для unica провайдера эти поля не обязательны
+      if (data.providerType === "unica") {
+        return true;
+      }
+      // Для других провайдеров проверяем обязательные поля
+      if (!data.tokenUrl || data.tokenUrl.trim().length === 0) {
+        return false;
+      }
+      try {
+        new URL(data.tokenUrl);
+      } catch {
+        return false;
+      }
+      if (!data.authorizationKey || data.authorizationKey.trim().length === 0) {
+        return false;
+      }
+      if (data.providerType !== "aitunnel" && (!data.scope || data.scope.trim().length === 0)) {
+        return false;
+      }
+      if (!data.model || data.model.trim().length === 0) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "Заполните все обязательные поля",
+      path: ["tokenUrl"], // Указываем первое проблемное поле
+    },
+  )
+  .refine(
+    (data) => {
+      if (data.providerType === "unica") {
+        return true;
+      }
+      if (data.tokenUrl && data.tokenUrl.trim().length > 0) {
+        try {
+          new URL(data.tokenUrl);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      return true;
+    },
+    {
+      message: "Некорректный URL для получения Access Token",
+      path: ["tokenUrl"],
+    },
+  )
+  .refine(
+    (data) => {
+      if (data.providerType === "unica") {
+        return true;
+      }
+      if (!data.authorizationKey || data.authorizationKey.trim().length === 0) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "Укажите Authorization key",
+      path: ["authorizationKey"],
+    },
+  )
+  .refine(
+    (data) => {
+      if (data.providerType === "unica" || data.providerType === "aitunnel") {
+        return true;
+      }
+      if (!data.scope || data.scope.trim().length === 0) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "Укажите OAuth scope",
+      path: ["scope"],
+    },
+  )
+  .refine(
+    (data) => {
+      if (data.providerType === "unica") {
+        return true;
+      }
+      if (!data.model || data.model.trim().length === 0) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "Укажите модель",
+      path: ["model"],
+    },
+  );
 
 export const updateLlmProviderSchema = z
   .object({

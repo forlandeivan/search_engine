@@ -509,7 +509,9 @@ export default function LlmProvidersPage() {
       ? values.model.trim()
       : sanitizedAvailableModels[0]?.value ??
         (values.providerType === "aitunnel" ? "gpt-5.1-chat" : "");
-    if (!modelName) {
+    
+    // Для unica провайдера модель не обязательна
+    if (!modelName && values.providerType !== "unica") {
       throw new Error("Укажите модель по умолчанию или добавьте варианты в список моделей.");
     }
 
@@ -538,10 +540,10 @@ export default function LlmProvidersPage() {
       description: values.description.trim() ? values.description.trim() : undefined,
       isActive: values.isActive,
       isGlobal: values.isGlobal,
-      tokenUrl: values.tokenUrl.trim(),
+      tokenUrl: values.providerType === "unica" ? "" : values.tokenUrl.trim(),
       completionUrl: values.completionUrl.trim(),
-      scope: values.scope.trim(),
-      model: modelName,
+      scope: values.providerType === "unica" ? "" : values.scope.trim(),
+      model: modelName || "",
       allowSelfSignedCertificate: values.allowSelfSignedCertificate,
       requestHeaders,
       requestConfig: {
@@ -562,7 +564,8 @@ export default function LlmProvidersPage() {
     const formattedRequestHeaders = formatJson(requestHeaders);
 
     if (mode === "create") {
-      if (trimmedAuthorizationKey.length === 0) {
+      // Для unica провайдера authorizationKey не обязателен
+      if (trimmedAuthorizationKey.length === 0 && values.providerType !== "unica") {
         throw new Error(
           values.providerType === "aitunnel"
             ? "Укажите API ключ AITunnel."
@@ -573,7 +576,7 @@ export default function LlmProvidersPage() {
       return {
         payload: {
           ...sharedFields,
-          authorizationKey: trimmedAuthorizationKey,
+          authorizationKey: values.providerType === "unica" ? "" : trimmedAuthorizationKey,
         },
         formattedRequestHeaders,
       } satisfies CreateLlmProviderVariables;
@@ -1267,8 +1270,8 @@ export default function LlmProvidersPage() {
                             <FormControl>
                               <Input
                                 {...field}
-                                placeholder={isAitunnelProvider ? "Не обязателен для AITunnel" : "https://.../oauth"}
-                                required={!isAitunnelProvider}
+                                placeholder={isAitunnelProvider ? "Не обязателен для AITunnel" : isUnicaProvider ? "Не требуется для Unica AI" : "https://.../oauth"}
+                                required={!isAitunnelProvider && !isUnicaProvider}
                               />
                             </FormControl>
                             <FormMessage />
@@ -1351,8 +1354,8 @@ export default function LlmProvidersPage() {
                             <FormControl>
                               <Input
                                 {...field}
-                                placeholder={isAitunnelProvider ? "Не требуется" : "GIGACHAT_API_PERS"}
-                                required={!isAitunnelProvider}
+                                placeholder={isAitunnelProvider ? "Не требуется" : isUnicaProvider ? "Не требуется для Unica AI" : "GIGACHAT_API_PERS"}
+                                required={!isAitunnelProvider && !isUnicaProvider}
                               />
                             </FormControl>
                             <FormMessage />
@@ -1416,10 +1419,10 @@ export default function LlmProvidersPage() {
                             ) : (
                               <>
                                 <FormControl>
-                                  <Input {...field} placeholder="Например, GigaChat" required />
+                                  <Input {...field} placeholder="Например, GigaChat" required={!isUnicaProvider} />
                                 </FormControl>
                                 <FormDescription className="text-xs">
-                                  Используется, если пользователь не выбрал конкретную модель.
+                                  {isUnicaProvider ? "Необязательно для Unica AI. Модель может быть указана позже." : "Используется, если пользователь не выбрал конкретную модель."}
                                 </FormDescription>
                               </>
                             )}
