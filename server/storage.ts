@@ -1930,9 +1930,7 @@ async function ensureKnowledgeBaseIndexingJobsTable(): Promise<void> {
   }
 
   ensuringKnowledgeBaseIndexingJobsTable = (async () => {
-    await ensureKnowledgeBasesTable();
-    await ensureKnowledgeDocumentsTable();
-    await ensureKnowledgeDocumentVersionsTable();
+    await ensureKnowledgeBaseTables();
     await ensureWorkspacesTable();
 
     await db.execute(sql`
@@ -2075,7 +2073,7 @@ async function ensureKnowledgeBaseIndexingActionsTable(): Promise<void> {
   }
 
   ensuringKnowledgeBaseIndexingActionsTable = (async () => {
-    await ensureKnowledgeBasesTable();
+    await ensureKnowledgeBaseTables();
     await ensureWorkspacesTable();
 
     await db.execute(sql`
