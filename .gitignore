@@ -35,3 +35,12 @@ minio-data/
 
 # Windows reserved names
 nul
+
+# Qdrant local data
+qdrant-data/
+
+# Docker CLI temp config
+.docker-tmp/
+
+# Local dev run logs
+dev-run.log
