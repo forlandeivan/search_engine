@@ -40,6 +40,11 @@ import {
   type FileEventOutboxInsert,
   files,
   indexingRules,
+  knowledgeBaseIndexingJobs,
+  knowledgeBaseIndexingPolicy,
+  type KnowledgeBaseIndexingJob,
+  type KnowledgeBaseIndexingJobInsert,
+  type KnowledgeBaseIndexingPolicy,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
   type KnowledgeBaseRagSearchSettings,
@@ -76,6 +81,8 @@ import {
   type SkillFileInsert,
   type SkillFileIngestionJob,
   type SkillFileIngestionJobInsert,
+  type KnowledgeBaseIndexingJob,
+  type KnowledgeBaseIndexingJobInsert,
   type ChatMessage,
   type ChatMessageInsert,
   type ChatCard,
@@ -1135,6 +1142,20 @@ export interface IStorage {
   updateChatTitleIfEmpty(chatId: string, title: string): Promise<boolean>;
   getWorkspaceDefaultFileStorageProvider(workspaceId: string): Promise<FileStorageProvider | null>;
   setWorkspaceDefaultFileStorageProvider(workspaceId: string, providerId: string | null): Promise<void>;
+  createKnowledgeBaseIndexingJob(value: KnowledgeBaseIndexingJobInsert): Promise<KnowledgeBaseIndexingJob | null>;
+  findKnowledgeBaseIndexingJobByDocument(
+    documentId: string,
+    versionId: string,
+  ): Promise<KnowledgeBaseIndexingJob | undefined>;
+  claimNextKnowledgeBaseIndexingJob(now?: Date): Promise<KnowledgeBaseIndexingJob | null>;
+  markKnowledgeBaseIndexingJobDone(
+    jobId: string,
+    stats?: { chunkCount?: number | null; totalChars?: number | null; totalTokens?: number | null },
+  ): Promise<void>;
+  rescheduleKnowledgeBaseIndexingJob(jobId: string, nextRetryAt: Date, errorMessage?: string | null): Promise<void>;
+  failKnowledgeBaseIndexingJob(jobId: string, errorMessage?: string | null): Promise<void>;
+  getKnowledgeBaseIndexingPolicy(): Promise<KnowledgeBaseIndexingPolicy | null>;
+  updateKnowledgeBaseIndexingPolicy(policy: Partial<KnowledgeBaseIndexingPolicy>): Promise<KnowledgeBaseIndexingPolicy>;
 }
 
 let usersTableEnsured = false;
@@ -1871,6 +1892,151 @@ async function ensureSkillFileIngestionJobsTable(): Promise<void> {
 
   await ensuringSkillFileIngestionJobsTable;
   ensuringSkillFileIngestionJobsTable = null;
+}
+
+let knowledgeBaseIndexingJobsTableEnsured = false;
+let ensuringKnowledgeBaseIndexingJobsTable: Promise<void> | null = null;
+
+async function ensureKnowledgeBaseIndexingJobsTable(): Promise<void> {
+  if (knowledgeBaseIndexingJobsTableEnsured) {
+    return;
+  }
+  if (ensuringKnowledgeBaseIndexingJobsTable) {
+    await ensuringKnowledgeBaseIndexingJobsTable;
+    return;
+  }
+
+  ensuringKnowledgeBaseIndexingJobsTable = (async () => {
+    await ensureKnowledgeBasesTable();
+    await ensureKnowledgeDocumentsTable();
+    await ensureKnowledgeDocumentVersionsTable();
+    await ensureWorkspacesTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_base_indexing_jobs" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "job_type" text NOT NULL DEFAULT 'knowledge_base_indexing',
+        "workspace_id" varchar NOT NULL,
+        "base_id" varchar NOT NULL,
+        "document_id" varchar NOT NULL,
+        "version_id" varchar NOT NULL,
+        "status" text NOT NULL DEFAULT 'pending',
+        "attempts" integer NOT NULL DEFAULT 0,
+        "next_retry_at" timestamp,
+        "last_error" text,
+        "chunk_count" integer,
+        "total_chars" integer,
+        "total_tokens" integer,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_base_indexing_jobs",
+      "knowledge_base_indexing_jobs_workspace_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_base_indexing_jobs"
+        ADD CONSTRAINT "knowledge_base_indexing_jobs_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_base_indexing_jobs",
+      "knowledge_base_indexing_jobs_base_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_base_indexing_jobs"
+        ADD CONSTRAINT "knowledge_base_indexing_jobs_base_id_fkey"
+        FOREIGN KEY ("base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_base_indexing_jobs",
+      "knowledge_base_indexing_jobs_document_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_base_indexing_jobs"
+        ADD CONSTRAINT "knowledge_base_indexing_jobs_document_id_fkey"
+        FOREIGN KEY ("document_id") REFERENCES "knowledge_documents"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_base_indexing_jobs",
+      "knowledge_base_indexing_jobs_version_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_base_indexing_jobs"
+        ADD CONSTRAINT "knowledge_base_indexing_jobs_version_id_fkey"
+        FOREIGN KEY ("version_id") REFERENCES "knowledge_document_versions"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS knowledge_base_indexing_jobs_unique_job_idx
+      ON "knowledge_base_indexing_jobs" ("job_type", "document_id", "version_id")
+    `);
+
+    await ensureIndex(
+      "knowledge_base_indexing_jobs_workspace_idx",
+      sql`CREATE INDEX IF NOT EXISTS knowledge_base_indexing_jobs_workspace_idx ON "knowledge_base_indexing_jobs" ("workspace_id", "status", "next_retry_at")`,
+    );
+    await ensureIndex(
+      "knowledge_base_indexing_jobs_base_idx",
+      sql`CREATE INDEX IF NOT EXISTS knowledge_base_indexing_jobs_base_idx ON "knowledge_base_indexing_jobs" ("base_id", "status", "next_retry_at")`,
+    );
+
+    knowledgeBaseIndexingJobsTableEnsured = true;
+  })();
+
+  await ensuringKnowledgeBaseIndexingJobsTable;
+  ensuringKnowledgeBaseIndexingJobsTable = null;
+}
+
+let knowledgeBaseIndexingPolicyTableEnsured = false;
+let ensuringKnowledgeBaseIndexingPolicyTable: Promise<void> | null = null;
+
+async function ensureKnowledgeBaseIndexingPolicyTable(): Promise<void> {
+  if (knowledgeBaseIndexingPolicyTableEnsured) {
+    return;
+  }
+  if (ensuringKnowledgeBaseIndexingPolicyTable) {
+    await ensuringKnowledgeBaseIndexingPolicyTable;
+    return;
+  }
+
+  ensuringKnowledgeBaseIndexingPolicyTable = (async () => {
+    await ensureUsersTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_base_indexing_policy" (
+        "id" varchar PRIMARY KEY DEFAULT 'kb_indexing_policy_singleton',
+        "embeddings_provider" varchar(255) NOT NULL,
+        "embeddings_model" varchar(255) NOT NULL,
+        "chunk_size" integer NOT NULL,
+        "chunk_overlap" integer NOT NULL,
+        "default_schema" jsonb NOT NULL DEFAULT '[]'::jsonb,
+        "updated_by_admin_id" varchar,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_base_indexing_policy",
+      "knowledge_base_indexing_policy_updated_by_admin_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_base_indexing_policy"
+        ADD CONSTRAINT "knowledge_base_indexing_policy_updated_by_admin_id_fkey"
+        FOREIGN KEY ("updated_by_admin_id") REFERENCES "users"("id") ON DELETE SET NULL
+      `,
+    );
+
+    knowledgeBaseIndexingPolicyTableEnsured = true;
+  })();
+
+  await ensuringKnowledgeBaseIndexingPolicyTable;
+  ensuringKnowledgeBaseIndexingPolicyTable = null;
 }
 
 async function ensureTranscriptsTable(): Promise<void> {
@@ -6639,6 +6805,215 @@ export class DatabaseStorage implements IStorage {
         updatedAt: now,
       })
       .where(eq(skillFileIngestionJobs.id, jobId));
+  }
+
+  async createKnowledgeBaseIndexingJob(
+    value: KnowledgeBaseIndexingJobInsert,
+  ): Promise<KnowledgeBaseIndexingJob | null> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    const normalized: KnowledgeBaseIndexingJobInsert = {
+      jobType: value.jobType ?? "knowledge_base_indexing",
+      workspaceId: value.workspaceId,
+      baseId: value.baseId,
+      documentId: value.documentId,
+      versionId: value.versionId,
+      status: value.status ?? "pending",
+      attempts: value.attempts ?? 0,
+      nextRetryAt: value.nextRetryAt ?? null,
+      lastError: value.lastError ?? null,
+      chunkCount: value.chunkCount ?? null,
+      totalChars: value.totalChars ?? null,
+      totalTokens: value.totalTokens ?? null,
+    };
+
+    const [created] = await this.db
+      .insert(knowledgeBaseIndexingJobs)
+      .values(normalized)
+      .onConflictDoNothing({
+        target: [
+          knowledgeBaseIndexingJobs.jobType,
+          knowledgeBaseIndexingJobs.documentId,
+          knowledgeBaseIndexingJobs.versionId,
+        ],
+      })
+      .returning();
+
+    if (created) {
+      return created;
+    }
+
+    const [existing] = await this.db
+      .select()
+      .from(knowledgeBaseIndexingJobs)
+      .where(
+        and(
+          eq(knowledgeBaseIndexingJobs.jobType, normalized.jobType ?? "knowledge_base_indexing"),
+          eq(knowledgeBaseIndexingJobs.documentId, normalized.documentId),
+          eq(knowledgeBaseIndexingJobs.versionId, normalized.versionId),
+        ),
+      )
+      .limit(1);
+
+    return existing ?? null;
+  }
+
+  async findKnowledgeBaseIndexingJobByDocument(
+    documentId: string,
+    versionId: string,
+  ): Promise<KnowledgeBaseIndexingJob | undefined> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    const rows = await this.db
+      .select()
+      .from(knowledgeBaseIndexingJobs)
+      .where(
+        and(
+          eq(knowledgeBaseIndexingJobs.documentId, documentId),
+          eq(knowledgeBaseIndexingJobs.versionId, versionId),
+          eq(knowledgeBaseIndexingJobs.jobType, "knowledge_base_indexing"),
+        ),
+      )
+      .limit(1);
+    return rows[0];
+  }
+
+  async claimNextKnowledgeBaseIndexingJob(now: Date = new Date()): Promise<KnowledgeBaseIndexingJob | null> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    const result = await this.db.execute(sql`
+      UPDATE "knowledge_base_indexing_jobs" AS jobs
+      SET
+        "status" = 'processing',
+        "attempts" = jobs."attempts" + 1,
+        "updated_at" = ${now}
+      WHERE jobs."id" = (
+        SELECT id
+        FROM "knowledge_base_indexing_jobs"
+        WHERE "status" = 'pending'
+          AND ("next_retry_at" IS NULL OR "next_retry_at" <= ${now})
+          AND "job_type" = 'knowledge_base_indexing'
+        ORDER BY "created_at"
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
+    `);
+
+    const row = (result.rows ?? [])[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      return null;
+    }
+
+    return {
+      id: String(row.id),
+      jobType: String(row.job_type ?? "knowledge_base_indexing"),
+      workspaceId: String(row.workspace_id),
+      baseId: String(row.base_id),
+      documentId: String(row.document_id),
+      versionId: String(row.version_id),
+      status: String(row.status ?? "pending") as KnowledgeBaseIndexingJob["status"],
+      attempts: Number(row.attempts ?? 0),
+      nextRetryAt: row.next_retry_at ? new Date(String(row.next_retry_at)) : null,
+      lastError: row.last_error ? String(row.last_error) : null,
+      chunkCount: row.chunk_count ? Number(row.chunk_count) : null,
+      totalChars: row.total_chars ? Number(row.total_chars) : null,
+      totalTokens: row.total_tokens ? Number(row.total_tokens) : null,
+      createdAt: new Date(String(row.created_at)),
+      updatedAt: new Date(String(row.updated_at)),
+    };
+  }
+
+  async markKnowledgeBaseIndexingJobDone(
+    jobId: string,
+    stats?: { chunkCount?: number | null; totalChars?: number | null; totalTokens?: number | null },
+  ): Promise<void> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    const now = new Date();
+    await this.db
+      .update(knowledgeBaseIndexingJobs)
+      .set({
+        status: "completed",
+        nextRetryAt: null,
+        lastError: null,
+        chunkCount: stats?.chunkCount ?? null,
+        totalChars: stats?.totalChars ?? null,
+        totalTokens: stats?.totalTokens ?? null,
+        updatedAt: now,
+      })
+      .where(eq(knowledgeBaseIndexingJobs.id, jobId));
+  }
+
+  async rescheduleKnowledgeBaseIndexingJob(
+    jobId: string,
+    nextRetryAt: Date,
+    errorMessage?: string | null,
+  ): Promise<void> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    const now = new Date();
+    await this.db
+      .update(knowledgeBaseIndexingJobs)
+      .set({
+        status: "pending",
+        nextRetryAt,
+        lastError: errorMessage?.trim() || null,
+        updatedAt: now,
+      })
+      .where(eq(knowledgeBaseIndexingJobs.id, jobId));
+  }
+
+  async failKnowledgeBaseIndexingJob(jobId: string, errorMessage?: string | null): Promise<void> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    const now = new Date();
+    await this.db
+      .update(knowledgeBaseIndexingJobs)
+      .set({
+        status: "failed",
+        nextRetryAt: null,
+        lastError: errorMessage?.trim() || null,
+        updatedAt: now,
+      })
+      .where(eq(knowledgeBaseIndexingJobs.id, jobId));
+  }
+
+  async getKnowledgeBaseIndexingPolicy(): Promise<KnowledgeBaseIndexingPolicy | null> {
+    await ensureKnowledgeBaseIndexingPolicyTable();
+    const [row] = await this.db
+      .select()
+      .from(knowledgeBaseIndexingPolicy)
+      .where(eq(knowledgeBaseIndexingPolicy.id, "kb_indexing_policy_singleton"))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async updateKnowledgeBaseIndexingPolicy(
+    policy: Partial<KnowledgeBaseIndexingPolicy>,
+  ): Promise<KnowledgeBaseIndexingPolicy> {
+    await ensureKnowledgeBaseIndexingPolicyTable();
+    const [updated] = await this.db
+      .insert(knowledgeBaseIndexingPolicy)
+      .values({
+        id: "kb_indexing_policy_singleton",
+        embeddingsProvider: policy.embeddingsProvider ?? "",
+        embeddingsModel: policy.embeddingsModel ?? "",
+        chunkSize: policy.chunkSize ?? 800,
+        chunkOverlap: policy.chunkOverlap ?? 200,
+        defaultSchema: policy.defaultSchema ?? ([] as unknown as Record<string, unknown>),
+        updatedByAdminId: policy.updatedByAdminId ?? null,
+        createdAt: policy.createdAt ?? new Date(),
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: knowledgeBaseIndexingPolicy.id,
+        set: {
+          embeddingsProvider: sql`EXCLUDED.embeddings_provider`,
+          embeddingsModel: sql`EXCLUDED.embeddings_model`,
+          chunkSize: sql`EXCLUDED.chunk_size`,
+          chunkOverlap: sql`EXCLUDED.chunk_overlap`,
+          defaultSchema: sql`EXCLUDED.default_schema`,
+          updatedByAdminId: sql`EXCLUDED.updated_by_admin_id`,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        },
+      })
+      .returning();
+    return updated;
   }
 
   async listSkillFiles(workspaceId: string, skillId: string): Promise<SkillFile[]> {

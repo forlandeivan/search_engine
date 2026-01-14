@@ -31,7 +31,7 @@ import {
   workspaces,
 } from "@shared/schema";
 import { db } from "./db";
-import { ensureKnowledgeBaseTables, isKnowledgeBasePathLtreeEnabled } from "./storage";
+import { storage, ensureKnowledgeBaseTables, isKnowledgeBasePathLtreeEnabled } from "./storage";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
 import { load as loadHtml } from "cheerio";
@@ -667,6 +667,68 @@ export async function listKnowledgeBases(workspaceId: string): Promise<Knowledge
       rootNodes: buildStructure(baseNodes),
     } satisfies KnowledgeBaseSummary;
   });
+}
+
+export async function getKnowledgeBaseById(workspaceId: string, baseId: string): Promise<KnowledgeBaseRow | null> {
+  await ensureKnowledgeBaseTables();
+  return await fetchBase(baseId, workspaceId);
+}
+
+export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: string): Promise<{ jobCount: number }> {
+  await ensureKnowledgeBaseTables();
+  
+  const base = await fetchBase(baseId, workspaceId);
+  if (!base) {
+    throw new KnowledgeBaseError("База знаний не найдена", 404);
+  }
+
+  const documentIds = await fetchDocumentIdsByBase(baseId, workspaceId);
+  if (documentIds.length === 0) {
+    return { jobCount: 0 };
+  }
+
+  // Получаем документы с их версиями
+  const documents = await db
+    .select({
+      documentId: knowledgeDocuments.id,
+      versionId: knowledgeDocuments.currentVersionId,
+    })
+    .from(knowledgeDocuments)
+    .where(
+      and(
+        eq(knowledgeDocuments.baseId, baseId),
+        eq(knowledgeDocuments.workspaceId, workspaceId),
+        inArray(knowledgeDocuments.id, documentIds),
+      ),
+    );
+
+  let jobCount = 0;
+  for (const doc of documents) {
+    if (!doc.versionId) {
+      continue;
+    }
+
+    const job = await storage.createKnowledgeBaseIndexingJob({
+      jobType: "knowledge_base_indexing",
+      workspaceId,
+      baseId,
+      documentId: doc.documentId,
+      versionId: doc.versionId,
+      status: "pending",
+      attempts: 0,
+      nextRetryAt: null,
+      lastError: null,
+      chunkCount: null,
+      totalChars: null,
+      totalTokens: null,
+    });
+
+    if (job) {
+      jobCount++;
+    }
+  }
+
+  return { jobCount };
 }
 
 export async function getKnowledgeNodeDetail(

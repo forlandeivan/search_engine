@@ -50,6 +50,7 @@ import {
   createKnowledgeFolder,
   createKnowledgeDocument,
   updateKnowledgeDocument,
+  startKnowledgeBaseIndexing,
 } from "./knowledge-base";
 import {
   previewKnowledgeDocumentChunks,
@@ -491,6 +492,15 @@ import {
   IndexingRulesDomainError,
   resolveEmbeddingProviderForWorkspace,
 } from "./indexing-rules";
+import {
+  knowledgeBaseIndexingPolicyService,
+  KnowledgeBaseIndexingPolicyError,
+  KnowledgeBaseIndexingPolicyDomainError,
+} from "./knowledge-base-indexing-policy";
+import {
+  knowledgeBaseIndexingPolicySchema,
+  updateKnowledgeBaseIndexingPolicySchema,
+} from "@shared/knowledge-base-indexing-policy";
 import { listEmbeddingProvidersWithStatus, resolveEmbeddingProviderModels } from "./embedding-provider-registry";
 import {
   DEFAULT_INDEXING_RULES,
@@ -8244,6 +8254,79 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         });
       });
     } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/admin/knowledge-base-indexing-policy", requireAdmin, async (_req, res, next) => {
+    try {
+      const policy = await knowledgeBaseIndexingPolicyService.get();
+      res.json(policy);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.put("/api/admin/knowledge-base-indexing-policy", requireAdmin, async (req, res, next) => {
+    try {
+      const parsed = knowledgeBaseIndexingPolicySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Invalid knowledge base indexing policy",
+          code: "KNOWLEDGE_BASE_INDEXING_POLICY_INVALID",
+          details: parsed.error.format(),
+        });
+      }
+
+      const admin = getSessionUser(req);
+      if (!admin) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const workspace = getRequestWorkspace(req);
+      const updated = await knowledgeBaseIndexingPolicyService.update(parsed.data, admin.id, workspace?.id);
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof KnowledgeBaseIndexingPolicyDomainError) {
+        return res
+          .status(error.status || 400)
+          .json({ message: error.message, code: error.code, field: error.field ?? "embeddings_provider" });
+      }
+      if (error instanceof KnowledgeBaseIndexingPolicyError) {
+        return res.status(error.status || 400).json({ message: error.message });
+      }
+      next(error);
+    }
+  });
+
+  app.patch("/api/admin/knowledge-base-indexing-policy", requireAdmin, async (req, res, next) => {
+    try {
+      const parsed = updateKnowledgeBaseIndexingPolicySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Invalid knowledge base indexing policy update",
+          code: "KNOWLEDGE_BASE_INDEXING_POLICY_INVALID",
+          details: parsed.error.format(),
+        });
+      }
+
+      const admin = getSessionUser(req);
+      if (!admin) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const workspace = getRequestWorkspace(req);
+      const updated = await knowledgeBaseIndexingPolicyService.update(parsed.data, admin.id, workspace?.id);
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof KnowledgeBaseIndexingPolicyDomainError) {
+        return res
+          .status(error.status || 400)
+          .json({ message: error.message, code: error.code, field: error.field ?? "embeddings_provider" });
+      }
+      if (error instanceof KnowledgeBaseIndexingPolicyError) {
+        return res.status(error.status || 400).json({ message: error.message });
+      }
       next(error);
     }
   });
@@ -16905,6 +16988,18 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+
+  app.post("/api/knowledge/bases/:baseId/index", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+
+    try {
+      const result = await startKnowledgeBaseIndexing(baseId, workspaceId);
+      res.json(result);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
 
   app.patch("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;

@@ -104,6 +104,7 @@ import {
   type KnowledgeBaseSourceType,
 } from "@/lib/knowledge-base";
 import { CrawlInlineProgress, type CrawlInlineState } from "@/components/knowledge-base/CrawlInlineProgress";
+import { useStartKnowledgeBaseIndexing } from "@/hooks/useKnowledgeBaseIndexing";
 import type {
   KnowledgeBaseSummary,
   KnowledgeBaseTreeNode,
@@ -124,6 +125,7 @@ import type { UseKnowledgeBaseAskAiOptions } from "@/hooks/useKnowledgeBaseAskAi
 import {
   ChevronDown,
   ChevronRight,
+  Database,
   FileDown,
   FileText,
   FileType,
@@ -1290,6 +1292,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => bases.find((base) => base.id === knowledgeBaseId) ?? null,
     [bases, knowledgeBaseId],
   );
+  const startIndexingMutation = useStartKnowledgeBaseIndexing();
   const searchSettingsQueryKey = useMemo(
     () =>
       selectedBase
@@ -3012,6 +3015,26 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     );
   };
 
+  const handleStartIndexing = useCallback(async () => {
+    if (!selectedBase) {
+      return;
+    }
+
+    try {
+      const result = await startIndexingMutation.mutateAsync({ baseId: selectedBase.id });
+      toast({
+        title: "Индексация запущена",
+        description: `Запущена индексация ${result.jobCount} документов. Процесс выполняется в фоновом режиме.`,
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Не удалось запустить индексацию",
+        description: error instanceof Error ? error.message : "Попробуйте позже",
+      });
+    }
+  }, [selectedBase, startIndexingMutation, toast]);
+
   const renderOverview = (detail: Extract<KnowledgeBaseNodeDetail, { type: "base" }>) => (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -3026,6 +3049,20 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             className="w-full sm:w-auto"
           >
             <Plus className="mr-2 h-4 w-4" /> Новый документ
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full sm:w-auto"
+            disabled={startIndexingMutation.isPending || detail.rootNodes.length === 0}
+            onClick={handleStartIndexing}
+          >
+            {startIndexingMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Database className="mr-2 h-4 w-4" />
+            )}
+            Индексировать
           </Button>
           {crawlJobForSelectedBase && (
             <Button

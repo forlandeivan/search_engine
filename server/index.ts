@@ -12,6 +12,7 @@ import { configureAuth } from "./auth";
 import { startSkillExecutionLogRetentionJob } from "./skill-execution-log-retention";
 import { startSystemNotificationLogRetentionJob } from "./system-notification-log-retention";
 import { startSkillFileIngestionWorker } from "./skill-file-ingestion-jobs";
+import { startKnowledgeBaseIndexingWorker } from "./knowledge-base-indexing-jobs";
 import { startFileEventOutboxWorker } from "./no-code-file-events-outbox";
 import { startBotActionWatchdog } from "./bot-action-watchdog";
 
@@ -180,6 +181,7 @@ void configureAuth(app);
 const retentionJob = startSkillExecutionLogRetentionJob();
 const notificationRetentionJob = startSystemNotificationLogRetentionJob();
 const skillFileIngestionWorker = startSkillFileIngestionWorker();
+const knowledgeBaseIndexingWorker = startKnowledgeBaseIndexingWorker();
 const fileEventOutboxWorker = startFileEventOutboxWorker();
 const botActionWatchdog = startBotActionWatchdog();
 

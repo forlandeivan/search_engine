@@ -570,6 +570,67 @@ export const indexingRules = pgTable("indexing_rules", {
 export type IndexingRules = typeof indexingRules.$inferSelect;
 export type IndexingRulesInsert = typeof indexingRules.$inferInsert;
 
+export const knowledgeBaseIndexingPolicy = pgTable("knowledge_base_indexing_policy", {
+  id: varchar("id").primaryKey().default("kb_indexing_policy_singleton"),
+  embeddingsProvider: varchar("embeddings_provider", { length: 255 }).notNull(),
+  embeddingsModel: varchar("embeddings_model", { length: 255 }).notNull(),
+  chunkSize: integer("chunk_size").notNull(),
+  chunkOverlap: integer("chunk_overlap").notNull(),
+  defaultSchema: jsonb("default_schema").notNull().default(sql`'[]'::jsonb`),
+  updatedByAdminId: varchar("updated_by_admin_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+export type KnowledgeBaseIndexingPolicy = typeof knowledgeBaseIndexingPolicy.$inferSelect;
+export type KnowledgeBaseIndexingPolicyInsert = typeof knowledgeBaseIndexingPolicy.$inferInsert;
+
+export const knowledgeBaseIndexingJobStatuses = ["pending", "processing", "completed", "failed"] as const;
+export type KnowledgeBaseIndexingJobStatus = (typeof knowledgeBaseIndexingJobStatuses)[number];
+
+export const knowledgeBaseIndexingJobs = pgTable(
+  "knowledge_base_indexing_jobs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    jobType: text("job_type").notNull().default("knowledge_base_indexing"),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    baseId: varchar("base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    documentId: varchar("document_id")
+      .notNull()
+      .references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+    versionId: varchar("version_id")
+      .notNull()
+      .references(() => knowledgeDocumentVersions.id, { onDelete: "cascade" }),
+    status: text("status").$type<KnowledgeBaseIndexingJobStatus>().notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    chunkCount: integer("chunk_count"),
+    totalChars: integer("total_chars"),
+    totalTokens: integer("total_tokens"),
+    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    uniqueJobIdx: uniqueIndex("knowledge_base_indexing_jobs_unique_job_idx").on(
+      table.jobType,
+      table.documentId,
+      table.versionId,
+    ),
+    workspaceIdx: index("knowledge_base_indexing_jobs_workspace_idx").on(
+      table.workspaceId,
+      table.status,
+      table.nextRetryAt,
+    ),
+    baseIdx: index("knowledge_base_indexing_jobs_base_idx").on(table.baseId, table.status, table.nextRetryAt),
+  }),
+);
+export type KnowledgeBaseIndexingJob = typeof knowledgeBaseIndexingJobs.$inferSelect;
+export type KnowledgeBaseIndexingJobInsert = typeof knowledgeBaseIndexingJobs.$inferInsert;
+
 export const knowledgeBaseNodeTypes = ["folder", "document"] as const;
 export type KnowledgeBaseNodeType = (typeof knowledgeBaseNodeTypes)[number];
 
