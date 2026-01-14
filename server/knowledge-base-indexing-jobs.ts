@@ -1,5 +1,6 @@
 import type { KnowledgeBaseIndexingJob, Workspace, EmbeddingProvider } from "@shared/schema";
-import { storage, buildWorkspaceScopedCollectionName } from "./storage";
+import { storage } from "./storage";
+import { buildWorkspaceScopedCollectionName } from "./qdrant-utils";
 import { knowledgeBaseIndexingPolicyService } from "./knowledge-base-indexing-policy";
 import { createKnowledgeDocumentChunkSet, updateKnowledgeDocumentChunkVectorRecords } from "./knowledge-chunks";
 import { getKnowledgeBaseById, getKnowledgeNodeDetail } from "./knowledge-base";
@@ -10,7 +11,7 @@ import type { CollectionSchemaFieldInput } from "@shared/vectorization";
 import { renderLiquidTemplate, castValueToType, normalizeArrayValue } from "@shared/vectorization";
 import { buildVectorPayload } from "./qdrant-utils";
 import type { Schemas } from "./qdrant-client";
-import { fetchAccessToken } from "./routes";
+import { fetchAccessToken } from "./llm-access-token";
 
 function buildKnowledgeCollectionName(
   base: { id?: string | null; name?: string | null } | null | undefined,
