@@ -16,14 +16,24 @@ import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-a
 import { log } from "./vite";
 import fs from "fs";
 import path from "path";
+import { db } from "./db";
+import { knowledgeDocuments } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
+import { applyTlsPreferences, type NodeFetchOptions } from "./http-utils";
+import fetch, { Headers } from "node-fetch";
 
 function buildKnowledgeCollectionName(
   base: { id?: string | null; name?: string | null } | null | undefined,
   provider: EmbeddingProvider,
   workspaceId: string,
 ): string {
-  const source = base?.id ?? base?.name ?? provider.id;
-  return buildWorkspaceScopedCollectionName(workspaceId, source, provider.id);
+  const baseId = base?.id;
+  if (!baseId) {
+    throw new Error("База знаний должна иметь ID для создания коллекции");
+  }
+  const baseSlug = baseId.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase().slice(0, 60) || "default";
+  const workspaceSlug = workspaceId.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase().slice(0, 60) || "default";
+  return `kb_${baseSlug}_ws_${workspaceSlug}`;
 }
 
 function removeUndefinedDeep<T>(value: T): T {
@@ -64,22 +74,35 @@ async function fetchEmbeddingVectorForChunk(
   accessToken: string,
   text: string,
 ): Promise<{ vector: number[]; usageTokens?: number; embeddingId?: string | number }> {
-  // Упрощенная версия - можно улучшить, используя полную логику из routes.ts
-  const response = await fetch(provider.embeddingsUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      ...provider.requestHeaders,
+  const headers = new Headers();
+  headers.set("Content-Type", "application/json");
+  headers.set("Authorization", `Bearer ${accessToken}`);
+  
+  for (const [key, value] of Object.entries(provider.requestHeaders ?? {})) {
+    headers.set(key, value);
+  }
+
+  const allowSelfSigned = provider.allowSelfSignedCertificate ?? false;
+  workerLog(`fetchEmbeddingVectorForChunk: provider.allowSelfSignedCertificate=${provider.allowSelfSignedCertificate}, allowSelfSigned=${allowSelfSigned}, url=${provider.embeddingsUrl}`);
+  
+  const requestOptions = applyTlsPreferences<NodeFetchOptions>(
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: provider.model,
+        input: text,
+      }),
     },
-    body: JSON.stringify({
-      model: provider.model,
-      input: text,
-    }),
-  });
+    allowSelfSigned,
+  );
+
+  workerLog(`fetchEmbeddingVectorForChunk: requestOptions.agent=${requestOptions.agent ? 'present' : 'absent'}`);
+  const response = await fetch(provider.embeddingsUrl, requestOptions);
 
   if (!response.ok) {
-    throw new Error(`Embedding API error: ${response.statusText}`);
+    const errorText = await response.text().catch(() => response.statusText);
+    throw new Error(`Embedding API error: ${response.status} ${errorText}`);
   }
 
   const data = await response.json();
@@ -116,7 +139,7 @@ function logToFile(message: string): void {
 
 function workerLog(message: string): void {
   log(message, JOB_TYPE);
-  logToFile(message);
+  // logToFile(message); // Отключено - логирование в dev.log не требуется
 }
 
 function computeRetryDelayMs(attempts: number): number {
@@ -174,8 +197,12 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
     const remainingCount = pendingCount + processingCount;
     const allDone = remainingCount === 0;
 
+    // Логируем состояние для диагностики
+    workerLog(`updateIndexingActionProgress: workspace=${workspaceId} base=${baseId} completed=${completedCount} total=${totalCount} pending=${pendingCount} processing=${processingCount} failed=${failedCount} allDone=${allDone}`);
+
     if (allDone) {
       // Все job'ы завершены
+      workerLog(`updateIndexingActionProgress: all done, failedCount=${failedCount}, setting status=${failedCount > 0 ? "error" : "done"}`);
       await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
         status: failedCount > 0 ? "error" : "done",
         stage: failedCount > 0 ? "error" : "completed",
@@ -242,16 +269,68 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       return;
     }
 
-    workerLog(`fetching node detail ${job.documentId} for job ${job.id}`);
-    const nodeDetail = await getKnowledgeNodeDetail(job.baseId, job.documentId, job.workspaceId);
+    workerLog(`fetching nodeId for document ${job.documentId} for job ${job.id}`);
+    // Получаем nodeId из базы по documentId
+    const [documentRow] = await db
+      .select({
+        nodeId: knowledgeDocuments.nodeId,
+      })
+      .from(knowledgeDocuments)
+      .where(
+        and(
+          eq(knowledgeDocuments.id, job.documentId),
+          eq(knowledgeDocuments.baseId, job.baseId),
+          eq(knowledgeDocuments.workspaceId, job.workspaceId),
+        ),
+      )
+      .limit(1);
+
+    if (!documentRow || !documentRow.nodeId) {
+      const message = `Документ с ID ${job.documentId} не найден в базе данных`;
+      workerLog(`${message} for job ${job.id}`);
+      await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      return;
+    }
+
+    const nodeId = documentRow.nodeId;
+    workerLog(`got nodeId=${nodeId} for document ${job.documentId} for job ${job.id}, fetching node detail...`);
+    
+    let nodeDetail;
+    try {
+      nodeDetail = await getKnowledgeNodeDetail(job.baseId, nodeId, job.workspaceId);
+      workerLog(`got node detail for job ${job.id}, type=${nodeDetail?.type ?? "null"}`);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      workerLog(`ERROR getting node detail for job ${job.id}: ${errorMsg}`);
+      if (error instanceof Error && error.stack) {
+        workerLog(`ERROR stack: ${error.stack}`);
+      }
+      await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка получения документа: ${errorMsg}`);
+      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      return;
+    }
+    
     if (!nodeDetail || nodeDetail.type !== "document") {
       const message = "Документ не найден";
       workerLog(`${message} for job ${job.id} document=${job.documentId} type=${nodeDetail?.type ?? "null"}`);
       await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      await updateIndexingActionProgress(job.workspaceId, job.baseId);
       return;
     }
 
-    const policy = await knowledgeBaseIndexingPolicyService.get();
+    workerLog(`got node detail for job ${job.id}, fetching policy...`);
+    let policy;
+    try {
+      policy = await knowledgeBaseIndexingPolicyService.get();
+      workerLog(`got policy for job ${job.id}, providerId=${policy.embeddingsProvider}`);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      workerLog(`ERROR getting policy for job ${job.id}: ${errorMsg}`);
+      await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка получения политики: ${errorMsg}`);
+      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      return;
+    }
 
     await updateIndexingActionStatus(job.workspaceId, job.baseId, "initializing", "Инициализация...");
 
@@ -260,6 +339,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     if (!providerId) {
       const message = "Сервис эмбеддингов не указан в политике индексации баз знаний";
       await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      await updateIndexingActionProgress(job.workspaceId, job.baseId);
       return;
     }
 
@@ -268,12 +348,14 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       if (!providerStatus) {
         const message = `Провайдер эмбеддингов '${providerId}' не найден`;
         await storage.failKnowledgeBaseIndexingJob(job.id, message);
+        await updateIndexingActionProgress(job.workspaceId, job.baseId);
         return;
       }
 
       if (!providerStatus.isConfigured) {
         const message = providerStatus.statusReason ?? `Провайдер эмбеддингов '${providerId}' недоступен`;
         await storage.failKnowledgeBaseIndexingJob(job.id, message);
+        await updateIndexingActionProgress(job.workspaceId, job.baseId);
         return;
       }
 
@@ -281,21 +363,29 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       if (!provider) {
         const message = `Провайдер эмбеддингов '${providerId}' не найден`;
         await storage.failKnowledgeBaseIndexingJob(job.id, message);
+        await updateIndexingActionProgress(job.workspaceId, job.baseId);
         return;
       }
+
+      workerLog(`loaded provider ${providerId} for job ${job.id}, allowSelfSignedCertificate=${provider.allowSelfSignedCertificate}, embeddingsUrl=${provider.embeddingsUrl}`);
 
       // Используем модель из политики баз знаний
       const modelFromPolicy = policy.embeddingsModel;
       embeddingProvider = modelFromPolicy ? { ...provider, model: modelFromPolicy } : provider;
+      
+      workerLog(`final embeddingProvider for job ${job.id}, allowSelfSignedCertificate=${embeddingProvider.allowSelfSignedCertificate}, model=${embeddingProvider.model}`);
     } catch (error) {
       const message =
         error instanceof Error && error.message ? error.message : "Сервис эмбеддингов недоступен в админ-настройках";
       await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      await updateIndexingActionProgress(job.workspaceId, job.baseId);
       return;
     }
 
     // Создаем коллекцию
+    workerLog(`building collection name for job ${job.id}...`);
     const collectionName = buildKnowledgeCollectionName(base, embeddingProvider, job.workspaceId);
+    workerLog(`collection name for job ${job.id}: ${collectionName}`);
     await updateIndexingActionStatus(
       job.workspaceId,
       job.baseId,
@@ -303,10 +393,21 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       "Создаём коллекцию в Qdrant...",
     );
 
+    workerLog(`checking if collection exists for job ${job.id}...`);
     const client = getQdrantClient();
-    const collectionExists = await (client as any).collectionExists?.(collectionName) ?? false;
+    let collectionExists = false;
+    try {
+      await client.getCollection(collectionName);
+      collectionExists = true;
+      workerLog(`collection exists=true for job ${job.id}`);
+    } catch (error) {
+      collectionExists = false;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      workerLog(`collection does not exist for job ${job.id}, error: ${errorMsg}`);
+    }
 
     // Создаем чанки
+    workerLog(`starting chunking for job ${job.id}...`);
     await updateIndexingActionStatus(
       job.workspaceId,
       job.baseId,
@@ -314,27 +415,58 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       `Разбиваем документ "${nodeDetail.title ?? "без названия"}" на фрагменты...`,
     );
 
-    const chunkSet = await createKnowledgeDocumentChunkSet(
-      job.baseId,
-      job.documentId,
-      job.workspaceId,
-      {
-        maxChars: policy.chunkSize,
-        overlapChars: policy.chunkOverlap,
-        splitByPages: false,
-        respectHeadings: true,
-        // useHtmlContent определяется автоматически по sourceType документа
-      },
-    );
-
-    if (!chunkSet || chunkSet.chunks.length === 0) {
-      const message = "Не удалось создать чанки для документа";
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
+    let chunkSet;
+    try {
+      workerLog(`calling createKnowledgeDocumentChunkSet for job ${job.id} with nodeId=${nodeId}...`);
+      chunkSet = await createKnowledgeDocumentChunkSet(
+        job.baseId,
+        nodeId,
+        job.workspaceId,
+        {
+          maxChars: policy.chunkSize,
+          overlapChars: policy.chunkOverlap,
+          splitByPages: false,
+          respectHeadings: true,
+          // useHtmlContent определяется автоматически по sourceType документа
+        },
+      );
+      workerLog(`createKnowledgeDocumentChunkSet returned for job ${job.id}, chunks.length=${chunkSet?.chunks.length ?? 0}`);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      workerLog(`ERROR creating chunks for job ${job.id}: ${errorMsg}`);
+      if (error instanceof Error && error.stack) {
+        workerLog(`ERROR stack: ${error.stack}`);
+      }
+      await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка создания чанков: ${errorMsg}`);
+      await updateIndexingActionProgress(job.workspaceId, job.baseId);
       return;
     }
 
+    if (!chunkSet || chunkSet.chunks.length === 0) {
+      const message = "Не удалось создать чанки для документа";
+      workerLog(`${message} for job ${job.id}`);
+      await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      return;
+    }
+    workerLog(`created ${chunkSet.chunks.length} chunks for job ${job.id}`);
+
     // Получаем эмбеддинги
-    const accessToken = await fetchAccessToken(embeddingProvider);
+    workerLog(`fetching access token for embedding provider ${embeddingProvider.id} for job ${job.id}...`);
+    let accessToken;
+    try {
+      accessToken = await fetchAccessToken(embeddingProvider);
+      workerLog(`got access token for job ${job.id}, token length=${accessToken?.length ?? 0}`);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      workerLog(`ERROR fetching access token for job ${job.id}: ${errorMsg}`);
+      if (error instanceof Error && error.stack) {
+        workerLog(`ERROR stack: ${error.stack}`);
+      }
+      await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка получения токена доступа: ${errorMsg}`);
+      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      return;
+    }
 
     const embeddingResults: Array<{
       chunk: typeof chunkSet.chunks[0];
@@ -351,10 +483,13 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       `Векторизуем фрагменты документа "${nodeDetail.title ?? "без названия"}" (0 из ${chunkSet.chunks.length})...`,
     );
 
+    workerLog(`starting vectorization for ${chunkSet.chunks.length} chunks for job ${job.id}...`);
     for (let index = 0; index < chunkSet.chunks.length; index += 1) {
       const chunk = chunkSet.chunks[index];
       try {
+        workerLog(`fetching embedding for chunk ${index + 1}/${chunkSet.chunks.length} for job ${job.id}, text length=${chunk.text.length}...`);
         const result = await fetchEmbeddingVectorForChunk(embeddingProvider, accessToken, chunk.text);
+        workerLog(`got embedding for chunk ${index + 1}/${chunkSet.chunks.length} for job ${job.id}, vector length=${result.vector?.length ?? 0}`);
         embeddingResults.push({
           chunk,
           vector: result.vector,
@@ -376,11 +511,21 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           );
         }
       } catch (embeddingError) {
-        workerLog(`Ошибка эмбеддинга чанка документа базы знаний: ${embeddingError instanceof Error ? embeddingError.message : String(embeddingError)}`);
+        const errorMsg = embeddingError instanceof Error ? embeddingError.message : String(embeddingError);
+        workerLog(`ERROR embedding chunk ${index + 1}/${chunkSet.chunks.length} for job ${job.id}: ${errorMsg}`);
+        if (embeddingError instanceof Error && embeddingError.stack) {
+          workerLog(`ERROR stack: ${embeddingError.stack}`);
+        }
+        if (embeddingError instanceof Error && embeddingError.cause) {
+          workerLog(`ERROR cause: ${embeddingError.cause}`);
+        }
         const errorMessage = embeddingError instanceof Error ? embeddingError.message : String(embeddingError);
-        throw new Error(`Ошибка эмбеддинга чанка #${index + 1}: ${errorMessage}`);
+        await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка эмбеддинга чанка #${index + 1}: ${errorMessage}`);
+        await updateIndexingActionProgress(job.workspaceId, job.baseId);
+        return;
       }
     }
+    workerLog(`completed vectorization for ${embeddingResults.length} chunks for job ${job.id}`);
 
     if (embeddingResults.length === 0) {
       const message = "Не удалось получить эмбеддинги для документа";
@@ -397,6 +542,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
     const detectedVectorLength = firstVector.length;
 
+    workerLog(`ensuring collection created for job ${job.id}, collectionName=${collectionName}, vectorLength=${detectedVectorLength}`);
     await ensureCollectionCreatedIfNeeded({
       client,
       provider: embeddingProvider,
@@ -405,8 +551,10 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       shouldCreateCollection: true,
       collectionExists,
     });
+    workerLog(`collection ensured for job ${job.id}`);
 
     await storage.upsertCollectionWorkspace(collectionName, job.workspaceId);
+    workerLog(`collection workspace updated for job ${job.id}`);
 
     await updateIndexingActionStatus(
       job.workspaceId,

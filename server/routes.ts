@@ -2387,8 +2387,13 @@ function buildKnowledgeCollectionName(
   provider: EmbeddingProvider,
   workspaceId: string,
 ): string {
-  const source = base?.id ?? base?.name ?? provider.id;
-  return buildWorkspaceScopedCollectionName(workspaceId, source, provider.id);
+  const baseId = base?.id;
+  if (!baseId) {
+    throw new Error("База знаний должна иметь ID для создания коллекции");
+  }
+  const baseSlug = baseId.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase().slice(0, 60) || "default";
+  const workspaceSlug = workspaceId.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase().slice(0, 60) || "default";
+  return `kb_${baseSlug}_ws_${workspaceSlug}`;
 }
 
 function removeUndefinedDeep<T>(value: T): T {
