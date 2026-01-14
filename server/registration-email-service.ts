@@ -51,7 +51,7 @@ export class RegistrationEmailServiceImpl implements RegistrationEmailService {
     const subject = `Подтверждение регистрации в ${this.productName}`;
 
     const bodyHtml = `
-      <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #1f2937; font-size: 16px;">
+      <div style="font-family: 'Inter', Arial, sans-serif; line-height: 1.5; color: #1f2937; font-size: 16px;">
         <p>Здравствуйте, ${escapeHtml(displayName)}!</p>
         <p>Вы получили это письмо, потому что зарегистрировались в ${escapeHtml(this.productName)}.</p>
         <p>Для подтверждения учётной записи нажмите кнопку ниже:</p>

@@ -151,7 +151,7 @@ function buildSnippet(config: {
   }
 
   const style = document.createElement("style");
-  style.textContent = ".kms-embed-wrapper { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #0f172a; } " +
+  style.textContent = ".kms-embed-wrapper { font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #0f172a; } " +
     ".kms-embed-wrapper[data-theme='dark'] { color: #e2e8f0; } " +
     ".kms-embed-surface { border: 1px solid rgba(15,23,42,0.1); border-radius: 16px; padding: 16px; background: rgba(255,255,255,0.95); box-shadow: 0 18px 60px rgba(15, 23, 42, 0.18); } " +
     ".kms-embed-wrapper[data-theme='dark'] .kms-embed-surface { background: rgba(15,23,42,0.9); border-color: rgba(226,232,240,0.12); box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32); } " +
