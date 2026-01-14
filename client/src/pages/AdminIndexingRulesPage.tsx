@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2, RefreshCw, XCircle } from "lucide-react";
+import { Loader2, XCircle } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -64,20 +64,25 @@ export default function AdminIndexingRulesPage() {
   const updateMutation = useUpdateIndexingRules();
   const providersQuery = useEmbeddingProviders();
   const { toast } = useToast();
-  const [baseline, setBaseline] = useState<IndexingRulesDto | null>(data ?? null);
+  const [baseline, setBaseline] = useState<IndexingRulesDto | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   const form = useForm<IndexingRulesDto>({
     resolver: zodResolver(formSchema),
     mode: "onChange",
-    defaultValues: data ?? { ...DEFAULT_INDEXING_RULES },
+    defaultValues: { ...DEFAULT_INDEXING_RULES },
   });
 
   useEffect(() => {
-    if (data && !form.formState.isDirty) {
+    if (data && !isInitialized) {
+      setBaseline(data);
+      form.reset(data);
+      setIsInitialized(true);
+    } else if (data && !form.formState.isDirty && isInitialized) {
       setBaseline(data);
       form.reset(data);
     }
-  }, [data, form]);
+  }, [data, form, isInitialized]);
 
   const selectedProviderId = form.watch("embeddingsProvider");
   const selectedModel = form.watch("embeddingsModel");
@@ -217,14 +222,6 @@ export default function AdminIndexingRulesPage() {
     return Number.isFinite(parsed) ? parsed : "";
   };
 
-  const handleRefresh = async () => {
-    if (form.formState.isDirty) {
-      const confirmReload = window.confirm("Есть несохранённые изменения. Обновить и потерять правки?");
-      if (!confirmReload) return;
-    }
-    await refetch();
-  };
-
   const handleCancel = () => {
     const fallback = baseline ?? data ?? { ...DEFAULT_INDEXING_RULES };
     form.reset(fallback);
@@ -255,10 +252,6 @@ export default function AdminIndexingRulesPage() {
               <CardDescription>Редактирование применится ко всем новым и переиндексируемым документам</CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" type="button" onClick={handleRefresh}>
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Обновить
-              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -628,7 +621,8 @@ function KnowledgeBaseIndexingPolicyTab() {
   const updateMutation = useUpdateKnowledgeBaseIndexingPolicy();
   const providersQuery = useEmbeddingProviders();
   const { toast } = useToast();
-  const [baseline, setBaseline] = useState<KnowledgeBaseIndexingPolicyDto | null>(data ?? null);
+  const [baseline, setBaseline] = useState<KnowledgeBaseIndexingPolicyDto | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   const form = useForm<KnowledgeBaseIndexingPolicyDto>({
     resolver: zodResolver(knowledgeBaseIndexingPolicySchema.refine(
@@ -639,15 +633,19 @@ function KnowledgeBaseIndexingPolicyTab() {
       },
     )),
     mode: "onChange",
-    defaultValues: data ?? { ...DEFAULT_KNOWLEDGE_BASE_INDEXING_POLICY },
+    defaultValues: { ...DEFAULT_KNOWLEDGE_BASE_INDEXING_POLICY },
   });
 
   useEffect(() => {
-    if (data && !form.formState.isDirty) {
+    if (data && !isInitialized) {
       setBaseline(data);
-      form.reset(data);
+      form.reset(data, { keepErrors: false });
+      setIsInitialized(true);
+    } else if (data && !form.formState.isDirty && isInitialized) {
+      setBaseline(data);
+      form.reset(data, { keepErrors: false });
     }
-  }, [data, form]);
+  }, [data, form, isInitialized]);
 
   const selectedProviderId = form.watch("embeddingsProvider");
   const selectedModel = form.watch("embeddingsModel");
@@ -778,14 +776,6 @@ function KnowledgeBaseIndexingPolicyTab() {
     return Number.isFinite(parsed) ? parsed : "";
   };
 
-  const handleRefresh = async () => {
-    if (form.formState.isDirty) {
-      const confirmReload = window.confirm("Есть несохранённые изменения. Обновить и потерять правки?");
-      if (!confirmReload) return;
-    }
-    await refetch();
-  };
-
   const handleCancel = () => {
     const fallback = baseline ?? data ?? { ...DEFAULT_KNOWLEDGE_BASE_INDEXING_POLICY };
     form.reset(fallback);
@@ -801,10 +791,6 @@ function KnowledgeBaseIndexingPolicyTab() {
             <CardDescription>Редактирование применится ко всем новым и переиндексируемым документам баз знаний</CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" type="button" onClick={handleRefresh}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Обновить
-            </Button>
             <Button
               variant="outline"
               size="sm"

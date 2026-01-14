@@ -79,7 +79,6 @@ class DbKnowledgeBaseIndexingPolicyRepository implements KnowledgeBaseIndexingPo
           embeddingsModel: values.embeddingsModel,
           chunkSize: values.chunkSize,
           chunkOverlap: values.chunkOverlap,
-          useHtmlContent: true, // Поле оставлено для обратной совместимости, но не используется
           defaultSchema: values.defaultSchema,
           updatedByAdminId: values.updatedByAdminId ?? null,
           updatedAt: sql`CURRENT_TIMESTAMP`,
@@ -185,9 +184,17 @@ export class KnowledgeBaseIndexingPolicyService {
 
     // Политика индексации для баз знаний глобальная, проверяем провайдер без workspaceId
     const providerStatus = await this.providerResolver.resolve(embeddingsProvider, undefined);
-    if (!providerStatus || !providerStatus.isAvailable) {
+    if (!providerStatus) {
       throw new KnowledgeBaseIndexingPolicyDomainError(
-        `Провайдер '${embeddingsProvider}' недоступен`,
+        `Провайдер '${embeddingsProvider}' не найден`,
+        "EMBEDDINGS_PROVIDER_UNKNOWN",
+        "embeddingsProvider",
+      );
+    }
+    
+    if (!providerStatus.isConfigured) {
+      throw new KnowledgeBaseIndexingPolicyDomainError(
+        providerStatus.statusReason ?? `Провайдер '${embeddingsProvider}' недоступен`,
         "PROVIDER_UNAVAILABLE",
         "embeddingsProvider",
       );
@@ -195,7 +202,7 @@ export class KnowledgeBaseIndexingPolicyService {
 
     const modelsInfo = await this.modelsResolver.resolveModels(embeddingsProvider, undefined);
     if (modelsInfo && modelsInfo.models.length > 0) {
-      const modelExists = modelsInfo.models.some((m) => m.id === embeddingsModel || m.name === embeddingsModel);
+      const modelExists = modelsInfo.models.includes(embeddingsModel);
       if (!modelExists) {
         throw new KnowledgeBaseIndexingPolicyDomainError(
           `Модель '${embeddingsModel}' не найдена у провайдера '${embeddingsProvider}'`,
@@ -219,7 +226,6 @@ export class KnowledgeBaseIndexingPolicyService {
       embeddingsModel: validated.embeddingsModel,
       chunkSize: validated.chunkSize,
       chunkOverlap: validated.chunkOverlap,
-      useHtmlContent: true, // Поле оставлено для обратной совместимости, но не используется
       defaultSchema: validated.defaultSchema as unknown as Record<string, unknown>,
       updatedByAdminId: updatedByAdminId ?? null,
       createdAt: current?.createdAt ?? new Date(),
