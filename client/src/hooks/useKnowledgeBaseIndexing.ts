@@ -8,6 +8,7 @@ export type StartKnowledgeBaseIndexingResponse = {
   jobCount: number;
   actionId?: string;
   status?: KnowledgeBaseIndexStatus;
+  documentIds?: string[];
 };
 
 export function useStartKnowledgeBaseIndexing() {

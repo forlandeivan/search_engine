@@ -106,6 +106,8 @@ import {
 import { CrawlInlineProgress, type CrawlInlineState } from "@/components/knowledge-base/CrawlInlineProgress";
 import { useStartKnowledgeBaseIndexing } from "@/hooks/useKnowledgeBaseIndexing";
 import { useKnowledgeBaseIndexingStatus } from "@/hooks/useKnowledgeBaseIndexingStatus";
+import { useKnowledgeBaseIndexingSummary } from "@/hooks/useKnowledgeBaseIndexingSummary";
+import { useKnowledgeBaseIndexingChanges } from "@/hooks/useKnowledgeBaseIndexingChanges";
 import { KnowledgeBaseIndexingProgressToast } from "@/components/knowledge-base/KnowledgeBaseIndexingProgressToast";
 import type {
   KnowledgeBaseSummary,
@@ -121,7 +123,12 @@ import type {
   KnowledgeDocumentVectorizationJobStatus,
   KnowledgeBaseCrawlJobStatus,
 } from "@shared/knowledge-base";
-import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
+import type {
+  PublicEmbeddingProvider,
+  PublicLlmProvider,
+  KnowledgeBaseIndexStatus,
+  KnowledgeDocumentIndexStatus,
+} from "@shared/schema";
 import type { SessionResponse } from "@/types/session";
 import type { UseKnowledgeBaseAskAiOptions } from "@/hooks/useKnowledgeBaseAskAi";
 import {
@@ -755,6 +762,51 @@ const DOCUMENT_SOURCE_LABELS: Record<string, string> = {
   crawl: "Импорт со страницы",
 };
 
+type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
+
+const INDEXING_STATUS_LABELS: Record<KnowledgeBaseIndexStatus, string> = {
+  up_to_date: "Актуальна",
+  outdated: "Есть изменения",
+  partial: "Частично актуальна",
+  indexing: "Индексируется",
+  error: "Ошибка",
+  not_indexed: "Не индексировалась",
+};
+
+const INDEXING_STATUS_DESCRIPTIONS: Record<KnowledgeBaseIndexStatus, string> = {
+  up_to_date: "База знаний полностью индексирована и готова к использованию в RAG.",
+  outdated: "Есть изменения в документах. Рекомендуем индексировать изменения.",
+  partial: "Индексация выполнена частично. Рекомендуем индексировать изменения.",
+  indexing: "Индексация выполняется. Дождитесь завершения процесса.",
+  error: "Часть документов не индексировалась из-за ошибок. Попробуйте переиндексацию.",
+  not_indexed: "Индексация еще не запускалась.",
+};
+
+const INDEXING_STATUS_BADGE_VARIANTS: Record<KnowledgeBaseIndexStatus, BadgeVariant> = {
+  up_to_date: "secondary",
+  outdated: "outline",
+  partial: "outline",
+  indexing: "outline",
+  error: "destructive",
+  not_indexed: "outline",
+};
+
+const INDEXING_CHANGE_STATUS_LABELS: Record<KnowledgeDocumentIndexStatus, string> = {
+  not_indexed: "Не индексирован",
+  outdated: "Есть изменения",
+  indexing: "Индексируется",
+  up_to_date: "Актуален",
+  error: "Ошибка",
+};
+
+const INDEXING_CHANGE_BADGE_VARIANTS: Record<KnowledgeDocumentIndexStatus, BadgeVariant> = {
+  not_indexed: "outline",
+  outdated: "outline",
+  indexing: "outline",
+  up_to_date: "secondary",
+  error: "destructive",
+};
+
 const normalizeBlockText = (value: string): string =>
   value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 
@@ -1295,6 +1347,21 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     [bases, knowledgeBaseId],
   );
   const startIndexingMutation = useStartKnowledgeBaseIndexing();
+  const indexingSummaryQuery = useKnowledgeBaseIndexingSummary(
+    workspaceId,
+    selectedBase?.id ?? null,
+    { enabled: Boolean(workspaceId && selectedBase?.id) },
+  );
+  const [isIndexingChangesOpen, setIsIndexingChangesOpen] = useState(false);
+  const indexingChangesQuery = useKnowledgeBaseIndexingChanges(
+    workspaceId,
+    selectedBase?.id ?? null,
+    {
+      limit: 50,
+      offset: 0,
+      enabled: Boolean(workspaceId && selectedBase?.id && isIndexingChangesOpen),
+    },
+  );
   const [indexingActionId, setIndexingActionId] = useState<string | null>(null);
   const indexingStatusQuery = useKnowledgeBaseIndexingStatus(
     workspaceId,
@@ -1329,6 +1396,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
   useEffect(() => {
     setIsAskAiJournalOpen(false);
+  }, [selectedBase?.id]);
+  useEffect(() => {
+    setIsIndexingChangesOpen(false);
   }, [selectedBase?.id]);
   useEffect(() => {
     if (!isQuickSwitcherOpen) {
@@ -3034,6 +3104,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       if (result.actionId) {
         setIndexingActionId(result.actionId);
       }
+      void indexingSummaryQuery.refetch();
+      if (isIndexingChangesOpen) {
+        void indexingChangesQuery.refetch();
+      }
     } catch (error) {
       toast({
         variant: "destructive",
@@ -3042,7 +3116,105 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       });
       setIndexingActionId(null);
     }
-  }, [selectedBase, startIndexingMutation, toast]);
+  }, [
+    selectedBase,
+    startIndexingMutation,
+    toast,
+    indexingSummaryQuery,
+    indexingChangesQuery,
+    isIndexingChangesOpen,
+  ]);
+
+  const indexingSummary = indexingSummaryQuery.data ?? null;
+  const indexingStatus = indexingSummary?.status ?? null;
+  const totalIndexedDocuments = indexingSummary?.totalDocuments ?? null;
+  const outdatedDocuments = indexingSummary?.outdatedDocuments ?? null;
+  const errorDocuments = indexingSummary?.errorDocuments ?? null;
+  const indexingDocuments = indexingSummary?.indexingDocuments ?? 0;
+  const hasIndexingDocuments = (totalIndexedDocuments ?? 0) > 0;
+  const hasIndexingChanges = (outdatedDocuments ?? 0) > 0 || (errorDocuments ?? 0) > 0;
+  const isIndexingInProgress = indexingStatus === "indexing";
+  const showChangedIndexingCta =
+    indexingStatus === "outdated" || indexingStatus === "partial" || indexingStatus === "error" || isIndexingInProgress;
+  const canStartChangedIndexing =
+    Boolean(indexingSummary) &&
+    hasIndexingDocuments &&
+    hasIndexingChanges &&
+    !isIndexingInProgress &&
+    !startIndexingMutation.isPending;
+  const indexingStatusLabel =
+    indexingSummaryQuery.isPending && !indexingSummary
+      ? "Загрузка"
+      : indexingStatus
+      ? INDEXING_STATUS_LABELS[indexingStatus]
+      : "Статус недоступен";
+  const indexingStatusBadgeVariant = indexingStatus
+    ? INDEXING_STATUS_BADGE_VARIANTS[indexingStatus]
+    : "outline";
+  const indexingStatusDescription = (() => {
+    if (indexingSummaryQuery.isError) {
+      return "Не удалось загрузить состояние индексации. Попробуйте обновить страницу.";
+    }
+    if (!indexingSummary) {
+      return "Загружаем статус индексации...";
+    }
+    if (!hasIndexingDocuments) {
+      return "В базе пока нет документов для индексации.";
+    }
+    if (isIndexingInProgress && indexingDocuments > 0) {
+      return `Индексация выполняется: ${indexingDocuments} в работе.`;
+    }
+    return INDEXING_STATUS_DESCRIPTIONS[indexingSummary.status];
+  })();
+  const formatIndexingCount = (value: number | null | undefined) =>
+    typeof value === "number" ? value : "—";
+  const indexingChanges = indexingChangesQuery.data ?? null;
+  const indexingChangeItems = indexingChanges?.items ?? [];
+  const indexingChangesTotal = indexingChanges?.total ?? 0;
+
+  const handleStartChangedIndexing = useCallback(async () => {
+    if (!selectedBase) {
+      return;
+    }
+
+    try {
+      const result = await startIndexingMutation.mutateAsync({
+        baseId: selectedBase.id,
+        mode: "changed",
+      });
+      if (result.actionId) {
+        setIndexingActionId(result.actionId);
+      } else if (result.jobCount === 0 && result.status === "up_to_date") {
+        toast({
+          title: "База актуальна",
+          description: "Изменений для индексации не найдено.",
+        });
+      } else if (result.jobCount === 0 && result.status === "indexing") {
+        toast({
+          title: "Индексация уже выполняется",
+          description: "Дождитесь завершения текущего процесса.",
+        });
+      }
+
+      void indexingSummaryQuery.refetch();
+      if (isIndexingChangesOpen) {
+        void indexingChangesQuery.refetch();
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Не удалось запустить индексацию изменений",
+        description: error instanceof Error ? error.message : "Попробуйте позже",
+      });
+    }
+  }, [
+    selectedBase,
+    startIndexingMutation,
+    toast,
+    indexingSummaryQuery,
+    indexingChangesQuery,
+    isIndexingChangesOpen,
+  ]);
 
   const renderOverview = (detail: Extract<KnowledgeBaseNodeDetail, { type: "base" }>) => (
     <Card>
@@ -3125,6 +3297,108 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">{detail.description}</p>
+        <Separator />
+        <div className="rounded-md border bg-muted/40 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold">Состояние индексации</h3>
+                <Badge variant={indexingStatusBadgeVariant}>{indexingStatusLabel}</Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">{indexingStatusDescription}</p>
+            </div>
+            {showChangedIndexingCta && (
+              <div className="flex flex-col gap-2 sm:items-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleStartChangedIndexing}
+                  disabled={!canStartChangedIndexing}
+                >
+                  {startIndexingMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                  )}
+                  Индексировать изменения
+                </Button>
+                {hasIndexingChanges && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsIndexingChangesOpen((open) => !open)}
+                    disabled={indexingSummaryQuery.isPending || indexingSummaryQuery.isError}
+                  >
+                    {isIndexingChangesOpen ? "Скрыть изменения" : "Показать изменения"}
+                    <ChevronDown
+                      className={cn(
+                        "ml-2 h-4 w-4 transition-transform",
+                        isIndexingChangesOpen && "rotate-180",
+                      )}
+                    />
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-md border bg-background p-3">
+              <p className="text-xs text-muted-foreground">Изменения</p>
+              <p className="text-lg font-semibold">{formatIndexingCount(outdatedDocuments)}</p>
+            </div>
+            <div className="rounded-md border bg-background p-3">
+              <p className="text-xs text-muted-foreground">Ошибки</p>
+              <p className="text-lg font-semibold">{formatIndexingCount(errorDocuments)}</p>
+            </div>
+            <div className="rounded-md border bg-background p-3">
+              <p className="text-xs text-muted-foreground">Всего документов</p>
+              <p className="text-lg font-semibold">{formatIndexingCount(totalIndexedDocuments)}</p>
+            </div>
+          </div>
+          {isIndexingChangesOpen && (
+            <div className="mt-3 space-y-2 border-t pt-3">
+              {indexingChangesQuery.isPending ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Загружаем изменения...
+                </div>
+              ) : indexingChangesQuery.isError ? (
+                <p className="text-sm text-destructive">
+                  Не удалось загрузить список изменений. Попробуйте позже.
+                </p>
+              ) : indexingChangeItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Изменений не найдено.</p>
+              ) : (
+                <div className="space-y-2">
+                  <ul className="space-y-2">
+                    {indexingChangeItems.map((item) => (
+                      <li
+                        key={item.documentId}
+                        className="flex flex-col gap-2 rounded-md border bg-background px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">{item.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Обновлено {formatDateTime(item.updatedAt)}
+                          </p>
+                        </div>
+                        <Badge variant={INDEXING_CHANGE_BADGE_VARIANTS[item.status]}>
+                          {INDEXING_CHANGE_STATUS_LABELS[item.status]}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
+                  {indexingChangesTotal > indexingChangeItems.length && (
+                    <p className="text-xs text-muted-foreground">
+                      Показаны первые {indexingChangeItems.length} из {indexingChangesTotal}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         <Separator />
         <div>
           <h3 className="text-sm font-semibold mb-2">Структура базы</h3>

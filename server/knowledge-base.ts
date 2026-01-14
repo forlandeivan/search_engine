@@ -26,6 +26,7 @@ import {
   knowledgeDocumentVersions,
   knowledgeDocumentChunkSets,
   knowledgeDocumentIndexState,
+  knowledgeBaseIndexingJobs,
   knowledgeBaseNodeTypes,
   knowledgeNodeSourceTypes,
   knowledgeDocumentStatuses,
@@ -537,6 +538,15 @@ async function fetchIndexingDocuments(
           eq(knowledgeDocumentIndexState.workspaceId, knowledgeDocuments.workspaceId),
         ),
       )
+      .leftJoin(
+        knowledgeBaseIndexingJobs,
+        and(
+          eq(knowledgeBaseIndexingJobs.documentId, knowledgeDocuments.id),
+          eq(knowledgeBaseIndexingJobs.versionId, knowledgeDocuments.currentVersionId),
+          eq(knowledgeBaseIndexingJobs.jobType, "knowledge_base_indexing"),
+          inArray(knowledgeBaseIndexingJobs.status, ["pending", "processing"]),
+        ),
+      )
       .where(
         and(
           eq(knowledgeDocuments.baseId, baseId),
@@ -545,6 +555,7 @@ async function fetchIndexingDocuments(
             inArray(knowledgeDocumentIndexState.status, INDEXING_CHANGE_STATUSES),
             isNull(knowledgeDocumentIndexState.documentId),
           ),
+          isNull(knowledgeBaseIndexingJobs.id),
         ),
       );
   }
@@ -892,7 +903,12 @@ export async function startKnowledgeBaseIndexing(
   baseId: string,
   workspaceId: string,
   mode: KnowledgeBaseIndexingMode = "full",
-): Promise<{ jobCount: number; actionId?: string; status?: KnowledgeBaseIndexStatus }> {
+): Promise<{
+  jobCount: number;
+  actionId?: string;
+  status?: KnowledgeBaseIndexStatus;
+  documentIds?: string[];
+}> {
   try {
     await ensureKnowledgeBaseTables();
   } catch (error) {
@@ -919,9 +935,9 @@ export async function startKnowledgeBaseIndexing(
       const indexingDocuments = await countIndexingDocumentsByBase(baseId, workspaceId);
       const status: KnowledgeBaseIndexStatus =
         totalDocuments === 0 ? "not_indexed" : indexingDocuments > 0 ? "indexing" : "up_to_date";
-      return { jobCount: 0, status };
+      return { jobCount: 0, status, documentIds: [] };
     }
-    return { jobCount: 0, actionId: undefined };
+    return { jobCount: 0, actionId: undefined, documentIds: [] };
   }
 
   // Создаем action для отслеживания статуса индексации
@@ -945,6 +961,7 @@ export async function startKnowledgeBaseIndexing(
   }
 
   let jobCount = 0;
+  const documentIds: string[] = [];
   let documentsWithoutVersions = 0;
 
   for (const doc of documents) {
@@ -1048,6 +1065,7 @@ export async function startKnowledgeBaseIndexing(
 
       if (job) {
         jobCount++;
+        documentIds.push(doc.documentId);
         console.log(
           `[startKnowledgeBaseIndexing] Created job ${job.id} for document ${doc.documentId} status=${job.status}`,
         );
@@ -1120,7 +1138,7 @@ export async function startKnowledgeBaseIndexing(
     }
   }
 
-  return { jobCount, actionId };
+  return { jobCount, actionId, documentIds };
 }
 
 export async function getKnowledgeNodeDetail(
