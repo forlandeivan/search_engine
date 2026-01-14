@@ -42,9 +42,12 @@ import {
   indexingRules,
   knowledgeBaseIndexingJobs,
   knowledgeBaseIndexingPolicy,
+  knowledgeBaseIndexingActions,
   type KnowledgeBaseIndexingJob,
   type KnowledgeBaseIndexingJobInsert,
   type KnowledgeBaseIndexingPolicy,
+  type KnowledgeBaseIndexingActionRecord,
+  type KnowledgeBaseIndexingActionInsert,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
   type KnowledgeBaseRagSearchSettings,
@@ -1156,6 +1159,26 @@ export interface IStorage {
   failKnowledgeBaseIndexingJob(jobId: string, errorMessage?: string | null): Promise<void>;
   getKnowledgeBaseIndexingPolicy(): Promise<KnowledgeBaseIndexingPolicy | null>;
   updateKnowledgeBaseIndexingPolicy(policy: Partial<KnowledgeBaseIndexingPolicy>): Promise<KnowledgeBaseIndexingPolicy>;
+
+  // Knowledge base indexing actions
+  createKnowledgeBaseIndexingAction(
+    value: KnowledgeBaseIndexingActionInsert,
+  ): Promise<KnowledgeBaseIndexingActionRecord | null>;
+  updateKnowledgeBaseIndexingAction(
+    workspaceId: string,
+    baseId: string,
+    actionId: string,
+    updates: Partial<KnowledgeBaseIndexingActionInsert>,
+  ): Promise<KnowledgeBaseIndexingActionRecord | null>;
+  getKnowledgeBaseIndexingAction(
+    workspaceId: string,
+    baseId: string,
+    actionId: string,
+  ): Promise<KnowledgeBaseIndexingActionRecord | null>;
+  getLatestKnowledgeBaseIndexingAction(
+    workspaceId: string,
+    baseId: string,
+  ): Promise<KnowledgeBaseIndexingActionRecord | null>;
 }
 
 let usersTableEnsured = false;
@@ -2037,6 +2060,78 @@ async function ensureKnowledgeBaseIndexingPolicyTable(): Promise<void> {
 
   await ensuringKnowledgeBaseIndexingPolicyTable;
   ensuringKnowledgeBaseIndexingPolicyTable = null;
+}
+
+let knowledgeBaseIndexingActionsTableEnsured = false;
+let ensuringKnowledgeBaseIndexingActionsTable: Promise<void> | null = null;
+
+async function ensureKnowledgeBaseIndexingActionsTable(): Promise<void> {
+  if (knowledgeBaseIndexingActionsTableEnsured) {
+    return;
+  }
+  if (ensuringKnowledgeBaseIndexingActionsTable) {
+    await ensuringKnowledgeBaseIndexingActionsTable;
+    return;
+  }
+
+  ensuringKnowledgeBaseIndexingActionsTable = (async () => {
+    await ensureKnowledgeBasesTable();
+    await ensureWorkspacesTable();
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_base_indexing_actions" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "workspace_id" varchar NOT NULL,
+        "base_id" varchar NOT NULL,
+        "action_id" text NOT NULL,
+        "status" text NOT NULL DEFAULT 'processing',
+        "stage" text NOT NULL,
+        "display_text" text,
+        "payload" jsonb DEFAULT '{}'::jsonb,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_base_indexing_actions",
+      "knowledge_base_indexing_actions_workspace_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_base_indexing_actions"
+        ADD CONSTRAINT "knowledge_base_indexing_actions_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_base_indexing_actions",
+      "knowledge_base_indexing_actions_base_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_base_indexing_actions"
+        ADD CONSTRAINT "knowledge_base_indexing_actions_base_id_fkey"
+        FOREIGN KEY ("base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS knowledge_base_indexing_actions_unique_idx
+      ON "knowledge_base_indexing_actions" ("workspace_id", "base_id", "action_id")
+    `);
+
+    await ensureIndex(
+      "knowledge_base_indexing_actions_base_idx",
+      sql`CREATE INDEX IF NOT EXISTS knowledge_base_indexing_actions_base_idx ON "knowledge_base_indexing_actions" ("workspace_id", "base_id", "updated_at")`,
+    );
+    await ensureIndex(
+      "knowledge_base_indexing_actions_status_idx",
+      sql`CREATE INDEX IF NOT EXISTS knowledge_base_indexing_actions_status_idx ON "knowledge_base_indexing_actions" ("workspace_id", "base_id", "status")`,
+    );
+
+    knowledgeBaseIndexingActionsTableEnsured = true;
+  })();
+
+  await ensuringKnowledgeBaseIndexingActionsTable;
+  ensuringKnowledgeBaseIndexingActionsTable = null;
 }
 
 async function ensureTranscriptsTable(): Promise<void> {
@@ -7014,6 +7109,98 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return updated;
+  }
+
+  async createKnowledgeBaseIndexingAction(
+    value: KnowledgeBaseIndexingActionInsert,
+  ): Promise<KnowledgeBaseIndexingActionRecord | null> {
+    try {
+      await ensureKnowledgeBaseIndexingActionsTable();
+      const [created] = await this.db
+        .insert(knowledgeBaseIndexingActions)
+        .values(value)
+        .onConflictDoNothing({
+          target: [
+            knowledgeBaseIndexingActions.workspaceId,
+            knowledgeBaseIndexingActions.baseId,
+            knowledgeBaseIndexingActions.actionId,
+          ],
+        })
+        .returning();
+      return created ?? null;
+    } catch (error) {
+      console.error(`[createKnowledgeBaseIndexingAction] Failed to create action:`, error);
+      throw error;
+    }
+  }
+
+  async updateKnowledgeBaseIndexingAction(
+    workspaceId: string,
+    baseId: string,
+    actionId: string,
+    updates: Partial<KnowledgeBaseIndexingActionInsert>,
+  ): Promise<KnowledgeBaseIndexingActionRecord | null> {
+    try {
+      await ensureKnowledgeBaseIndexingActionsTable();
+      const now = new Date();
+      const [updated] = await this.db
+        .update(knowledgeBaseIndexingActions)
+        .set({
+          ...updates,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(knowledgeBaseIndexingActions.workspaceId, workspaceId),
+            eq(knowledgeBaseIndexingActions.baseId, baseId),
+            eq(knowledgeBaseIndexingActions.actionId, actionId),
+          ),
+        )
+        .returning();
+      return updated ?? null;
+    } catch (error) {
+      console.error(`[updateKnowledgeBaseIndexingAction] Failed to update action for baseId: ${baseId}, workspaceId: ${workspaceId}, actionId: ${actionId}:`, error);
+      throw error;
+    }
+  }
+
+  async getKnowledgeBaseIndexingAction(
+    workspaceId: string,
+    baseId: string,
+    actionId: string,
+  ): Promise<KnowledgeBaseIndexingActionRecord | null> {
+    await ensureKnowledgeBaseIndexingActionsTable();
+    const [row] = await this.db
+      .select()
+      .from(knowledgeBaseIndexingActions)
+      .where(
+        and(
+          eq(knowledgeBaseIndexingActions.workspaceId, workspaceId),
+          eq(knowledgeBaseIndexingActions.baseId, baseId),
+          eq(knowledgeBaseIndexingActions.actionId, actionId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  }
+
+  async getLatestKnowledgeBaseIndexingAction(
+    workspaceId: string,
+    baseId: string,
+  ): Promise<KnowledgeBaseIndexingActionRecord | null> {
+    await ensureKnowledgeBaseIndexingActionsTable();
+    const [row] = await this.db
+      .select()
+      .from(knowledgeBaseIndexingActions)
+      .where(
+        and(
+          eq(knowledgeBaseIndexingActions.workspaceId, workspaceId),
+          eq(knowledgeBaseIndexingActions.baseId, baseId),
+        ),
+      )
+      .orderBy(desc(knowledgeBaseIndexingActions.updatedAt))
+      .limit(1);
+    return row ?? null;
   }
 
   async listSkillFiles(workspaceId: string, skillId: string): Promise<SkillFile[]> {

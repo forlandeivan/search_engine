@@ -631,6 +631,80 @@ export const knowledgeBaseIndexingJobs = pgTable(
 export type KnowledgeBaseIndexingJob = typeof knowledgeBaseIndexingJobs.$inferSelect;
 export type KnowledgeBaseIndexingJobInsert = typeof knowledgeBaseIndexingJobs.$inferInsert;
 
+export const indexingStages = [
+  "initializing",
+  "creating_collection",
+  "chunking",
+  "vectorizing",
+  "uploading",
+  "verifying",
+  "completed",
+  "error",
+] as const;
+export type IndexingStage = (typeof indexingStages)[number];
+
+export const knowledgeBaseIndexingActionStatuses = ["processing", "done", "error"] as const;
+export type KnowledgeBaseIndexingActionStatus = (typeof knowledgeBaseIndexingActionStatuses)[number];
+
+export type KnowledgeBaseIndexingAction = {
+  workspaceId: string;
+  baseId: string;
+  actionId: string;
+  status: KnowledgeBaseIndexingActionStatus;
+  stage: IndexingStage;
+  displayText?: string | null;
+  payload?: Record<string, unknown> | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export const knowledgeBaseIndexingActionSchema = z.object({
+  workspaceId: z.string().min(1),
+  baseId: z.string().min(1),
+  actionId: z.string().min(1),
+  status: z.enum(knowledgeBaseIndexingActionStatuses),
+  stage: z.enum(indexingStages),
+  displayText: z.string().nullable().optional(),
+  payload: z.record(z.any()).nullable().optional(),
+  createdAt: z.string().datetime().nullable().optional(),
+  updatedAt: z.string().datetime().nullable().optional(),
+});
+
+export const knowledgeBaseIndexingActions = pgTable(
+  "knowledge_base_indexing_actions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    baseId: varchar("base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    actionId: text("action_id").notNull(),
+    status: text("status").$type<KnowledgeBaseIndexingActionStatus>().notNull().default("processing"),
+    stage: text("stage").$type<IndexingStage>().notNull(),
+    displayText: text("display_text"),
+    payload: jsonb("payload").$type<Record<string, unknown> | null>().default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => ({
+    baseIdx: index("knowledge_base_indexing_actions_base_idx").on(table.workspaceId, table.baseId, table.updatedAt),
+    statusIdx: index("knowledge_base_indexing_actions_status_idx").on(
+      table.workspaceId,
+      table.baseId,
+      table.status,
+    ),
+    uniqueAction: uniqueIndex("knowledge_base_indexing_actions_unique_idx").on(
+      table.workspaceId,
+      table.baseId,
+      table.actionId,
+    ),
+  }),
+);
+export type KnowledgeBaseIndexingActionRecord = typeof knowledgeBaseIndexingActions.$inferSelect;
+export type KnowledgeBaseIndexingActionInsert = typeof knowledgeBaseIndexingActions.$inferInsert;
+
 export const knowledgeBaseNodeTypes = ["folder", "document"] as const;
 export type KnowledgeBaseNodeType = (typeof knowledgeBaseNodeTypes)[number];
 

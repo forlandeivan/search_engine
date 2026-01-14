@@ -105,6 +105,8 @@ import {
 } from "@/lib/knowledge-base";
 import { CrawlInlineProgress, type CrawlInlineState } from "@/components/knowledge-base/CrawlInlineProgress";
 import { useStartKnowledgeBaseIndexing } from "@/hooks/useKnowledgeBaseIndexing";
+import { useKnowledgeBaseIndexingStatus } from "@/hooks/useKnowledgeBaseIndexingStatus";
+import { KnowledgeBaseIndexingProgressToast } from "@/components/knowledge-base/KnowledgeBaseIndexingProgressToast";
 import type {
   KnowledgeBaseSummary,
   KnowledgeBaseTreeNode,
@@ -1293,6 +1295,13 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     [bases, knowledgeBaseId],
   );
   const startIndexingMutation = useStartKnowledgeBaseIndexing();
+  const [indexingActionId, setIndexingActionId] = useState<string | null>(null);
+  const indexingStatusQuery = useKnowledgeBaseIndexingStatus(
+    workspaceId,
+    selectedBase?.id ?? null,
+    indexingActionId,
+    { enabled: Boolean(workspaceId && selectedBase?.id && indexingActionId) },
+  );
   const searchSettingsQueryKey = useMemo(
     () =>
       selectedBase
@@ -3022,16 +3031,16 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
     try {
       const result = await startIndexingMutation.mutateAsync({ baseId: selectedBase.id });
-      toast({
-        title: "Индексация запущена",
-        description: `Запущена индексация ${result.jobCount} документов. Процесс выполняется в фоновом режиме.`,
-      });
+      if (result.actionId) {
+        setIndexingActionId(result.actionId);
+      }
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Не удалось запустить индексацию",
         description: error instanceof Error ? error.message : "Попробуйте позже",
       });
+      setIndexingActionId(null);
     }
   }, [selectedBase, startIndexingMutation, toast]);
 
@@ -3170,6 +3179,19 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     } else {
       detailContent = renderOverview(detail);
     }
+
+    return (
+      <>
+        <KnowledgeBaseIndexingProgressToast
+          action={indexingStatusQuery.data ?? null}
+          onComplete={() => {
+            setIndexingActionId(null);
+            void indexingStatusQuery.refetch();
+          }}
+        />
+        {detailContent}
+      </>
+    );
 
     const searchPlaceholder = selectedBase?.name
       ? `Быстрый поиск по базе «${selectedBase.name}»`

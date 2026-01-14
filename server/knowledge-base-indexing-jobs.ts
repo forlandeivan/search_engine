@@ -12,6 +12,7 @@ import { renderLiquidTemplate, castValueToType, normalizeArrayValue } from "@sha
 import { buildVectorPayload } from "./qdrant-utils";
 import type { Schemas } from "./qdrant-client";
 import { fetchAccessToken } from "./llm-access-token";
+import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
 
 function buildKnowledgeCollectionName(
   base: { id?: string | null; name?: string | null } | null | undefined,
@@ -103,6 +104,28 @@ function computeRetryDelayMs(attempts: number): number {
   return Math.min(Math.max(BASE_RETRY_DELAY_MS, delay), MAX_RETRY_DELAY_MS);
 }
 
+async function updateIndexingActionStatus(
+  workspaceId: string,
+  baseId: string,
+  stage: string,
+  displayText: string,
+  payload?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const action = await knowledgeBaseIndexingActionsService.getLatest(workspaceId, baseId);
+    if (action && action.status === "processing") {
+      await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
+        stage: stage as any,
+        displayText,
+        payload,
+      });
+    }
+  } catch (error) {
+    // Игнорируем ошибки обновления статуса, чтобы не прерывать индексацию
+    console.error("Failed to update indexing action status:", error);
+  }
+}
+
 async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
   if (job.jobType && job.jobType !== JOB_TYPE) {
     return;
@@ -135,6 +158,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
     const policy = await knowledgeBaseIndexingPolicyService.get();
 
+    await updateIndexingActionStatus(job.workspaceId, job.baseId, "initializing", "Инициализация...");
+
     try {
       const resolved = await resolveEmbeddingProviderForWorkspace({ workspaceId: job.workspaceId });
       embeddingProvider = resolved.provider;
@@ -150,19 +175,38 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       return;
     }
 
+    // Создаем коллекцию
+    const collectionName = buildKnowledgeCollectionName(base, embeddingProvider, job.workspaceId);
+    await updateIndexingActionStatus(
+      job.workspaceId,
+      job.baseId,
+      "creating_collection",
+      "Создаём коллекцию в Qdrant...",
+    );
+
+    const client = getQdrantClient();
+    const collectionExists = await (client as any).collectionExists?.(collectionName) ?? false;
+
     // Создаем чанки
-        const chunkSet = await createKnowledgeDocumentChunkSet(
-          job.baseId,
-          job.documentId,
-          job.workspaceId,
-          {
-            maxChars: policy.chunkSize,
-            overlapChars: policy.chunkOverlap,
-            splitByPages: false,
-            respectHeadings: true,
-            // useHtmlContent определяется автоматически по sourceType документа
-          },
-        );
+    await updateIndexingActionStatus(
+      job.workspaceId,
+      job.baseId,
+      "chunking",
+      `Разбиваем документ "${nodeDetail.title ?? "без названия"}" на фрагменты...`,
+    );
+
+    const chunkSet = await createKnowledgeDocumentChunkSet(
+      job.baseId,
+      job.documentId,
+      job.workspaceId,
+      {
+        maxChars: policy.chunkSize,
+        overlapChars: policy.chunkOverlap,
+        splitByPages: false,
+        respectHeadings: true,
+        // useHtmlContent определяется автоматически по sourceType документа
+      },
+    );
 
     if (!chunkSet || chunkSet.chunks.length === 0) {
       const message = "Не удалось создать чанки для документа";
@@ -181,6 +225,13 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       index: number;
     }> = [];
 
+    await updateIndexingActionStatus(
+      job.workspaceId,
+      job.baseId,
+      "vectorizing",
+      `Векторизуем фрагменты документа "${nodeDetail.title ?? "без названия"}" (0 из ${chunkSet.chunks.length})...`,
+    );
+
     for (let index = 0; index < chunkSet.chunks.length; index += 1) {
       const chunk = chunkSet.chunks[index];
       try {
@@ -192,6 +243,19 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           embeddingId: result.embeddingId,
           index,
         });
+
+        // Обновляем прогресс векторизации каждые 5 чанков или на последнем
+        if ((index + 1) % 5 === 0 || index === chunkSet.chunks.length - 1) {
+          await updateIndexingActionStatus(
+            job.workspaceId,
+            job.baseId,
+            "vectorizing",
+            `Векторизуем фрагменты документа "${nodeDetail.title ?? "без названия"}" (${index + 1} из ${chunkSet.chunks.length})...`,
+            {
+              progressPercent: Math.round(((index + 1) / chunkSet.chunks.length) * 100),
+            },
+          );
+        }
       } catch (embeddingError) {
         console.error("Ошибка эмбеддинга чанка документа базы знаний", embeddingError);
         const errorMessage = embeddingError instanceof Error ? embeddingError.message : String(embeddingError);
@@ -205,9 +269,6 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       return;
     }
 
-    // Создаем коллекцию
-    const collectionName = buildKnowledgeCollectionName(base, embeddingProvider, job.workspaceId);
-    const client = getQdrantClient();
     const firstVector = embeddingResults[0]?.vector;
     if (!Array.isArray(firstVector) || firstVector.length === 0) {
       const message = "Сервис эмбеддингов вернул пустой вектор";
@@ -216,7 +277,6 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     }
 
     const detectedVectorLength = firstVector.length;
-    const collectionExists = await (client as any).collectionExists?.(collectionName) ?? false;
 
     await ensureCollectionCreatedIfNeeded({
       client,
@@ -228,6 +288,13 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     });
 
     await storage.upsertCollectionWorkspace(collectionName, job.workspaceId);
+
+    await updateIndexingActionStatus(
+      job.workspaceId,
+      job.baseId,
+      "uploading",
+      `Загружаем векторы документа "${nodeDetail.title ?? "без названия"}" в коллекцию...`,
+    );
 
     // Подготавливаем payload с использованием schema из политики
     const schemaFields: CollectionSchemaFieldInput[] = policy.defaultSchema as CollectionSchemaFieldInput[];
@@ -375,6 +442,13 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       points,
     });
 
+    await updateIndexingActionStatus(
+      job.workspaceId,
+      job.baseId,
+      "verifying",
+      `Проверяем загруженные данные документа "${nodeDetail.title ?? "без названия"}"...`,
+    );
+
     // Обновляем vectorRecordId в чанках
     const vectorRecordMappings = embeddingResults.map((result, index) => {
       const chunk = result.chunk;
@@ -412,6 +486,13 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     }
 
     await storage.failKnowledgeBaseIndexingJob(job.id, errorMessage);
+    await updateIndexingActionStatus(
+      job.workspaceId,
+      job.baseId,
+      "error",
+      `Ошибка индексации документа: ${errorMessage}`,
+      { error: errorMessage },
+    );
   }
 }
 

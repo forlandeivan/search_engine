@@ -52,6 +52,7 @@ import {
   updateKnowledgeDocument,
   startKnowledgeBaseIndexing,
 } from "./knowledge-base";
+import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
 import {
   previewKnowledgeDocumentChunks,
   createKnowledgeDocumentChunkSet,
@@ -16996,6 +16997,76 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     try {
       const result = await startKnowledgeBaseIndexing(baseId, workspaceId);
       res.json(result);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.post("/api/knowledge/bases/:baseId/indexing/actions/start", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+    const { actionId, initialStage } = req.body as { actionId?: string; initialStage?: string };
+
+    try {
+      const action = await knowledgeBaseIndexingActionsService.start(
+        workspaceId,
+        baseId,
+        actionId,
+        initialStage as any,
+      );
+      res.json(action);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.post("/api/knowledge/bases/:baseId/indexing/actions/update", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+    const { actionId, status, stage, displayText, payload } = req.body as {
+      actionId: string;
+      status?: string;
+      stage?: string;
+      displayText?: string | null;
+      payload?: Record<string, unknown> | null;
+    };
+
+    if (!actionId) {
+      return res.status(400).json({ error: "actionId обязателен" });
+    }
+
+    try {
+      const action = await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
+        status: status as any,
+        stage: stage as any,
+        displayText,
+        payload,
+      });
+      if (!action) {
+        return res.status(404).json({ error: "Статус индексации не найден" });
+      }
+      res.json(action);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.get("/api/knowledge/bases/:baseId/indexing/actions/status", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+    const { actionId } = req.query as { actionId?: string };
+
+    try {
+      let action;
+      if (actionId) {
+        action = await knowledgeBaseIndexingActionsService.get(workspaceId, baseId, actionId);
+      } else {
+        action = await knowledgeBaseIndexingActionsService.getLatest(workspaceId, baseId);
+      }
+      if (!action) {
+        return res.status(404).json({ error: "Статус индексации не найден" });
+      }
+      res.json(action);
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);
     }

@@ -2,8 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
 export type StartKnowledgeBaseIndexingResponse = {
-  message: string;
   jobCount: number;
+  actionId?: string;
 };
 
 export function useStartKnowledgeBaseIndexing() {

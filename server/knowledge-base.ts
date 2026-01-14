@@ -40,6 +40,7 @@ import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
+import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
 
 export class KnowledgeBaseError extends Error {
   public status: number;
@@ -696,15 +697,36 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
   }
 
   if (documentIds.length === 0) {
-    return { jobCount: 0 };
+    return { jobCount: 0, actionId: undefined };
   }
 
-  // Получаем документы с их версиями
-  let documents: Array<{ documentId: string; versionId: string | null }>;
+  // Создаем action для отслеживания статуса индексации
+  let actionId: string | undefined;
+  try {
+    actionId = randomUUID();
+    await knowledgeBaseIndexingActionsService.start(workspaceId, baseId, actionId, "initializing");
+    await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
+      stage: "initializing",
+      displayText: `Инициализация индексации ${documentIds.length} документов...`,
+      payload: {
+        totalDocuments: documentIds.length,
+        processedDocuments: 0,
+        progressPercent: 0,
+      },
+    });
+  } catch (error) {
+    console.error(`[startKnowledgeBaseIndexing] Failed to create indexing action for baseId: ${baseId}, workspaceId: ${workspaceId}`, error);
+    // Продолжаем без action, индексация все равно должна работать
+    actionId = undefined;
+  }
+
+  // Получаем документы с их версиями и nodeId
+  let documents: Array<{ documentId: string; nodeId: string; versionId: string | null }>;
   try {
     documents = await db
       .select({
         documentId: knowledgeDocuments.id,
+        nodeId: knowledgeDocuments.nodeId,
         versionId: knowledgeDocuments.currentVersionId,
       })
       .from(knowledgeDocuments)
@@ -721,18 +743,93 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
   }
 
   let jobCount = 0;
+  let documentsWithoutVersions = 0;
+
   for (const doc of documents) {
-    if (!doc.versionId) {
-      continue;
+    let effectiveVersionId = doc.versionId;
+
+    // Если у документа нет версии, создаем начальную версию
+    if (!effectiveVersionId) {
+      try {
+        // Получаем данные узла для создания версии
+        const [node] = await db
+          .select({
+            id: knowledgeNodes.id,
+            title: knowledgeNodes.title,
+            content: knowledgeNodes.content,
+          })
+          .from(knowledgeNodes)
+          .where(
+            and(
+              eq(knowledgeNodes.id, doc.nodeId),
+              eq(knowledgeNodes.baseId, baseId),
+            ),
+          )
+          .limit(1);
+
+        if (!node) {
+          console.warn(`Node not found for document ${doc.documentId}, nodeId: ${doc.nodeId}`);
+          documentsWithoutVersions++;
+          continue;
+        }
+
+        // Создаем начальную версию
+        const versionId = randomUUID();
+        const contentHtml = node.content ?? "";
+        const contentPlainText = extractPlainTextFromHtml(contentHtml) || "";
+        const contentMarkdown = "";
+        const hash = computeContentHash(contentMarkdown || contentPlainText || contentHtml);
+        const wordCount = countWords(contentPlainText);
+
+        const [version] = await db
+          .insert(knowledgeDocumentVersions)
+          .values({
+            id: versionId,
+            documentId: doc.documentId,
+            workspaceId,
+            versionNo: 1,
+            contentJson: {
+              html: contentHtml,
+              markdown: contentMarkdown || undefined,
+            },
+            contentText: contentPlainText,
+            hash: hash ?? null,
+            wordCount,
+          })
+          .returning();
+
+        if (!version) {
+          console.warn(`Failed to create version for document ${doc.documentId}`);
+          documentsWithoutVersions++;
+          continue;
+        }
+
+        // Обновляем currentVersionId в документе
+        await db
+          .update(knowledgeDocuments)
+          .set({
+            currentVersionId: version.id,
+            updatedAt: new Date(),
+          })
+          .where(eq(knowledgeDocuments.id, doc.documentId));
+
+        effectiveVersionId = version.id;
+        console.log(`Created initial version for document ${doc.documentId}, versionId: ${effectiveVersionId}`);
+      } catch (error) {
+        console.error(`Failed to create version for document ${doc.documentId}:`, error);
+        documentsWithoutVersions++;
+        continue;
+      }
     }
 
+    // Создаем job для индексации
     try {
       const job = await storage.createKnowledgeBaseIndexingJob({
         jobType: "knowledge_base_indexing",
         workspaceId,
         baseId,
         documentId: doc.documentId,
-        versionId: doc.versionId,
+        versionId: effectiveVersionId,
         status: "pending",
         attempts: 0,
         nextRetryAt: null,
@@ -751,7 +848,40 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
     }
   }
 
-  return { jobCount };
+  if (documentsWithoutVersions > 0) {
+    console.warn(
+      `Skipped ${documentsWithoutVersions} document(s) without versions that could not be fixed automatically`,
+    );
+  }
+
+  // Обновляем статус после создания всех job'ов
+  if (actionId) {
+    try {
+      if (jobCount > 0) {
+        await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
+          stage: "initializing",
+          displayText: `Запущена индексация ${jobCount} документов. Процесс выполняется в фоновом режиме.`,
+          payload: {
+            totalDocuments: jobCount,
+            processedDocuments: 0,
+            progressPercent: 0,
+          },
+        });
+      } else {
+        // Если job'ов нет, завершаем action
+        await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
+          status: "done",
+          stage: "completed",
+          displayText: "Нет документов для индексации",
+        });
+      }
+    } catch (error) {
+      console.error(`[startKnowledgeBaseIndexing] Failed to update indexing action for baseId: ${baseId}, workspaceId: ${workspaceId}, actionId: ${actionId}`, error);
+      // Продолжаем, ошибка обновления статуса не критична
+    }
+  }
+
+  return { jobCount, actionId };
 }
 
 export async function getKnowledgeNodeDetail(
