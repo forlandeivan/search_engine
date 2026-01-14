@@ -2301,6 +2301,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       setIsCreateDocumentDialogOpen(false);
       queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
       queryClient.invalidateQueries({
+        queryKey: ["/api/knowledge/bases", variables.baseId, "indexing", "summary"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/knowledge/bases", variables.baseId, "indexing", "changes"],
+      });
+      queryClient.invalidateQueries({
         predicate: (query) => {
           const [key, baseId] = query.queryKey as [unknown, unknown, ...unknown[]];
           return key === "knowledge-node" && baseId === variables.baseId;
@@ -2348,6 +2354,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       setIsCreateDocumentDialogOpen(false);
       queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
       queryClient.invalidateQueries({
+        queryKey: ["/api/knowledge/bases", variables.baseId, "indexing", "summary"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/knowledge/bases", variables.baseId, "indexing", "changes"],
+      });
+      queryClient.invalidateQueries({
         predicate: (query) => {
           const [key, baseId] = query.queryKey as [unknown, unknown, ...unknown[]];
           return key === "knowledge-node" && baseId === variables.baseId;
@@ -2386,6 +2398,12 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         document,
       );
       queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/knowledge/bases", variables.baseId, "indexing", "summary"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/knowledge/bases", variables.baseId, "indexing", "changes"],
+      });
     },
     onError: (error) => {
       toast({
