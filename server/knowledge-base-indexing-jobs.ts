@@ -4,7 +4,7 @@ import { buildWorkspaceScopedCollectionName } from "./qdrant-utils";
 import { knowledgeBaseIndexingPolicyService } from "./knowledge-base-indexing-policy";
 import { createKnowledgeDocumentChunkSet, updateKnowledgeDocumentChunkVectorRecords } from "./knowledge-chunks";
 import { getKnowledgeBaseById, getKnowledgeNodeDetail } from "./knowledge-base";
-import { resolveEmbeddingProviderForWorkspace } from "./indexing-rules";
+import { resolveEmbeddingProviderStatus, resolveEmbeddingProviderModels } from "./embedding-provider-registry";
 import { getQdrantClient } from "./qdrant";
 import { ensureCollectionCreatedIfNeeded } from "./qdrant-collections";
 import type { CollectionSchemaFieldInput } from "@shared/vectorization";
@@ -160,14 +160,38 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
     await updateIndexingActionStatus(job.workspaceId, job.baseId, "initializing", "Инициализация...");
 
+    // Политика индексации для баз знаний глобальная, проверяем провайдер без workspaceId
+    const providerId = policy.embeddingsProvider;
+    if (!providerId) {
+      const message = "Сервис эмбеддингов не указан в политике индексации баз знаний";
+      await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      return;
+    }
+
     try {
-      const resolved = await resolveEmbeddingProviderForWorkspace({ workspaceId: job.workspaceId });
-      embeddingProvider = resolved.provider;
-      if (!embeddingProvider) {
-        const message = "Сервис эмбеддингов недоступен в админ-настройках";
+      const providerStatus = await resolveEmbeddingProviderStatus(providerId, undefined);
+      if (!providerStatus) {
+        const message = `Провайдер эмбеддингов '${providerId}' не найден`;
         await storage.failKnowledgeBaseIndexingJob(job.id, message);
         return;
       }
+
+      if (!providerStatus.isConfigured) {
+        const message = providerStatus.statusReason ?? `Провайдер эмбеддингов '${providerId}' недоступен`;
+        await storage.failKnowledgeBaseIndexingJob(job.id, message);
+        return;
+      }
+
+      const provider = await storage.getEmbeddingProvider(providerId, undefined);
+      if (!provider) {
+        const message = `Провайдер эмбеддингов '${providerId}' не найден`;
+        await storage.failKnowledgeBaseIndexingJob(job.id, message);
+        return;
+      }
+
+      // Используем модель из политики баз знаний
+      const modelFromPolicy = policy.embeddingsModel;
+      embeddingProvider = modelFromPolicy ? { ...provider, model: modelFromPolicy } : provider;
     } catch (error) {
       const message =
         error instanceof Error && error.message ? error.message : "Сервис эмбеддингов недоступен в админ-настройках";
@@ -521,8 +545,10 @@ export function startKnowledgeBaseIndexingWorker() {
         return;
       }
 
+      console.info(`[${JOB_TYPE}] processing job ${job.id} for document ${job.documentId}`);
       try {
         await processJob(job);
+        console.info(`[${JOB_TYPE}] job ${job.id} completed successfully`);
       } catch (error) {
         // Ошибка уже обработана в processJob
         console.error(`[${JOB_TYPE}] job ${job.id} failed`, error);
