@@ -3112,7 +3112,7 @@ export default function SkillsPage() {
       <Card>
         <CardHeader className="py-4">
           <CardTitle className="text-base">Список навыков</CardTitle>
-          <CardDescription>Название, описание, тип, связанные базы, действия и выбранная модель LLM.</CardDescription>
+          <CardDescription>Название, описание, связанные базы, действия и выбранная модель LLM.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {showLoadingState ? (
@@ -3130,7 +3130,6 @@ export default function SkillsPage() {
                   <TableHead className="w-[60px] text-center">Иконка</TableHead>
                   <TableHead className="w-[220px]">Название</TableHead>
                   <TableHead>Описание</TableHead>
-                  <TableHead className="w-[120px]">Тип</TableHead>
                   <TableHead className="w-[200px]">Действия</TableHead>
                   <TableHead className="w-[220px]">Базы знаний</TableHead>
                   <TableHead className="w-[220px]">LLM модель</TableHead>
@@ -3140,9 +3139,6 @@ export default function SkillsPage() {
               </TableHeader>
               <TableBody>
                 {sortedSkills.map((skill) => {
-                  const isRagSkill =
-                    (skill.knowledgeBaseIds ?? []).length > 0 ||
-                    (skill.ragConfig?.collectionIds ?? []).length > 0;
                   return (
                     <TableRow
                       key={skill.id}
@@ -3192,19 +3188,6 @@ export default function SkillsPage() {
                       ) : (
                         <span className="text-sm text-muted-foreground">Нет описания</span>
                       )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "text-[11px] uppercase",
-                          isRagSkill
-                            ? "border-blue-200 bg-blue-100 text-blue-800"
-                            : "border-green-200 bg-green-100 text-green-800",
-                        )}
-                      >
-                        {isRagSkill ? "RAG" : "LLM"}
-                      </Badge>
                     </TableCell>
                     <TableCell>
                       <SkillActionsInline skillId={skill.id} />
