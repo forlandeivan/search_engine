@@ -675,32 +675,50 @@ export async function getKnowledgeBaseById(workspaceId: string, baseId: string):
 }
 
 export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: string): Promise<{ jobCount: number }> {
-  await ensureKnowledgeBaseTables();
+  try {
+    await ensureKnowledgeBaseTables();
+  } catch (error) {
+    console.error("Failed to ensure knowledge base tables:", error);
+    throw new KnowledgeBaseError("Не удалось инициализировать таблицы баз знаний", 500);
+  }
   
   const base = await fetchBase(baseId, workspaceId);
   if (!base) {
     throw new KnowledgeBaseError("База знаний не найдена", 404);
   }
 
-  const documentIds = await fetchDocumentIdsByBase(baseId, workspaceId);
+  let documentIds: string[];
+  try {
+    documentIds = await fetchDocumentIdsByBase(baseId, workspaceId);
+  } catch (error) {
+    console.error("Failed to fetch document IDs:", error);
+    throw new KnowledgeBaseError("Не удалось получить список документов", 500);
+  }
+
   if (documentIds.length === 0) {
     return { jobCount: 0 };
   }
 
   // Получаем документы с их версиями
-  const documents = await db
-    .select({
-      documentId: knowledgeDocuments.id,
-      versionId: knowledgeDocuments.currentVersionId,
-    })
-    .from(knowledgeDocuments)
-    .where(
-      and(
-        eq(knowledgeDocuments.baseId, baseId),
-        eq(knowledgeDocuments.workspaceId, workspaceId),
-        inArray(knowledgeDocuments.id, documentIds),
-      ),
-    );
+  let documents: Array<{ documentId: string; versionId: string | null }>;
+  try {
+    documents = await db
+      .select({
+        documentId: knowledgeDocuments.id,
+        versionId: knowledgeDocuments.currentVersionId,
+      })
+      .from(knowledgeDocuments)
+      .where(
+        and(
+          eq(knowledgeDocuments.baseId, baseId),
+          eq(knowledgeDocuments.workspaceId, workspaceId),
+          inArray(knowledgeDocuments.id, documentIds),
+        ),
+      );
+  } catch (error) {
+    console.error("Failed to fetch documents:", error);
+    throw new KnowledgeBaseError("Не удалось получить документы для индексации", 500);
+  }
 
   let jobCount = 0;
   for (const doc of documents) {
@@ -708,23 +726,28 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
       continue;
     }
 
-    const job = await storage.createKnowledgeBaseIndexingJob({
-      jobType: "knowledge_base_indexing",
-      workspaceId,
-      baseId,
-      documentId: doc.documentId,
-      versionId: doc.versionId,
-      status: "pending",
-      attempts: 0,
-      nextRetryAt: null,
-      lastError: null,
-      chunkCount: null,
-      totalChars: null,
-      totalTokens: null,
-    });
+    try {
+      const job = await storage.createKnowledgeBaseIndexingJob({
+        jobType: "knowledge_base_indexing",
+        workspaceId,
+        baseId,
+        documentId: doc.documentId,
+        versionId: doc.versionId,
+        status: "pending",
+        attempts: 0,
+        nextRetryAt: null,
+        lastError: null,
+        chunkCount: null,
+        totalChars: null,
+        totalTokens: null,
+      });
 
-    if (job) {
-      jobCount++;
+      if (job) {
+        jobCount++;
+      }
+    } catch (error) {
+      console.error(`Failed to create indexing job for document ${doc.documentId}:`, error);
+      // Продолжаем обработку других документов, но логируем ошибку
     }
   }
 
