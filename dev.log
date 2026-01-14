@@ -200,3 +200,6 @@
 [2026-01-14T17:25:55.271Z] [knowledge_base_indexing] polling for next job...
 [2026-01-14T17:25:55.281Z] [knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: no rows returned, result.rows.length=0
 [2026-01-14T17:25:55.282Z] [knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob returned: null
+[2026-01-14T17:26:00.294Z] [knowledge_base_indexing] polling for next job...
+[2026-01-14T17:26:00.303Z] [knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: no rows returned, result.rows.length=0
+[2026-01-14T17:26:00.304Z] [knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob returned: null
