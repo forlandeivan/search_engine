@@ -182,26 +182,25 @@ export class KnowledgeBaseIndexingPolicyService {
       );
     }
 
-    if (workspaceId) {
-      const providerStatus = await this.providerResolver.resolve(embeddingsProvider, workspaceId);
-      if (!providerStatus || !providerStatus.isAvailable) {
-        throw new KnowledgeBaseIndexingPolicyDomainError(
-          `Провайдер '${embeddingsProvider}' недоступен`,
-          "PROVIDER_UNAVAILABLE",
-          "embeddingsProvider",
-        );
-      }
+    // Политика индексации для баз знаний глобальная, проверяем провайдер без workspaceId
+    const providerStatus = await this.providerResolver.resolve(embeddingsProvider, undefined);
+    if (!providerStatus || !providerStatus.isAvailable) {
+      throw new KnowledgeBaseIndexingPolicyDomainError(
+        `Провайдер '${embeddingsProvider}' недоступен`,
+        "PROVIDER_UNAVAILABLE",
+        "embeddingsProvider",
+      );
+    }
 
-      const modelsInfo = await this.modelsResolver.resolveModels(embeddingsProvider, workspaceId);
-      if (modelsInfo && modelsInfo.models.length > 0) {
-        const modelExists = modelsInfo.models.some((m) => m.id === embeddingsModel || m.name === embeddingsModel);
-        if (!modelExists) {
-          throw new KnowledgeBaseIndexingPolicyDomainError(
-            `Модель '${embeddingsModel}' не найдена у провайдера '${embeddingsProvider}'`,
-            "MODEL_NOT_FOUND",
-            "embeddingsModel",
-          );
-        }
+    const modelsInfo = await this.modelsResolver.resolveModels(embeddingsProvider, undefined);
+    if (modelsInfo && modelsInfo.models.length > 0) {
+      const modelExists = modelsInfo.models.some((m) => m.id === embeddingsModel || m.name === embeddingsModel);
+      if (!modelExists) {
+        throw new KnowledgeBaseIndexingPolicyDomainError(
+          `Модель '${embeddingsModel}' не найдена у провайдера '${embeddingsProvider}'`,
+          "MODEL_NOT_FOUND",
+          "embeddingsModel",
+        );
       }
     }
 
