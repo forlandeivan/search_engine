@@ -188,7 +188,10 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
 }
 
 async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
+  console.info(`[${JOB_TYPE}] processJob started for job ${job.id} document=${job.documentId} base=${job.baseId}`);
+  
   if (job.jobType && job.jobType !== JOB_TYPE) {
+    console.warn(`[${JOB_TYPE}] job ${job.id} has wrong jobType: ${job.jobType}, expected ${JOB_TYPE}`);
     return;
   }
 
@@ -196,23 +199,29 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
   let workspace: Workspace | undefined;
 
   try {
+    console.info(`[${JOB_TYPE}] fetching workspace ${job.workspaceId} for job ${job.id}`);
     workspace = await storage.getWorkspace(job.workspaceId);
     if (!workspace) {
       const message = "Рабочее пространство не найдено";
+      console.error(`[${JOB_TYPE}] ${message} for job ${job.id} workspace=${job.workspaceId}`);
       await storage.failKnowledgeBaseIndexingJob(job.id, message);
       return;
     }
 
+    console.info(`[${JOB_TYPE}] fetching base ${job.baseId} for job ${job.id}`);
     const base = await getKnowledgeBaseById(job.workspaceId, job.baseId);
     if (!base) {
       const message = "База знаний не найдена";
+      console.error(`[${JOB_TYPE}] ${message} for job ${job.id} base=${job.baseId}`);
       await storage.failKnowledgeBaseIndexingJob(job.id, message);
       return;
     }
 
+    console.info(`[${JOB_TYPE}] fetching node detail ${job.documentId} for job ${job.id}`);
     const nodeDetail = await getKnowledgeNodeDetail(job.baseId, job.documentId, job.workspaceId);
     if (!nodeDetail || nodeDetail.type !== "document") {
       const message = "Документ не найден";
+      console.error(`[${JOB_TYPE}] ${message} for job ${job.id} document=${job.documentId} type=${nodeDetail?.type ?? "null"}`);
       await storage.failKnowledgeBaseIndexingJob(job.id, message);
       return;
     }
@@ -614,16 +623,22 @@ export function startKnowledgeBaseIndexingWorker() {
         return;
       }
 
-      console.info(`[${JOB_TYPE}] processing job ${job.id} for document ${job.documentId} base=${job.baseId}`);
+      console.info(`[${JOB_TYPE}] processing job ${job.id} for document ${job.documentId} base=${job.baseId} workspace=${job.workspaceId}`);
       try {
         await processJob(job);
         console.info(`[${JOB_TYPE}] job ${job.id} completed successfully`);
       } catch (error) {
         // Ошибка уже обработана в processJob
-        console.error(`[${JOB_TYPE}] job ${job.id} failed`, error);
+        console.error(`[${JOB_TYPE}] job ${job.id} failed:`, error instanceof Error ? error.message : String(error));
+        if (error instanceof Error && error.stack) {
+          console.error(`[${JOB_TYPE}] job ${job.id} stack:`, error.stack);
+        }
       }
     } catch (error) {
-      console.error(`[${JOB_TYPE}] worker error`, error);
+      console.error(`[${JOB_TYPE}] worker error:`, error instanceof Error ? error.message : String(error));
+      if (error instanceof Error && error.stack) {
+        console.error(`[${JOB_TYPE}] worker error stack:`, error.stack);
+      }
     } finally {
       active = false;
     }
