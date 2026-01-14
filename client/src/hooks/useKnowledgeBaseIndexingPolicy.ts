@@ -6,11 +6,8 @@ export function useKnowledgeBaseIndexingPolicy() {
   return useQuery({
     queryKey: ["knowledge-base-indexing-policy"],
     queryFn: async (): Promise<KnowledgeBaseIndexingPolicyDto> => {
-      const response = await apiRequest<KnowledgeBaseIndexingPolicyDto>(
-        "/api/admin/knowledge-base-indexing-policy",
-        { method: "GET" },
-      );
-      return response;
+      const res = await apiRequest("GET", "/api/admin/knowledge-base-indexing-policy");
+      return (await res.json()) as KnowledgeBaseIndexingPolicyDto;
     },
   });
 }
@@ -20,14 +17,8 @@ export function useUpdateKnowledgeBaseIndexingPolicy() {
 
   return useMutation({
     mutationFn: async (data: UpdateKnowledgeBaseIndexingPolicyDto): Promise<KnowledgeBaseIndexingPolicyDto> => {
-      const response = await apiRequest<KnowledgeBaseIndexingPolicyDto>(
-        "/api/admin/knowledge-base-indexing-policy",
-        {
-          method: "PUT",
-          body: JSON.stringify(data),
-        },
-      );
-      return response;
+      const res = await apiRequest("PUT", "/api/admin/knowledge-base-indexing-policy", data);
+      return (await res.json()) as KnowledgeBaseIndexingPolicyDto;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["knowledge-base-indexing-policy"] });
