@@ -1151,6 +1151,11 @@ export interface IStorage {
     versionId: string,
   ): Promise<KnowledgeBaseIndexingJob | undefined>;
   claimNextKnowledgeBaseIndexingJob(now?: Date): Promise<KnowledgeBaseIndexingJob | null>;
+  countKnowledgeBaseIndexingJobs(
+    workspaceId: string,
+    baseId: string,
+    status: "pending" | "processing" | "completed" | "failed" | null,
+  ): Promise<number>;
   markKnowledgeBaseIndexingJobDone(
     jobId: string,
     stats?: { chunkCount?: number | null; totalChars?: number | null; totalTokens?: number | null },
@@ -7064,6 +7069,27 @@ export class DatabaseStorage implements IStorage {
         updatedAt: now,
       })
       .where(eq(knowledgeBaseIndexingJobs.id, jobId));
+  }
+
+  async countKnowledgeBaseIndexingJobs(
+    workspaceId: string,
+    baseId: string,
+    status: "pending" | "processing" | "completed" | "failed" | null,
+  ): Promise<number> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    const conditions = [
+      eq(knowledgeBaseIndexingJobs.workspaceId, workspaceId),
+      eq(knowledgeBaseIndexingJobs.baseId, baseId),
+      eq(knowledgeBaseIndexingJobs.jobType, "knowledge_base_indexing"),
+    ];
+    if (status !== null) {
+      conditions.push(eq(knowledgeBaseIndexingJobs.status, status));
+    }
+    const [result] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(knowledgeBaseIndexingJobs)
+      .where(and(...conditions));
+    return Number(result?.count ?? 0);
   }
 
   async getKnowledgeBaseIndexingPolicy(): Promise<KnowledgeBaseIndexingPolicy | null> {

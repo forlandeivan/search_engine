@@ -126,6 +126,67 @@ async function updateIndexingActionStatus(
   }
 }
 
+async function updateIndexingActionProgress(workspaceId: string, baseId: string): Promise<void> {
+  try {
+    const action = await knowledgeBaseIndexingActionsService.getLatest(workspaceId, baseId);
+    if (!action || action.status !== "processing") {
+      return;
+    }
+
+    // Подсчитываем job'ы для этой базы знаний
+    const [completedCount, totalCount] = await Promise.all([
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "completed"),
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, null),
+    ]);
+
+    const processedDocuments = completedCount;
+    const progressPercent = totalCount > 0 ? Math.round((processedDocuments / totalCount) * 100) : 0;
+
+    // Проверяем, все ли job'ы завершены
+    const [pendingCount, processingCount, failedCount] = await Promise.all([
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "pending"),
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "processing"),
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "failed"),
+    ]);
+
+    const remainingCount = pendingCount + processingCount;
+    const allDone = remainingCount === 0;
+
+    if (allDone) {
+      // Все job'ы завершены
+      await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
+        status: failedCount > 0 ? "error" : "done",
+        stage: failedCount > 0 ? "error" : "completed",
+        displayText:
+          failedCount > 0
+            ? `Индексация завершена с ошибками: ${failedCount} документов не удалось проиндексировать`
+            : `Индексация завершена: проиндексировано ${processedDocuments} из ${totalCount} документов`,
+        payload: {
+          totalDocuments: totalCount,
+          processedDocuments,
+          progressPercent: 100,
+          failedDocuments: failedCount,
+        },
+      });
+    } else {
+      // Обновляем прогресс
+      await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
+        stage: "processing",
+        displayText: `Индексация в процессе: обработано ${processedDocuments} из ${totalCount} документов`,
+        payload: {
+          totalDocuments: totalCount,
+          processedDocuments,
+          progressPercent,
+          remainingDocuments: remainingCount,
+        },
+      });
+    }
+  } catch (error) {
+    // Игнорируем ошибки обновления прогресса, чтобы не прерывать индексацию
+    console.error("Failed to update indexing action progress:", error);
+  }
+}
+
 async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
   if (job.jobType && job.jobType !== JOB_TYPE) {
     return;
@@ -496,6 +557,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       totalTokens,
     });
 
+    // Обновляем прогресс индексации
+    await updateIndexingActionProgress(job.workspaceId, job.baseId);
+
     console.info(
       `[${JOB_TYPE}] indexed document=${nodeDetail.id} base=${base.id} chunks=${chunkSet.chunks.length}`,
     );
@@ -510,6 +574,10 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     }
 
     await storage.failKnowledgeBaseIndexingJob(job.id, errorMessage);
+    
+    // Обновляем прогресс индексации (включая ошибки)
+    await updateIndexingActionProgress(job.workspaceId, job.baseId);
+    
     await updateIndexingActionStatus(
       job.workspaceId,
       job.baseId,
@@ -542,10 +610,11 @@ export function startKnowledgeBaseIndexingWorker() {
     try {
       const job = await storage.claimNextKnowledgeBaseIndexingJob();
       if (!job) {
+        // Нет доступных job'ов, продолжаем опрос
         return;
       }
 
-      console.info(`[${JOB_TYPE}] processing job ${job.id} for document ${job.documentId}`);
+      console.info(`[${JOB_TYPE}] processing job ${job.id} for document ${job.documentId} base=${job.baseId}`);
       try {
         await processJob(job);
         console.info(`[${JOB_TYPE}] job ${job.id} completed successfully`);
