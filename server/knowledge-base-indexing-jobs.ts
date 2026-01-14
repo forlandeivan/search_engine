@@ -1,20 +1,15 @@
-import type { KnowledgeBaseIndexingJob } from "@shared/schema";
-import { storage } from "./storage";
+import type { KnowledgeBaseIndexingJob, Workspace, EmbeddingProvider } from "@shared/schema";
+import { storage, buildWorkspaceScopedCollectionName } from "./storage";
 import { knowledgeBaseIndexingPolicyService } from "./knowledge-base-indexing-policy";
 import { createKnowledgeDocumentChunkSet, updateKnowledgeDocumentChunkVectorRecords } from "./knowledge-chunks";
 import { getKnowledgeBaseById, getKnowledgeNodeDetail } from "./knowledge-base";
 import { resolveEmbeddingProviderForWorkspace } from "./indexing-rules";
-import type { Workspace } from "@shared/schema";
 import { getQdrantClient } from "./qdrant";
 import { ensureCollectionCreatedIfNeeded } from "./qdrant-collections";
 import type { CollectionSchemaFieldInput } from "@shared/vectorization";
-import { renderLiquidTemplate } from "@shared/vectorization";
+import { renderLiquidTemplate, castValueToType, normalizeArrayValue } from "@shared/vectorization";
 import { buildVectorPayload } from "./qdrant-utils";
 import type { Schemas } from "./qdrant-client";
-import { buildWorkspaceScopedCollectionName } from "./storage";
-import { getQdrantClient } from "./qdrant";
-import { renderLiquidTemplate, castValueToType, normalizeArrayValue } from "@shared/vectorization";
-import type { EmbeddingProvider } from "@shared/schema";
 import { fetchAccessToken } from "./routes";
 
 function buildKnowledgeCollectionName(

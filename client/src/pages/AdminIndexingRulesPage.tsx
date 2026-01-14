@@ -20,6 +20,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CollectionSchemaEditor } from "@/components/collection-schema-editor";
 import { useToast } from "@/hooks/use-toast";
 import { useIndexingRules, useUpdateIndexingRules } from "@/hooks/useIndexingRules";
 import { useEmbeddingProviders } from "@/hooks/useEmbeddingProviders";
@@ -983,8 +984,8 @@ function KnowledgeBaseIndexingPolicyTab() {
                         <Input
                           id="kb-indexing-chunk-size"
                           type="number"
-                          min={MIN_CHUNK_SIZE}
-                          max={MAX_CHUNK_SIZE}
+                          min={KB_MIN_CHUNK_SIZE}
+                          max={KB_MAX_CHUNK_SIZE}
                           step={1}
                           disabled={disableInputs}
                           value={field.value ?? ""}
@@ -1040,16 +1041,27 @@ function KnowledgeBaseIndexingPolicyTab() {
 
             <section className="space-y-4">
               <div>
-                <h3 className="text-lg font-semibold">Schema полей</h3>
+                <h3 className="text-lg font-semibold">Schema полей для векторов</h3>
                 <p className="text-sm text-muted-foreground">
-                  Настройка полей для payload векторных записей через Liquid шаблоны.
+                  Определите, какие поля и значения будут храниться в векторной базе для каждого чанка. Используйте Liquid шаблоны для динамических значений.
                 </p>
               </div>
-              <Alert>
-                <AlertDescription>
-                  Редактор schema полей будет добавлен в следующей итерации. Сейчас используется дефолтная схема.
-                </AlertDescription>
-              </Alert>
+              <FormField
+                control={form.control}
+                name="defaultSchema"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <CollectionSchemaEditor
+                        value={field.value}
+                        onChange={field.onChange}
+                        disabled={disableInputs}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </section>
           </form>
         </Form>
