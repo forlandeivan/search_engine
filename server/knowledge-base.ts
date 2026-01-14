@@ -15,6 +15,9 @@ import {
   type CreateKnowledgeDocumentResponse,
   type UpdateKnowledgeDocumentPayload,
   type UpdateKnowledgeDocumentResponse,
+  type KnowledgeBaseIndexingSummary,
+  type KnowledgeBaseIndexingChangesResponse,
+  type KnowledgeBaseIndexingChangeItem,
 } from "@shared/knowledge-base";
 import {
   knowledgeBases,
@@ -22,17 +25,20 @@ import {
   knowledgeDocuments,
   knowledgeDocumentVersions,
   knowledgeDocumentChunkSets,
+  knowledgeDocumentIndexState,
   knowledgeBaseNodeTypes,
   knowledgeNodeSourceTypes,
   knowledgeDocumentStatuses,
   type KnowledgeBaseNodeType,
   type KnowledgeNodeSourceType,
   type KnowledgeDocumentStatus,
+  type KnowledgeBaseIndexStatus,
+  type KnowledgeDocumentIndexStatus,
   workspaces,
 } from "@shared/schema";
 import { db } from "./db";
 import { storage, ensureKnowledgeBaseTables, isKnowledgeBasePathLtreeEnabled } from "./storage";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
 import { load as loadHtml } from "cheerio";
 import { getLatestKnowledgeDocumentChunkSetForDocument } from "./knowledge-chunks";
@@ -60,6 +66,13 @@ type KnowledgeNodeRow = typeof knowledgeNodes.$inferSelect;
 const NODE_TYPE_SET = new Set<KnowledgeBaseNodeType>(knowledgeBaseNodeTypes);
 const NODE_SOURCE_SET = new Set<KnowledgeNodeSourceType>(knowledgeNodeSourceTypes);
 const DOCUMENT_STATUS_SET = new Set<KnowledgeDocumentStatus>(knowledgeDocumentStatuses);
+const INDEXING_CHANGE_STATUSES: KnowledgeDocumentIndexStatus[] = [
+  "outdated",
+  "not_indexed",
+  "error",
+];
+
+type KnowledgeBaseIndexingMode = "full" | "changed";
 
 const CYRILLIC_TO_LATIN: Record<string, string> = {
   а: "a",
@@ -466,6 +479,86 @@ async function fetchDocumentIdsByBase(
   return rows.map((row: (typeof rows)[number]) => row.id);
 }
 
+async function countDocumentsByBase(baseId: string, workspaceId: string): Promise<number> {
+  const [row] = await db
+    .select({
+      total: sql<number>`count(*)`,
+    })
+    .from(knowledgeDocuments)
+    .where(and(eq(knowledgeDocuments.baseId, baseId), eq(knowledgeDocuments.workspaceId, workspaceId)));
+
+  return Number(row?.total ?? 0);
+}
+
+async function countIndexingDocumentsByBase(
+  baseId: string,
+  workspaceId: string,
+): Promise<number> {
+  const [row] = await db
+    .select({
+      total: sql<number>`count(*)`,
+    })
+    .from(knowledgeDocumentIndexState)
+    .where(
+      and(
+        eq(knowledgeDocumentIndexState.baseId, baseId),
+        eq(knowledgeDocumentIndexState.workspaceId, workspaceId),
+        eq(knowledgeDocumentIndexState.status, "indexing"),
+      ),
+    );
+
+  return Number(row?.total ?? 0);
+}
+
+type IndexingDocumentRow = {
+  documentId: string;
+  nodeId: string;
+  versionId: string | null;
+};
+
+async function fetchIndexingDocuments(
+  baseId: string,
+  workspaceId: string,
+  mode: KnowledgeBaseIndexingMode,
+): Promise<IndexingDocumentRow[]> {
+  if (mode === "changed") {
+    return await db
+      .select({
+        documentId: knowledgeDocuments.id,
+        nodeId: knowledgeDocuments.nodeId,
+        versionId: knowledgeDocuments.currentVersionId,
+      })
+      .from(knowledgeDocuments)
+      .leftJoin(
+        knowledgeDocumentIndexState,
+        and(
+          eq(knowledgeDocumentIndexState.documentId, knowledgeDocuments.id),
+          eq(knowledgeDocumentIndexState.baseId, knowledgeDocuments.baseId),
+          eq(knowledgeDocumentIndexState.workspaceId, knowledgeDocuments.workspaceId),
+        ),
+      )
+      .where(
+        and(
+          eq(knowledgeDocuments.baseId, baseId),
+          eq(knowledgeDocuments.workspaceId, workspaceId),
+          or(
+            inArray(knowledgeDocumentIndexState.status, INDEXING_CHANGE_STATUSES),
+            isNull(knowledgeDocumentIndexState.documentId),
+          ),
+        ),
+      );
+  }
+
+  return await db
+    .select({
+      documentId: knowledgeDocuments.id,
+      nodeId: knowledgeDocuments.nodeId,
+      versionId: knowledgeDocuments.currentVersionId,
+    })
+    .from(knowledgeDocuments)
+    .where(and(eq(knowledgeDocuments.baseId, baseId), eq(knowledgeDocuments.workspaceId, workspaceId)));
+}
+
 async function deleteDocumentsWithChunks(
   tx: typeof db,
   documentIds: readonly string[],
@@ -676,7 +769,130 @@ export async function getKnowledgeBaseById(workspaceId: string, baseId: string):
   return await fetchBase(baseId, workspaceId);
 }
 
-export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: string): Promise<{ jobCount: number }> {
+export async function getKnowledgeBaseIndexingSummary(
+  baseId: string,
+  workspaceId: string,
+): Promise<KnowledgeBaseIndexingSummary> {
+  const base = await fetchBase(baseId, workspaceId);
+  if (!base) {
+    throw new KnowledgeBaseError("База знаний не найдена", 404);
+  }
+
+  let state = await storage.getKnowledgeBaseIndexState(workspaceId, baseId);
+
+  if (!state) {
+    const totalDocuments = await countDocumentsByBase(baseId, workspaceId);
+    const policy = await storage.getKnowledgeBaseIndexingPolicy();
+    const status: KnowledgeBaseIndexStatus = totalDocuments === 0 ? "not_indexed" : "outdated";
+
+    state =
+      (await storage.upsertKnowledgeBaseIndexState({
+        workspaceId,
+        baseId,
+        status,
+        totalDocuments,
+        outdatedDocuments: totalDocuments,
+        indexingDocuments: 0,
+        errorDocuments: 0,
+        upToDateDocuments: 0,
+        policyHash: policy?.policyHash ?? null,
+      })) ?? null;
+  }
+
+  return {
+    baseId,
+    status: (state?.status ?? "not_indexed") as KnowledgeBaseIndexStatus,
+    totalDocuments: Number(state?.totalDocuments ?? 0),
+    outdatedDocuments: Number(state?.outdatedDocuments ?? 0),
+    indexingDocuments: Number(state?.indexingDocuments ?? 0),
+    errorDocuments: Number(state?.errorDocuments ?? 0),
+    upToDateDocuments: Number(state?.upToDateDocuments ?? 0),
+    policyHash: state?.policyHash ?? null,
+    updatedAt: toIsoDate(state?.updatedAt ?? null),
+  } satisfies KnowledgeBaseIndexingSummary;
+}
+
+export async function getKnowledgeBaseIndexingChanges(
+  baseId: string,
+  workspaceId: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<KnowledgeBaseIndexingChangesResponse> {
+  const base = await fetchBase(baseId, workspaceId);
+  if (!base) {
+    throw new KnowledgeBaseError("База знаний не найдена", 404);
+  }
+
+  const limit = options.limit ?? 50;
+  const offset = options.offset ?? 0;
+
+  const baseCondition = and(
+    eq(knowledgeDocuments.baseId, baseId),
+    eq(knowledgeDocuments.workspaceId, workspaceId),
+  );
+  const stateJoin = and(
+    eq(knowledgeDocumentIndexState.documentId, knowledgeDocuments.id),
+    eq(knowledgeDocumentIndexState.baseId, knowledgeDocuments.baseId),
+    eq(knowledgeDocumentIndexState.workspaceId, knowledgeDocuments.workspaceId),
+  );
+  const changeFilter = or(
+    inArray(knowledgeDocumentIndexState.status, INDEXING_CHANGE_STATUSES),
+    isNull(knowledgeDocumentIndexState.documentId),
+  );
+
+  const [countRow] = await db
+    .select({ total: sql<number>`count(*)` })
+    .from(knowledgeDocuments)
+    .leftJoin(knowledgeDocumentIndexState, stateJoin)
+    .where(and(baseCondition, changeFilter));
+
+  const rows = await db
+    .select({
+      documentId: knowledgeDocuments.id,
+      nodeId: knowledgeDocuments.nodeId,
+      title: knowledgeNodes.title,
+      status: knowledgeDocumentIndexState.status,
+      stateUpdatedAt: knowledgeDocumentIndexState.updatedAt,
+      documentUpdatedAt: knowledgeDocuments.updatedAt,
+      nodeUpdatedAt: knowledgeNodes.updatedAt,
+    })
+    .from(knowledgeDocuments)
+    .leftJoin(knowledgeDocumentIndexState, stateJoin)
+    .leftJoin(
+      knowledgeNodes,
+      and(
+        eq(knowledgeNodes.id, knowledgeDocuments.nodeId),
+        eq(knowledgeNodes.baseId, knowledgeDocuments.baseId),
+        eq(knowledgeNodes.workspaceId, knowledgeDocuments.workspaceId),
+      ),
+    )
+    .where(and(baseCondition, changeFilter))
+    .orderBy(
+      desc(
+        sql`COALESCE(${knowledgeDocumentIndexState.updatedAt}, ${knowledgeDocuments.updatedAt}, ${knowledgeNodes.updatedAt})`,
+      ),
+    )
+    .limit(limit)
+    .offset(offset);
+
+  const items: KnowledgeBaseIndexingChangeItem[] = rows.map((row: (typeof rows)[number]) => ({
+    documentId: row.documentId,
+    nodeId: row.nodeId,
+    title: row.title ?? "Без названия",
+    status: (row.status ?? "not_indexed") as KnowledgeDocumentIndexStatus,
+    updatedAt: toIsoDate(row.stateUpdatedAt ?? row.documentUpdatedAt ?? row.nodeUpdatedAt ?? null),
+  }));
+
+  return {
+    items,
+    total: Number(countRow?.total ?? 0),
+  } satisfies KnowledgeBaseIndexingChangesResponse;
+}
+
+export async function startKnowledgeBaseIndexing(
+  baseId: string,
+  workspaceId: string,
+  mode: KnowledgeBaseIndexingMode = "full",
+): Promise<{ jobCount: number; actionId?: string; status?: KnowledgeBaseIndexStatus }> {
   try {
     await ensureKnowledgeBaseTables();
   } catch (error) {
@@ -689,15 +905,22 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
     throw new KnowledgeBaseError("База знаний не найдена", 404);
   }
 
-  let documentIds: string[];
+  let documents: IndexingDocumentRow[];
   try {
-    documentIds = await fetchDocumentIdsByBase(baseId, workspaceId);
+    documents = await fetchIndexingDocuments(baseId, workspaceId, mode);
   } catch (error) {
-    console.error("Failed to fetch document IDs:", error);
-    throw new KnowledgeBaseError("Не удалось получить список документов", 500);
+    console.error("Failed to fetch documents:", error);
+    throw new KnowledgeBaseError("Не удалось получить документы для индексации", 500);
   }
 
-  if (documentIds.length === 0) {
+  if (documents.length === 0) {
+    if (mode === "changed") {
+      const totalDocuments = await countDocumentsByBase(baseId, workspaceId);
+      const indexingDocuments = await countIndexingDocumentsByBase(baseId, workspaceId);
+      const status: KnowledgeBaseIndexStatus =
+        totalDocuments === 0 ? "not_indexed" : indexingDocuments > 0 ? "indexing" : "up_to_date";
+      return { jobCount: 0, status };
+    }
     return { jobCount: 0, actionId: undefined };
   }
 
@@ -708,9 +931,9 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
     await knowledgeBaseIndexingActionsService.start(workspaceId, baseId, actionId, "initializing");
     await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
       stage: "initializing",
-      displayText: `Инициализация индексации ${documentIds.length} документов...`,
+      displayText: `Инициализация индексации ${documents.length} документов...`,
       payload: {
-        totalDocuments: documentIds.length,
+        totalDocuments: documents.length,
         processedDocuments: 0,
         progressPercent: 0,
       },
@@ -719,28 +942,6 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
     console.error(`[startKnowledgeBaseIndexing] Failed to create indexing action for baseId: ${baseId}, workspaceId: ${workspaceId}`, error);
     // Продолжаем без action, индексация все равно должна работать
     actionId = undefined;
-  }
-
-  // Получаем документы с их версиями и nodeId
-  let documents: Array<{ documentId: string; nodeId: string; versionId: string | null }>;
-  try {
-    documents = await db
-      .select({
-        documentId: knowledgeDocuments.id,
-        nodeId: knowledgeDocuments.nodeId,
-        versionId: knowledgeDocuments.currentVersionId,
-      })
-      .from(knowledgeDocuments)
-      .where(
-        and(
-          eq(knowledgeDocuments.baseId, baseId),
-          eq(knowledgeDocuments.workspaceId, workspaceId),
-          inArray(knowledgeDocuments.id, documentIds),
-        ),
-      );
-  } catch (error) {
-    console.error("Failed to fetch documents:", error);
-    throw new KnowledgeBaseError("Не удалось получить документы для индексации", 500);
   }
 
   let jobCount = 0;
@@ -823,6 +1024,11 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
       }
     }
 
+    if (!effectiveVersionId) {
+      documentsWithoutVersions++;
+      continue;
+    }
+
     // Создаем job для индексации
     try {
       const job = await storage.createKnowledgeBaseIndexingJob({
@@ -840,48 +1046,52 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
         totalTokens: null,
       });
 
-        if (job) {
-          jobCount++;
-          console.log(`[startKnowledgeBaseIndexing] Created job ${job.id} for document ${doc.documentId} status=${job.status}`);
-          try {
-            await knowledgeBaseIndexingStateService.markDocumentIndexing(
-              workspaceId,
-              baseId,
-              doc.documentId,
-              { recalculateBase: false },
-            );
-          } catch (error) {
-            console.error(
-              `[startKnowledgeBaseIndexing] Failed to mark document ${doc.documentId} as indexing`,
-              error,
-            );
-          }
-        } else {
-          console.warn(`[startKnowledgeBaseIndexing] Failed to create job for document ${doc.documentId} - job is null`);
+      if (job) {
+        jobCount++;
+        console.log(
+          `[startKnowledgeBaseIndexing] Created job ${job.id} for document ${doc.documentId} status=${job.status}`,
+        );
+        try {
+          await knowledgeBaseIndexingStateService.markDocumentIndexing(
+            workspaceId,
+            baseId,
+            doc.documentId,
+            { recalculateBase: false },
+          );
+        } catch (error) {
+          console.error(
+            `[startKnowledgeBaseIndexing] Failed to mark document ${doc.documentId} as indexing`,
+            error,
+          );
         }
-      } catch (error) {
+      } else {
+        console.warn(
+          `[startKnowledgeBaseIndexing] Failed to create job for document ${doc.documentId} - job is null`,
+        );
+      }
+    } catch (error) {
       console.error(`[startKnowledgeBaseIndexing] Failed to create indexing job for document ${doc.documentId}:`, error);
       // Продолжаем обработку других документов, но логируем ошибку
     }
   }
 
-    if (documentsWithoutVersions > 0) {
-      console.warn(
-        `Skipped ${documentsWithoutVersions} document(s) without versions that could not be fixed automatically`,
-      );
-    }
+  if (documentsWithoutVersions > 0) {
+    console.warn(
+      `Skipped ${documentsWithoutVersions} document(s) without versions that could not be fixed automatically`,
+    );
+  }
 
-    try {
-      await knowledgeBaseIndexingStateService.recalculateBaseState(workspaceId, baseId);
-    } catch (error) {
-      console.error(
-        `[startKnowledgeBaseIndexing] Failed to recalculate base state for baseId=${baseId}`,
-        error,
-      );
-    }
+  try {
+    await knowledgeBaseIndexingStateService.recalculateBaseState(workspaceId, baseId);
+  } catch (error) {
+    console.error(
+      `[startKnowledgeBaseIndexing] Failed to recalculate base state for baseId=${baseId}`,
+      error,
+    );
+  }
 
-    // Обновляем статус после создания всех job'ов
-    if (actionId) {
+  // Обновляем статус после создания всех job'ов
+  if (actionId) {
     try {
       if (jobCount > 0) {
         await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
@@ -902,7 +1112,10 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
         });
       }
     } catch (error) {
-      console.error(`[startKnowledgeBaseIndexing] Failed to update indexing action for baseId: ${baseId}, workspaceId: ${workspaceId}, actionId: ${actionId}`, error);
+      console.error(
+        `[startKnowledgeBaseIndexing] Failed to update indexing action for baseId: ${baseId}, workspaceId: ${workspaceId}, actionId: ${actionId}`,
+        error,
+      );
       // Продолжаем, ошибка обновления статуса не критична
     }
   }

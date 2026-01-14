@@ -2,6 +2,8 @@ import type {
   KnowledgeNodeSourceType,
   KnowledgeDocumentStatus,
   KnowledgeBaseAskAiPipelineStepLog,
+  KnowledgeBaseIndexStatus,
+  KnowledgeDocumentIndexStatus,
 } from "./schema";
 
 export type KnowledgeBaseCrawlSelectorConfig = {
@@ -202,6 +204,31 @@ export type KnowledgeBaseSummary = {
   description: string;
   updatedAt: string;
   rootNodes: KnowledgeBaseTreeNode[];
+};
+
+export type KnowledgeBaseIndexingSummary = {
+  baseId: string;
+  status: KnowledgeBaseIndexStatus;
+  totalDocuments: number;
+  outdatedDocuments: number;
+  indexingDocuments: number;
+  errorDocuments: number;
+  upToDateDocuments: number;
+  policyHash: string | null;
+  updatedAt: string;
+};
+
+export type KnowledgeBaseIndexingChangeItem = {
+  documentId: string;
+  nodeId: string;
+  title: string;
+  status: KnowledgeDocumentIndexStatus;
+  updatedAt: string;
+};
+
+export type KnowledgeBaseIndexingChangesResponse = {
+  items: KnowledgeBaseIndexingChangeItem[];
+  total: number;
 };
 
 export type KnowledgeBaseAskAiRunSummary = {

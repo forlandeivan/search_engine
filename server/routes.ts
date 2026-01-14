@@ -51,6 +51,8 @@ import {
   createKnowledgeDocument,
   updateKnowledgeDocument,
   startKnowledgeBaseIndexing,
+  getKnowledgeBaseIndexingSummary,
+  getKnowledgeBaseIndexingChanges,
 } from "./knowledge-base";
 import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
 import {
@@ -16998,10 +17000,81 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   app.post("/api/knowledge/bases/:baseId/index", requireAuth, async (req, res) => {
     const { baseId } = req.params;
     const { id: workspaceId } = getRequestWorkspace(req);
+    const modeRaw = Array.isArray(req.query.mode) ? req.query.mode[0] : req.query.mode;
+    const modeNormalized =
+      typeof modeRaw === "string" ? modeRaw.trim().toLowerCase() : undefined;
+
+    if (modeNormalized && modeNormalized !== "full" && modeNormalized !== "changed") {
+      return res.status(400).json({ error: "Некорректный режим индексации" });
+    }
+
+    const mode = (modeNormalized ?? "full") as "full" | "changed";
 
     try {
-      const result = await startKnowledgeBaseIndexing(baseId, workspaceId);
+      const result = await startKnowledgeBaseIndexing(baseId, workspaceId, mode);
       res.json(result);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.get("/api/knowledge/bases/:baseId/indexing/summary", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+
+    try {
+      const summary = await getKnowledgeBaseIndexingSummary(baseId, workspaceId);
+      res.json(summary);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.get("/api/knowledge/bases/:baseId/indexing/changes", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+    const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+    const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+
+    const parseNumber = (value: unknown): number | undefined => {
+      if (value === undefined) {
+        return undefined;
+      }
+      if (typeof value === "string" && value.trim().length === 0) {
+        return undefined;
+      }
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+      }
+      if (typeof value === "string") {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) {
+          return parsed;
+        }
+      }
+      return NaN;
+    };
+
+    const limitCandidate = parseNumber(limitRaw);
+    if (limitCandidate !== undefined) {
+      if (!Number.isInteger(limitCandidate) || limitCandidate < 1) {
+        return res.status(400).json({ error: "Некорректный параметр limit" });
+      }
+    }
+
+    const offsetCandidate = parseNumber(offsetRaw);
+    if (offsetCandidate !== undefined) {
+      if (!Number.isInteger(offsetCandidate) || offsetCandidate < 0) {
+        return res.status(400).json({ error: "Некорректный параметр offset" });
+      }
+    }
+
+    const limit = (limitCandidate ?? 50) as number;
+    const offset = (offsetCandidate ?? 0) as number;
+
+    try {
+      const changes = await getKnowledgeBaseIndexingChanges(baseId, workspaceId, { limit, offset });
+      res.json(changes);
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);
     }
