@@ -79,6 +79,7 @@ class DbKnowledgeBaseIndexingPolicyRepository implements KnowledgeBaseIndexingPo
           embeddingsModel: values.embeddingsModel,
           chunkSize: values.chunkSize,
           chunkOverlap: values.chunkOverlap,
+          useHtmlContent: true, // Поле оставлено для обратной совместимости, но не используется
           defaultSchema: values.defaultSchema,
           updatedByAdminId: values.updatedByAdminId ?? null,
           updatedAt: sql`CURRENT_TIMESTAMP`,
@@ -218,6 +219,7 @@ export class KnowledgeBaseIndexingPolicyService {
       embeddingsModel: validated.embeddingsModel,
       chunkSize: validated.chunkSize,
       chunkOverlap: validated.chunkOverlap,
+      useHtmlContent: true, // Поле оставлено для обратной совместимости, но не используется
       defaultSchema: validated.defaultSchema as unknown as Record<string, unknown>,
       updatedByAdminId: updatedByAdminId ?? null,
       createdAt: current?.createdAt ?? new Date(),

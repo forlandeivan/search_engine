@@ -576,6 +576,7 @@ export const knowledgeBaseIndexingPolicy = pgTable("knowledge_base_indexing_poli
   embeddingsModel: varchar("embeddings_model", { length: 255 }).notNull(),
   chunkSize: integer("chunk_size").notNull(),
   chunkOverlap: integer("chunk_overlap").notNull(),
+  useHtmlContent: boolean("use_html_content").notNull().default(true),
   defaultSchema: jsonb("default_schema").notNull().default(sql`'[]'::jsonb`),
   updatedByAdminId: varchar("updated_by_admin_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),

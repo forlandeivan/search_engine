@@ -151,17 +151,18 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     }
 
     // Создаем чанки
-    const chunkSet = await createKnowledgeDocumentChunkSet(
-      job.baseId,
-      job.documentId,
-      job.workspaceId,
-      {
-        maxChars: policy.chunkSize,
-        overlapChars: policy.chunkOverlap,
-        splitByPages: false,
-        respectHeadings: true,
-      },
-    );
+        const chunkSet = await createKnowledgeDocumentChunkSet(
+          job.baseId,
+          job.documentId,
+          job.workspaceId,
+          {
+            maxChars: policy.chunkSize,
+            overlapChars: policy.chunkOverlap,
+            splitByPages: false,
+            respectHeadings: true,
+            // useHtmlContent определяется автоматически по sourceType документа
+          },
+        );
 
     if (!chunkSet || chunkSet.chunks.length === 0) {
       const message = "Не удалось создать чанки для документа";

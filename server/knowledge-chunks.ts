@@ -24,6 +24,7 @@ interface ChunkingConfigInput {
   overlapChars?: number | null;
   splitByPages?: boolean;
   respectHeadings?: boolean;
+  // useHtmlContent больше не используется - определяется автоматически по sourceType документа
 }
 
 type SentenceUnit = {
@@ -47,8 +48,11 @@ interface DocumentContext {
   versionId: string;
   versionNumber: number | null;
   content: string;
+  contentHtml: string | null;
+  contentText: string;
   documentHash: string | null;
   sourceUrl: string | null;
+  sourceType: "manual" | "import" | "crawl";
 }
 
 const headingLevels: Record<string, number> = {
@@ -653,9 +657,11 @@ const fetchDocumentContext = async (
       nodeBaseId: knowledgeNodes.baseId,
       versionId: knowledgeDocumentVersions.id,
       versionNumber: knowledgeDocumentVersions.versionNo,
-      content: knowledgeDocumentVersions.contentText,
+      contentText: knowledgeDocumentVersions.contentText,
+      contentJson: knowledgeDocumentVersions.contentJson,
       storedHash: knowledgeDocumentVersions.hash,
       sourceUrl: knowledgeDocuments.sourceUrl,
+      sourceType: knowledgeNodes.sourceType,
     })
     .from(knowledgeDocuments)
     .innerJoin(knowledgeNodes, eq(knowledgeDocuments.nodeId, knowledgeNodes.id))
@@ -684,17 +690,26 @@ const fetchDocumentContext = async (
     throw new KnowledgeBaseError("У документа отсутствует актуальная версия", 400);
   }
 
-  const content = typeof row.content === "string" ? row.content : "";
+  const contentText = typeof row.contentText === "string" ? row.contentText : "";
+  const versionContent = (row.contentJson ?? {}) as Record<string, unknown>;
+  const contentHtml = typeof versionContent.html === "string" ? versionContent.html : null;
+  const content = contentHtml || contentText;
   const normalizedContent = content.trim();
   const documentHash = row.storedHash ?? (normalizedContent ? hashText(normalizedContent) : null);
+  const sourceType = (row.sourceType === "crawl" || row.sourceType === "import" || row.sourceType === "manual")
+    ? row.sourceType
+    : "manual";
 
   return {
     documentId: row.documentId,
     versionId: row.versionId,
     versionNumber: row.versionNumber ?? null,
     content,
+    contentHtml,
+    contentText,
     documentHash,
     sourceUrl: typeof row.sourceUrl === "string" && row.sourceUrl.trim().length > 0 ? row.sourceUrl.trim() : null,
+    sourceType,
   } satisfies DocumentContext;
 };
 
@@ -764,6 +779,64 @@ const mapChunkSet = (
   } satisfies KnowledgeDocumentChunkSet;
 };
 
+const extractSentencesFromPlainText = (text: string): { sentences: SentenceUnit[]; normalizedText: string } => {
+  const normalized = sanitizeWhitespace(text);
+  if (!normalized) {
+    return { sentences: [], normalizedText: "" };
+  }
+
+  const normalizedText = normalized;
+  const sentenceParts = splitSentences(normalizedText);
+  const sentences: SentenceUnit[] = [];
+
+  let charStart = 0;
+  for (const sentence of sentenceParts) {
+    // Ищем предложение в тексте, начиная с текущей позиции
+    const sentenceIndex = normalizedText.indexOf(sentence, charStart);
+    if (sentenceIndex === -1) {
+      // Если не нашли, значит предложение уже было обработано или текст изменился
+      // Используем текущую позицию как fallback
+      const charEnd = Math.min(charStart + sentence.length, normalizedText.length);
+      if (charEnd > charStart) {
+        sentences.push({
+          text: sentence,
+          headingPath: [],
+          pageNumber: null,
+          type: "paragraph",
+          charStart,
+          charEnd,
+          tokenCount: countTokens(sentence),
+          anchorId: null,
+        });
+        charStart = charEnd;
+        // Добавляем пробел после предложения, если он есть
+        if (charStart < normalizedText.length && normalizedText[charStart] === " ") {
+          charStart += 1;
+        }
+      }
+    } else {
+      const charEnd = sentenceIndex + sentence.length;
+      sentences.push({
+        text: sentence,
+        headingPath: [],
+        pageNumber: null,
+        type: "paragraph",
+        charStart: sentenceIndex,
+        charEnd,
+        tokenCount: countTokens(sentence),
+        anchorId: null,
+      });
+      charStart = charEnd;
+      // Добавляем пробел после предложения, если он есть
+      if (charStart < normalizedText.length && normalizedText[charStart] === " ") {
+        charStart += 1;
+      }
+    }
+  }
+
+  return { sentences, normalizedText };
+};
+
 export const previewKnowledgeDocumentChunks = async (
   baseId: string,
   nodeId: string,
@@ -772,7 +845,12 @@ export const previewKnowledgeDocumentChunks = async (
 ): Promise<KnowledgeDocumentChunkPreview> => {
   const context = await fetchDocumentContext(baseId, nodeId, workspaceId);
   const normalizedConfig = normalizeChunkingConfig(inputConfig);
-  const { sentences, normalizedText } = extractSentences(context.content ?? "");
+  // Автоматическое определение: crawl → HTML, manual/import → текст
+  const useHtmlContent = context.sourceType === "crawl";
+  const sourceContent = useHtmlContent && context.contentHtml ? context.contentHtml : context.contentText;
+  const { sentences, normalizedText } = useHtmlContent
+    ? extractSentences(sourceContent ?? "")
+    : extractSentencesFromPlainText(sourceContent ?? "");
   const generatedChunks = generateChunks(
     sentences,
     normalizedText,
@@ -841,7 +919,12 @@ export const createKnowledgeDocumentChunkSet = async (
   console.log("[CHUNKS] Начало создания чанков для документа:", { baseId, nodeId, workspaceId });
   const context = await fetchDocumentContext(baseId, nodeId, workspaceId);
   const normalizedConfig = normalizeChunkingConfig(inputConfig);
-  const { sentences, normalizedText } = extractSentences(context.content ?? "");
+  // Автоматическое определение: crawl → HTML, manual/import → текст
+  const useHtmlContent = context.sourceType === "crawl";
+  const sourceContent = useHtmlContent && context.contentHtml ? context.contentHtml : context.contentText;
+  const { sentences, normalizedText } = useHtmlContent
+    ? extractSentences(sourceContent ?? "")
+    : extractSentencesFromPlainText(sourceContent ?? "");
   const generatedChunks = generateChunks(
     sentences,
     normalizedText,
