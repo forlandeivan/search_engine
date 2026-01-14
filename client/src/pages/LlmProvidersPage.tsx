@@ -1715,11 +1715,13 @@ export default function LlmProvidersPage() {
                               <SelectValue placeholder="Выберите провайдера" />
                             </SelectTrigger>
                             <SelectContent>
-                              {providers.map((provider: PublicLlmProvider) => (
-                                <SelectItem key={provider.id} value={provider.id}>
-                                  {provider.name}
-                                </SelectItem>
-                              ))}
+                              {providers
+                                .filter((provider: PublicLlmProvider) => provider.providerType === "unica")
+                                .map((provider: PublicLlmProvider) => (
+                                  <SelectItem key={provider.id} value={provider.id}>
+                                    {provider.name}
+                                  </SelectItem>
+                                ))}
                             </SelectContent>
                           </Select>
                         </FormControl>
