@@ -44,3 +44,4 @@ qdrant-data/
 
 # Local dev run logs
 dev-run.log
+dev.log

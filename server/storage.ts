@@ -7052,20 +7052,19 @@ export class DatabaseStorage implements IStorage {
 
     const row = (result.rows ?? [])[0] as Record<string, unknown> | undefined;
     if (!row) {
-      // Логируем через console.log, чтобы увидеть в dev.log
+      // Логирование в dev.log отключено
       const rowsCount = result.rows?.length ?? 0;
-      console.log(`[knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: no rows returned, result.rows.length=${rowsCount}`);
-      // Также пишем в файл напрямую
-      try {
-        const fs = await import("fs");
-        const path = await import("path");
-        const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
-        const timestamp = new Date().toISOString();
-        const logLine = `[${timestamp}] [knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: no rows returned, result.rows.length=${rowsCount}\n`;
-        fs.appendFileSync(logFile, logLine, "utf-8");
-      } catch {
-        // Игнорируем ошибки
-      }
+      // console.log(`[knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: no rows returned, result.rows.length=${rowsCount}`);
+      // try {
+      //   const fs = await import("fs");
+      //   const path = await import("path");
+      //   const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
+      //   const timestamp = new Date().toISOString();
+      //   const logLine = `[${timestamp}] [knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: no rows returned, result.rows.length=${rowsCount}\n`;
+      //   fs.appendFileSync(logFile, logLine, "utf-8");
+      // } catch {
+      //   // Игнорируем ошибки
+      // }
       return null;
     }
     
