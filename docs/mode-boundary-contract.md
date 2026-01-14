@@ -12,8 +12,11 @@
   - `server/skill-file-ingestion-jobs.ts` — эмбеддинги только из админки; ragConfig навыка не используется.
   - `server/routes.ts` — KB/RAG endpoint `/collections/search/rag` не влияет на standard-поток.
 - Frontend:
-  - KB UI скрыт из стандартной формы навыка (SkillSettingsPage) и из сайдбара; KnowledgeBase routes за guarded флагом `VITE_ENABLE_KB`.
-  - Типы `Skill`/`SkillPayload` допускают `ragConfig` как optional/null, стандартный UI его не использует.
+  - KB UI доступен в форме навыка для всех режимов выполнения, кроме no-code (`executionMode !== "no_code"`).
+  - Выбор баз знаний показывается при `executionMode !== "no_code"`.
+  - RAG-настройки показываются при `mode = "rag"` или при наличии баз знаний/коллекций.
+  - KnowledgeBase routes за guarded флагом `VITE_ENABLE_KB`.
+  - Типы `Skill`/`SkillPayload` допускают `ragConfig` как optional/null.
 
 ## Правило разделения
 - Standard — дефолт. Всё, что относится к RAG/KB, доступно только если навык явно `mode="rag"` (или будущий KB-flag true). Наличие legacy rag\_*/KB полей в данных не переключает режим.

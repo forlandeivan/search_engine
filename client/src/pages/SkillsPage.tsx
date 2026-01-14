@@ -1391,21 +1391,20 @@ export function SkillFormContent({
     return [...knowledgeBases].sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" }));
   }, [knowledgeBases]);
   const executionMode = form.watch("executionMode");
+  const knowledgeBaseIds = form.watch("knowledgeBaseIds");
+  const ragCollectionIds = form.watch("ragCollectionIds");
 
+  // Автоматическое определение режима при изменении баз знаний или коллекций
   useEffect(() => {
-    if (executionMode === "standard") {
-      form.setValue("knowledgeBaseIds", [], { shouldDirty: true });
-      form.setValue("ragMode", "all_collections", { shouldDirty: true });
-      form.setValue("ragCollectionIds", [], { shouldDirty: true });
-      form.setValue("ragTopK", "", { shouldDirty: true });
-      form.setValue("ragMinScore", "", { shouldDirty: true });
-      form.setValue("ragMaxContextTokens", "", { shouldDirty: true });
-      form.setValue("ragShowSources", true, { shouldDirty: true });
-      form.setValue("ragEmbeddingProviderId", NO_EMBEDDING_PROVIDER_VALUE, { shouldDirty: true });
-      form.setValue("llmTemperature", "", { shouldDirty: true });
-      form.setValue("llmMaxTokens", "", { shouldDirty: true });
+    if (executionMode === "no_code") {
+      // Для no-code режима всегда llm, не меняем
+      return;
     }
-  }, [executionMode, form]);
+    const hasRagSources =
+      (knowledgeBaseIds?.length ?? 0) > 0 || (ragCollectionIds?.length ?? 0) > 0;
+    const newMode = hasRagSources ? "rag" : "llm";
+    form.setValue("mode", newMode, { shouldDirty: true });
+  }, [knowledgeBaseIds, ragCollectionIds, executionMode, form]);
 
   const effectiveLlmOptions = useMemo(() => {
     if (!skill?.llmProviderConfigId || !skill?.modelId) {
@@ -1560,27 +1559,22 @@ export function SkillFormContent({
       }
     }
     try {
-      const cleanedValues =
-        values.executionMode === "standard"
-          ? {
-              ...values,
-              knowledgeBaseIds: [],
-              ragMode: "all_collections",
-              ragCollectionIds: [],
-              ragTopK: "",
-              ragMinScore: "",
-              ragMaxContextTokens: "",
-              ragShowSources: true,
-              ragEmbeddingProviderId: NO_EMBEDDING_PROVIDER_VALUE,
-              llmTemperature: "",
-              llmMaxTokens: "",
-            }
-          : values;
+      // Автоматическое определение режима на основе баз знаний и коллекций
+      const ragCollectionIdsForMode =
+        values.ragMode === "selected_collections"
+          ? values.ragCollectionIds.map((name) => name.trim()).filter((name) => name.length > 0)
+          : [];
+      const hasRagSources =
+        values.executionMode !== "no_code" &&
+        (values.knowledgeBaseIds.length > 0 || ragCollectionIdsForMode.length > 0);
+      const autoMode = values.executionMode === "no_code" ? "llm" : hasRagSources ? "rag" : "llm";
+
       const nextValues: SkillFormValues = {
-        ...cleanedValues,
+        ...values,
+        mode: autoMode,
         noCodeAuthType: noCodeAuthType,
         noCodeBearerTokenAction:
-          cleanedValues.noCodeBearerTokenAction ?? (storedNoCodeTokenIsSet ? "keep" : "replace"),
+          values.noCodeBearerTokenAction ?? (storedNoCodeTokenIsSet ? "keep" : "replace"),
       };
       if (!isBearerProvider) {
         nextValues.noCodeBearerTokenAction = "clear";
@@ -1590,12 +1584,12 @@ export function SkillFormContent({
       if (didSave) {
         const normalized: SkillFormValues = {
           ...nextValues,
-          name: cleanedValues.name.trim(),
-          description: cleanedValues.description?.trim() ?? "",
-          systemPrompt: cleanedValues.systemPrompt?.trim() ?? "",
-          icon: cleanedValues.icon?.trim() ?? "",
+          name: nextValues.name.trim(),
+          description: nextValues.description?.trim() ?? "",
+          systemPrompt: nextValues.systemPrompt?.trim() ?? "",
+          icon: nextValues.icon?.trim() ?? "",
           noCodeFileStorageProviderId:
-            cleanedValues.noCodeFileStorageProviderId ?? WORKSPACE_DEFAULT_PROVIDER_VALUE,
+            nextValues.noCodeFileStorageProviderId ?? WORKSPACE_DEFAULT_PROVIDER_VALUE,
           noCodeBearerToken: "",
           noCodeBearerTokenAction: nextValues.noCodeBearerTokenAction === "clear" ? "replace" : "keep",
         };
@@ -1960,11 +1954,12 @@ export function SkillFormContent({
                       <CardHeader className="px-6 grid gap-2">
                         <CardTitle className="text-base font-semibold">Источники и коллекции</CardTitle>
                         <CardDescription className="text-sm text-muted-foreground">
-                          Навык будет искать ответы только в выбранных базах, коллекциях и режимах RAG.
+                          Навык будет искать ответы в выбранных базах знаний и коллекциях.
+                          {form.watch("mode") === "rag" && " Режим RAG активен."}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="px-6 pb-6 space-y-6">
-                        {executionMode !== "standard" && (
+                        {executionMode !== "no_code" && (
                           <div className="grid gap-6 md:grid-cols-2">
                             <div className="space-y-6">
                               <FormField
@@ -2061,10 +2056,14 @@ export function SkillFormContent({
                             </div>
                           </div>
                         )}
-                        <Accordion type="single" collapsible>
-                          <AccordionItem value="rag-advanced" className="border-none">
-                            <AccordionTrigger className="py-2">RAG (дополнительно)</AccordionTrigger>
-                            <AccordionContent>
+                        {executionMode !== "no_code" &&
+                          (form.watch("mode") === "rag" ||
+                            (form.watch("knowledgeBaseIds")?.length ?? 0) > 0 ||
+                            (form.watch("ragCollectionIds")?.length ?? 0) > 0) && (
+                          <Accordion type="single" collapsible>
+                            <AccordionItem value="rag-advanced" className="border-none">
+                              <AccordionTrigger className="py-2">RAG (дополнительно)</AccordionTrigger>
+                              <AccordionContent>
                               <div className="space-y-4">
                                 <div className="space-y-1">
                                   <h3 className="text-base font-semibold">Провайдер эмбеддингов</h3>
@@ -2213,6 +2212,7 @@ export function SkillFormContent({
                             </AccordionContent>
                           </AccordionItem>
                         </Accordion>
+                        )}
                       </CardContent>
                     </Card>
                     ) : null}
