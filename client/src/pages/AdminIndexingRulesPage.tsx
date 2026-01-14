@@ -240,8 +240,15 @@ export default function AdminIndexingRulesPage() {
         </CardDescription>
       </header>
 
-      <Card>
-        <CardHeader className="flex flex-col gap-2">
+      <Tabs defaultValue="skills" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="skills">Навыки</TabsTrigger>
+          <TabsTrigger value="knowledge-bases">Базы знаний</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="skills" className="space-y-4">
+          <Card>
+            <CardHeader className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <CardTitle>Профиль индексации</CardTitle>
@@ -605,7 +612,7 @@ export default function AdminIndexingRulesPage() {
             </form>
           </Form>
         </CardContent>
-      </Card>
+          </Card>
         </TabsContent>
 
         <TabsContent value="knowledge-bases" className="space-y-4">
