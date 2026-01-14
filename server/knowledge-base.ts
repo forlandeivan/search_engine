@@ -841,9 +841,12 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
 
       if (job) {
         jobCount++;
+        console.log(`[startKnowledgeBaseIndexing] Created job ${job.id} for document ${doc.documentId} status=${job.status}`);
+      } else {
+        console.warn(`[startKnowledgeBaseIndexing] Failed to create job for document ${doc.documentId} - job is null`);
       }
     } catch (error) {
-      console.error(`Failed to create indexing job for document ${doc.documentId}:`, error);
+      console.error(`[startKnowledgeBaseIndexing] Failed to create indexing job for document ${doc.documentId}:`, error);
       // Продолжаем обработку других документов, но логируем ошибку
     }
   }

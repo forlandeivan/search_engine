@@ -6937,6 +6937,17 @@ export class DatabaseStorage implements IStorage {
       .returning();
 
     if (created) {
+      // Логируем создание job'а
+      try {
+        const fs = await import("fs");
+        const path = await import("path");
+        const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
+        const timestamp = new Date().toISOString();
+        const logLine = `[${timestamp}] [knowledge_base_indexing] createKnowledgeBaseIndexingJob: created job id=${created.id} documentId=${normalized.documentId} versionId=${normalized.versionId} status=${created.status}\n`;
+        fs.appendFileSync(logFile, logLine, "utf-8");
+      } catch {
+        // Игнорируем ошибки
+      }
       return created;
     }
 
@@ -6951,6 +6962,50 @@ export class DatabaseStorage implements IStorage {
         ),
       )
       .limit(1);
+
+    if (existing) {
+      // Если job существует и он failed, сбрасываем его в pending для повторной попытки
+      if (existing.status === "failed") {
+        const [updated] = await this.db
+          .update(knowledgeBaseIndexingJobs)
+          .set({
+            status: "pending",
+            attempts: 0,
+            nextRetryAt: null,
+            lastError: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(knowledgeBaseIndexingJobs.id, existing.id))
+          .returning();
+        
+        if (updated) {
+          // Логируем сброс failed job в pending
+          try {
+            const fs = await import("fs");
+            const path = await import("path");
+            const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
+            const timestamp = new Date().toISOString();
+            const logLine = `[${timestamp}] [knowledge_base_indexing] createKnowledgeBaseIndexingJob: reset failed job id=${existing.id} documentId=${normalized.documentId} versionId=${normalized.versionId} from failed to pending\n`;
+            fs.appendFileSync(logFile, logLine, "utf-8");
+          } catch {
+            // Игнорируем ошибки
+          }
+          return updated;
+        }
+      } else {
+        // Логируем, что job уже существует
+        try {
+          const fs = await import("fs");
+          const path = await import("path");
+          const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
+          const timestamp = new Date().toISOString();
+          const logLine = `[${timestamp}] [knowledge_base_indexing] createKnowledgeBaseIndexingJob: job already exists id=${existing.id} documentId=${normalized.documentId} versionId=${normalized.versionId} status=${existing.status}\n`;
+          fs.appendFileSync(logFile, logLine, "utf-8");
+        } catch {
+          // Игнорируем ошибки
+        }
+      }
+    }
 
     return existing ?? null;
   }
@@ -6997,7 +7052,36 @@ export class DatabaseStorage implements IStorage {
 
     const row = (result.rows ?? [])[0] as Record<string, unknown> | undefined;
     if (!row) {
+      // Логируем через console.log, чтобы увидеть в dev.log
+      const rowsCount = result.rows?.length ?? 0;
+      console.log(`[knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: no rows returned, result.rows.length=${rowsCount}`);
+      // Также пишем в файл напрямую
+      try {
+        const fs = await import("fs");
+        const path = await import("path");
+        const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
+        const timestamp = new Date().toISOString();
+        const logLine = `[${timestamp}] [knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: no rows returned, result.rows.length=${rowsCount}\n`;
+        fs.appendFileSync(logFile, logLine, "utf-8");
+      } catch {
+        // Игнорируем ошибки
+      }
       return null;
+    }
+    
+    const jobId = String(row.id ?? "unknown");
+    const jobStatus = String(row.status ?? "unknown");
+    console.log(`[knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: found job id=${jobId} status=${jobStatus}`);
+    // Также пишем в файл напрямую
+    try {
+      const fs = await import("fs");
+      const path = await import("path");
+      const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
+      const timestamp = new Date().toISOString();
+      const logLine = `[${timestamp}] [knowledge_base_indexing] claimNextKnowledgeBaseIndexingJob: found job id=${jobId} status=${jobStatus}\n`;
+      fs.appendFileSync(logFile, logLine, "utf-8");
+    } catch {
+      // Игнорируем ошибки
     }
 
     return {
