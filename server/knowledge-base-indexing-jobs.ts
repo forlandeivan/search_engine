@@ -13,6 +13,7 @@ import { buildVectorPayload } from "./qdrant-utils";
 import type { Schemas } from "./qdrant-client";
 import { fetchAccessToken } from "./llm-access-token";
 import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
+import { knowledgeBaseIndexingStateService } from "./knowledge-base-indexing-state";
 import { log } from "./vite";
 import fs from "fs";
 import path from "path";
@@ -238,6 +239,30 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
 }
 
 async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
+  const markJobError = async (message: string): Promise<void> => {
+    try {
+      await storage.failKnowledgeBaseIndexingJob(job.id, message);
+    } catch (error) {
+      workerLog(`failed to mark job ${job.id} as failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    try {
+      await knowledgeBaseIndexingStateService.markDocumentError(
+        job.workspaceId,
+        job.baseId,
+        job.documentId,
+        message,
+        job.versionId,
+      );
+    } catch (error) {
+      workerLog(
+        `failed to mark document ${job.documentId} as error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    await updateIndexingActionProgress(job.workspaceId, job.baseId);
+  };
+
   // Внешний try-catch для ловли всех ошибок
   try {
     workerLog(`processJob ENTRY for job ${job.id} document=${job.documentId} base=${job.baseId} workspace=${job.workspaceId}`);
@@ -256,7 +281,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     if (!workspace) {
       const message = "Рабочее пространство не найдено";
       workerLog(`${message} for job ${job.id} workspace=${job.workspaceId}`);
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      await markJobError(message);
       return;
     }
 
@@ -265,7 +290,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     if (!base) {
       const message = "База знаний не найдена";
       workerLog(`${message} for job ${job.id} base=${job.baseId}`);
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      await markJobError(message);
       return;
     }
 
@@ -288,8 +313,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     if (!documentRow || !documentRow.nodeId) {
       const message = `Документ с ID ${job.documentId} не найден в базе данных`;
       workerLog(`${message} for job ${job.id}`);
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(message);
       return;
     }
 
@@ -306,16 +330,14 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       if (error instanceof Error && error.stack) {
         workerLog(`ERROR stack: ${error.stack}`);
       }
-      await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка получения документа: ${errorMsg}`);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(`Ошибка получения документа: ${errorMsg}`);
       return;
     }
     
     if (!nodeDetail || nodeDetail.type !== "document") {
       const message = "Документ не найден";
       workerLog(`${message} for job ${job.id} document=${job.documentId} type=${nodeDetail?.type ?? "null"}`);
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(message);
       return;
     }
 
@@ -327,8 +349,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       workerLog(`ERROR getting policy for job ${job.id}: ${errorMsg}`);
-      await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка получения политики: ${errorMsg}`);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(`Ошибка получения политики: ${errorMsg}`);
       return;
     }
 
@@ -338,8 +359,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     const providerId = policy.embeddingsProvider;
     if (!providerId) {
       const message = "Сервис эмбеддингов не указан в политике индексации баз знаний";
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(message);
       return;
     }
 
@@ -347,23 +367,20 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       const providerStatus = await resolveEmbeddingProviderStatus(providerId, undefined);
       if (!providerStatus) {
         const message = `Провайдер эмбеддингов '${providerId}' не найден`;
-        await storage.failKnowledgeBaseIndexingJob(job.id, message);
-        await updateIndexingActionProgress(job.workspaceId, job.baseId);
+        await markJobError(message);
         return;
       }
 
       if (!providerStatus.isConfigured) {
         const message = providerStatus.statusReason ?? `Провайдер эмбеддингов '${providerId}' недоступен`;
-        await storage.failKnowledgeBaseIndexingJob(job.id, message);
-        await updateIndexingActionProgress(job.workspaceId, job.baseId);
+        await markJobError(message);
         return;
       }
 
       const provider = await storage.getEmbeddingProvider(providerId, undefined);
       if (!provider) {
         const message = `Провайдер эмбеддингов '${providerId}' не найден`;
-        await storage.failKnowledgeBaseIndexingJob(job.id, message);
-        await updateIndexingActionProgress(job.workspaceId, job.baseId);
+        await markJobError(message);
         return;
       }
 
@@ -377,8 +394,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     } catch (error) {
       const message =
         error instanceof Error && error.message ? error.message : "Сервис эмбеддингов недоступен в админ-настройках";
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(message);
       return;
     }
 
@@ -437,16 +453,14 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       if (error instanceof Error && error.stack) {
         workerLog(`ERROR stack: ${error.stack}`);
       }
-      await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка создания чанков: ${errorMsg}`);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(`Ошибка создания чанков: ${errorMsg}`);
       return;
     }
 
     if (!chunkSet || chunkSet.chunks.length === 0) {
       const message = "Не удалось создать чанки для документа";
       workerLog(`${message} for job ${job.id}`);
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(message);
       return;
     }
     workerLog(`created ${chunkSet.chunks.length} chunks for job ${job.id}`);
@@ -463,8 +477,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       if (error instanceof Error && error.stack) {
         workerLog(`ERROR stack: ${error.stack}`);
       }
-      await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка получения токена доступа: ${errorMsg}`);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(`Ошибка получения токена доступа: ${errorMsg}`);
       return;
     }
 
@@ -520,8 +533,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           workerLog(`ERROR cause: ${embeddingError.cause}`);
         }
         const errorMessage = embeddingError instanceof Error ? embeddingError.message : String(embeddingError);
-        await storage.failKnowledgeBaseIndexingJob(job.id, `Ошибка эмбеддинга чанка #${index + 1}: ${errorMessage}`);
-        await updateIndexingActionProgress(job.workspaceId, job.baseId);
+        await markJobError(`Ошибка эмбеддинга чанка #${index + 1}: ${errorMessage}`);
         return;
       }
     }
@@ -529,14 +541,14 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
     if (embeddingResults.length === 0) {
       const message = "Не удалось получить эмбеддинги для документа";
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      await markJobError(message);
       return;
     }
 
     const firstVector = embeddingResults[0]?.vector;
     if (!Array.isArray(firstVector) || firstVector.length === 0) {
       const message = "Сервис эмбеддингов вернул пустой вектор";
-      await storage.failKnowledgeBaseIndexingJob(job.id, message);
+      await markJobError(message);
       return;
     }
 
@@ -739,6 +751,21 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       totalTokens,
     });
 
+    try {
+      await knowledgeBaseIndexingStateService.markDocumentUpToDate(
+        job.workspaceId,
+        job.baseId,
+        job.documentId,
+        job.versionId,
+        chunkSet.id,
+        new Date(),
+      );
+    } catch (error) {
+      workerLog(
+        `failed to mark document ${job.documentId} as up to date: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
     // Обновляем прогресс индексации
     await updateIndexingActionProgress(job.workspaceId, job.baseId);
 
@@ -753,10 +780,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
         throw error;
       }
 
-      await storage.failKnowledgeBaseIndexingJob(job.id, errorMessage);
-      
-      // Обновляем прогресс индексации (включая ошибки)
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(errorMessage);
       
       await updateIndexingActionStatus(
         job.workspaceId,
@@ -775,8 +799,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     }
     // Помечаем job как failed
     try {
-      await storage.failKnowledgeBaseIndexingJob(job.id, outerErrorMessage);
-      await updateIndexingActionProgress(job.workspaceId, job.baseId);
+      await markJobError(outerErrorMessage);
     } catch (failError) {
       workerLog(`failed to mark job ${job.id} as failed in outer catch: ${failError instanceof Error ? failError.message : String(failError)}`);
     }
@@ -827,6 +850,20 @@ export function startKnowledgeBaseIndexingWorker() {
         // Убеждаемся, что job помечен как failed
         try {
           await storage.failKnowledgeBaseIndexingJob(job.id, errorMsg);
+          try {
+            await knowledgeBaseIndexingStateService.markDocumentError(
+              job.workspaceId,
+              job.baseId,
+              job.documentId,
+              errorMsg,
+              job.versionId,
+              { recalculateBase: false },
+            );
+          } catch (stateError) {
+            workerLog(
+              `failed to mark document ${job.documentId} as error in poll: ${stateError instanceof Error ? stateError.message : String(stateError)}`,
+            );
+          }
           await updateIndexingActionProgress(job.workspaceId, job.baseId);
         } catch (failError) {
           workerLog(`failed to mark job ${job.id} as failed: ${failError instanceof Error ? failError.message : String(failError)}`);
@@ -864,4 +901,3 @@ export function startKnowledgeBaseIndexingWorker() {
     },
   };
 }
-

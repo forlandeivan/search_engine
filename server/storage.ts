@@ -90,8 +90,6 @@ import {
   type SkillFileInsert,
   type SkillFileIngestionJob,
   type SkillFileIngestionJobInsert,
-  type KnowledgeBaseIndexingJob,
-  type KnowledgeBaseIndexingJobInsert,
   type ChatMessage,
   type ChatMessageInsert,
   type ChatCard,

@@ -41,6 +41,7 @@ import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
+import { knowledgeBaseIndexingStateService } from "./knowledge-base-indexing-state";
 
 export class KnowledgeBaseError extends Error {
   public status: number;
@@ -839,26 +840,48 @@ export async function startKnowledgeBaseIndexing(baseId: string, workspaceId: st
         totalTokens: null,
       });
 
-      if (job) {
-        jobCount++;
-        console.log(`[startKnowledgeBaseIndexing] Created job ${job.id} for document ${doc.documentId} status=${job.status}`);
-      } else {
-        console.warn(`[startKnowledgeBaseIndexing] Failed to create job for document ${doc.documentId} - job is null`);
-      }
-    } catch (error) {
+        if (job) {
+          jobCount++;
+          console.log(`[startKnowledgeBaseIndexing] Created job ${job.id} for document ${doc.documentId} status=${job.status}`);
+          try {
+            await knowledgeBaseIndexingStateService.markDocumentIndexing(
+              workspaceId,
+              baseId,
+              doc.documentId,
+              { recalculateBase: false },
+            );
+          } catch (error) {
+            console.error(
+              `[startKnowledgeBaseIndexing] Failed to mark document ${doc.documentId} as indexing`,
+              error,
+            );
+          }
+        } else {
+          console.warn(`[startKnowledgeBaseIndexing] Failed to create job for document ${doc.documentId} - job is null`);
+        }
+      } catch (error) {
       console.error(`[startKnowledgeBaseIndexing] Failed to create indexing job for document ${doc.documentId}:`, error);
       // Продолжаем обработку других документов, но логируем ошибку
     }
   }
 
-  if (documentsWithoutVersions > 0) {
-    console.warn(
-      `Skipped ${documentsWithoutVersions} document(s) without versions that could not be fixed automatically`,
-    );
-  }
+    if (documentsWithoutVersions > 0) {
+      console.warn(
+        `Skipped ${documentsWithoutVersions} document(s) without versions that could not be fixed automatically`,
+      );
+    }
 
-  // Обновляем статус после создания всех job'ов
-  if (actionId) {
+    try {
+      await knowledgeBaseIndexingStateService.recalculateBaseState(workspaceId, baseId);
+    } catch (error) {
+      console.error(
+        `[startKnowledgeBaseIndexing] Failed to recalculate base state for baseId=${baseId}`,
+        error,
+      );
+    }
+
+    // Обновляем статус после создания всех job'ов
+    if (actionId) {
     try {
       if (jobCount > 0) {
         await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
@@ -1254,11 +1277,20 @@ export async function createKnowledgeDocument(
   const children = mapChildren(node, groups, updatedNodesById);
   const structure = buildTreeFromGroups(groups, null);
 
-  return {
-    id: node.id,
-    title: node.title,
-    parentId: node.parentId ?? null,
-    type: "document",
+    try {
+      await knowledgeBaseIndexingStateService.markDocumentNotIndexed(workspaceId, baseId, documentId);
+    } catch (error) {
+      console.error(
+        `[createKnowledgeDocument] Failed to mark document ${documentId} as not indexed`,
+        error,
+      );
+    }
+
+    return {
+      id: node.id,
+      title: node.title,
+      parentId: node.parentId ?? null,
+      type: "document",
     content: contentHtml,
     contentMarkdown: contentMarkdown || null,
     contentPlainText: contentPlainText || null,
@@ -1389,7 +1421,16 @@ export async function updateKnowledgeDocument(
       .where(eq(knowledgeBases.id, baseId));
   });
 
-  return (await getKnowledgeNodeDetail(baseId, nodeId, workspaceId)) as UpdateKnowledgeDocumentResponse;
+    try {
+      await knowledgeBaseIndexingStateService.markDocumentOutdated(workspaceId, baseId, documentId);
+    } catch (error) {
+      console.error(
+        `[updateKnowledgeDocument] Failed to mark document ${documentId} as outdated`,
+        error,
+      );
+    }
+
+    return (await getKnowledgeNodeDetail(baseId, nodeId, workspaceId)) as UpdateKnowledgeDocumentResponse;
 }
 
 export async function deleteKnowledgeNode(

@@ -22,6 +22,7 @@ import {
   type EmbeddingProviderModelsInfo,
   type EmbeddingProviderStatus,
 } from "./embedding-provider-registry";
+import { knowledgeBaseIndexingStateService } from "./knowledge-base-indexing-state";
 
 export class KnowledgeBaseIndexingPolicyError extends Error {
   status = 400;
@@ -281,8 +282,16 @@ export class KnowledgeBaseIndexingPolicyService {
       updatedAt: new Date(),
     };
 
-    await this.repository.upsert(stored);
-    return mapToDto(await this.repository.get());
+      await this.repository.upsert(stored);
+      try {
+        await knowledgeBaseIndexingStateService.markAllDocumentsOutdatedByPolicy(policyHash);
+      } catch (error) {
+        console.error(
+          `[KnowledgeBaseIndexingPolicyService.update] Failed to update indexing states after policy change`,
+          error,
+        );
+      }
+      return mapToDto(await this.repository.get());
   }
 }
 
