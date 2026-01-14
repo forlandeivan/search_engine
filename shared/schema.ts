@@ -577,6 +577,7 @@ export const knowledgeBaseIndexingPolicy = pgTable("knowledge_base_indexing_poli
   chunkSize: integer("chunk_size").notNull(),
   chunkOverlap: integer("chunk_overlap").notNull(),
   defaultSchema: jsonb("default_schema").notNull().default(sql`'[]'::jsonb`),
+  policyHash: text("policy_hash"),
   updatedByAdminId: varchar("updated_by_admin_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -628,8 +629,101 @@ export const knowledgeBaseIndexingJobs = pgTable(
     baseIdx: index("knowledge_base_indexing_jobs_base_idx").on(table.baseId, table.status, table.nextRetryAt),
   }),
 );
-export type KnowledgeBaseIndexingJob = typeof knowledgeBaseIndexingJobs.$inferSelect;
-export type KnowledgeBaseIndexingJobInsert = typeof knowledgeBaseIndexingJobs.$inferInsert;
+  export type KnowledgeBaseIndexingJob = typeof knowledgeBaseIndexingJobs.$inferSelect;
+  export type KnowledgeBaseIndexingJobInsert = typeof knowledgeBaseIndexingJobs.$inferInsert;
+
+export const knowledgeDocumentIndexStatuses = [
+  "not_indexed",
+  "outdated",
+  "indexing",
+  "up_to_date",
+  "error",
+] as const;
+export type KnowledgeDocumentIndexStatus = (typeof knowledgeDocumentIndexStatuses)[number];
+
+export const knowledgeBaseIndexStatuses = [
+  "not_indexed",
+  "outdated",
+  "indexing",
+  "up_to_date",
+  "partial",
+  "error",
+] as const;
+export type KnowledgeBaseIndexStatus = (typeof knowledgeBaseIndexStatuses)[number];
+
+export const knowledgeDocumentIndexState = pgTable(
+  "knowledge_document_index_state",
+  {
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    baseId: varchar("base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    documentId: varchar("document_id")
+      .notNull()
+      .references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+    indexedVersionId: varchar("indexed_version_id").references(() => knowledgeDocumentVersions.id, {
+      onDelete: "set null",
+    }),
+    chunkSetId: varchar("chunk_set_id").references(() => knowledgeDocumentChunkSets.id, {
+      onDelete: "set null",
+    }),
+    policyHash: text("policy_hash"),
+    status: text("status")
+      .$type<KnowledgeDocumentIndexStatus>()
+      .notNull()
+      .default("not_indexed"),
+    error: text("error"),
+    indexedAt: timestamp("indexed_at"),
+    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.baseId, table.documentId] }),
+    baseStatusIdx: index("knowledge_document_index_state_base_status_idx").on(
+      table.baseId,
+      table.status,
+    ),
+    workspaceBaseIdx: index("knowledge_document_index_state_workspace_base_idx").on(
+      table.workspaceId,
+      table.baseId,
+    ),
+    documentIdx: index("knowledge_document_index_state_document_idx").on(table.documentId),
+  }),
+);
+export type KnowledgeDocumentIndexStateRecord = typeof knowledgeDocumentIndexState.$inferSelect;
+export type KnowledgeDocumentIndexStateInsert = typeof knowledgeDocumentIndexState.$inferInsert;
+
+export const knowledgeBaseIndexState = pgTable(
+  "knowledge_base_index_state",
+  {
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    baseId: varchar("base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    status: text("status")
+      .$type<KnowledgeBaseIndexStatus>()
+      .notNull()
+      .default("not_indexed"),
+    totalDocuments: integer("total_documents").notNull().default(0),
+    outdatedDocuments: integer("outdated_documents").notNull().default(0),
+    indexingDocuments: integer("indexing_documents").notNull().default(0),
+    errorDocuments: integer("error_documents").notNull().default(0),
+    upToDateDocuments: integer("up_to_date_documents").notNull().default(0),
+    policyHash: text("policy_hash"),
+    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.workspaceId, table.baseId] }),
+    statusIdx: index("knowledge_base_index_state_status_idx").on(table.workspaceId, table.status),
+  }),
+);
+export type KnowledgeBaseIndexStateRecord = typeof knowledgeBaseIndexState.$inferSelect;
+export type KnowledgeBaseIndexStateInsert = typeof knowledgeBaseIndexState.$inferInsert;
 
 export const indexingStages = [
   "initializing",

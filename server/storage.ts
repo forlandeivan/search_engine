@@ -43,11 +43,17 @@ import {
   knowledgeBaseIndexingJobs,
   knowledgeBaseIndexingPolicy,
   knowledgeBaseIndexingActions,
+  knowledgeDocumentIndexState,
+  knowledgeBaseIndexState,
   type KnowledgeBaseIndexingJob,
   type KnowledgeBaseIndexingJobInsert,
   type KnowledgeBaseIndexingPolicy,
   type KnowledgeBaseIndexingActionRecord,
   type KnowledgeBaseIndexingActionInsert,
+  type KnowledgeDocumentIndexStateRecord,
+  type KnowledgeDocumentIndexStateInsert,
+  type KnowledgeBaseIndexStateRecord,
+  type KnowledgeBaseIndexStateInsert,
   type KnowledgeBaseSearchSettingsRow,
   type KnowledgeBaseChunkSearchSettings,
   type KnowledgeBaseRagSearchSettings,
@@ -1165,6 +1171,34 @@ export interface IStorage {
   getKnowledgeBaseIndexingPolicy(): Promise<KnowledgeBaseIndexingPolicy | null>;
   updateKnowledgeBaseIndexingPolicy(policy: Partial<KnowledgeBaseIndexingPolicy>): Promise<KnowledgeBaseIndexingPolicy>;
 
+  // Knowledge base indexing state
+  upsertKnowledgeDocumentIndexState(
+    value: KnowledgeDocumentIndexStateInsert,
+  ): Promise<KnowledgeDocumentIndexStateRecord | null>;
+  updateKnowledgeDocumentIndexState(
+    workspaceId: string,
+    baseId: string,
+    documentId: string,
+    updates: Partial<KnowledgeDocumentIndexStateInsert>,
+  ): Promise<KnowledgeDocumentIndexStateRecord | null>;
+  getKnowledgeDocumentIndexState(
+    workspaceId: string,
+    baseId: string,
+    documentId: string,
+  ): Promise<KnowledgeDocumentIndexStateRecord | null>;
+  upsertKnowledgeBaseIndexState(
+    value: KnowledgeBaseIndexStateInsert,
+  ): Promise<KnowledgeBaseIndexStateRecord | null>;
+  updateKnowledgeBaseIndexState(
+    workspaceId: string,
+    baseId: string,
+    updates: Partial<KnowledgeBaseIndexStateInsert>,
+  ): Promise<KnowledgeBaseIndexStateRecord | null>;
+  getKnowledgeBaseIndexState(
+    workspaceId: string,
+    baseId: string,
+  ): Promise<KnowledgeBaseIndexStateRecord | null>;
+
   // Knowledge base indexing actions
   createKnowledgeBaseIndexingAction(
     value: KnowledgeBaseIndexingActionInsert,
@@ -2034,19 +2068,25 @@ async function ensureKnowledgeBaseIndexingPolicyTable(): Promise<void> {
   ensuringKnowledgeBaseIndexingPolicyTable = (async () => {
     await ensureUsersTable();
 
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS "knowledge_base_indexing_policy" (
-        "id" varchar PRIMARY KEY DEFAULT 'kb_indexing_policy_singleton',
-        "embeddings_provider" varchar(255) NOT NULL,
-        "embeddings_model" varchar(255) NOT NULL,
-        "chunk_size" integer NOT NULL,
-        "chunk_overlap" integer NOT NULL,
-        "default_schema" jsonb NOT NULL DEFAULT '[]'::jsonb,
-        "updated_by_admin_id" varchar,
-        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "knowledge_base_indexing_policy" (
+          "id" varchar PRIMARY KEY DEFAULT 'kb_indexing_policy_singleton',
+          "embeddings_provider" varchar(255) NOT NULL,
+          "embeddings_model" varchar(255) NOT NULL,
+          "chunk_size" integer NOT NULL,
+          "chunk_overlap" integer NOT NULL,
+          "default_schema" jsonb NOT NULL DEFAULT '[]'::jsonb,
+          "policy_hash" text,
+          "updated_by_admin_id" varchar,
+          "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      await db.execute(sql`
+        ALTER TABLE "knowledge_base_indexing_policy"
+        ADD COLUMN IF NOT EXISTS "policy_hash" text
+      `);
 
     await ensureConstraint(
       "knowledge_base_indexing_policy",
@@ -2061,11 +2101,179 @@ async function ensureKnowledgeBaseIndexingPolicyTable(): Promise<void> {
     knowledgeBaseIndexingPolicyTableEnsured = true;
   })();
 
-  await ensuringKnowledgeBaseIndexingPolicyTable;
-  ensuringKnowledgeBaseIndexingPolicyTable = null;
-}
+    await ensuringKnowledgeBaseIndexingPolicyTable;
+    ensuringKnowledgeBaseIndexingPolicyTable = null;
+  }
 
-let knowledgeBaseIndexingActionsTableEnsured = false;
+  let knowledgeDocumentIndexStateTableEnsured = false;
+  let ensuringKnowledgeDocumentIndexStateTable: Promise<void> | null = null;
+
+  async function ensureKnowledgeDocumentIndexStateTable(): Promise<void> {
+    if (knowledgeDocumentIndexStateTableEnsured) {
+      return;
+    }
+    if (ensuringKnowledgeDocumentIndexStateTable) {
+      await ensuringKnowledgeDocumentIndexStateTable;
+      return;
+    }
+
+    ensuringKnowledgeDocumentIndexStateTable = (async () => {
+      await ensureKnowledgeBaseTables();
+      await ensureWorkspacesTable();
+
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "knowledge_document_index_state" (
+          "workspace_id" varchar NOT NULL,
+          "base_id" varchar NOT NULL,
+          "document_id" varchar NOT NULL,
+          "indexed_version_id" varchar,
+          "chunk_set_id" varchar,
+          "policy_hash" text,
+          "status" text NOT NULL DEFAULT 'not_indexed',
+          "error" text,
+          "indexed_at" timestamp,
+          "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY ("workspace_id", "base_id", "document_id")
+        )
+      `);
+
+      await ensureConstraint(
+        "knowledge_document_index_state",
+        "knowledge_document_index_state_workspace_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_state"
+          ADD CONSTRAINT "knowledge_document_index_state_workspace_id_fkey"
+          FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+        `,
+      );
+
+      await ensureConstraint(
+        "knowledge_document_index_state",
+        "knowledge_document_index_state_base_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_state"
+          ADD CONSTRAINT "knowledge_document_index_state_base_id_fkey"
+          FOREIGN KEY ("base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE
+        `,
+      );
+
+      await ensureConstraint(
+        "knowledge_document_index_state",
+        "knowledge_document_index_state_document_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_state"
+          ADD CONSTRAINT "knowledge_document_index_state_document_id_fkey"
+          FOREIGN KEY ("document_id") REFERENCES "knowledge_documents"("id") ON DELETE CASCADE
+        `,
+      );
+
+      await ensureConstraint(
+        "knowledge_document_index_state",
+        "knowledge_document_index_state_indexed_version_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_state"
+          ADD CONSTRAINT "knowledge_document_index_state_indexed_version_id_fkey"
+          FOREIGN KEY ("indexed_version_id") REFERENCES "knowledge_document_versions"("id") ON DELETE SET NULL
+        `,
+      );
+
+      await ensureConstraint(
+        "knowledge_document_index_state",
+        "knowledge_document_index_state_chunk_set_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_state"
+          ADD CONSTRAINT "knowledge_document_index_state_chunk_set_id_fkey"
+          FOREIGN KEY ("chunk_set_id") REFERENCES "knowledge_document_chunk_sets"("id") ON DELETE SET NULL
+        `,
+      );
+
+      await ensureIndex(
+        "knowledge_document_index_state_base_status_idx",
+        sql`CREATE INDEX IF NOT EXISTS knowledge_document_index_state_base_status_idx ON "knowledge_document_index_state" ("base_id", "status")`,
+      );
+      await ensureIndex(
+        "knowledge_document_index_state_workspace_base_idx",
+        sql`CREATE INDEX IF NOT EXISTS knowledge_document_index_state_workspace_base_idx ON "knowledge_document_index_state" ("workspace_id", "base_id")`,
+      );
+      await ensureIndex(
+        "knowledge_document_index_state_document_idx",
+        sql`CREATE INDEX IF NOT EXISTS knowledge_document_index_state_document_idx ON "knowledge_document_index_state" ("document_id")`,
+      );
+
+      knowledgeDocumentIndexStateTableEnsured = true;
+    })();
+
+    await ensuringKnowledgeDocumentIndexStateTable;
+    ensuringKnowledgeDocumentIndexStateTable = null;
+  }
+
+  let knowledgeBaseIndexStateTableEnsured = false;
+  let ensuringKnowledgeBaseIndexStateTable: Promise<void> | null = null;
+
+  async function ensureKnowledgeBaseIndexStateTable(): Promise<void> {
+    if (knowledgeBaseIndexStateTableEnsured) {
+      return;
+    }
+    if (ensuringKnowledgeBaseIndexStateTable) {
+      await ensuringKnowledgeBaseIndexStateTable;
+      return;
+    }
+
+    ensuringKnowledgeBaseIndexStateTable = (async () => {
+      await ensureKnowledgeBaseTables();
+      await ensureWorkspacesTable();
+
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "knowledge_base_index_state" (
+          "workspace_id" varchar NOT NULL,
+          "base_id" varchar NOT NULL,
+          "status" text NOT NULL DEFAULT 'not_indexed',
+          "total_documents" integer NOT NULL DEFAULT 0,
+          "outdated_documents" integer NOT NULL DEFAULT 0,
+          "indexing_documents" integer NOT NULL DEFAULT 0,
+          "error_documents" integer NOT NULL DEFAULT 0,
+          "up_to_date_documents" integer NOT NULL DEFAULT 0,
+          "policy_hash" text,
+          "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY ("workspace_id", "base_id")
+        )
+      `);
+
+      await ensureConstraint(
+        "knowledge_base_index_state",
+        "knowledge_base_index_state_workspace_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_base_index_state"
+          ADD CONSTRAINT "knowledge_base_index_state_workspace_id_fkey"
+          FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+        `,
+      );
+
+      await ensureConstraint(
+        "knowledge_base_index_state",
+        "knowledge_base_index_state_base_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_base_index_state"
+          ADD CONSTRAINT "knowledge_base_index_state_base_id_fkey"
+          FOREIGN KEY ("base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE
+        `,
+      );
+
+      await ensureIndex(
+        "knowledge_base_index_state_status_idx",
+        sql`CREATE INDEX IF NOT EXISTS knowledge_base_index_state_status_idx ON "knowledge_base_index_state" ("workspace_id", "status")`,
+      );
+
+      knowledgeBaseIndexStateTableEnsured = true;
+    })();
+
+    await ensuringKnowledgeBaseIndexStateTable;
+    ensuringKnowledgeBaseIndexStateTable = null;
+  }
+
+  let knowledgeBaseIndexingActionsTableEnsured = false;
 let ensuringKnowledgeBaseIndexingActionsTable: Promise<void> | null = null;
 
 async function ensureKnowledgeBaseIndexingActionsTable(): Promise<void> {
@@ -7215,6 +7423,7 @@ export class DatabaseStorage implements IStorage {
         chunkSize: policy.chunkSize ?? 800,
         chunkOverlap: policy.chunkOverlap ?? 200,
         defaultSchema: policy.defaultSchema ?? ([] as unknown as Record<string, unknown>),
+        policyHash: policy.policyHash ?? null,
         updatedByAdminId: policy.updatedByAdminId ?? null,
         createdAt: policy.createdAt ?? new Date(),
         updatedAt: new Date(),
@@ -7227,12 +7436,180 @@ export class DatabaseStorage implements IStorage {
           chunkSize: sql`EXCLUDED.chunk_size`,
           chunkOverlap: sql`EXCLUDED.chunk_overlap`,
           defaultSchema: sql`EXCLUDED.default_schema`,
+          policyHash: sql`EXCLUDED.policy_hash`,
           updatedByAdminId: sql`EXCLUDED.updated_by_admin_id`,
           updatedAt: sql`CURRENT_TIMESTAMP`,
         },
       })
       .returning();
     return updated;
+  }
+
+  async upsertKnowledgeDocumentIndexState(
+    value: KnowledgeDocumentIndexStateInsert,
+  ): Promise<KnowledgeDocumentIndexStateRecord | null> {
+    try {
+      await ensureKnowledgeDocumentIndexStateTable();
+      const now = new Date();
+      const [updated] = await this.db
+        .insert(knowledgeDocumentIndexState)
+        .values({
+          ...value,
+          createdAt: value.createdAt ?? now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            knowledgeDocumentIndexState.workspaceId,
+            knowledgeDocumentIndexState.baseId,
+            knowledgeDocumentIndexState.documentId,
+          ],
+          set: {
+            indexedVersionId: sql`EXCLUDED.indexed_version_id`,
+            chunkSetId: sql`EXCLUDED.chunk_set_id`,
+            policyHash: sql`EXCLUDED.policy_hash`,
+            status: sql`EXCLUDED.status`,
+            error: sql`EXCLUDED.error`,
+            indexedAt: sql`EXCLUDED.indexed_at`,
+            updatedAt: sql`CURRENT_TIMESTAMP`,
+          },
+        })
+        .returning();
+      return updated ?? null;
+    } catch (error) {
+      console.error(`[upsertKnowledgeDocumentIndexState] Failed to upsert document state:`, error);
+      throw error;
+    }
+  }
+
+  async updateKnowledgeDocumentIndexState(
+    workspaceId: string,
+    baseId: string,
+    documentId: string,
+    updates: Partial<KnowledgeDocumentIndexStateInsert>,
+  ): Promise<KnowledgeDocumentIndexStateRecord | null> {
+    try {
+      await ensureKnowledgeDocumentIndexStateTable();
+      const now = new Date();
+      const [updated] = await this.db
+        .update(knowledgeDocumentIndexState)
+        .set({
+          ...updates,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(knowledgeDocumentIndexState.workspaceId, workspaceId),
+            eq(knowledgeDocumentIndexState.baseId, baseId),
+            eq(knowledgeDocumentIndexState.documentId, documentId),
+          ),
+        )
+        .returning();
+      return updated ?? null;
+    } catch (error) {
+      console.error(`[updateKnowledgeDocumentIndexState] Failed to update document state:`, error);
+      throw error;
+    }
+  }
+
+  async getKnowledgeDocumentIndexState(
+    workspaceId: string,
+    baseId: string,
+    documentId: string,
+  ): Promise<KnowledgeDocumentIndexStateRecord | null> {
+    await ensureKnowledgeDocumentIndexStateTable();
+    const [row] = await this.db
+      .select()
+      .from(knowledgeDocumentIndexState)
+      .where(
+        and(
+          eq(knowledgeDocumentIndexState.workspaceId, workspaceId),
+          eq(knowledgeDocumentIndexState.baseId, baseId),
+          eq(knowledgeDocumentIndexState.documentId, documentId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  }
+
+  async upsertKnowledgeBaseIndexState(
+    value: KnowledgeBaseIndexStateInsert,
+  ): Promise<KnowledgeBaseIndexStateRecord | null> {
+    try {
+      await ensureKnowledgeBaseIndexStateTable();
+      const now = new Date();
+      const [updated] = await this.db
+        .insert(knowledgeBaseIndexState)
+        .values({
+          ...value,
+          createdAt: value.createdAt ?? now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [knowledgeBaseIndexState.workspaceId, knowledgeBaseIndexState.baseId],
+          set: {
+            status: sql`EXCLUDED.status`,
+            totalDocuments: sql`EXCLUDED.total_documents`,
+            outdatedDocuments: sql`EXCLUDED.outdated_documents`,
+            indexingDocuments: sql`EXCLUDED.indexing_documents`,
+            errorDocuments: sql`EXCLUDED.error_documents`,
+            upToDateDocuments: sql`EXCLUDED.up_to_date_documents`,
+            policyHash: sql`EXCLUDED.policy_hash`,
+            updatedAt: sql`CURRENT_TIMESTAMP`,
+          },
+        })
+        .returning();
+      return updated ?? null;
+    } catch (error) {
+      console.error(`[upsertKnowledgeBaseIndexState] Failed to upsert base state:`, error);
+      throw error;
+    }
+  }
+
+  async updateKnowledgeBaseIndexState(
+    workspaceId: string,
+    baseId: string,
+    updates: Partial<KnowledgeBaseIndexStateInsert>,
+  ): Promise<KnowledgeBaseIndexStateRecord | null> {
+    try {
+      await ensureKnowledgeBaseIndexStateTable();
+      const now = new Date();
+      const [updated] = await this.db
+        .update(knowledgeBaseIndexState)
+        .set({
+          ...updates,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(knowledgeBaseIndexState.workspaceId, workspaceId),
+            eq(knowledgeBaseIndexState.baseId, baseId),
+          ),
+        )
+        .returning();
+      return updated ?? null;
+    } catch (error) {
+      console.error(`[updateKnowledgeBaseIndexState] Failed to update base state:`, error);
+      throw error;
+    }
+  }
+
+  async getKnowledgeBaseIndexState(
+    workspaceId: string,
+    baseId: string,
+  ): Promise<KnowledgeBaseIndexStateRecord | null> {
+    await ensureKnowledgeBaseIndexStateTable();
+    const [row] = await this.db
+      .select()
+      .from(knowledgeBaseIndexState)
+      .where(
+        and(
+          eq(knowledgeBaseIndexState.workspaceId, workspaceId),
+          eq(knowledgeBaseIndexState.baseId, baseId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
   }
 
   async createKnowledgeBaseIndexingAction(

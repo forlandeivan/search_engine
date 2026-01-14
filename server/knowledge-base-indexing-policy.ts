@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "./db";
@@ -80,6 +81,7 @@ class DbKnowledgeBaseIndexingPolicyRepository implements KnowledgeBaseIndexingPo
           chunkSize: values.chunkSize,
           chunkOverlap: values.chunkOverlap,
           defaultSchema: values.defaultSchema,
+          policyHash: values.policyHash ?? null,
           updatedByAdminId: values.updatedByAdminId ?? null,
           updatedAt: sql`CURRENT_TIMESTAMP`,
         },
@@ -88,6 +90,44 @@ class DbKnowledgeBaseIndexingPolicyRepository implements KnowledgeBaseIndexingPo
 
     return row;
   }
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, current]) => current !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, current]) => `${JSON.stringify(key)}:${stableStringify(current)}`);
+    return `{${entries.join(",")}}`;
+  }
+
+  if (value === undefined) {
+    return "null";
+  }
+
+  return JSON.stringify(value);
+}
+
+function computePolicyHash(policy: {
+  embeddingsProvider: string;
+  embeddingsModel: string;
+  chunkSize: number;
+  chunkOverlap: number;
+  defaultSchema: unknown;
+}): string {
+  const hashSource = stableStringify({
+    embeddingsProvider: policy.embeddingsProvider,
+    embeddingsModel: policy.embeddingsModel,
+    chunkSize: policy.chunkSize,
+    chunkOverlap: policy.chunkOverlap,
+    defaultSchema: policy.defaultSchema,
+  });
+
+  return createHash("sha256").update(hashSource, "utf8").digest("hex");
 }
 
 function mapToDto(row: StoredKnowledgeBaseIndexingPolicy | null): KnowledgeBaseIndexingPolicyDto {
@@ -220,6 +260,14 @@ export class KnowledgeBaseIndexingPolicyService {
       defaultSchema,
     });
 
+    const policyHash = computePolicyHash({
+      embeddingsProvider: validated.embeddingsProvider,
+      embeddingsModel: validated.embeddingsModel,
+      chunkSize: validated.chunkSize,
+      chunkOverlap: validated.chunkOverlap,
+      defaultSchema: validated.defaultSchema,
+    });
+
     const stored: StoredKnowledgeBaseIndexingPolicy = {
       id: KNOWLEDGE_BASE_INDEXING_POLICY_SINGLETON_ID,
       embeddingsProvider: validated.embeddingsProvider,
@@ -227,6 +275,7 @@ export class KnowledgeBaseIndexingPolicyService {
       chunkSize: validated.chunkSize,
       chunkOverlap: validated.chunkOverlap,
       defaultSchema: validated.defaultSchema as unknown as Record<string, unknown>,
+      policyHash,
       updatedByAdminId: updatedByAdminId ?? null,
       createdAt: current?.createdAt ?? new Date(),
       updatedAt: new Date(),
