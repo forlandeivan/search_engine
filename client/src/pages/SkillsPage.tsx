@@ -1228,7 +1228,7 @@ export function SkillFormContent({
   const embeddingProviderSelectDisabled = embeddingProvidersUnavailable || controlsDisabled;
   const isNoCodeMode = form.watch("executionMode") === "no_code";
   const isStandardMode = !isNoCodeMode;
-  const showRagUi = false;
+  const showRagUi = !isNoCodeMode; // Показывать RAG UI для всех режимов, кроме no-code
   const canManageCallbackToken = Boolean(skill?.id && isNoCodeMode && allowNoCodeFlow && onGenerateCallbackToken);
   const formatDateTime = (value: string | null | undefined): string | null => {
     if (!value) return null;
