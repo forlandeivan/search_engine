@@ -5,6 +5,19 @@ import { storage } from "./storage";
 import { isRagSkill } from "./skill-type";
 import { ensureModelAvailable, ModelInactiveError, ModelUnavailableError, ModelValidationError } from "./model-service";
 import { indexingRulesService } from "./indexing-rules";
+import fs from "fs";
+import path from "path";
+
+function logToDevLog(message: string): void {
+  try {
+    const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
+    const timestamp = new Date().toISOString();
+    const logLine = `[${timestamp}] ${message}\n`;
+    fs.appendFileSync(logFile, logLine, "utf-8");
+  } catch {
+    // Игнорируем ошибки записи в лог
+  }
+}
 
 export type RagPipelineStream = {
   onEvent: (eventName: string, payload?: unknown) => void;
@@ -105,11 +118,15 @@ export async function buildSkillRagRequestPayload(options: {
   stream?: boolean;
 }): Promise<KnowledgeRagRequestPayload> {
   const { skill, workspaceId } = options;
+  logToDevLog(`[RAG BUILD PAYLOAD] START: skillId=${skill.id}, workspaceId=${workspaceId}, messageLength=${options.userMessage.length}`);
+  logToDevLog(`[RAG BUILD PAYLOAD] skill.mode=${skill.mode}, isRagSkill=${isRagSkill(skill)}`);
+  logToDevLog(`[RAG BUILD PAYLOAD] skill.knowledgeBaseIds=${JSON.stringify(skill.knowledgeBaseIds)}`);
   console.log(`[RAG BUILD PAYLOAD] START: skillId=${skill.id}, workspaceId=${workspaceId}, messageLength=${options.userMessage.length}`);
   console.log(`[RAG BUILD PAYLOAD] skill.mode=${skill.mode}, isRagSkill=${isRagSkill(skill)}`);
   console.log(`[RAG BUILD PAYLOAD] skill.knowledgeBaseIds=${JSON.stringify(skill.knowledgeBaseIds)}`);
   
   if (!isRagSkill(skill)) {
+    logToDevLog(`[RAG BUILD PAYLOAD] ERROR: skill is not RAG skill (mode=${skill.mode})`);
     console.error(`[RAG BUILD PAYLOAD] ERROR: skill is not RAG skill (mode=${skill.mode})`);
     throw new SkillRagConfigurationError("Навык не поддерживает RAG-пайплайн");
   }
@@ -126,10 +143,13 @@ export async function buildSkillRagRequestPayload(options: {
     throw new SkillRagConfigurationError("У навыка не выбран источник (база знаний)");
   }
   
+  logToDevLog(`[RAG BUILD PAYLOAD] knowledgeBaseId=${knowledgeBaseId}`);
   console.log(`[RAG BUILD PAYLOAD] knowledgeBaseId=${knowledgeBaseId}`);
 
   const searchSettingsRecord = await storage.getKnowledgeBaseSearchSettings(workspaceId, knowledgeBaseId);
   const indexingRules = await indexingRulesService.getIndexingRules();
+  logToDevLog(`[RAG BUILD PAYLOAD] indexingRules.topK=${indexingRules.topK}, embeddingsProvider=${indexingRules.embeddingsProvider}`);
+  logToDevLog(`[RAG BUILD PAYLOAD] searchSettingsRecord=${searchSettingsRecord ? 'found' : 'not found'}`);
   console.log(`[RAG BUILD PAYLOAD] indexingRules.topK=${indexingRules.topK}, embeddingsProvider=${indexingRules.embeddingsProvider}`);
   console.log(`[RAG BUILD PAYLOAD] searchSettingsRecord=${searchSettingsRecord ? 'found' : 'not found'}`);
   
@@ -199,18 +219,24 @@ export async function buildSkillRagRequestPayload(options: {
   const baseSlug = sanitizeCollectionName(knowledgeBaseId);
   const workspaceSlug = sanitizeCollectionName(workspaceId);
   const vectorCollection = `kb_${baseSlug}_ws_${workspaceSlug}`;
+  logToDevLog(`[RAG BUILD PAYLOAD] vectorCollection=${vectorCollection} (baseSlug=${baseSlug}, workspaceSlug=${workspaceSlug})`);
   console.log(`[RAG BUILD PAYLOAD] vectorCollection=${vectorCollection} (baseSlug=${baseSlug}, workspaceSlug=${workspaceSlug})`);
 
+
+  // Если используется только векторный поиск (есть vectorCollection), то по умолчанию bm25Weight=0, vectorWeight=1.0
+  // Иначе (если нет векторной коллекции), то используется только BM25: bm25Weight=1.0, vectorWeight=0
+  const defaultBm25Weight = vectorCollection ? 0 : 1.0;
+  const defaultVectorWeight = vectorCollection ? 1.0 : 0;
 
   const bm25Weight =
     clampFraction(skill.ragConfig.bm25Weight) ??
     sanitizeOptionalNumber(resolvedRagSettings.bm25Weight ?? undefined) ??
-    0.5;
+    defaultBm25Weight;
 
   const vectorWeight =
     clampFraction(skill.ragConfig.vectorWeight) ??
     sanitizeOptionalNumber(resolvedRagSettings.vectorWeight ?? undefined) ??
-    (vectorCollection ? 0.5 : 0);
+    defaultVectorWeight;
 
   const request: KnowledgeRagRequestPayload = {
     q: trimmedMessage,
@@ -244,6 +270,13 @@ export async function buildSkillRagRequestPayload(options: {
     request.stream = options.stream;
   }
 
+  logToDevLog(`[RAG BUILD PAYLOAD] SUCCESS: request prepared`);
+  logToDevLog(`[RAG BUILD PAYLOAD] request.q=${request.q.slice(0, 50)}...`);
+  logToDevLog(`[RAG BUILD PAYLOAD] request.kb_id=${request.kb_id}`);
+  logToDevLog(`[RAG BUILD PAYLOAD] request.collection=${request.collection}`);
+  logToDevLog(`[RAG BUILD PAYLOAD] request.top_k=${request.top_k}`);
+  logToDevLog(`[RAG BUILD PAYLOAD] request.hybrid.vector.collection=${request.hybrid.vector.collection}`);
+  logToDevLog(`[RAG BUILD PAYLOAD] request.hybrid.vector.embedding_provider_id=${request.hybrid.vector.embedding_provider_id}`);
   console.log(`[RAG BUILD PAYLOAD] SUCCESS: request prepared`);
   console.log(`[RAG BUILD PAYLOAD] request.q=${request.q.slice(0, 50)}...`);
   console.log(`[RAG BUILD PAYLOAD] request.kb_id=${request.kb_id}`);
@@ -263,6 +296,7 @@ export async function callRagForSkillChat(options: {
   runPipeline: RunKnowledgeBaseRagPipeline;
   stream?: RagPipelineStream | null;
 }): Promise<unknown> {
+  logToDevLog(`[RAG CALL PIPELINE] START: skillId=${options.skill.id}, workspaceId=${options.workspaceId}, messageLength=${options.userMessage.length}`);
   console.log(`[RAG CALL PIPELINE] START: skillId=${options.skill.id}, workspaceId=${options.workspaceId}, messageLength=${options.userMessage.length}`);
   
   const body = await buildSkillRagRequestPayload({
@@ -272,6 +306,7 @@ export async function callRagForSkillChat(options: {
     stream: options.stream ? true : undefined,
   });
 
+  logToDevLog(`[RAG CALL PIPELINE] payload built, calling runPipeline with collection=${body.collection}`);
   console.log(`[RAG CALL PIPELINE] payload built, calling runPipeline with collection=${body.collection}`);
   
   try {
@@ -280,9 +315,12 @@ export async function callRagForSkillChat(options: {
       body,
       stream: options.stream ?? null,
     });
+    logToDevLog(`[RAG CALL PIPELINE] SUCCESS: result received, answerLength=${result?.response?.answer?.length ?? 0}`);
     console.log(`[RAG CALL PIPELINE] SUCCESS: result received, answerLength=${result?.response?.answer?.length ?? 0}`);
     return result;
   } catch (error) {
+    logToDevLog(`[RAG CALL PIPELINE] ERROR: ${error instanceof Error ? error.message : String(error)}`);
+    logToDevLog(`[RAG CALL PIPELINE] ERROR stack: ${error instanceof Error ? error.stack : 'no stack'}`);
     console.error(`[RAG CALL PIPELINE] ERROR: ${error instanceof Error ? error.message : String(error)}`);
     console.error(`[RAG CALL PIPELINE] ERROR stack: ${error instanceof Error ? error.stack : 'no stack'}`);
     throw error;

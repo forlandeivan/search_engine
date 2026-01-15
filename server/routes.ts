@@ -8,7 +8,20 @@ import fetch, {
 } from "node-fetch";
 import { createHash, randomUUID, randomBytes } from "crypto";
 import { extname } from "path";
+import path from "path";
+import fs from "fs";
 import { performance } from "perf_hooks";
+
+function logToDevLog(message: string): void {
+  try {
+    const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
+    const timestamp = new Date().toISOString();
+    const logLine = `[${timestamp}] ${message}\n`;
+    fs.appendFileSync(logFile, logLine, "utf-8");
+  } catch {
+    // Игнорируем ошибки записи в лог
+  }
+}
 import { storage } from "./storage";
 import {
   uploadWorkspaceFile,
@@ -3627,15 +3640,14 @@ async function runKnowledgeBaseRagPipeline(options: {
   const knowledgeBaseId = body.kb_id.trim();
   const wantsLlmStream = Boolean(stream);
   
-  console.log(`[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_id=${knowledgeBaseId}`);
+  logToDevLog(`[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_id=${knowledgeBaseId}`);
+  logToDevLog(`[RAG PIPELINE] stream=${stream ? 'PROVIDED' : 'NULL'}, wantsLlmStream=${wantsLlmStream}`);
+  logToDevLog(`[RAG PIPELINE] body.collection=${body.collection}, body.top_k=${body.top_k}`);
+  logToDevLog(`[RAG PIPELINE] body.hybrid.vector.collection=${body.hybrid?.vector?.collection}, embedding_provider_id=${body.hybrid?.vector?.embedding_provider_id}`);
+  logToDevLog(`[RAG PIPELINE] effectiveTopK=${effectiveTopK}, effectiveMinScore=${effectiveMinScore}, effectiveMaxContextTokens=${effectiveMaxContextTokens}`);
   console.log(`[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_id=${knowledgeBaseId}`);
   console.log(`[RAG PIPELINE] stream param:`, stream ? 'PROVIDED' : 'NULL');
   console.log(`[RAG PIPELINE] wantsLlmStream:`, wantsLlmStream);
-  console.log(`[RAG PIPELINE] body.collection=${body.collection}`);
-  console.log(`[RAG PIPELINE] body.top_k=${body.top_k}`);
-  console.log(`[RAG PIPELINE] body.hybrid.vector.collection=${body.hybrid?.vector?.collection}`);
-  console.log(`[RAG PIPELINE] body.hybrid.vector.embedding_provider_id=${body.hybrid?.vector?.embedding_provider_id}`);
-  console.log(`[RAG PIPELINE] effectiveTopK=${effectiveTopK}, effectiveMinScore=${effectiveMinScore}`);
   console.log(`[RAG PIPELINE] body.collection=${body.collection}`);
   console.log(`[RAG PIPELINE] body.top_k=${body.top_k}`);
   console.log(`[RAG PIPELINE] body.hybrid.vector.collection=${body.hybrid?.vector?.collection}`);
@@ -3880,17 +3892,23 @@ async function runKnowledgeBaseRagPipeline(options: {
       vectorCollection = vectorCollectionsToSearch[0];
       vectorConfigured = true;
     }
+    // Если используется векторный поиск, но веса не заданы явно - используем только векторный поиск (bm25Weight=0, vectorWeight=1.0)
+    // Если векторный поиск не настроен - используем только BM25 (bm25Weight=1.0, vectorWeight=0)
     if (vectorConfigured) {
-      if (!hasVectorWeightOverride) {
-        vectorWeight = 0.5;
-      }
-      if (!hasBm25WeightOverride) {
-        bm25Weight = 0.5;
+      if (!hasVectorWeightOverride && !hasBm25WeightOverride) {
+        // По умолчанию: только векторный поиск, BM25 отключен
+        bm25Weight = 0;
+        vectorWeight = 1.0;
+      } else if (!hasVectorWeightOverride) {
+        vectorWeight = 1.0 - bm25Weight;
+      } else if (!hasBm25WeightOverride) {
+        bm25Weight = 1.0 - vectorWeight;
       }
     } else {
+      // Векторный поиск не настроен - используем только BM25
       vectorWeight = 0;
-      if (bm25Weight <= 0) {
-        bm25Weight = 1;
+      if (!hasBm25WeightOverride) {
+        bm25Weight = 1.0;
       }
     }
 
@@ -3917,32 +3935,45 @@ async function runKnowledgeBaseRagPipeline(options: {
     >["sections"];
     let bm25Sections: SuggestSections = [];
 
-    const bm25Step = startPipelineStep(
-      "bm25_search",
-      { limit: suggestionLimit, weight: bm25Weight },
-      "BM25 РїРѕРёСЃРє",
-    );
-    const bm25Start = performance.now();
-    try {
-      const bm25Suggestions = await storage.searchKnowledgeBaseSuggestions(
-        knowledgeBaseId,
-        query,
-        suggestionLimit,
+    // BM25 поиск выполняется только если bm25Weight > 0
+    if (bm25Weight > 0) {
+      const bm25Step = startPipelineStep(
+        "bm25_search",
+        { limit: suggestionLimit, weight: bm25Weight },
+        "BM25 РїРѕРёСЃРє",
       );
-      bm25Duration = performance.now() - bm25Start;
-      normalizedQuery = bm25Suggestions.normalizedQuery || query;
-      bm25Sections = bm25Suggestions.sections
-        .filter((entry) => entry.source === "content")
-        .slice(0, bm25Limit);
-      bm25ResultCount = bm25Sections.length;
-      bm25Step.finish({
-        normalizedQuery,
-        candidates: bm25ResultCount,
-      });
-    } catch (error) {
-      bm25Duration = performance.now() - bm25Start;
-      bm25Step.fail(error);
-      throw error;
+      const bm25Start = performance.now();
+      try {
+        const bm25Suggestions = await storage.searchKnowledgeBaseSuggestions(
+          knowledgeBaseId,
+          query,
+          suggestionLimit,
+        );
+        bm25Duration = performance.now() - bm25Start;
+        normalizedQuery = bm25Suggestions.normalizedQuery || query;
+        bm25Sections = bm25Suggestions.sections
+          .filter((entry) => entry.source === "content")
+          .slice(0, bm25Limit);
+        bm25ResultCount = bm25Sections.length;
+        logToDevLog(`[RAG PIPELINE] BM25 search: normalizedQuery="${normalizedQuery}", bm25ResultCount=${bm25ResultCount}, duration=${bm25Duration.toFixed(2)}ms`);
+        bm25Step.finish({
+          normalizedQuery,
+          candidates: bm25ResultCount,
+        });
+      } catch (error) {
+        bm25Duration = performance.now() - bm25Start;
+        bm25Step.fail(error);
+        throw error;
+      }
+    } else {
+      skipPipelineStep(
+        "bm25_search",
+        "BM25 поиск",
+        "BM25 поиск отключён (bm25Weight=0)",
+      );
+      normalizedQuery = query;
+      bm25ResultCount = 0;
+      logToDevLog(`[RAG PIPELINE] BM25 search SKIPPED: bm25Weight=0, using only vector search`);
     }
 
     if (vectorWeight > 0) {
@@ -4059,45 +4090,54 @@ async function runKnowledgeBaseRagPipeline(options: {
         let lastVectorResponseStatus = 200;
         const aggregatedVectorResults: Array<{ collection: string; record: Record<string, unknown> }> = [];
 
-        if (normalizedSkillId) {
-        const searchResult = await searchSkillFileVectors({
-          workspaceId,
-          skillId: normalizedSkillId,
-          provider: embeddingProvider,
-          vector: vectorPayload,
-          limit: vectorLimit,
-          caller: "rag_pipeline",
-        });
+        // Если есть явно указанная коллекция базы знаний (не skill files), используем её
+        // Иначе, если есть skillId и нет явной коллекции, ищем в skill files
+        const hasExplicitKnowledgeBaseCollection = vectorCollectionsToSearch.length > 0 && 
+          !vectorCollectionsToSearch.includes("__skill_file_autoselect__") &&
+          vectorCollectionsToSearch.some(coll => coll.startsWith("kb_"));
 
-        if (searchResult.guardrailTriggered) {
-          vectorCollectionsToSearch = [];
-          vectorCollection = null;
-          vectorConfigured = false;
-          console.warn("[RAG VECTOR] guardrail triggered, vector search skipped", {
-            reason: searchResult.guardrailReason,
+        if (normalizedSkillId && !hasExplicitKnowledgeBaseCollection) {
+          // Ищем в skill files только если нет явной коллекции базы знаний
+          const searchResult = await searchSkillFileVectors({
             workspaceId,
             skillId: normalizedSkillId,
+            provider: embeddingProvider,
+            vector: vectorPayload,
+            limit: vectorLimit,
+            caller: "rag_pipeline",
           });
-        } else {
-          vectorCollectionsToSearch = [searchResult.collection!];
-          vectorCollection = searchResult.collection;
-          vectorConfigured = true;
-          if (!hasVectorWeightOverride && vectorWeight === 0) {
-            vectorWeight = 0.5;
-          }
-          if (!hasBm25WeightOverride && vectorWeight > 0 && bm25Weight === 1) {
-            bm25Weight = 0.5;
+
+          if (searchResult.guardrailTriggered) {
+            vectorCollectionsToSearch = [];
+            vectorCollection = null;
+            vectorConfigured = false;
+            console.warn("[RAG VECTOR] guardrail triggered, vector search skipped", {
+              reason: searchResult.guardrailReason,
+              workspaceId,
+              skillId: normalizedSkillId,
+            });
+          } else {
+            vectorCollectionsToSearch = [searchResult.collection!];
+            vectorCollection = searchResult.collection;
+            vectorConfigured = true;
+            if (!hasVectorWeightOverride && vectorWeight === 0) {
+              vectorWeight = 0.5;
+            }
+            if (!hasBm25WeightOverride && vectorWeight > 0 && bm25Weight === 1) {
+              bm25Weight = 0.5;
+            }
+
+            aggregatedVectorResults.push(
+              ...searchResult.results.map((item) => ({
+                collection: searchResult.collection!,
+                record: item as Record<string, unknown>,
+              })),
+            );
+            logToDevLog(`[RAG PIPELINE] Vector search (skill files): collection=${searchResult.collection}, results=${searchResult.results.length}`);
           }
 
-          aggregatedVectorResults.push(
-            ...searchResult.results.map((item) => ({
-              collection: searchResult.collection!,
-              record: item as Record<string, unknown>,
-            })),
-          );
-        }
-
-        vectorDuration = performance.now() - vectorStart;
+          vectorDuration = performance.now() - vectorStart;
+          logToDevLog(`[RAG PIPELINE] Vector search completed: aggregatedResults=${aggregatedVectorResults.length}, duration=${vectorDuration.toFixed(2)}ms`);
       } else {
         const apiBaseUrl = resolvePublicApiBaseUrl(req);
           const requestUrl = new URL(
@@ -4193,6 +4233,8 @@ async function runKnowledgeBaseRagPipeline(options: {
               results: Array<Record<string, unknown>>;
             }).results;
 
+            logToDevLog(`[RAG PIPELINE] Vector search (Qdrant API): collection=${collectionName}, results=${vectorResults.length}, status=${vectorResponse.status}`);
+
             aggregatedVectorResults.push(
               ...vectorResults.map((item) => ({
                 collection: collectionName,
@@ -4200,6 +4242,7 @@ async function runKnowledgeBaseRagPipeline(options: {
               })),
             );
           }
+          logToDevLog(`[RAG PIPELINE] Vector search (all collections): totalResults=${aggregatedVectorResults.length}`);
         }
 
         const formattedResults = aggregatedVectorResults.map(({ collection, record }) => ({
@@ -4244,6 +4287,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         }
 
         vectorResultCount = vectorChunks.length;
+        logToDevLog(`[RAG PIPELINE] Vector search final: vectorResultCount=${vectorResultCount}, vectorChunks=${vectorChunks.length}`);
         vectorStep.finish({
           hits: vectorResultCount,
           usageTokens: embeddingUsageTokens,
@@ -4268,7 +4312,13 @@ async function runKnowledgeBaseRagPipeline(options: {
       skipPipelineStep("vector_search", "Векторный поиск", "Векторный поиск отключён");
     }
 
-    if (normalizedSkillId && vectorChunks.length > 0) {
+    // Фильтрация по skill files нужна только если мы искали в skill files коллекции
+    // Если искали в коллекции базы знаний (kb_..._ws_...), то эта фильтрация не нужна
+    const isSkillFilesCollection = vectorCollectionsToSearch.length > 0 && 
+      (vectorCollectionsToSearch[0] === "__skill_file_autoselect__" ||
+       vectorCollectionsToSearch.some(coll => coll.includes("__proj_skill_files__")));
+    
+    if (normalizedSkillId && vectorChunks.length > 0 && isSkillFilesCollection) {
       const files = await storage.listSkillFiles(workspaceId, normalizedSkillId);
       const readyIds = new Set(
         files
@@ -4280,6 +4330,7 @@ async function runKnowledgeBaseRagPipeline(options: {
       if (readyIds.size === 0) {
         vectorChunks.length = 0;
         sanitizedVectorResults.length = 0;
+        logToDevLog(`[RAG PIPELINE] Skill files filter: readyIds.size=0, clearing vectorChunks (skill files collection)`);
       } else {
         const filteredVectorChunks = vectorChunks.filter((entry) => {
           const docId = typeof entry.payload?.doc_id === "string" ? entry.payload.doc_id : null;
@@ -4290,17 +4341,24 @@ async function runKnowledgeBaseRagPipeline(options: {
           return docId ? readyIds.has(docId) : true;
         });
 
+        logToDevLog(`[RAG PIPELINE] Skill files filter: readyIds.size=${readyIds.size}, before=${vectorChunks.length}, after=${filteredVectorChunks.length}`);
+        
         vectorChunks.length = 0;
         vectorChunks.push(...filteredVectorChunks);
 
         sanitizedVectorResults.length = 0;
         sanitizedVectorResults.push(...filteredSanitized);
       }
+    } else if (normalizedSkillId && vectorChunks.length > 0) {
+      logToDevLog(`[RAG PIPELINE] Skill files filter SKIPPED: isSkillFilesCollection=${isSkillFilesCollection}, using knowledge base collection`);
     }
 
+    const chunkIdsFromVector = Array.from(new Set(vectorChunks.map((entry) => entry.chunkId).filter(Boolean)));
+    logToDevLog(`[RAG PIPELINE] Getting chunk details: vectorChunks=${vectorChunks.length}, chunkIdsFromVector=${chunkIdsFromVector.length}`);
+    
     const chunkDetailsFromVector = await storage.getKnowledgeChunksByIds(
       knowledgeBaseId,
-      Array.from(new Set(vectorChunks.map((entry) => entry.chunkId).filter(Boolean))),
+      chunkIdsFromVector,
     );
     const vectorRecordIds = vectorChunks
       .map((entry) => entry.recordId)
@@ -4309,6 +4367,8 @@ async function runKnowledgeBaseRagPipeline(options: {
       vectorRecordIds.length > 0
         ? await storage.getKnowledgeChunksByVectorRecords(knowledgeBaseId, vectorRecordIds)
         : [];
+    
+    logToDevLog(`[RAG PIPELINE] Chunk details: chunkDetailsFromVector=${chunkDetailsFromVector.length}, chunkDetailsFromRecords=${chunkDetailsFromRecords.length}, vectorRecordIds=${vectorRecordIds.length}`);
 
     const chunkDetailsMap = new Map<
       string,
@@ -4348,6 +4408,8 @@ async function runKnowledgeBaseRagPipeline(options: {
         recordToChunk.set(detail.vectorRecordId, detail.chunkId);
       }
     }
+    
+    logToDevLog(`[RAG PIPELINE] chunkDetailsMap.size=${chunkDetailsMap.size}, recordToChunk.size=${recordToChunk.size}`);
 
     const aggregated = new Map<
       string,
@@ -4389,6 +4451,10 @@ async function runKnowledgeBaseRagPipeline(options: {
       });
     }
 
+    let vectorChunksProcessed = 0;
+    let vectorChunksSkippedNoChunkId = 0;
+    let vectorChunksSkippedNoDetail = 0;
+    
     for (const entry of vectorChunks) {
       let chunkId = entry.chunkId;
       if (!chunkId && entry.recordId) {
@@ -4396,13 +4462,17 @@ async function runKnowledgeBaseRagPipeline(options: {
       }
 
       if (!chunkId) {
+        vectorChunksSkippedNoChunkId++;
         continue;
       }
 
       const detail = chunkDetailsMap.get(chunkId);
       if (!detail) {
+        vectorChunksSkippedNoDetail++;
         continue;
       }
+      
+      vectorChunksProcessed++;
 
       const existing = aggregated.get(chunkId);
       const baseSnippet =
@@ -4435,6 +4505,8 @@ async function runKnowledgeBaseRagPipeline(options: {
 
       vectorDocumentIds.add(detail.documentId);
     }
+    
+    logToDevLog(`[RAG PIPELINE] Vector chunks processing: processed=${vectorChunksProcessed}, skippedNoChunkId=${vectorChunksSkippedNoChunkId}, skippedNoDetail=${vectorChunksSkippedNoDetail}, aggregated.size=${aggregated.size}`);
 
     const bm25Max = Math.max(...Array.from(aggregated.values()).map((item) => item.bm25Score), 0);
     const vectorMax = Math.max(...Array.from(aggregated.values()).map((item) => item.vectorScore), 0);
@@ -4459,6 +4531,11 @@ async function runKnowledgeBaseRagPipeline(options: {
           } satisfies KnowledgeBaseRagCombinedChunk;
         })
         .sort((a, b) => b.combinedScore - a.combinedScore);
+    
+    logToDevLog(`[RAG PIPELINE] Before post-processing: combinedResults.length=${combinedResults.length}, minScore=${effectiveMinScore}, maxScores: bm25Max=${bm25Max}, vectorMax=${vectorMax}, weights: bm25=${bm25Weight}, vector=${vectorWeight}`);
+    if (combinedResults.length > 0) {
+      logToDevLog(`[RAG PIPELINE] Top 3 combined scores: ${combinedResults.slice(0, 3).map(r => r.combinedScore.toFixed(3)).join(', ')}`);
+    }
 
     const { combinedResults: processedResults } = applyRetrievalPostProcessing({
       combinedResults,
@@ -4468,6 +4545,8 @@ async function runKnowledgeBaseRagPipeline(options: {
       estimateTokens,
     });
     combinedResults = processedResults;
+    
+    logToDevLog(`[RAG PIPELINE] After post-processing: combinedResults.length=${combinedResults.length}`);
 
     if (allowSources) {
       combinedResults.forEach((item, index) => {
@@ -4495,6 +4574,8 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     combinedResultCount = combinedResults.length;
     vectorDocumentCount = vectorResultCount !== null ? vectorDocumentIds.size : null;
+    retrievalDuration = performance.now() - retrievalStart;
+    logToDevLog(`[RAG PIPELINE] Combined results: combinedResultCount=${combinedResultCount}, vectorResultCount=${vectorResultCount}, bm25ResultCount=${bm25ResultCount}, vectorDocumentCount=${vectorDocumentCount}, retrievalDuration=${retrievalDuration.toFixed(2)}ms`);
     combinedStep.finish({ combined: combinedResultCount, vectorDocuments: vectorDocumentCount });
 
     const contextRecords: LlmContextRecord[] = combinedResults.map((item, index) => ({
@@ -4524,7 +4605,8 @@ async function runKnowledgeBaseRagPipeline(options: {
       },
     }));
 
-    retrievalDuration = performance.now() - retrievalStart;
+    // retrievalDuration уже установлен выше перед логом
+    // retrievalDuration = performance.now() - retrievalStart;
 
     const ragResponseFormat = normalizeResponseFormat(body.llm.response_format);
     if (ragResponseFormat === null) {
@@ -13046,9 +13128,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
 
       if (context.skill.isRagSkill) {
-        console.log(`[CHAT RAG] isRagSkill=true, skillId=${context.skill.id}, mode=${context.skillConfig.mode}`);
-        console.log(`[CHAT RAG] knowledgeBaseIds=${JSON.stringify(context.skillConfig.knowledgeBaseIds)}`);
-        console.log(`[CHAT RAG] userMessage="${payload.content.slice(0, 50)}..."`);
+        const timestamp = new Date().toISOString();
+        const logMsg1 = `[CHAT RAG] isRagSkill=true, skillId=${context.skill.id}, mode=${context.skillConfig.mode}`;
+        const logMsg2 = `[CHAT RAG] knowledgeBaseIds=${JSON.stringify(context.skillConfig.knowledgeBaseIds)}`;
+        const logMsg3 = `[CHAT RAG] userMessage="${payload.content.slice(0, 50)}..."`;
+        try {
+          const fs = await import("fs");
+          const path = await import("path");
+          const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
+          fs.appendFileSync(logFile, `[${timestamp}] ${logMsg1}\n`, "utf-8");
+          fs.appendFileSync(logFile, `[${timestamp}] ${logMsg2}\n`, "utf-8");
+          fs.appendFileSync(logFile, `[${timestamp}] ${logMsg3}\n`, "utf-8");
+        } catch {}
+        console.log(logMsg1);
+        console.log(logMsg2);
+        console.log(logMsg3);
         
         if (wantsStream) {
           console.info(
@@ -13064,6 +13158,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           collections: context.skillConfig.ragConfig?.collectionIds ?? [],
         };
 
+        logToDevLog(`[CHAT RAG] ragStepInput=${JSON.stringify(ragStepInput)}`);
         console.log(`[CHAT RAG] ragStepInput=${JSON.stringify(ragStepInput)}`);
 
         await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.RUNNING, {
@@ -13075,6 +13170,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           | null = null;
 
         try {
+          logToDevLog(`[CHAT RAG] calling callRagForSkillChat...`);
           console.log(`[CHAT RAG] calling callRagForSkillChat...`);
           ragResult = (await callRagForSkillChat({
             req,
@@ -13084,6 +13180,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             runPipeline: runKnowledgeBaseRagPipeline,
             stream: null,
           })) as Awaited<ReturnType<typeof runKnowledgeBaseRagPipeline>>;
+          logToDevLog(`[CHAT RAG] callRagForSkillChat SUCCESS, result.answer.length=${ragResult?.response?.answer?.length ?? 0}`);
           console.log(`[CHAT RAG] callRagForSkillChat SUCCESS, result.answer.length=${ragResult?.response?.answer?.length ?? 0}`);
 
           await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
@@ -13094,8 +13191,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             },
           });
         } catch (ragError) {
-          console.error(`[CHAT RAG] ERROR in callRagForSkillChat: ${ragError instanceof Error ? ragError.message : String(ragError)}`);
-          console.error(`[CHAT RAG] ERROR stack: ${ragError instanceof Error ? ragError.stack : 'no stack'}`);
+          const errorMsg = `[CHAT RAG] ERROR in callRagForSkillChat: ${ragError instanceof Error ? ragError.message : String(ragError)}`;
+          const errorStack = `[CHAT RAG] ERROR stack: ${ragError instanceof Error ? ragError.stack : 'no stack'}`;
+          logToDevLog(errorMsg);
+          logToDevLog(errorStack);
+          console.error(errorMsg);
+          console.error(errorStack);
           
           const info = describeErrorForLog(ragError);
           await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.ERROR, {
@@ -13106,25 +13207,37 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           });
 
           if (ragError instanceof SkillRagConfigurationError) {
-            console.error(`[CHAT RAG] SkillRagConfigurationError, throwing ChatServiceError: ${ragError.message}`);
+            const configErrorMsg = `[CHAT RAG] SkillRagConfigurationError, throwing ChatServiceError: ${ragError.message}`;
+            logToDevLog(configErrorMsg);
+            console.error(configErrorMsg);
             throw new ChatServiceError(ragError.message, 400);
           }
           if (ragError instanceof HttpError) {
-            console.error(`[CHAT RAG] HttpError, throwing: ${ragError.message}`);
+            const httpErrorMsg = `[CHAT RAG] HttpError, throwing: ${ragError.message}`;
+            logToDevLog(httpErrorMsg);
+            console.error(httpErrorMsg);
             throw ragError;
           }
-          console.error(`[CHAT RAG] Unknown error, throwing as-is`);
+          const unknownErrorMsg = `[CHAT RAG] Unknown error, throwing as-is`;
+          logToDevLog(unknownErrorMsg);
+          console.error(unknownErrorMsg);
           throw ragError;
         }
 
         if (!ragResult) {
+          logToDevLog(`[CHAT RAG] ERROR: ragResult is null`);
           throw new Error("RAG pipeline returned empty result");
         }
 
+        logToDevLog(`[CHAT RAG] ragResult received, answer.length=${ragResult.response.answer.length}, wantsStream=${wantsStream}`);
+        
         const citations = Array.isArray(ragResult.response.citations) ? ragResult.response.citations : [];
         const metadata = citations.length > 0 ? { citations } : undefined;
+        
+        logToDevLog(`[CHAT RAG] citations.length=${citations.length}, metadata=${metadata ? 'present' : 'null'}`);
 
         if (wantsStream) {
+          logToDevLog(`[CHAT RAG] Entering streaming response branch`);
           streamingResponseStarted = true;
           res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
           res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -13158,6 +13271,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             metadata,
           );
 
+          logToDevLog(`[CHAT RAG] Streaming: assistantMessage.id=${assistantMessage.id}, answer.length=${answer.length}`);
           console.info(
             `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} RAG streaming finished`,
           );
@@ -13172,9 +13286,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             },
           });
 
+          logToDevLog(`[CHAT RAG] Streaming: SSE done event sent, finishing execution`);
           await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
           res.end();
+          logToDevLog(`[CHAT RAG] Streaming: response ended`);
         } else {
+          logToDevLog(`[CHAT RAG] Entering non-streaming response branch (wantsStream=false)`);
           const assistantMessage = await writeAssistantMessage(
             req.params.chatId,
             workspaceId,
@@ -13183,8 +13300,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             metadata,
           );
 
+          logToDevLog(`[CHAT RAG] Non-streaming: assistantMessage.id=${assistantMessage.id}, answer.length=${ragResult.response.answer.length}`);
+          
           await safeFinishExecution(SKILL_EXECUTION_STATUS.SUCCESS);
-          res.json({
+          
+          const responsePayload = {
             message: assistantMessage,
             userMessage: userMessageRecord,
             usage: ragResult.response.usage ?? null,
@@ -13193,8 +13313,13 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               normalizedQuery: ragResult.response.normalizedQuery,
               citations: ragResult.response.citations,
             },
-          });
+          };
+          
+          logToDevLog(`[CHAT RAG] Non-streaming: sending JSON response, message.id=${assistantMessage.id}`);
+          res.json(responsePayload);
+          logToDevLog(`[CHAT RAG] Non-streaming: JSON response sent`);
         }
+        logToDevLog(`[CHAT RAG] Exiting RAG handler, returning`);
         return;
       }
 
