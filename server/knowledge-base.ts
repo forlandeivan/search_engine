@@ -152,10 +152,12 @@ async function deleteKnowledgeDocumentVectors(params: {
   workspaceId: string;
   baseId: string;
   documentIds: readonly string[];
+  nodeIds?: readonly string[];
   context: string;
 }): Promise<void> {
-  const { workspaceId, baseId, documentIds, context } = params;
-  if (!documentIds.length) {
+  const { workspaceId, baseId, documentIds, nodeIds, context } = params;
+  const deleteIds = Array.from(new Set([...(documentIds ?? []), ...(nodeIds ?? [])]));
+  if (!deleteIds.length) {
     return;
   }
 
@@ -190,7 +192,7 @@ async function deleteKnowledgeDocumentVectors(params: {
     return;
   }
 
-  for (const documentId of documentIds) {
+  for (const documentId of deleteIds) {
     try {
       await client.delete(collectionName, {
         wait: true,
@@ -1999,6 +2001,7 @@ export async function deleteKnowledgeNode(
     workspaceId,
     baseId,
     documentIds,
+    nodeIds: toDelete,
     context: "deleteKnowledgeNode",
   });
 

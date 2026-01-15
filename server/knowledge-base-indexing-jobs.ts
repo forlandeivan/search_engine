@@ -870,11 +870,18 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       };
     });
 
+    logToFile(
+      `upsert start doc=${job.documentId} revision=${revisionId} collection=${collectionName} points=${points.length}`,
+    );
+
     // Загружаем векторы в Qdrant
     await client.upsert(collectionName, {
       wait: true,
       points,
     });
+    logToFile(
+      `upsert done doc=${job.documentId} revision=${revisionId} collection=${collectionName} points=${points.length}`,
+    );
 
     await updateIndexingActionStatus(
       job.workspaceId,
@@ -913,6 +920,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       previousRevisionId = switchResult?.previousRevisionId ?? null;
       workerLog(
         `switched revision for document ${job.documentId}, previous=${previousRevisionId ?? "null"}, current=${revisionId}`,
+      );
+      logToFile(
+        `switch revision doc=${job.documentId} previous=${previousRevisionId ?? "null"} current=${revisionId} chunkSet=${chunkSet.id}`,
       );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -968,24 +978,36 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     await updateIndexingActionProgress(job.workspaceId, job.baseId);
 
     const previousRevisionLabel = previousRevisionId ?? "unknown";
+    const cleanupDocumentIds = Array.from(new Set([job.documentId, nodeDetail.id]));
     workerLog(
       `cleanup non-current revisions for document ${job.documentId}, previous=${previousRevisionLabel}`,
     );
 
-    try {
-      await client.delete(collectionName, {
-        wait: true,
-        filter: {
-          must: [{ key: "document_id", match: { value: job.documentId } }],
-          must_not: [{ key: "revision_id", match: { value: revisionId } }],
-        },
-      });
-    } catch (error) {
-      workerLog(
-        `failed to cleanup non-current revisions for document ${job.documentId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+    for (const documentId of cleanupDocumentIds) {
+      logToFile(
+        `cleanup start doc=${documentId} keep=${revisionId} collection=${collectionName}`,
       );
+      try {
+        await client.delete(collectionName, {
+          wait: true,
+          filter: {
+            must: [{ key: "document_id", match: { value: documentId } }],
+            must_not: [{ key: "revision_id", match: { value: revisionId } }],
+          },
+        });
+        logToFile(
+          `cleanup done doc=${documentId} keep=${revisionId} collection=${collectionName}`,
+        );
+      } catch (error) {
+        workerLog(
+          `failed to cleanup non-current revisions for document ${documentId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        logToFile(
+          `cleanup failed doc=${documentId} keep=${revisionId} collection=${collectionName} error=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
 
     workerLog(`indexed document=${nodeDetail.id} base=${base.id} chunks=${chunkSet.chunks.length}`);
