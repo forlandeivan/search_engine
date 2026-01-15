@@ -51,6 +51,7 @@ import {
   createKnowledgeDocument,
   updateKnowledgeDocument,
   startKnowledgeBaseIndexing,
+  resetKnowledgeBaseIndex,
   getKnowledgeBaseIndexingSummary,
   getKnowledgeBaseIndexingChanges,
 } from "./knowledge-base";
@@ -4209,10 +4210,17 @@ async function runKnowledgeBaseRagPipeline(options: {
           const payload = (record.payload as Record<string, unknown> | undefined) ?? null;
           const rawScore = normalizeVectorScore((record as any).score);
 
+          const recordId =
+            typeof record.id === "string"
+              ? record.id
+              : typeof record.id === "number"
+                ? record.id.toString()
+                : null;
+
           vectorChunks.push({
             chunkId: typeof payload?.chunk_id === "string" ? payload.chunk_id : "",
             score: rawScore ?? 0,
-            recordId: typeof record.id === "string" ? record.id : null,
+            recordId,
             payload,
           });
         }
@@ -17012,6 +17020,24 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
     try {
       const result = await startKnowledgeBaseIndexing(baseId, workspaceId, mode);
+      res.json(result);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
+  app.post("/api/knowledge/bases/:baseId/indexing/reset", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+    const payload = (req.body ?? {}) as Record<string, unknown>;
+    const deleteCollection = payload.deleteCollection !== false;
+    const reindex = payload.reindex !== false;
+
+    try {
+      const result = await resetKnowledgeBaseIndex(baseId, workspaceId, {
+        deleteCollection,
+        reindex,
+      });
       res.json(result);
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);

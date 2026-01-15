@@ -6093,6 +6093,11 @@ export class DatabaseStorage implements IStorage {
 
     await ensureKnowledgeBaseTables();
 
+    const revisionFilter = sql`(
+      (${knowledgeDocuments.currentRevisionId} IS NOT NULL AND ${knowledgeDocumentChunkItems.revisionId} = ${knowledgeDocuments.currentRevisionId})
+      OR (${knowledgeDocuments.currentRevisionId} IS NULL AND ${knowledgeDocumentChunkSets.isLatest} = TRUE)
+    )`;
+
     const rows = await this.db
       .select({
         chunkId: knowledgeDocumentChunkItems.id,
@@ -6107,10 +6112,7 @@ export class DatabaseStorage implements IStorage {
       .from(knowledgeDocumentChunkItems)
       .innerJoin(
         knowledgeDocumentChunkSets,
-        and(
-          eq(knowledgeDocumentChunkSets.id, knowledgeDocumentChunkItems.chunkSetId),
-          eq(knowledgeDocumentChunkSets.isLatest, true),
-        ),
+        eq(knowledgeDocumentChunkSets.id, knowledgeDocumentChunkItems.chunkSetId),
       )
       .innerJoin(
         knowledgeDocuments,
@@ -6121,6 +6123,7 @@ export class DatabaseStorage implements IStorage {
         and(
           eq(knowledgeDocuments.baseId, baseId),
           inArray(knowledgeDocumentChunkItems.id, chunkIds),
+          revisionFilter,
         ),
       );
 
@@ -6163,6 +6166,18 @@ export class DatabaseStorage implements IStorage {
 
     await ensureKnowledgeBaseTables();
 
+    const revisionFilter = sql`(
+      (${knowledgeDocuments.currentRevisionId} IS NOT NULL AND ${knowledgeDocumentChunkItems.revisionId} = ${knowledgeDocuments.currentRevisionId})
+      OR (${knowledgeDocuments.currentRevisionId} IS NULL AND ${knowledgeDocumentChunkSets.isLatest} = TRUE)
+    )`;
+    const recordFilter = or(
+      inArray(knowledgeDocumentChunkItems.vectorId, recordIds),
+      and(
+        isNull(knowledgeDocumentChunkItems.vectorId),
+        inArray(knowledgeDocumentChunkItems.vectorRecordId, recordIds),
+      ),
+    );
+
     const rows = await this.db
       .select({
         chunkId: knowledgeDocumentChunkItems.id,
@@ -6172,16 +6187,14 @@ export class DatabaseStorage implements IStorage {
         sectionPath: knowledgeDocumentChunkItems.sectionPath,
         docTitle: knowledgeNodes.title,
         vectorRecordId: knowledgeDocumentChunkItems.vectorRecordId,
+        vectorId: knowledgeDocumentChunkItems.vectorId,
         nodeId: knowledgeNodes.id,
         nodeSlug: knowledgeNodes.slug,
       })
       .from(knowledgeDocumentChunkItems)
       .innerJoin(
         knowledgeDocumentChunkSets,
-        and(
-          eq(knowledgeDocumentChunkSets.id, knowledgeDocumentChunkItems.chunkSetId),
-          eq(knowledgeDocumentChunkSets.isLatest, true),
-        ),
+        eq(knowledgeDocumentChunkSets.id, knowledgeDocumentChunkItems.chunkSetId),
       )
       .innerJoin(
         knowledgeDocuments,
@@ -6191,7 +6204,8 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(knowledgeDocuments.baseId, baseId),
-          inArray(knowledgeDocumentChunkItems.vectorRecordId, recordIds),
+          recordFilter,
+          revisionFilter,
         ),
       );
 
@@ -6209,7 +6223,7 @@ export class DatabaseStorage implements IStorage {
         docTitle: row.docTitle ?? "",
         sectionTitle,
         text: row.text ?? "",
-        vectorRecordId: row.vectorRecordId ?? null,
+        vectorRecordId: row.vectorId ?? row.vectorRecordId ?? null,
         nodeId,
         nodeSlug,
       };

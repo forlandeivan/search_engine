@@ -223,6 +223,49 @@ export class KnowledgeBaseIndexingStateService {
     }
   }
 
+  async markBaseDocumentsOutdated(
+    workspaceId: string,
+    baseId: string,
+    options: UpdateOptions = {},
+  ): Promise<void> {
+    const policyHash = await getPolicyHash();
+    const now = new Date();
+
+    await db.execute(sql`
+      INSERT INTO "knowledge_document_index_state" (
+        "workspace_id",
+        "base_id",
+        "document_id",
+        "status",
+        "error",
+        "policy_hash",
+        "created_at",
+        "updated_at"
+      )
+      SELECT
+        ${workspaceId},
+        ${baseId},
+        doc."id",
+        'outdated',
+        NULL,
+        ${policyHash},
+        ${now},
+        ${now}
+      FROM "knowledge_documents" AS doc
+      WHERE doc."workspace_id" = ${workspaceId}
+        AND doc."base_id" = ${baseId}
+      ON CONFLICT ("workspace_id", "base_id", "document_id") DO UPDATE
+        SET "status" = 'outdated',
+            "error" = NULL,
+            "policy_hash" = EXCLUDED."policy_hash",
+            "updated_at" = EXCLUDED."updated_at"
+    `);
+
+    if (options.recalculateBase !== false) {
+      await this.recalculateBaseState(workspaceId, baseId);
+    }
+  }
+
   async markDocumentIndexing(
     workspaceId: string,
     baseId: string,

@@ -49,6 +49,7 @@ import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
 import { knowledgeBaseIndexingStateService } from "./knowledge-base-indexing-state";
+import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
 
 export class KnowledgeBaseError extends Error {
   public status: number;
@@ -58,6 +59,22 @@ export class KnowledgeBaseError extends Error {
     this.name = "KnowledgeBaseError";
     this.status = status;
   }
+}
+
+function sanitizeCollectionName(source: string): string {
+  const normalized = source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+  return normalized.length > 0 ? normalized.slice(0, 60) : "default";
+}
+
+function buildKnowledgeCollectionName(baseId: string, workspaceId: string): string {
+  const baseSlug = sanitizeCollectionName(baseId);
+  const workspaceSlug = sanitizeCollectionName(workspaceId);
+  return `kb_${baseSlug}_ws_${workspaceSlug}`;
+}
+
+function isQdrantNotFoundError(error: unknown): boolean {
+  const status = (error as any)?.status ?? (error as any)?.response?.status ?? null;
+  return status === 404;
 }
 
 type KnowledgeBaseRow = typeof knowledgeBases.$inferSelect;
@@ -1170,6 +1187,108 @@ export async function startKnowledgeBaseIndexing(
   }
 
   return { jobCount, actionId, documentIds };
+}
+
+export async function resetKnowledgeBaseIndex(
+  baseId: string,
+  workspaceId: string,
+  options: { deleteCollection?: boolean; reindex?: boolean } = {},
+): Promise<{
+  collectionName: string;
+  deletedCollection: boolean;
+  jobCount: number;
+  actionId?: string;
+}> {
+  try {
+    await ensureKnowledgeBaseTables();
+  } catch (error) {
+    console.error("Failed to ensure knowledge base tables:", error);
+    throw new KnowledgeBaseError("Не удалось инициализировать таблицы баз знаний", 500);
+  }
+
+  const base = await fetchBase(baseId, workspaceId);
+  if (!base) {
+    throw new KnowledgeBaseError("База знаний не найдена", 404);
+  }
+
+  const deleteCollection = options.deleteCollection !== false;
+  const reindex = options.reindex !== false;
+  const collectionName = buildKnowledgeCollectionName(base.id, workspaceId);
+
+  let deletedCollection = false;
+  if (deleteCollection) {
+    try {
+      const client = getQdrantClient();
+      let exists = true;
+      try {
+        await client.getCollection(collectionName);
+      } catch (error) {
+        if (isQdrantNotFoundError(error)) {
+          exists = false;
+        } else {
+          throw error;
+        }
+      }
+
+      if (exists) {
+        await client.deleteCollection(collectionName);
+        deletedCollection = true;
+        await storage.removeCollectionWorkspace(collectionName).catch((error) => {
+          console.warn(
+            `[resetKnowledgeBaseIndex] Failed to remove collection mapping ${collectionName}:`,
+            error,
+          );
+        });
+      }
+    } catch (error) {
+      if (error instanceof QdrantConfigurationError) {
+        throw new KnowledgeBaseError("Qdrant не настроен", 503);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new KnowledgeBaseError(`Не удалось удалить коллекцию Qdrant: ${message}`, 500);
+    }
+  }
+
+  const now = new Date();
+  await db
+    .update(knowledgeDocuments)
+    .set({ currentRevisionId: null, updatedAt: now })
+    .where(
+      and(
+        eq(knowledgeDocuments.workspaceId, workspaceId),
+        eq(knowledgeDocuments.baseId, baseId),
+      ),
+    );
+
+  await db.execute(sql`
+    UPDATE "knowledge_document_chunk_sets" AS chunk_set
+    SET "is_latest" = FALSE,
+        "updated_at" = ${now}
+    FROM "knowledge_documents" AS doc
+    WHERE chunk_set."document_id" = doc."id"
+      AND doc."workspace_id" = ${workspaceId}
+      AND doc."base_id" = ${baseId}
+  `);
+
+  await knowledgeBaseIndexingStateService.markBaseDocumentsOutdated(workspaceId, baseId, {
+    recalculateBase: !reindex,
+  });
+
+  if (!reindex) {
+    return {
+      collectionName,
+      deletedCollection,
+      jobCount: 0,
+    };
+  }
+
+  const result = await startKnowledgeBaseIndexing(baseId, workspaceId, "full");
+  return {
+    collectionName,
+    deletedCollection,
+    jobCount: result.jobCount,
+    actionId: result.actionId,
+  };
 }
 
 export async function getKnowledgeNodeDetail(
