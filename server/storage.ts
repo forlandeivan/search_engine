@@ -118,7 +118,7 @@ import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
 import { GIGACHAT_EMBEDDING_VECTOR_SIZE } from "@shared/constants";
 import { db } from "./db";
 import { createUnicaChatSkillForWorkspace } from "./skills";
-import { and, asc, desc, eq, ilike, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
@@ -1192,6 +1192,12 @@ export interface IStorage {
     workspaceId: string,
     documentId: string,
   ): Promise<KnowledgeDocumentIndexRevisionRecord | null>;
+  switchKnowledgeDocumentRevision(
+    workspaceId: string,
+    documentId: string,
+    revisionId: string,
+    chunkSetId: string,
+  ): Promise<{ previousRevisionId: string | null }>;
 
   // Knowledge base indexing state
   upsertKnowledgeDocumentIndexState(
@@ -7818,6 +7824,65 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(knowledgeDocumentIndexRevisions.createdAt))
       .limit(1);
     return row ?? null;
+  }
+
+  async switchKnowledgeDocumentRevision(
+    workspaceId: string,
+    documentId: string,
+    revisionId: string,
+    chunkSetId: string,
+  ): Promise<{ previousRevisionId: string | null }> {
+    await ensureKnowledgeBaseTables();
+    const now = new Date();
+
+    return this.db.transaction(async (tx) => {
+      const [docRow] = await tx
+        .select({ currentRevisionId: knowledgeDocuments.currentRevisionId })
+        .from(knowledgeDocuments)
+        .where(
+          and(
+            eq(knowledgeDocuments.id, documentId),
+            eq(knowledgeDocuments.workspaceId, workspaceId),
+          ),
+        )
+        .limit(1);
+
+      await tx
+        .update(knowledgeDocuments)
+        .set({
+          currentRevisionId: revisionId,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(knowledgeDocuments.id, documentId),
+            eq(knowledgeDocuments.workspaceId, workspaceId),
+          ),
+        );
+
+      await tx
+        .update(knowledgeDocumentChunkSets)
+        .set({ isLatest: false, updatedAt: now })
+        .where(
+          and(
+            eq(knowledgeDocumentChunkSets.documentId, documentId),
+            eq(knowledgeDocumentChunkSets.workspaceId, workspaceId),
+            ne(knowledgeDocumentChunkSets.id, chunkSetId),
+          ),
+        );
+
+      await tx
+        .update(knowledgeDocumentChunkSets)
+        .set({ isLatest: true, updatedAt: now })
+        .where(
+          and(
+            eq(knowledgeDocumentChunkSets.id, chunkSetId),
+            eq(knowledgeDocumentChunkSets.workspaceId, workspaceId),
+          ),
+        );
+
+      return { previousRevisionId: docRow?.currentRevisionId ?? null };
+    });
   }
 
   async upsertKnowledgeDocumentIndexState(

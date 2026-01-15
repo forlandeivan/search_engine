@@ -976,12 +976,13 @@ export const createKnowledgeDocumentChunkSet = async (
   nodeId: string,
   workspaceId: string,
   inputConfig: ChunkingConfigInput,
-  options?: { revisionId?: string | null },
+  options?: { revisionId?: string | null; setLatest?: boolean },
 ): Promise<KnowledgeDocumentChunkSet> => {
   console.log("[CHUNKS] Начало создания чанков для документа:", { baseId, nodeId, workspaceId });
   const context = await fetchDocumentContext(baseId, nodeId, workspaceId);
   const normalizedConfig = normalizeChunkingConfig(inputConfig);
   const revisionId = options?.revisionId ?? null;
+  const setLatest = options?.setLatest ?? true;
   // Автоматическое определение: crawl → HTML, manual/import → текст
   const useHtmlContent = context.sourceType === "crawl";
   const sourceContent = useHtmlContent && context.contentHtml ? context.contentHtml : context.contentText;
@@ -1014,10 +1015,17 @@ export const createKnowledgeDocumentChunkSet = async (
   const now = new Date();
 
   await db.transaction(async (tx: typeof db) => {
-    await tx
-      .update(knowledgeDocumentChunkSets)
-      .set({ isLatest: false, updatedAt: now })
-      .where(and(eq(knowledgeDocumentChunkSets.documentId, context.documentId), eq(knowledgeDocumentChunkSets.workspaceId, workspaceId)));
+    if (setLatest) {
+      await tx
+        .update(knowledgeDocumentChunkSets)
+        .set({ isLatest: false, updatedAt: now })
+        .where(
+          and(
+            eq(knowledgeDocumentChunkSets.documentId, context.documentId),
+            eq(knowledgeDocumentChunkSets.workspaceId, workspaceId),
+          ),
+        );
+    }
 
     await tx.insert(knowledgeDocumentChunkSets).values({
       id: chunkSetId,
@@ -1035,7 +1043,7 @@ export const createKnowledgeDocumentChunkSet = async (
       chunkCount: generatedChunks.length,
       totalTokens,
       totalChars,
-      isLatest: true,
+      isLatest: setLatest,
       createdAt: now,
       updatedAt: now,
     });

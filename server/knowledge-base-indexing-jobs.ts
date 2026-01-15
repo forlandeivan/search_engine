@@ -550,7 +550,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           respectHeadings: true,
           // useHtmlContent определяется автоматически по sourceType документа
         },
-        { revisionId },
+        { revisionId, setLatest: false },
       );
       workerLog(`createKnowledgeDocumentChunkSet returned for job ${job.id}, chunks.length=${chunkSet?.chunks.length ?? 0}`);
     } catch (error) {
@@ -902,11 +902,20 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     const totalChars = chunkSet.chunks.reduce((sum, chunk) => sum + (chunk.charCount ?? 0), 0);
     const totalTokens = chunkSet.chunks.reduce((sum, chunk) => sum + (chunk.tokenCount ?? 0), 0);
 
-    await storage.markKnowledgeBaseIndexingJobDone(job.id, {
-      chunkCount: chunkSet.chunks.length,
-      totalChars,
-      totalTokens,
-    });
+    let previousRevisionId: string | null = null;
+    try {
+      const switchResult = await storage.switchKnowledgeDocumentRevision(
+        job.workspaceId,
+        job.documentId,
+        revisionId,
+        chunkSet.id,
+      );
+      previousRevisionId = switchResult?.previousRevisionId ?? null;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await markJobError(`Ошибка переключения ревизии: ${errorMsg}`);
+      return;
+    }
 
     try {
       await storage.updateKnowledgeDocumentIndexRevision(
@@ -931,6 +940,12 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       );
     }
 
+    await storage.markKnowledgeBaseIndexingJobDone(job.id, {
+      chunkCount: chunkSet.chunks.length,
+      totalChars,
+      totalTokens,
+    });
+
     try {
       await knowledgeBaseIndexingStateService.markDocumentUpToDate(
         job.workspaceId,
@@ -948,6 +963,26 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
     // Обновляем прогресс индексации
     await updateIndexingActionProgress(job.workspaceId, job.baseId);
+
+    if (previousRevisionId && previousRevisionId !== revisionId) {
+      try {
+        await client.delete(collectionName, {
+          wait: true,
+          filter: {
+            must: [
+              { key: "document_id", match: { value: job.documentId } },
+              { key: "revision_id", match: { value: previousRevisionId } },
+            ],
+          },
+        });
+      } catch (error) {
+        workerLog(
+          `failed to cleanup old revision ${previousRevisionId} for document ${job.documentId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
 
     workerLog(`indexed document=${nodeDetail.id} base=${base.id} chunks=${chunkSet.chunks.length}`);
     } catch (error) {
