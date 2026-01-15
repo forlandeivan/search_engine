@@ -1101,19 +1101,21 @@ export function startKnowledgeBaseIndexingWorker() {
 
   async function poll() {
     if (stopped || active) {
-      return;
+      return false;
     }
 
     active = true;
+    let hadJob = false;
     try {
       workerLog(`polling for next job...`);
       const job = await storage.claimNextKnowledgeBaseIndexingJob();
       workerLog(`claimNextKnowledgeBaseIndexingJob returned: ${job ? `job ${job.id}` : "null"}`);
       if (!job) {
         // Нет доступных job'ов, продолжаем опрос
-        return;
+        return false;
       }
 
+      hadJob = true;
       workerLog(`claimed job ${job.id} for document ${job.documentId} base=${job.baseId} workspace=${job.workspaceId} status=${job.status} attempts=${job.attempts} versionId=${job.versionId ?? "null"}`);
       try {
         workerLog(`calling processJob for job ${job.id}...`);
@@ -1157,17 +1159,23 @@ export function startKnowledgeBaseIndexingWorker() {
     } finally {
       active = false;
     }
+
+    return hadJob;
   }
 
-  function scheduleNext() {
+  function scheduleNext(delayMs = POLL_INTERVAL_MS) {
     if (stopped) {
       return;
     }
     setTimeout(() => {
-      poll().finally(() => {
-        scheduleNext();
-      });
-    }, POLL_INTERVAL_MS);
+      poll()
+        .then((hadJob) => {
+          scheduleNext(hadJob ? 0 : POLL_INTERVAL_MS);
+        })
+        .catch(() => {
+          scheduleNext(POLL_INTERVAL_MS);
+        });
+    }, delayMs);
   }
 
   workerLog(`worker started`);
