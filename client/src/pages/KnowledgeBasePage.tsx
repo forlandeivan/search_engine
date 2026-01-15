@@ -77,6 +77,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -105,6 +106,7 @@ import {
 } from "@/lib/knowledge-base";
 import { CrawlInlineProgress, type CrawlInlineState } from "@/components/knowledge-base/CrawlInlineProgress";
 import { useStartKnowledgeBaseIndexing } from "@/hooks/useKnowledgeBaseIndexing";
+import { useResetKnowledgeBaseIndexing } from "@/hooks/useResetKnowledgeBaseIndexing";
 import { useKnowledgeBaseIndexingStatus } from "@/hooks/useKnowledgeBaseIndexingStatus";
 import { useKnowledgeBaseIndexingSummary } from "@/hooks/useKnowledgeBaseIndexingSummary";
 import { useKnowledgeBaseIndexingChanges } from "@/hooks/useKnowledgeBaseIndexingChanges";
@@ -991,6 +993,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   } | null>(null);
   const [baseDeleteTarget, setBaseDeleteTarget] = useState<KnowledgeBaseSummary | null>(null);
   const [baseDeleteConfirmation, setBaseDeleteConfirmation] = useState<string>("");
+  const [isResetIndexDialogOpen, setIsResetIndexDialogOpen] = useState(false);
+  const [resetDeleteCollection, setResetDeleteCollection] = useState(true);
+  const [resetReindex, setResetReindex] = useState(true);
+  const [resetConfirmed, setResetConfirmed] = useState(false);
   const [movingNodeId, setMovingNodeId] = useState<string | null>(null);
   const [isCreateDocumentDialogOpen, setIsCreateDocumentDialogOpen] = useState(false);
   const [documentDialogParentId, setDocumentDialogParentId] = useState<string | null>(null);
@@ -1335,6 +1341,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     [llmProvidersResponse?.providers],
   );
   const workspaceId = session?.workspace.active.id ?? null;
+  const workspaceRole = session?.workspace.active.role ?? null;
+  const canManageKnowledgeBase = workspaceRole === "owner" || workspaceRole === "manager";
   const { data: vectorCollectionsResponse, isLoading: isVectorCollectionsLoading } =
     useQuery<VectorCollectionsResponse>({
       queryKey: ["/api/vector/collections"],
@@ -1347,6 +1355,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     [bases, knowledgeBaseId],
   );
   const startIndexingMutation = useStartKnowledgeBaseIndexing();
+  const resetIndexingMutation = useResetKnowledgeBaseIndexing();
   const indexingSummaryQuery = useKnowledgeBaseIndexingSummary(
     workspaceId,
     selectedBase?.id ?? null,
@@ -3156,6 +3165,75 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     isIndexingChangesOpen,
   ]);
 
+  const handleOpenResetIndexDialog = useCallback(() => {
+    setResetDeleteCollection(true);
+    setResetReindex(true);
+    setResetConfirmed(false);
+    setIsResetIndexDialogOpen(true);
+  }, []);
+
+  const handleResetIndexing = useCallback(async () => {
+    if (!selectedBase) {
+      return;
+    }
+
+    try {
+      const result = await resetIndexingMutation.mutateAsync({
+        baseId: selectedBase.id,
+        deleteCollection: resetDeleteCollection,
+        reindex: resetReindex,
+      });
+      setIsResetIndexDialogOpen(false);
+      setResetConfirmed(false);
+
+      const collectionNote = resetDeleteCollection
+        ? result.deletedCollection
+          ? "Коллекция Qdrant удалена."
+          : "Коллекция Qdrant уже отсутствовала."
+        : "Коллекция Qdrant сохранена.";
+
+      if (!resetReindex) {
+        toast({
+          title: "Индекс сброшен",
+          description: `${collectionNote} Документы помечены для переиндексации.`,
+        });
+      } else if (result.jobCount === 0) {
+        toast({
+          title: "Индекс сброшен",
+          description: `${collectionNote} Документов для индексации нет.`,
+        });
+      } else {
+        toast({
+          title: "Индекс сброшен",
+          description: `${collectionNote} Запущена полная переиндексация.`,
+        });
+      }
+
+      if (result.actionId) {
+        setIndexingActionId(result.actionId);
+      }
+      void indexingSummaryQuery.refetch();
+      if (isIndexingChangesOpen) {
+        void indexingChangesQuery.refetch();
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Не удалось сбросить индекс",
+        description: error instanceof Error ? error.message : "Попробуйте позже",
+      });
+    }
+  }, [
+    selectedBase,
+    resetIndexingMutation,
+    resetDeleteCollection,
+    resetReindex,
+    toast,
+    indexingSummaryQuery,
+    indexingChangesQuery,
+    isIndexingChangesOpen,
+  ]);
+
   const indexingSummary = indexingSummaryQuery.data ?? null;
   const indexingStatus = indexingSummary?.status ?? null;
   const totalIndexedDocuments = indexingSummary?.totalDocuments ?? null;
@@ -3281,17 +3359,25 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 : "Перезапустить краулинг"}
             </Button>
           )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="Действия с базой знаний">
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onSelect={(event) => {
-                  event.preventDefault();
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="Действия с базой знаний">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {canManageKnowledgeBase && (
+                  <>
+                    <DropdownMenuItem onSelect={handleOpenResetIndexDialog}>
+                      <RefreshCw className="mr-2 h-4 w-4" /> Сбросить индекс
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onSelect={(event) => {
+                    event.preventDefault();
                   setBaseDeleteTarget({
                     id: detail.id,
                     name: detail.name,
@@ -3984,12 +4070,104 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
-      <AlertDialog
-        open={Boolean(baseDeleteTarget)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setBaseDeleteTarget(null);
+        </Dialog>
+        <Dialog
+          open={isResetIndexDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setIsResetIndexDialogOpen(false);
+              setResetConfirmed(false);
+              resetIndexingMutation.reset();
+            }
+          }}
+        >
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Сбросить индекс?</DialogTitle>
+              <DialogDescription>
+                Индекс будет пересобран для базы «{selectedBase?.name ?? "Без названия"}».
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <Alert variant="destructive">
+                <AlertTitle>Внимание</AlertTitle>
+                <AlertDescription>
+                  Сброс индекса удаляет текущие векторные данные. Поиск будет недоступен до завершения переиндексации.
+                </AlertDescription>
+              </Alert>
+              <div className="rounded-md border bg-muted/40 p-3 text-sm">
+                <p className="font-medium">База: {selectedBase?.name ?? "Без названия"}</p>
+                <p className="text-muted-foreground">
+                  Все документы будут помечены как требующие индексации.
+                </p>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="reset-delete-collection"
+                    checked={resetDeleteCollection}
+                    onCheckedChange={(checked) => setResetDeleteCollection(Boolean(checked))}
+                    disabled={resetIndexingMutation.isPending}
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="reset-delete-collection">Удалить коллекцию Qdrant</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Полный ресет: коллекция будет удалена и создана заново при переиндексации.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="reset-reindex"
+                    checked={resetReindex}
+                    onCheckedChange={(checked) => setResetReindex(Boolean(checked))}
+                    disabled={resetIndexingMutation.isPending}
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="reset-reindex">Запустить переиндексацию сразу</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Если отключить, индексацию нужно будет запустить вручную.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+                <Checkbox
+                  id="reset-confirmed"
+                  checked={resetConfirmed}
+                  onCheckedChange={(checked) => setResetConfirmed(Boolean(checked))}
+                  disabled={resetIndexingMutation.isPending}
+                />
+                <Label htmlFor="reset-confirmed" className="text-sm">
+                  Я понимаю последствия и хочу сбросить индекс.
+                </Label>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsResetIndexDialogOpen(false)}
+                disabled={resetIndexingMutation.isPending}
+              >
+                Отмена
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleResetIndexing}
+                disabled={!resetConfirmed || resetIndexingMutation.isPending}
+              >
+                {resetIndexingMutation.isPending ? "Сбрасываем..." : "Сбросить индекс"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <AlertDialog
+          open={Boolean(baseDeleteTarget)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setBaseDeleteTarget(null);
             setBaseDeleteConfirmation("");
             deleteBaseMutation.reset();
           }

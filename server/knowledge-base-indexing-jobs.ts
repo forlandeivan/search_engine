@@ -911,6 +911,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
         chunkSet.id,
       );
       previousRevisionId = switchResult?.previousRevisionId ?? null;
+      workerLog(
+        `switched revision for document ${job.documentId}, previous=${previousRevisionId ?? "null"}, current=${revisionId}`,
+      );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       await markJobError(`Ошибка переключения ревизии: ${errorMsg}`);
@@ -964,24 +967,25 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     // Обновляем прогресс индексации
     await updateIndexingActionProgress(job.workspaceId, job.baseId);
 
-    if (previousRevisionId && previousRevisionId !== revisionId) {
-      try {
-        await client.delete(collectionName, {
-          wait: true,
-          filter: {
-            must: [
-              { key: "document_id", match: { value: job.documentId } },
-              { key: "revision_id", match: { value: previousRevisionId } },
-            ],
-          },
-        });
-      } catch (error) {
-        workerLog(
-          `failed to cleanup old revision ${previousRevisionId} for document ${job.documentId}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
+    const previousRevisionLabel = previousRevisionId ?? "unknown";
+    workerLog(
+      `cleanup non-current revisions for document ${job.documentId}, previous=${previousRevisionLabel}`,
+    );
+
+    try {
+      await client.delete(collectionName, {
+        wait: true,
+        filter: {
+          must: [{ key: "document_id", match: { value: job.documentId } }],
+          must_not: [{ key: "revision_id", match: { value: revisionId } }],
+        },
+      });
+    } catch (error) {
+      workerLog(
+        `failed to cleanup non-current revisions for document ${job.documentId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
 
     workerLog(`indexed document=${nodeDetail.id} base=${base.id} chunks=${chunkSet.chunks.length}`);

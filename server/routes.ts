@@ -16468,7 +16468,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   app.get("/api/kb/:baseId/crawl/active", requireAuth, (req, res) => {
     const { baseId } = req.params;
-    const { id: workspaceId } = getRequestWorkspace(req);
+    const { id: workspaceId, role: workspaceRole } = getRequestWorkspace(req);
+    if (!isWorkspaceAdmin(workspaceRole)) {
+      return res.status(403).json({ error: "Недостаточно прав" });
+    }
 
     const { active, latest } = getKnowledgeBaseCrawlJobStateForBase(baseId, workspaceId);
     if (!active) {
@@ -17027,6 +17030,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   app.post("/api/knowledge/bases/:baseId/indexing/reset", requireAuth, async (req, res) => {
+    const user = getAuthorizedUser(req, res);
+    if (!user) {
+      return;
+    }
     const { baseId } = req.params;
     const { id: workspaceId } = getRequestWorkspace(req);
     const payload = (req.body ?? {}) as Record<string, unknown>;
@@ -17034,12 +17041,37 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     const reindex = payload.reindex !== false;
 
     try {
+      console.info("[knowledge-base/indexing-reset] requested", {
+        userId: user.id,
+        workspaceId,
+        baseId,
+        deleteCollection,
+        reindex,
+      });
       const result = await resetKnowledgeBaseIndex(baseId, workspaceId, {
         deleteCollection,
         reindex,
       });
+      console.info("[knowledge-base/indexing-reset] completed", {
+        userId: user.id,
+        workspaceId,
+        baseId,
+        deleteCollection,
+        reindex,
+        deletedCollection: result.deletedCollection,
+        jobCount: result.jobCount,
+        actionId: result.actionId ?? null,
+      });
       res.json(result);
     } catch (error) {
+      console.error("[knowledge-base/indexing-reset] failed", {
+        userId: user.id,
+        workspaceId,
+        baseId,
+        deleteCollection,
+        reindex,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
