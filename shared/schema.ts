@@ -629,8 +629,61 @@ export const knowledgeBaseIndexingJobs = pgTable(
     baseIdx: index("knowledge_base_indexing_jobs_base_idx").on(table.baseId, table.status, table.nextRetryAt),
   }),
 );
-  export type KnowledgeBaseIndexingJob = typeof knowledgeBaseIndexingJobs.$inferSelect;
-  export type KnowledgeBaseIndexingJobInsert = typeof knowledgeBaseIndexingJobs.$inferInsert;
+export type KnowledgeBaseIndexingJob = typeof knowledgeBaseIndexingJobs.$inferSelect;
+export type KnowledgeBaseIndexingJobInsert = typeof knowledgeBaseIndexingJobs.$inferInsert;
+
+export const knowledgeDocumentIndexRevisionStatuses = [
+  "processing",
+  "ready",
+  "failed",
+  "canceled",
+] as const;
+export type KnowledgeDocumentIndexRevisionStatus =
+  (typeof knowledgeDocumentIndexRevisionStatuses)[number];
+
+export const knowledgeDocumentIndexRevisions = pgTable(
+  "knowledge_document_index_revisions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: varchar("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    baseId: varchar("base_id")
+      .notNull()
+      .references(() => knowledgeBases.id, { onDelete: "cascade" }),
+    documentId: varchar("document_id")
+      .notNull()
+      .references(() => knowledgeDocuments.id, { onDelete: "cascade" }),
+    versionId: varchar("version_id").references(() => knowledgeDocumentVersions.id, {
+      onDelete: "set null",
+    }),
+    chunkSetId: varchar("chunk_set_id").references(() => knowledgeDocumentChunkSets.id, {
+      onDelete: "set null",
+    }),
+    policyHash: text("policy_hash"),
+    status: text("status")
+      .$type<KnowledgeDocumentIndexRevisionStatus>()
+      .notNull()
+      .default("processing"),
+    error: text("error"),
+    startedAt: timestamp("started_at"),
+    finishedAt: timestamp("finished_at"),
+    chunkCount: integer("chunk_count").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    totalChars: integer("total_chars").notNull().default(0),
+    createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    documentIdx: index("knowledge_document_index_revisions_document_idx").on(
+      table.documentId,
+      table.createdAt,
+    ),
+    workspaceBaseStatusIdx: index(
+      "knowledge_document_index_revisions_workspace_base_status_idx",
+    ).on(table.workspaceId, table.baseId, table.status),
+  }),
+);
 
 export const knowledgeDocumentIndexStatuses = [
   "not_indexed",
@@ -878,6 +931,10 @@ export const knowledgeDocuments = pgTable(
       .notNull()
       .default("draft"),
     currentVersionId: varchar("current_version_id"),
+    currentRevisionId: varchar("current_revision_id").references(
+      () => knowledgeDocumentIndexRevisions.id,
+      { onDelete: "set null" },
+    ),
     sourceUrl: text("source_url"),
     contentHash: text("content_hash"),
     language: text("language"),
@@ -889,6 +946,9 @@ export const knowledgeDocuments = pgTable(
   },
   (table) => ({
     nodeUnique: uniqueIndex("knowledge_documents_node_id_key").on(table.nodeId),
+    currentRevisionIdx: index("knowledge_documents_current_revision_idx").on(
+      table.currentRevisionId,
+    ),
   }),
 );
 
@@ -933,6 +993,9 @@ export const knowledgeDocumentChunkSets = pgTable(
     versionId: varchar("version_id")
       .notNull()
       .references(() => knowledgeDocumentVersions.id, { onDelete: "cascade" }),
+    revisionId: varchar("revision_id").references(() => knowledgeDocumentIndexRevisions.id, {
+      onDelete: "set null",
+    }),
     documentHash: text("document_hash"),
     maxTokens: integer("max_tokens"),
     maxChars: integer("max_chars"),
@@ -956,6 +1019,10 @@ export const knowledgeDocumentChunkSets = pgTable(
       table.documentId,
       table.createdAt,
     ),
+    documentRevisionIndex: index("knowledge_document_chunk_sets_document_revision_idx").on(
+      table.documentId,
+      table.revisionId,
+    ),
   }),
 );
 
@@ -975,6 +1042,9 @@ export const knowledgeDocumentChunkItems = pgTable(
     versionId: varchar("version_id")
       .notNull()
       .references(() => knowledgeDocumentVersions.id, { onDelete: "cascade" }),
+    revisionId: varchar("revision_id").references(() => knowledgeDocumentIndexRevisions.id, {
+      onDelete: "set null",
+    }),
     chunkIndex: integer("chunk_index").notNull(),
     text: text("text").notNull(),
     textTsv: tsvector("text_tsv"),
@@ -988,6 +1058,8 @@ export const knowledgeDocumentChunkItems = pgTable(
       .notNull()
       .default(sql`'{}'::jsonb`),
     contentHash: text("content_hash").notNull(),
+    chunkOrdinal: integer("chunk_ordinal"),
+    vectorId: text("vector_id"),
     vectorRecordId: text("vector_record_id"),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -1000,6 +1072,17 @@ export const knowledgeDocumentChunkItems = pgTable(
     documentIndex: index("knowledge_document_chunks_document_idx").on(
       table.documentId,
       table.chunkIndex,
+    ),
+    vectorIdIndex: uniqueIndex("knowledge_document_chunks_vector_id_idx").on(table.vectorId),
+    revisionHashOrdinalIndex: uniqueIndex("knowledge_document_chunks_revision_hash_ordinal_idx").on(
+      table.documentId,
+      table.revisionId,
+      table.contentHash,
+      table.chunkOrdinal,
+    ),
+    documentRevisionIndex: index("knowledge_document_chunks_document_revision_idx").on(
+      table.documentId,
+      table.revisionId,
     ),
   }),
 );
@@ -2604,6 +2687,10 @@ export type KnowledgeBaseSearchSettingsRow = typeof knowledgeBaseSearchSettings.
 export type KnowledgeBaseSearchSettingsInsert = typeof knowledgeBaseSearchSettings.$inferInsert;
 export type KnowledgeBaseAskAiRun = typeof knowledgeBaseAskAiRuns.$inferSelect;
 export type KnowledgeBaseAskAiRunInsert = typeof knowledgeBaseAskAiRuns.$inferInsert;
+export type KnowledgeDocumentIndexRevisionRecord =
+  typeof knowledgeDocumentIndexRevisions.$inferSelect;
+export type KnowledgeDocumentIndexRevisionInsert =
+  typeof knowledgeDocumentIndexRevisions.$inferInsert;
 export type KnowledgeDocumentChunkSet = typeof knowledgeDocumentChunkSets.$inferSelect;
 export type KnowledgeDocumentChunkSetInsert = typeof knowledgeDocumentChunkSets.$inferInsert;
 export type KnowledgeDocumentChunkItem = typeof knowledgeDocumentChunkItems.$inferSelect;

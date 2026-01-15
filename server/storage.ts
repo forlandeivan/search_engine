@@ -43,6 +43,7 @@ import {
   knowledgeBaseIndexingJobs,
   knowledgeBaseIndexingPolicy,
   knowledgeBaseIndexingActions,
+  knowledgeDocumentIndexRevisions,
   knowledgeDocumentIndexState,
   knowledgeBaseIndexState,
   type KnowledgeBaseIndexingJob,
@@ -50,6 +51,8 @@ import {
   type KnowledgeBaseIndexingPolicy,
   type KnowledgeBaseIndexingActionRecord,
   type KnowledgeBaseIndexingActionInsert,
+  type KnowledgeDocumentIndexRevisionRecord,
+  type KnowledgeDocumentIndexRevisionInsert,
   type KnowledgeDocumentIndexStateRecord,
   type KnowledgeDocumentIndexStateInsert,
   type KnowledgeBaseIndexStateRecord,
@@ -1170,6 +1173,26 @@ export interface IStorage {
   getKnowledgeBaseIndexingPolicy(): Promise<KnowledgeBaseIndexingPolicy | null>;
   updateKnowledgeBaseIndexingPolicy(policy: Partial<KnowledgeBaseIndexingPolicy>): Promise<KnowledgeBaseIndexingPolicy>;
 
+  // Knowledge document indexing revisions
+  createKnowledgeDocumentIndexRevision(
+    value: KnowledgeDocumentIndexRevisionInsert,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord | null>;
+  updateKnowledgeDocumentIndexRevision(
+    workspaceId: string,
+    documentId: string,
+    revisionId: string,
+    updates: Partial<KnowledgeDocumentIndexRevisionInsert>,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord | null>;
+  getKnowledgeDocumentIndexRevision(
+    workspaceId: string,
+    documentId: string,
+    revisionId: string,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord | null>;
+  getLatestKnowledgeDocumentIndexRevision(
+    workspaceId: string,
+    documentId: string,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord | null>;
+
   // Knowledge base indexing state
   upsertKnowledgeDocumentIndexState(
     value: KnowledgeDocumentIndexStateInsert,
@@ -2106,6 +2129,111 @@ async function ensureKnowledgeBaseIndexingPolicyTable(): Promise<void> {
 
   let knowledgeDocumentIndexStateTableEnsured = false;
   let ensuringKnowledgeDocumentIndexStateTable: Promise<void> | null = null;
+
+  let knowledgeDocumentIndexRevisionsTableEnsured = false;
+  let ensuringKnowledgeDocumentIndexRevisionsTable: Promise<void> | null = null;
+
+  async function ensureKnowledgeDocumentIndexRevisionsTable(): Promise<void> {
+    if (knowledgeDocumentIndexRevisionsTableEnsured) {
+      return;
+    }
+    if (ensuringKnowledgeDocumentIndexRevisionsTable) {
+      await ensuringKnowledgeDocumentIndexRevisionsTable;
+      return;
+    }
+
+    ensuringKnowledgeDocumentIndexRevisionsTable = (async () => {
+      await ensureKnowledgeBaseTables();
+      await ensureWorkspacesTable();
+
+      const uuidExpression = await getUuidGenerationExpression();
+
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "knowledge_document_index_revisions" (
+          "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+          "workspace_id" varchar NOT NULL,
+          "base_id" varchar NOT NULL,
+          "document_id" varchar NOT NULL,
+          "version_id" varchar,
+          "chunk_set_id" varchar,
+          "policy_hash" text,
+          "status" text NOT NULL DEFAULT 'processing',
+          "error" text,
+          "started_at" timestamp,
+          "finished_at" timestamp,
+          "chunk_count" integer NOT NULL DEFAULT 0,
+          "total_tokens" integer NOT NULL DEFAULT 0,
+          "total_chars" integer NOT NULL DEFAULT 0,
+          "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      await ensureConstraint(
+        "knowledge_document_index_revisions",
+        "knowledge_document_index_revisions_workspace_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_revisions"
+          ADD CONSTRAINT "knowledge_document_index_revisions_workspace_id_fkey"
+          FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+        `,
+      );
+
+      await ensureConstraint(
+        "knowledge_document_index_revisions",
+        "knowledge_document_index_revisions_base_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_revisions"
+          ADD CONSTRAINT "knowledge_document_index_revisions_base_id_fkey"
+          FOREIGN KEY ("base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE
+        `,
+      );
+
+      await ensureConstraint(
+        "knowledge_document_index_revisions",
+        "knowledge_document_index_revisions_document_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_revisions"
+          ADD CONSTRAINT "knowledge_document_index_revisions_document_id_fkey"
+          FOREIGN KEY ("document_id") REFERENCES "knowledge_documents"("id") ON DELETE CASCADE
+        `,
+      );
+
+      await ensureConstraint(
+        "knowledge_document_index_revisions",
+        "knowledge_document_index_revisions_version_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_revisions"
+          ADD CONSTRAINT "knowledge_document_index_revisions_version_id_fkey"
+          FOREIGN KEY ("version_id") REFERENCES "knowledge_document_versions"("id") ON DELETE SET NULL
+        `,
+      );
+
+      await ensureConstraint(
+        "knowledge_document_index_revisions",
+        "knowledge_document_index_revisions_chunk_set_id_fkey",
+        sql`
+          ALTER TABLE "knowledge_document_index_revisions"
+          ADD CONSTRAINT "knowledge_document_index_revisions_chunk_set_id_fkey"
+          FOREIGN KEY ("chunk_set_id") REFERENCES "knowledge_document_chunk_sets"("id") ON DELETE SET NULL
+        `,
+      );
+
+      await ensureIndex(
+        "knowledge_document_index_revisions_document_idx",
+        sql`CREATE INDEX IF NOT EXISTS knowledge_document_index_revisions_document_idx ON "knowledge_document_index_revisions" ("document_id", "created_at" DESC)`,
+      );
+      await ensureIndex(
+        "knowledge_document_index_revisions_workspace_base_status_idx",
+        sql`CREATE INDEX IF NOT EXISTS knowledge_document_index_revisions_workspace_base_status_idx ON "knowledge_document_index_revisions" ("workspace_id", "base_id", "status")`,
+      );
+
+      knowledgeDocumentIndexRevisionsTableEnsured = true;
+    })();
+
+    await ensuringKnowledgeDocumentIndexRevisionsTable;
+    ensuringKnowledgeDocumentIndexRevisionsTable = null;
+  }
 
   async function ensureKnowledgeDocumentIndexStateTable(): Promise<void> {
     if (knowledgeDocumentIndexStateTableEnsured) {
@@ -3065,9 +3193,15 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         "node_id" varchar NOT NULL,
         "status" text NOT NULL DEFAULT 'draft',
         "current_version_id" varchar,
+        "current_revision_id" varchar,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "knowledge_documents"
+      ADD COLUMN IF NOT EXISTS "current_revision_id" varchar
     `);
 
     await ensureConstraint(
@@ -3118,6 +3252,9 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
     );
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_documents_base_idx ON knowledge_documents("base_id")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_documents_current_revision_idx ON knowledge_documents("current_revision_id")`,
     );
 
     await db.execute(sql`
@@ -3186,11 +3323,90 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
     );
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_document_index_revisions" (
+        "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
+        "workspace_id" varchar NOT NULL,
+        "base_id" varchar NOT NULL,
+        "document_id" varchar NOT NULL,
+        "version_id" varchar,
+        "chunk_set_id" varchar,
+        "policy_hash" text,
+        "status" text NOT NULL DEFAULT 'processing',
+        "error" text,
+        "started_at" timestamp,
+        "finished_at" timestamp,
+        "chunk_count" integer NOT NULL DEFAULT 0,
+        "total_tokens" integer NOT NULL DEFAULT 0,
+        "total_chars" integer NOT NULL DEFAULT 0,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await ensureConstraint(
+      "knowledge_document_index_revisions",
+      "knowledge_document_index_revisions_workspace_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_index_revisions"
+        ADD CONSTRAINT "knowledge_document_index_revisions_workspace_id_fkey"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_index_revisions",
+      "knowledge_document_index_revisions_base_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_index_revisions"
+        ADD CONSTRAINT "knowledge_document_index_revisions_base_id_fkey"
+        FOREIGN KEY ("base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_index_revisions",
+      "knowledge_document_index_revisions_document_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_index_revisions"
+        ADD CONSTRAINT "knowledge_document_index_revisions_document_id_fkey"
+        FOREIGN KEY ("document_id") REFERENCES "knowledge_documents"("id") ON DELETE CASCADE
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_index_revisions",
+      "knowledge_document_index_revisions_version_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_index_revisions"
+        ADD CONSTRAINT "knowledge_document_index_revisions_version_id_fkey"
+        FOREIGN KEY ("version_id") REFERENCES "knowledge_document_versions"("id") ON DELETE SET NULL
+      `,
+    );
+
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_index_revisions_document_idx ON knowledge_document_index_revisions("document_id", "created_at" DESC)`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_index_revisions_workspace_base_status_idx ON knowledge_document_index_revisions("workspace_id", "base_id", "status")`,
+    );
+
+    await ensureConstraint(
+      "knowledge_documents",
+      "knowledge_documents_current_revision_fkey",
+      sql`
+        ALTER TABLE "knowledge_documents"
+        ADD CONSTRAINT "knowledge_documents_current_revision_fkey"
+        FOREIGN KEY ("current_revision_id") REFERENCES "knowledge_document_index_revisions"("id") ON DELETE SET NULL
+      `,
+    );
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "knowledge_document_chunk_sets" (
         "id" varchar PRIMARY KEY DEFAULT ${uuidExpression},
         "workspace_id" varchar NOT NULL,
         "document_id" varchar NOT NULL,
         "version_id" varchar NOT NULL,
+        "revision_id" varchar,
         "document_hash" text,
         "max_tokens" integer,
         "max_chars" integer,
@@ -3205,6 +3421,11 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+
+    await db.execute(sql`
+      ALTER TABLE "knowledge_document_chunk_sets"
+      ADD COLUMN IF NOT EXISTS "revision_id" varchar
     `);
 
     await ensureConstraint(
@@ -3237,12 +3458,35 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       `,
     );
 
+    await ensureConstraint(
+      "knowledge_document_chunk_sets",
+      "knowledge_document_chunk_sets_revision_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_chunk_sets"
+        ADD CONSTRAINT "knowledge_document_chunk_sets_revision_id_fkey"
+        FOREIGN KEY ("revision_id") REFERENCES "knowledge_document_index_revisions"("id") ON DELETE SET NULL
+      `,
+    );
+
+    await ensureConstraint(
+      "knowledge_document_index_revisions",
+      "knowledge_document_index_revisions_chunk_set_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_index_revisions"
+        ADD CONSTRAINT "knowledge_document_index_revisions_chunk_set_id_fkey"
+        FOREIGN KEY ("chunk_set_id") REFERENCES "knowledge_document_chunk_sets"("id") ON DELETE SET NULL
+      `,
+    );
+
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunk_sets_document_idx ON knowledge_document_chunk_sets("document_id", "created_at" DESC)`,
     );
 
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunk_sets_document_latest_idx ON knowledge_document_chunk_sets("document_id", "is_latest")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunk_sets_document_revision_idx ON knowledge_document_chunk_sets("document_id", "revision_id")`,
     );
 
     await db.execute(sql`
@@ -3252,6 +3496,7 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         "chunk_set_id" varchar NOT NULL,
         "document_id" varchar NOT NULL,
         "version_id" varchar NOT NULL,
+        "revision_id" varchar,
         "chunk_index" integer NOT NULL,
         "text" text NOT NULL,
         "char_start" integer NOT NULL,
@@ -3261,11 +3506,23 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
         "section_path" text[],
         "metadata" jsonb NOT NULL DEFAULT '{}'::jsonb,
         "content_hash" text NOT NULL,
+        "chunk_ordinal" integer,
+        "vector_id" text,
         "vector_record_id" text,
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    await db.execute(
+      sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "revision_id" varchar`,
+    );
+    await db.execute(
+      sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "chunk_ordinal" integer`,
+    );
+    await db.execute(
+      sql`ALTER TABLE "knowledge_document_chunks" ADD COLUMN IF NOT EXISTS "vector_id" text`,
+    );
 
     await ensureConstraint(
       "knowledge_document_chunks",
@@ -3307,12 +3564,31 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
       `,
     );
 
+    await ensureConstraint(
+      "knowledge_document_chunks",
+      "knowledge_document_chunks_revision_id_fkey",
+      sql`
+        ALTER TABLE "knowledge_document_chunks"
+        ADD CONSTRAINT "knowledge_document_chunks_revision_id_fkey"
+        FOREIGN KEY ("revision_id") REFERENCES "knowledge_document_index_revisions"("id") ON DELETE SET NULL
+      `,
+    );
+
     await db.execute(
       sql`CREATE UNIQUE INDEX IF NOT EXISTS knowledge_document_chunks_set_index_idx ON knowledge_document_chunks("chunk_set_id", "chunk_index")`,
     );
 
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunks_document_idx ON knowledge_document_chunks("document_id", "chunk_index")`,
+    );
+    await db.execute(
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS knowledge_document_chunks_vector_id_idx ON knowledge_document_chunks("vector_id")`,
+    );
+    await db.execute(
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS knowledge_document_chunks_revision_hash_ordinal_idx ON knowledge_document_chunks("document_id", "revision_id", "content_hash", "chunk_ordinal")`,
+    );
+    await db.execute(
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunks_document_revision_idx ON knowledge_document_chunks("document_id", "revision_id")`,
     );
 
 
@@ -7446,6 +7722,102 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return updated;
+  }
+
+  async createKnowledgeDocumentIndexRevision(
+    value: KnowledgeDocumentIndexRevisionInsert,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord | null> {
+    try {
+      await ensureKnowledgeDocumentIndexRevisionsTable();
+      const now = new Date();
+      const [created] = await this.db
+        .insert(knowledgeDocumentIndexRevisions)
+        .values({
+          ...value,
+          createdAt: value.createdAt ?? now,
+          updatedAt: now,
+        })
+        .returning();
+      return created ?? null;
+    } catch (error) {
+      console.error(
+        `[createKnowledgeDocumentIndexRevision] Failed to create revision:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async updateKnowledgeDocumentIndexRevision(
+    workspaceId: string,
+    documentId: string,
+    revisionId: string,
+    updates: Partial<KnowledgeDocumentIndexRevisionInsert>,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord | null> {
+    try {
+      await ensureKnowledgeDocumentIndexRevisionsTable();
+      const now = new Date();
+      const [updated] = await this.db
+        .update(knowledgeDocumentIndexRevisions)
+        .set({
+          ...updates,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(knowledgeDocumentIndexRevisions.workspaceId, workspaceId),
+            eq(knowledgeDocumentIndexRevisions.documentId, documentId),
+            eq(knowledgeDocumentIndexRevisions.id, revisionId),
+          ),
+        )
+        .returning();
+      return updated ?? null;
+    } catch (error) {
+      console.error(
+        `[updateKnowledgeDocumentIndexRevision] Failed to update revision:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  async getKnowledgeDocumentIndexRevision(
+    workspaceId: string,
+    documentId: string,
+    revisionId: string,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord | null> {
+    await ensureKnowledgeDocumentIndexRevisionsTable();
+    const [row] = await this.db
+      .select()
+      .from(knowledgeDocumentIndexRevisions)
+      .where(
+        and(
+          eq(knowledgeDocumentIndexRevisions.workspaceId, workspaceId),
+          eq(knowledgeDocumentIndexRevisions.documentId, documentId),
+          eq(knowledgeDocumentIndexRevisions.id, revisionId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  }
+
+  async getLatestKnowledgeDocumentIndexRevision(
+    workspaceId: string,
+    documentId: string,
+  ): Promise<KnowledgeDocumentIndexRevisionRecord | null> {
+    await ensureKnowledgeDocumentIndexRevisionsTable();
+    const [row] = await this.db
+      .select()
+      .from(knowledgeDocumentIndexRevisions)
+      .where(
+        and(
+          eq(knowledgeDocumentIndexRevisions.workspaceId, workspaceId),
+          eq(knowledgeDocumentIndexRevisions.documentId, documentId),
+        ),
+      )
+      .orderBy(desc(knowledgeDocumentIndexRevisions.createdAt))
+      .limit(1);
+    return row ?? null;
   }
 
   async upsertKnowledgeDocumentIndexState(
