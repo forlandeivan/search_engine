@@ -1073,7 +1073,7 @@ export const knowledgeDocumentChunkItems = pgTable(
       table.documentId,
       table.chunkIndex,
     ),
-    vectorIdIndex: uniqueIndex("knowledge_document_chunks_vector_id_idx").on(table.vectorId),
+    vectorIdIndex: index("knowledge_document_chunks_vector_id_idx").on(table.vectorId),
     revisionHashOrdinalIndex: uniqueIndex("knowledge_document_chunks_revision_hash_ordinal_idx").on(
       table.documentId,
       table.revisionId,

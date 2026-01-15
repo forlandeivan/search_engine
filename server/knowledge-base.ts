@@ -77,6 +77,137 @@ function isQdrantNotFoundError(error: unknown): boolean {
   return status === 404;
 }
 
+async function deleteKnowledgeBaseCollection(params: {
+  workspaceId: string;
+  baseId: string;
+  context: string;
+  throwOnError?: boolean;
+}): Promise<{ collectionName: string; deleted: boolean }> {
+  const { workspaceId, baseId, context, throwOnError = false } = params;
+  const collectionName = buildKnowledgeCollectionName(baseId, workspaceId);
+  let deleted = false;
+
+  try {
+    const client = getQdrantClient();
+    let exists = true;
+    try {
+      await client.getCollection(collectionName);
+    } catch (error) {
+      if (isQdrantNotFoundError(error)) {
+        exists = false;
+      } else {
+        throw error;
+      }
+    }
+
+    if (exists) {
+      await client.deleteCollection(collectionName);
+      deleted = true;
+    }
+  } catch (error) {
+    if (throwOnError) {
+      if (error instanceof QdrantConfigurationError) {
+        throw new KnowledgeBaseError("Qdrant не настроен", 503);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new KnowledgeBaseError(`Не удалось удалить коллекцию Qdrant: ${message}`, 500);
+    }
+
+    if (error instanceof QdrantConfigurationError) {
+      console.warn(`[${context}] Qdrant не настроен, пропускаем удаление коллекции`, {
+        collectionName,
+      });
+    } else {
+      console.warn(`[${context}] Не удалось удалить коллекцию Qdrant`, {
+        collectionName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  try {
+    await storage.removeCollectionWorkspace(collectionName);
+  } catch (error) {
+    console.warn(`[${context}] Не удалось удалить связь коллекции`, {
+      collectionName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  if (deleted) {
+    try {
+      await adjustWorkspaceQdrantUsage(workspaceId, { collectionsCount: -1 });
+    } catch (error) {
+      console.warn(`[${context}] Не удалось обновить метрики Qdrant`, {
+        collectionName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { collectionName, deleted };
+}
+
+async function deleteKnowledgeDocumentVectors(params: {
+  workspaceId: string;
+  baseId: string;
+  documentIds: readonly string[];
+  context: string;
+}): Promise<void> {
+  const { workspaceId, baseId, documentIds, context } = params;
+  if (!documentIds.length) {
+    return;
+  }
+
+  const collectionName = buildKnowledgeCollectionName(baseId, workspaceId);
+  let client;
+  try {
+    client = getQdrantClient();
+  } catch (error) {
+    if (error instanceof QdrantConfigurationError) {
+      console.warn(`[${context}] Qdrant не настроен, пропускаем очистку документов`, {
+        collectionName,
+      });
+      return;
+    }
+    console.warn(`[${context}] Не удалось инициализировать Qdrant`, {
+      collectionName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  try {
+    await client.getCollection(collectionName);
+  } catch (error) {
+    if (isQdrantNotFoundError(error)) {
+      return;
+    }
+    console.warn(`[${context}] Не удалось проверить коллекцию Qdrant`, {
+      collectionName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  for (const documentId of documentIds) {
+    try {
+      await client.delete(collectionName, {
+        wait: true,
+        filter: {
+          must: [{ key: "document_id", match: { value: documentId } }],
+        },
+      });
+    } catch (error) {
+      console.warn(`[${context}] Не удалось удалить точки документа`, {
+        collectionName,
+        documentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+}
+
 type KnowledgeBaseRow = typeof knowledgeBases.$inferSelect;
 type KnowledgeBaseInsert = typeof knowledgeBases.$inferInsert;
 type KnowledgeNodeRow = typeof knowledgeNodes.$inferSelect;
@@ -740,6 +871,12 @@ export async function deleteKnowledgeBase(
   const period = getUsagePeriodForDate(new Date());
   await adjustWorkspaceObjectCounters(workspaceId, { knowledgeBasesDelta: -1 }, period);
 
+  await deleteKnowledgeBaseCollection({
+    workspaceId,
+    baseId,
+    context: "deleteKnowledgeBase",
+  });
+
   return { deletedId: baseId } satisfies DeleteKnowledgeBaseResponse;
 }
 
@@ -1218,40 +1355,14 @@ export async function resetKnowledgeBaseIndex(
   let deletedCollection = false;
   if (deleteCollection) {
     try {
-      const client = getQdrantClient();
-      let exists = true;
-      try {
-        await client.getCollection(collectionName);
-      } catch (error) {
-        if (isQdrantNotFoundError(error)) {
-          exists = false;
-        } else {
-          throw error;
-        }
-      }
-
-      if (exists) {
-        await client.deleteCollection(collectionName);
-        deletedCollection = true;
-        await storage.removeCollectionWorkspace(collectionName).catch((error) => {
-          console.warn(
-            `[resetKnowledgeBaseIndex] Failed to remove collection mapping ${collectionName}:`,
-            error,
-          );
-        });
-        try {
-          await adjustWorkspaceQdrantUsage(workspaceId, { collectionsCount: -1 });
-        } catch (error) {
-          console.warn(
-            `[resetKnowledgeBaseIndex] Failed to adjust Qdrant usage for ${collectionName}:`,
-            error,
-          );
-        }
-      }
+      const result = await deleteKnowledgeBaseCollection({
+        workspaceId,
+        baseId: base.id,
+        context: "resetKnowledgeBaseIndex",
+        throwOnError: true,
+      });
+      deletedCollection = result.deleted;
     } catch (error) {
-      if (error instanceof QdrantConfigurationError) {
-        throw new KnowledgeBaseError("Qdrant не настроен", 503);
-      }
       const message = error instanceof Error ? error.message : String(error);
       throw new KnowledgeBaseError(`Не удалось удалить коллекцию Qdrant: ${message}`, 500);
     }
@@ -1863,6 +1974,13 @@ export async function deleteKnowledgeNode(
       .update(knowledgeBases)
       .set({ updatedAt: new Date() })
       .where(eq(knowledgeBases.id, baseId));
+  });
+
+  await deleteKnowledgeDocumentVectors({
+    workspaceId,
+    baseId,
+    documentIds,
+    context: "deleteKnowledgeNode",
   });
 
   return { deletedIds: toDelete } satisfies DeleteKnowledgeNodeResponse;

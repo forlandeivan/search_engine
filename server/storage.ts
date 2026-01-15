@@ -3503,8 +3503,18 @@ export async function ensureKnowledgeBaseTables(): Promise<void> {
     await db.execute(
       sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunks_document_idx ON knowledge_document_chunks("document_id", "chunk_index")`,
     );
+    const vectorIdIndexCheck = await db.execute(sql`
+      SELECT i.indisunique AS is_unique
+      FROM pg_class c
+      JOIN pg_index i ON i.indexrelid = c.oid
+      WHERE c.relname = 'knowledge_document_chunks_vector_id_idx'
+    `);
+    const vectorIdIsUnique = Boolean((vectorIdIndexCheck.rows ?? [])[0]?.is_unique);
+    if (vectorIdIsUnique) {
+      await db.execute(sql`DROP INDEX IF EXISTS knowledge_document_chunks_vector_id_idx`);
+    }
     await db.execute(
-      sql`CREATE UNIQUE INDEX IF NOT EXISTS knowledge_document_chunks_vector_id_idx ON knowledge_document_chunks("vector_id")`,
+      sql`CREATE INDEX IF NOT EXISTS knowledge_document_chunks_vector_id_idx ON knowledge_document_chunks("vector_id")`,
     );
     await db.execute(
       sql`CREATE UNIQUE INDEX IF NOT EXISTS knowledge_document_chunks_revision_hash_ordinal_idx ON knowledge_document_chunks("document_id", "revision_id", "content_hash", "chunk_ordinal")`,
