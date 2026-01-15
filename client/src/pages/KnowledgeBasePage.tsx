@@ -3458,6 +3458,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
           onComplete={() => {
             setIndexingActionId(null);
             void indexingStatusQuery.refetch();
+            void indexingSummaryQuery.refetch();
+            if (isIndexingChangesOpen) {
+              void indexingChangesQuery.refetch();
+            }
           }}
         />
         {detailContent}
