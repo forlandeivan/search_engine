@@ -142,6 +142,7 @@ function mapToDto(row: StoredKnowledgeBaseIndexingPolicy | null): KnowledgeBaseI
     chunkSize: row.chunkSize,
     chunkOverlap: row.chunkOverlap,
     defaultSchema: Array.isArray(row.defaultSchema) ? row.defaultSchema : [],
+    policyHash: row.policyHash ?? null,
   };
 }
 

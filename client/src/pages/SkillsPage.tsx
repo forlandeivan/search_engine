@@ -87,7 +87,6 @@ import type { FileStorageProviderSummary } from "@/types/file-storage-providers"
 
 const ICON_OPTIONS = SKILL_ICON_OPTIONS;
 
-const NO_EMBEDDING_PROVIDER_VALUE = "__none";
 export const WORKSPACE_DEFAULT_PROVIDER_VALUE = "__workspace_default";
 
 export const skillFormSchema = z.object({
@@ -109,13 +108,6 @@ export const skillFormSchema = z.object({
     .optional()
     .or(z.literal("")),
   icon: z.string().optional().or(z.literal("")),
-  ragMode: z.enum(["all_collections", "selected_collections"]),
-  ragCollectionIds: z.array(z.string()).default([]),
-  ragTopK: z.string().optional().or(z.literal("")),
-  ragMinScore: z.string().optional().or(z.literal("")),
-  ragMaxContextTokens: z.string().optional().or(z.literal("")),
-  ragShowSources: z.boolean(),
-  ragEmbeddingProviderId: z.string().optional().or(z.literal("")),
   transcriptionFlowMode: z.enum(["standard", "no_code"]).default("standard"),
   onTranscriptionMode: z.enum(["raw_only", "auto_action"]),
   onTranscriptionAutoActionId: z.string().optional().or(z.literal("")),
@@ -137,25 +129,6 @@ export const skillFormSchema = z.object({
   noCodeBearerToken: z.string().optional().or(z.literal("")),
   noCodeBearerTokenAction: z.enum(["keep", "replace", "clear"]).default("replace"),
   noCodeFileStorageProviderId: z.string().optional().or(z.literal("")).nullable(),
-}).superRefine((val, ctx) => {
-  if (val.executionMode === "standard") {
-    return;
-  }
-  // В режиме no-code внутренние RAG-настройки не обязательны.
-  if (val.executionMode === "no_code") {
-    return;
-  }
-
-  const hasKnowledgeBases = Boolean(val.knowledgeBaseIds?.length);
-  const hasCollections =
-    val.ragMode === "selected_collections" && Boolean(val.ragCollectionIds?.length);
-  if (hasCollections && !hasKnowledgeBases) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["knowledgeBaseIds"],
-      message: "Для коллекций выберите базу знаний",
-    });
-  }
 });
 
 
@@ -182,13 +155,6 @@ export const defaultFormValues = {
   llmMaxTokens: "",
   systemPrompt: "",
   icon: "",
-  ragMode: "all_collections" as "all_collections" | "selected_collections",
-  ragCollectionIds: [] as string[],
-  ragTopK: "5",
-  ragMinScore: "0.7",
-  ragMaxContextTokens: "3000",
-  ragShowSources: true,
-  ragEmbeddingProviderId: NO_EMBEDDING_PROVIDER_VALUE,
   transcriptionFlowMode: "standard" as "standard" | "no_code",
   onTranscriptionMode: "raw_only" as "raw_only" | "auto_action",
   onTranscriptionAutoActionId: "",
@@ -220,21 +186,6 @@ type KnowledgeBaseMultiSelectProps = {
   onChange: (next: string[]) => void;
   knowledgeBases: KnowledgeBaseSummary[];
   disabled?: boolean;
-};
-
-type VectorCollectionSummary = {
-  name: string;
-};
-
-type VectorCollectionMultiSelectProps = {
-  value: string[];
-  onChange: (next: string[]) => void;
-  collections: VectorCollectionSummary[];
-  disabled?: boolean;
-};
-
-type VectorCollectionsResponse = {
-  collections: VectorCollectionSummary[];
 };
 
 type SkillActionConfigItem = {
@@ -378,94 +329,6 @@ function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }:
                           <p className="text-xs text-muted-foreground line-clamp-2">{kb.description}</p>
                         )}
                       </div>
-                    </CommandItem>
-                  );
-                })}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
-}
-
-function VectorCollectionMultiSelect({
-  value,
-  onChange,
-  collections,
-  disabled,
-}: VectorCollectionMultiSelectProps) {
-  const [open, setOpen] = useState(false);
-  const sortedCollections = useMemo(
-    () => [...collections].sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" })),
-    [collections],
-  );
-  const selectedSet = useMemo(() => new Set(value), [value]);
-  const selected = sortedCollections.filter((collection) => selectedSet.has(collection.name));
-  const MAX_BADGES = 2;
-  const visibleBadges = selected.slice(0, MAX_BADGES);
-  const extraBadges = selected.length - visibleBadges.length;
-
-  const toggle = (name: string) => {
-    if (selectedSet.has(name)) {
-      onChange(value.filter((current) => current !== name));
-      return;
-    }
-    onChange([...value, name]);
-  };
-
-  return (
-    <div className="space-y-2">
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full justify-between gap-2"
-            role="combobox"
-            aria-expanded={open}
-            disabled={disabled || sortedCollections.length === 0}
-            data-testid="collections-multiselect"
-          >
-            {sortedCollections.length === 0 ? (
-              <span className="truncate">Коллекции не найдены</span>
-            ) : selected.length === 0 ? (
-              <span className="truncate text-muted-foreground">Выберите коллекции</span>
-            ) : (
-              <span className="flex min-w-0 flex-wrap items-center gap-1">
-                {visibleBadges.map((collection) => (
-                  <Badge key={collection.name} variant="secondary" className="text-[11px]">
-                    {collection.name}
-                  </Badge>
-                ))}
-                {extraBadges > 0 && (
-                  <Badge variant="outline" className="text-[11px] text-muted-foreground">
-                    +{extraBadges}
-                  </Badge>
-                )}
-              </span>
-            )}
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-[360px] p-0">
-          <Command>
-            <CommandInput placeholder="Поиск по коллекциям..." />
-            <CommandList>
-              <CommandEmpty>Коллекции не найдены</CommandEmpty>
-              <CommandGroup heading="Коллекции">
-                {sortedCollections.map((collection) => {
-                  const isSelected = selectedSet.has(collection.name);
-                  return (
-                    <CommandItem
-                      key={collection.name}
-                      value={collection.name}
-                      onSelect={() => toggle(collection.name)}
-                      className="items-start"
-                    >
-                      <Check className={cn("mr-2 h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} />
-                      <span className="text-sm font-medium leading-none">{collection.name}</span>
                     </CommandItem>
                   );
                 })}
@@ -971,14 +834,14 @@ function ActionsPreviewForNewSkill() {
 
 type SkillFormProps = {
   knowledgeBases: KnowledgeBaseSummary[];
-  vectorCollections: VectorCollectionSummary[];
-  isVectorCollectionsLoading: boolean;
   embeddingProviders: PublicEmbeddingProvider[];
   isEmbeddingProvidersLoading: boolean;
   fileStorageProviders: FileStorageProviderSummary[];
   workspaceDefaultFileStorageProvider: FileStorageProviderSummary | null;
   isFileStorageProvidersLoading?: boolean;
   fileStorageProvidersError?: Error | null;
+  hasSkillFiles?: boolean;
+  isSkillFilesReady?: boolean;
   llmOptions: LlmSelectionOption[];
   onSubmit: (values: SkillFormValues) => Promise<boolean>;
   isSubmitting: boolean;
@@ -1099,14 +962,14 @@ function IconPicker({
 
 export function SkillFormContent({
   knowledgeBases,
-  vectorCollections,
-  isVectorCollectionsLoading,
   embeddingProviders,
   isEmbeddingProvidersLoading,
   fileStorageProviders,
   workspaceDefaultFileStorageProvider,
   isFileStorageProvidersLoading = false,
   fileStorageProvidersError,
+  hasSkillFiles,
+  isSkillFilesReady,
   llmOptions,
   onSubmit,
   isSubmitting,
@@ -1211,24 +1074,18 @@ export function SkillFormContent({
     }
   };
   const isSystemSkill = Boolean(skill?.isSystem);
-  const ragMode = form.watch("ragMode");
-  const isManualRagMode = ragMode === "selected_collections";
   const iconValue = form.watch("icon") ?? "";
   const transcriptionMode = form.watch("onTranscriptionMode");
   const isAutoActionMode = transcriptionMode === "auto_action";
   const transcriptionFlowMode = form.watch("transcriptionFlowMode");
   const isTranscriptionNoCode = transcriptionFlowMode === "no_code";
-  const vectorCollectionsEmpty = vectorCollections.length === 0;
-  const vectorCollectionsUnavailable = isVectorCollectionsLoading || vectorCollectionsEmpty;
   const controlsDisabled = isSubmitting || isSystemSkill;
   const noCodeDisabled = controlsDisabled || !allowNoCodeFlow;
-  const vectorCollectionsDisabled = vectorCollectionsUnavailable || controlsDisabled;
-  const embeddingProvidersEmpty = embeddingProviders.length === 0;
-  const embeddingProvidersUnavailable = isEmbeddingProvidersLoading || embeddingProvidersEmpty;
-  const embeddingProviderSelectDisabled = embeddingProvidersUnavailable || controlsDisabled;
   const isNoCodeMode = form.watch("executionMode") === "no_code";
   const isStandardMode = !isNoCodeMode;
   const showRagUi = !isNoCodeMode; // Показывать RAG UI для всех режимов, кроме no-code
+  const hasSkillFilesValue = Boolean(hasSkillFiles);
+  const skillFilesReady = isSkillFilesReady ?? true;
   const canManageCallbackToken = Boolean(skill?.id && isNoCodeMode && allowNoCodeFlow && onGenerateCallbackToken);
   const formatDateTime = (value: string | null | undefined): string | null => {
     if (!value) return null;
@@ -1242,9 +1099,9 @@ export function SkillFormContent({
   const providerSelection = form.watch("noCodeFileStorageProviderId") ?? WORKSPACE_DEFAULT_PROVIDER_VALUE;
   const normalizedProviderSelection =
     providerSelection && providerSelection !== WORKSPACE_DEFAULT_PROVIDER_VALUE ? providerSelection : null;
-  const selectedProvider =
-    normalizedProviderSelection &&
-    fileStorageProviders.find((provider) => provider.id === normalizedProviderSelection);
+  const selectedProvider = normalizedProviderSelection
+    ? fileStorageProviders.find((provider) => provider.id === normalizedProviderSelection) ?? null
+    : null;
   const workspaceDefaultProvider = workspaceDefaultFileStorageProvider ?? null;
   const resolvedProvider = selectedProvider ?? (normalizedProviderSelection ? null : workspaceDefaultProvider);
   const resolvedProviderSource: "skill" | "workspace_default" | "none" =
@@ -1345,32 +1202,6 @@ export function SkillFormContent({
     setIssuedCallbackToken(null);
     setIssuedCallbackTokenMeta({ rotatedAt: null, lastFour: null });
   };
-  const embeddingProviderOptions = useMemo(() => {
-    return embeddingProviders
-      .map((provider) => ({
-        id: provider.id,
-        name: provider.name,
-        isActive: provider.isActive,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" }));
-  }, [embeddingProviders]);
-  const effectiveEmbeddingProviderOptions = useMemo(() => {
-    const currentId = skill?.ragConfig?.embeddingProviderId;
-    if (!currentId) {
-      return embeddingProviderOptions;
-    }
-    if (embeddingProviderOptions.some((provider) => provider.id === currentId)) {
-      return embeddingProviderOptions;
-    }
-    return [
-      ...embeddingProviderOptions,
-      {
-        id: currentId,
-        name: `${currentId} (не доступен)`,
-        isActive: false,
-      },
-    ];
-  }, [embeddingProviderOptions, skill]);
   const transcriptActionsQuery = useQuery<SkillActionConfigItem[]>({
     queryKey: ["skill-actions", skill?.id, "transcript"],
     enabled: Boolean(skill?.id),
@@ -1392,19 +1223,21 @@ export function SkillFormContent({
   }, [knowledgeBases]);
   const executionMode = form.watch("executionMode");
   const knowledgeBaseIds = form.watch("knowledgeBaseIds");
-  const ragCollectionIds = form.watch("ragCollectionIds");
 
-  // Автоматическое определение режима при изменении баз знаний или коллекций
+  // Автоматическое определение режима при изменении баз знаний
   useEffect(() => {
     if (executionMode === "no_code") {
       // Для no-code режима всегда llm, не меняем
       return;
     }
-    const hasRagSources =
-      (knowledgeBaseIds?.length ?? 0) > 0 || (ragCollectionIds?.length ?? 0) > 0;
+    const hasSelectedBases = (knowledgeBaseIds?.length ?? 0) > 0;
+    if (!hasSelectedBases && !skillFilesReady) {
+      return;
+    }
+    const hasRagSources = hasSelectedBases || hasSkillFilesValue;
     const newMode = hasRagSources ? "rag" : "llm";
     form.setValue("mode", newMode, { shouldDirty: true });
-  }, [knowledgeBaseIds, ragCollectionIds, executionMode, form]);
+  }, [knowledgeBaseIds, executionMode, form, hasSkillFilesValue, skillFilesReady]);
 
   const effectiveLlmOptions = useMemo(() => {
     if (!skill?.llmProviderConfigId || !skill?.modelId) {
@@ -1442,8 +1275,6 @@ export function SkillFormContent({
 
     if (skill) {
       const ragConfig = skill.ragConfig ?? {
-        mode: "all_collections",
-        collectionIds: [],
         topK: 5,
         minScore: 0.7,
         maxContextTokens: null,
@@ -1489,13 +1320,6 @@ export function SkillFormContent({
             : String(ragConfig.llmMaxTokens),
         systemPrompt: skill.systemPrompt ?? "",
         icon: skill.icon ?? "",
-        ragMode: ragConfig.mode,
-        ragCollectionIds: ragConfig.collectionIds,
-        ragTopK: String(ragConfig.topK),
-        ragMinScore: String(ragConfig.minScore),
-        ragMaxContextTokens: ragConfig.maxContextTokens !== null ? String(ragConfig.maxContextTokens) : "",
-        ragShowSources: ragConfig.showSources,
-        ragEmbeddingProviderId: ragConfig.embeddingProviderId ?? NO_EMBEDDING_PROVIDER_VALUE,
         transcriptionFlowMode: skill.transcriptionFlowMode ?? "standard",
         onTranscriptionMode: skill.onTranscriptionMode ?? "raw_only",
         onTranscriptionAutoActionId: skill.onTranscriptionAutoActionId ?? "",
@@ -1559,14 +1383,10 @@ export function SkillFormContent({
       }
     }
     try {
-      // Автоматическое определение режима на основе баз знаний и коллекций
-      const ragCollectionIdsForMode =
-        values.ragMode === "selected_collections"
-          ? values.ragCollectionIds.map((name) => name.trim()).filter((name) => name.length > 0)
-          : [];
+      // Автоматическое определение режима на основе баз знаний
       const hasRagSources =
         values.executionMode !== "no_code" &&
-        (values.knowledgeBaseIds.length > 0 || ragCollectionIdsForMode.length > 0);
+        (values.knowledgeBaseIds.length > 0 || hasSkillFilesValue);
       const autoMode = values.executionMode === "no_code" ? "llm" : hasRagSources ? "rag" : "llm";
 
       const nextValues: SkillFormValues = {
@@ -1952,266 +1772,34 @@ export function SkillFormContent({
                     {showRagUi ? (
                     <Card className="md:col-span-2">
                       <CardHeader className="px-6 grid gap-2">
-                        <CardTitle className="text-base font-semibold">Источники и коллекции</CardTitle>
+                        <CardTitle className="text-base font-semibold">Источники</CardTitle>
                         <CardDescription className="text-sm text-muted-foreground">
-                          Навык будет искать ответы в выбранных базах знаний и коллекциях.
+                          Навык будет искать ответы в выбранных базах знаний и загруженных файлах (если они есть).
                           {form.watch("mode") === "rag" && " Режим RAG активен."}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="px-6 pb-6 space-y-6">
                         {executionMode !== "no_code" && (
-                          <div className="grid gap-6 md:grid-cols-2">
-                            <div className="space-y-6">
-                              <FormField
-                                control={form.control}
-                                name="knowledgeBaseIds"
-                                render={({ field }) => (
-                                  <FormItem>
-                                    <FormLabel>Базы знаний</FormLabel>
-                                    <FormControl>
-                                      <KnowledgeBaseMultiSelect
-                                        value={field.value}
-                                        onChange={field.onChange}
-                                        knowledgeBases={sortedKnowledgeBases}
-                                        disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
-                                      />
-                                    </FormControl>
-                                    <FormMessage className="text-xs text-destructive leading-tight" />
-                                  </FormItem>
-                                )}
-                              />
-                            </div>
-                            <div className="space-y-6">
-                              <FormField
-                                control={form.control}
-                                name="ragMode"
-                                render={({ field }) => (
-                                  <FormItem>
-                                    <FormLabel>Режим использования коллекций</FormLabel>
-                                    <FormControl>
-                                      <RadioGroup
-                                        value={field.value}
-                                        onValueChange={controlsDisabled ? undefined : field.onChange}
-                                        className="grid gap-3"
-                                      >
-                                        <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
-                                          <RadioGroupItem value="all_collections" className="peer sr-only" disabled={controlsDisabled} />
-                                          <div className="flex items-start gap-3">
-                                            <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
-                                            <div>
-                                              <p className="text-sm font-medium">Все коллекции</p>
-                                              <p className="text-xs text-muted-foreground">
-                                                Навык автоматически ищет во всех коллекциях рабочего пространства.
-                                              </p>
-                                            </div>
-                                          </div>
-                                          <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
-                                        </label>
-                                        <label className="relative cursor-pointer rounded-lg border border-border bg-background px-4 py-4 transition-colors hover:bg-accent/40">
-                                          <RadioGroupItem value="selected_collections" className="peer sr-only" disabled={controlsDisabled} />
-                                          <div className="flex items-start gap-3">
-                                            <div className="h-4 w-4 rounded-full border border-muted peer-checked:border-primary peer-checked:bg-primary" aria-hidden="true" />
-                                            <div>
-                                              <p className="text-sm font-medium">Выбрать вручную</p>
-                                              <p className="text-xs text-muted-foreground">
-                                                Укажите конкретные коллекции, в которых навык может искать ответы.
-                                              </p>
-                                            </div>
-                                          </div>
-                                          <div className="pointer-events-none absolute inset-0 rounded-lg border border-transparent peer-checked:border-primary peer-checked:bg-accent/40" />
-                                        </label>
-                                      </RadioGroup>
-                                    </FormControl>
-                                    <FormMessage className="text-xs text-destructive leading-tight" />
-                                  </FormItem>
-                                )}
-                              />
-                              {isManualRagMode ? (
-                                <FormField
-                                  control={form.control}
-                                  name="ragCollectionIds"
-                                  render={({ field }) => (
-                                    <FormItem>
-                                      <FormLabel>Коллекции для навыка</FormLabel>
-                                      <FormControl>
-                                        <VectorCollectionMultiSelect
-                                          value={field.value}
-                                          onChange={field.onChange}
-                                          collections={vectorCollections}
-                                          disabled={vectorCollectionsDisabled}
-                                        />
-                                      </FormControl>
-                                      <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                        {isVectorCollectionsLoading
-                                          ? "Загружаем список коллекций..."
-                                          : vectorCollectionsEmpty
-                                            ? "Коллекций пока нет — создайте их в разделе “Vector Collections”."
-                                            : "Можно выбрать одну или несколько коллекций рабочего пространства."}
-                                      </FormDescription>
-                                      <FormMessage className="text-xs text-destructive leading-tight" />
-                                    </FormItem>
-                                  )}
-                                />
-                              ) : null}
-                            </div>
+                          <div className="grid gap-6">
+                            <FormField
+                              control={form.control}
+                              name="knowledgeBaseIds"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Базы знаний</FormLabel>
+                                  <FormControl>
+                                    <KnowledgeBaseMultiSelect
+                                      value={field.value}
+                                      onChange={field.onChange}
+                                      knowledgeBases={sortedKnowledgeBases}
+                                      disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
+                                    />
+                                  </FormControl>
+                                  <FormMessage className="text-xs text-destructive leading-tight" />
+                                </FormItem>
+                              )}
+                            />
                           </div>
-                        )}
-                        {executionMode !== "no_code" &&
-                          (form.watch("mode") === "rag" ||
-                            (form.watch("knowledgeBaseIds")?.length ?? 0) > 0 ||
-                            (form.watch("ragCollectionIds")?.length ?? 0) > 0) && (
-                          <Accordion type="single" collapsible>
-                            <AccordionItem value="rag-advanced" className="border-none">
-                              <AccordionTrigger className="py-2">RAG (дополнительно)</AccordionTrigger>
-                              <AccordionContent>
-                              <div className="space-y-4">
-                                <div className="space-y-1">
-                                  <h3 className="text-base font-semibold">Провайдер эмбеддингов</h3>
-                                  <p className="text-sm text-muted-foreground">
-                                    Должен совпадать с тем, что использует выбранная коллекция.
-                                  </p>
-                                </div>
-                                <FormField
-                                  control={form.control}
-                                  name="ragEmbeddingProviderId"
-                                  render={({ field }) => (
-                                    <FormItem>
-                                      <Select
-                                        value={field.value ?? NO_EMBEDDING_PROVIDER_VALUE}
-                                        onValueChange={field.onChange}
-                                        disabled={embeddingProviderSelectDisabled}
-                                      >
-                                        <SelectTrigger>
-                                          <SelectValue
-                                            placeholder={
-                                              embeddingProvidersUnavailable
-                                                ? "Загрузка..."
-                                                : embeddingProvidersEmpty
-                                                  ? "Нет доступных сервисов"
-                                                  : "Выберите сервис"
-                                            }
-                                          />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value={NO_EMBEDDING_PROVIDER_VALUE}>Не выбрано</SelectItem>
-                                          {effectiveEmbeddingProviderOptions.map((provider) => (
-                                            <SelectItem key={provider.id} value={provider.id} disabled={!provider.isActive}>
-                                              <div className="flex flex-col gap-0.5">
-                                                <span>{provider.name}</span>
-                                                {!provider.isActive && (
-                                                  <span className="text-xs text-muted-foreground">Провайдер отключён</span>
-                                                )}
-                                              </div>
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                      <FormMessage className="text-xs text-destructive leading-tight" />
-                                    </FormItem>
-                                  )}
-                                />
-
-                                <div className="space-y-1">
-                                  <h3 className="text-base font-semibold">Параметры поиска</h3>
-                                  <p className="text-sm text-muted-foreground">Управляют объёмом и точностью выдачи.</p>
-                                </div>
-                                <div className="grid gap-4 md:grid-cols-2">
-                                  <FormField
-                                    control={form.control}
-                                    name="ragTopK"
-                                    render={({ field }) => (
-                                      <FormItem>
-                                        <div className="flex items-center gap-2">
-                                          <FormLabel>topK</FormLabel>
-                                          <InfoTooltipIcon text="Число чанков, которые ищем для каждого запроса. Больше — точнее, но дороже. По умолчанию 5." />
-                                        </div>
-                                        <FormControl>
-                                          <Input
-                                            type="number"
-                                            min={1}
-                                            max={50}
-                                            placeholder="5"
-                                            value={field.value ?? ""}
-                                            onChange={(event) => field.onChange(event.target.value)}
-                                          />
-                                        </FormControl>
-                                        <FormMessage className="text-xs text-destructive leading-tight" />
-                                      </FormItem>
-                                    )}
-                                  />
-                                  <FormField
-                                    control={form.control}
-                                    name="ragMinScore"
-                                    render={({ field }) => (
-                                      <FormItem>
-                                        <div className="flex items-center gap-2">
-                                          <FormLabel>minScore</FormLabel>
-                                          <InfoTooltipIcon text="Минимальная релевантность чанка (0–1). Всё, что ниже порога, отбрасывается." />
-                                        </div>
-                                        <FormControl>
-                                          <Input
-                                            type="number"
-                                            step="0.05"
-                                            min={0}
-                                            max={1}
-                                            placeholder="0.7"
-                                            value={field.value ?? ""}
-                                            onChange={(event) => field.onChange(event.target.value)}
-                                          />
-                                        </FormControl>
-                                        <FormMessage className="text-xs text-destructive leading-tight" />
-                                      </FormItem>
-                                    )}
-                                  />
-                                </div>
-
-                                <FormField
-                                  control={form.control}
-                                  name="ragMaxContextTokens"
-                                  render={({ field }) => (
-                                    <FormItem>
-                                      <div className="flex items-center gap-2">
-                                        <FormLabel>Лимит контекста (токены)</FormLabel>
-                                        <InfoTooltipIcon text="Мягкий лимит на суммарный текст из базы знаний для одного ответа LLM. Если пусто — используем настройку по умолчанию." />
-                                      </div>
-                                      <FormControl>
-                                        <Input
-                                          type="number"
-                                          min={500}
-                                          placeholder="3000"
-                                          value={field.value ?? ""}
-                                          onChange={(event) => field.onChange(event.target.value)}
-                                        />
-                                      </FormControl>
-                                      <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                        Оставьте поле пустым, чтобы использовать стандартное значение.
-                                      </FormDescription>
-                                      <FormMessage className="text-xs text-destructive leading-tight" />
-                                    </FormItem>
-                                  )}
-                                />
-
-                                <FormField
-                                  control={form.control}
-                                  name="ragShowSources"
-                                  render={({ field }) => (
-                                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
-                                      <div className="space-y-0.5">
-                                        <FormLabel className="text-base">Показывать источники в ответе</FormLabel>
-                                        <FormDescription className="text-xs text-muted-foreground leading-tight">
-                                          Показывает пользователю документы и ссылки, из которых взяты чанки.
-                                        </FormDescription>
-                                      </div>
-                                      <FormControl>
-                                        <Switch checked={field.value} onCheckedChange={field.onChange} disabled={controlsDisabled} />
-                                      </FormControl>
-                                    </FormItem>
-                                  )}
-                                />
-                              </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        </Accordion>
                         )}
                       </CardContent>
                     </Card>
@@ -2864,17 +2452,6 @@ export default function SkillsPage() {
     queryFn: () => fetchKnowledgeBases(workspaceId as string),
     enabled: Boolean(workspaceId),
   });
-  const vectorCollectionsQuery = useQuery<VectorCollectionsResponse>({
-    queryKey: ["/api/vector/collections", workspaceId],
-    enabled: Boolean(workspaceId),
-    queryFn: async () => {
-      if (!workspaceId) {
-        throw new Error("Рабочее пространство не выбрано");
-      }
-      const response = await apiRequest("GET", "/api/vector/collections", undefined, undefined, { workspaceId });
-      return (await response.json()) as VectorCollectionsResponse;
-    },
-  });
   const {
     data: embeddingProvidersResponse,
     isLoading: isEmbeddingProvidersLoading,
@@ -2899,8 +2476,6 @@ export default function SkillsPage() {
   const llmProviders = llmProvidersResponse?.providers ?? [];
 
   const knowledgeBases = knowledgeBaseQuery.data ?? [];
-  const vectorCollections = vectorCollectionsQuery.data?.collections ?? [];
-  const vectorCollectionsError = vectorCollectionsQuery.error as Error | undefined;
   const embeddingProviders = embeddingProvidersResponse?.providers ?? [];
   const embeddingProvidersError = embeddingProvidersErrorRaw as Error | undefined;
   const { toast } = useToast();
@@ -3065,7 +2640,6 @@ export default function SkillsPage() {
     isSkillsLoading ||
     knowledgeBaseQuery.isLoading ||
     isLlmLoading ||
-    vectorCollectionsQuery.isLoading ||
     isEmbeddingProvidersLoading ||
     isModelsLoading;
 
@@ -3096,15 +2670,14 @@ export default function SkillsPage() {
         </div>
       </div>
 
-      {(isError || knowledgeBaseQuery.error || llmError || modelsError || vectorCollectionsError || embeddingProvidersError) && (
+      {(isError || knowledgeBaseQuery.error || llmError || modelsError || embeddingProvidersError) && (
         <Alert variant="destructive">
           <AlertTitle>Не удалось загрузить данные</AlertTitle>
           <AlertDescription>
             {error?.message ||
               (knowledgeBaseQuery.error as Error | undefined)?.message ||
               (llmError as Error | undefined)?.message ||
-              (modelsError as Error | undefined)?.message ||
-              vectorCollectionsError?.message}
+              (modelsError as Error | undefined)?.message}
           </AlertDescription>
         </Alert>
       )}

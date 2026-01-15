@@ -1,4 +1,4 @@
-import fetch, { Headers } from "node-fetch";
+import fetch, { Headers, type Response } from "node-fetch";
 import { EmbeddingProvider } from "@shared/schema";
 import { fetchAccessToken } from "./llm-access-token";
 import { applyTlsPreferences, type NodeFetchOptions } from "./http-utils";
@@ -59,6 +59,18 @@ async function callEmbedding(
       );
       response = await fetch(provider.embeddingsUrl, requestOptions);
     } catch (error) {
+      lastError = new EmbeddingError(
+        "Сервис эмбеддингов временно недоступен. Попробуйте позже.",
+        true,
+      );
+      if (attempt < EMBEDDING_MAX_RETRIES) {
+        await sleep(EMBEDDING_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+      throw lastError;
+    }
+
+    if (!response) {
       lastError = new EmbeddingError(
         "Сервис эмбеддингов временно недоступен. Попробуйте позже.",
         true,

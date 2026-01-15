@@ -10,7 +10,12 @@ import { createHash, randomUUID, randomBytes } from "crypto";
 import { extname } from "path";
 import { performance } from "perf_hooks";
 import { storage } from "./storage";
-import { uploadWorkspaceFile, deleteObject as deleteWorkspaceObject } from "./workspace-storage-service";
+import {
+  uploadWorkspaceFile,
+  deleteObject as deleteWorkspaceObject,
+  getWorkspaceFile,
+  generateWorkspaceFileDownloadUrl,
+} from "./workspace-storage-service";
 import { uploadFileToProvider, FileUploadToProviderError } from "./file-storage-provider-upload-service";
 import { cleanupFailedSkillFileUpload, type UploadedSkillFileDescriptor } from "./skill-file-upload-utils";
 import type { KnowledgeChunkSearchEntry, WorkspaceMemberWithUser } from "./storage";
@@ -259,10 +264,11 @@ function formatZodValidationError(error: z.ZodError, endpoint?: string): {
     let message = issue.message;
     let expected: string | undefined;
     let example: string | undefined;
+    const receivedValue = "received" in issue ? String(issue.received) : "undefined";
 
     // Улучшаем сообщения для разных типов ошибок
     if (issue.code === "invalid_type") {
-      if (issue.received === "undefined") {
+      if (receivedValue === "undefined") {
         message = `Поле "${field}" обязательно для заполнения`;
         if (field === "status") {
           expected = "Одно из: 'processing', 'done', 'error'";
@@ -276,11 +282,11 @@ function formatZodValidationError(error: z.ZodError, endpoint?: string): {
           example = '"transcribe_audio"';
         }
       } else {
-        message = `Поле "${field}" имеет неверный тип. Получено: ${issue.received}, ожидается: ${issue.expected}`;
+        message = `Поле "${field}" имеет неверный тип. Получено: ${receivedValue}, ожидается: ${issue.expected}`;
         expected = issue.expected;
       }
     } else if (issue.code === "invalid_enum_value") {
-      message = `Поле "${field}" содержит недопустимое значение. Получено: "${issue.received}"`;
+      message = `Поле "${field}" содержит недопустимое значение. Получено: "${receivedValue}"`;
       if (issue.options && issue.options.length > 0) {
         expected = `Одно из: ${issue.options.map((opt) => `'${opt}'`).join(", ")}`;
         example = `"${issue.options[0]}"`;
@@ -294,7 +300,7 @@ function formatZodValidationError(error: z.ZodError, endpoint?: string): {
     return {
       field,
       message,
-      received: issue.received || "undefined",
+      received: receivedValue,
       ...(expected ? { expected } : {}),
       ...(example ? { example } : {}),
     };
@@ -366,7 +372,6 @@ import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { listGuardBlockEvents } from "./guards/block-log-service";
 import { buildEmbeddingsOperationContext, buildStorageUploadOperationContext, buildLlmOperationContext } from "./guards/helpers";
-import { uploadWorkspaceFile, getWorkspaceFile, generateWorkspaceFileDownloadUrl } from "./workspace-storage-service";
 import { fetchAccessToken, type OAuthProviderConfig } from "./llm-access-token";
 import { tariffPlanService } from "./tariff-plan-service";
 import { TARIFF_LIMIT_CATALOG } from "./tariff-limit-catalog";
@@ -3598,7 +3603,7 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     let effectiveTopK = retrievalParams.topK;
     let effectiveMinScore = retrievalParams.minScore;
-    let effectiveMaxContextTokens: number | null = null;
+    let effectiveMaxContextTokens: number | null = indexingRules.maxContextTokens;
     let allowSources = resolveAllowSources({ rulesCitationsEnabled: indexingRules.citationsEnabled });
     let skillCollectionFilter: string[] = [];
 

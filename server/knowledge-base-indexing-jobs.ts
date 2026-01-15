@@ -1,4 +1,4 @@
-import type { KnowledgeBaseIndexingJob, Workspace, EmbeddingProvider } from "@shared/schema";
+import type { KnowledgeBaseIndexingJob, Workspace, EmbeddingProvider, IndexingStage } from "@shared/schema";
 import { storage } from "./storage";
 import { buildWorkspaceScopedCollectionName } from "./qdrant-utils";
 import { knowledgeBaseIndexingPolicyService } from "./knowledge-base-indexing-policy";
@@ -10,7 +10,7 @@ import { ensureCollectionCreatedIfNeeded } from "./qdrant-collections";
 import type { CollectionSchemaFieldInput } from "@shared/vectorization";
 import { renderLiquidTemplate, castValueToType, normalizeArrayValue } from "@shared/vectorization";
 import { buildVectorPayload } from "./qdrant-utils";
-import type { Schemas } from "./qdrant-client";
+import type { Schemas } from "@qdrant/js-client-rest";
 import { fetchAccessToken } from "./llm-access-token";
 import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
 import { knowledgeBaseIndexingStateService } from "./knowledge-base-indexing-state";
@@ -106,7 +106,12 @@ async function fetchEmbeddingVectorForChunk(
     throw new Error(`Embedding API error: ${response.status} ${errorText}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as {
+    data?: Array<{ embedding?: number[] }>;
+    embedding?: number[];
+    usage?: { total_tokens?: number };
+    id?: string | number;
+  };
   const vector = Array.isArray(data.data?.[0]?.embedding) ? data.data[0].embedding : data.embedding;
   if (!Array.isArray(vector)) {
     throw new Error("Invalid embedding response format");
@@ -153,7 +158,7 @@ function computeRetryDelayMs(attempts: number): number {
 async function updateIndexingActionStatus(
   workspaceId: string,
   baseId: string,
-  stage: string,
+  stage: IndexingStage,
   displayText: string,
   payload?: Record<string, unknown>,
 ): Promise<void> {
@@ -161,7 +166,7 @@ async function updateIndexingActionStatus(
     const action = await knowledgeBaseIndexingActionsService.getLatest(workspaceId, baseId);
     if (action && action.status === "processing") {
       await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
-        stage: stage as any,
+        stage,
         displayText,
         payload,
       });
@@ -225,7 +230,7 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
     } else {
       // Обновляем прогресс
       await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
-        stage: "processing",
+        stage: "vectorizing",
         displayText: `Индексация в процессе: обработано ${processedDocuments} из ${totalCount} документов`,
         payload: {
           totalDocuments: totalCount,
@@ -377,7 +382,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       return;
     }
 
-    let embeddingProvider: Awaited<ReturnType<typeof resolveEmbeddingProviderForWorkspace>>["provider"] | null = null;
+    let embeddingProvider: EmbeddingProvider | null = null;
     let workspace: Workspace | undefined;
 
     try {
@@ -737,7 +742,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     await updateIndexingActionStatus(
       job.workspaceId,
       job.baseId,
-      "uploading",
+      "vectorizing",
       `Загружаем векторы документа "${nodeDetail.title ?? "без названия"}" в коллекцию...`,
     );
 
@@ -942,8 +947,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     });
 
     await updateKnowledgeDocumentChunkVectorRecords({
+      workspaceId: job.workspaceId,
       chunkSetId: chunkSet.id,
-      mappings: vectorRecordMappings,
+      chunkRecords: vectorRecordMappings,
     });
 
     const totalChars = chunkSet.chunks.reduce((sum, chunk) => sum + (chunk.charCount ?? 0), 0);

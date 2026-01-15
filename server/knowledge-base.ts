@@ -1518,6 +1518,7 @@ export async function getKnowledgeNodeDetail(
     id: node.id,
     title: node.title,
     content: contentHtml || contentPlainText,
+    html: contentHtml || null,
     contentMarkdown,
     contentPlainText,
     sourceUrl: documentRow?.sourceUrl ?? null,
@@ -1527,6 +1528,13 @@ export async function getKnowledgeNodeDetail(
     importFileName: node.importFileName ?? null,
     documentId,
     status,
+    currentVersion: versionId
+      ? {
+          id: versionId,
+          versionNo: versionNumber,
+          createdAt: toIsoDate(versionCreatedAt),
+        }
+      : null,
     versionId,
     versionNumber,
     children: mapChildren(node, groups, nodesById),

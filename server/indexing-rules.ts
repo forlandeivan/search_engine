@@ -77,6 +77,7 @@ class DbIndexingRulesRepository implements IndexingRulesRepository {
           chunkOverlap: values.chunkOverlap,
           topK: values.topK,
           relevanceThreshold: values.relevanceThreshold,
+          maxContextTokens: values.maxContextTokens,
           citationsEnabled: values.citationsEnabled,
           updatedByAdminId: values.updatedByAdminId ?? null,
           updatedAt: sql`CURRENT_TIMESTAMP`,
@@ -100,6 +101,7 @@ function mapToDto(row: StoredIndexingRules | null): IndexingRulesDto {
     chunkOverlap: row.chunkOverlap,
     topK: row.topK,
     relevanceThreshold: row.relevanceThreshold,
+    maxContextTokens: row.maxContextTokens,
     citationsEnabled: row.citationsEnabled,
   };
 }
@@ -229,6 +231,7 @@ export class IndexingRulesService {
       chunkOverlap: values.chunkOverlap,
       topK: values.topK,
       relevanceThreshold: values.relevanceThreshold,
+      maxContextTokens: values.maxContextTokens,
       citationsEnabled: values.citationsEnabled,
       updatedByAdminId: actorAdminId ?? existing?.updatedByAdminId ?? null,
       createdAt: existing?.createdAt ?? new Date(),

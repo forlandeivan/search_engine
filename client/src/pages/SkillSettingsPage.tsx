@@ -48,6 +48,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+type SkillFileListItem = {
+  id?: string;
+  name: string;
+  size?: number | null;
+  contentType?: string | null;
+  status?: string;
+  error?: string;
+  errorMessage?: string | null;
+  createdAt?: string | null;
+  isPending?: boolean;
+};
+
 const parseTab = (search: string | null | undefined): SkillSettingsTab | null => {
   if (!search) return null;
   const params = new URLSearchParams(search.startsWith("?") ? search : `?${search}`);
@@ -64,14 +76,6 @@ const parseTab = (search: string | null | undefined): SkillSettingsTab | null =>
 type SkillSettingsPageProps = {
   skillId?: string;
   isNew?: boolean;
-};
-
-type VectorCollectionSummary = {
-  name: string;
-};
-
-type VectorCollectionsResponse = {
-  collections: VectorCollectionSummary[];
 };
 
 type WorkspacePlanResponse = {
@@ -156,18 +160,6 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     enabled: Boolean(workspaceId),
   });
 
-  const vectorCollectionsQuery = useQuery<VectorCollectionsResponse>({
-    queryKey: ["/api/vector/collections", workspaceId],
-    enabled: Boolean(workspaceId),
-    queryFn: async () => {
-      if (!workspaceId) {
-        throw new Error("Рабочее пространство не выбрано");
-      }
-      const response = await apiRequest("GET", "/api/vector/collections", undefined, undefined, { workspaceId });
-      return (await response.json()) as VectorCollectionsResponse;
-    },
-  });
-
   const {
     data: embeddingProvidersResponse,
     isLoading: isEmbeddingProvidersLoading,
@@ -192,8 +184,6 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
 
   const llmProviders = llmProvidersResponse?.providers ?? [];
   const knowledgeBases = knowledgeBaseQuery.data ?? [];
-  const vectorCollections = vectorCollectionsQuery.data?.collections ?? [];
-  const vectorCollectionsError = vectorCollectionsQuery.error as Error | undefined;
   const embeddingProviders = embeddingProvidersResponse?.providers ?? [];
   const embeddingProvidersError = embeddingProvidersErrorRaw as Error | undefined;
   const {
@@ -202,6 +192,18 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     isLoading: isFileStorageProvidersLoading,
     error: fileStorageProvidersError,
   } = useWorkspaceFileStorageProviders(workspaceId);
+
+  const shouldLoadSkillFiles = Boolean(workspaceId && skillId && !isNew);
+  const skillFilesQuery = useQuery<{ files: SkillFileListItem[] }>({
+    queryKey: ["/api/workspaces", workspaceId, "skills", skillId, "files"],
+    enabled: shouldLoadSkillFiles,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/workspaces/${workspaceId}/skills/${skillId}/files`);
+      return (await res.json()) as { files: SkillFileListItem[] };
+    },
+  });
+  const hasSkillFiles = (skillFilesQuery.data?.files?.length ?? 0) > 0;
+  const isSkillFilesReady = !shouldLoadSkillFiles || skillFilesQuery.isSuccess || skillFilesQuery.isError;
   const allowNoCodeFlow = Boolean(workspacePlanQuery.data?.plan?.noCodeFlowEnabled);
 
   const llmOptions = useMemo<LlmSelectionOption[]>(() => {
@@ -312,11 +314,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       const parsed = Number.parseInt(sanitizedMaxTokens, 10);
       ragMaxContextTokens = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
     }
-    const ragCollectionIds =
-      values.ragMode === "selected_collections"
-        ? values.ragCollectionIds.map((name) => name.trim()).filter((name) => name.length > 0)
-        : [];
-    const hasRagSources = !isNoCodeMode && (values.knowledgeBaseIds.length > 0 || ragCollectionIds.length > 0);
+    const hasRagSources = !isNoCodeMode && (values.knowledgeBaseIds.length > 0 || hasSkillFiles);
     const llmTemperature = parseTemperatureOrNull(values.llmTemperature);
     const llmMaxTokens = parseMaxTokensOrNull(values.llmMaxTokens);
     const autoActionId =
@@ -351,16 +349,13 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       ragConfig: isNoCodeMode
         ? undefined
         : {
-            mode: values.ragMode,
-            collectionIds: ragCollectionIds,
-            topK: ragTopK,
-            minScore: ragMinScore,
-            maxContextTokens: ragMaxContextTokens,
-            showSources: values.ragShowSources,
-            embeddingProviderId:
-              values.ragEmbeddingProviderId && values.ragEmbeddingProviderId !== "__none"
-                ? values.ragEmbeddingProviderId.trim()
-                : null,
+            mode: "all_collections",
+            collectionIds: [],
+            topK: null,
+            minScore: null,
+            maxContextTokens: null,
+            showSources: null,
+            embeddingProviderId: null,
             bm25Weight: null,
             bm25Limit: null,
             vectorWeight: null,
@@ -494,14 +489,14 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
           <>
             <SkillFormContent
               knowledgeBases={knowledgeBases}
-              vectorCollections={vectorCollections}
-              isVectorCollectionsLoading={vectorCollectionsQuery.isLoading}
               embeddingProviders={embeddingProviders}
               isEmbeddingProvidersLoading={isEmbeddingProvidersLoading}
               fileStorageProviders={fileStorageProviders}
               workspaceDefaultFileStorageProvider={workspaceDefaultFileStorageProvider}
               isFileStorageProvidersLoading={isFileStorageProvidersLoading}
               fileStorageProvidersError={fileStorageProvidersError ?? null}
+              hasSkillFiles={hasSkillFiles}
+              isSkillFilesReady={isSkillFilesReady}
               llmOptions={llmOptions}
               onSubmit={handleSubmit}
               isSubmitting={isUpdating || isCreating}
@@ -542,17 +537,9 @@ export function SkillFilesSection({
   workspaceId: string | null;
   skillId: string | null;
   uploadFiles?: (params: { workspaceId: string; skillId: string; files: File[] }) => Promise<{
-    files: Array<{ id?: string; name?: string; size?: number | null; contentType?: string | null; status?: string }>;
+    files: SkillFileListItem[];
   }>;
-  initialFiles?: Array<{
-    id?: string;
-    name: string;
-    size?: number | null;
-    contentType?: string | null;
-    status?: string;
-    errorMessage?: string | null;
-    createdAt?: string | null;
-  }>;
+  initialFiles?: SkillFileListItem[];
 }) {
   if (!canEdit) {
     return null;
@@ -560,32 +547,14 @@ export function SkillFilesSection({
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [persistedFiles, setPersistedFiles] = useState<
-    Array<{
-      id?: string;
-      name: string;
-      size?: number | null;
-      contentType?: string | null;
-      status?: string;
-      errorMessage?: string | null;
-      createdAt?: string | null;
-    }>
-  >(initialFiles ?? []);
+  const [persistedFiles, setPersistedFiles] = useState<SkillFileListItem[]>(initialFiles ?? []);
   const skillFilesQuery = useQuery({
     queryKey: ["/api/workspaces", workspaceId, "skills", skillId, "files"],
     enabled: Boolean(workspaceId && skillId),
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/workspaces/${workspaceId}/skills/${skillId}/files`);
       return (await res.json()) as {
-        files: Array<{
-          id?: string;
-          name: string;
-          size?: number | null;
-          contentType?: string | null;
-          status?: string;
-          errorMessage?: string | null;
-          createdAt?: string | null;
-        }>;
+        files: SkillFileListItem[];
       };
     },
   });
@@ -596,18 +565,13 @@ export function SkillFilesSection({
     }
   }, [skillFilesQuery.data]);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [uploads, setUploads] = useState<
-    Array<{ id: string; name: string; size?: number | null; status: string; error?: string }>
-  >([]);
+  const [uploads, setUploads] = useState<SkillFileListItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const generateId = () => (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2));
 
-  const mergeFiles = (
-    existing: Array<{ id?: string; name: string; size?: number | null; contentType?: string | null; status?: string; errorMessage?: string | null; createdAt?: string | null }>,
-    added: Array<{ id?: string; name: string; size?: number | null; contentType?: string | null; status?: string; errorMessage?: string | null; createdAt?: string | null }>,
-  ) => {
+  const mergeFiles = (existing: SkillFileListItem[], added: SkillFileListItem[]) => {
     const seen = new Set<string>();
     const merged: typeof existing = [];
     [...added, ...existing].forEach((item) => {

@@ -6,6 +6,8 @@ export const MIN_TOP_K = 1;
 export const MAX_TOP_K = 20;
 export const MIN_RELEVANCE_THRESHOLD = 0;
 export const MAX_RELEVANCE_THRESHOLD = 1;
+export const MIN_MAX_CONTEXT_TOKENS = 500;
+export const MAX_MAX_CONTEXT_TOKENS = 20_000;
 
 export const indexingRulesSchema = z.object({
   embeddingsProvider: z.string().trim().min(1, "Укажите провайдера эмбеддингов").max(255),
@@ -25,6 +27,11 @@ export const indexingRulesSchema = z.object({
     .number()
     .min(MIN_RELEVANCE_THRESHOLD, `relevanceThreshold должно быть от ${MIN_RELEVANCE_THRESHOLD} до ${MAX_RELEVANCE_THRESHOLD}`)
     .max(MAX_RELEVANCE_THRESHOLD, `relevanceThreshold должно быть от ${MIN_RELEVANCE_THRESHOLD} до ${MAX_RELEVANCE_THRESHOLD}`),
+  maxContextTokens: z
+    .number()
+    .int()
+    .min(MIN_MAX_CONTEXT_TOKENS, `maxContextTokens должно быть не меньше ${MIN_MAX_CONTEXT_TOKENS}`)
+    .max(MAX_MAX_CONTEXT_TOKENS, `maxContextTokens должно быть не больше ${MAX_MAX_CONTEXT_TOKENS}`),
   citationsEnabled: z.boolean(),
 });
 
@@ -53,5 +60,6 @@ export const DEFAULT_INDEXING_RULES: IndexingRulesDto = {
   chunkOverlap: 200,
   topK: 6,
   relevanceThreshold: 0.5,
+  maxContextTokens: 3000,
   citationsEnabled: true,
 };

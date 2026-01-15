@@ -14,8 +14,8 @@ import type {
   AssistantActionType,
   type BotAction,
   type BotActionStatus,
-  botActionStatuses,
 } from "@shared/schema";
+import { botActionStatuses, botActionTypes } from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
 import { skillExecutionLogService } from "./skill-execution-log-context";
@@ -35,7 +35,6 @@ import { resolveEmbeddingProviderForWorkspace } from "./indexing-rules";
 import { searchSkillFileVectors } from "./skill-file-vector-store";
 import { embedTextWithProvider } from "./skill-file-embeddings";
 import type { SyncFinalResult } from "./no-code-events";
-import { botActionTypes } from "@shared/schema";
 
 export class ChatServiceError extends Error {
   public status: number;

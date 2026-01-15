@@ -239,7 +239,7 @@ export class FileStorageProviderClient {
       }
     };
 
-    let res: Response;
+    let res: Response | null = null;
     try {
       res = await attemptUpload();
     } catch (err) {
@@ -261,6 +261,16 @@ export class FileStorageProviderClient {
       } else {
         throw error;
       }
+    }
+
+    if (!res) {
+      throw new ProviderUploadError(
+        "Провайдер файлового хранилища не вернул ответ",
+        502,
+        "NO_RESPONSE",
+        true,
+        { requestId, url, providerBaseUrl: this.baseUrl, attempt },
+      );
     }
 
     const payload = await parseJsonSafe(res);
@@ -289,12 +299,18 @@ export class FileStorageProviderClient {
           extractProviderFileId(payload)
         : extractProviderFileId(payload);
     if (!providerFileId) {
-      throw new ProviderUploadError("В ответе провайдера нет provider_file_id", 502, "MALFORMED_RESPONSE", {
-        status: res.status,
-        requestId,
-        url,
-        response: payload ?? null,
-      });
+      throw new ProviderUploadError(
+        "В ответе провайдера нет provider_file_id",
+        502,
+        "MALFORMED_RESPONSE",
+        false,
+        {
+          status: res.status,
+          requestId,
+          url,
+          response: payload ?? null,
+        },
+      );
     }
 
     return {

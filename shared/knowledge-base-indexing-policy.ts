@@ -40,7 +40,9 @@ export const updateKnowledgeBaseIndexingPolicySchema = knowledgeBaseIndexingPoli
     },
   );
 
-export type KnowledgeBaseIndexingPolicyDto = z.infer<typeof knowledgeBaseIndexingPolicySchema>;
+export type KnowledgeBaseIndexingPolicyDto = z.infer<typeof knowledgeBaseIndexingPolicySchema> & {
+  policyHash?: string | null;
+};
 export type UpdateKnowledgeBaseIndexingPolicyDto = z.infer<typeof updateKnowledgeBaseIndexingPolicySchema>;
 
 export const DEFAULT_KNOWLEDGE_BASE_INDEXING_POLICY: KnowledgeBaseIndexingPolicyDto = {
@@ -48,6 +50,7 @@ export const DEFAULT_KNOWLEDGE_BASE_INDEXING_POLICY: KnowledgeBaseIndexingPolicy
   embeddingsModel: "text-embedding-3-small",
   chunkSize: 800,
   chunkOverlap: 200,
+  policyHash: null,
   defaultSchema: [
     { name: "content", type: "string", isArray: false, template: "{{ chunk.text }}" },
     {

@@ -4,6 +4,7 @@ import { mergeRagSearchSettings } from "@shared/knowledge-base-search";
 import { storage } from "./storage";
 import { isRagSkill } from "./skill-type";
 import { ensureModelAvailable, ModelInactiveError, ModelUnavailableError, ModelValidationError } from "./model-service";
+import { indexingRulesService } from "./indexing-rules";
 
 export type RagPipelineStream = {
   onEvent: (eventName: string, payload?: unknown) => void;
@@ -119,13 +120,15 @@ export async function buildSkillRagRequestPayload(options: {
   }
 
   const searchSettingsRecord = await storage.getKnowledgeBaseSearchSettings(workspaceId, knowledgeBaseId);
+  const indexingRules = await indexingRulesService.getIndexingRules();
   const resolvedRagSettings = mergeRagSearchSettings(searchSettingsRecord?.ragSettings ?? null, {
-    topK: skill.ragConfig.topK,
+    topK: indexingRules.topK,
   });
 
-  const embeddingProviderId = sanitizeOptionalString(skill.ragConfig.embeddingProviderId ?? undefined);
-  if (!embeddingProviderId) {
-    throw new SkillRagConfigurationError("Для навыка не выбран сервис эмбеддингов. Укажите его в настройках навыка.");
+  // Используем провайдер эмбеддингов из правил индексации (БЗ индексируются с этим провайдером)
+  const embeddingProviderId = indexingRules.embeddingsProvider;
+  if (!embeddingProviderId || embeddingProviderId.trim().length === 0) {
+    throw new SkillRagConfigurationError("Сервис эмбеддингов не настроен в правилах индексации. Настройте его в админ-панели.");
   }
 
   const llmProviderId = sanitizeOptionalString(skill.llmProviderConfigId);
@@ -160,8 +163,8 @@ export async function buildSkillRagRequestPayload(options: {
     clampInteger(resolvedRagSettings.maxTokens ?? null, 16, 4096) ??
     undefined;
 
-  const fallbackTopK = resolvedRagSettings.topK ?? 6;
-  const topK = ensurePositiveInteger(skill.ragConfig.topK, fallbackTopK, { min: 1, max: 20 });
+  const fallbackTopK = resolvedRagSettings.topK ?? indexingRules.topK;
+  const topK = ensurePositiveInteger(null, fallbackTopK, { min: 1, max: 20 });
   const bm25Limit =
     clampInteger(skill.ragConfig.bm25Limit, 1, 50) ??
     clampInteger(resolvedRagSettings.bm25Limit ?? null, 1, 50) ??

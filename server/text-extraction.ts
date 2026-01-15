@@ -19,9 +19,13 @@ const TEXT_DECODER_ENCODINGS = ["utf-8", "utf-16le", "windows-1251", "windows-12
 const CLEAN_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
 const MIN_TEXT_LENGTH = 8;
 
-pdfjsLib.GlobalWorkerOptions.disableWorker = true;
+const pdfWorkerOptions = pdfjsLib.GlobalWorkerOptions as unknown as {
+  disableWorker?: boolean;
+  standardFontDataUrl?: string | undefined;
+};
+pdfWorkerOptions.disableWorker = true;
 // Use system fonts instead of external CDN
-pdfjsLib.GlobalWorkerOptions.standardFontDataUrl = undefined;
+pdfWorkerOptions.standardFontDataUrl = undefined;
 
 export class TextExtractionError extends Error {
   public code: "TEXT_EXTRACTION_FAILED" | "TEXT_EMPTY_AFTER_EXTRACTION" | "TEXT_UNSUPPORTED" | "STORAGE_UNAVAILABLE";

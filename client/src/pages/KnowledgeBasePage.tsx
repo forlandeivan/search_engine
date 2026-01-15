@@ -3554,8 +3554,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </>
     );
 
+    const baseName = selectedBase?.name ?? "База знаний";
     const searchPlaceholder = selectedBase?.name
-      ? `Быстрый поиск по базе «${selectedBase.name}»`
+      ? `Быстрый поиск по базе «${baseName}»`
       : "Быстрый поиск по базе";
 
     const isSearchSettingsAvailable = Boolean(selectedBase && storageKey);
@@ -3643,8 +3644,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                       <AlertDescription>{searchSettingsError}</AlertDescription>
                     </Alert>
                   ) : null}
-                  <KnowledgeBaseSearchSettingsForm
-                    baseName={selectedBase.name}
+                    <KnowledgeBaseSearchSettingsForm
+                      baseName={baseName}
                     searchSettings={searchSettings}
                     isSearchSettingsReady={isSearchSettingsReady}
                     isDirty={isSearchSettingsDirty}

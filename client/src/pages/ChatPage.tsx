@@ -150,6 +150,9 @@ export default function ChatPage({ params }: ChatPageProps) {
   useEffect(() => {
     if (!workspaceId || !effectiveChatId) {
       setBotActionsByChatId((prev) => {
+        if (!effectiveChatId) {
+          return prev;
+        }
         const next = { ...prev };
         delete next[effectiveChatId];
         return next;

@@ -309,7 +309,7 @@ export async function searchSkillFileVectors(params: {
   workspaceId: string;
   skillId: string;
   provider: EmbeddingProvider;
-  vector: Schemas["VectorStruct"];
+  vector: number[];
   limit: number;
   scoreThreshold?: number | null;
   caller?: string;
@@ -324,7 +324,7 @@ export async function searchSkillFileVectors(params: {
     return { collection: null, results: [], guardrailTriggered: true, guardrailReason: "missing_scope" };
   }
 
-  const vectorPayload = buildVectorPayload(vector as number[], provider.qdrantConfig?.vectorFieldName);
+  const vectorPayload = buildVectorPayload(vector, provider.qdrantConfig?.vectorFieldName);
   if (!vectorPayload || (Array.isArray(vectorPayload) && vectorPayload.length === 0)) {
     return { collection: null, results: [], guardrailTriggered: true, guardrailReason: "empty_vector" };
   }
@@ -350,7 +350,7 @@ export async function searchSkillFileVectors(params: {
   }
 
   const searchPayload: Parameters<typeof client.search>[1] = {
-    vector: vectorPayload as Schemas["VectorStruct"],
+    vector: vectorPayload,
     limit,
     filter: buildSkillFileVectorFilter({ workspaceId, skillId }),
     with_payload: true,

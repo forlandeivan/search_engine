@@ -182,6 +182,9 @@ export default function AdminIndexingRulesPage() {
       if (details?.field === "relevance_threshold") {
         form.setError("relevanceThreshold", { message });
       }
+      if (details?.field === "max_context_tokens") {
+        form.setError("maxContextTokens", { message });
+      }
       toast({ title: "Ошибка сохранения", description: message, variant: "destructive" });
     }
   });
@@ -559,13 +562,42 @@ export default function AdminIndexingRulesPage() {
                         </FormDescription>
                         <FormMessage />
                         {showStrictThresholdWarning ? (
-                          <Alert variant="warning" className="mt-2">
+                          <Alert variant="default" className="mt-2 border-amber-200 bg-amber-50 text-amber-900">
                             <AlertTitle>Слишком строгий порог</AlertTitle>
                             <AlertDescription>
                               Система может не находить подходящих фрагментов и отвечать без опоры на документы.
                             </AlertDescription>
                           </Alert>
                         ) : null}
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="maxContextTokens"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel htmlFor="indexing-max-context-tokens">Лимит контекста (токены)</FormLabel>
+                        <FormControl>
+                          <Input
+                            id="indexing-max-context-tokens"
+                            type="number"
+                            min={500}
+                            max={20000}
+                            step={100}
+                            disabled={disableInputs}
+                            value={field.value ?? ""}
+                            onChange={(event) => {
+                              const raw = event.target.value;
+                              const normalized = normalizeNumber(raw);
+                              field.onChange(normalized === "" ? undefined : normalized);
+                            }}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Максимальное количество токенов в контексте, передаваемом в LLM. Ограничивает объем информации, используемой для генерации ответа.
+                        </FormDescription>
+                        <FormMessage />
                       </FormItem>
                     )}
                   />

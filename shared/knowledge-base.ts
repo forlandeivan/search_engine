@@ -98,6 +98,9 @@ export type KnowledgeDocumentChunkItem = {
   charStart: number;
   charEnd: number;
   tokenCount: number;
+  charCount?: number | null;
+  wordCount?: number | null;
+  excerpt?: string | null;
   pageNumber?: number | null;
   sectionPath?: string[];
   contentHash: string;
@@ -398,6 +401,7 @@ export type KnowledgeBaseDocumentDetail = {
   id: string;
   title: string;
   content: string;
+  html?: string | null;
   contentMarkdown?: string | null;
   contentPlainText?: string | null;
   sourceUrl?: string | null;
@@ -407,6 +411,11 @@ export type KnowledgeBaseDocumentDetail = {
   importFileName: string | null;
   documentId: string;
   status: KnowledgeDocumentStatus;
+  currentVersion?: {
+    id: string;
+    versionNo: number | null;
+    createdAt: string;
+  } | null;
   versionId: string | null;
   versionNumber: number | null;
   children: KnowledgeBaseChildNode[];
