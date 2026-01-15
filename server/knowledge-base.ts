@@ -43,7 +43,7 @@ import { and, asc, desc, eq, inArray, sql, or, isNull } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
 import { load as loadHtml } from "cheerio";
 import { getLatestKnowledgeDocumentChunkSetForDocument } from "./knowledge-chunks";
-import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
+import { adjustWorkspaceObjectCounters, adjustWorkspaceQdrantUsage } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
@@ -1239,6 +1239,14 @@ export async function resetKnowledgeBaseIndex(
             error,
           );
         });
+        try {
+          await adjustWorkspaceQdrantUsage(workspaceId, { collectionsCount: -1 });
+        } catch (error) {
+          console.warn(
+            `[resetKnowledgeBaseIndex] Failed to adjust Qdrant usage for ${collectionName}:`,
+            error,
+          );
+        }
       }
     } catch (error) {
       if (error instanceof QdrantConfigurationError) {
