@@ -174,32 +174,16 @@ export async function buildSkillRagRequestPayload(options: {
     clampInteger(resolvedRagSettings.vectorLimit ?? null, 1, 50) ??
     topK;
 
-  const selectedCollections =
-    skill.ragConfig.mode === "selected_collections"
-      ? skill.ragConfig.collectionIds
-          .map((id) => (typeof id === "string" ? id.trim() : ""))
-          .filter((id) => id.length > 0)
-      : [];
+  // Определяем коллекцию автоматически из базы знаний
+  // Коллекция для БЗ формируется как: kb_{baseId}_ws_{workspaceId}
+  const sanitizeCollectionName = (source: string): string => {
+    const normalized = source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+    return normalized.length > 0 ? normalized.slice(0, 60) : "default";
+  };
 
-  if (skill.ragConfig.mode === "selected_collections" && selectedCollections.length === 0) {
-    throw new SkillRagConfigurationError("В режиме ручного выбора коллекций укажите хотя бы одну коллекцию.");
-  }
-
-  let vectorCollectionOverride: string | null = selectedCollections[0] ?? null;
-
-  const fallbackCollectionFromSettings = sanitizeOptionalString(resolvedRagSettings.collection ?? undefined);
-  const fallbackCollectionFromSkill = sanitizeOptionalString(skill.collectionName ?? undefined);
-
-  const vectorCollection =
-    (vectorCollectionOverride && vectorCollectionOverride.length > 0 ? vectorCollectionOverride : undefined) ??
-    fallbackCollectionFromSettings ??
-    fallbackCollectionFromSkill;
-
-  if (!vectorCollection) {
-    throw new SkillRagConfigurationError(
-      "Не удалось определить коллекцию для RAG. Настройте коллекцию в базе знаний или в конфиге навыка.",
-    );
-  }
+  const baseSlug = sanitizeCollectionName(knowledgeBaseId);
+  const workspaceSlug = sanitizeCollectionName(workspaceId);
+  const vectorCollection = `kb_${baseSlug}_ws_${workspaceSlug}`;
 
 
   const bm25Weight =
