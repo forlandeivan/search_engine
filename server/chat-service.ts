@@ -629,17 +629,6 @@ export async function buildChatLlmContext(
   const isRag = isRagSkill(skill);
   const isLlmMode = !isRag;
   const skillType: ChatSkillType = isUnica ? "UNICA_CHAT" : isRag ? "RAG_SKILL" : "LLM_SKILL";
-  
-  try {
-    const fs = await import("fs");
-    const path = await import("path");
-    const timestamp = new Date().toISOString();
-    const logFile = path.resolve(import.meta.dirname, "..", "dev.log");
-    fs.appendFileSync(logFile, `[${timestamp}] [CHAT BUILD CONTEXT] skillId=${skill.id}, mode=${skill.mode}, isUnica=${isUnica}, isRag=${isRag}, skillType=${skillType}\n`, "utf-8");
-    fs.appendFileSync(logFile, `[${timestamp}] [CHAT BUILD CONTEXT] skill.knowledgeBaseIds=${JSON.stringify(skill.knowledgeBaseIds)}\n`, "utf-8");
-  } catch {}
-  console.log(`[CHAT BUILD CONTEXT] skillId=${skill.id}, mode=${skill.mode}, isUnica=${isUnica}, isRag=${isRag}, skillType=${skillType}`);
-  console.log(`[CHAT BUILD CONTEXT] skill.knowledgeBaseIds=${JSON.stringify(skill.knowledgeBaseIds)}`);
   const skillContext: ChatSkillContext = {
     id: skill.id,
     name: skill.name ?? null,
