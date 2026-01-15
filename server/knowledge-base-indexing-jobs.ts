@@ -179,10 +179,13 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
       return;
     }
 
-    // Подсчитываем job'ы для этой базы знаний
+    const actionCreatedAt = action.createdAt ? new Date(action.createdAt) : null;
+    const countOptions = actionCreatedAt ? { since: actionCreatedAt } : undefined;
+
+    // Подсчитываем job'ы для этой базы знаний (в рамках текущего запуска)
     const [completedCount, totalCount] = await Promise.all([
-      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "completed"),
-      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, null),
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "completed", countOptions),
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, null, countOptions),
     ]);
 
     const processedDocuments = completedCount;
@@ -190,9 +193,9 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
 
     // Проверяем, все ли job'ы завершены
     const [pendingCount, processingCount, failedCount] = await Promise.all([
-      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "pending"),
-      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "processing"),
-      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "failed"),
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "pending", countOptions),
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "processing", countOptions),
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "failed", countOptions),
     ]);
 
     const remainingCount = pendingCount + processingCount;

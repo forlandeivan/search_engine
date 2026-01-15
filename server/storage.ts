@@ -1159,6 +1159,7 @@ export interface IStorage {
     workspaceId: string,
     baseId: string,
     status: "pending" | "processing" | "completed" | "failed" | null,
+    options?: { since?: Date | null },
   ): Promise<number>;
   markKnowledgeBaseIndexingJobDone(
     jobId: string,
@@ -7381,6 +7382,7 @@ export class DatabaseStorage implements IStorage {
     workspaceId: string,
     baseId: string,
     status: "pending" | "processing" | "completed" | "failed" | null,
+    options: { since?: Date | null } = {},
   ): Promise<number> {
     await ensureKnowledgeBaseIndexingJobsTable();
     const conditions = [
@@ -7388,6 +7390,9 @@ export class DatabaseStorage implements IStorage {
       eq(knowledgeBaseIndexingJobs.baseId, baseId),
       eq(knowledgeBaseIndexingJobs.jobType, "knowledge_base_indexing"),
     ];
+    if (options.since) {
+      conditions.push(sql`${knowledgeBaseIndexingJobs.createdAt} >= ${options.since}`);
+    }
     if (status !== null) {
       conditions.push(eq(knowledgeBaseIndexingJobs.status, status));
     }
