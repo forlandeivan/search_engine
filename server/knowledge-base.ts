@@ -791,6 +791,37 @@ export async function getKnowledgeBaseIndexingSummary(
 
   let state = await storage.getKnowledgeBaseIndexState(workspaceId, baseId);
 
+  if (state?.status === "indexing") {
+    const [pendingCount, processingCount] = await Promise.all([
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "pending"),
+      storage.countKnowledgeBaseIndexingJobs(workspaceId, baseId, "processing"),
+    ]);
+
+    if (pendingCount + processingCount === 0) {
+      await db.execute(sql`
+        UPDATE "knowledge_document_index_state" AS state
+        SET "status" = 'outdated',
+            "error" = NULL,
+            "updated_at" = CURRENT_TIMESTAMP
+        WHERE state."workspace_id" = ${workspaceId}
+          AND state."base_id" = ${baseId}
+          AND state."status" = 'indexing'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "knowledge_base_indexing_jobs" AS jobs
+            WHERE jobs."workspace_id" = state."workspace_id"
+              AND jobs."base_id" = state."base_id"
+              AND jobs."document_id" = state."document_id"
+              AND jobs."job_type" = 'knowledge_base_indexing'
+              AND jobs."status" IN ('pending', 'processing')
+          )
+      `);
+
+      await knowledgeBaseIndexingStateService.recalculateBaseState(workspaceId, baseId);
+      state = await storage.getKnowledgeBaseIndexState(workspaceId, baseId);
+    }
+  }
+
   if (!state) {
     const totalDocuments = await countDocumentsByBase(baseId, workspaceId);
     const policy = await storage.getKnowledgeBaseIndexingPolicy();
