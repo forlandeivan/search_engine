@@ -17,7 +17,7 @@ import { knowledgeBaseIndexingStateService } from "./knowledge-base-indexing-sta
 import { log } from "./vite";
 import fs from "fs";
 import path from "path";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { knowledgeDocuments } from "@shared/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { applyTlsPreferences, type NodeFetchOptions } from "./http-utils";
@@ -242,40 +242,62 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
   }
 }
 
+type DocumentIndexingLock = {
+  client: { query: (text: string, params?: unknown[]) => Promise<{ rows?: any[] }>; release: () => void } | null;
+  workspaceId: string;
+  documentId: string;
+};
+
 async function tryAcquireDocumentIndexingLock(
   workspaceId: string,
   documentId: string,
-): Promise<boolean> {
+): Promise<DocumentIndexingLock | null> {
+  if (!pool || typeof (pool as any).connect !== "function") {
+    workerLog(`Document lock skipped (pool unavailable) for document=${documentId}`);
+    return { client: null, workspaceId, documentId };
+  }
+
+  const client = await (pool as any).connect();
   try {
-    const result = await db.execute(sql`
-      SELECT pg_try_advisory_lock(hashtext(${workspaceId}), hashtext(${documentId})) AS locked
-    `);
-    const locked = Boolean((result.rows ?? [])[0]?.locked);
-    return locked;
+    const result = await client.query(
+      "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked",
+      [workspaceId, documentId],
+    );
+    const locked = Boolean((result?.rows ?? [])[0]?.locked);
+    if (!locked) {
+      client.release();
+      return null;
+    }
+    return { client, workspaceId, documentId };
   } catch (error) {
+    client.release();
     workerLog(
       `Failed to acquire document lock for document=${documentId}: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    return false;
+    return null;
   }
 }
 
-async function releaseDocumentIndexingLock(
-  workspaceId: string,
-  documentId: string,
-): Promise<void> {
+async function releaseDocumentIndexingLock(lock: DocumentIndexingLock | null): Promise<void> {
+  if (!lock?.client) {
+    return;
+  }
+  const { client, workspaceId, documentId } = lock;
   try {
-    await db.execute(sql`
-      SELECT pg_advisory_unlock(hashtext(${workspaceId}), hashtext(${documentId}))
-    `);
+    await client.query("SELECT pg_advisory_unlock(hashtext($1), hashtext($2))", [
+      workspaceId,
+      documentId,
+    ]);
   } catch (error) {
     workerLog(
       `Failed to release document lock for document=${documentId}: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
+  } finally {
+    client.release();
   }
 }
 
@@ -326,7 +348,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     await updateIndexingActionProgress(job.workspaceId, job.baseId);
   };
 
-  let lockAcquired = false;
+  let lock: DocumentIndexingLock | null = null;
+  const jobStartedAt = Date.now();
+  logToFile(`job start doc=${job.documentId} job=${job.id}`);
   // Внешний try-catch для ловли всех ошибок
   try {
     workerLog(
@@ -338,11 +362,12 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       return;
     }
 
-    lockAcquired = await tryAcquireDocumentIndexingLock(job.workspaceId, job.documentId);
-    if (!lockAcquired) {
+    lock = await tryAcquireDocumentIndexingLock(job.workspaceId, job.documentId);
+    if (!lock) {
       workerLog(
         `document ${job.documentId} is already locked, rescheduling job ${job.id}`,
       );
+      logToFile(`lock busy doc=${job.documentId} job=${job.id} rescheduleMs=${LOCK_RETRY_DELAY_MS}`);
       const nextRetryAt = new Date(Date.now() + LOCK_RETRY_DELAY_MS);
       await storage.rescheduleKnowledgeBaseIndexingJob(
         job.id,
@@ -528,6 +553,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     }
 
     // Создаем чанки
+    const chunkingStartedAt = Date.now();
+    logToFile(`chunking start doc=${job.documentId} job=${job.id}`);
     workerLog(`starting chunking for job ${job.id}...`);
     await updateIndexingActionStatus(
       job.workspaceId,
@@ -570,6 +597,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       return;
     }
     workerLog(`created ${chunkSet.chunks.length} chunks for job ${job.id}`);
+    logToFile(
+      `chunking done doc=${job.documentId} job=${job.id} chunks=${chunkSet.chunks.length} durationMs=${Date.now() - chunkingStartedAt}`,
+    );
 
     try {
       await storage.updateKnowledgeDocumentIndexRevision(
@@ -592,11 +622,16 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     }
 
     // Получаем эмбеддинги
+    const tokenStartedAt = Date.now();
+    logToFile(`access token start doc=${job.documentId} job=${job.id} provider=${embeddingProvider.id}`);
     workerLog(`fetching access token for embedding provider ${embeddingProvider.id} for job ${job.id}...`);
     let accessToken;
     try {
       accessToken = await fetchAccessToken(embeddingProvider);
       workerLog(`got access token for job ${job.id}, token length=${accessToken?.length ?? 0}`);
+      logToFile(
+        `access token done doc=${job.documentId} job=${job.id} provider=${embeddingProvider.id} durationMs=${Date.now() - tokenStartedAt}`,
+      );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       workerLog(`ERROR fetching access token for job ${job.id}: ${errorMsg}`);
@@ -622,6 +657,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       `Векторизуем фрагменты документа "${nodeDetail.title ?? "без названия"}" (0 из ${chunkSet.chunks.length})...`,
     );
 
+    const vectorizationStartedAt = Date.now();
+    logToFile(`vectorization start doc=${job.documentId} job=${job.id} chunks=${chunkSet.chunks.length}`);
     workerLog(`starting vectorization for ${chunkSet.chunks.length} chunks for job ${job.id}...`);
     for (let index = 0; index < chunkSet.chunks.length; index += 1) {
       const chunk = chunkSet.chunks[index];
@@ -664,6 +701,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       }
     }
     workerLog(`completed vectorization for ${embeddingResults.length} chunks for job ${job.id}`);
+    logToFile(
+      `vectorization done doc=${job.documentId} job=${job.id} chunks=${embeddingResults.length} durationMs=${Date.now() - vectorizationStartedAt}`,
+    );
 
     if (embeddingResults.length === 0) {
       const message = "Не удалось получить эмбеддинги для документа";
@@ -1011,6 +1051,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     }
 
     workerLog(`indexed document=${nodeDetail.id} base=${base.id} chunks=${chunkSet.chunks.length}`);
+    logToFile(
+      `job done doc=${job.documentId} job=${job.id} durationMs=${Date.now() - jobStartedAt}`,
+    );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const isRetryable = error instanceof Error && (error.message.includes("timeout") || error.message.includes("network"));
@@ -1046,8 +1089,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     }
     throw outerError;
   } finally {
-    if (lockAcquired) {
-      await releaseDocumentIndexingLock(job.workspaceId, job.documentId);
+    if (lock) {
+      await releaseDocumentIndexingLock(lock);
     }
   }
 }
