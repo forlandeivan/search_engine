@@ -95,7 +95,27 @@ const countTokens = (text: string): number => {
 
 const sanitizeWhitespace = (text: string): string => text.replace(/\s+/gu, " ").trim();
 
+const normalizeChunkText = (text: string): string =>
+  sanitizeWhitespace(text.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n"));
+
 const hashText = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
+
+const buildVectorId = ({
+  workspaceId,
+  baseId,
+  documentId,
+  chunkHash,
+  chunkOrdinal,
+}: {
+  workspaceId: string;
+  baseId: string;
+  documentId: string;
+  chunkHash: string;
+  chunkOrdinal: number;
+}): string => {
+  const input = `${workspaceId}:${baseId}:${documentId}:${chunkHash}:${chunkOrdinal}`;
+  return hashText(input);
+};
 
 const arraysEqual = (first: readonly string[] | null, second: readonly string[] | undefined): boolean => {
   if (!first && (!second || second.length === 0)) {
@@ -574,6 +594,7 @@ const generateChunks = (
       metadata.heading = sectionPathCandidate[sectionPathCandidate.length - 1];
     }
 
+    const normalizedChunkText = normalizeChunkText(chunkText);
     const chunk: GeneratedChunk = {
       id: randomUUID(),
       index: chunkIndex,
@@ -584,7 +605,7 @@ const generateChunks = (
       pageNumber,
       sectionPath: sectionPathCandidate,
       metadata,
-      contentHash: hashText(chunkText),
+      contentHash: hashText(normalizedChunkText),
     };
 
     chunks.push(chunk);
@@ -643,6 +664,35 @@ const generateChunks = (
   }
 
   return chunks;
+};
+
+const applyChunkIdentifiers = (
+  chunks: GeneratedChunk[],
+  identifiers: {
+    workspaceId: string;
+    baseId: string;
+    documentId: string;
+  },
+): GeneratedChunk[] => {
+  const ordinalMap = new Map<string, number>();
+
+  return chunks.map((chunk) => {
+    const hash = chunk.contentHash;
+    const nextOrdinal = ordinalMap.get(hash) ?? 0;
+    ordinalMap.set(hash, nextOrdinal + 1);
+
+    return {
+      ...chunk,
+      chunkOrdinal: nextOrdinal,
+      vectorId: buildVectorId({
+        workspaceId: identifiers.workspaceId,
+        baseId: identifiers.baseId,
+        documentId: identifiers.documentId,
+        chunkHash: hash,
+        chunkOrdinal: nextOrdinal,
+      }),
+    };
+  });
 };
 
 const fetchDocumentContext = async (
@@ -741,6 +791,9 @@ const mapChunkSet = (
     sectionPath: Array.isArray(item.sectionPath) ? (item.sectionPath as string[]) : undefined,
     metadata: (item.metadata ?? {}) as Record<string, unknown>,
     contentHash: item.contentHash,
+    chunkOrdinal: typeof item.chunkOrdinal === "number" ? item.chunkOrdinal : null,
+    vectorId: item.vectorId ?? null,
+    revisionId: item.revisionId ?? null,
     vectorRecordId: item.vectorRecordId ?? null,
   }));
 
@@ -765,6 +818,7 @@ const mapChunkSet = (
     id: setRow.id,
     documentId: setRow.documentId,
     versionId: setRow.versionId,
+    revisionId: setRow.revisionId ?? null,
     documentHash: setRow.documentHash ?? null,
     chunkCount: setRow.chunkCount,
     totalTokens: setRow.totalTokens,
@@ -857,14 +911,19 @@ export const previewKnowledgeDocumentChunks = async (
     normalizedConfig,
     context.sourceUrl,
   );
+  const preparedChunks = applyChunkIdentifiers(generatedChunks, {
+    workspaceId,
+    baseId,
+    documentId: context.documentId,
+  });
 
-  const totalTokens = generatedChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0);
-  const totalChars = generatedChunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
+  const totalTokens = preparedChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0);
+  const totalChars = preparedChunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
   let maxChunkTokens: number | null = null;
   let maxChunkIndex: number | null = null;
   let maxChunkId: string | null = null;
 
-  for (const chunk of generatedChunks) {
+  for (const chunk of preparedChunks) {
     const tokens = typeof chunk.tokenCount === "number" && Number.isFinite(chunk.tokenCount)
       ? chunk.tokenCount
       : null;
@@ -879,7 +938,7 @@ export const previewKnowledgeDocumentChunks = async (
     }
   }
 
-  const previewItems = generatedChunks.slice(0, 10).map((chunk): KnowledgeDocumentChunkItem => ({
+  const previewItems = preparedChunks.slice(0, 10).map((chunk): KnowledgeDocumentChunkItem => ({
     id: chunk.id,
     index: chunk.index,
     text: chunk.text,
@@ -890,6 +949,8 @@ export const previewKnowledgeDocumentChunks = async (
     sectionPath: chunk.sectionPath,
     metadata: chunk.metadata,
     contentHash: chunk.contentHash,
+    chunkOrdinal: chunk.chunkOrdinal ?? null,
+    vectorId: chunk.vectorId ?? null,
     vectorRecordId: chunk.vectorRecordId ?? null,
   }));
 
@@ -899,7 +960,7 @@ export const previewKnowledgeDocumentChunks = async (
     versionNumber: context.versionNumber,
     documentHash: context.documentHash ?? null,
     generatedAt: new Date().toISOString(),
-    totalChunks: generatedChunks.length,
+    totalChunks: preparedChunks.length,
     totalTokens,
     totalChars,
     maxChunkTokens,
@@ -915,10 +976,12 @@ export const createKnowledgeDocumentChunkSet = async (
   nodeId: string,
   workspaceId: string,
   inputConfig: ChunkingConfigInput,
+  options?: { revisionId?: string | null },
 ): Promise<KnowledgeDocumentChunkSet> => {
   console.log("[CHUNKS] Начало создания чанков для документа:", { baseId, nodeId, workspaceId });
   const context = await fetchDocumentContext(baseId, nodeId, workspaceId);
   const normalizedConfig = normalizeChunkingConfig(inputConfig);
+  const revisionId = options?.revisionId ?? null;
   // Автоматическое определение: crawl → HTML, manual/import → текст
   const useHtmlContent = context.sourceType === "crawl";
   const sourceContent = useHtmlContent && context.contentHtml ? context.contentHtml : context.contentText;
@@ -931,17 +994,22 @@ export const createKnowledgeDocumentChunkSet = async (
     normalizedConfig,
     context.sourceUrl,
   );
+  const preparedChunks = applyChunkIdentifiers(generatedChunks, {
+    workspaceId,
+    baseId,
+    documentId: context.documentId,
+  });
   console.log("[CHUNKS] Сгенерировано чанков:", { 
-    count: generatedChunks.length, 
-    allHaveHashes: generatedChunks.every(c => !!c.contentHash) 
+    count: preparedChunks.length, 
+    allHaveHashes: preparedChunks.every(c => !!c.contentHash) 
   });
 
-  if (generatedChunks.length === 0) {
+  if (preparedChunks.length === 0) {
     throw new KnowledgeBaseError("Не удалось разбить документ на чанки", 400);
   }
 
-  const totalTokens = generatedChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0);
-  const totalChars = generatedChunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
+  const totalTokens = preparedChunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0);
+  const totalChars = preparedChunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
   const chunkSetId = randomUUID();
   const now = new Date();
 
@@ -956,6 +1024,7 @@ export const createKnowledgeDocumentChunkSet = async (
       workspaceId,
       documentId: context.documentId,
       versionId: context.versionId,
+      revisionId,
       documentHash: context.documentHash ?? null,
       maxTokens: normalizedConfig.maxTokens,
       maxChars: normalizedConfig.maxChars,
@@ -971,14 +1040,15 @@ export const createKnowledgeDocumentChunkSet = async (
       updatedAt: now,
     });
 
-    if (generatedChunks.length > 0) {
+    if (preparedChunks.length > 0) {
       try {
-        const chunkValues = generatedChunks.map((chunk) => ({
+        const chunkValues = preparedChunks.map((chunk) => ({
           id: chunk.id,
           workspaceId,
           chunkSetId,
           documentId: context.documentId,
           versionId: context.versionId,
+          revisionId,
           chunkIndex: chunk.index,
           text: chunk.text,
           charStart: chunk.charStart,
@@ -988,6 +1058,8 @@ export const createKnowledgeDocumentChunkSet = async (
           sectionPath: chunk.sectionPath && chunk.sectionPath.length > 0 ? chunk.sectionPath : null,
           metadata: chunk.metadata,
           contentHash: chunk.contentHash,
+          chunkOrdinal: chunk.chunkOrdinal ?? null,
+          vectorId: chunk.vectorId ?? null,
           vectorRecordId: chunk.vectorRecordId ?? null,
           createdAt: now,
           updatedAt: now,

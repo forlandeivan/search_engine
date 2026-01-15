@@ -101,6 +101,9 @@ export type KnowledgeDocumentChunkItem = {
   pageNumber?: number | null;
   sectionPath?: string[];
   contentHash: string;
+  chunkOrdinal?: number | null;
+  vectorId?: string | null;
+  revisionId?: string | null;
   metadata: Record<string, unknown>;
   vectorRecordId?: string | null;
 };
@@ -109,6 +112,7 @@ export type KnowledgeDocumentChunkSet = {
   id: string;
   documentId: string;
   versionId: string;
+  revisionId?: string | null;
   documentHash?: string | null;
   chunkCount: number;
   totalTokens: number;
@@ -126,6 +130,7 @@ export type KnowledgeDocumentChunkPreview = {
   documentId: string;
   versionId: string;
   versionNumber?: number | null;
+  revisionId?: string | null;
   documentHash?: string | null;
   generatedAt: string;
   totalChunks: number;

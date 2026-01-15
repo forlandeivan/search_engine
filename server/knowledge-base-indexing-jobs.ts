@@ -19,7 +19,7 @@ import fs from "fs";
 import path from "path";
 import { db } from "./db";
 import { knowledgeDocuments } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { applyTlsPreferences, type NodeFetchOptions } from "./http-utils";
 import fetch, { Headers } from "node-fetch";
 
@@ -124,6 +124,7 @@ const BASE_RETRY_DELAY_MS = 30_000;
 const MAX_RETRY_DELAY_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
 const JOB_TYPE = "knowledge_base_indexing";
+const LOCK_RETRY_DELAY_MS = 5_000;
 
 // Логирование в файл для отладки
 function logToFile(message: string): void {
@@ -241,12 +242,71 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
   }
 }
 
+async function tryAcquireDocumentIndexingLock(
+  workspaceId: string,
+  documentId: string,
+): Promise<boolean> {
+  try {
+    const result = await db.execute(sql`
+      SELECT pg_try_advisory_lock(hashtext(${workspaceId}), hashtext(${documentId})) AS locked
+    `);
+    const locked = Boolean((result.rows ?? [])[0]?.locked);
+    return locked;
+  } catch (error) {
+    workerLog(
+      `Failed to acquire document lock for document=${documentId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
+}
+
+async function releaseDocumentIndexingLock(
+  workspaceId: string,
+  documentId: string,
+): Promise<void> {
+  try {
+    await db.execute(sql`
+      SELECT pg_advisory_unlock(hashtext(${workspaceId}), hashtext(${documentId}))
+    `);
+  } catch (error) {
+    workerLog(
+      `Failed to release document lock for document=${documentId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
+  let revisionId: string | null = null;
   const markJobError = async (message: string): Promise<void> => {
     try {
       await storage.failKnowledgeBaseIndexingJob(job.id, message);
     } catch (error) {
       workerLog(`failed to mark job ${job.id} as failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    if (revisionId) {
+      try {
+        await storage.updateKnowledgeDocumentIndexRevision(
+          job.workspaceId,
+          job.documentId,
+          revisionId,
+          {
+            status: "failed",
+            error: message,
+            finishedAt: new Date(),
+          },
+        );
+      } catch (error) {
+        workerLog(
+          `failed to mark revision ${revisionId} as failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
 
     try {
@@ -266,12 +326,29 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     await updateIndexingActionProgress(job.workspaceId, job.baseId);
   };
 
+  let lockAcquired = false;
   // Внешний try-catch для ловли всех ошибок
   try {
-    workerLog(`processJob ENTRY for job ${job.id} document=${job.documentId} base=${job.baseId} workspace=${job.workspaceId}`);
-    
+    workerLog(
+      `processJob ENTRY for job ${job.id} document=${job.documentId} base=${job.baseId} workspace=${job.workspaceId}`,
+    );
+
     if (job.jobType && job.jobType !== JOB_TYPE) {
       workerLog(`job ${job.id} has wrong jobType: ${job.jobType}, expected ${JOB_TYPE}`);
+      return;
+    }
+
+    lockAcquired = await tryAcquireDocumentIndexingLock(job.workspaceId, job.documentId);
+    if (!lockAcquired) {
+      workerLog(
+        `document ${job.documentId} is already locked, rescheduling job ${job.id}`,
+      );
+      const nextRetryAt = new Date(Date.now() + LOCK_RETRY_DELAY_MS);
+      await storage.rescheduleKnowledgeBaseIndexingJob(
+        job.id,
+        nextRetryAt,
+        "Документ уже индексируется",
+      );
       return;
     }
 
@@ -425,6 +502,31 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       workerLog(`collection does not exist for job ${job.id}, error: ${errorMsg}`);
     }
 
+    // Создаем ревизию индексации
+    try {
+      const created = await storage.createKnowledgeDocumentIndexRevision({
+        workspaceId: job.workspaceId,
+        baseId: job.baseId,
+        documentId: job.documentId,
+        versionId: job.versionId,
+        policyHash: policy.policyHash ?? null,
+        status: "processing",
+        startedAt: new Date(),
+      });
+      revisionId = created?.id ?? null;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      workerLog(`ERROR creating revision for job ${job.id}: ${errorMsg}`);
+      await markJobError(`Ошибка создания ревизии индексации: ${errorMsg}`);
+      return;
+    }
+
+    if (!revisionId) {
+      const message = "Не удалось создать ревизию индексации";
+      await markJobError(message);
+      return;
+    }
+
     // Создаем чанки
     workerLog(`starting chunking for job ${job.id}...`);
     await updateIndexingActionStatus(
@@ -448,6 +550,7 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           respectHeadings: true,
           // useHtmlContent определяется автоматически по sourceType документа
         },
+        { revisionId },
       );
       workerLog(`createKnowledgeDocumentChunkSet returned for job ${job.id}, chunks.length=${chunkSet?.chunks.length ?? 0}`);
     } catch (error) {
@@ -467,6 +570,26 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       return;
     }
     workerLog(`created ${chunkSet.chunks.length} chunks for job ${job.id}`);
+
+    try {
+      await storage.updateKnowledgeDocumentIndexRevision(
+        job.workspaceId,
+        job.documentId,
+        revisionId,
+        {
+          chunkSetId: chunkSet.id,
+          chunkCount: chunkSet.chunks.length,
+          totalTokens: chunkSet.totalTokens,
+          totalChars: chunkSet.totalChars,
+        },
+      );
+    } catch (error) {
+      workerLog(
+        `failed to attach chunk set ${chunkSet.id} to revision ${revisionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     // Получаем эмбеддинги
     workerLog(`fetching access token for embedding provider ${embeddingProvider.id} for job ${job.id}...`);
@@ -594,6 +717,10 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     const points: Schemas["PointStruct"][] = embeddingResults.map((result) => {
       const { chunk, vector, usageTokens, embeddingId, index } = result;
       const resolvedChunkId = chunk.id ?? `${nodeDetail.id}-chunk-${index + 1}`;
+      const vectorId = chunk.vectorId;
+      if (!vectorId) {
+        throw new Error(`Не найден vector_id для чанка ${resolvedChunkId}`);
+      }
 
       const templateContext = removeUndefinedDeep({
         document: {
@@ -629,6 +756,10 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           id: embeddingProvider.id,
           name: embeddingProvider.name,
         },
+        revision: {
+          id: revisionId,
+          policyHash: policy.policyHash ?? null,
+        },
         chunk: {
           id: resolvedChunkId,
           index,
@@ -640,6 +771,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           wordCount: chunk.wordCount ?? 0,
           tokenCount: chunk.tokenCount ?? 0,
           excerpt: chunk.excerpt ?? null,
+          hash: chunk.contentHash ?? null,
+          ordinal: chunk.chunkOrdinal ?? null,
+          vectorId,
         },
         embedding: {
           model: embeddingProvider.model,
@@ -650,6 +784,15 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       }) as Record<string, unknown>;
 
       const rawPayload = {
+        workspace_id: job.workspaceId,
+        knowledge_base_id: base.id,
+        document_id: nodeDetail.id,
+        revision_id: revisionId,
+        chunk_id: resolvedChunkId,
+        chunk_hash: chunk.contentHash ?? null,
+        chunk_ordinal: chunk.chunkOrdinal ?? null,
+        vector_id: vectorId,
+        policy_hash: policy.policyHash ?? null,
         document: {
           id: nodeDetail.id,
           title: nodeDetail.title ?? null,
@@ -702,17 +845,26 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
       const customPayload = hasCustomSchema ? buildCustomPayloadFromSchema(schemaFields, templateContext) : null;
       const payloadSource = customPayload ?? rawPayload;
-      const payload = removeUndefinedDeep(payloadSource) as Record<string, unknown>;
+      const payload = removeUndefinedDeep({
+        ...(payloadSource as Record<string, unknown>),
+        workspace_id: job.workspaceId,
+        knowledge_base_id: base.id,
+        document_id: nodeDetail.id,
+        revision_id: revisionId,
+        chunk_id: resolvedChunkId,
+        chunk_hash: chunk.contentHash ?? null,
+        chunk_ordinal: chunk.chunkOrdinal ?? null,
+        vector_id: vectorId,
+        policy_hash: policy.policyHash ?? null,
+      }) as Record<string, unknown>;
 
       const pointVectorPayload = buildVectorPayload(
         vector,
         embeddingProvider.qdrantConfig?.vectorFieldName,
       ) as Schemas["PointStruct"]["vector"];
 
-      const pointId = normalizePointId(resolvedChunkId);
-
       return {
-        id: pointId,
+        id: vectorId,
         vector: pointVectorPayload,
         payload,
       };
@@ -735,9 +887,11 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     const vectorRecordMappings = embeddingResults.map((result, index) => {
       const chunk = result.chunk;
       const resolvedChunkId = chunk.id ?? `${nodeDetail.id}-chunk-${index + 1}`;
-      const pointId = normalizePointId(resolvedChunkId);
-      const recordIdValue = typeof pointId === "number" ? pointId.toString() : String(pointId);
-      return { chunkId: resolvedChunkId, vectorRecordId: recordIdValue };
+      const vectorId = chunk.vectorId;
+      if (!vectorId) {
+        throw new Error(`Не найден vector_id для чанка ${resolvedChunkId}`);
+      }
+      return { chunkId: resolvedChunkId, vectorRecordId: vectorId };
     });
 
     await updateKnowledgeDocumentChunkVectorRecords({
@@ -753,6 +907,29 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       totalChars,
       totalTokens,
     });
+
+    try {
+      await storage.updateKnowledgeDocumentIndexRevision(
+        job.workspaceId,
+        job.documentId,
+        revisionId,
+        {
+          status: "ready",
+          error: null,
+          finishedAt: new Date(),
+          chunkSetId: chunkSet.id,
+          chunkCount: chunkSet.chunks.length,
+          totalTokens,
+          totalChars,
+        },
+      );
+    } catch (error) {
+      workerLog(
+        `failed to mark revision ${revisionId} as ready: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     try {
       await knowledgeBaseIndexingStateService.markDocumentUpToDate(
@@ -807,16 +984,11 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       workerLog(`failed to mark job ${job.id} as failed in outer catch: ${failError instanceof Error ? failError.message : String(failError)}`);
     }
     throw outerError;
+  } finally {
+    if (lockAcquired) {
+      await releaseDocumentIndexingLock(job.workspaceId, job.documentId);
+    }
   }
-}
-
-function normalizePointId(chunkId: string): string | number {
-  // Простая нормализация - можно улучшить
-  const hash = chunkId.split("").reduce((acc, char) => {
-    const code = char.charCodeAt(0);
-    return ((acc << 5) - acc + code) | 0;
-  }, 0);
-  return Math.abs(hash);
 }
 
 export function startKnowledgeBaseIndexingWorker() {
