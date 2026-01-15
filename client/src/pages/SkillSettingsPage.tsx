@@ -327,14 +327,6 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       values.noCodeFileStorageProviderId && values.noCodeFileStorageProviderId !== WORKSPACE_DEFAULT_PROVIDER_VALUE
         ? values.noCodeFileStorageProviderId
         : null;
-    const contextInputLimitValue = values.contextInputLimit?.trim();
-    let contextInputLimit: number | null = null;
-    if (contextInputLimitValue) {
-      const parsed = Number.parseInt(contextInputLimitValue, 10);
-      if (Number.isFinite(parsed)) {
-        contextInputLimit = Math.max(100, Math.min(50000, parsed));
-      }
-    }
 
     const payload: SkillPayload = {
       name: values.name.trim(),
@@ -367,7 +359,6 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       transcriptionFlowMode: values.transcriptionFlowMode,
       onTranscriptionMode: values.onTranscriptionMode,
       onTranscriptionAutoActionId: autoActionId,
-      contextInputLimit,
       noCodeEndpointUrl,
       noCodeFileStorageProviderId,
       noCodeAuthType: values.noCodeAuthType,

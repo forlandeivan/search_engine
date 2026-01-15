@@ -12301,13 +12301,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
 
         // MVP: отправляем событие только на user-сообщения, чтобы избежать зацикливания и утечек ответа обратно в сценарий.
+        const indexingRules = await indexingRulesService.getIndexingRules();
         const contextPack = await buildContextPack({
           workspaceId,
           chatId: req.params.chatId,
           skillId: skill.id,
           triggerMessageId: message.id,
           userId: user.id,
-          limitCharacters: skill.contextInputLimit ?? null,
+          limitCharacters: indexingRules.contextInputLimit ?? null,
         });
 
         const eventPayload = buildMessageCreatedEventPayload({
@@ -12392,13 +12393,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           throw createNoCodeFlowError("NOT_CONFIGURED");
         }
 
+        const indexingRules = await indexingRulesService.getIndexingRules();
         const contextPack = await buildContextPack({
           workspaceId,
           chatId: req.params.chatId,
           skillId: skill.id,
           triggerMessageId: message.id,
           userId: user.id,
-          limitCharacters: skill.contextInputLimit ?? null,
+          limitCharacters: indexingRules.contextInputLimit ?? null,
         });
 
         const mappedMessage = mapMessage(message);

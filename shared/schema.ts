@@ -563,6 +563,7 @@ export const indexingRules = pgTable("indexing_rules", {
   topK: integer("top_k").notNull(),
   relevanceThreshold: doublePrecision("relevance_threshold").notNull(),
   maxContextTokens: integer("max_context_tokens").notNull().default(3000),
+  contextInputLimit: integer("context_input_limit"),
   citationsEnabled: boolean("citations_enabled").notNull().default(false),
   updatedByAdminId: varchar("updated_by_admin_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),

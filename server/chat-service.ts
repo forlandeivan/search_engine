@@ -31,7 +31,7 @@ import {
   ModelValidationError,
   tryResolveModel,
 } from "./model-service";
-import { resolveEmbeddingProviderForWorkspace } from "./indexing-rules";
+import { indexingRulesService, resolveEmbeddingProviderForWorkspace } from "./indexing-rules";
 import { searchSkillFileVectors } from "./skill-file-vector-store";
 import { embedTextWithProvider } from "./skill-file-embeddings";
 import type { SyncFinalResult } from "./no-code-events";
@@ -806,6 +806,9 @@ export async function buildChatLlmContext(
     }
   }
 
+  // Используем contextInputLimit из правил индексации вместо настройки навыка
+  const indexingRules = await indexingRulesService.getIndexingRules();
+
   await logExecutionStepForChat(executionId, "RESOLVE_LLM_PROVIDER_CONFIG", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
     input: { ...providerLogInput, providerId },
     output: {
@@ -819,7 +822,7 @@ export async function buildChatLlmContext(
         temperature: requestOverrides.temperature ?? null,
         topP: requestOverrides.topP ?? null,
         maxTokens: requestOverrides.maxTokens ?? null,
-        contextInputLimit: skill.contextInputLimit ?? null,
+        contextInputLimit: indexingRules.contextInputLimit ?? null,
       },
     },
   });
@@ -829,8 +832,7 @@ export async function buildChatLlmContext(
     role: entry.role,
     content: entry.content,
   }));
-
-  const contextLimit = skill.contextInputLimit ?? null;
+  const contextLimit = indexingRules.contextInputLimit ?? null;
   const limitedConversation = applyContextLimitByCharacters(conversation, contextLimit);
   let retrievedContext: string[] | undefined;
 

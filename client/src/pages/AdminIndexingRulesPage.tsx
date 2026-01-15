@@ -601,6 +601,35 @@ export default function AdminIndexingRulesPage() {
                       </FormItem>
                     )}
                   />
+                  <FormField
+                    control={form.control}
+                    name="contextInputLimit"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel htmlFor="indexing-context-input-limit">Лимит символов истории</FormLabel>
+                        <FormControl>
+                          <Input
+                            id="indexing-context-input-limit"
+                            type="number"
+                            min={100}
+                            max={50000}
+                            step={100}
+                            disabled={disableInputs}
+                            value={field.value ?? ""}
+                            onChange={(event) => {
+                              const raw = event.target.value;
+                              const normalized = normalizeNumber(raw);
+                              field.onChange(normalized === "" ? null : normalized);
+                            }}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Ограничивает объём истории диалога, отправляемой в обработку. Меньше — дешевле, но меньше "память" диалога. Оставьте пустым, чтобы использовать дефолт.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                 </div>
               </section>
 
