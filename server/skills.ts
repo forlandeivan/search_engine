@@ -455,6 +455,11 @@ function mapSkillRow(
   const effectiveProvider = providerInfo?.effective ?? (row as any).effectiveFileStorageProvider ?? null;
   const authType = effectiveProvider?.authType ?? normalizeNoCodeAuthType(row.noCodeAuthType);
 
+  // Если у навыка есть БЗ, но mode в БД "llm" - исправляем на "rag"
+  const storedMode = normalizeSkillMode(row.mode);
+  const hasKnowledgeBases = knowledgeBaseIds.length > 0;
+  const effectiveMode: SkillMode = hasKnowledgeBases && storedMode === "llm" ? "rag" : storedMode;
+  
   const payload: SkillDto = {
     id: row.id,
     workspaceId: row.workspaceId,
@@ -468,7 +473,7 @@ function mapSkillRow(
     systemKey: row.systemKey ?? null,
     executionMode: normalizeSkillExecutionMode(row.executionMode),
     status: (row.status as SkillStatus) ?? "active",
-    mode: normalizeSkillMode(row.mode),
+    mode: effectiveMode,
     icon: row.icon ?? null,
     noCodeConnection: {
       endpointUrl: row.noCodeEndpointUrl ?? null,
@@ -1032,6 +1037,13 @@ export async function updateSkill(
   const effectiveMode = normalized.mode ?? normalizeSkillMode(row.mode) ?? inferredMode;
   const isStandardMode = effectiveMode === "llm";
   const nextRagConfig = isStandardMode ? { ...DEFAULT_RAG_CONFIG } : ragUpdates ?? currentRagConfig;
+
+  // Обновляем mode, если он изменился (например, при добавлении/удалении БЗ)
+  const currentMode = normalizeSkillMode(row.mode);
+  if (effectiveMode !== currentMode) {
+    updates.mode = effectiveMode;
+    console.log(`[SKILL UPDATE] mode changed: ${currentMode} -> ${effectiveMode} (skillId=${skillId}, hasKnowledgeBases=${hasKnowledgeBases})`);
+  }
 
   let knowledgeBaseIdsForValidation: string[];
   if (isStandardMode) {

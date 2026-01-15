@@ -629,6 +629,9 @@ export async function buildChatLlmContext(
   const isRag = isRagSkill(skill);
   const isLlmMode = !isRag;
   const skillType: ChatSkillType = isUnica ? "UNICA_CHAT" : isRag ? "RAG_SKILL" : "LLM_SKILL";
+  
+  console.log(`[CHAT BUILD CONTEXT] skillId=${skill.id}, mode=${skill.mode}, isUnica=${isUnica}, isRag=${isRag}, skillType=${skillType}`);
+  console.log(`[CHAT BUILD CONTEXT] skill.knowledgeBaseIds=${JSON.stringify(skill.knowledgeBaseIds)}`);
   const skillContext: ChatSkillContext = {
     id: skill.id,
     name: skill.name ?? null,

@@ -105,22 +105,34 @@ export async function buildSkillRagRequestPayload(options: {
   stream?: boolean;
 }): Promise<KnowledgeRagRequestPayload> {
   const { skill, workspaceId } = options;
+  console.log(`[RAG BUILD PAYLOAD] START: skillId=${skill.id}, workspaceId=${workspaceId}, messageLength=${options.userMessage.length}`);
+  console.log(`[RAG BUILD PAYLOAD] skill.mode=${skill.mode}, isRagSkill=${isRagSkill(skill)}`);
+  console.log(`[RAG BUILD PAYLOAD] skill.knowledgeBaseIds=${JSON.stringify(skill.knowledgeBaseIds)}`);
+  
   if (!isRagSkill(skill)) {
+    console.error(`[RAG BUILD PAYLOAD] ERROR: skill is not RAG skill (mode=${skill.mode})`);
     throw new SkillRagConfigurationError("Навык не поддерживает RAG-пайплайн");
   }
 
   const trimmedMessage = options.userMessage.trim();
   if (!trimmedMessage) {
+    console.error(`[RAG BUILD PAYLOAD] ERROR: empty message`);
     throw new SkillRagConfigurationError("Пустое сообщение невозможно отправить в RAG-пайплайн");
   }
 
   const knowledgeBaseId = skill.knowledgeBaseIds?.[0];
   if (!knowledgeBaseId) {
+    console.error(`[RAG BUILD PAYLOAD] ERROR: no knowledge base selected`);
     throw new SkillRagConfigurationError("У навыка не выбран источник (база знаний)");
   }
+  
+  console.log(`[RAG BUILD PAYLOAD] knowledgeBaseId=${knowledgeBaseId}`);
 
   const searchSettingsRecord = await storage.getKnowledgeBaseSearchSettings(workspaceId, knowledgeBaseId);
   const indexingRules = await indexingRulesService.getIndexingRules();
+  console.log(`[RAG BUILD PAYLOAD] indexingRules.topK=${indexingRules.topK}, embeddingsProvider=${indexingRules.embeddingsProvider}`);
+  console.log(`[RAG BUILD PAYLOAD] searchSettingsRecord=${searchSettingsRecord ? 'found' : 'not found'}`);
+  
   const resolvedRagSettings = mergeRagSearchSettings(searchSettingsRecord?.ragSettings ?? null, {
     topK: indexingRules.topK,
   });
@@ -128,8 +140,11 @@ export async function buildSkillRagRequestPayload(options: {
   // Используем провайдер эмбеддингов из правил индексации (БЗ индексируются с этим провайдером)
   const embeddingProviderId = indexingRules.embeddingsProvider;
   if (!embeddingProviderId || embeddingProviderId.trim().length === 0) {
+    console.error(`[RAG BUILD PAYLOAD] ERROR: embedding provider not configured in indexing rules`);
     throw new SkillRagConfigurationError("Сервис эмбеддингов не настроен в правилах индексации. Настройте его в админ-панели.");
   }
+  
+  console.log(`[RAG BUILD PAYLOAD] embeddingProviderId=${embeddingProviderId}`);
 
   const llmProviderId = sanitizeOptionalString(skill.llmProviderConfigId);
   if (!llmProviderId) {
@@ -184,6 +199,7 @@ export async function buildSkillRagRequestPayload(options: {
   const baseSlug = sanitizeCollectionName(knowledgeBaseId);
   const workspaceSlug = sanitizeCollectionName(workspaceId);
   const vectorCollection = `kb_${baseSlug}_ws_${workspaceSlug}`;
+  console.log(`[RAG BUILD PAYLOAD] vectorCollection=${vectorCollection} (baseSlug=${baseSlug}, workspaceSlug=${workspaceSlug})`);
 
 
   const bm25Weight =
@@ -228,6 +244,14 @@ export async function buildSkillRagRequestPayload(options: {
     request.stream = options.stream;
   }
 
+  console.log(`[RAG BUILD PAYLOAD] SUCCESS: request prepared`);
+  console.log(`[RAG BUILD PAYLOAD] request.q=${request.q.slice(0, 50)}...`);
+  console.log(`[RAG BUILD PAYLOAD] request.kb_id=${request.kb_id}`);
+  console.log(`[RAG BUILD PAYLOAD] request.collection=${request.collection}`);
+  console.log(`[RAG BUILD PAYLOAD] request.top_k=${request.top_k}`);
+  console.log(`[RAG BUILD PAYLOAD] request.hybrid.vector.collection=${request.hybrid.vector.collection}`);
+  console.log(`[RAG BUILD PAYLOAD] request.hybrid.vector.embedding_provider_id=${request.hybrid.vector.embedding_provider_id}`);
+
   return request;
 }
 
@@ -239,6 +263,8 @@ export async function callRagForSkillChat(options: {
   runPipeline: RunKnowledgeBaseRagPipeline;
   stream?: RagPipelineStream | null;
 }): Promise<unknown> {
+  console.log(`[RAG CALL PIPELINE] START: skillId=${options.skill.id}, workspaceId=${options.workspaceId}, messageLength=${options.userMessage.length}`);
+  
   const body = await buildSkillRagRequestPayload({
     skill: options.skill,
     workspaceId: options.workspaceId,
@@ -246,9 +272,19 @@ export async function callRagForSkillChat(options: {
     stream: options.stream ? true : undefined,
   });
 
-  return options.runPipeline({
-    req: options.req,
-    body,
-    stream: options.stream ?? null,
-  });
+  console.log(`[RAG CALL PIPELINE] payload built, calling runPipeline with collection=${body.collection}`);
+  
+  try {
+    const result = await options.runPipeline({
+      req: options.req,
+      body,
+      stream: options.stream ?? null,
+    });
+    console.log(`[RAG CALL PIPELINE] SUCCESS: result received, answerLength=${result?.response?.answer?.length ?? 0}`);
+    return result;
+  } catch (error) {
+    console.error(`[RAG CALL PIPELINE] ERROR: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[RAG CALL PIPELINE] ERROR stack: ${error instanceof Error ? error.stack : 'no stack'}`);
+    throw error;
+  }
 }

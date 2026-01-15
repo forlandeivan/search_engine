@@ -18,5 +18,7 @@ export function isUnicaChatSkill(skill: SkillLike | null | undefined): boolean {
 export function isRagSkill(skill: SkillLike | null | undefined): boolean {
   if (isUnicaChatSkill(skill)) return false;
   const mode = (skill as SkillDto | undefined)?.mode ?? (skill as any)?.mode;
-  return mode === "rag";
+  const result = mode === "rag";
+  console.log(`[isRagSkill] skillId=${(skill as any)?.id ?? 'unknown'}, mode=${mode}, isRag=${result}`);
+  return result;
 }

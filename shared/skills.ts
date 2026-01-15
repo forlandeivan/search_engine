@@ -43,10 +43,10 @@ const knowledgeBaseIdSchema = z.string().min(1);
 const ragConfigInputSchema = z.object({
   mode: z.enum(skillRagModes).optional(),
   collectionIds: z.array(z.string().min(1)).optional(),
-  topK: z.number().int().min(1).max(50).optional(),
-  minScore: z.number().min(0).max(1).optional(),
+  topK: z.number().int().min(1).max(50).nullable().optional(),
+  minScore: z.number().min(0).max(1).nullable().optional(),
   maxContextTokens: z.number().int().min(500).max(20000).nullable().optional(),
-  showSources: z.boolean().optional(),
+  showSources: z.boolean().nullable().optional(),
   bm25Weight: z.number().min(0).max(1).nullable().optional(),
   bm25Limit: z.number().int().min(1).max(50).nullable().optional(),
   vectorWeight: z.number().min(0).max(1).nullable().optional(),

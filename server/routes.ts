@@ -3627,8 +3627,20 @@ async function runKnowledgeBaseRagPipeline(options: {
   const knowledgeBaseId = body.kb_id.trim();
   const wantsLlmStream = Boolean(stream);
   
+  console.log(`[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_id=${knowledgeBaseId}`);
+  console.log(`[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_id=${knowledgeBaseId}`);
   console.log(`[RAG PIPELINE] stream param:`, stream ? 'PROVIDED' : 'NULL');
   console.log(`[RAG PIPELINE] wantsLlmStream:`, wantsLlmStream);
+  console.log(`[RAG PIPELINE] body.collection=${body.collection}`);
+  console.log(`[RAG PIPELINE] body.top_k=${body.top_k}`);
+  console.log(`[RAG PIPELINE] body.hybrid.vector.collection=${body.hybrid?.vector?.collection}`);
+  console.log(`[RAG PIPELINE] body.hybrid.vector.embedding_provider_id=${body.hybrid?.vector?.embedding_provider_id}`);
+  console.log(`[RAG PIPELINE] effectiveTopK=${effectiveTopK}, effectiveMinScore=${effectiveMinScore}`);
+  console.log(`[RAG PIPELINE] body.collection=${body.collection}`);
+  console.log(`[RAG PIPELINE] body.top_k=${body.top_k}`);
+  console.log(`[RAG PIPELINE] body.hybrid.vector.collection=${body.hybrid?.vector?.collection}`);
+  console.log(`[RAG PIPELINE] body.hybrid.vector.embedding_provider_id=${body.hybrid?.vector?.embedding_provider_id}`);
+  console.log(`[RAG PIPELINE] effectiveTopK=${effectiveTopK}, effectiveMinScore=${effectiveMinScore}`);
 
   if (!query) {
     throw new HttpError(400, "Укажите поисковый запрос");
@@ -3664,6 +3676,7 @@ async function runKnowledgeBaseRagPipeline(options: {
   let embeddingProviderId = requestedEmbeddingProviderId || null;
   let vectorCollection = requestedVectorCollection || null;
   let vectorConfigured = Boolean(embeddingProviderId && vectorCollection);
+  console.log(`[RAG PIPELINE] embeddingProviderId=${embeddingProviderId}, vectorCollection=${vectorCollection}, vectorConfigured=${vectorConfigured}`);
 
   let bm25Weight = hasBm25WeightOverride
     ? bm25WeightOverride!
@@ -13033,6 +13046,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
 
       if (context.skill.isRagSkill) {
+        console.log(`[CHAT RAG] isRagSkill=true, skillId=${context.skill.id}, mode=${context.skillConfig.mode}`);
+        console.log(`[CHAT RAG] knowledgeBaseIds=${JSON.stringify(context.skillConfig.knowledgeBaseIds)}`);
+        console.log(`[CHAT RAG] userMessage="${payload.content.slice(0, 50)}..."`);
+        
         if (wantsStream) {
           console.info(
             `[chat] user=${user.id} workspace=${workspaceId} chat=${req.params.chatId} requested stream for RAG skill – falling back to sync response`,
@@ -13047,6 +13064,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           collections: context.skillConfig.ragConfig?.collectionIds ?? [],
         };
 
+        console.log(`[CHAT RAG] ragStepInput=${JSON.stringify(ragStepInput)}`);
+
         await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.RUNNING, {
           input: ragStepInput,
         });
@@ -13056,6 +13075,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           | null = null;
 
         try {
+          console.log(`[CHAT RAG] calling callRagForSkillChat...`);
           ragResult = (await callRagForSkillChat({
             req,
             skill: context.skillConfig,
@@ -13064,6 +13084,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             runPipeline: runKnowledgeBaseRagPipeline,
             stream: null,
           })) as Awaited<ReturnType<typeof runKnowledgeBaseRagPipeline>>;
+          console.log(`[CHAT RAG] callRagForSkillChat SUCCESS, result.answer.length=${ragResult?.response?.answer?.length ?? 0}`);
 
           await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.SUCCESS, {
             output: {
@@ -13073,6 +13094,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             },
           });
         } catch (ragError) {
+          console.error(`[CHAT RAG] ERROR in callRagForSkillChat: ${ragError instanceof Error ? ragError.message : String(ragError)}`);
+          console.error(`[CHAT RAG] ERROR stack: ${ragError instanceof Error ? ragError.stack : 'no stack'}`);
+          
           const info = describeErrorForLog(ragError);
           await safeLogStep("CALL_RAG_PIPELINE", SKILL_EXECUTION_STEP_STATUS.ERROR, {
             errorCode: info.code,
@@ -13082,11 +13106,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           });
 
           if (ragError instanceof SkillRagConfigurationError) {
+            console.error(`[CHAT RAG] SkillRagConfigurationError, throwing ChatServiceError: ${ragError.message}`);
             throw new ChatServiceError(ragError.message, 400);
           }
           if (ragError instanceof HttpError) {
+            console.error(`[CHAT RAG] HttpError, throwing: ${ragError.message}`);
             throw ragError;
           }
+          console.error(`[CHAT RAG] Unknown error, throwing as-is`);
           throw ragError;
         }
 
