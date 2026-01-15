@@ -1389,6 +1389,25 @@ export async function resetKnowledgeBaseIndex(
       AND doc."base_id" = ${baseId}
   `);
 
+  const removedJobs = await db
+    .delete(knowledgeBaseIndexingJobs)
+    .where(
+      and(
+        eq(knowledgeBaseIndexingJobs.workspaceId, workspaceId),
+        eq(knowledgeBaseIndexingJobs.baseId, baseId),
+        eq(knowledgeBaseIndexingJobs.jobType, "knowledge_base_indexing"),
+      ),
+    )
+    .returning({ id: knowledgeBaseIndexingJobs.id });
+
+  if (removedJobs.length > 0) {
+    console.info("[resetKnowledgeBaseIndex] Removed existing indexing jobs", {
+      workspaceId,
+      baseId,
+      count: removedJobs.length,
+    });
+  }
+
   await knowledgeBaseIndexingStateService.markBaseDocumentsOutdated(workspaceId, baseId, {
     recalculateBase: !reindex,
   });
