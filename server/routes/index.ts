@@ -10,6 +10,7 @@ import { adminRouter } from './admin';
 import { vectorRouter } from './vector.routes';
 import { noCodeRouter } from './no-code.routes';
 import { chatRouter } from './chat.routes';
+import { skillRouter } from './skill.routes';
 
 const routerLogger = createLogger('router');
 
@@ -70,6 +71,10 @@ export function registerRouteModules(app: Express): void {
   // Chat routes
   app.use('/api/chat', chatRouter);
   routerLogger.info('Registered: /api/chat');
+
+  // Skill routes
+  app.use('/api/skills', skillRouter);
+  routerLogger.info('Registered: /api/skills');
   
   // Route modules will be registered here as they are migrated
   // Example:
