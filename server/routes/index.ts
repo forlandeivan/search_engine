@@ -23,6 +23,8 @@ import { embedRouter } from './embed.routes';
 import { transcribeRouter } from './transcribe.routes';
 import { knowledgeIndexingRouter } from './knowledge-indexing.routes';
 import { knowledgeCrawlRouter } from './knowledge-crawl.routes';
+import { metricsRouter } from './metrics.routes';
+import { metricsMiddleware } from '../monitoring/middleware';
 
 const routerLogger = createLogger('router');
 
@@ -52,6 +54,10 @@ const routerLogger = createLogger('router');
  */
 export function registerRouteModules(app: Express): void {
   routerLogger.info('Registering route modules');
+  
+  // Add metrics middleware (should be early in the chain)
+  app.use(metricsMiddleware);
+  routerLogger.info('Registered: metrics middleware');
   
   // Configure auth router with OAuth settings from app
   configureAuthRouter(app);
@@ -99,6 +105,11 @@ export function registerRouteModules(app: Express): void {
   // Health check routes
   app.use('/api/health', healthRouter);
   routerLogger.info('Registered: /api/health');
+
+  // Prometheus metrics endpoint
+  app.use('/metrics', metricsRouter);
+  app.use('/api/metrics', metricsRouter);
+  routerLogger.info('Registered: /metrics, /api/metrics');
 
   // Public routes (no auth required)
   app.use('/api/public', publicRouter);
