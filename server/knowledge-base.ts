@@ -1090,6 +1090,7 @@ export async function startKnowledgeBaseIndexing(
   baseId: string,
   workspaceId: string,
   mode: KnowledgeBaseIndexingMode = "full",
+  userId?: string | null,
 ): Promise<{
   jobCount: number;
   actionId?: string;
@@ -1131,7 +1132,7 @@ export async function startKnowledgeBaseIndexing(
   let actionId: string | undefined;
   try {
     actionId = randomUUID();
-    await knowledgeBaseIndexingActionsService.start(workspaceId, baseId, actionId, "initializing");
+    await knowledgeBaseIndexingActionsService.start(workspaceId, baseId, actionId, "initializing", userId);
     await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
       stage: "initializing",
       displayText: `Инициализация индексации ${documents.length} документов...`,
@@ -1331,7 +1332,7 @@ export async function startKnowledgeBaseIndexing(
 export async function resetKnowledgeBaseIndex(
   baseId: string,
   workspaceId: string,
-  options: { deleteCollection?: boolean; reindex?: boolean } = {},
+  options: { deleteCollection?: boolean; reindex?: boolean; userId?: string | null } = {},
 ): Promise<{
   collectionName: string;
   deletedCollection: boolean;
@@ -1422,7 +1423,7 @@ export async function resetKnowledgeBaseIndex(
     };
   }
 
-  const result = await startKnowledgeBaseIndexing(baseId, workspaceId, "full");
+  const result = await startKnowledgeBaseIndexing(baseId, workspaceId, "full", options.userId);
   return {
     collectionName,
     deletedCollection,

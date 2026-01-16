@@ -18,6 +18,7 @@ function mapToDto(row: KnowledgeBaseIndexingActionRecord): KnowledgeBaseIndexing
     stage: row.stage,
     displayText: row.displayText ?? null,
     payload: row.payload ?? null,
+    userId: row.userId ?? null,
     createdAt: row.createdAt ? row.createdAt.toISOString() : null,
     updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
   };
@@ -29,6 +30,7 @@ export class KnowledgeBaseIndexingActionsService {
     baseId: string,
     actionId?: string,
     initialStage: IndexingStage = "initializing",
+    userId?: string | null,
   ): Promise<KnowledgeBaseIndexingAction> {
     const effectiveActionId = actionId ?? randomUUID();
     const now = new Date();
@@ -41,6 +43,7 @@ export class KnowledgeBaseIndexingActionsService {
       stage: initialStage,
       displayText: null,
       payload: {},
+      userId: userId ?? null,
       createdAt: now,
       updatedAt: now,
     };

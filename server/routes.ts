@@ -17200,9 +17200,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
 
     const mode = (modeNormalized ?? "full") as "full" | "changed";
+    const userId = (req.workspaceContext?.userId ?? req.user?.id) ?? null;
 
     try {
-      const result = await startKnowledgeBaseIndexing(baseId, workspaceId, mode);
+      const result = await startKnowledgeBaseIndexing(baseId, workspaceId, mode, userId);
       res.json(result);
     } catch (error) {
       return handleKnowledgeBaseRouteError(error, res);
@@ -17231,6 +17232,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const result = await resetKnowledgeBaseIndex(baseId, workspaceId, {
         deleteCollection,
         reindex,
+        userId: user.id,
       });
       console.info("[knowledge-base/indexing-reset] completed", {
         userId: user.id,

@@ -803,6 +803,7 @@ export type KnowledgeBaseIndexingAction = {
   stage: IndexingStage;
   displayText?: string | null;
   payload?: Record<string, unknown> | null;
+  userId?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
@@ -834,6 +835,7 @@ export const knowledgeBaseIndexingActions = pgTable(
     stage: text("stage").$type<IndexingStage>().notNull(),
     displayText: text("display_text"),
     payload: jsonb("payload").$type<Record<string, unknown> | null>().default(sql`'{}'::jsonb`),
+    userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
@@ -844,6 +846,7 @@ export const knowledgeBaseIndexingActions = pgTable(
       table.baseId,
       table.status,
     ),
+    userIdx: index("knowledge_base_indexing_actions_user_idx").on(table.workspaceId, table.baseId, table.userId),
     uniqueAction: uniqueIndex("knowledge_base_indexing_actions_unique_idx").on(
       table.workspaceId,
       table.baseId,
