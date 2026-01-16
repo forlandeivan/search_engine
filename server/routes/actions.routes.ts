@@ -8,7 +8,7 @@
 import { Router, type Response } from 'express';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
-import { actionsRepository } from '../actions-repository';
+import { actionsRepository } from '../actions';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('actions');

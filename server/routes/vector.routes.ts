@@ -25,7 +25,8 @@ import {
   extractQdrantApiError,
 } from '../qdrant';
 import { workspaceOperationGuard } from '../guards/workspace-operation-guard';
-import { buildEmbeddingsOperationContext, mapDecisionToPayload } from '../guards/helpers';
+import { buildEmbeddingsOperationContext } from '../guards/helpers';
+import { mapDecisionToPayload } from '../guards/errors';
 import { OperationBlockedError } from '../guards/errors';
 import { adjustWorkspaceQdrantUsage } from '../usage/usage-service';
 import {

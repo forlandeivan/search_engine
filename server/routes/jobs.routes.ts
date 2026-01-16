@@ -20,7 +20,7 @@ import {
   retryKnowledgeBaseCrawl,
   subscribeKnowledgeBaseCrawlJob,
   type KnowledgeBaseCrawlJobStatus,
-} from '../knowledge-base-crawl';
+} from '../kb-crawler';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('jobs');

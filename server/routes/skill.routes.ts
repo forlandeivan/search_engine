@@ -22,8 +22,8 @@ import {
   getSkillById,
   SkillServiceError,
 } from '../skills';
-import { actionsRepository } from '../actions-repository';
-import { skillActionsRepository } from '../skill-actions-repository';
+import { actionsRepository } from '../actions';
+import { skillActionsRepository } from '../skill-actions';
 import type { PublicUser } from '@shared/schema';
 import type { ActionPlacement } from '@shared/schema';
 

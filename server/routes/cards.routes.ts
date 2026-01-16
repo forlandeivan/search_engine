@@ -9,7 +9,7 @@ import { Router, type Response } from 'express';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
-import { getCardById } from '../cards';
+import { getCardById } from '../card-service';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('cards');

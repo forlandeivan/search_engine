@@ -14,12 +14,14 @@ import { asyncHandler } from '../middleware/async-handler';
 import {
   listKnowledgeBases,
   createKnowledgeBase,
-  startKnowledgeBaseCrawl,
-  getKnowledgeBaseCrawlJobStateForBase,
   KnowledgeBaseError,
   type KnowledgeBaseCrawlConfig,
 } from '../knowledge-base';
-import { crawlKnowledgeDocumentPage } from '../kb-crawler';
+import { 
+  crawlKnowledgeDocumentPage, 
+  getKnowledgeBaseCrawlJobStateForBase,
+  startKnowledgeBaseCrawl,
+} from '../kb-crawler';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('knowledge-crawl');
