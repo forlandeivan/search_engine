@@ -11847,6 +11847,18 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   );
   GET /api/chat/sessions - MIGRATED END */
 
+  // ========================================================================
+  // CHAT EVENTS & ACTIONS - TODO: MIGRATE TO chat.routes.ts
+  // Complex SSE endpoints with real-time events
+  // ========================================================================
+  /* CHAT EVENTS MIGRATED - START
+  app.get("/api/chats/:chatId/events", ...);  // SSE
+  app.get("/api/chat/actions", ...);
+  app.post("/api/chat/actions/start", ...);
+  app.post("/api/chat/actions/update", ...);
+  CHAT EVENTS MIGRATED - END */
+
+  /* ORIGINAL CHAT EVENTS - KEEP FOR NOW - START
   app.get(
     "/api/chats/:chatId/events",
     requireAuth,
@@ -11999,6 +12011,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  ORIGINAL CHAT EVENTS - KEEP FOR NOW - END */
 
   // MIGRATED TO: server/routes/chat.routes.ts
   /* POST /api/chat/sessions - MIGRATED
@@ -12105,6 +12118,18 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   DELETE /api/chat/sessions/:chatId - MIGRATED END */
 
+  // ========================================================================
+  // CHAT MESSAGES ENDPOINTS - TODO: MIGRATE TO chat.routes.ts
+  // Complex endpoints with file uploads and no-code integration
+  // ========================================================================
+  /* CHAT MESSAGES TODO MIGRATED - START
+  app.post("/api/chat/sessions/:chatId/messages", ...);  // Add user message
+  app.post("/api/chat/sessions/:chatId/messages/:messageId/send", ...);  // Re-send message
+  app.post("/api/chat/sessions/:chatId/messages/file", ...);  // File upload
+  app.get("/api/chat/messages/:messageId/file", ...);  // File download
+  CHAT MESSAGES TODO MIGRATED - END */
+
+  /* ORIGINAL CHAT MESSAGES - KEEP FOR NOW - START
   app.post(
     "/api/chat/sessions/:chatId/messages",
     requireAuth,
@@ -12620,6 +12645,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  ORIGINAL CHAT MESSAGES - KEEP FOR NOW - END */
 
   // ========================================================================
   // MIGRATED TO: server/routes/chat.routes.ts
@@ -13883,6 +13909,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   );
   ORIGINAL WORKSPACE ACTIONS - KEEP FOR NOW - END */
 
+  // ========================================================================
+  // SKILL ACTIONS RUN - TODO: MIGRATE TO skill.routes.ts
+  // Complex LLM endpoint with action execution
+  // ========================================================================
+  /* SKILL ACTIONS RUN MIGRATED - START
+  app.post("/api/skills/:skillId/actions/:actionId/run", ...);
+  SKILL ACTIONS RUN MIGRATED - END */
+
+  /* ORIGINAL SKILL ACTIONS RUN - KEEP FOR NOW - START
   // Run action (compute only, no apply)
   app.post(
     "/api/skills/:skillId/actions/:actionId/run",
@@ -14163,6 +14198,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  ORIGINAL SKILL ACTIONS RUN - KEEP FOR NOW - END */
 
   // ========================================================================
   // CANVAS ROUTES MIGRATED TO: server/routes/canvas.routes.ts
@@ -14454,6 +14490,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
   SKILL ACTIONS ROUTES MIGRATED - END */
+  
+  // ========================================================================
+  // TRANSCRIPTS ENDPOINTS - TODO: MIGRATE TO transcribe.routes.ts
+  // ========================================================================
+  /* TRANSCRIPTS MIGRATED - START
+  app.get("/api/workspaces/:workspaceId/transcripts/:transcriptId", ...);
+  app.patch("/api/workspaces/:workspaceId/transcripts/:transcriptId", ...);
+  TRANSCRIPTS MIGRATED - END */
+
+  /* ORIGINAL TRANSCRIPTS - KEEP FOR NOW - START
   app.get(
     "/api/workspaces/:workspaceId/transcripts/:transcriptId",
     requireAuth,
@@ -14569,7 +14615,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  ORIGINAL TRANSCRIPTS - KEEP FOR NOW - END */
 
+  // ========================================================================
+  // CHAT TRANSCRIBE - TODO: MIGRATE TO transcribe.routes.ts
+  // ========================================================================
+  /* CHAT TRANSCRIBE MIGRATED - START
+  app.post("/api/chat/transcribe", ...);  // Audio file transcription
+  CHAT TRANSCRIBE MIGRATED - END */
+
+  /* ORIGINAL CHAT TRANSCRIBE - KEEP FOR NOW - START
   const audioUpload = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -15032,6 +15087,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  ORIGINAL CHAT TRANSCRIBE - KEEP FOR NOW - END */
 
   // ========================================================================
   // TRANSCRIBE OPERATIONS MIGRATED TO: server/routes/transcribe.routes.ts
@@ -16222,6 +16278,14 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   KNOWLEDGE CRAWL ROUTES MIGRATED - END */
 
+  // ========================================================================
+  // KNOWLEDGE BASES - TODO: MIGRATE TO knowledge-base.routes.ts
+  // ========================================================================
+  /* KNOWLEDGE BASES CREATE MIGRATED - START
+  app.post("/api/knowledge/bases", ...);
+  KNOWLEDGE BASES CREATE MIGRATED - END */
+
+  /* ORIGINAL KNOWLEDGE BASES CREATE - KEEP FOR NOW - START
   app.post(
     "/api/knowledge/bases",
     requireAuth,
@@ -16243,6 +16307,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  ORIGINAL KNOWLEDGE BASES CREATE - KEEP FOR NOW - END */
 
   // MIGRATED TO: server/routes/knowledge-crawl.routes.ts
   /* CRAWL ACTIVE MIGRATED - START
@@ -16722,6 +16787,16 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   POST /api/knowledge/bases/:baseId/documents - MIGRATED END */
 
+  // ========================================================================
+  // KNOWLEDGE DOCUMENTS ENDPOINTS - TODO: MIGRATE TO knowledge-base.routes.ts
+  // ========================================================================
+  /* KNOWLEDGE DOCUMENTS MIGRATED - START
+  app.patch("/api/knowledge/bases/:baseId/documents/:nodeId", ...);
+  app.post("/api/knowledge/bases/:baseId/documents/:nodeId/chunks/preview", ...);
+  app.post("/api/knowledge/bases/:baseId/documents/:nodeId/chunks", ...);
+  KNOWLEDGE DOCUMENTS MIGRATED - END */
+
+  /* ORIGINAL KNOWLEDGE DOCUMENTS - KEEP FOR NOW - START
   app.patch(
     "/api/knowledge/bases/:baseId/documents/:nodeId",
     requireAuth,
@@ -16818,6 +16893,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  ORIGINAL KNOWLEDGE DOCUMENTS - KEEP FOR NOW - END */
 
   // MIGRATED TO: server/routes/knowledge-base.routes.ts
   /* POST /api/knowledge/bases/:baseId/index - MIGRATED
