@@ -21,6 +21,7 @@ import { webhookRouter } from './webhook.routes';
 import { embedRouter } from './embed.routes';
 import { transcribeRouter } from './transcribe.routes';
 import { knowledgeIndexingRouter } from './knowledge-indexing.routes';
+import { knowledgeCrawlRouter } from './knowledge-crawl.routes';
 
 const routerLogger = createLogger('router');
 
@@ -125,6 +126,10 @@ export function registerRouteModules(app: Express): void {
   // Knowledge indexing routes (indexing actions)
   app.use('/api/knowledge', knowledgeIndexingRouter);
   routerLogger.info('Registered: /api/knowledge (indexing)');
+
+  // Knowledge crawl routes
+  app.use('/api/kb', knowledgeCrawlRouter);
+  routerLogger.info('Registered: /api/kb (crawl)');
   
   // Route modules will be registered here as they are migrated
   // Example:

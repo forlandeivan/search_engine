@@ -16666,6 +16666,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       .optional(),
   });
 
+  // ========================================================================
+  // KNOWLEDGE CRAWL ROUTES MIGRATED TO: server/routes/knowledge-crawl.routes.ts
+  // ========================================================================
+  /* KNOWLEDGE CRAWL ROUTES MIGRATED - START
   app.post("/api/kb", requireAuth, async (req, res) => {
     try {
       const payload = createKnowledgeBaseWithCrawlSchema.parse(req.body ?? {});
@@ -16725,6 +16729,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  KNOWLEDGE CRAWL ROUTES MIGRATED - END */
 
   app.post(
     "/api/knowledge/bases",
@@ -16748,6 +16753,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // MIGRATED TO: server/routes/knowledge-crawl.routes.ts
+  /* CRAWL ACTIVE MIGRATED - START
   app.get("/api/kb/:baseId/crawl/active", requireAuth, (req, res) => {
     const { baseId } = req.params;
     const { id: workspaceId, role: workspaceRole } = getRequestWorkspace(req);
@@ -16795,6 +16802,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       job: active,
     });
   });
+  CRAWL ACTIVE MIGRATED - END */
 
   // ========================================================================
   // KNOWLEDGE BASE ROUTES MIGRATED TO: server/routes/knowledge-base.routes.ts
