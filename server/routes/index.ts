@@ -9,6 +9,7 @@ import { workspaceRouter } from './workspace.routes';
 import { adminRouter } from './admin';
 import { vectorRouter } from './vector.routes';
 import { noCodeRouter } from './no-code.routes';
+import { chatRouter } from './chat.routes';
 
 const routerLogger = createLogger('router');
 
@@ -65,6 +66,10 @@ export function registerRouteModules(app: Express): void {
   // No-code callback routes (external integrations)
   app.use('/api/no-code', noCodeRouter);
   routerLogger.info('Registered: /api/no-code');
+
+  // Chat routes
+  app.use('/api/chat', chatRouter);
+  routerLogger.info('Registered: /api/chat');
   
   // Route modules will be registered here as they are migrated
   // Example:
