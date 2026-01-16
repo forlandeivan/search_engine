@@ -1,5 +1,6 @@
 ﻿import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import { createServer, type Server } from "http";
+import { registerRouteModules } from "./routes/index";
 import fetch, {
   Headers,
   type HeadersInit,
@@ -5243,6 +5244,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const isGoogleAuthEnabled = () => Boolean(app.get("googleAuthConfigured"));
   const isYandexAuthEnabled = () => Boolean(app.get("yandexAuthConfigured"));
 
+  // Register modular routes (migrated from this file)
+  registerRouteModules(app);
+
   app.get(
     "/api/workspaces/:workspaceId/usage/llm",
     requireAuth,
@@ -6912,17 +6916,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/auth/providers", (_req, res) => {
-    const googleAuthEnabled = isGoogleAuthEnabled();
-    const yandexAuthEnabled = isYandexAuthEnabled();
-    res.json({
-      providers: {
-        local: { enabled: true },
-        google: { enabled: googleAuthEnabled },
-        yandex: { enabled: yandexAuthEnabled },
-      },
-    });
-  });
+  // MIGRATED TO: server/routes/auth.routes.ts
+  // app.get("/api/auth/providers", ...);
 
   const resolveFrontendBaseUrl = (req: Request): string => {
     const envBase = process.env.FRONTEND_URL || process.env.PUBLIC_URL;
@@ -7110,6 +7105,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   };
 }
+
+  // ========================================================================
+  // AUTH ROUTES MIGRATED TO: server/routes/auth.routes.ts
+  // ========================================================================
+  /* AUTH ROUTES MIGRATED - START
   app.get("/api/auth/session", async (req, res, next) => {
     try {
       const user = getSessionUser(req);
@@ -7637,6 +7637,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.json({ success: true });
     });
   });
+  AUTH ROUTES MIGRATED - END */
 
   app.use("/api", requireAuth);
 
@@ -7926,6 +7927,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     pageSize: z.coerce.number().int().min(1).max(100).default(20),
   });
 
+  // ========================================================================
+  // WORKSPACE ROUTES MIGRATED TO: server/routes/workspace.routes.ts
+  // ========================================================================
+  /* WORKSPACE ROUTES MIGRATED - START
   app.get("/api/workspaces", async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -8225,7 +8230,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  WORKSPACE ROUTES MIGRATED - END */
 
+  // ========================================================================
+  // USER ROUTES MIGRATED TO: server/routes/user.routes.ts
+  // ========================================================================
+  /* USER ROUTES MIGRATED - START
   app.get("/api/users/me", async (req, res, next) => {
     try {
       const sessionUser = getAuthorizedUser(req, res);
@@ -8443,7 +8453,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  USER ROUTES MIGRATED - END */
 
+  // ========================================================================
+  // ADMIN ROUTES MIGRATED TO: server/routes/admin/
+  // ========================================================================
+  /* ADMIN ROUTES MIGRATED - START
   app.get("/api/admin/knowledge-base-indexing-policy", requireAdmin, async (_req, res, next) => {
     try {
       const policy = await knowledgeBaseIndexingPolicyService.get();
@@ -11031,7 +11046,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  ADMIN ROUTES MIGRATED - END */
 
+  // ========================================================================
+  // VECTOR ROUTES MIGRATED TO: server/routes/vector.routes.ts
+  // ========================================================================
+  /* VECTOR ROUTES MIGRATED - START
   // Vector search endpoints
   const qdrantCollectionsResponseSchema = z
     .object({
@@ -11456,6 +11476,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
     }
   });
+  VECTOR ROUTES PART 1 MIGRATED - END */
 
   app.get("/api/skills", requireAuth, async (req, res, next) => {
     try {
@@ -15636,6 +15657,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  /* VECTOR ROUTES PART 2 MIGRATED - START
   app.post("/api/vector/collections/:name/points", async (req, res) => {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
@@ -16302,6 +16324,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
     }
   });
+  VECTOR ROUTES PART 2 MIGRATED - END */
 
   // Sites management
 

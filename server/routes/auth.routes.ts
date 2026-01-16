@@ -1,0 +1,350 @@
+/**
+ * Authentication Routes Module
+ * 
+ * Handles all authentication-related endpoints:
+ * - OAuth (Google, Yandex)
+ * - Local auth (login, register, logout)
+ * - Email confirmation
+ * - Session management
+ */
+
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import passport from 'passport';
+import bcrypt from 'bcryptjs';
+import { z } from 'zod';
+import { storage } from '../storage';
+import { createLogger } from '../lib/logger';
+import { asyncHandler } from '../middleware/async-handler';
+import { emailConfirmationTokenService, EmailConfirmationTokenError } from '../email-confirmation-token-service';
+import { registrationEmailService } from '../email-sender-registry';
+import { SmtpSendError } from '../smtp-email-sender';
+import { EmailValidationError } from '../email';
+import type { PublicUser, User } from '@shared/schema';
+
+const authLogger = createLogger('auth');
+
+// Create router instance
+export const authRouter = Router();
+
+// OAuth enabled flags - will be set by configureAuthRouter
+let _isGoogleAuthEnabled = false;
+let _isYandexAuthEnabled = false;
+
+/**
+ * Configure auth router with OAuth settings from app
+ * Must be called before using the router
+ */
+export function configureAuthRouter(app: { get: (key: string) => unknown }): void {
+  _isGoogleAuthEnabled = Boolean(app.get('googleAuthConfigured'));
+  _isYandexAuthEnabled = Boolean(app.get('yandexAuthConfigured'));
+  authLogger.info({ google: _isGoogleAuthEnabled, yandex: _isYandexAuthEnabled }, 'Auth router configured');
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+function isGoogleAuthEnabled(): boolean {
+  return _isGoogleAuthEnabled;
+}
+
+function isYandexAuthEnabled(): boolean {
+  return _isYandexAuthEnabled;
+}
+
+function resolveFrontendBaseUrl(req: Request): string {
+  const envBase = process.env.FRONTEND_URL || process.env.PUBLIC_URL;
+  if (envBase) return envBase;
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin.startsWith('http')) return origin;
+  const host = req.headers.host;
+  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+  return host ? `${proto}://${host}` : 'http://localhost:5000';
+}
+
+function sanitizeRedirectPath(path: string | undefined): string {
+  if (!path) return '/';
+  if (!path.startsWith('/') || path.startsWith('//')) return '/';
+  if (path.includes('://')) return '/';
+  return path;
+}
+
+function appendAuthErrorParam(redirectTo: string, provider: string): string {
+  const separator = redirectTo.includes('?') ? '&' : '?';
+  return `${redirectTo}${separator}auth_error=${provider}`;
+}
+
+function toPublicUser(user: User): PublicUser {
+  return {
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    phone: user.phone,
+    role: user.role,
+    status: user.status,
+    isEmailConfirmed: user.isEmailConfirmed,
+    avatarUrl: user.avatarUrl,
+    createdAt: user.createdAt,
+    lastActivityAt: user.lastActivityAt,
+  };
+}
+
+function getSessionUser(req: Request): PublicUser | null {
+  return req.user as PublicUser | null;
+}
+
+function splitFullName(fullName: string): { firstName: string; lastName: string } {
+  const parts = fullName.trim().split(/\s+/);
+  const firstName = parts[0] || '';
+  const lastName = parts.slice(1).join(' ') || '';
+  return { firstName, lastName };
+}
+
+async function sendRegistrationEmailWithRetry(
+  userEmail: string,
+  userDisplayName: string | null,
+  confirmationLink: string,
+  userId: string,
+  maxAttempts: number = 3,
+): Promise<{ success: boolean; attempts: number; lastError?: Error }> {
+  const delays = [1000, 2000, 4000];
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await registrationEmailService.sendRegistrationConfirmationEmail(
+        userEmail,
+        userDisplayName,
+        confirmationLink,
+      );
+      authLogger.info({ userId, email: userEmail, attempt }, 'Email sent successfully');
+      return { success: true, attempts: attempt };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      authLogger.warn({ userId, email: userEmail, attempt, error: lastError.message }, 'Email send attempt failed');
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt - 1] || 4000));
+      }
+    }
+  }
+  return { success: false, attempts: maxAttempts, lastError };
+}
+
+interface WorkspaceContext {
+  workspaceId: string;
+  workspaceName: string;
+  role: string;
+}
+
+interface SessionResponse {
+  user: PublicUser;
+  workspace?: { active?: { id: string; name: string }; available?: Array<{ id: string; name: string }> };
+  activeWorkspaceId?: string | null;
+}
+
+async function buildSessionResponse(user: PublicUser, context?: WorkspaceContext | null): Promise<SessionResponse> {
+  const workspaces = await storage.getUserWorkspaces(user.id);
+  const available = workspaces.map((w) => ({ id: w.id, name: w.name }));
+  return {
+    user,
+    workspace: { active: context ? { id: context.workspaceId, name: context.workspaceName } : undefined, available },
+  };
+}
+
+async function ensureWorkspaceContext(req: Request, user: PublicUser): Promise<WorkspaceContext | null> {
+  const sessionWorkspaceId = (req.session as any)?.workspaceId || (req.session as any)?.activeWorkspaceId;
+  if (sessionWorkspaceId) {
+    const membership = await storage.getWorkspaceMember(sessionWorkspaceId, user.id);
+    if (membership) {
+      const workspace = await storage.getWorkspaceById(sessionWorkspaceId);
+      if (workspace) {
+        return { workspaceId: workspace.id, workspaceName: workspace.name, role: membership.role };
+      }
+    }
+  }
+  const workspaces = await storage.getUserWorkspaces(user.id);
+  if (workspaces.length > 0) {
+    const first = workspaces[0];
+    const membership = await storage.getWorkspaceMember(first.id, user.id);
+    if (req.session) {
+      (req.session as any).workspaceId = first.id;
+      (req.session as any).activeWorkspaceId = first.id;
+    }
+    return { workspaceId: first.id, workspaceName: first.name, role: membership?.role || 'member' };
+  }
+  return null;
+}
+
+// ============================================================================
+// Routes
+// ============================================================================
+
+authRouter.get('/providers', (_req, res) => {
+  res.json({
+    providers: {
+      local: { enabled: true },
+      google: { enabled: isGoogleAuthEnabled() },
+      yandex: { enabled: isYandexAuthEnabled() },
+    },
+  });
+});
+
+authRouter.get('/session', asyncHandler(async (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ message: 'Нет активной сессии' });
+  const updatedUser = await storage.recordUserActivity(user.id);
+  const safeUser = updatedUser ? toPublicUser(updatedUser) : user;
+  if (updatedUser) req.user = safeUser;
+  const context = await ensureWorkspaceContext(req, safeUser);
+  const activeWorkspaceId = (req.session as any)?.activeWorkspaceId ?? (req.session as any)?.workspaceId ?? null;
+  const sessionResponse = await buildSessionResponse(safeUser, context);
+  res.json({ ...sessionResponse, activeWorkspaceId });
+}));
+
+authRouter.get('/google', (req, res, next) => {
+  if (!isGoogleAuthEnabled()) return res.status(404).json({ message: 'Авторизация через Google недоступна' });
+  const redirectTo = sanitizeRedirectPath(typeof req.query.redirect === 'string' ? req.query.redirect : undefined);
+  if (req.session) (req.session as any).oauthRedirectTo = redirectTo;
+  passport.authenticate('google', { scope: ['profile', 'email'], prompt: 'select_account' })(req, res, next);
+});
+
+authRouter.get('/google/callback', (req, res, next) => {
+  if (!isGoogleAuthEnabled()) return res.status(404).json({ message: 'Авторизация через Google недоступна' });
+  passport.authenticate('google', (err: unknown, user: PublicUser | false) => {
+    const redirectTo = sanitizeRedirectPath((req.session as any)?.oauthRedirectTo ?? '/');
+    if (req.session) delete (req.session as any).oauthRedirectTo;
+    if (err) { authLogger.error({ err }, 'Google OAuth error'); return res.redirect(appendAuthErrorParam(redirectTo, 'google')); }
+    if (!user) return res.redirect(appendAuthErrorParam(redirectTo, 'google'));
+    req.logIn(user, (loginError) => { if (loginError) return next(loginError); res.redirect(redirectTo); });
+  })(req, res, next);
+});
+
+authRouter.get('/yandex', (req, res, next) => {
+  if (!isYandexAuthEnabled()) return res.status(404).json({ message: 'Авторизация через Yandex недоступна' });
+  const redirectTo = sanitizeRedirectPath(typeof req.query.redirect === 'string' ? req.query.redirect : undefined);
+  if (req.session) (req.session as any).oauthRedirectTo = redirectTo;
+  passport.authenticate('yandex', { scope: ['login:info', 'login:email'] })(req, res, next);
+});
+
+authRouter.get('/yandex/callback', (req, res, next) => {
+  if (!isYandexAuthEnabled()) return res.status(404).json({ message: 'Авторизация через Yandex недоступна' });
+  passport.authenticate('yandex', (err: unknown, user: PublicUser | false) => {
+    const redirectTo = sanitizeRedirectPath((req.session as any)?.oauthRedirectTo ?? '/');
+    if (req.session) delete (req.session as any).oauthRedirectTo;
+    if (err) { authLogger.error({ err }, 'Yandex OAuth error'); return res.redirect(appendAuthErrorParam(redirectTo, 'yandex')); }
+    if (!user) return res.redirect(appendAuthErrorParam(redirectTo, 'yandex'));
+    req.logIn(user, (loginError) => { if (loginError) return next(loginError); res.redirect(redirectTo); });
+  })(req, res, next);
+});
+
+authRouter.post('/register', asyncHandler(async (req, res, next) => {
+  const neutralResponse = { message: 'If this email is not yet registered, a confirmation link has been sent.' };
+  const emailRaw = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+  const passwordRaw = typeof req.body?.password === 'string' ? req.body.password : '';
+  const fullNameRaw = typeof req.body?.fullName === 'string' ? req.body.fullName.trim() : '';
+  if (!emailRaw || emailRaw.length > 255) return res.status(400).json({ message: 'Email is too long' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) return res.status(400).json({ message: 'Invalid email format' });
+  if (!passwordRaw || passwordRaw.length < 8) return res.status(400).json({ message: 'Password is too short' });
+  if (passwordRaw.length > 100 || !(/[A-Za-z]/.test(passwordRaw) && /[0-9]/.test(passwordRaw))) return res.status(400).json({ message: 'Invalid password format' });
+  if (fullNameRaw.length > 255) return res.status(400).json({ message: 'Full name is too long' });
+  const email = emailRaw.toLowerCase();
+  const fullName = fullNameRaw || email;
+  const existingUser = await storage.getUserByEmail(email);
+  if (existingUser) return res.status(201).json(neutralResponse);
+  const passwordHash = await bcrypt.hash(passwordRaw, 12);
+  const { firstName, lastName } = splitFullName(fullName);
+  let user: User;
+  try {
+    user = await storage.createUser({ email, fullName, firstName, lastName, phone: '', passwordHash });
+  } catch (createUserError) {
+    const existing = await storage.getUserByEmail(email);
+    if (existing) user = existing; else throw createUserError;
+  }
+  let token: string = '';
+  try { token = await emailConfirmationTokenService.createToken(user.id, 24); } catch { return res.status(201).json(neutralResponse); }
+  if (!token) return res.status(201).json(neutralResponse);
+  const baseUrl = resolveFrontendBaseUrl(req);
+  const confirmationUrl = new URL('/auth/verify-email', baseUrl);
+  confirmationUrl.searchParams.set('token', token);
+  await sendRegistrationEmailWithRetry(email, fullName, confirmationUrl.toString(), user.id);
+  return res.status(201).json(neutralResponse);
+}));
+
+authRouter.post('/verify-email', asyncHandler(async (req, res, next) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  if (!token || token.length > 512) return res.status(400).json({ message: 'Invalid or expired token' });
+  const activeToken = await emailConfirmationTokenService.getActiveToken(token);
+  if (!activeToken) return res.status(400).json({ message: 'Invalid or expired token' });
+  if (activeToken.consumedAt) return res.status(400).json({ message: 'Token already used' });
+  const user = await storage.getUserById(activeToken.userId);
+  if (!user) return res.status(400).json({ message: 'Invalid token' });
+  await storage.confirmUserEmail(user.id);
+  await emailConfirmationTokenService.consumeToken(token);
+  const safeUser = toPublicUser(user);
+  req.logIn(safeUser, (loginError) => {
+    if (loginError) return next(loginError);
+    void (async () => {
+      const updatedUser = await storage.recordUserActivity(user.id);
+      const fullUser = updatedUser ?? (await storage.getUser(user.id));
+      const finalUser = fullUser ? toPublicUser(fullUser) : safeUser;
+      req.user = finalUser;
+      const context = await ensureWorkspaceContext(req, finalUser);
+      const sessionResponse = await buildSessionResponse(finalUser, context);
+      res.json(sessionResponse);
+    })();
+  });
+}));
+
+authRouter.post('/resend-confirmation', asyncHandler(async (req, res) => {
+  const neutralResponse = { message: 'If this email is registered and not yet confirmed, a new confirmation link has been sent.' };
+  const emailRaw = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+  if (!emailRaw || emailRaw.length > 255) return res.status(400).json({ message: 'Email is too long' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) return res.status(400).json({ message: 'Invalid email format' });
+  const email = emailRaw.toLowerCase();
+  const user = await storage.getUserByEmail(email);
+  if (!user) return res.status(200).json(neutralResponse);
+  if (user.isEmailConfirmed) return res.status(200).json({ message: 'Email is already confirmed.' });
+  const lastCreated = await emailConfirmationTokenService.getLastCreatedAt(user.id);
+  if (lastCreated && Date.now() - lastCreated.getTime() < 60_000) return res.status(429).json({ message: 'Please wait before requesting another confirmation email' });
+  const tokensIn24h = await emailConfirmationTokenService.countTokensLastHours(user.id, 24);
+  if (tokensIn24h >= 5) return res.status(429).json({ message: 'Too many confirmation emails requested' });
+  const token = await emailConfirmationTokenService.createToken(user.id, 24);
+  const baseUrl = resolveFrontendBaseUrl(req);
+  const confirmationUrl = new URL('/auth/verify-email', baseUrl);
+  confirmationUrl.searchParams.set('token', token);
+  await registrationEmailService.sendRegistrationConfirmationEmail(user.email, user.fullName || user.email, confirmationUrl.toString());
+  return res.status(200).json({ message: 'A new confirmation link has been sent if the email is not yet confirmed.' });
+}));
+
+authRouter.post('/login', (req, res, next) => {
+  passport.authenticate('local', (err: unknown, user: PublicUser | false, info?: { message?: string }) => {
+    if (err) return next(err);
+    if (!user) return res.status(401).json({ message: info?.message ?? 'Неверный email или пароль' });
+    const isPending = user.status === 'pending_email_confirmation' || user.status === 'PendingEmailConfirmation' || user.isEmailConfirmed === false;
+    if (isPending) return res.status(403).json({ error: 'email_not_confirmed', message: 'Please confirm your email before logging in.' });
+    req.logIn(user, (loginError) => {
+      if (loginError) return next(loginError);
+      void (async () => {
+        const updatedUser = await storage.recordUserActivity(user.id);
+        const fullUser = updatedUser ?? (await storage.getUser(user.id));
+        const safeUser = fullUser ? toPublicUser(fullUser) : user;
+        req.user = safeUser;
+        const context = await ensureWorkspaceContext(req, safeUser);
+        const sessionResponse = await buildSessionResponse(safeUser, context);
+        res.json(sessionResponse);
+      })();
+    });
+  })(req, res, next);
+});
+
+authRouter.post('/logout', (req, res, next) => {
+  req.logout((error) => {
+    if (error) return next(error);
+    if (req.session) delete (req.session as any).workspaceId;
+    res.json({ success: true });
+  });
+});
+
+export default authRouter;
