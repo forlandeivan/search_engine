@@ -58,4 +58,10 @@ export function scheduleVectorizationJobCleanup(jobId: string, delayMs = 60_000)
   knowledgeDocumentVectorizationJobCleanup.set(jobId, timeout);
 }
 
+// Re-export the internal Map for direct access 
+export { knowledgeDocumentVectorizationJobs };
+
+// Aliases for backward compatibility with routes.ts naming
+export const updateKnowledgeDocumentVectorizationJob = updateVectorizationJob;
+export const scheduleKnowledgeDocumentVectorizationJobCleanup = scheduleVectorizationJobCleanup;
 export { VECTORIZE_JOB_FAILURE_CLEANUP_DELAY_MS };

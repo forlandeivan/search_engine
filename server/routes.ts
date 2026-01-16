@@ -17418,6 +17418,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   DELETE /api/knowledge/bases/:baseId/nodes/:nodeId - MIGRATED END */
 
+  // MIGRATED TO: server/routes/vector.routes.ts (full implementation - 800+ строк)
+  /* POST /api/knowledge/documents/vectorize - MIGRATED
   app.post("/api/knowledge/documents/vectorize", async (req, res) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -18250,6 +18252,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.status(500).json({ error: message });
     }
   });
+  POST /api/knowledge/documents/vectorize - MIGRATED END */
 
   // MIGRATED TO: server/routes/vector.routes.ts
   /* VECTORIZE JOBS MIGRATED - START
