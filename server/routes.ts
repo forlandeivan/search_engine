@@ -8471,8 +8471,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   USER ROUTES MIGRATED - END */
 
   // ========================================================================
-  // ADMIN ROUTES - TODO: migrate to server/routes/admin/ (import issues to fix)
+  // ADMIN ROUTES MIGRATED TO: server/routes/admin/
   // ========================================================================
+  /* ADMIN ROUTES MIGRATED - START
   app.get("/api/admin/knowledge-base-indexing-policy", requireAdmin, async (_req, res, next) => {
     try {
       const policy = await knowledgeBaseIndexingPolicyService.get();
@@ -11060,6 +11061,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  ADMIN ROUTES MIGRATED - END */
 
   // ========================================================================
   // VECTOR ROUTES MIGRATED TO: server/routes/vector.routes.ts
