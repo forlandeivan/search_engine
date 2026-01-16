@@ -20,8 +20,9 @@ import { z } from 'zod';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
-import { workspaceMemberRoles, type PublicUser, type User } from '@shared/schema';
+import { workspaceMemberRoles, type PublicUser, type User, actionTargets, actionPlacements, actionInputTypes, actionOutputModes, type ActionPlacement } from '@shared/schema';
 import type { WorkspaceMemberWithUser } from '../storage';
+import { actionsRepository } from '../actions';
 import {
   getWorkspaceLlmUsageSummary,
   getWorkspaceAsrUsageSummary,
@@ -543,6 +544,137 @@ workspaceRouter.get('/:workspaceId/usage/qdrant', asyncHandler(async (req, res) 
   
   const usage = await getWorkspaceQdrantUsage(req.params.workspaceId);
   res.json(usage);
+}));
+
+// ============================================================================
+// Workspace Actions Endpoints
+// ============================================================================
+
+/**
+ * GET /:workspaceId/actions
+ * List workspace actions
+ */
+workspaceRouter.get('/:workspaceId/actions', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const workspaceId = req.workspaceContext?.workspaceId ?? req.params.workspaceId;
+  const actions = await actionsRepository.listForWorkspace(workspaceId, { includeSystem: true });
+  const payload = actions.map((action) => ({
+    ...action,
+    editable: action.scope === 'workspace' && action.workspaceId === workspaceId,
+  }));
+  res.json({ actions: payload });
+}));
+
+/**
+ * POST /:workspaceId/actions
+ * Create workspace action
+ */
+workspaceRouter.post('/:workspaceId/actions', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const workspaceId = req.workspaceContext?.workspaceId ?? req.params.workspaceId;
+  const body = req.body ?? {};
+
+  if (!body.label || typeof body.label !== 'string') {
+    return res.status(400).json({ message: 'label is required' });
+  }
+  if (!actionTargets.includes(body.target)) {
+    return res.status(400).json({ message: 'invalid target' });
+  }
+  if (
+    !Array.isArray(body.placements) ||
+    body.placements.some((p: unknown) => !actionPlacements.includes(p as ActionPlacement))
+  ) {
+    return res.status(400).json({ message: 'invalid placements' });
+  }
+  if (!body.promptTemplate || typeof body.promptTemplate !== 'string') {
+    return res.status(400).json({ message: 'promptTemplate is required' });
+  }
+  if (!actionInputTypes.includes(body.inputType)) {
+    return res.status(400).json({ message: 'invalid inputType' });
+  }
+  if (!actionOutputModes.includes(body.outputMode)) {
+    return res.status(400).json({ message: 'invalid outputMode' });
+  }
+
+  const target = body.target as (typeof actionTargets)[number];
+  const inputType = body.inputType as (typeof actionInputTypes)[number];
+  const outputMode = body.outputMode as (typeof actionOutputModes)[number];
+  const placements = (body.placements as ActionPlacement[]).filter((p) => actionPlacements.includes(p));
+
+  const created = await actionsRepository.createWorkspaceAction(workspaceId, {
+    label: body.label,
+    description: typeof body.description === 'string' ? body.description : null,
+    target,
+    placements,
+    promptTemplate: body.promptTemplate,
+    inputType,
+    outputMode,
+    llmConfigId: null,
+  });
+
+  res.status(201).json({
+    action: {
+      ...created,
+      editable: true,
+    },
+  });
+}));
+
+/**
+ * PATCH /:workspaceId/actions/:actionId
+ * Update workspace action
+ */
+workspaceRouter.patch('/:workspaceId/actions/:actionId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId, actionId } = req.params;
+  const body = req.body ?? {};
+
+  const patch: Record<string, unknown> = {};
+  if (typeof body.label === 'string') patch.label = body.label;
+  if (typeof body.description === 'string' || body.description === null) patch.description = body.description;
+  if (body.target && actionTargets.includes(body.target)) {
+    patch.target = body.target as (typeof actionTargets)[number];
+  }
+  if (
+    Array.isArray(body.placements) &&
+    body.placements.every((p: unknown) => actionPlacements.includes(p as ActionPlacement))
+  ) {
+    patch.placements = (body.placements as ActionPlacement[]).filter((p) => actionPlacements.includes(p));
+  }
+  if (typeof body.promptTemplate === 'string') patch.promptTemplate = body.promptTemplate;
+  if (body.inputType && actionInputTypes.includes(body.inputType)) {
+    patch.inputType = body.inputType as (typeof actionInputTypes)[number];
+  }
+  if (body.outputMode && actionOutputModes.includes(body.outputMode)) {
+    patch.outputMode = body.outputMode as (typeof actionOutputModes)[number];
+  }
+
+  const updated = await actionsRepository.updateWorkspaceAction(workspaceId, actionId, patch);
+  res.json({
+    action: {
+      ...updated,
+      editable: true,
+    },
+  });
+}));
+
+/**
+ * DELETE /:workspaceId/actions/:actionId
+ * Delete workspace action
+ */
+workspaceRouter.delete('/:workspaceId/actions/:actionId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId, actionId } = req.params;
+  await actionsRepository.softDeleteWorkspaceAction(workspaceId, actionId);
+  res.status(204).send();
 }));
 
 export default workspaceRouter;

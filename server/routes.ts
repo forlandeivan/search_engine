@@ -13713,6 +13713,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   ACTIONS ROUTES MIGRATED - END */
 
+  // ========================================================================
+  // WORKSPACE ACTIONS MIGRATED TO: server/routes/workspace.routes.ts
+  // ========================================================================
+  /* WORKSPACE ACTIONS MIGRATED - START
+  app.get("/api/workspaces/:workspaceId/actions", ...);
+  app.post("/api/workspaces/:workspaceId/actions", ...);
+  app.patch("/api/workspaces/:workspaceId/actions/:actionId", ...);
+  app.delete("/api/workspaces/:workspaceId/actions/:actionId", ...);
+  WORKSPACE ACTIONS MIGRATED - END */
+
+  /* ORIGINAL WORKSPACE ACTIONS - KEEP FOR NOW - START
   // Actions (workspace library)
   app.get(
     "/api/workspaces/:workspaceId/actions",
@@ -13870,6 +13881,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  ORIGINAL WORKSPACE ACTIONS - KEEP FOR NOW - END */
 
   // Run action (compute only, no apply)
   app.post(
