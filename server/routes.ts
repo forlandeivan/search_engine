@@ -5263,117 +5263,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/workspaces/:workspaceId/usage/qdrant", ...);
   USAGE ROUTES MIGRATED - END */
 
-  app.get("/public/search/suggest", async (req, res) => {
-    const parsed = knowledgeSuggestQuerySchema.safeParse({
-      q:
-        typeof req.query.q === "string"
-          ? req.query.q
-          : typeof req.query.query === "string"
-            ? req.query.query
-            : "",
-      kb_id:
-        typeof req.query.kb_id === "string"
-          ? req.query.kb_id
-          : typeof req.query.kbId === "string"
-            ? req.query.kbId
-            : "",
-      limit: req.query.limit,
-    });
-
-    if (!parsed.success) {
-      return res.status(400).json({
-        error: "Некорректные параметры запроса",
-        details: parsed.error.format(),
-      });
-    }
-
-    const { q, kb_id, limit } = parsed.data;
-    const query = q.trim();
-    const knowledgeBaseId = kb_id.trim();
-    const limitValue = limit !== undefined ? Math.max(1, Math.min(Number(limit), 10)) : 3;
-
-    const requestStartedAt = performance.now();
-    const logContext = {
-      kb_id: knowledgeBaseId,
-      query_length: query.length,
-      query_preview: createQueryPreview(query),
-      limit: limitValue,
-    };
-
-    console.info("[public/search/suggest] Получен запрос", logContext);
-
-    if (!query) {
-      console.warn("[public/search/suggest] Пустой запрос", logContext);
-      return res.status(400).json({ error: "Укажите поисковый запрос" });
-    }
-
-    try {
-      const base = await storage.getKnowledgeBase(knowledgeBaseId);
-      if (!base) {
-        console.warn("[public/search/suggest] База знаний не найдена", logContext);
-        return res.status(404).json({ error: "База знаний не найдена" });
-      }
-
-      const suggestions = await storage.searchKnowledgeBaseSuggestions(
-        knowledgeBaseId,
-        query,
-        limitValue,
-      );
-      const duration = performance.now() - requestStartedAt;
-
-      const sections = suggestions.sections.map((entry) => ({
-        chunk_id: entry.chunkId,
-        doc_id: entry.documentId,
-        doc_title: entry.docTitle,
-        section_title: entry.sectionTitle,
-        snippet: entry.snippet,
-        score: entry.score,
-        source: entry.source,
-        node_id: entry.nodeId ?? null,
-        node_slug: entry.nodeSlug ?? null,
-      }));
-
-      res.json({
-        query,
-        kb_id: knowledgeBaseId,
-        normalized_query: suggestions.normalizedQuery || query,
-        ask_ai: {
-          label: "Спросить AI",
-          query: suggestions.normalizedQuery || query,
-        },
-        sections,
-        timings: {
-          total_ms: Number(duration.toFixed(2)),
-        },
-      });
-
-      console.info("[public/search/suggest] Ответ сформирован", {
-        ...logContext,
-        workspace_id: base.workspaceId,
-        normalized_query: suggestions.normalizedQuery || query,
-        sections: sections.length,
-        duration_ms: Number(duration.toFixed(2)),
-      });
-    } catch (error) {
-      const durationMs = Number((performance.now() - requestStartedAt).toFixed(2));
-      const errorDetails = getErrorDetails(error);
-
-      console.error(
-        `[public/search/suggest] Ошибка выдачи подсказок: ${errorDetails}`,
-        {
-          ...logContext,
-          duration_ms: durationMs,
-        },
-      );
-
-      if (error instanceof Error) {
-        console.error(error.stack ?? error);
-      } else {
-        console.error(error);
-      }
-      res.status(500).json({ error: "Не удалось получить подсказки" });
-    }
-  });
+  // ========================================================================
+  // PUBLIC SEARCH SUGGEST MIGRATED TO: server/routes/public.routes.ts
+  // ========================================================================
+  /* PUBLIC SEARCH SUGGEST MIGRATED - START
+  app.get("/public/search/suggest", async (req, res) => { ... });
+  PUBLIC SEARCH SUGGEST MIGRATED - END */
 
   // MIGRATED TO: server/routes/public.routes.ts
   /* PUBLIC EMBED SUGGEST MIGRATED - START
@@ -5382,96 +5277,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   PUBLIC EMBED SUGGEST MIGRATED - END */
 
-  app.post("/public/rag/answer", async (req, res) => {
-    const parsed = knowledgeRagRequestSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({
-        error: "Некорректные параметры RAG-запроса",
-        details: parsed.error.format(),
-      });
-    }
-
-    const body = parsed.data;
-    const acceptHeader = typeof req.headers.accept === "string" ? req.headers.accept : "";
-    const wantsStream = Boolean(
-      body.stream === true || acceptHeader.toLowerCase().includes("text/event-stream"),
-    );
-
-    try {
-      if (wantsStream) {
-        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-        res.setHeader("Cache-Control", "no-cache, no-transform");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        const flusher = (res as Response & { flushHeaders?: () => void }).flushHeaders;
-        if (typeof flusher === "function") {
-          flusher.call(res);
-        }
-
-        try {
-          await runKnowledgeBaseRagPipeline({
-            req,
-            body,
-            stream: {
-              onEvent: (eventName, payload) => {
-                sendSseEvent(res, eventName, payload);
-              },
-            },
-          });
-          res.end();
-        } catch (error) {
-          if (error instanceof HttpError) {
-            sendSseEvent(res, "error", { message: error.message, details: error.details ?? null });
-            res.end();
-            return;
-          }
-
-          if (error instanceof QdrantConfigurationError) {
-            sendSseEvent(res, "error", { message: "Qdrant не настроен", details: error.message });
-            res.end();
-            return;
-          }
-
-          console.error("Ошибка RAG-поиска по базе знаний (SSE):", error);
-          sendSseEvent(res, "error", { message: "Не удалось получить ответ от LLM" });
-          res.end();
-        }
-
-        return;
-      }
-
-      const result = await runKnowledgeBaseRagPipeline({ req, body });
-      res.json({
-        query: result.response.query,
-        kb_id: result.response.knowledgeBaseId,
-        normalized_query: result.response.normalizedQuery,
-        answer: result.response.answer,
-        citations: result.response.citations,
-        chunks: result.response.chunks,
-        usage: result.response.usage,
-        timings: result.response.timings,
-        debug: result.response.debug,
-      });
-    } catch (error) {
-      if (error instanceof HttpError) {
-        return res.status(error.status).json({
-          error: error.message,
-          details: error.details ?? null,
-        });
-      }
-
-      if (error instanceof QdrantConfigurationError) {
-        return res.status(503).json({ error: "Qdrant не настроен", details: error.message });
-      }
-
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Некорректные параметры RAG-запроса", details: error.errors });
-      }
-
-      console.error("Ошибка RAG-поиска по базе знаний:", error);
-      res.status(500).json({ error: "Не удалось получить ответ от LLM" });
-    }
-  });
+  // ========================================================================
+  // PUBLIC RAG ANSWER MIGRATED TO: server/routes/public.routes.ts
+  // ========================================================================
+  /* PUBLIC RAG ANSWER MIGRATED - START
+  app.post("/public/rag/answer", async (req, res) => { ... });
+  PUBLIC RAG ANSWER MIGRATED - END */
 
   const registerPublicCollectionRoute = (path: string, handler: RequestHandler) => {
     app.post(path, handler);
