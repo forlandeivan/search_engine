@@ -130,6 +130,10 @@ export function registerRouteModules(app: Express): void {
   // Knowledge crawl routes
   app.use('/api/kb', knowledgeCrawlRouter);
   routerLogger.info('Registered: /api/kb (crawl)');
+
+  // Knowledge crawl routes for /api/knowledge/bases path
+  app.use('/api/knowledge/bases', knowledgeCrawlRouter);
+  routerLogger.info('Registered: /api/knowledge/bases (crawl documents)');
   
   // Route modules will be registered here as they are migrated
   // Example:

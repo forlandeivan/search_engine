@@ -17156,6 +17156,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   POST /api/knowledge/bases/:baseId/folders - MIGRATED END */
 
+  // MIGRATED TO: server/routes/knowledge-crawl.routes.ts
+  /* DOCUMENTS CRAWL MIGRATED - START
   app.post("/api/knowledge/bases/:baseId/documents/crawl", requireAuth, async (req, res) => {
     const { baseId } = req.params;
 
@@ -17198,6 +17200,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  DOCUMENTS CRAWL MIGRATED - END */
 
   // MIGRATED TO: server/routes/knowledge-base.routes.ts
   /* POST /api/knowledge/bases/:baseId/documents - MIGRATED

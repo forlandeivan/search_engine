@@ -19,6 +19,7 @@ import {
   KnowledgeBaseError,
   type KnowledgeBaseCrawlConfig,
 } from '../knowledge-base';
+import { crawlKnowledgeDocumentPage } from '../kb-crawler';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('knowledge-crawl');
@@ -62,6 +63,15 @@ function isWorkspaceAdmin(role?: string): boolean {
 // Validation Schemas
 // ============================================================================
 
+const crawlSelectorsSchema = z.object({
+  title: z.string().trim().min(1).optional(),
+  content: z.string().trim().min(1).optional(),
+}).partial();
+
+const crawlAuthSchema = z.object({
+  headers: z.record(z.string()).optional(),
+}).partial();
+
 const crawlConfigSchema = z.object({
   start_urls: z.array(z.string().url()).min(1, 'Укажите хотя бы один URL для начала обхода'),
   sitemap_url: z.string().url().optional().nullable(),
@@ -89,6 +99,28 @@ const createKnowledgeBaseWithCrawlSchema = z.object({
 const restartKnowledgeBaseCrawlSchema = z.object({
   crawl_config: crawlConfigSchema,
 });
+
+const createCrawledKnowledgeDocumentSchema = z.object({
+  url: z.string().trim().min(1, 'Укажите ссылку на страницу').refine((value) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }, 'Укажите корректный URL страницы'),
+  selectors: crawlSelectorsSchema.optional(),
+  language: z.string().trim().min(1).optional(),
+  version: z.string().trim().min(1).optional(),
+  auth: crawlAuthSchema.optional(),
+});
+
+function parseKnowledgeNodeParentId(raw: unknown): string | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  if (typeof raw !== 'string') throw new KnowledgeBaseError('Некорректный идентификатор родителя', 400);
+  const trimmed = raw.trim();
+  return trimmed || null;
+}
 
 function mapCrawlConfig(input: z.infer<typeof crawlConfigSchema>): KnowledgeBaseCrawlConfig {
   const normalizeArray = (value?: string[]) =>
@@ -238,6 +270,47 @@ knowledgeCrawlRouter.get('/:baseId/crawl/active', asyncHandler(async (req, res) 
     progress,
     job: active,
   });
+}));
+
+/**
+ * POST /:baseId/documents/crawl
+ * Crawl a single document page and add to knowledge base
+ * Note: This is mounted at /api/knowledge/bases via index.ts
+ */
+knowledgeCrawlRouter.post('/:baseId/documents/crawl', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const payload = createCrawledKnowledgeDocumentSchema.parse(req.body ?? {});
+  const parentId = parseKnowledgeNodeParentId(req.body?.parentId);
+  const { id: workspaceId } = getRequestWorkspace(req);
+
+  const selectors = payload.selectors
+    ? {
+        title: payload.selectors.title?.trim() || null,
+        content: payload.selectors.content?.trim() || null,
+      }
+    : null;
+  
+  const authHeaders = payload.auth?.headers
+    ? Object.fromEntries(
+        Object.entries(payload.auth.headers)
+          .map(([key, value]) => [key.trim(), value.trim()])
+          .filter(([key, value]) => key.length > 0 && value.length > 0),
+      )
+    : undefined;
+
+  const result = await crawlKnowledgeDocumentPage(workspaceId, baseId, {
+    url: payload.url,
+    parentId,
+    selectors,
+    language: payload.language?.trim() || null,
+    version: payload.version?.trim() || null,
+    auth: authHeaders ? { headers: authHeaders } : null,
+  });
+
+  res.status(201).json(result);
 }));
 
 // Error handler for this router
