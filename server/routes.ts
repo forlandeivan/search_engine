@@ -17342,6 +17342,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   POST /api/knowledge/bases/:baseId/index - MIGRATED END */
 
+  // MIGRATED TO: server/routes/knowledge-indexing.routes.ts
+  /* INDEXING RESET MIGRATED - START
   app.post("/api/knowledge/bases/:baseId/indexing/reset", requireAuth, async (req, res) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -17389,6 +17391,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  INDEXING RESET MIGRATED - END */
 
   // MIGRATED TO: server/routes/knowledge-base.routes.ts
   /* GET /api/knowledge/bases/:baseId/indexing/summary - MIGRATED
@@ -17405,6 +17408,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   GET /api/knowledge/bases/:baseId/indexing/summary - MIGRATED END */
 
+  // MIGRATED TO: server/routes/knowledge-indexing.routes.ts
+  /* INDEXING CHANGES MIGRATED - START
   app.get("/api/knowledge/bases/:baseId/indexing/changes", requireAuth, async (req, res) => {
     const { baseId } = req.params;
     const { id: workspaceId } = getRequestWorkspace(req);
@@ -17454,6 +17459,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  INDEXING CHANGES MIGRATED - END */
 
   // ========================================================================
   // INDEXING ACTIONS ROUTES MIGRATED TO: server/routes/knowledge-indexing.routes.ts

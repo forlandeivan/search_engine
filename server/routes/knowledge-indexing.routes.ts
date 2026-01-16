@@ -14,7 +14,11 @@ import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { knowledgeBaseIndexingActionsService } from '../knowledge-base-indexing-actions';
-import { KnowledgeBaseError } from '../knowledge-base';
+import {
+  KnowledgeBaseError,
+  getKnowledgeBaseIndexingChanges,
+  resetKnowledgeBaseIndex,
+} from '../knowledge-base';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('knowledge-indexing');
@@ -196,6 +200,85 @@ knowledgeIndexingRouter.get('/bases/:baseId/indexing/actions/:actionId/logs', as
     hasMore: logs.hasMore,
     nextOffset: logs.nextOffset,
   });
+}));
+
+/**
+ * POST /bases/:baseId/indexing/reset
+ * Reset indexing (delete collection and optionally reindex)
+ */
+knowledgeIndexingRouter.post('/bases/:baseId/indexing/reset', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const payload = (req.body ?? {}) as Record<string, unknown>;
+  const deleteCollection = payload.deleteCollection !== false;
+  const reindex = payload.reindex !== false;
+
+  logger.info({ userId: user.id, workspaceId, baseId, deleteCollection, reindex }, 'Indexing reset requested');
+  
+  const result = await resetKnowledgeBaseIndex(baseId, workspaceId, {
+    deleteCollection,
+    reindex,
+    userId: user.id,
+  });
+  
+  logger.info({
+    userId: user.id,
+    workspaceId,
+    baseId,
+    deletedCollection: result.deletedCollection,
+    jobCount: result.jobCount,
+    actionId: result.actionId ?? null,
+  }, 'Indexing reset completed');
+  
+  res.json(result);
+}));
+
+/**
+ * GET /bases/:baseId/indexing/changes
+ * Get indexing changes (documents pending indexing)
+ */
+knowledgeIndexingRouter.get('/bases/:baseId/indexing/changes', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+  const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+
+  const parseNumber = (value: unknown): number | undefined => {
+    if (value === undefined) return undefined;
+    if (typeof value === 'string' && value.trim().length === 0) return undefined;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return NaN;
+  };
+
+  const limitCandidate = parseNumber(limitRaw);
+  if (limitCandidate !== undefined) {
+    if (!Number.isInteger(limitCandidate) || limitCandidate < 1) {
+      return res.status(400).json({ error: 'Некорректный параметр limit' });
+    }
+  }
+
+  const offsetCandidate = parseNumber(offsetRaw);
+  if (offsetCandidate !== undefined) {
+    if (!Number.isInteger(offsetCandidate) || offsetCandidate < 0) {
+      return res.status(400).json({ error: 'Некорректный параметр offset' });
+    }
+  }
+
+  const limit = (limitCandidate ?? 50) as number;
+  const offset = (offsetCandidate ?? 0) as number;
+
+  const changes = await getKnowledgeBaseIndexingChanges(baseId, workspaceId, { limit, offset });
+  res.json(changes);
 }));
 
 // Error handler for this router
