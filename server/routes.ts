@@ -16917,6 +16917,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     });
 
+  // ========================================================================
+  // KNOWLEDGE RAG/ASK-AI ROUTES MIGRATED TO: server/routes/knowledge-base.routes.ts
+  // ========================================================================
+  /* KNOWLEDGE RAG/ASK-AI ROUTES MIGRATED - START
   app.get("/api/knowledge/bases/:baseId/rag/config/latest", requireAuth, async (req, res) => {
     const { baseId } = req.params;
 
@@ -17007,6 +17011,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  KNOWLEDGE RAG/ASK-AI ROUTES MIGRATED - END */
 
   // ========================================================================
   // JOBS ROUTES MIGRATED TO: server/routes/jobs.routes.ts
@@ -17450,6 +17455,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // ========================================================================
+  // INDEXING ACTIONS ROUTES MIGRATED TO: server/routes/knowledge-indexing.routes.ts
+  // ========================================================================
+  /* INDEXING ACTIONS ROUTES MIGRATED - START
   app.post("/api/knowledge/bases/:baseId/indexing/actions/start", requireAuth, async (req, res) => {
     const { baseId } = req.params;
     const { id: workspaceId } = getRequestWorkspace(req);
@@ -17519,7 +17528,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  INDEXING ACTIONS ROUTES MIGRATED - END */
 
+  /* INDEXING HISTORY/LOGS ROUTES MIGRATED - START
   app.get("/api/knowledge/bases/:baseId/indexing/actions/history", requireAuth, async (req, res) => {
     const { baseId } = req.params;
     const { id: workspaceId } = getRequestWorkspace(req);
@@ -17568,6 +17579,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  INDEXING HISTORY/LOGS ROUTES MIGRATED - END */
 
   // MIGRATED TO: server/routes/knowledge-base.routes.ts
   /* PATCH /api/knowledge/bases/:baseId/nodes/:nodeId - MIGRATED

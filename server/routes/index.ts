@@ -20,6 +20,7 @@ import { actionsRouter } from './actions.routes';
 import { webhookRouter } from './webhook.routes';
 import { embedRouter } from './embed.routes';
 import { transcribeRouter } from './transcribe.routes';
+import { knowledgeIndexingRouter } from './knowledge-indexing.routes';
 
 const routerLogger = createLogger('router');
 
@@ -120,6 +121,10 @@ export function registerRouteModules(app: Express): void {
   // Transcribe routes (speech-to-text operations)
   app.use('/api/chat/transcribe', transcribeRouter);
   routerLogger.info('Registered: /api/chat/transcribe');
+
+  // Knowledge indexing routes (indexing actions)
+  app.use('/api/knowledge', knowledgeIndexingRouter);
+  routerLogger.info('Registered: /api/knowledge (indexing)');
   
   // Route modules will be registered here as they are migrated
   // Example:

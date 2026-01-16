@@ -237,6 +237,90 @@ knowledgeBaseRouter.post('/bases/:baseId/index', asyncHandler(async (req, res) =
   res.json(result);
 }));
 
+/**
+ * GET /bases/:baseId/rag/config/latest
+ * Get latest RAG configuration for knowledge base
+ */
+knowledgeBaseRouter.get('/bases/:baseId/rag/config/latest', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  
+  const base = await storage.getKnowledgeBase(baseId);
+  if (!base || base.workspaceId !== workspaceId) {
+    return res.status(404).json({ error: 'База знаний не найдена' });
+  }
+
+  const config = await storage.getLatestKnowledgeBaseRagConfig(workspaceId, baseId);
+  res.json({
+    config: config ?? {
+      workspaceId,
+      knowledgeBaseId: baseId,
+      topK: null,
+      bm25: null,
+      vector: null,
+      recordedAt: null,
+    },
+  });
+}));
+
+/**
+ * GET /bases/:baseId/ask-ai/runs
+ * List Ask AI runs for knowledge base
+ */
+knowledgeBaseRouter.get('/bases/:baseId/ask-ai/runs', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  
+  const base = await storage.getKnowledgeBase(baseId);
+  if (!base || base.workspaceId !== workspaceId) {
+    return res.status(404).json({ error: 'База знаний не найдена' });
+  }
+
+  const limitParam = typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined;
+  const offsetParam = typeof req.query.offset === 'string' ? Number(req.query.offset) : undefined;
+
+  const result = await storage.listKnowledgeBaseAskAiRuns(workspaceId, baseId, {
+    limit: Number.isFinite(limitParam) ? Number(limitParam) : undefined,
+    offset: Number.isFinite(offsetParam) ? Number(offsetParam) : undefined,
+  });
+
+  res.json({
+    items: result.items,
+    hasMore: result.hasMore,
+    nextOffset: result.nextOffset,
+  });
+}));
+
+/**
+ * GET /bases/:baseId/ask-ai/runs/:runId
+ * Get Ask AI run detail
+ */
+knowledgeBaseRouter.get('/bases/:baseId/ask-ai/runs/:runId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId, runId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  
+  const base = await storage.getKnowledgeBase(baseId);
+  if (!base || base.workspaceId !== workspaceId) {
+    return res.status(404).json({ error: 'База знаний не найдена' });
+  }
+
+  const run = await storage.getKnowledgeBaseAskAiRun(runId, workspaceId, baseId);
+  if (!run) {
+    return res.status(404).json({ error: 'Запуск не найден' });
+  }
+
+  res.json(run);
+}));
+
 // Error handler for this router
 knowledgeBaseRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof z.ZodError) {
