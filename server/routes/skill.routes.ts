@@ -22,7 +22,10 @@ import {
   getSkillById,
   SkillServiceError,
 } from '../skills';
+import { actionsRepository } from '../actions-repository';
+import { skillActionsRepository } from '../skill-actions-repository';
 import type { PublicUser } from '@shared/schema';
+import type { ActionPlacement } from '@shared/schema';
 
 const logger = createLogger('skill');
 
@@ -56,6 +59,24 @@ function getRequestWorkspace(req: any): { id: string } {
   }
   return { id: workspaceId };
 }
+
+function pickFirstString(...values: unknown[]): string | undefined {
+  for (const val of values) {
+    if (typeof val === 'string' && val.trim().length > 0) {
+      return val.trim();
+    }
+  }
+  return undefined;
+}
+
+function resolveWorkspaceIdForRequest(req: any, explicitId: string | null | undefined): string {
+  if (explicitId && explicitId.trim().length > 0) {
+    return explicitId.trim();
+  }
+  return getRequestWorkspace(req).id;
+}
+
+const actionPlacements: ActionPlacement[] = ['inline', 'context_menu', 'side_panel', 'transcript_menu', 'transcript_block'];
 
 // ============================================================================
 // Validation Schemas
@@ -175,22 +196,118 @@ skillRouter.get('/:skillId', asyncHandler(async (req, res) => {
 
 /**
  * GET /:skillId/actions
- * List skill actions
+ * List skill actions configuration
  */
 skillRouter.get('/:skillId/actions', asyncHandler(async (req, res) => {
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const { id: workspaceId } = getRequestWorkspace(req);
   const { skillId } = req.params;
+  const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+  const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
   
   const skill = await getSkillById(workspaceId, skillId);
   if (!skill) {
-    return res.status(404).json({ message: 'Навык не найден' });
+    return res.status(404).json({ message: 'Skill not found' });
   }
 
-  const actions = await storage.listSkillActions(skillId);
-  res.json({ actions });
+  const actions = await actionsRepository.listForWorkspace(skill.workspaceId, { includeSystem: true });
+  const skillActions = await skillActionsRepository.listForSkill(skillId);
+  const skillActionMap = new Map(skillActions.map((sa) => [sa.actionId, sa]));
+
+  const items = actions.map((action) => {
+    const sa = skillActionMap.get(action.id);
+    const effectiveLabel = sa?.labelOverride ?? action.label;
+    const editable =
+      action.scope === 'system' ||
+      (action.scope === 'workspace' && action.workspaceId === skill.workspaceId);
+
+    return {
+      action,
+      skillAction: sa
+        ? {
+            enabled: sa.enabled,
+            enabledPlacements: sa.enabledPlacements,
+            labelOverride: sa.labelOverride,
+          }
+        : null,
+      ui: {
+        effectiveLabel,
+        editable,
+      },
+    };
+  });
+
+  res.json({ items });
+}));
+
+/**
+ * PUT /:skillId/actions/:actionId
+ * Update skill action configuration
+ */
+skillRouter.put('/:skillId/actions/:actionId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { skillId, actionId } = req.params;
+  const body = req.body ?? {};
+
+  if (typeof body.enabled !== 'boolean') {
+    return res.status(400).json({ message: 'enabled is required' });
+  }
+  if (
+    !Array.isArray(body.enabledPlacements) ||
+    body.enabledPlacements.some((p: unknown) => !actionPlacements.includes(p as ActionPlacement))
+  ) {
+    return res.status(400).json({ message: 'invalid enabledPlacements' });
+  }
+  const enabledPlacements = body.enabledPlacements as ActionPlacement[];
+
+  const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+  const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate);
+  const skill = await getSkillById(workspaceId, skillId);
+  if (!skill) {
+    return res.status(404).json({ message: 'Skill not found' });
+  }
+
+  const action = await actionsRepository.getByIdForWorkspace(skill.workspaceId, actionId);
+  if (!action) {
+    return res.status(404).json({ message: 'Action not found for this workspace' });
+  }
+
+  // Check that enabledPlacements ⊆ action.placements
+  const allowedPlacements = (action.placements ?? []) as ActionPlacement[];
+  const isSubset = enabledPlacements.every((p: ActionPlacement) => allowedPlacements.includes(p));
+  if (!isSubset) {
+    return res.status(400).json({ message: 'enabledPlacements must be subset of action.placements' });
+  }
+
+  const updatedSkillAction = await skillActionsRepository.upsertForSkill(
+    skill.workspaceId,
+    skillId,
+    actionId,
+    {
+      enabled: body.enabled,
+      enabledPlacements,
+      labelOverride:
+        typeof body.labelOverride === 'string' || body.labelOverride === null
+          ? body.labelOverride
+          : undefined,
+    },
+  );
+
+  res.json({
+    action,
+    skillAction: {
+      enabled: updatedSkillAction.enabled,
+      enabledPlacements: updatedSkillAction.enabledPlacements,
+      labelOverride: updatedSkillAction.labelOverride,
+    },
+    ui: {
+      effectiveLabel: updatedSkillAction.labelOverride ?? action.label,
+      editable: true,
+    },
+  });
 }));
 
 // Error handler for this router

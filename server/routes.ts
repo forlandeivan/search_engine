@@ -6789,6 +6789,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   );
   registerPublicCollectionRoute("/api/public/collections/search/rag", publicRagSearchHandler);
 
+  // ========================================================================
+  // EMBED ROUTES MIGRATED TO: server/routes/embed.routes.ts
+  // ========================================================================
+  /* EMBED ROUTES MIGRATED - START
   app.post("/api/embed/keys", async (req, res) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -6915,6 +6919,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Не удалось удалить домен" });
     }
   });
+  EMBED ROUTES MIGRATED - END */
 
   // MIGRATED TO: server/routes/auth.routes.ts
   // app.get("/api/auth/providers", ...);
@@ -11493,6 +11498,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   VECTOR ROUTES MIGRATED - END */
 
+  // ========================================================================
+  // SKILL ROUTES MIGRATED TO: server/routes/skill.routes.ts
+  // ========================================================================
+  /* SKILL ROUTES MIGRATED - START
   app.get("/api/skills", requireAuth, async (req, res, next) => {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
@@ -11561,6 +11570,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  SKILL GET/POST/PUT - MIGRATED END */
 
   app.get(
     "/api/workspaces/:workspaceId/skills/:skillId/files",
@@ -12157,6 +12167,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  // MIGRATED TO: server/routes/skill.routes.ts
+  /* DELETE /api/skills/:skillId - MIGRATED
   app.delete(
     "/api/skills/:skillId",
     requireAuth,
@@ -12182,8 +12194,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
     },
   );
+  DELETE /api/skills/:skillId - MIGRATED END */
 
 
+  // MIGRATED TO: server/routes/chat.routes.ts
+  /* GET /api/chat/sessions - MIGRATED
   app.get(
     "/api/chat/sessions",
     requireAuth,
@@ -12212,6 +12227,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  GET /api/chat/sessions - MIGRATED END */
 
   app.get(
     "/api/chats/:chatId/events",
@@ -12366,6 +12382,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  // MIGRATED TO: server/routes/chat.routes.ts
+  /* POST /api/chat/sessions - MIGRATED
   app.post("/api/chat/sessions", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -12414,7 +12432,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  POST /api/chat/sessions - MIGRATED END */
 
+  // MIGRATED TO: server/routes/chat.routes.ts
+  /* PATCH /api/chat/sessions/:chatId - MIGRATED
   app.patch("/api/chat/sessions/:chatId", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -12436,7 +12457,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  PATCH /api/chat/sessions/:chatId - MIGRATED END */
 
+  // MIGRATED TO: server/routes/chat.routes.ts
+  /* DELETE /api/chat/sessions/:chatId - MIGRATED
   app.delete("/api/chat/sessions/:chatId", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -12461,6 +12485,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  DELETE /api/chat/sessions/:chatId - MIGRATED END */
 
   app.post(
     "/api/chat/sessions/:chatId/messages",
@@ -13985,6 +14010,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   NO-CODE ROUTES MIGRATED - END */
 
+  // MIGRATED TO: server/routes/chat.routes.ts
+  /* GET /api/chat/sessions/:chatId/messages - MIGRATED
   app.get(
     "/api/chat/sessions/:chatId/messages",
     requireAuth,
@@ -14011,7 +14038,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
     },
   );
+  GET /api/chat/sessions/:chatId/messages - MIGRATED END */
 
+  // ========================================================================
+  // CARDS ROUTES MIGRATED TO: server/routes/cards.routes.ts
+  // ========================================================================
+  /* CARDS ROUTES MIGRATED - START
   app.get("/api/cards/:cardId", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -14038,7 +14070,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  CARDS ROUTES MIGRATED - END */
 
+  // ========================================================================
+  // ACTIONS ROUTES MIGRATED TO: server/routes/actions.routes.ts
+  // ========================================================================
+  /* ACTIONS ROUTES MIGRATED - START
   // Available system actions (for preview before creating skill)
   app.get("/api/actions/available", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
@@ -14051,6 +14088,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  ACTIONS ROUTES MIGRATED - END */
 
   // Actions (workspace library)
   app.get(
@@ -14491,6 +14529,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  // ========================================================================
+  // CANVAS ROUTES MIGRATED TO: server/routes/canvas.routes.ts
+  // ========================================================================
+  /* CANVAS ROUTES MIGRATED - START
   // Canvas documents
   app.get("/api/chats/:chatId/canvas-documents", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
@@ -14647,7 +14689,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  CANVAS ROUTES MIGRATED - END */
 
+  // ========================================================================
+  // SKILL ACTIONS ROUTES MIGRATED TO: server/routes/skill.routes.ts
+  // ========================================================================
+  /* SKILL ACTIONS ROUTES MIGRATED - START
   // Skill ↔ Actions configuration
   app.get("/api/skills/:skillId/actions", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
@@ -14771,6 +14818,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  SKILL ACTIONS ROUTES MIGRATED - END */
   app.get(
     "/api/workspaces/:workspaceId/transcripts/:transcriptId",
     requireAuth,
@@ -16366,6 +16414,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   // Webhook endpoint for automated crawling (e.g., from Tilda)
 
+  // ========================================================================
+  // WEBHOOK ROUTES MIGRATED TO: server/routes/webhook.routes.ts
+  // ========================================================================
+  /* WEBHOOK ROUTES MIGRATED - START
   app.post("/api/webhook/send-json", async (req, res) => {
     try {
       const { webhookUrl, payload } = sendJsonToWebhookSchema.parse(req.body);
@@ -16419,6 +16471,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.status(500).json({ error: "Не удалось отправить JSON на вебхук" });
     }
   });
+  WEBHOOK ROUTES MIGRATED - END */
 
   // Get all pages
 
@@ -16735,6 +16788,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     });
   });
 
+  // ========================================================================
+  // KNOWLEDGE BASE ROUTES MIGRATED TO: server/routes/knowledge-base.routes.ts
+  // ========================================================================
+  /* DELETE /api/knowledge/bases/:baseId - MIGRATED
   app.delete("/api/knowledge/bases/:baseId", requireAuth, async (req, res) => {
     const { baseId } = req.params;
 
@@ -16753,7 +16810,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  DELETE /api/knowledge/bases/:baseId - MIGRATED END */
 
+  // MIGRATED TO: server/routes/knowledge-base.routes.ts
+  /* GET /api/knowledge/bases - MIGRATED
   app.get("/api/knowledge/bases", requireAuth, async (req, res) => {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
@@ -16763,6 +16823,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  GET /api/knowledge/bases - MIGRATED END */
 
   const knowledgeBaseSearchSettingsPath = "/api/knowledge/bases/:baseId/search/settings";
 
@@ -16939,6 +17000,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  // ========================================================================
+  // JOBS ROUTES MIGRATED TO: server/routes/jobs.routes.ts
+  // ========================================================================
+  /* JOBS ROUTES MIGRATED - START
   app.get("/api/jobs/:jobId", requireAuth, (req, res) => {
     const { jobId } = req.params;
     const job = getKnowledgeBaseCrawlJob(jobId);
@@ -17027,7 +17092,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.end();
     });
   });
+  JOBS ROUTES MIGRATED - END */
 
+  // MIGRATED TO: server/routes/knowledge-base.routes.ts
+  /* GET /api/knowledge/bases/:baseId/nodes/:nodeId - MIGRATED
   app.get("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;
 
@@ -17039,7 +17107,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  GET /api/knowledge/bases/:baseId/nodes/:nodeId - MIGRATED END */
 
+  // MIGRATED TO: server/routes/knowledge-base.routes.ts
+  /* POST /api/knowledge/bases/:baseId/folders - MIGRATED
   app.post("/api/knowledge/bases/:baseId/folders", requireAuth, async (req, res) => {
     const { baseId } = req.params;
 
@@ -17062,6 +17133,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  POST /api/knowledge/bases/:baseId/folders - MIGRATED END */
 
   app.post("/api/knowledge/bases/:baseId/documents/crawl", requireAuth, async (req, res) => {
     const { baseId } = req.params;
@@ -17106,6 +17178,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // MIGRATED TO: server/routes/knowledge-base.routes.ts
+  /* POST /api/knowledge/bases/:baseId/documents - MIGRATED
   app.post("/api/knowledge/bases/:baseId/documents", requireAuth, async (req, res) => {
     const { baseId } = req.params;
 
@@ -17131,6 +17205,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  POST /api/knowledge/bases/:baseId/documents - MIGRATED END */
 
   app.patch(
     "/api/knowledge/bases/:baseId/documents/:nodeId",
@@ -17229,6 +17304,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  // MIGRATED TO: server/routes/knowledge-base.routes.ts
+  /* POST /api/knowledge/bases/:baseId/index - MIGRATED
   app.post("/api/knowledge/bases/:baseId/index", requireAuth, async (req, res) => {
     const { baseId } = req.params;
     const { id: workspaceId } = getRequestWorkspace(req);
@@ -17250,6 +17327,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  POST /api/knowledge/bases/:baseId/index - MIGRATED END */
 
   app.post("/api/knowledge/bases/:baseId/indexing/reset", requireAuth, async (req, res) => {
     const user = getAuthorizedUser(req, res);
@@ -17299,6 +17377,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // MIGRATED TO: server/routes/knowledge-base.routes.ts
+  /* GET /api/knowledge/bases/:baseId/indexing/summary - MIGRATED
   app.get("/api/knowledge/bases/:baseId/indexing/summary", requireAuth, async (req, res) => {
     const { baseId } = req.params;
     const { id: workspaceId } = getRequestWorkspace(req);
@@ -17310,6 +17390,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  GET /api/knowledge/bases/:baseId/indexing/summary - MIGRATED END */
 
   app.get("/api/knowledge/bases/:baseId/indexing/changes", requireAuth, async (req, res) => {
     const { baseId } = req.params;
@@ -17480,6 +17561,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // MIGRATED TO: server/routes/knowledge-base.routes.ts
+  /* PATCH /api/knowledge/bases/:baseId/nodes/:nodeId - MIGRATED
   app.patch("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;
     const rawParentId = req.body?.parentId as unknown;
@@ -17501,7 +17584,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  PATCH /api/knowledge/bases/:baseId/nodes/:nodeId - MIGRATED END */
 
+  // MIGRATED TO: server/routes/knowledge-base.routes.ts
+  /* DELETE /api/knowledge/bases/:baseId/nodes/:nodeId - MIGRATED
   app.delete("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;
 
@@ -17513,6 +17599,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       return handleKnowledgeBaseRouteError(error, res);
     }
   });
+  DELETE /api/knowledge/bases/:baseId/nodes/:nodeId - MIGRATED END */
 
   app.post("/api/knowledge/documents/vectorize", async (req, res) => {
     const user = getAuthorizedUser(req, res);
@@ -18465,6 +18552,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   // Statistics endpoint
 
 
+  // ========================================================================
+  // HEALTH ROUTES MIGRATED TO: server/routes/health.routes.ts
+  // ========================================================================
+  /* HEALTH ROUTES MIGRATED - START
   // Health check endpoint for Qdrant diagnostics
   app.get("/api/health/vector", async (_req, res) => {
     const qdrantUrl = process.env.QDRANT_URL || null;
@@ -18565,6 +18656,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
     }
   });
+  HEALTH ROUTES MIGRATED - END */
 
   const httpServer = createServer(app);
   // Гасим сетевые ошибки, чтобы процесс не падал на обрыве соединения (write EOF и пр.)

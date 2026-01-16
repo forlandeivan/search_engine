@@ -12,6 +12,13 @@ import { noCodeRouter } from './no-code.routes';
 import { chatRouter } from './chat.routes';
 import { skillRouter } from './skill.routes';
 import { knowledgeBaseRouter } from './knowledge-base.routes';
+import { healthRouter } from './health.routes';
+import { jobsRouter } from './jobs.routes';
+import { canvasRouter } from './canvas.routes';
+import { cardsRouter } from './cards.routes';
+import { actionsRouter } from './actions.routes';
+import { webhookRouter } from './webhook.routes';
+import { embedRouter } from './embed.routes';
 
 const routerLogger = createLogger('router');
 
@@ -80,6 +87,34 @@ export function registerRouteModules(app: Express): void {
   // Knowledge base routes
   app.use('/api/knowledge', knowledgeBaseRouter);
   routerLogger.info('Registered: /api/knowledge');
+
+  // Health check routes
+  app.use('/api/health', healthRouter);
+  routerLogger.info('Registered: /api/health');
+
+  // Jobs routes (crawling, indexing background tasks)
+  app.use('/api/jobs', jobsRouter);
+  routerLogger.info('Registered: /api/jobs');
+
+  // Canvas documents routes
+  app.use('/api', canvasRouter);
+  routerLogger.info('Registered: /api (canvas-documents)');
+
+  // Cards routes
+  app.use('/api/cards', cardsRouter);
+  routerLogger.info('Registered: /api/cards');
+
+  // Actions routes
+  app.use('/api/actions', actionsRouter);
+  routerLogger.info('Registered: /api/actions');
+
+  // Webhook routes
+  app.use('/api/webhook', webhookRouter);
+  routerLogger.info('Registered: /api/webhook');
+
+  // Embed keys routes (public widget integration)
+  app.use('/api/embed', embedRouter);
+  routerLogger.info('Registered: /api/embed');
   
   // Route modules will be registered here as they are migrated
   // Example:
