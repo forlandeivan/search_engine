@@ -3406,8 +3406,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               </div>
               <p className="text-sm text-muted-foreground">{indexingStatusDescription}</p>
             </div>
-            {hasIndexingChanges && (
-              <div className="flex flex-col gap-2 sm:items-end">
+            <div className="flex flex-col gap-2 sm:items-end">
+              {hasIndexingChanges && (
                 <Button
                   type="button"
                   variant="ghost"
@@ -3423,8 +3423,18 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                     )}
                   />
                 </Button>
-              </div>
-            )}
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setLocation(`/knowledge/${knowledgeBaseId}/indexing/history`)}
+                disabled={!knowledgeBaseId}
+              >
+                <History className="mr-2 h-4 w-4" />
+                История индексаций
+              </Button>
+            </div>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <div className="rounded-md border bg-background p-3">

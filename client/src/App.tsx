@@ -49,6 +49,7 @@ import type { CSSProperties } from "react";
 import SkillSettingsPage from "@/pages/SkillSettingsPage";
 import ActionSettingsPage from "@/pages/ActionSettingsPage";
 import AdminIndexingRulesPage from "@/pages/AdminIndexingRulesPage";
+import KnowledgeBaseIndexingHistoryPage from "@/pages/KnowledgeBaseIndexingHistoryPage";
 
 function AdminRouter() {
   return (
@@ -104,6 +105,9 @@ function MainRouter() {
     <Switch>
       <Route path="/workspaces/:workspaceId/chat/:chatId" component={ChatPage} />
       <Route path="/workspaces/:workspaceId/chat" component={ChatPage} />
+      <Route path="/knowledge/:baseId/indexing/history">
+        {(params) => <KnowledgeBaseIndexingHistoryPage params={{ knowledgeBaseId: params.baseId }} />}
+      </Route>
       <Route path="/knowledge/:knowledgeBaseId/node/:nodeId" component={KnowledgeBasePage} />
       <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
       <Route path="/knowledge" component={KnowledgeBasePage} />
