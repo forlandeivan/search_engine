@@ -6,7 +6,7 @@ import { createLogger } from '../lib/logger';
 import { authRouter, configureAuthRouter } from './auth.routes';
 import { userRouter } from './user.routes';
 import { workspaceRouter } from './workspace.routes';
-// TODO: Fix admin router imports before enabling
+// TODO: Fix admin router imports (SmtpTestError, etc.) before enabling
 // import { adminRouter } from './admin';
 import { vectorRouter } from './vector.routes';
 import { noCodeRouter } from './no-code.routes';
@@ -55,8 +55,8 @@ export function registerRouteModules(app: Express): void {
   app.use('/api/workspaces', workspaceRouter);
   routerLogger.info('Registered: /api/workspaces');
   
-  // Admin routes - temporarily disabled due to import issues
-  // TODO: Fix admin router imports before enabling
+  // Admin routes - temporarily disabled (multiple missing exports)
+  // TODO: Fix admin router imports (SmtpTestError, creditsService, mapFileStorageProvider, etc.)
   // app.use('/api/admin', adminRouter);
   // routerLogger.info('Registered: /api/admin');
   

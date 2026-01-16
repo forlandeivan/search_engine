@@ -19,12 +19,31 @@ import { asyncHandler } from '../../middleware/async-handler';
 import {
   fileStorageProviderService,
   FileStorageProviderServiceError,
-  mapFileStorageProvider,
 } from '../../file-storage-provider-service';
-import { workspacePlanService, WorkspacePlanServiceError } from '../../workspace-plan-service';
-import { creditsService } from '../../credits-service';
+import { workspacePlanService, PlanDowngradeNotAllowedError } from '../../workspace-plan-service';
+import { 
+  applyManualCreditAdjustment, 
+  getRecentManualAdjustments,
+  getWorkspaceCreditAccount 
+} from '../../credits-service';
 
 const logger = createLogger('admin-workspaces');
+
+/**
+ * Map file storage provider to public response format
+ */
+function mapFileStorageProvider(provider: any) {
+  return {
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl ?? null,
+    description: provider.description ?? null,
+    authType: provider.authType ?? null,
+    isActive: provider.isActive,
+    createdAt: provider.createdAt,
+    updatedAt: provider.updatedAt,
+  };
+}
 
 export const adminWorkspacesRouter = Router();
 
@@ -116,8 +135,12 @@ adminWorkspacesRouter.get('/:workspaceId/plan', asyncHandler(async (req, res) =>
     const plan = await workspacePlanService.getWorkspacePlan(req.params.workspaceId);
     res.json(plan);
   } catch (error) {
-    if (error instanceof WorkspacePlanServiceError) {
-      return res.status(error.status).json({ message: error.message });
+    if (error instanceof PlanDowngradeNotAllowedError) {
+      return res.status(400).json({ 
+        message: error.message,
+        code: error.code,
+        violations: error.violations,
+      });
     }
     throw error;
   }
@@ -135,8 +158,12 @@ adminWorkspacesRouter.put('/:workspaceId/plan', asyncHandler(async (req, res) =>
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid payload', details: error.issues });
     }
-    if (error instanceof WorkspacePlanServiceError) {
-      return res.status(error.status).json({ message: error.message });
+    if (error instanceof PlanDowngradeNotAllowedError) {
+      return res.status(400).json({ 
+        message: error.message,
+        code: error.code,
+        violations: error.violations,
+      });
     }
     throw error;
   }
@@ -149,12 +176,12 @@ adminWorkspacesRouter.post('/:workspaceId/credits/adjust', asyncHandler(async (r
   try {
     const parsed = adjustCreditsSchema.parse(req.body);
     const adminId = (req.user as any)?.id;
-    const result = await creditsService.adjustCredits(
-      req.params.workspaceId,
-      parsed.amount,
-      parsed.reason,
-      adminId
-    );
+    const result = await applyManualCreditAdjustment({
+      workspaceId: req.params.workspaceId,
+      amountDelta: parsed.amount,
+      reason: parsed.reason,
+      actorUserId: adminId ?? null,
+    });
     res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -172,7 +199,7 @@ adminWorkspacesRouter.post('/:workspaceId/credits/adjust', asyncHandler(async (r
  */
 adminWorkspacesRouter.get('/:workspaceId/credits/adjustments/recent', asyncHandler(async (req, res) => {
   try {
-    const adjustments = await creditsService.getRecentAdjustments(req.params.workspaceId);
+    const adjustments = await getRecentManualAdjustments(req.params.workspaceId);
     res.json({ adjustments });
   } catch (error) {
     if (error instanceof Error && 'status' in error) {

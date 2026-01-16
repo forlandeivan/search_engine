@@ -16,10 +16,25 @@ import { asyncHandler } from '../../middleware/async-handler';
 import {
   fileStorageProviderService,
   FileStorageProviderServiceError,
-  mapFileStorageProvider,
 } from '../../file-storage-provider-service';
 
 const logger = createLogger('admin-file-storage');
+
+/**
+ * Map file storage provider to public response format
+ */
+function mapFileStorageProvider(provider: any) {
+  return {
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl ?? null,
+    description: provider.description ?? null,
+    authType: provider.authType ?? null,
+    isActive: provider.isActive,
+    createdAt: provider.createdAt,
+    updatedAt: provider.updatedAt,
+  };
+}
 
 export const adminFileStorageRouter = Router();
 
