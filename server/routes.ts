@@ -16313,6 +16313,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // MIGRATED TO: server/routes/vector.routes.ts (full implementation)
+  /* VECTOR SEARCH MIGRATED - START
   app.post("/api/vector/collections/:name/search", async (req, res) => {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
@@ -16402,6 +16404,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
     }
   });
+  VECTOR SEARCH MIGRATED - END */
 
   // Sites management
 

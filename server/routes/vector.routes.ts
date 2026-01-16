@@ -97,6 +97,41 @@ const upsertPointsSchema = z.object({
   })).min(1),
 });
 
+const namedVectorSchema = z.object({
+  name: z.string(),
+  vector: z.array(z.number()),
+});
+
+const namedSparseVectorSchema = z.object({
+  name: z.string(),
+  vector: sparseVectorSchema,
+});
+
+const searchVectorSchema = z.union([
+  z.array(z.number()),
+  namedVectorSchema,
+  namedSparseVectorSchema,
+]);
+
+const searchPointsSchema = z.object({
+  vector: searchVectorSchema,
+  limit: z.number().int().positive().max(100).default(10),
+  offset: z.number().int().min(0).optional(),
+  filter: z.unknown().optional(),
+  params: z.unknown().optional(),
+  withPayload: z.unknown().optional(),
+  withVector: z.unknown().optional(),
+  scoreThreshold: z.number().optional(),
+  shardKey: z.unknown().optional(),
+  consistency: z.union([
+    z.number().int().positive(),
+    z.literal('majority'),
+    z.literal('quorum'),
+    z.literal('all'),
+  ]).optional(),
+  timeout: z.number().positive().optional(),
+});
+
 const fetchKnowledgeVectorRecordsSchema = z.object({
   collectionName: z.string().trim().min(1, 'Укажите коллекцию'),
   recordIds: z
@@ -527,47 +562,90 @@ vectorRouter.post('/collections/:name/points', asyncHandler(async (req, res) => 
 
 /**
  * POST /collections/:name/search
- * Vector search
+ * Vector search (full implementation with all options)
  */
 vectorRouter.post('/collections/:name/search', asyncHandler(async (req, res) => {
   const { id: workspaceId } = getRequestWorkspace(req);
   const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
 
   if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
-    return res.status(404).json({ error: 'Collection not found' });
+    return res.status(404).json({ error: 'Коллекция не найдена' });
   }
-
-  const vector = req.body?.vector;
-  if (!Array.isArray(vector)) {
-    return res.status(400).json({ error: 'Vector is required' });
-  }
-
-  const limit = typeof req.body?.limit === 'number' ? Math.min(Math.max(1, req.body.limit), 100) : 10;
-  const filter = req.body?.filter;
-  const scoreThreshold = req.body?.scoreThreshold;
 
   try {
+    const body = searchPointsSchema.parse(req.body);
     const client = getQdrantClient();
-    const result = await client.search(req.params.name, {
-      vector,
-      limit,
-      filter,
-      score_threshold: scoreThreshold,
-      with_payload: true,
-    });
 
-    res.json({ results: result });
+    const searchPayload = {
+      vector: body.vector as Schemas['NamedVectorStruct'],
+      limit: body.limit,
+    } as Parameters<typeof client.search>[1];
+
+    if (body.offset !== undefined) {
+      searchPayload.offset = body.offset;
+    }
+
+    if (body.filter !== undefined) {
+      searchPayload.filter = body.filter as Parameters<typeof client.search>[1]['filter'];
+    }
+
+    if (body.params !== undefined) {
+      searchPayload.params = body.params as Parameters<typeof client.search>[1]['params'];
+    }
+
+    if (body.withPayload !== undefined) {
+      searchPayload.with_payload = body.withPayload as Parameters<typeof client.search>[1]['with_payload'];
+    }
+
+    if (body.withVector !== undefined) {
+      searchPayload.with_vector = body.withVector as Parameters<typeof client.search>[1]['with_vector'];
+    }
+
+    if (body.scoreThreshold !== undefined) {
+      searchPayload.score_threshold = body.scoreThreshold;
+    }
+
+    if (body.shardKey !== undefined) {
+      searchPayload.shard_key = body.shardKey as Parameters<typeof client.search>[1]['shard_key'];
+    }
+
+    if (body.consistency !== undefined) {
+      searchPayload.consistency = body.consistency;
+    }
+
+    if (body.timeout !== undefined) {
+      searchPayload.timeout = body.timeout;
+    }
+
+    const results = await client.search(req.params.name, searchPayload);
+    res.json({ results });
   } catch (error) {
     if (error instanceof QdrantConfigurationError) {
       return res.status(503).json({
-        error: 'Qdrant not configured',
+        error: 'Qdrant не настроен',
         details: error.message,
+      });
+    }
+
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Некорректные параметры поиска',
+        details: error.errors,
+      });
+    }
+
+    const qdrantError = extractQdrantApiError(error);
+    if (qdrantError) {
+      logger.error({ error, collection: req.params.name }, 'Qdrant error searching');
+      return res.status(qdrantError.status).json({
+        error: qdrantError.message,
+        details: qdrantError.details,
       });
     }
 
     logger.error({ error, collection: req.params.name }, 'Error searching');
     res.status(500).json({
-      error: 'Failed to search',
+      error: 'Не удалось выполнить поиск',
       details: getErrorDetails(error),
     });
   }
