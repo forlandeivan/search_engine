@@ -18500,6 +18500,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // MIGRATED TO: server/routes/vector.routes.ts
+  /* VECTOR RECORDS MIGRATED - START
   app.post("/api/knowledge/documents/vector-records", async (req, res) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -18580,6 +18582,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       res.status(500).json({ error: message });
     }
   });
+  VECTOR RECORDS MIGRATED - END */
 
 
 

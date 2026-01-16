@@ -70,6 +70,15 @@ const createCollectionSchema = z.object({
   distance: z.enum(['Cosine', 'Euclid', 'Dot']).default('Cosine'),
 });
 
+const fetchKnowledgeVectorRecordsSchema = z.object({
+  collectionName: z.string().trim().min(1, 'Укажите коллекцию'),
+  recordIds: z
+    .array(z.union([z.string().trim().min(1), z.number()]))
+    .min(1, 'Передайте хотя бы один идентификатор')
+    .max(256, 'За один запрос можно получить не более 256 записей'),
+  includeVector: z.boolean().optional(),
+});
+
 // ============================================================================
 // Routes
 // ============================================================================
@@ -526,6 +535,75 @@ vectorRouter.post('/collections/:name/search/generative', asyncHandler(async (re
 
   // Note: This is a placeholder. In real implementation, you'd integrate with LLM.
   res.status(501).json({ error: 'Generative search requires LLM integration' });
+}));
+
+/**
+ * POST /documents/vector-records
+ * Fetch vector records by IDs from a collection
+ * Note: This is mounted at /api/knowledge via index.ts
+ */
+vectorRouter.post('/documents/vector-records', asyncHandler(async (req, res) => {
+  const { id: workspaceId } = getRequestWorkspace(req);
+
+  const body = fetchKnowledgeVectorRecordsSchema.parse(req.body);
+
+  const ownerWorkspaceId = await storage.getCollectionWorkspace(body.collectionName);
+  if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
+    return res.status(404).json({ error: 'Коллекция не найдена' });
+  }
+
+  const ids = body.recordIds.map((value) => {
+    if (typeof value === 'number') return value;
+    const trimmed = value.trim();
+    if (/^-?\d+$/.test(trimmed)) {
+      const parsed = Number.parseInt(trimmed, 10);
+      if (Number.isSafeInteger(parsed)) return parsed;
+    }
+    return trimmed;
+  });
+
+  try {
+    const client = getQdrantClient();
+    const includeVector = body.includeVector ?? true;
+
+    const result = await client.retrieve(body.collectionName, {
+      ids: ids as Array<string | number>,
+      with_payload: true,
+      with_vector: includeVector,
+    });
+
+    const records = result.map((point) => ({
+      id: point.id ?? null,
+      payload: point.payload ?? null,
+      vector: point.vector ?? null,
+      shardKey: (point as { shard_key?: string | number }).shard_key ?? null,
+      version: (point as { version?: number }).version ?? null,
+    }));
+
+    res.json({ records });
+  } catch (error) {
+    if (error instanceof QdrantConfigurationError) {
+      return res.status(503).json({
+        error: 'Qdrant не настроен',
+        details: error.message,
+      });
+    }
+
+    const qdrantError = extractQdrantApiError(error);
+    if (qdrantError) {
+      logger.error({ error, collection: body.collectionName }, 'Qdrant error fetching vector records');
+      return res.status(qdrantError.status).json({
+        error: qdrantError.message,
+        details: qdrantError.details,
+      });
+    }
+
+    logger.error({ error }, 'Error fetching vector records');
+    res.status(500).json({
+      error: 'Не удалось получить записи',
+      details: getErrorDetails(error),
+    });
+  }
 }));
 
 export default vectorRouter;

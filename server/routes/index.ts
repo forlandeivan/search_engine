@@ -75,6 +75,10 @@ export function registerRouteModules(app: Express): void {
   app.use('/api/vector', vectorRouter);
   routerLogger.info('Registered: /api/vector');
   
+  // Vector routes also handles /api/knowledge/documents/vector-records
+  app.use('/api/knowledge', vectorRouter);
+  routerLogger.info('Registered: /api/knowledge (vector-records)');
+  
   // No-code callback routes (external integrations)
   app.use('/api/no-code', noCodeRouter);
   routerLogger.info('Registered: /api/no-code');
