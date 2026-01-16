@@ -15733,6 +15733,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   TRANSCRIBE STATUS MIGRATED - END */
 
+  // MIGRATED TO: server/routes/vector.routes.ts (with full guard and usage tracking)
+  /* VECTOR POINTS MIGRATED - START
   app.post("/api/vector/collections/:name/points", async (req, res) => {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
@@ -15817,6 +15819,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
     }
   });
+  VECTOR POINTS MIGRATED - END */
 
   app.post("/api/vector/collections/:name/search/text", async (req, res) => {
     try {

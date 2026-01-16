@@ -24,6 +24,11 @@ import {
   QdrantConfigurationError,
   extractQdrantApiError,
 } from '../qdrant';
+import { workspaceOperationGuard } from '../guards/workspace-operation-guard';
+import { buildEmbeddingsOperationContext, mapDecisionToPayload } from '../guards/helpers';
+import { OperationBlockedError } from '../guards/errors';
+import { adjustWorkspaceQdrantUsage } from '../usage/usage-service';
+import type { Schemas } from '@qdrant/js-client-rest';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('vector');
@@ -68,6 +73,28 @@ const createCollectionSchema = z.object({
   name: z.string().trim().min(1).max(100),
   vectorSize: z.number().int().positive(),
   distance: z.enum(['Cosine', 'Euclid', 'Dot']).default('Cosine'),
+});
+
+const sparseVectorSchema = z.object({
+  indices: z.array(z.number().int()),
+  values: z.array(z.number()),
+});
+
+const pointVectorSchema = z.union([
+  z.array(z.number()),
+  z.array(z.array(z.number())),
+  z.record(z.any()),
+  sparseVectorSchema,
+]);
+
+const upsertPointsSchema = z.object({
+  wait: z.boolean().optional(),
+  ordering: z.enum(['weak', 'medium', 'strong']).optional(),
+  points: z.array(z.object({
+    id: z.union([z.string(), z.number()]),
+    vector: pointVectorSchema,
+    payload: z.record(z.any()).optional(),
+  })).min(1),
 });
 
 const fetchKnowledgeVectorRecordsSchema = z.object({
@@ -411,37 +438,88 @@ vectorRouter.delete('/collections/:name', asyncHandler(async (req, res) => {
 
 /**
  * POST /collections/:name/points
- * Upsert points to collection
+ * Upsert points to collection (with guard and usage tracking)
  */
 vectorRouter.post('/collections/:name/points', asyncHandler(async (req, res) => {
   const { id: workspaceId } = getRequestWorkspace(req);
   const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
 
   if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
-    return res.status(404).json({ error: 'Collection not found' });
-  }
-
-  const points = req.body?.points;
-  if (!Array.isArray(points) || points.length === 0) {
-    return res.status(400).json({ error: 'Points array is required' });
+    return res.status(404).json({ error: 'Коллекция не найдена' });
   }
 
   try {
+    const body = upsertPointsSchema.parse(req.body);
     const client = getQdrantClient();
-    await client.upsert(req.params.name, { points });
 
-    res.json({ success: true, count: points.length });
+    // Check operation guard
+    const expectedPoints = Array.isArray(body.points) ? body.points.length : 0;
+    const decision = await workspaceOperationGuard.check(
+      buildEmbeddingsOperationContext({
+        workspaceId,
+        providerId: null,
+        model: null,
+        scenario: 'document_vectorization',
+        objects: expectedPoints > 0 ? expectedPoints : undefined,
+        collection: req.params.name,
+      }),
+    );
+    
+    if (!decision.allowed) {
+      throw new OperationBlockedError(
+        mapDecisionToPayload(decision, {
+          workspaceId,
+          operationType: 'EMBEDDINGS',
+        }),
+      );
+    }
+
+    const upsertPayload: Parameters<typeof client.upsert>[1] = {
+      wait: body.wait,
+      ordering: body.ordering,
+      points: body.points as Schemas['PointStruct'][],
+    };
+
+    const result = await client.upsert(req.params.name, upsertPayload);
+    
+    // Track usage
+    const pointsDelta = Array.isArray(body.points) ? body.points.length : 0;
+    if (pointsDelta > 0) {
+      await adjustWorkspaceQdrantUsage(workspaceId, { pointsCount: pointsDelta });
+    }
+
+    res.status(202).json(result);
   } catch (error) {
     if (error instanceof QdrantConfigurationError) {
       return res.status(503).json({
-        error: 'Qdrant not configured',
+        error: 'Qdrant не настроен',
         details: error.message,
+      });
+    }
+
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Некорректные данные точек',
+        details: error.errors,
+      });
+    }
+    
+    if (error instanceof OperationBlockedError) {
+      return res.status(error.status).json(error.toJSON());
+    }
+
+    const qdrantError = extractQdrantApiError(error);
+    if (qdrantError) {
+      logger.error({ error, collection: req.params.name }, 'Qdrant error upserting points');
+      return res.status(qdrantError.status).json({
+        error: qdrantError.message,
+        details: qdrantError.details,
       });
     }
 
     logger.error({ error, collection: req.params.name }, 'Error upserting points');
     res.status(500).json({
-      error: 'Failed to upsert points',
+      error: 'Не удалось загрузить данные в коллекцию',
       details: getErrorDetails(error),
     });
   }
