@@ -13,6 +13,7 @@
         "seed:tariffs": "tsx server/tariff-seed.ts"
     },
     "dependencies": {
+        "@asteasolutions/zod-to-openapi": "^7.3.4",
         "@aws-sdk/client-s3": "^3.940.0",
         "@aws-sdk/s3-request-presigner": "^3.957.0",
         "@hookform/resolvers": "^3.10.0",
@@ -113,6 +114,7 @@
         "rehype-autolink-headings": "^7.1.0",
         "rehype-slug": "^6.0.0",
         "remark-gfm": "^4.0.1",
+        "swagger-ui-express": "^5.0.1",
         "tailwind-merge": "^2.6.0",
         "tailwindcss-animate": "^1.0.7",
         "turndown": "^7.2.0",
@@ -140,6 +142,7 @@
         "@types/passport-local": "^1.0.38",
         "@types/react": "^18.3.11",
         "@types/react-dom": "^18.3.1",
+        "@types/swagger-ui-express": "^4.1.8",
         "@types/turndown": "^5.0.4",
         "@types/ws": "^8.5.13",
         "@vitejs/plugin-react": "^4.3.2",

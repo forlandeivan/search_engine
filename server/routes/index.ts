@@ -25,6 +25,7 @@ import { knowledgeIndexingRouter } from './knowledge-indexing.routes';
 import { knowledgeCrawlRouter } from './knowledge-crawl.routes';
 import { metricsRouter } from './metrics.routes';
 import { metricsMiddleware } from '../monitoring/middleware';
+import { openapiRouter } from './openapi.routes';
 
 const routerLogger = createLogger('router');
 
@@ -110,6 +111,10 @@ export function registerRouteModules(app: Express): void {
   app.use('/metrics', metricsRouter);
   app.use('/api/metrics', metricsRouter);
   routerLogger.info('Registered: /metrics, /api/metrics');
+
+  // OpenAPI documentation
+  app.use('/api/docs', openapiRouter);
+  routerLogger.info('Registered: /api/docs (OpenAPI/Swagger)');
 
   // Public routes (no auth required)
   app.use('/api/public', publicRouter);
