@@ -28,6 +28,16 @@ import { workspaceOperationGuard } from '../guards/workspace-operation-guard';
 import { buildEmbeddingsOperationContext, mapDecisionToPayload } from '../guards/helpers';
 import { OperationBlockedError } from '../guards/errors';
 import { adjustWorkspaceQdrantUsage } from '../usage/usage-service';
+import {
+  parseVectorSize,
+  fetchAccessToken,
+  fetchEmbeddingVector,
+  recordEmbeddingUsageSafe,
+  measureTokensForModel,
+  buildVectorPayload,
+} from '../lib/embedding-utils';
+import { getVectorizationJob } from '../lib/vectorization-jobs';
+import { HttpError } from '../lib/errors';
 import type { Schemas } from '@qdrant/js-client-rest';
 import type { PublicUser } from '@shared/schema';
 
@@ -115,6 +125,26 @@ const searchVectorSchema = z.union([
 
 const searchPointsSchema = z.object({
   vector: searchVectorSchema,
+  limit: z.number().int().positive().max(100).default(10),
+  offset: z.number().int().min(0).optional(),
+  filter: z.unknown().optional(),
+  params: z.unknown().optional(),
+  withPayload: z.unknown().optional(),
+  withVector: z.unknown().optional(),
+  scoreThreshold: z.number().optional(),
+  shardKey: z.unknown().optional(),
+  consistency: z.union([
+    z.number().int().positive(),
+    z.literal('majority'),
+    z.literal('quorum'),
+    z.literal('all'),
+  ]).optional(),
+  timeout: z.number().positive().optional(),
+});
+
+const textSearchPointsSchema = z.object({
+  query: z.string().trim().min(1, 'Введите поисковый запрос'),
+  embeddingProviderId: z.string().trim().min(1, 'Укажите сервис эмбеддингов'),
   limit: z.number().int().positive().max(100).default(10),
   offset: z.number().int().min(0).optional(),
   filter: z.unknown().optional(),
@@ -653,23 +683,141 @@ vectorRouter.post('/collections/:name/search', asyncHandler(async (req, res) => 
 
 /**
  * POST /collections/:name/search/text
- * Text search (requires embedding)
+ * Text search with embedding (full implementation)
  */
 vectorRouter.post('/collections/:name/search/text', asyncHandler(async (req, res) => {
   const { id: workspaceId } = getRequestWorkspace(req);
   const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
 
   if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
-    return res.status(404).json({ error: 'Collection not found' });
+    return res.status(404).json({ error: 'Коллекция не найдена' });
   }
 
-  const text = req.body?.text;
-  if (typeof text !== 'string' || !text.trim()) {
-    return res.status(400).json({ error: 'Text is required' });
-  }
+  try {
+    const body = textSearchPointsSchema.parse(req.body);
+    const provider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
 
-  // Note: This is a placeholder. In real implementation, you'd call embedding service first.
-  res.status(501).json({ error: 'Text search requires embedding service integration' });
+    if (!provider) {
+      return res.status(404).json({ error: 'Сервис эмбеддингов не найден' });
+    }
+
+    if (!provider.isActive) {
+      throw new HttpError(400, 'Выбранный сервис эмбеддингов отключён');
+    }
+
+    const client = getQdrantClient();
+    const collectionInfo = await client.getCollection(req.params.name);
+    const vectorsConfig = collectionInfo.config?.params?.vectors as
+      | { size?: number | null; distance?: string | null }
+      | undefined;
+
+    const collectionVectorSize = vectorsConfig?.size ?? null;
+    const providerVectorSize = parseVectorSize(provider.qdrantConfig?.vectorSize);
+
+    if (
+      collectionVectorSize &&
+      providerVectorSize &&
+      Number(collectionVectorSize) !== Number(providerVectorSize)
+    ) {
+      throw new HttpError(
+        400,
+        `Размер вектора коллекции (${collectionVectorSize}) не совпадает с настройкой сервиса (${providerVectorSize}).`,
+      );
+    }
+
+    const accessToken = await fetchAccessToken(provider);
+    const embeddingResult = await fetchEmbeddingVector(provider, accessToken, body.query);
+
+    if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
+      throw new HttpError(
+        400,
+        `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+      );
+    }
+
+    const embeddingTokensForUsage =
+      embeddingResult.usageTokens ?? Math.max(1, Math.ceil(Buffer.byteLength(body.query, 'utf8') / 4));
+    const embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
+      consumptionUnit: 'TOKENS_1K',
+      modelKey: provider.model ?? null,
+    });
+
+    await recordEmbeddingUsageSafe({
+      workspaceId,
+      provider,
+      modelKey: provider.model ?? null,
+      tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingTokensForUsage,
+      contentBytes: Buffer.byteLength(body.query, 'utf8'),
+      operationId: `collection-search-${crypto.randomUUID()}`,
+    });
+
+    const searchPayload: Parameters<typeof client.search>[1] = {
+      vector: buildVectorPayload(
+        embeddingResult.vector,
+        provider.qdrantConfig?.vectorFieldName,
+      ),
+      limit: body.limit,
+    };
+
+    if (body.offset !== undefined) searchPayload.offset = body.offset;
+    if (body.filter !== undefined) searchPayload.filter = body.filter as any;
+    if (body.params !== undefined) searchPayload.params = body.params as any;
+    if (body.withPayload !== undefined) searchPayload.with_payload = body.withPayload as any;
+    if (body.withVector !== undefined) searchPayload.with_vector = body.withVector as any;
+    if (body.scoreThreshold !== undefined) searchPayload.score_threshold = body.scoreThreshold;
+    if (body.shardKey !== undefined) searchPayload.shard_key = body.shardKey as any;
+    if (body.consistency !== undefined) searchPayload.consistency = body.consistency;
+    if (body.timeout !== undefined) searchPayload.timeout = body.timeout;
+
+    const results = await client.search(req.params.name, searchPayload);
+
+    res.json({
+      results,
+      queryVector: embeddingResult.vector,
+      vectorLength: embeddingResult.vector.length,
+      usageTokens: embeddingResult.usageTokens ?? null,
+      provider: {
+        id: provider.id,
+        name: provider.name,
+      },
+    });
+  } catch (error) {
+    if (error instanceof HttpError) {
+      return res.status(error.status).json({
+        error: error.message,
+        details: error.details,
+      });
+    }
+
+    if (error instanceof QdrantConfigurationError) {
+      return res.status(503).json({
+        error: 'Qdrant не настроен',
+        details: error.message,
+      });
+    }
+
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Некорректные параметры поиска',
+        details: error.errors,
+      });
+    }
+
+    const qdrantError = extractQdrantApiError(error);
+    if (qdrantError) {
+      logger.error({ error, collection: req.params.name }, 'Qdrant error in text search');
+      return res.status(qdrantError.status).json({
+        error: qdrantError.message,
+        details: qdrantError.details,
+      });
+    }
+
+    logger.error({ error, collection: req.params.name }, 'Error in text search');
+    res.status(500).json({
+      error: 'Не удалось выполнить текстовый поиск',
+      details: getErrorDetails(error),
+    });
+  }
 }));
 
 /**
@@ -760,6 +908,35 @@ vectorRouter.post('/documents/vector-records', asyncHandler(async (req, res) => 
       details: getErrorDetails(error),
     });
   }
+}));
+
+// ============================================================================
+// Knowledge Document Vectorization Jobs
+// ============================================================================
+
+/**
+ * GET /documents/vectorize/jobs/:jobId
+ * Get vectorization job status
+ * Note: This is mounted at /api/knowledge, so full path is /api/knowledge/documents/vectorize/jobs/:jobId
+ */
+vectorRouter.get('/documents/vectorize/jobs/:jobId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { jobId } = req.params;
+  if (!jobId || !jobId.trim()) {
+    return res.status(400).json({ error: 'Некорректный идентификатор задачи' });
+  }
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const job = getVectorizationJob(jobId);
+
+  if (!job || job.workspaceId !== workspaceId) {
+    return res.status(404).json({ error: 'Задача не найдена' });
+  }
+
+  const { workspaceId: _workspaceId, ...publicJob } = job;
+  res.json({ job: publicJob });
 }));
 
 export default vectorRouter;

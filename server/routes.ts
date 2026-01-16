@@ -5478,88 +5478,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // MIGRATED TO: server/routes/public.routes.ts
+  /* PUBLIC EMBED SUGGEST MIGRATED - START
   app.get("/api/public/embed/suggest", async (req, res) => {
-    try {
-      const publicContext = await resolvePublicCollectionRequest(req, res);
-      if (!publicContext) {
-        return;
-      }
-
-      if (!publicContext.embedKey || !publicContext.knowledgeBaseId) {
-        res.status(403).json({ error: "Публичный ключ не поддерживает подсказки по базе знаний" });
-        return;
-      }
-
-      const queryParam =
-        typeof req.query.q === "string"
-          ? req.query.q
-          : typeof req.query.query === "string"
-            ? req.query.query
-            : "";
-      const query = queryParam.trim();
-
-      if (!query) {
-        res.status(400).json({ error: "Укажите поисковый запрос" });
-        return;
-      }
-
-      const requestedKbId =
-        typeof req.query.kb_id === "string"
-          ? req.query.kb_id.trim()
-          : typeof req.query.kbId === "string"
-            ? req.query.kbId.trim()
-            : "";
-
-      if (requestedKbId && requestedKbId !== publicContext.knowledgeBaseId) {
-        res.status(403).json({ error: "Доступ к указанной базе знаний запрещён" });
-        return;
-      }
-
-      const limitCandidate = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
-      const limitValue = Number.isFinite(limitCandidate) ? Math.max(1, Math.min(10, Number(limitCandidate))) : 3;
-
-      const knowledgeBaseId = publicContext.knowledgeBaseId;
-      const base = await storage.getKnowledgeBase(knowledgeBaseId);
-
-      if (!base) {
-        res.status(404).json({ error: "База знаний не найдена" });
-        return;
-      }
-
-      const startedAt = performance.now();
-      const suggestions = await storage.searchKnowledgeBaseSuggestions(knowledgeBaseId, query, limitValue);
-      const duration = performance.now() - startedAt;
-
-      const sections = suggestions.sections.map((entry) => ({
-        chunk_id: entry.chunkId,
-        doc_id: entry.documentId,
-        doc_title: entry.docTitle,
-        section_title: entry.sectionTitle,
-        snippet: entry.snippet,
-        score: entry.score,
-        source: entry.source,
-        node_id: entry.nodeId ?? null,
-        node_slug: entry.nodeSlug ?? null,
-      }));
-
-      res.json({
-        query,
-        kb_id: knowledgeBaseId,
-        normalized_query: suggestions.normalizedQuery || query,
-        ask_ai: {
-          label: "Спросить AI",
-          query: suggestions.normalizedQuery || query,
-        },
-        sections,
-        timings: {
-          total_ms: Number(duration.toFixed(2)),
-        },
-      });
-    } catch (error) {
-      console.error("Ошибка подсказок для встраиваемого поиска:", error);
-      res.status(500).json({ error: "Не удалось получить подсказки" });
-    }
+    // ... implementation migrated to public.routes.ts ...
   });
+  PUBLIC EMBED SUGGEST MIGRATED - END */
 
   app.post("/public/rag/answer", async (req, res) => {
     const parsed = knowledgeRagRequestSchema.safeParse(req.body);
@@ -15821,168 +15745,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   VECTOR POINTS MIGRATED - END */
 
+  // MIGRATED TO: server/routes/vector.routes.ts (full implementation with embedding)
+  /* VECTOR SEARCH TEXT MIGRATED - START
   app.post("/api/vector/collections/:name/search/text", async (req, res) => {
-    try {
-      const { id: workspaceId } = getRequestWorkspace(req);
-      const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
-
-      if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
-        return res.status(404).json({
-          error: "Коллекция не найдена",
-        });
-      }
-
-      const body = textSearchPointsSchema.parse(req.body);
-      const provider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
-
-      if (!provider) {
-        return res.status(404).json({ error: "Сервис эмбеддингов не найден" });
-      }
-
-      if (!provider.isActive) {
-        throw new HttpError(400, "Выбранный сервис эмбеддингов отключён");
-      }
-
-      const client = getQdrantClient();
-      const collectionInfo = await client.getCollection(req.params.name);
-      const vectorsConfig = collectionInfo.config?.params?.vectors as
-        | { size?: number | null; distance?: string | null }
-        | undefined;
-
-      const collectionVectorSize = vectorsConfig?.size ?? null;
-      const providerVectorSize = parseVectorSize(provider.qdrantConfig?.vectorSize);
-
-      if (
-        collectionVectorSize &&
-        providerVectorSize &&
-        Number(collectionVectorSize) !== Number(providerVectorSize)
-      ) {
-        throw new HttpError(
-          400,
-          `Размер вектора коллекции (${collectionVectorSize}) не совпадает с настройкой сервиса (${providerVectorSize}).`,
-        );
-      }
-
-      const accessToken = await fetchAccessToken(provider);
-      const embeddingResult = await fetchEmbeddingVector(provider, accessToken, body.query);
-
-      if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
-        throw new HttpError(
-          400,
-          `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
-        );
-      }
-
-      const embeddingTokensForUsage =
-        embeddingResult.usageTokens ?? Math.max(1, Math.ceil(Buffer.byteLength(body.query, "utf8") / 4));
-      const embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
-        consumptionUnit: "TOKENS_1K",
-        modelKey: provider.model ?? null,
-      });
-
-      await recordEmbeddingUsageSafe({
-        workspaceId,
-        provider,
-        modelKey: provider.model ?? null,
-        tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingTokensForUsage,
-        contentBytes: Buffer.byteLength(body.query, "utf8"),
-        operationId: `collection-search-${randomUUID()}`,
-      });
-
-      const searchPayload: Parameters<QdrantClient["search"]>[1] = {
-        vector: buildVectorPayload(
-          embeddingResult.vector,
-          provider.qdrantConfig?.vectorFieldName,
-        ),
-        limit: body.limit,
-      };
-
-      if (body.offset !== undefined) {
-        searchPayload.offset = body.offset;
-      }
-
-      if (body.filter !== undefined) {
-        searchPayload.filter = body.filter as Parameters<QdrantClient["search"]>[1]["filter"];
-      }
-
-      if (body.params !== undefined) {
-        searchPayload.params = body.params as Parameters<QdrantClient["search"]>[1]["params"];
-      }
-
-      if (body.withPayload !== undefined) {
-        searchPayload.with_payload = body.withPayload as Parameters<QdrantClient["search"]>[1]["with_payload"];
-      }
-
-      if (body.withVector !== undefined) {
-        searchPayload.with_vector = body.withVector as Parameters<QdrantClient["search"]>[1]["with_vector"];
-      }
-
-      if (body.scoreThreshold !== undefined) {
-        searchPayload.score_threshold = body.scoreThreshold;
-      }
-
-      if (body.shardKey !== undefined) {
-        searchPayload.shard_key = body.shardKey as Parameters<QdrantClient["search"]>[1]["shard_key"];
-      }
-
-      if (body.consistency !== undefined) {
-        searchPayload.consistency = body.consistency;
-      }
-
-      if (body.timeout !== undefined) {
-        searchPayload.timeout = body.timeout;
-      }
-
-      const results = await client.search(req.params.name, searchPayload);
-
-      res.json({
-        results,
-        queryVector: embeddingResult.vector,
-        vectorLength: embeddingResult.vector.length,
-        usageTokens: embeddingResult.usageTokens ?? null,
-        provider: {
-          id: provider.id,
-          name: provider.name,
-        },
-      });
-    } catch (error) {
-      if (error instanceof HttpError) {
-        return res.status(error.status).json({
-          error: error.message,
-          details: error.details,
-        });
-      }
-
-      if (error instanceof QdrantConfigurationError) {
-        return res.status(503).json({
-          error: "Qdrant не настроен",
-          details: error.message,
-        });
-      }
-
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          error: "Некорректные параметры поиска",
-          details: error.errors,
-        });
-      }
-
-      const qdrantError = extractQdrantApiError(error);
-      if (qdrantError) {
-        console.error(`Ошибка Qdrant при текстовом поиске в коллекции ${req.params.name}:`, error);
-        return res.status(qdrantError.status).json({
-          error: qdrantError.message,
-          details: qdrantError.details,
-        });
-      }
-
-      console.error(`Ошибка при текстовом поиске в коллекции ${req.params.name}:`, error);
-      res.status(500).json({
-        error: "Не удалось выполнить текстовый поиск",
-        details: error instanceof Error ? error.message : String(error),
-      });
-    }
+    // ... 160 lines of implementation ...
   });
+  VECTOR SEARCH TEXT MIGRATED - END */
 
   app.post("/api/vector/collections/:name/search/generative", async (req, res) => {
     try {
@@ -18477,34 +18245,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // MIGRATED TO: server/routes/vector.routes.ts
+  /* VECTORIZE JOBS MIGRATED - START
   app.get("/api/knowledge/documents/vectorize/jobs/:jobId", async (req, res) => {
-    const user = getAuthorizedUser(req, res);
-    if (!user) {
-      return;
-    }
-
-    const { jobId } = req.params;
-    if (!jobId || !jobId.trim()) {
-      res.status(400).json({ error: "Некорректный идентификатор задачи" });
-      return;
-    }
-
-    try {
-      const { id: workspaceId } = getRequestWorkspace(req);
-      const job = knowledgeDocumentVectorizationJobs.get(jobId);
-
-      if (!job || job.workspaceId !== workspaceId) {
-        res.status(404).json({ error: "Задача не найдена" });
-        return;
-      }
-
-      const { workspaceId: _workspaceId, ...publicJob } = job;
-      res.json({ job: publicJob });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      res.status(500).json({ error: message });
-    }
+    // ... implementation migrated to vector.routes.ts ...
   });
+  VECTORIZE JOBS MIGRATED - END */
 
   // MIGRATED TO: server/routes/vector.routes.ts
   /* VECTOR RECORDS MIGRATED - START

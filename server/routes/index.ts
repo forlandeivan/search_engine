@@ -13,6 +13,7 @@ import { chatRouter } from './chat.routes';
 import { skillRouter } from './skill.routes';
 import { knowledgeBaseRouter } from './knowledge-base.routes';
 import { healthRouter } from './health.routes';
+import { publicRouter } from './public.routes';
 import { jobsRouter } from './jobs.routes';
 import { canvasRouter } from './canvas.routes';
 import { cardsRouter } from './cards.routes';
@@ -98,6 +99,10 @@ export function registerRouteModules(app: Express): void {
   // Health check routes
   app.use('/api/health', healthRouter);
   routerLogger.info('Registered: /api/health');
+
+  // Public routes (no auth required)
+  app.use('/api/public', publicRouter);
+  routerLogger.info('Registered: /api/public');
 
   // Jobs routes (crawling, indexing background tasks)
   app.use('/api/jobs', jobsRouter);
