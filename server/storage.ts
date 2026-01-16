@@ -10246,3 +10246,15 @@ export async function ensureDatabaseSchema(): Promise<void> {
     throw error;
   }
 }
+
+// Re-export repositories for gradual migration
+// These can be used directly as an alternative to storage methods
+export {
+  userRepository,
+  workspaceRepository,
+  chatRepository,
+  knowledgeBaseRepository,
+  fileRepository,
+  skillRepository,
+  providerRepository,
+} from './repositories';
