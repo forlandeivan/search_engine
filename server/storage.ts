@@ -7128,6 +7128,25 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  /**
+   * Batch insert chat messages (optimized for bulk operations).
+   */
+  async createChatMessages(valuesList: ChatMessageInsert[]): Promise<ChatMessage[]> {
+    if (valuesList.length === 0) {
+      return [];
+    }
+    await ensureChatTables();
+    const normalized = valuesList.map((values) => ({
+      messageType: (values as any).messageType ?? "text",
+      ...values,
+    }));
+    const created = await this.db
+      .insert(chatMessages)
+      .values(normalized)
+      .returning();
+    return created;
+  }
+
   async getChatMessage(id: string): Promise<ChatMessage | undefined> {
     await ensureChatTables();
     const [message] = await this.db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
