@@ -17424,6 +17424,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  app.get("/api/knowledge/bases/:baseId/indexing/actions/:actionId/logs", requireAuth, async (req, res) => {
+    const { baseId, actionId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+
+    try {
+      const logs = await knowledgeBaseIndexingActionsService.getLogs(workspaceId, baseId, actionId);
+      if (!logs) {
+        return res.status(404).json({ error: "Лог индексации не найден" });
+      }
+      res.json(logs);
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
   app.patch("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;
     const rawParentId = req.body?.parentId as unknown;

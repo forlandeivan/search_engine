@@ -162,6 +162,114 @@ export class KnowledgeBaseIndexingActionsService {
     
     return result;
   }
+
+  async getLogs(
+    workspaceId: string,
+    baseId: string,
+    actionId: string,
+  ): Promise<{
+    actionId: string;
+    summary: {
+      status: KnowledgeBaseIndexingActionStatus;
+      stage: IndexingStage;
+      displayText: string | null;
+      startedAt: string;
+      finishedAt: string | null;
+      userId: string | null;
+      userName: string | null;
+      userEmail: string | null;
+      totalDocuments: number;
+      processedDocuments: number;
+      failedDocuments: number;
+      totalChunks: number;
+    };
+    jobs: Array<{
+      jobId: string;
+      documentId: string;
+      documentTitle: string;
+      versionId: string;
+      status: "pending" | "processing" | "completed" | "failed";
+      chunkCount: number | null;
+      totalChars: number | null;
+      totalTokens: number | null;
+      error: string | null;
+      attempts: number;
+      startedAt: string | null;
+      finishedAt: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+  } | null> {
+    // Получаем action
+    const action = await storage.getKnowledgeBaseIndexingAction(workspaceId, baseId, actionId);
+    if (!action) {
+      return null;
+    }
+
+    const dto = mapToDto(action);
+
+    // Получаем статистику
+    const stats = await storage.getKnowledgeBaseIndexingJobsStatsForAction(
+      workspaceId,
+      baseId,
+      action.createdAt,
+      action.updatedAt,
+    );
+
+    // Получаем информацию о пользователе
+    let userName: string | null = null;
+    let userEmail: string | null = null;
+    if (action.userId) {
+      try {
+        const user = await storage.getUserById(action.userId);
+        if (user) {
+          userName = user.fullName;
+          userEmail = user.email;
+        }
+      } catch (error) {
+        console.error(`[KnowledgeBaseIndexingActionsService.getLogs] Failed to get user ${action.userId}:`, error);
+      }
+    }
+
+    // Получаем jobs с информацией о документах
+    const jobs = await storage.getKnowledgeBaseIndexingJobsByAction(
+      workspaceId,
+      baseId,
+      action.createdAt,
+      action.updatedAt,
+    );
+
+    return {
+      actionId: dto.actionId,
+      summary: {
+        status: dto.status,
+        stage: dto.stage,
+        displayText: dto.displayText,
+        startedAt: dto.createdAt ?? new Date().toISOString(),
+        finishedAt: dto.status === "processing" ? null : dto.updatedAt,
+        userId: dto.userId,
+        userName,
+        userEmail,
+        ...stats,
+      },
+      jobs: jobs.map((job) => ({
+        jobId: job.id,
+        documentId: job.documentId,
+        documentTitle: job.documentTitle ?? "Без названия",
+        versionId: job.versionId,
+        status: job.status,
+        chunkCount: job.chunkCount,
+        totalChars: job.totalChars,
+        totalTokens: job.totalTokens,
+        error: job.lastError,
+        attempts: job.attempts,
+        startedAt: job.createdAt ? job.createdAt.toISOString() : null,
+        finishedAt: job.status === "completed" || job.status === "failed" ? (job.updatedAt ? job.updatedAt.toISOString() : null) : null,
+        createdAt: job.createdAt.toISOString(),
+        updatedAt: job.updatedAt.toISOString(),
+      })),
+    };
+  }
 }
 
 export const knowledgeBaseIndexingActionsService = new KnowledgeBaseIndexingActionsService();

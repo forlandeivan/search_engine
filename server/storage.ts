@@ -1262,6 +1262,12 @@ export interface IStorage {
     failedDocuments: number;
     totalChunks: number;
   }>;
+  getKnowledgeBaseIndexingJobsByAction(
+    workspaceId: string,
+    baseId: string,
+    actionCreatedAt: Date,
+    actionUpdatedAt: Date,
+  ): Promise<Array<KnowledgeBaseIndexingJob & { documentTitle: string | null }>>;
 }
 
 let usersTableEnsured = false;
@@ -8163,6 +8169,82 @@ export class DatabaseStorage implements IStorage {
       failedDocuments,
       totalChunks,
     };
+  }
+
+  async getKnowledgeBaseIndexingJobsByAction(
+    workspaceId: string,
+    baseId: string,
+    actionCreatedAt: Date,
+    actionUpdatedAt: Date,
+  ): Promise<Array<KnowledgeBaseIndexingJob & { documentTitle: string | null }>> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    await ensureKnowledgeBaseTables();
+    
+    // Получаем jobs с информацией о документах
+    const jobs = await this.db
+      .select({
+        id: knowledgeBaseIndexingJobs.id,
+        jobType: knowledgeBaseIndexingJobs.jobType,
+        workspaceId: knowledgeBaseIndexingJobs.workspaceId,
+        baseId: knowledgeBaseIndexingJobs.baseId,
+        documentId: knowledgeBaseIndexingJobs.documentId,
+        versionId: knowledgeBaseIndexingJobs.versionId,
+        status: knowledgeBaseIndexingJobs.status,
+        attempts: knowledgeBaseIndexingJobs.attempts,
+        nextRetryAt: knowledgeBaseIndexingJobs.nextRetryAt,
+        lastError: knowledgeBaseIndexingJobs.lastError,
+        chunkCount: knowledgeBaseIndexingJobs.chunkCount,
+        totalChars: knowledgeBaseIndexingJobs.totalChars,
+        totalTokens: knowledgeBaseIndexingJobs.totalTokens,
+        createdAt: knowledgeBaseIndexingJobs.createdAt,
+        updatedAt: knowledgeBaseIndexingJobs.updatedAt,
+        documentTitle: knowledgeNodes.title,
+      })
+      .from(knowledgeBaseIndexingJobs)
+      .leftJoin(
+        knowledgeDocuments,
+        and(
+          eq(knowledgeDocuments.id, knowledgeBaseIndexingJobs.documentId),
+          eq(knowledgeDocuments.workspaceId, knowledgeBaseIndexingJobs.workspaceId),
+          eq(knowledgeDocuments.baseId, knowledgeBaseIndexingJobs.baseId),
+        ),
+      )
+      .leftJoin(
+        knowledgeNodes,
+        and(
+          eq(knowledgeNodes.id, knowledgeDocuments.nodeId),
+          eq(knowledgeNodes.workspaceId, knowledgeBaseIndexingJobs.workspaceId),
+          eq(knowledgeNodes.baseId, knowledgeBaseIndexingJobs.baseId),
+        ),
+      )
+      .where(
+        and(
+          eq(knowledgeBaseIndexingJobs.workspaceId, workspaceId),
+          eq(knowledgeBaseIndexingJobs.baseId, baseId),
+          sql`${knowledgeBaseIndexingJobs.createdAt} >= ${actionCreatedAt}`,
+          sql`${knowledgeBaseIndexingJobs.createdAt} <= ${actionUpdatedAt}`,
+        ),
+      )
+      .orderBy(asc(knowledgeBaseIndexingJobs.createdAt));
+
+    return jobs.map((job) => ({
+      id: job.id,
+      jobType: job.jobType,
+      workspaceId: job.workspaceId,
+      baseId: job.baseId,
+      documentId: job.documentId,
+      versionId: job.versionId,
+      status: job.status,
+      attempts: job.attempts,
+      nextRetryAt: job.nextRetryAt,
+      lastError: job.lastError,
+      chunkCount: job.chunkCount,
+      totalChars: job.totalChars,
+      totalTokens: job.totalTokens,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      documentTitle: job.documentTitle,
+    }));
   }
 
   async listSkillFiles(workspaceId: string, skillId: string): Promise<SkillFile[]> {
