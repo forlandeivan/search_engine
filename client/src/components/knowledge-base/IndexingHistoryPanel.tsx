@@ -1,5 +1,4 @@
 import { format } from "date-fns";
-import { Loader2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -57,8 +56,7 @@ type IndexingHistoryPanelProps = {
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
-  onCopyLog?: (actionId: string) => void;
-  copyingActionId?: string | null;
+  onViewLog?: (actionId: string) => void;
 };
 
 export function IndexingHistoryPanel({
@@ -66,8 +64,7 @@ export function IndexingHistoryPanel({
   isLoading,
   isError,
   error,
-  onCopyLog,
-  copyingActionId,
+  onViewLog,
 }: IndexingHistoryPanelProps) {
   if (isLoading) {
     return (
@@ -156,22 +153,14 @@ export function IndexingHistoryPanel({
                 </div>
               </TableCell>
               <TableCell className="text-right">
-                {onCopyLog && (
+                {onViewLog && (
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => onCopyLog(item.actionId)}
-                    disabled={copyingActionId === item.actionId}
+                    onClick={() => onViewLog(item.actionId)}
                   >
-                    {copyingActionId === item.actionId ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Загрузка...
-                      </>
-                    ) : (
-                      "Скопировать лог"
-                    )}
+                    Лог
                   </Button>
                 )}
               </TableCell>

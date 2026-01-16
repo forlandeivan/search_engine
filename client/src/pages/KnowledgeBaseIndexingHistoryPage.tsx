@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRoute } from "wouter";
 import { Link } from "wouter";
 import {
@@ -11,10 +11,8 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { IndexingHistoryPanel } from "@/components/knowledge-base/IndexingHistoryPanel";
+import { IndexingLogDialog } from "@/components/knowledge-base/IndexingLogDialog";
 import { useKnowledgeBaseIndexingHistory } from "@/hooks/useKnowledgeBaseIndexingHistory";
-import { useKnowledgeBaseIndexingLogs } from "@/hooks/useKnowledgeBaseIndexingLogs";
-import { formatIndexingLog } from "@/lib/indexing-log-formatter";
-import { useToast } from "@/hooks/use-toast";
 
 type KnowledgeBaseIndexingHistoryPageProps = {
   params?: {
@@ -25,57 +23,22 @@ type KnowledgeBaseIndexingHistoryPageProps = {
 export default function KnowledgeBaseIndexingHistoryPage({ params }: KnowledgeBaseIndexingHistoryPageProps = {}) {
   const [, routeParams] = useRoute("/knowledge/:baseId/indexing/history");
   const baseId = params?.knowledgeBaseId ?? routeParams?.baseId ?? null;
-  const { toast } = useToast();
-  const [copyingActionId, setCopyingActionId] = useState<string | null>(null);
+  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const { data, isLoading, isError, error } = useKnowledgeBaseIndexingHistory(baseId, 25);
-  const { data: logsData, isLoading: isLogsLoading, error: logsError } = useKnowledgeBaseIndexingLogs(
-    baseId,
-    copyingActionId,
-    { enabled: Boolean(copyingActionId) },
-  );
 
-  const handleCopyLog = async (actionId: string) => {
-    setCopyingActionId(actionId);
+  const handleViewLog = (actionId: string) => {
+    setSelectedActionId(actionId);
+    setIsDialogOpen(true);
   };
 
-  // Обработка копирования после загрузки лога
-  useEffect(() => {
-    if (logsData && copyingActionId) {
-      const copyLog = async () => {
-        try {
-          const formattedLog = formatIndexingLog(logsData);
-          await navigator.clipboard.writeText(formattedLog);
-          toast({
-            title: "Лог скопирован",
-            description: "Лог индексации скопирован в буфер обмена",
-          });
-        } catch (copyError) {
-          console.error("Не удалось скопировать лог", copyError);
-          toast({
-            title: "Ошибка копирования",
-            description: "Не удалось скопировать лог в буфер обмена",
-            variant: "destructive",
-          });
-        } finally {
-          setCopyingActionId(null);
-        }
-      };
-      void copyLog();
+  const handleDialogClose = (open: boolean) => {
+    setIsDialogOpen(open);
+    if (!open) {
+      setSelectedActionId(null);
     }
-  }, [logsData, copyingActionId, toast]);
-
-  // Обработка ошибки загрузки лога
-  useEffect(() => {
-    if (copyingActionId && logsError && !isLogsLoading) {
-      toast({
-        title: "Ошибка загрузки",
-        description: "Не удалось загрузить лог индексации",
-        variant: "destructive",
-      });
-      setCopyingActionId(null);
-    }
-  }, [copyingActionId, logsError, isLogsLoading, toast]);
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -110,11 +73,17 @@ export default function KnowledgeBaseIndexingHistoryPage({ params }: KnowledgeBa
             isLoading={isLoading}
             isError={isError}
             error={error}
-            onCopyLog={handleCopyLog}
-            copyingActionId={copyingActionId}
+            onViewLog={handleViewLog}
           />
         </CardContent>
       </Card>
+
+      <IndexingLogDialog
+        open={isDialogOpen}
+        onOpenChange={handleDialogClose}
+        baseId={baseId}
+        actionId={selectedActionId}
+      />
     </div>
   );
 }
