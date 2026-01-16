@@ -17,7 +17,8 @@ import { storage } from '../../storage';
 import { createLogger } from '../../lib/logger';
 import { asyncHandler } from '../../middleware/async-handler';
 import { smtpSettingsService, SmtpSettingsError } from '../../smtp-settings';
-import { smtpTestService, SmtpTestError } from '../../smtp-test-service';
+import { smtpTestService } from '../../smtp-test-service';
+import { SmtpSettingsError } from '../../smtp-settings';
 import { indexingRulesService, IndexingRulesError } from '../../indexing-rules';
 
 const logger = createLogger('admin-settings');
@@ -95,7 +96,7 @@ adminSettingsRouter.post('/smtp/test', asyncHandler(async (req, res) => {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid request', details: error.issues });
     }
-    if (error instanceof SmtpTestError) {
+    if (error instanceof SmtpSettingsError) {
       return res.status(error.status).json({ message: error.message });
     }
     throw error;

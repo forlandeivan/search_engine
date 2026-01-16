@@ -22,16 +22,31 @@ import { z } from 'zod';
 import { storage } from '../../storage';
 import { createLogger } from '../../lib/logger';
 import { asyncHandler } from '../../middleware/async-handler';
-import { modelService, ModelServiceError } from '../../model-service';
-import { llmDebugConfig } from '../../llm-debug-config';
-import { embeddingProviderRegistry } from '../../embedding-provider-registry';
+import { 
+  listModels, 
+  createModel, 
+  updateModel,
+  ModelValidationError,
+  ModelUnavailableError,
+  ModelInactiveError,
+} from '../../model-service';
+import { 
+  getLlmPromptDebugConfig, 
+  setLlmPromptDebugEnabled 
+} from '../../llm-debug-config';
+import { 
+  listEmbeddingProvidersWithStatus,
+  resolveEmbeddingProviderModels,
+} from '../../embedding-provider-registry';
 import {
   knowledgeBaseIndexingPolicyService,
   KnowledgeBaseIndexingPolicyError,
   KnowledgeBaseIndexingPolicyDomainError,
+} from '../../knowledge-base-indexing-policy';
+import {
   knowledgeBaseIndexingPolicySchema,
   updateKnowledgeBaseIndexingPolicySchema,
-} from '../../knowledge-base-indexing-policy';
+} from '@shared/knowledge-base-indexing-policy';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('admin-llm');
@@ -62,7 +77,7 @@ function getRequestWorkspace(req: any): { id: string } | null {
  * GET /models
  */
 adminLlmRouter.get('/models', asyncHandler(async (_req, res) => {
-  const models = await modelService.listAll();
+  const models = await listModels();
   res.json({ models });
 }));
 
@@ -71,14 +86,14 @@ adminLlmRouter.get('/models', asyncHandler(async (_req, res) => {
  */
 adminLlmRouter.post('/models', asyncHandler(async (req, res) => {
   try {
-    const model = await modelService.create(req.body);
+    const model = await createModel(req.body);
     res.status(201).json(model);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid model data', details: error.issues });
     }
-    if (error instanceof ModelServiceError) {
-      return res.status(error.status).json({ message: error.message });
+    if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
+      return res.status((error as any).status || 400).json({ message: error.message, code: (error as any).code });
     }
     throw error;
   }
@@ -89,39 +104,27 @@ adminLlmRouter.post('/models', asyncHandler(async (req, res) => {
  */
 adminLlmRouter.put('/models/:id', asyncHandler(async (req, res) => {
   try {
-    const model = await modelService.update(req.params.id, req.body);
+    const model = await updateModel(req.params.id, req.body);
     res.json(model);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid model data', details: error.issues });
     }
-    if (error instanceof ModelServiceError) {
-      return res.status(error.status).json({ message: error.message });
+    if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
+      return res.status((error as any).status || 400).json({ message: error.message, code: (error as any).code });
     }
     throw error;
   }
 }));
 
-/**
- * POST /llm-providers/:id/health-check
- */
-adminLlmRouter.post('/llm-providers/:id/health-check', asyncHandler(async (req, res) => {
-  try {
-    const result = await modelService.healthCheck(req.params.id);
-    res.json(result);
-  } catch (error) {
-    if (error instanceof ModelServiceError) {
-      return res.status(error.status).json({ message: error.message });
-    }
-    throw error;
-  }
-}));
+// NOTE: POST /llm-providers/:id/health-check remains in routes.ts
+// because it uses checkLlmProviderHealth which is defined locally there
 
 /**
  * GET /llm-debug
  */
 adminLlmRouter.get('/llm-debug', asyncHandler(async (_req, res) => {
-  res.json(llmDebugConfig.get());
+  res.json(getLlmPromptDebugConfig());
 }));
 
 /**
@@ -129,8 +132,9 @@ adminLlmRouter.get('/llm-debug', asyncHandler(async (_req, res) => {
  */
 adminLlmRouter.post('/llm-debug', asyncHandler(async (req, res) => {
   try {
-    llmDebugConfig.set(req.body);
-    res.json(llmDebugConfig.get());
+    const enabled = typeof req.body?.enabled === 'boolean' ? req.body.enabled : false;
+    setLlmPromptDebugEnabled(enabled);
+    res.json(getLlmPromptDebugConfig());
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid config', details: error.issues });
@@ -164,7 +168,7 @@ adminLlmRouter.get('/llm-executions/:id', asyncHandler(async (req, res) => {
  * GET /embeddings/providers
  */
 adminLlmRouter.get('/embeddings/providers', asyncHandler(async (_req, res) => {
-  const providers = embeddingProviderRegistry.listProviders();
+  const providers = await listEmbeddingProvidersWithStatus();
   res.json({ providers });
 }));
 
@@ -172,7 +176,7 @@ adminLlmRouter.get('/embeddings/providers', asyncHandler(async (_req, res) => {
  * GET /embeddings/providers/:providerId/models
  */
 adminLlmRouter.get('/embeddings/providers/:providerId/models', asyncHandler(async (req, res) => {
-  const models = embeddingProviderRegistry.getProviderModels(req.params.providerId);
+  const models = await resolveEmbeddingProviderModels(req.params.providerId);
   if (!models) {
     return res.status(404).json({ message: 'Provider not found' });
   }

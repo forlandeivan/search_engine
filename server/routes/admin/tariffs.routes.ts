@@ -15,8 +15,8 @@ import { z } from 'zod';
 import { storage } from '../../storage';
 import { createLogger } from '../../lib/logger';
 import { asyncHandler } from '../../middleware/async-handler';
-import { tariffPlanService, TariffPlanServiceError } from '../../tariff-plan-service';
-import { tariffLimitCatalog } from '../../tariff-limit-catalog';
+import { tariffPlanService } from '../../tariff-plan-service';
+import { TARIFF_LIMIT_CATALOG } from '../../tariff-limit-catalog';
 
 const logger = createLogger('admin-tariffs');
 
@@ -63,8 +63,8 @@ adminTariffsRouter.get('/:planId', asyncHandler(async (req, res) => {
     }
     res.json(tariff);
   } catch (error) {
-    if (error instanceof TariffPlanServiceError) {
-      return res.status(error.status).json({ message: error.message });
+    if (error instanceof Error && 'status' in error) {
+      return res.status((error as any).status || 500).json({ message: error.message });
     }
     throw error;
   }
@@ -82,8 +82,8 @@ adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid data', details: error.issues });
     }
-    if (error instanceof TariffPlanServiceError) {
-      return res.status(error.status).json({ message: error.message });
+    if (error instanceof Error && 'status' in error) {
+      return res.status((error as any).status || 500).json({ message: error.message });
     }
     throw error;
   }
@@ -100,8 +100,8 @@ adminTariffsRouter.put('/:planId/limits', asyncHandler(async (req, res) => {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid limits', details: error.issues });
     }
-    if (error instanceof TariffPlanServiceError) {
-      return res.status(error.status).json({ message: error.message });
+    if (error instanceof Error && 'status' in error) {
+      return res.status((error as any).status || 500).json({ message: error.message });
     }
     throw error;
   }
@@ -111,7 +111,7 @@ adminTariffsRouter.put('/:planId/limits', asyncHandler(async (req, res) => {
  * GET /tariff-limit-catalog
  */
 adminTariffsRouter.get('/limit-catalog', asyncHandler(async (_req, res) => {
-  res.json(tariffLimitCatalog);
+  res.json(TARIFF_LIMIT_CATALOG);
 }));
 
 export default adminTariffsRouter;
