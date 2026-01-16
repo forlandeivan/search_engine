@@ -15398,6 +15398,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  // ========================================================================
+  // TRANSCRIBE OPERATIONS MIGRATED TO: server/routes/transcribe.routes.ts
+  // ========================================================================
+  /* TRANSCRIBE OPERATIONS MIGRATED - START
   app.get("/api/chat/transcribe/operations/:operationId", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -15421,6 +15425,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  TRANSCRIBE OPERATIONS MIGRATED - END */
 
   app.post("/api/chat/transcribe/complete/:operationId", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
@@ -15716,6 +15721,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // MIGRATED TO: server/routes/transcribe.routes.ts
+  /* TRANSCRIBE STATUS MIGRATED - START
   app.get("/api/chat/transcribe/status", requireAuth, async (req, res, next) => {
     try {
       const health = await yandexSttService.checkHealth();
@@ -15724,6 +15731,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  TRANSCRIBE STATUS MIGRATED - END */
 
   app.post("/api/vector/collections/:name/points", async (req, res) => {
     try {

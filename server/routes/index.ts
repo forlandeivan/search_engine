@@ -19,6 +19,7 @@ import { cardsRouter } from './cards.routes';
 import { actionsRouter } from './actions.routes';
 import { webhookRouter } from './webhook.routes';
 import { embedRouter } from './embed.routes';
+import { transcribeRouter } from './transcribe.routes';
 
 const routerLogger = createLogger('router');
 
@@ -115,6 +116,10 @@ export function registerRouteModules(app: Express): void {
   // Embed keys routes (public widget integration)
   app.use('/api/embed', embedRouter);
   routerLogger.info('Registered: /api/embed');
+
+  // Transcribe routes (speech-to-text operations)
+  app.use('/api/chat/transcribe', transcribeRouter);
+  routerLogger.info('Registered: /api/chat/transcribe');
   
   // Route modules will be registered here as they are migrated
   // Example:
