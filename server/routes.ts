@@ -15755,6 +15755,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   VECTOR SEARCH TEXT MIGRATED - END */
 
+  // MIGRATED TO: server/routes/vector.routes.ts (full implementation with streaming)
+  /* VECTOR SEARCH GENERATIVE MIGRATED - START
   app.post("/api/vector/collections/:name/search/generative", async (req, res) => {
     try {
       const workspaceContext = await resolveGenerativeWorkspace(req, res);
@@ -16083,6 +16085,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
     }
   });
+  VECTOR SEARCH GENERATIVE MIGRATED - END */
 
   // MIGRATED TO: server/routes/vector.routes.ts (full implementation)
   /* VECTOR SEARCH MIGRATED - START

@@ -14,7 +14,7 @@
  * - POST /api/vector/collections/:name/search - Vector search
  */
 
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
@@ -38,8 +38,19 @@ import {
 } from '../lib/embedding-utils';
 import { getVectorizationJob } from '../lib/vectorization-jobs';
 import { HttpError } from '../lib/errors';
+import {
+  resolveGenerativeWorkspace,
+  streamGigachatCompletion,
+  normalizeResponseFormat,
+  mergeLlmRequestConfig,
+  sanitizeLlmModelOptions,
+  fetchLlmCompletion,
+  type LlmContextRecord,
+  type RagResponseFormat,
+  type GenerativeContextEntry,
+} from '../lib/generative-search';
 import type { Schemas } from '@qdrant/js-client-rest';
-import type { PublicUser } from '@shared/schema';
+import type { PublicUser, LlmProvider } from '@shared/schema';
 
 const logger = createLogger('vector');
 
@@ -48,6 +59,15 @@ export const vectorRouter = Router();
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+function getAuthorizedUser(req: any, res: Response): PublicUser | null {
+  const user = req.user as PublicUser | undefined;
+  if (!user) {
+    res.status(401).json({ error: 'Требуется авторизация' });
+    return null;
+  }
+  return user;
+}
 
 function getSessionUser(req: any): PublicUser | null {
   return req.user as PublicUser | null;
@@ -160,6 +180,19 @@ const textSearchPointsSchema = z.object({
     z.literal('all'),
   ]).optional(),
   timeout: z.number().positive().optional(),
+});
+
+const generativeSearchPointsSchema = textSearchPointsSchema.extend({
+  llmProviderId: z.string().trim().min(1, 'Укажите провайдера LLM'),
+  llmModel: z.string().trim().min(1, 'Укажите модель LLM').optional(),
+  contextLimit: z.number().int().positive().max(50).optional(),
+  responseFormat: z.string().optional(),
+  includeContext: z.boolean().optional(),
+  includeQueryVector: z.boolean().optional(),
+  llmTemperature: z.coerce.number().min(0).max(2).optional(),
+  llmMaxTokens: z.coerce.number().int().min(16).max(4_096).optional(),
+  llmSystemPrompt: z.string().optional(),
+  llmResponseFormat: z.string().optional(),
 });
 
 const fetchKnowledgeVectorRecordsSchema = z.object({
@@ -822,23 +855,256 @@ vectorRouter.post('/collections/:name/search/text', asyncHandler(async (req, res
 
 /**
  * POST /collections/:name/search/generative
- * Generative search (RAG)
+ * Generative search with embedding + LLM (full implementation)
  */
 vectorRouter.post('/collections/:name/search/generative', asyncHandler(async (req, res) => {
-  const { id: workspaceId } = getRequestWorkspace(req);
+  const workspaceContext = await resolveGenerativeWorkspace(req, res);
+  if (!workspaceContext) {
+    return;
+  }
+
+  const { workspaceId } = workspaceContext;
   const ownerWorkspaceId = await storage.getCollectionWorkspace(req.params.name);
 
   if (!ownerWorkspaceId || ownerWorkspaceId !== workspaceId) {
-    return res.status(404).json({ error: 'Collection not found' });
+    return res.status(404).json({ error: 'Коллекция не найдена' });
   }
 
-  const query = req.body?.query;
-  if (typeof query !== 'string' || !query.trim()) {
-    return res.status(400).json({ error: 'Query is required' });
+  const payloadSource: Record<string, unknown> =
+    req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? { ...(req.body as Record<string, unknown>) }
+      : {};
+
+  delete payloadSource.apiKey;
+  delete payloadSource.publicId;
+  delete payloadSource.sitePublicId;
+  delete payloadSource.workspaceId;
+  delete payloadSource.workspace_id;
+
+  const body = generativeSearchPointsSchema.parse(payloadSource);
+  const responseFormatCandidate = normalizeResponseFormat(body.responseFormat);
+  if (responseFormatCandidate === null) {
+    return res.status(400).json({
+      error: 'Некорректный формат ответа',
+      details: 'Поддерживаются значения text, md/markdown или html',
+    });
   }
 
-  // Note: This is a placeholder. In real implementation, you'd integrate with LLM.
-  res.status(501).json({ error: 'Generative search requires LLM integration' });
+  const responseFormat: RagResponseFormat = responseFormatCandidate ?? 'text';
+  const includeContextInResponse = body.includeContext ?? true;
+  const includeQueryVectorInResponse = body.includeQueryVector ?? true;
+  const llmResponseFormatCandidate = normalizeResponseFormat(body.llmResponseFormat);
+  if (llmResponseFormatCandidate === null) {
+    return res.status(400).json({
+      error: 'Неверный формат ответа LLM',
+      details: 'Допустимые варианты формата: text, md/markdown или html',
+    });
+  }
+  const llmResponseFormatNormalized = llmResponseFormatCandidate ?? responseFormat;
+  
+  const embeddingProvider = await storage.getEmbeddingProvider(body.embeddingProviderId, workspaceId);
+  if (!embeddingProvider) {
+    return res.status(404).json({ error: 'Сервис эмбеддингов не найден' });
+  }
+  if (!embeddingProvider.isActive) {
+    throw new HttpError(400, 'Выбранный сервис эмбеддингов отключён');
+  }
+
+  const llmProvider = await storage.getLlmProvider(body.llmProviderId, workspaceId);
+  if (!llmProvider) {
+    return res.status(404).json({ error: 'Провайдер LLM не найден' });
+  }
+  if (!llmProvider.isActive) {
+    throw new HttpError(400, 'Выбранный провайдер LLM отключён');
+  }
+
+  const llmRequestConfig = mergeLlmRequestConfig(llmProvider);
+  if (body.llmSystemPrompt !== undefined) {
+    llmRequestConfig.systemPrompt = body.llmSystemPrompt || undefined;
+  }
+  if (body.llmTemperature !== undefined) {
+    llmRequestConfig.temperature = body.llmTemperature;
+  }
+  if (body.llmMaxTokens !== undefined) {
+    llmRequestConfig.maxTokens = body.llmMaxTokens;
+  }
+
+  const configuredLlmProvider: LlmProvider = {
+    ...llmProvider,
+    requestConfig: llmRequestConfig,
+  };
+
+  const sanitizedModels = sanitizeLlmModelOptions(configuredLlmProvider.availableModels);
+  const requestedModel = typeof body.llmModel === 'string' ? body.llmModel.trim() : '';
+  const normalizedModelFromList =
+    sanitizedModels.find((model) => model.value === requestedModel)?.value ??
+    sanitizedModels.find((model) => model.label === requestedModel)?.value ??
+    null;
+  const selectedModelValue =
+    (normalizedModelFromList && normalizedModelFromList.trim().length > 0
+      ? normalizedModelFromList.trim()
+      : undefined) ??
+    (requestedModel.length > 0 ? requestedModel : undefined) ??
+    configuredLlmProvider.model;
+  const selectedModelMeta =
+    sanitizedModels.find((model) => model.value === selectedModelValue) ?? null;
+
+  const client = getQdrantClient();
+  const collectionInfo = await client.getCollection(req.params.name);
+  const vectorsConfig = collectionInfo.config?.params?.vectors as
+    | { size?: number | null; distance?: string | null }
+    | undefined;
+
+  const collectionVectorSize = vectorsConfig?.size ?? null;
+  const providerVectorSize = parseVectorSize(embeddingProvider.qdrantConfig?.vectorSize);
+
+  if (
+    collectionVectorSize &&
+    providerVectorSize &&
+    Number(collectionVectorSize) !== Number(providerVectorSize)
+  ) {
+    throw new HttpError(
+      400,
+      `Размер вектора коллекции (${collectionVectorSize}) не совпадает с настройкой сервиса (${providerVectorSize}).`,
+    );
+  }
+
+  const embeddingAccessToken = await fetchAccessToken(embeddingProvider);
+  const embeddingResult = await fetchEmbeddingVector(embeddingProvider, embeddingAccessToken, body.query);
+
+  if (collectionVectorSize && embeddingResult.vector.length !== collectionVectorSize) {
+    throw new HttpError(
+      400,
+      `Сервис эмбеддингов вернул вектор длиной ${embeddingResult.vector.length}, ожидалось ${collectionVectorSize}.`,
+    );
+  }
+
+  const embeddingTokensForUsage =
+    embeddingResult.usageTokens ?? Math.max(1, Math.ceil(Buffer.byteLength(body.query, 'utf8') / 4));
+  const embeddingUsageMeasurement = measureTokensForModel(embeddingTokensForUsage, {
+    consumptionUnit: 'TOKENS_1K',
+    modelKey: selectedModelValue ?? embeddingProvider.model ?? null,
+  });
+
+  await recordEmbeddingUsageSafe({
+    workspaceId,
+    provider: embeddingProvider,
+    modelKey: selectedModelValue ?? embeddingProvider.model ?? null,
+    tokensTotal: embeddingUsageMeasurement?.quantityRaw ?? embeddingTokensForUsage,
+    contentBytes: Buffer.byteLength(body.query, 'utf8'),
+    operationId: `collection-search-${crypto.randomUUID()}`,
+  });
+
+  const searchPayload: Parameters<typeof client.search>[1] = {
+    vector: buildVectorPayload(embeddingResult.vector, embeddingProvider.qdrantConfig?.vectorFieldName),
+    limit: body.limit,
+  };
+
+  if (body.offset !== undefined) searchPayload.offset = body.offset;
+  if (body.filter !== undefined) searchPayload.filter = body.filter as any;
+  if (body.params !== undefined) searchPayload.params = body.params as any;
+  searchPayload.with_payload = (body.withPayload ?? true) as any;
+  if (body.withVector !== undefined) searchPayload.with_vector = body.withVector as any;
+  if (body.scoreThreshold !== undefined) searchPayload.score_threshold = body.scoreThreshold;
+  if (body.shardKey !== undefined) searchPayload.shard_key = body.shardKey as any;
+  if (body.consistency !== undefined) searchPayload.consistency = body.consistency;
+  if (body.timeout !== undefined) searchPayload.timeout = body.timeout;
+
+  const results = await client.search(req.params.name, searchPayload);
+
+  const sanitizedResults: GenerativeContextEntry[] = results.map((result) => ({
+    id: result.id,
+    payload: result.payload ?? null,
+    score: result.score ?? null,
+    shard_key: result.shard_key ?? null,
+    order_value: result.order_value ?? null,
+  }));
+
+  const desiredContext = body.contextLimit ?? sanitizedResults.length;
+  const contextLimit = Math.max(0, Math.min(desiredContext, sanitizedResults.length));
+  const contextRecords: LlmContextRecord[] = sanitizedResults.slice(0, contextLimit).map((entry, index) => {
+    const basePayload = entry.payload;
+    let contextPayload: Record<string, unknown> | null = null;
+
+    if (basePayload && typeof basePayload === 'object' && !Array.isArray(basePayload)) {
+      contextPayload = { ...(basePayload as Record<string, unknown>) };
+    } else if (basePayload !== null && basePayload !== undefined) {
+      contextPayload = { value: basePayload };
+    }
+
+    return {
+      index: index + 1,
+      score: typeof entry.score === 'number' ? entry.score : null,
+      payload: contextPayload,
+    } satisfies LlmContextRecord;
+  });
+
+  const llmAccessToken = await fetchAccessToken(configuredLlmProvider);
+  const acceptHeader = typeof req.headers.accept === 'string' ? req.headers.accept : '';
+  const wantsStreamingResponse =
+    configuredLlmProvider.providerType === 'gigachat' && acceptHeader.toLowerCase().includes('text/event-stream');
+
+  if (wantsStreamingResponse) {
+    await streamGigachatCompletion({
+      req,
+      res,
+      provider: configuredLlmProvider,
+      accessToken: llmAccessToken,
+      query: body.query,
+      context: contextRecords,
+      sanitizedResults,
+      embeddingResult,
+      embeddingProvider,
+      selectedModelValue,
+      selectedModelMeta,
+      limit: body.limit,
+      contextLimit,
+      responseFormat: llmResponseFormatNormalized,
+      includeContextInResponse,
+      includeQueryVectorInResponse,
+      collectionName: typeof req.params.name === 'string' ? req.params.name : '',
+    });
+    return;
+  }
+
+  const completion = await fetchLlmCompletion(
+    configuredLlmProvider,
+    llmAccessToken,
+    body.query,
+    contextRecords,
+    selectedModelValue,
+    { responseFormat: llmResponseFormatNormalized },
+  );
+
+  const responsePayload: Record<string, unknown> = {
+    answer: completion.answer,
+    format: responseFormat,
+    usage: {
+      embeddingTokens: embeddingResult.usageTokens ?? null,
+      llmTokens: completion.usageTokens ?? null,
+    },
+    provider: {
+      id: llmProvider.id,
+      name: llmProvider.name,
+      model: selectedModelValue,
+      modelLabel: selectedModelMeta?.label ?? selectedModelValue,
+    },
+    embeddingProvider: {
+      id: embeddingProvider.id,
+      name: embeddingProvider.name,
+    },
+  };
+
+  if (includeContextInResponse) {
+    responsePayload.context = sanitizedResults;
+  }
+
+  if (includeQueryVectorInResponse) {
+    responsePayload.queryVector = embeddingResult.vector;
+    responsePayload.vectorLength = embeddingResult.vector.length;
+  }
+
+  res.json(responsePayload);
 }));
 
 /**
