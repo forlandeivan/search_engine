@@ -17390,6 +17390,40 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  app.get("/api/knowledge/bases/:baseId/indexing/actions/history", requireAuth, async (req, res) => {
+    const { baseId } = req.params;
+    const { id: workspaceId } = getRequestWorkspace(req);
+    const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+    const limit = limitRaw ? Math.min(Math.max(1, Number(limitRaw)), 100) : 25;
+
+    try {
+      const history = await knowledgeBaseIndexingActionsService.listHistory(workspaceId, baseId, limit);
+      
+      const items = history.map((action) => ({
+        actionId: action.actionId,
+        status: action.status,
+        stage: action.stage,
+        displayText: action.displayText,
+        startedAt: action.createdAt ?? new Date().toISOString(),
+        finishedAt: action.status === "processing" ? null : action.updatedAt,
+        userId: action.userId,
+        userName: action.userName,
+        userEmail: action.userEmail,
+        totalDocuments: action.totalDocuments,
+        processedDocuments: action.processedDocuments,
+        failedDocuments: action.failedDocuments,
+        totalChunks: action.totalChunks,
+      }));
+
+      res.json({
+        items,
+        total: items.length,
+      });
+    } catch (error) {
+      return handleKnowledgeBaseRouteError(error, res);
+    }
+  });
+
   app.patch("/api/knowledge/bases/:baseId/nodes/:nodeId", requireAuth, async (req, res) => {
     const { baseId, nodeId } = req.params;
     const rawParentId = req.body?.parentId as unknown;

@@ -816,9 +816,31 @@ export const knowledgeBaseIndexingActionSchema = z.object({
   stage: z.enum(indexingStages),
   displayText: z.string().nullable().optional(),
   payload: z.record(z.any()).nullable().optional(),
+  userId: z.string().nullable().optional(),
   createdAt: z.string().datetime().nullable().optional(),
   updatedAt: z.string().datetime().nullable().optional(),
 });
+
+export type IndexingHistoryItem = {
+  actionId: string;
+  status: KnowledgeBaseIndexingActionStatus;
+  stage: IndexingStage;
+  displayText: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  userId: string | null;
+  userName: string | null;
+  userEmail: string | null;
+  totalDocuments: number;
+  processedDocuments: number;
+  failedDocuments: number;
+  totalChunks: number;
+};
+
+export type IndexingHistoryResponse = {
+  items: IndexingHistoryItem[];
+  total: number;
+};
 
 export const knowledgeBaseIndexingActions = pgTable(
   "knowledge_base_indexing_actions",

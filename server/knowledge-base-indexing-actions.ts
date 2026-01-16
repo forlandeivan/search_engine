@@ -109,6 +109,59 @@ export class KnowledgeBaseIndexingActionsService {
     const record = await storage.getLatestKnowledgeBaseIndexingAction(workspaceId, baseId);
     return record ? mapToDto(record) : null;
   }
+
+  async listHistory(
+    workspaceId: string,
+    baseId: string,
+    limit: number = 25,
+  ): Promise<Array<KnowledgeBaseIndexingAction & {
+    userName: string | null;
+    userEmail: string | null;
+    totalDocuments: number;
+    processedDocuments: number;
+    failedDocuments: number;
+    totalChunks: number;
+  }>> {
+    const actions = await storage.listKnowledgeBaseIndexingActionsHistory(workspaceId, baseId, limit);
+    
+    const result = await Promise.all(
+      actions.map(async (action) => {
+        const dto = mapToDto(action);
+        
+        // Получаем статистику из jobs
+        const stats = await storage.getKnowledgeBaseIndexingJobsStatsForAction(
+          workspaceId,
+          baseId,
+          action.createdAt,
+          action.updatedAt,
+        );
+        
+        // Получаем информацию о пользователе, если userId не null
+        let userName: string | null = null;
+        let userEmail: string | null = null;
+        if (action.userId) {
+          try {
+            const user = await storage.getUserById(action.userId);
+            if (user) {
+              userName = user.fullName;
+              userEmail = user.email;
+            }
+          } catch (error) {
+            console.error(`[KnowledgeBaseIndexingActionsService.listHistory] Failed to get user ${action.userId}:`, error);
+          }
+        }
+        
+        return {
+          ...dto,
+          userName,
+          userEmail,
+          ...stats,
+        };
+      }),
+    );
+    
+    return result;
+  }
 }
 
 export const knowledgeBaseIndexingActionsService = new KnowledgeBaseIndexingActionsService();

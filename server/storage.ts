@@ -1246,6 +1246,22 @@ export interface IStorage {
     workspaceId: string,
     baseId: string,
   ): Promise<KnowledgeBaseIndexingActionRecord | null>;
+  listKnowledgeBaseIndexingActionsHistory(
+    workspaceId: string,
+    baseId: string,
+    limit: number,
+  ): Promise<KnowledgeBaseIndexingActionRecord[]>;
+  getKnowledgeBaseIndexingJobsStatsForAction(
+    workspaceId: string,
+    baseId: string,
+    actionCreatedAt: Date,
+    actionUpdatedAt: Date,
+  ): Promise<{
+    totalDocuments: number;
+    processedDocuments: number;
+    failedDocuments: number;
+    totalChunks: number;
+  }>;
 }
 
 let usersTableEnsured = false;
@@ -8082,6 +8098,71 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(knowledgeBaseIndexingActions.updatedAt))
       .limit(1);
     return row ?? null;
+  }
+
+  async listKnowledgeBaseIndexingActionsHistory(
+    workspaceId: string,
+    baseId: string,
+    limit: number,
+  ): Promise<KnowledgeBaseIndexingActionRecord[]> {
+    await ensureKnowledgeBaseIndexingActionsTable();
+    const rows = await this.db
+      .select()
+      .from(knowledgeBaseIndexingActions)
+      .where(
+        and(
+          eq(knowledgeBaseIndexingActions.workspaceId, workspaceId),
+          eq(knowledgeBaseIndexingActions.baseId, baseId),
+        ),
+      )
+      .orderBy(desc(knowledgeBaseIndexingActions.createdAt))
+      .limit(limit);
+    return rows;
+  }
+
+  async getKnowledgeBaseIndexingJobsStatsForAction(
+    workspaceId: string,
+    baseId: string,
+    actionCreatedAt: Date,
+    actionUpdatedAt: Date,
+  ): Promise<{
+    totalDocuments: number;
+    processedDocuments: number;
+    failedDocuments: number;
+    totalChunks: number;
+  }> {
+    await ensureKnowledgeBaseIndexingJobsTable();
+    
+    // Получаем jobs, созданные в период действия action
+    // Jobs считаются связанными с action, если они созданы между createdAt и updatedAt action
+    const jobs = await this.db
+      .select({
+        status: knowledgeBaseIndexingJobs.status,
+        chunkCount: knowledgeBaseIndexingJobs.chunkCount,
+      })
+      .from(knowledgeBaseIndexingJobs)
+      .where(
+        and(
+          eq(knowledgeBaseIndexingJobs.workspaceId, workspaceId),
+          eq(knowledgeBaseIndexingJobs.baseId, baseId),
+          sql`${knowledgeBaseIndexingJobs.createdAt} >= ${actionCreatedAt}`,
+          sql`${knowledgeBaseIndexingJobs.createdAt} <= ${actionUpdatedAt}`,
+        ),
+      );
+
+    const totalDocuments = jobs.length;
+    const processedDocuments = jobs.filter((j) => j.status === "completed").length;
+    const failedDocuments = jobs.filter((j) => j.status === "failed").length;
+    const totalChunks = jobs
+      .filter((j) => j.status === "completed" && j.chunkCount !== null)
+      .reduce((sum, j) => sum + (j.chunkCount ?? 0), 0);
+
+    return {
+      totalDocuments,
+      processedDocuments,
+      failedDocuments,
+      totalChunks,
+    };
   }
 
   async listSkillFiles(workspaceId: string, skillId: string): Promise<SkillFile[]> {
