@@ -130,6 +130,8 @@ const MAX_RETRY_DELAY_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
 const JOB_TYPE = "knowledge_base_indexing";
 const LOCK_RETRY_DELAY_MS = 5_000;
+const ACTION_TIMEOUT_HOURS = 1;
+const ACTION_COMPLETION_CHECK_SECONDS = 30;
 
 // Логирование в файл для отладки
 function logToFile(message: string): void {
@@ -155,20 +157,87 @@ function computeRetryDelayMs(attempts: number): number {
   return Math.min(Math.max(BASE_RETRY_DELAY_MS, delay), MAX_RETRY_DELAY_MS);
 }
 
+const MAX_EVENTS = 50;
+
+type IndexingActionEvent = {
+  timestamp: string;
+  stage: IndexingStage;
+  message: string;
+  error?: string;
+  metadata?: Record<string, unknown>;
+};
+
+async function addIndexingActionEvent(
+  workspaceId: string,
+  baseId: string,
+  stage: IndexingStage,
+  message: string,
+  error?: string,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const action = await knowledgeBaseIndexingActionsService.getLatest(workspaceId, baseId);
+    if (!action || action.status !== "processing") {
+      return;
+    }
+
+    const currentPayload = (action.payload ?? {}) as Record<string, unknown>;
+    const events = (Array.isArray(currentPayload.events) ? currentPayload.events : []) as IndexingActionEvent[];
+
+    const newEvent: IndexingActionEvent = {
+      timestamp: new Date().toISOString(),
+      stage,
+      message,
+      ...(error && { error }),
+      ...(metadata && { metadata }),
+    };
+
+    // Добавляем новое событие и ограничиваем размер до MAX_EVENTS
+    const updatedEvents = [...events, newEvent].slice(-MAX_EVENTS);
+
+    const updatedPayload = {
+      ...currentPayload,
+      events: updatedEvents,
+    };
+
+    await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
+      payload: updatedPayload,
+    });
+  } catch (error) {
+    // Игнорируем ошибки обновления событий, чтобы не прерывать индексацию
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    workerLog(`Failed to add indexing action event: ${errorMsg}`);
+  }
+}
+
 async function updateIndexingActionStatus(
   workspaceId: string,
   baseId: string,
   stage: IndexingStage,
   displayText: string,
   payload?: Record<string, unknown>,
+  error?: string,
+  metadata?: Record<string, unknown>,
 ): Promise<void> {
   try {
     const action = await knowledgeBaseIndexingActionsService.getLatest(workspaceId, baseId);
     if (action && action.status === "processing") {
+      // Добавляем событие в историю
+      await addIndexingActionEvent(workspaceId, baseId, stage, displayText, error, metadata);
+
+      // Объединяем существующий payload с новым, сохраняя events
+      const currentPayload = (action.payload ?? {}) as Record<string, unknown>;
+      const events = currentPayload.events ?? [];
+      const mergedPayload = {
+        ...currentPayload,
+        ...payload,
+        events, // Сохраняем events из addIndexingActionEvent
+      };
+
       await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
         stage,
         displayText,
-        payload,
+        payload: mergedPayload,
       });
     }
   } catch (error) {
@@ -207,36 +276,127 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
     const remainingCount = pendingCount + processingCount;
     const allDone = remainingCount === 0;
 
+    // Агрегируем ошибки из failed jobs (первые 10)
+    const MAX_ERRORS = 10;
+    let aggregatedErrors: Array<{
+      documentId: string;
+      documentTitle: string;
+      error: string;
+      stage: string;
+      timestamp: string;
+    }> = [];
+    
+    if (failedCount > 0 && actionCreatedAt) {
+      try {
+        const failedJobs = await storage.getKnowledgeBaseIndexingJobsByAction(
+          workspaceId,
+          baseId,
+          actionCreatedAt,
+          action.updatedAt ? new Date(action.updatedAt) : new Date(),
+        );
+        
+        const failedJobsWithErrors = failedJobs
+          .filter((job) => job.status === "failed" && job.lastError)
+          .slice(0, MAX_ERRORS)
+          .map((job) => ({
+            documentId: job.documentId,
+            documentTitle: job.documentTitle ?? "Без названия",
+            error: job.lastError ?? "Неизвестная ошибка",
+            stage: "processing", // Можно улучшить, добавив поле stage в job
+            timestamp: job.updatedAt ? job.updatedAt.toISOString() : new Date().toISOString(),
+          }));
+        
+        aggregatedErrors = failedJobsWithErrors;
+      } catch (error) {
+        // Игнорируем ошибки получения failed jobs
+        workerLog(`Failed to get failed jobs for error aggregation: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // Получаем текущий payload для сохранения config и events
+    const currentPayload = (action.payload ?? {}) as Record<string, unknown>;
+    const config = currentPayload.config ?? {};
+    const events = currentPayload.events ?? [];
+
     // Логируем состояние для диагностики
     workerLog(`updateIndexingActionProgress: workspace=${workspaceId} base=${baseId} completed=${completedCount} total=${totalCount} pending=${pendingCount} processing=${processingCount} failed=${failedCount} allDone=${allDone}`);
+
+    // Проверка таймаута: если action в статусе "processing" более 1 часа без обновлений
+    const actionUpdatedAt = action.updatedAt ? new Date(action.updatedAt) : null;
+    const now = new Date();
+    const hoursSinceUpdate = actionUpdatedAt ? (now.getTime() - actionUpdatedAt.getTime()) / (1000 * 60 * 60) : 0;
+    const TIMEOUT_HOURS = 1;
+    
+    if (hoursSinceUpdate > TIMEOUT_HOURS && !allDone) {
+      // Принудительно завершаем action по таймауту
+      workerLog(`updateIndexingActionProgress: action timeout (${hoursSinceUpdate.toFixed(2)}h), forcing completion`);
+      await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
+        status: "error",
+        stage: "error",
+        displayText: `Индексация прервана по таймауту (более ${TIMEOUT_HOURS} часа без обновлений). Обработано ${processedDocuments} из ${totalCount} документов.`,
+        payload: {
+          ...currentPayload,
+          config,
+          events: [
+            ...(Array.isArray(events) ? events : []),
+            {
+              timestamp: now.toISOString(),
+              stage: "error",
+              message: `Таймаут: действие не обновлялось более ${TIMEOUT_HOURS} часа`,
+              error: "Таймаут индексации",
+            },
+          ],
+          totalDocuments: totalCount,
+          processedDocuments,
+          progressPercent,
+          failedDocuments: failedCount,
+          ...(aggregatedErrors.length > 0 && { errors: aggregatedErrors }),
+        },
+      });
+      return;
+    }
 
     if (allDone) {
       // Все job'ы завершены
       workerLog(`updateIndexingActionProgress: all done, failedCount=${failedCount}, setting status=${failedCount > 0 ? "error" : "done"}`);
+      
+      const errorSummary = failedCount > 0 && aggregatedErrors.length > 0
+        ? `\n\nОшибки:\n${aggregatedErrors.map((e, i) => `${i + 1}. "${e.documentTitle}": ${e.error}`).join("\n")}`
+        : "";
+      
       await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
         status: failedCount > 0 ? "error" : "done",
         stage: failedCount > 0 ? "error" : "completed",
         displayText:
           failedCount > 0
-            ? `Индексация завершена с ошибками: ${failedCount} документов не удалось проиндексировать`
+            ? `Индексация завершена с ошибками: ${failedCount} документов не удалось проиндексировать${errorSummary}`
             : `Индексация завершена: проиндексировано ${processedDocuments} из ${totalCount} документов`,
         payload: {
+          ...currentPayload,
+          config,
+          events,
           totalDocuments: totalCount,
           processedDocuments,
           progressPercent: 100,
           failedDocuments: failedCount,
+          ...(aggregatedErrors.length > 0 && { errors: aggregatedErrors }),
         },
       });
     } else {
       // Обновляем прогресс
       await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, action.actionId, {
         stage: "vectorizing",
-        displayText: `Индексация в процессе: обработано ${processedDocuments} из ${totalCount} документов`,
+        displayText: `Индексация в процессе: обработано ${processedDocuments} из ${totalCount} документов${failedCount > 0 ? `, ошибок: ${failedCount}` : ""}`,
         payload: {
+          ...currentPayload,
+          config,
+          events,
           totalDocuments: totalCount,
           processedDocuments,
           progressPercent,
           remainingDocuments: remainingCount,
+          failedDocuments: failedCount,
+          ...(aggregatedErrors.length > 0 && { errors: aggregatedErrors }),
         },
       });
     }
@@ -456,9 +616,26 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     try {
       policy = await knowledgeBaseIndexingPolicyService.get();
       workerLog(`got policy for job ${job.id}, providerId=${policy.embeddingsProvider}`);
+      await addIndexingActionEvent(
+        job.workspaceId,
+        job.baseId,
+        "initializing",
+        "Политика индексации получена",
+        undefined,
+        { providerId: policy.embeddingsProvider, model: policy.embeddingsModel },
+      );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       workerLog(`ERROR getting policy for job ${job.id}: ${errorMsg}`);
+      await updateIndexingActionStatus(
+        job.workspaceId,
+        job.baseId,
+        "error",
+        `Ошибка: Не удалось получить политику индексации: ${errorMsg}`,
+        undefined,
+        errorMsg,
+        { documentId: job.documentId },
+      );
       await markJobError(`Ошибка получения политики: ${errorMsg}`);
       return;
     }
@@ -469,6 +646,15 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     const providerId = policy.embeddingsProvider;
     if (!providerId) {
       const message = "Сервис эмбеддингов не указан в политике индексации баз знаний";
+      await updateIndexingActionStatus(
+        job.workspaceId,
+        job.baseId,
+        "error",
+        `Ошибка: ${message}. Проверьте настройки в админ-панели.`,
+        undefined,
+        message,
+        { documentId: job.documentId },
+      );
       await markJobError(message);
       return;
     }
@@ -477,12 +663,31 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       const providerStatus = await resolveEmbeddingProviderStatus(providerId, undefined);
       if (!providerStatus) {
         const message = `Провайдер эмбеддингов '${providerId}' не найден`;
+        await updateIndexingActionStatus(
+          job.workspaceId,
+          job.baseId,
+          "error",
+          `Ошибка: ${message}. Проверьте настройки в админ-панели.`,
+          undefined,
+          message,
+          { documentId: job.documentId, providerId },
+        );
         await markJobError(message);
         return;
       }
 
       if (!providerStatus.isConfigured) {
         const message = providerStatus.statusReason ?? `Провайдер эмбеддингов '${providerId}' недоступен`;
+        const detailedMessage = `Провайдер эмбеддингов '${providerId}' не активирован. ${providerStatus.statusReason ? `Причина: ${providerStatus.statusReason}` : "Проверьте настройки в админ-панели."}`;
+        await updateIndexingActionStatus(
+          job.workspaceId,
+          job.baseId,
+          "error",
+          `Ошибка: ${detailedMessage}`,
+          undefined,
+          message,
+          { documentId: job.documentId, providerId, statusReason: providerStatus.statusReason },
+        );
         await markJobError(message);
         return;
       }
@@ -490,6 +695,15 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       const provider = await storage.getEmbeddingProvider(providerId, undefined);
       if (!provider) {
         const message = `Провайдер эмбеддингов '${providerId}' не найден`;
+        await updateIndexingActionStatus(
+          job.workspaceId,
+          job.baseId,
+          "error",
+          `Ошибка: ${message}. Проверьте настройки в админ-панели.`,
+          undefined,
+          message,
+          { documentId: job.documentId, providerId },
+        );
         await markJobError(message);
         return;
       }
@@ -501,9 +715,27 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       embeddingProvider = modelFromPolicy ? { ...provider, model: modelFromPolicy } : provider;
       
       workerLog(`final embeddingProvider for job ${job.id}, allowSelfSignedCertificate=${embeddingProvider.allowSelfSignedCertificate}, model=${embeddingProvider.model}`);
+      
+      await addIndexingActionEvent(
+        job.workspaceId,
+        job.baseId,
+        "initializing",
+        `Провайдер эмбеддингов '${provider.name}' (${embeddingProvider.model}) загружен`,
+        undefined,
+        { providerId, providerName: provider.name, model: embeddingProvider.model },
+      );
     } catch (error) {
       const message =
         error instanceof Error && error.message ? error.message : "Сервис эмбеддингов недоступен в админ-настройках";
+      await updateIndexingActionStatus(
+        job.workspaceId,
+        job.baseId,
+        "error",
+        `Ошибка: ${message}. Проверьте настройки в админ-панели.`,
+        undefined,
+        message,
+        { documentId: job.documentId, providerId },
+      );
       await markJobError(message);
       return;
     }
@@ -517,6 +749,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       job.baseId,
       "creating_collection",
       "Создаём коллекцию в Qdrant...",
+      undefined,
+      undefined,
+      { collectionName },
     );
 
     workerLog(`checking if collection exists for job ${job.id}...`);
@@ -566,6 +801,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       job.baseId,
       "chunking",
       `Разбиваем документ "${nodeDetail.title ?? "без названия"}" на фрагменты...`,
+      undefined,
+      undefined,
+      { documentId: job.documentId, documentTitle: nodeDetail.title },
     );
 
     let chunkSet;
@@ -591,6 +829,15 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       if (error instanceof Error && error.stack) {
         workerLog(`ERROR stack: ${error.stack}`);
       }
+      await updateIndexingActionStatus(
+        job.workspaceId,
+        job.baseId,
+        "error",
+        `Ошибка создания чанков для документа "${nodeDetail.title ?? "без названия"}": ${errorMsg}`,
+        undefined,
+        errorMsg,
+        { documentId: job.documentId, documentTitle: nodeDetail.title },
+      );
       await markJobError(`Ошибка создания чанков: ${errorMsg}`);
       return;
     }
@@ -598,10 +845,27 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     if (!chunkSet || chunkSet.chunks.length === 0) {
       const message = "Не удалось создать чанки для документа";
       workerLog(`${message} for job ${job.id}`);
+      await updateIndexingActionStatus(
+        job.workspaceId,
+        job.baseId,
+        "error",
+        `Ошибка: ${message} "${nodeDetail.title ?? "без названия"}"`,
+        undefined,
+        message,
+        { documentId: job.documentId, documentTitle: nodeDetail.title },
+      );
       await markJobError(message);
       return;
     }
     workerLog(`created ${chunkSet.chunks.length} chunks for job ${job.id}`);
+    await addIndexingActionEvent(
+      job.workspaceId,
+      job.baseId,
+      "chunking",
+      `Создано ${chunkSet.chunks.length} фрагментов для документа "${nodeDetail.title ?? "без названия"}"`,
+      undefined,
+      { documentId: job.documentId, documentTitle: nodeDetail.title, chunkCount: chunkSet.chunks.length },
+    );
     logToFile(
       `chunking done doc=${job.documentId} job=${job.id} chunks=${chunkSet.chunks.length} durationMs=${Date.now() - chunkingStartedAt}`,
     );
@@ -643,6 +907,15 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       if (error instanceof Error && error.stack) {
         workerLog(`ERROR stack: ${error.stack}`);
       }
+      await updateIndexingActionStatus(
+        job.workspaceId,
+        job.baseId,
+        "error",
+        `Ошибка получения токена доступа для провайдера '${embeddingProvider.name}': ${errorMsg}`,
+        undefined,
+        errorMsg,
+        { documentId: job.documentId, documentTitle: nodeDetail.title, providerId: embeddingProvider.id },
+      );
       await markJobError(`Ошибка получения токена доступа: ${errorMsg}`);
       return;
     }
@@ -660,6 +933,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       job.baseId,
       "vectorizing",
       `Векторизуем фрагменты документа "${nodeDetail.title ?? "без названия"}" (0 из ${chunkSet.chunks.length})...`,
+      undefined,
+      undefined,
+      { documentId: job.documentId, documentTitle: nodeDetail.title, totalChunks: chunkSet.chunks.length },
     );
 
     const vectorizationStartedAt = Date.now();
@@ -689,6 +965,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
             {
               progressPercent: Math.round(((index + 1) / chunkSet.chunks.length) * 100),
             },
+            undefined,
+            { documentId: job.documentId, documentTitle: nodeDetail.title, processedChunks: index + 1, totalChunks: chunkSet.chunks.length },
           );
         }
       } catch (embeddingError) {
@@ -701,6 +979,15 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
           workerLog(`ERROR cause: ${embeddingError.cause}`);
         }
         const errorMessage = embeddingError instanceof Error ? embeddingError.message : String(embeddingError);
+        await updateIndexingActionStatus(
+          job.workspaceId,
+          job.baseId,
+          "error",
+          `Ошибка эмбеддинга чанка #${index + 1} документа "${nodeDetail.title ?? "без названия"}": ${errorMessage}`,
+          undefined,
+          errorMessage,
+          { documentId: job.documentId, documentTitle: nodeDetail.title, chunkIndex: index + 1, totalChunks: chunkSet.chunks.length },
+        );
         await markJobError(`Ошибка эмбеддинга чанка #${index + 1}: ${errorMessage}`);
         return;
       }
@@ -712,6 +999,15 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
 
     if (embeddingResults.length === 0) {
       const message = "Не удалось получить эмбеддинги для документа";
+      await updateIndexingActionStatus(
+        job.workspaceId,
+        job.baseId,
+        "error",
+        `Ошибка: ${message} "${nodeDetail.title ?? "без названия"}"`,
+        undefined,
+        message,
+        { documentId: job.documentId, documentTitle: nodeDetail.title },
+      );
       await markJobError(message);
       return;
     }
@@ -719,6 +1015,15 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
     const firstVector = embeddingResults[0]?.vector;
     if (!Array.isArray(firstVector) || firstVector.length === 0) {
       const message = "Сервис эмбеддингов вернул пустой вектор";
+      await updateIndexingActionStatus(
+        job.workspaceId,
+        job.baseId,
+        "error",
+        `Ошибка: ${message} для документа "${nodeDetail.title ?? "без названия"}"`,
+        undefined,
+        message,
+        { documentId: job.documentId, documentTitle: nodeDetail.title },
+      );
       await markJobError(message);
       return;
     }
@@ -744,6 +1049,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       job.baseId,
       "vectorizing",
       `Загружаем векторы документа "${nodeDetail.title ?? "без названия"}" в коллекцию...`,
+      undefined,
+      undefined,
+      { documentId: job.documentId, documentTitle: nodeDetail.title, collectionName, vectorCount: embeddingResults.length },
     );
 
     // Подготавливаем payload с использованием schema из политики
@@ -933,6 +1241,9 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
       job.baseId,
       "verifying",
       `Проверяем загруженные данные документа "${nodeDetail.title ?? "без названия"}"...`,
+      undefined,
+      undefined,
+      { documentId: job.documentId, documentTitle: nodeDetail.title, vectorCount: embeddingResults.length },
     );
 
     // Обновляем vectorRecordId в чанках
@@ -1078,6 +1389,8 @@ async function processJob(job: KnowledgeBaseIndexingJob): Promise<void> {
         "error",
         `Ошибка индексации документа: ${errorMessage}`,
         { error: errorMessage },
+        errorMessage,
+        { documentId: job.documentId, attempts: job.attempts },
       );
     }
   } catch (outerError) {

@@ -55,6 +55,19 @@ function formatJobStatus(status: IndexingLogResponse["jobs"][number]["status"]):
   return statusMap[status] ?? status;
 }
 
+function formatStageName(stage: string): string {
+  const stageMap: Record<string, string> = {
+    initializing: "Инициализация",
+    creating_collection: "Создание коллекции",
+    chunking: "Чанкинг",
+    vectorizing: "Векторизация",
+    verifying: "Проверка",
+    completed: "Завершено",
+    error: "Ошибка",
+  };
+  return stageMap[stage] ?? stage;
+}
+
 export function formatIndexingLog(log: IndexingLogResponse): string {
   const lines: string[] = [];
 
@@ -66,7 +79,34 @@ export function formatIndexingLog(log: IndexingLogResponse): string {
   lines.push(`Время начала: ${formatDateTime(log.summary.startedAt)}`);
   lines.push(`Время завершения: ${formatDateTime(log.summary.finishedAt)}`);
   lines.push(`Запустил: ${formatUser(log.summary.userName, log.summary.userEmail)}`);
+  if (log.summary.displayText) {
+    lines.push(`Описание: ${log.summary.displayText}`);
+  }
   lines.push("");
+
+  // Конфигурация
+  if (log.config && Object.keys(log.config).length > 0) {
+    lines.push("=== Конфигурация ===");
+    if (log.config.providerId) {
+      lines.push(`Провайдер эмбеддингов: ${log.config.providerName ?? log.config.providerId}`);
+      if (log.config.providerId && typeof log.config.providerId === "string") {
+        lines.push(`  ID: ${log.config.providerId}`);
+      }
+    }
+    if (log.config.model) {
+      lines.push(`Модель: ${log.config.model}`);
+    }
+    if (log.config.chunkSize !== null && log.config.chunkSize !== undefined) {
+      lines.push(`Размер чанка: ${log.config.chunkSize}`);
+    }
+    if (log.config.chunkOverlap !== null && log.config.chunkOverlap !== undefined) {
+      lines.push(`Перекрытие чанков: ${log.config.chunkOverlap}`);
+    }
+    if (log.config.mode) {
+      lines.push(`Режим индексации: ${log.config.mode === "full" ? "Полная" : "Только изменения"}`);
+    }
+    lines.push("");
+  }
 
   // Сводка
   lines.push("=== Сводка ===");
@@ -75,6 +115,38 @@ export function formatIndexingLog(log: IndexingLogResponse): string {
   lines.push(`С ошибками: ${log.summary.failedDocuments}`);
   lines.push(`Всего чанков: ${log.summary.totalChunks.toLocaleString("ru-RU")}`);
   lines.push("");
+
+  // События (хронология этапов)
+  if (log.events && log.events.length > 0) {
+    lines.push("=== События (хронология) ===");
+    log.events.forEach((event, index) => {
+      lines.push(`${index + 1}. [${formatDateTime(event.timestamp)}] ${formatStageName(event.stage)}: ${event.message}`);
+      if (event.error) {
+        lines.push(`   ❌ Ошибка: ${event.error}`);
+      }
+      if (event.metadata && Object.keys(event.metadata).length > 0) {
+        const metadataStr = Object.entries(event.metadata)
+          .map(([key, value]) => `${key}=${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
+          .join(", ");
+        if (metadataStr) {
+          lines.push(`   📋 ${metadataStr}`);
+        }
+      }
+    });
+    lines.push("");
+  }
+
+  // Ошибки (агрегированные)
+  if (log.errors && log.errors.length > 0) {
+    lines.push("=== Ошибки ===");
+    log.errors.forEach((error, index) => {
+      lines.push(`${index + 1}. Документ: "${error.documentTitle}" (ID: ${error.documentId})`);
+      lines.push(`   Время: ${formatDateTime(error.timestamp)}`);
+      lines.push(`   Этап: ${formatStageName(error.stage)}`);
+      lines.push(`   Ошибка: ${error.error}`);
+      lines.push("");
+    });
+  }
 
   // Детали по документам
   lines.push("=== Детали по документам ===");

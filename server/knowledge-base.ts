@@ -49,7 +49,9 @@ import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
 import { knowledgeBaseIndexingActionsService } from "./knowledge-base-indexing-actions";
 import { knowledgeBaseIndexingStateService } from "./knowledge-base-indexing-state";
+import { knowledgeBaseIndexingPolicyService } from "./knowledge-base-indexing-policy";
 import { getQdrantClient, QdrantConfigurationError } from "./qdrant";
+import { resolveEmbeddingProviderStatus } from "./embedding-provider-registry";
 
 export class KnowledgeBaseError extends Error {
   public status: number;
@@ -1132,14 +1134,98 @@ export async function startKnowledgeBaseIndexing(
   let actionId: string | undefined;
   try {
     actionId = randomUUID();
+    
+    // Получаем конфигурацию для сохранения в action и валидации
+    let configPayload: Record<string, unknown> = {
+      mode,
+    };
+    
+    let validationError: string | null = null;
+    
+    try {
+      const policy = await knowledgeBaseIndexingPolicyService.get();
+      if (policy) {
+        const providerId = policy.embeddingsProvider;
+        let providerName: string | null = null;
+        
+        // Валидация конфигурации
+        if (!providerId) {
+          validationError = "Сервис эмбеддингов не указан в политике индексации баз знаний. Проверьте настройки в админ-панели.";
+        } else {
+          try {
+            const providerStatus = await resolveEmbeddingProviderStatus(providerId, undefined);
+            if (!providerStatus) {
+              validationError = `Провайдер эмбеддингов '${providerId}' не найден. Проверьте настройки в админ-панели.`;
+            } else if (!providerStatus.isConfigured) {
+              validationError = `Провайдер эмбеддингов '${providerId}' не активирован. ${providerStatus.statusReason ? `Причина: ${providerStatus.statusReason}` : "Проверьте настройки в админ-панели."}`;
+            } else {
+              const provider = await storage.getEmbeddingProvider(providerId, undefined);
+              if (provider) {
+                providerName = provider.name;
+              }
+            }
+          } catch (error) {
+            validationError = `Ошибка проверки провайдера эмбеддингов: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
+        
+        configPayload = {
+          ...configPayload,
+          providerId: providerId ?? null,
+          providerName: providerName ?? null,
+          model: policy.embeddingsModel ?? null,
+          chunkSize: policy.chunkSize ?? null,
+          chunkOverlap: policy.chunkOverlap ?? null,
+        };
+      } else {
+        validationError = "Не удалось получить политику индексации баз знаний";
+      }
+    } catch (error) {
+      validationError = `Ошибка получения политики индексации: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    
     await knowledgeBaseIndexingActionsService.start(workspaceId, baseId, actionId, "initializing", userId);
+    
+    // Если есть ошибка валидации, сразу завершаем action
+    if (validationError) {
+      await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
+        status: "error",
+        stage: "error",
+        displayText: `Ошибка: ${validationError}`,
+        payload: {
+          config: configPayload,
+          totalDocuments: documents.length,
+          processedDocuments: 0,
+          progressPercent: 0,
+          events: [
+            {
+              timestamp: new Date().toISOString(),
+              stage: "error",
+              message: `Ошибка валидации конфигурации: ${validationError}`,
+              error: validationError,
+            },
+          ],
+        },
+      });
+      return { jobCount: 0, actionId, documentIds: [] };
+    }
+    
     await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
       stage: "initializing",
       displayText: `Инициализация индексации ${documents.length} документов...`,
       payload: {
+        config: configPayload,
         totalDocuments: documents.length,
         processedDocuments: 0,
         progressPercent: 0,
+        events: [
+          {
+            timestamp: new Date().toISOString(),
+            stage: "initializing",
+            message: `Начало индексации ${documents.length} документов (режим: ${mode})`,
+            metadata: { mode, documentCount: documents.length },
+          },
+        ],
       },
     });
   } catch (error) {
@@ -1300,10 +1386,15 @@ export async function startKnowledgeBaseIndexing(
   if (actionId) {
     try {
       if (jobCount > 0) {
+        // Получаем текущий payload, чтобы сохранить config и events
+        const currentAction = await knowledgeBaseIndexingActionsService.get(workspaceId, baseId, actionId);
+        const currentPayload = (currentAction?.payload ?? {}) as Record<string, unknown>;
+        
         await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
           stage: "initializing",
           displayText: `Запущена индексация ${jobCount} документов. Процесс выполняется в фоновом режиме.`,
           payload: {
+            ...currentPayload, // Сохраняем config и events
             totalDocuments: jobCount,
             processedDocuments: 0,
             progressPercent: 0,

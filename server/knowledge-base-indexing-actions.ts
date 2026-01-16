@@ -239,6 +239,23 @@ export class KnowledgeBaseIndexingActionsService {
       action.updatedAt,
     );
 
+    const payload = (dto.payload ?? {}) as Record<string, unknown>;
+    const config = (payload.config ?? {}) as Record<string, unknown>;
+    const events = (Array.isArray(payload.events) ? payload.events : []) as Array<{
+      timestamp: string;
+      stage: string;
+      message: string;
+      error?: string;
+      metadata?: Record<string, unknown>;
+    }>;
+    const errors = (Array.isArray(payload.errors) ? payload.errors : []) as Array<{
+      documentId: string;
+      documentTitle: string;
+      error: string;
+      stage: string;
+      timestamp: string;
+    }>;
+
     return {
       actionId: dto.actionId,
       summary: {
@@ -252,6 +269,9 @@ export class KnowledgeBaseIndexingActionsService {
         userEmail,
         ...stats,
       },
+      config: Object.keys(config).length > 0 ? config : null,
+      events: events.length > 0 ? events : null,
+      errors: errors.length > 0 ? errors : null,
       jobs: jobs.map((job) => ({
         jobId: job.id,
         documentId: job.documentId,

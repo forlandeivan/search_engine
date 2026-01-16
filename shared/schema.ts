@@ -843,6 +843,21 @@ export type IndexingHistoryResponse = {
 };
 
 export type IndexingLogResponse = {
+  config?: Record<string, unknown> | null;
+  events?: Array<{
+    timestamp: string;
+    stage: string;
+    message: string;
+    error?: string;
+    metadata?: Record<string, unknown>;
+  }> | null;
+  errors?: Array<{
+    documentId: string;
+    documentTitle: string;
+    error: string;
+    stage: string;
+    timestamp: string;
+  }> | null;
   actionId: string;
   summary: {
     status: KnowledgeBaseIndexingActionStatus;
