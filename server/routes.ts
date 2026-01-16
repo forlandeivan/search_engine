@@ -3379,7 +3379,8 @@ interface SanitizedVectorSearchResult {
 interface KnowledgeBaseRagPipelineSuccess {
   response: {
     query: string;
-    knowledgeBaseId: string;
+    knowledgeBaseId: string; // Для обратной совместимости
+    knowledgeBaseIds?: string[]; // Новое поле для списка БЗ
     normalizedQuery: string;
     answer: string;
     citations: Array<{
@@ -3392,6 +3393,7 @@ interface KnowledgeBaseRagPipelineSuccess {
       scores: { bm25: number; vector: number };
       node_id: string | null;
       node_slug: string | null;
+      knowledge_base_id?: string | null; // Добавляем информацию о БЗ
     }>;
     chunks: Array<{
       chunk_id: string;
@@ -3404,6 +3406,7 @@ interface KnowledgeBaseRagPipelineSuccess {
       scores: { bm25: number; vector: number };
       node_id: string | null;
       node_slug: string | null;
+      knowledge_base_id?: string | null; // Добавляем информацию о БЗ
     }>;
     usage: { embeddingTokens: number | null; llmTokens: number | null };
     timings: {
@@ -3849,18 +3852,33 @@ async function runKnowledgeBaseRagPipeline(options: {
   };
 
   try {
-    const base = await storage.getKnowledgeBase(knowledgeBaseId);
-    if (!base) {
+    // Проверяем, что все БЗ существуют и принадлежат одному workspace
+    const bases = await Promise.all(
+      knowledgeBaseIds.map((kbId) => storage.getKnowledgeBase(kbId)),
+    );
+    
+    const missingBases = bases.filter((base) => !base);
+    if (missingBases.length > 0) {
       runStatus = "error";
-      runErrorMessage = "База знаний не найдена";
+      runErrorMessage = "Одна или несколько баз знаний не найдены";
       await finalizeRunLog();
-      throw new HttpError(404, "База знаний не найдена");
+      throw new HttpError(404, "Одна или несколько баз знаний не найдены");
     }
-
-    workspaceId = base.workspaceId;
+    
+    const allBases = bases.filter((base): base is NonNullable<typeof base> => base !== null);
+    const workspaceIds = new Set(allBases.map((base) => base.workspaceId));
+    
+    if (workspaceIds.size !== 1) {
+      runStatus = "error";
+      runErrorMessage = "Все базы знаний должны принадлежать одному рабочему пространству";
+      await finalizeRunLog();
+      throw new HttpError(400, "Все базы знаний должны принадлежать одному рабочему пространству");
+    }
+    
+    workspaceId = allBases[0].workspaceId;
 
     if (normalizedSkillId) {
-      const skill = await getSkillById(base.workspaceId, normalizedSkillId);
+      const skill = await getSkillById(workspaceId, normalizedSkillId);
       if (!skill) {
         runStatus = "error";
         runErrorMessage = "пїЅ?пїЅпїЅпїЅ?пїЅ<пїЅпїЅ пїЅ?пїЅпїЅ пїЅ?пїЅпїЅпїЅпїЅпїЅ?пїЅпїЅ?";
@@ -4472,6 +4490,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         vectorScore: number;
         nodeId: string | null;
         nodeSlug: string | null;
+        knowledgeBaseId?: string; // Добавляем информацию о БЗ
       }
     >();
 
@@ -4485,6 +4504,8 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     for (const entry of bm25Sections) {
       const snippet = entry.snippet || buildSnippet(entry.text);
+      // Получаем knowledgeBaseId из entry (если было добавлено в BM25 поиске)
+      const kbId = (entry as any).knowledgeBaseId;
       aggregated.set(entry.chunkId, {
         chunkId: entry.chunkId,
         documentId: entry.documentId,
@@ -4496,6 +4517,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         vectorScore: 0,
         nodeId: entry.nodeId ?? null,
         nodeSlug: entry.nodeSlug ?? null,
+        knowledgeBaseId: kbId,
       });
     }
 
@@ -4549,6 +4571,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         vectorScore: Math.max(existing?.vectorScore ?? 0, entry.score),
         nodeId,
         nodeSlug,
+        knowledgeBaseId: detail.knowledgeBaseId ?? existing?.knowledgeBaseId,
       });
 
       vectorDocumentIds.add(detail.documentId);
@@ -4609,6 +4632,7 @@ async function runKnowledgeBaseRagPipeline(options: {
             },
             node_id: item.nodeId ?? null,
             node_slug: item.nodeSlug ?? null,
+            knowledge_base_id: item.knowledgeBaseId ?? null, // Добавляем информацию о БЗ
           },
         });
       });
@@ -4630,12 +4654,14 @@ async function runKnowledgeBaseRagPipeline(options: {
           sectionTitle: item.sectionTitle,
           nodeId: item.nodeId,
           nodeSlug: item.nodeSlug,
+          knowledgeBaseId: item.knowledgeBaseId, // Добавляем информацию о БЗ
         },
         document: {
           id: item.documentId,
           title: item.docTitle,
           nodeId: item.nodeId,
           nodeSlug: item.nodeSlug,
+          knowledgeBaseId: item.knowledgeBaseId, // Добавляем информацию о БЗ
         },
         scores: {
           bm25: item.bm25Score,
@@ -4838,6 +4864,7 @@ async function runKnowledgeBaseRagPipeline(options: {
           },
           node_id: item.nodeId ?? null,
           node_slug: item.nodeSlug ?? null,
+          knowledge_base_id: item.knowledgeBaseId ?? null, // Добавляем информацию о БЗ
         }))
       : [];
 
@@ -4856,6 +4883,7 @@ async function runKnowledgeBaseRagPipeline(options: {
           },
           node_id: item.nodeId ?? null,
           node_slug: item.nodeSlug ?? null,
+          knowledge_base_id: item.knowledgeBaseId ?? null, // Добавляем информацию о БЗ
         }))
       : [];
 
@@ -4865,7 +4893,8 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     const response = {
       query,
-      knowledgeBaseId,
+      knowledgeBaseId, // Для обратной совместимости
+      knowledgeBaseIds, // Новое поле для списка БЗ
       normalizedQuery,
       answer: completion.answer,
       citations,
