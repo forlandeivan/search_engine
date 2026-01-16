@@ -50,6 +50,20 @@ export class ChatServiceError extends Error {
   }
 }
 
+/**
+ * Build a standardized error payload from ChatServiceError
+ */
+export function buildChatServiceErrorPayload(error: ChatServiceError): Record<string, unknown> {
+  const payload: Record<string, unknown> = { message: error.message };
+  if (error.code) {
+    payload.errorCode = error.code;
+  }
+  if (error.details !== undefined) {
+    payload.details = error.details;
+  }
+  return payload;
+}
+
 export type ChatSummary = {
   id: string;
   workspaceId: string;

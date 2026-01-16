@@ -24,8 +24,8 @@ import {
   addNoCodeStreamChunk,
   setNoCodeAssistantAction,
   buildChatServiceErrorPayload,
+  upsertBotActionForChat,
 } from '../chat-service';
-import { upsertBotActionForChat } from '../actions';
 import type { TranscriptStatus, AssistantActionType } from '@shared/schema';
 
 const logger = createLogger('no-code');

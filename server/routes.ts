@@ -7649,7 +7649,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       '/public/',
       '/api/auth/', // auth endpoints handle their own auth
     ];
-    if (publicPaths.some(path => fullPath.startsWith(path))) {
+    const isPublic = publicPaths.some(path => fullPath.startsWith(path));
+    if (isPublic) {
       return next();
     }
     return requireAuth(req, res, next);
@@ -11061,8 +11062,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   // ========================================================================
-  // VECTOR ROUTES - TODO: migrate to server/routes/vector.routes.ts (import issues to fix)
+  // VECTOR ROUTES MIGRATED TO: server/routes/vector.routes.ts
   // ========================================================================
+  /* VECTOR ROUTES MIGRATED - START
   // Vector search endpoints
   const qdrantCollectionsResponseSchema = z
     .object({
@@ -11487,6 +11489,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
     }
   });
+  VECTOR ROUTES MIGRATED - END */
 
   app.get("/api/skills", requireAuth, async (req, res, next) => {
     try {
@@ -13686,8 +13689,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   // ========================================================================
-  // NO-CODE ROUTES - TODO: migrate to server/routes/no-code.routes.ts (import issues to fix)
+  // NO-CODE ROUTES MIGRATED TO: server/routes/no-code.routes.ts
   // ========================================================================
+  /* NO-CODE ROUTES MIGRATED - START
   app.post("/api/no-code/callback/transcripts", async (req, res, next) => {
     try {
       const payload = noCodeCallbackTranscriptCreateSchema.parse(req.body ?? {});
@@ -13977,6 +13981,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  NO-CODE ROUTES MIGRATED - END */
 
   app.get(
     "/api/chat/sessions/:chatId/messages",
