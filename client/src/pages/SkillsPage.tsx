@@ -184,6 +184,7 @@ type KnowledgeBaseMultiSelectProps = {
   onChange: (next: string[]) => void;
   knowledgeBases: KnowledgeBaseSummary[];
   disabled?: boolean;
+  embeddingProviderName?: string | null;
 };
 
 type SkillActionConfigItem = {
@@ -253,7 +254,7 @@ function SkillActionsInline({ skillId }: { skillId: string }) {
   );
 }
 
-function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }: KnowledgeBaseMultiSelectProps) {
+function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled, embeddingProviderName }: KnowledgeBaseMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const selectedSet = useMemo(() => new Set(value), [value]);
   const selectedBases = useMemo(() => {
@@ -321,10 +322,15 @@ function KnowledgeBaseMultiSelect({ value, onChange, knowledgeBases, disabled }:
                       className="items-start"
                     >
                       <Check className={cn("mr-2 h-4 w-4", isSelected ? "opacity-100" : "opacity-0")} />
-                      <div className="space-y-0.5">
+                      <div className="space-y-0.5 flex-1">
                         <p className="text-sm font-medium leading-none">{kb.name}</p>
                         {kb.description && (
                           <p className="text-xs text-muted-foreground line-clamp-2">{kb.description}</p>
+                        )}
+                        {embeddingProviderName && (
+                          <p className="text-xs text-muted-foreground">
+                            Провайдер эмбеддингов: <span className="font-medium">{embeddingProviderName}</span>
+                          </p>
                         )}
                       </div>
                     </CommandItem>
@@ -1221,6 +1227,28 @@ export function SkillFormContent({
   }, [knowledgeBases]);
   const executionMode = form.watch("executionMode");
   const knowledgeBaseIds = form.watch("knowledgeBaseIds");
+  
+  // Получаем embedding-провайдер из правил индексации (если доступно для админов)
+  const indexingRulesQuery = useQuery({
+    queryKey: ["/api/admin/indexing-rules"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/admin/indexing-rules");
+      return (await response.json()) as { embeddingsProvider: string; embeddingsModel: string };
+    },
+    retry: false,
+    enabled: true, // Пытаемся загрузить, если пользователь админ
+    staleTime: 60000, // Кэшируем на 1 минуту
+  });
+  
+  // Получаем название embedding-провайдера из правил индексации (для админов)
+  const embeddingProviderFromRules = indexingRulesQuery.data?.embeddingsProvider;
+  const embeddingProviderName = useMemo(() => {
+    if (embeddingProviderFromRules && embeddingProviders.length > 0) {
+      const provider = embeddingProviders.find((p) => p.id === embeddingProviderFromRules);
+      return provider?.name ?? embeddingProviderFromRules;
+    }
+    return null;
+  }, [embeddingProviderFromRules, embeddingProviders]);
 
   // Автоматическое определение режима при изменении баз знаний
   useEffect(() => {
@@ -1753,8 +1781,18 @@ export function SkillFormContent({
                                       onChange={field.onChange}
                                       knowledgeBases={sortedKnowledgeBases}
                                       disabled={selectedKnowledgeBasesDisabled || controlsDisabled}
+                                      embeddingProviderName={embeddingProviderName}
                                     />
                                   </FormControl>
+                                  <FormDescription className="text-xs text-muted-foreground leading-tight">
+                                    {field.value.length > 0 && embeddingProviderName
+                                      ? `Все выбранные базы знаний используют embedding-провайдер "${embeddingProviderName}" из правил индексации`
+                                      : field.value.length > 0 && !embeddingProviderName && indexingRulesQuery.isError
+                                        ? "Не удалось загрузить информацию о embedding-провайдере. Валидация будет выполнена на сервере."
+                                        : field.value.length > 0 && !embeddingProviderName && !indexingRulesQuery.isError && !indexingRulesQuery.isLoading
+                                          ? "Все базы знаний используют embedding-провайдер из правил индексации"
+                                          : null}
+                                  </FormDescription>
                                   <FormMessage className="text-xs text-destructive leading-tight" />
                                 </FormItem>
                               )}

@@ -3365,6 +3365,7 @@ export interface KnowledgeBaseRagCombinedChunk {
   combinedScore: number;
   nodeId: string | null;
   nodeSlug: string | null;
+  knowledgeBaseId?: string; // Добавляем информацию о БЗ
 }
 
 interface SanitizedVectorSearchResult {
@@ -3624,15 +3625,28 @@ async function runKnowledgeBaseRagPipeline(options: {
     emitStreamEvent("status", { stage, message });
   };
   const query = body.q.trim();
-  const knowledgeBaseId = body.kb_id.trim();
+  // Поддержка нескольких БЗ: используем kb_ids если есть, иначе fallback на kb_id
+  const knowledgeBaseIds = Array.isArray(body.kb_ids) && body.kb_ids.length > 0
+    ? body.kb_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    : typeof body.kb_id === "string" && body.kb_id.trim().length > 0
+      ? [body.kb_id.trim()]
+      : [];
+  
+  if (knowledgeBaseIds.length === 0) {
+    throw new HttpError(400, "Не указана база знаний");
+  }
+  
+  const knowledgeBaseId = knowledgeBaseIds[0]; // Для обратной совместимости
   const wantsLlmStream = Boolean(stream);
   
-  console.log(`[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_id=${knowledgeBaseId}`);
+  console.log(`[RAG PIPELINE] START: query="${query.slice(0, 50)}...", kb_ids=[${knowledgeBaseIds.join(", ")}]`);
   console.log(`[RAG PIPELINE] stream param:`, stream ? 'PROVIDED' : 'NULL');
   console.log(`[RAG PIPELINE] wantsLlmStream:`, wantsLlmStream);
   console.log(`[RAG PIPELINE] body.collection=${body.collection}`);
+  console.log(`[RAG PIPELINE] body.collections=${Array.isArray(body.collections) ? body.collections.join(", ") : "N/A"}`);
   console.log(`[RAG PIPELINE] body.top_k=${body.top_k}`);
   console.log(`[RAG PIPELINE] body.hybrid.vector.collection=${body.hybrid?.vector?.collection}`);
+  console.log(`[RAG PIPELINE] body.hybrid.vector.collections=${Array.isArray(body.hybrid?.vector?.collections) ? body.hybrid.vector.collections.join(", ") : "N/A"}`);
   console.log(`[RAG PIPELINE] body.hybrid.vector.embedding_provider_id=${body.hybrid?.vector?.embedding_provider_id}`);
   console.log(`[RAG PIPELINE] effectiveTopK=${effectiveTopK}, effectiveMinScore=${effectiveMinScore}`);
 
@@ -3658,10 +3672,19 @@ async function runKnowledgeBaseRagPipeline(options: {
     typeof body.hybrid.vector.embedding_provider_id === "string"
       ? body.hybrid.vector.embedding_provider_id.trim()
       : "";
-  const requestedVectorCollection =
-    typeof body.hybrid.vector.collection === "string"
-      ? body.hybrid.vector.collection.trim()
-      : "";
+  
+  // Поддержка нескольких коллекций: используем collections если есть, иначе fallback на collection
+  const requestedVectorCollections = Array.isArray(body.hybrid?.vector?.collections) && body.hybrid.vector.collections.length > 0
+    ? body.hybrid.vector.collections.filter((col): col is string => typeof col === "string" && col.trim().length > 0)
+    : Array.isArray(body.collections) && body.collections.length > 0
+      ? body.collections.filter((col): col is string => typeof col === "string" && col.trim().length > 0)
+      : typeof body.hybrid.vector.collection === "string" && body.hybrid.vector.collection.trim().length > 0
+        ? [body.hybrid.vector.collection.trim()]
+        : typeof body.collection === "string" && body.collection.trim().length > 0
+          ? [body.collection.trim()]
+          : [];
+  
+  const requestedVectorCollection = requestedVectorCollections.length > 0 ? requestedVectorCollections[0] : "";
   const bm25WeightOverride = body.hybrid.bm25.weight;
   const vectorWeightOverride = body.hybrid.vector.weight;
   const hasBm25WeightOverride = bm25WeightOverride !== undefined;
@@ -3857,12 +3880,15 @@ async function runKnowledgeBaseRagPipeline(options: {
       skillCollectionFilter = [];
     }
 
+    // Поддержка нескольких коллекций: используем requestedVectorCollections если есть
     vectorCollectionsToSearch =
       skillCollectionFilter.length > 0
         ? skillCollectionFilter
-        : requestedVectorCollection
-          ? [requestedVectorCollection]
-          : [];
+        : requestedVectorCollections.length > 0
+          ? requestedVectorCollections
+          : requestedVectorCollection
+            ? [requestedVectorCollection]
+            : [];
     // TODO: validate that selected collections belong to the current workspace/knowledge base.
 
     vectorCollection =
@@ -3921,25 +3947,45 @@ async function runKnowledgeBaseRagPipeline(options: {
     if (bm25Weight > 0) {
       const bm25Step = startPipelineStep(
         "bm25_search",
-        { limit: suggestionLimit, weight: bm25Weight },
-        "BM25 РїРѕРёСЃРє",
+        { limit: suggestionLimit, weight: bm25Weight, knowledgeBaseIds },
+        "BM25 поиск",
       );
       const bm25Start = performance.now();
       try {
-        const bm25Suggestions = await storage.searchKnowledgeBaseSuggestions(
-          knowledgeBaseId,
-          query,
-          suggestionLimit,
+        // Выполняем BM25 поиск по всем выбранным БЗ и объединяем результаты
+        const bm25ResultsPromises = knowledgeBaseIds.map((kbId) =>
+          storage.searchKnowledgeBaseSuggestions(kbId, query, suggestionLimit),
         );
+        const bm25Results = await Promise.all(bm25ResultsPromises);
+        
         bm25Duration = performance.now() - bm25Start;
-        normalizedQuery = bm25Suggestions.normalizedQuery || query;
-        bm25Sections = bm25Suggestions.sections
-          .filter((entry) => entry.source === "content")
-          .slice(0, bm25Limit);
+        
+        // Используем normalizedQuery из первого результата
+        normalizedQuery = bm25Results[0]?.normalizedQuery || query;
+        
+        // Объединяем результаты из всех БЗ
+        const allBm25Sections: SuggestSections = [];
+        for (let i = 0; i < bm25Results.length; i++) {
+          const kbId = knowledgeBaseIds[i];
+          const sections = bm25Results[i]?.sections
+            .filter((entry) => entry.source === "content")
+            .map((entry) => ({
+              ...entry,
+              // Добавляем информацию о БЗ для идентификации источника
+              knowledgeBaseId: kbId,
+            }));
+          allBm25Sections.push(...sections);
+        }
+        
+        // Сортируем по релевантности и берем топ результатов
+        allBm25Sections.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+        bm25Sections = allBm25Sections.slice(0, bm25Limit);
         bm25ResultCount = bm25Sections.length;
+        
         bm25Step.finish({
           normalizedQuery,
           candidates: bm25ResultCount,
+          knowledgeBasesSearched: knowledgeBaseIds.length,
         });
       } catch (error) {
         bm25Duration = performance.now() - bm25Start;
@@ -4326,19 +4372,48 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     const chunkIdsFromVector = Array.from(new Set(vectorChunks.map((entry) => entry.chunkId).filter(Boolean)));
     
-    const chunkDetailsFromVector = await storage.getKnowledgeChunksByIds(
-      knowledgeBaseId,
-      chunkIdsFromVector,
+    // Получаем chunk details для всех БЗ
+    const chunkDetailsFromVectorPromises = knowledgeBaseIds.map((kbId) =>
+      storage.getKnowledgeChunksByIds(kbId, chunkIdsFromVector),
     );
+    const chunkDetailsFromVectorArrays = await Promise.all(chunkDetailsFromVectorPromises);
+    const chunkDetailsFromVector = chunkDetailsFromVectorArrays.flat();
+    
     const vectorRecordIds = vectorChunks
       .map((entry) => entry.recordId)
       .filter((value): value is string => Boolean(value));
-    const chunkDetailsFromRecords =
+    
+    // Получаем chunk details по record IDs для всех БЗ
+    const chunkDetailsFromRecordsPromises = knowledgeBaseIds.map((kbId) =>
       vectorRecordIds.length > 0
-        ? await storage.getKnowledgeChunksByVectorRecords(knowledgeBaseId, vectorRecordIds)
-        : [];
+        ? storage.getKnowledgeChunksByVectorRecords(kbId, vectorRecordIds)
+        : Promise.resolve([]),
+    );
+    const chunkDetailsFromRecordsArrays = await Promise.all(chunkDetailsFromRecordsPromises);
+    const chunkDetailsFromRecords = chunkDetailsFromRecordsArrays.flat();
     
 
+    // Создаем мапу для определения БЗ по коллекции
+    const collectionToKnowledgeBaseId = new Map<string, string>();
+    for (let i = 0; i < knowledgeBaseIds.length; i++) {
+      const kbId = knowledgeBaseIds[i];
+      if (i < vectorCollectionsToSearch.length) {
+        collectionToKnowledgeBaseId.set(vectorCollectionsToSearch[i], kbId);
+      }
+    }
+    
+    // Получаем БЗ для каждого chunk из векторных результатов
+    const chunkToKnowledgeBaseId = new Map<string, string>();
+    for (const { collection, record } of aggregatedVectorResults) {
+      const kbId = collectionToKnowledgeBaseId.get(collection);
+      if (kbId) {
+        const chunkId = typeof record.payload?.chunk_id === "string" ? record.payload.chunk_id : null;
+        if (chunkId) {
+          chunkToKnowledgeBaseId.set(chunkId, kbId);
+        }
+      }
+    }
+    
     const chunkDetailsMap = new Map<
       string,
       {
@@ -4348,11 +4423,13 @@ async function runKnowledgeBaseRagPipeline(options: {
         text: string;
         nodeId: string | null;
         nodeSlug: string | null;
+        knowledgeBaseId?: string; // Добавляем информацию о БЗ
       }
     >();
     const recordToChunk = new Map<string, string>();
 
     for (const detail of chunkDetailsFromVector) {
+      const kbId = chunkToKnowledgeBaseId.get(detail.chunkId);
       chunkDetailsMap.set(detail.chunkId, {
         documentId: detail.documentId,
         docTitle: detail.docTitle,
@@ -4360,10 +4437,12 @@ async function runKnowledgeBaseRagPipeline(options: {
         text: detail.text,
         nodeId: detail.nodeId,
         nodeSlug: detail.nodeSlug,
+        knowledgeBaseId: kbId,
       });
     }
 
     for (const detail of chunkDetailsFromRecords) {
+      const kbId = chunkToKnowledgeBaseId.get(detail.chunkId);
       chunkDetailsMap.set(detail.chunkId, {
         documentId: detail.documentId,
         docTitle: detail.docTitle,
@@ -4371,6 +4450,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         text: detail.text,
         nodeId: detail.nodeId,
         nodeSlug: detail.nodeSlug,
+        knowledgeBaseId: kbId,
       });
 
       if (detail.vectorRecordId) {

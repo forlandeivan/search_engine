@@ -29,6 +29,7 @@ import { mapDecisionToPayload, OperationBlockedError } from "./guards/errors";
 import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } from "./model-service";
 import { workspacePlanService } from "./workspace-plan-service";
 import { decryptSecret, encryptSecret } from "./secret-storage";
+import { indexingRulesService } from "./indexing-rules";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -796,6 +797,21 @@ export async function createSkill(
     normalizedBearerToken = null;
   }
   const normalizedEndpointUrl = normalized.noCodeEndpointUrl ?? null;
+  
+  // Валидация embedding-провайдера для выбранных БЗ
+  const selectedKnowledgeBases = normalized.knowledgeBaseIds ?? [];
+  if (selectedKnowledgeBases.length > 0) {
+    const indexingRules = await indexingRulesService.getIndexingRules();
+    const embeddingProviderId = indexingRules.embeddingsProvider;
+    if (!embeddingProviderId || embeddingProviderId.trim().length === 0) {
+      throw new SkillServiceError(
+        "Для использования баз знаний необходимо настроить embedding-провайдер в правилах индексации (Админ → Правила индексации → Навыки)",
+        400,
+        "EMBEDDING_PROVIDER_NOT_CONFIGURED",
+      );
+    }
+  }
+  
   const validKnowledgeBases = normalized.knowledgeBaseIds
     ? await filterWorkspaceKnowledgeBases(workspaceId, normalized.knowledgeBaseIds)
     : [];
@@ -1057,6 +1073,19 @@ export async function updateSkill(
     knowledgeBaseIdsForValidation = validKnowledgeBases;
   } else {
     knowledgeBaseIdsForValidation = await getSkillKnowledgeBaseIds(skillId, workspaceId);
+  }
+
+  // Валидация embedding-провайдера для выбранных БЗ
+  if (knowledgeBaseIdsForValidation.length > 0) {
+    const indexingRules = await indexingRulesService.getIndexingRules();
+    const embeddingProviderId = indexingRules.embeddingsProvider;
+    if (!embeddingProviderId || embeddingProviderId.trim().length === 0) {
+      throw new SkillServiceError(
+        "Для использования баз знаний необходимо настроить embedding-провайдер в правилах индексации (Админ → Правила индексации → Навыки)",
+        400,
+        "EMBEDDING_PROVIDER_NOT_CONFIGURED",
+      );
+    }
   }
 
   assertRagRequirements(nextRagConfig, knowledgeBaseIdsForValidation, submittedExecutionMode);

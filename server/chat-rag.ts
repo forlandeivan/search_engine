@@ -12,9 +12,11 @@ export type RagPipelineStream = {
 
 export type KnowledgeRagRequestPayload = {
   q: string;
-  kb_id: string;
+  kb_id: string; // Оставляем для обратной совместимости, но может быть устаревшим
+  kb_ids?: string[]; // Новое поле для списка БЗ
   top_k: number;
-  collection: string;
+  collection: string; // Оставляем для обратной совместимости
+  collections?: string[]; // Новое поле для списка коллекций
   skill_id?: string;
   hybrid: {
     bm25: {
@@ -24,7 +26,8 @@ export type KnowledgeRagRequestPayload = {
     vector: {
       weight?: number;
       limit?: number;
-      collection?: string;
+      collection?: string; // Оставляем для обратной совместимости
+      collections?: string[]; // Новое поле для списка коллекций
       embedding_provider_id?: string;
     };
   };
@@ -116,12 +119,14 @@ export async function buildSkillRagRequestPayload(options: {
     throw new SkillRagConfigurationError("Пустое сообщение невозможно отправить в RAG-пайплайн");
   }
 
-  const knowledgeBaseId = skill.knowledgeBaseIds?.[0];
-  if (!knowledgeBaseId) {
+  const knowledgeBaseIds = skill.knowledgeBaseIds ?? [];
+  if (knowledgeBaseIds.length === 0) {
     throw new SkillRagConfigurationError("У навыка не выбран источник (база знаний)");
   }
 
-  const searchSettingsRecord = await storage.getKnowledgeBaseSearchSettings(workspaceId, knowledgeBaseId);
+  // Получаем настройки поиска для первой БЗ (используем для общих настроек)
+  const firstKnowledgeBaseId = knowledgeBaseIds[0];
+  const searchSettingsRecord = await storage.getKnowledgeBaseSearchSettings(workspaceId, firstKnowledgeBaseId);
   const indexingRules = await indexingRulesService.getIndexingRules();
   
   const resolvedRagSettings = mergeRagSearchSettings(searchSettingsRecord?.ragSettings ?? null, {
@@ -135,7 +140,7 @@ export async function buildSkillRagRequestPayload(options: {
     throw new SkillRagConfigurationError("Сервис эмбеддингов не настроен в правилах индексации. Настройте его в админ-панели.");
   }
   
-  console.log(`[RAG BUILD PAYLOAD] embeddingProviderId=${embeddingProviderId}`);
+  console.log(`[RAG BUILD PAYLOAD] embeddingProviderId=${embeddingProviderId}, knowledgeBaseIds=[${knowledgeBaseIds.join(", ")}]`);
 
   const llmProviderId = sanitizeOptionalString(skill.llmProviderConfigId);
   if (!llmProviderId) {
@@ -180,16 +185,21 @@ export async function buildSkillRagRequestPayload(options: {
     clampInteger(resolvedRagSettings.vectorLimit ?? null, 1, 50) ??
     topK;
 
-  // Определяем коллекцию автоматически из базы знаний
+  // Определяем коллекции автоматически из баз знаний
   // Коллекция для БЗ формируется как: kb_{baseId}_ws_{workspaceId}
   const sanitizeCollectionName = (source: string): string => {
     const normalized = source.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
     return normalized.length > 0 ? normalized.slice(0, 60) : "default";
   };
 
-  const baseSlug = sanitizeCollectionName(knowledgeBaseId);
   const workspaceSlug = sanitizeCollectionName(workspaceId);
-  const vectorCollection = `kb_${baseSlug}_ws_${workspaceSlug}`;
+  const vectorCollections = knowledgeBaseIds.map((kbId) => {
+    const baseSlug = sanitizeCollectionName(kbId);
+    return `kb_${baseSlug}_ws_${workspaceSlug}`;
+  });
+  
+  // Для обратной совместимости оставляем первую коллекцию
+  const vectorCollection = vectorCollections[0];
 
 
   // Если используется только векторный поиск (есть vectorCollection), то по умолчанию bm25Weight=0, vectorWeight=1.0
@@ -209,9 +219,11 @@ export async function buildSkillRagRequestPayload(options: {
 
   const request: KnowledgeRagRequestPayload = {
     q: trimmedMessage,
-    kb_id: knowledgeBaseId,
+    kb_id: firstKnowledgeBaseId, // Для обратной совместимости
+    kb_ids: knowledgeBaseIds, // Новое поле для списка БЗ
     top_k: topK,
-    collection: vectorCollection,
+    collection: vectorCollection, // Для обратной совместимости
+    collections: vectorCollections, // Новое поле для списка коллекций
     skill_id: skill.id,
     hybrid: {
       bm25: {
@@ -221,7 +233,8 @@ export async function buildSkillRagRequestPayload(options: {
       vector: {
         weight: vectorWeight,
         limit: vectorLimit,
-        collection: vectorCollection,
+        collection: vectorCollection, // Для обратной совместимости
+        collections: vectorCollections, // Новое поле для списка коллекций
         embedding_provider_id: embeddingProviderId,
       },
     },
