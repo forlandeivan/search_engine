@@ -21,6 +21,7 @@ import {
   archiveSkill,
   getSkillById,
   SkillServiceError,
+  generateNoCodeCallbackToken,
 } from '../skills';
 import { actionsRepository } from '../actions';
 import { skillActionsRepository } from '../skill-actions';
@@ -307,6 +308,26 @@ skillRouter.put('/:skillId/actions/:actionId', asyncHandler(async (req, res) => 
       effectiveLabel: updatedSkillAction.labelOverride ?? action.label,
       editable: true,
     },
+  });
+}));
+
+/**
+ * POST /:skillId/no-code/callback-token
+ * Generate no-code callback token for skill
+ */
+skillRouter.post('/:skillId/no-code/callback-token', asyncHandler(async (req, res) => {
+  const workspaceId = resolveWorkspaceIdForRequest(req, null);
+  const skillId = req.params.skillId;
+  if (!skillId) {
+    return res.status(400).json({ message: 'Не указан идентификатор навыка' });
+  }
+
+  const result = await generateNoCodeCallbackToken({ workspaceId, skillId });
+  return res.status(201).json({
+    token: result.token,
+    lastFour: result.lastFour,
+    rotatedAt: result.rotatedAt,
+    skill: result.skill,
   });
 }));
 

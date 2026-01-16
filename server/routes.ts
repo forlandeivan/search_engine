@@ -11204,6 +11204,17 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   );
   SKILL GET/POST/PUT - MIGRATED END */
 
+  // ========================================================================
+  // SKILL FILES ENDPOINTS - TODO: MIGRATE TO skill-files.routes.ts
+  // These endpoints are complex with file uploads and vector operations
+  // ========================================================================
+  /* SKILL FILES MIGRATED - START
+  app.get("/api/workspaces/:workspaceId/skills/:skillId/files", ...);
+  app.post("/api/workspaces/:workspaceId/skills/:skillId/files", ...);
+  app.delete("/api/workspaces/:workspaceId/skills/:skillId/files/:fileId", ...);
+  SKILL FILES MIGRATED - END */
+
+  /* ORIGINAL SKILL FILES - KEEP FOR NOW - START
   app.get(
     "/api/workspaces/:workspaceId/skills/:skillId/files",
     requireAuth,
@@ -11767,37 +11778,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       }
     },
   );
+  ORIGINAL SKILL FILES - KEEP FOR NOW - END */
 
-  app.post(
-    "/api/skills/:skillId/no-code/callback-token",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true, allowSessionFallback: true }),
-    async (req, res, next) => {
-    try {
-      const workspaceId = req.workspaceContext?.workspaceId ?? getRequestWorkspace(req).id;
-      const skillId = req.params.skillId;
-      if (!skillId) {
-        return res.status(400).json({ message: "Не указан идентификатор навыка" });
-      }
-
-      const result = await generateNoCodeCallbackToken({ workspaceId, skillId });
-      return res.status(201).json({
-        token: result.token,
-        lastFour: result.lastFour,
-        rotatedAt: result.rotatedAt,
-        skill: result.skill,
-      });
-    } catch (error) {
-      if (error instanceof SkillServiceError) {
-        return res
-          .status(error.status)
-          .json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
-      }
-
-      next(error);
-    }
-    },
-  );
+  // MIGRATED TO: server/routes/skill.routes.ts
+  /* NO-CODE CALLBACK TOKEN MIGRATED - START
+  app.post("/api/skills/:skillId/no-code/callback-token", ...);
+  NO-CODE CALLBACK TOKEN MIGRATED - END */
 
   // MIGRATED TO: server/routes/skill.routes.ts
   /* DELETE /api/skills/:skillId - MIGRATED
