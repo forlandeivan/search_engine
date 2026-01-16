@@ -78,7 +78,9 @@ export async function recordEmbeddingUsageSafe(params: {
 export interface TokenMeasurement {
   quantityRaw: number;
   quantityBilled: number;
-  unit: string;
+  quantityUnits: number;
+  quantity: number;
+  unit: 'TOKENS_1K' | 'MINUTES';
 }
 
 export function measureTokensForModel(
@@ -89,12 +91,15 @@ export function measureTokensForModel(
     return null;
   }
 
-  const unit = options.consumptionUnit ?? 'TOKENS_1K';
+  const unit = (options.consumptionUnit ?? 'TOKENS_1K') as 'TOKENS_1K' | 'MINUTES';
   
   if (unit === 'TOKENS_1K') {
+    const quantityBilled = Math.ceil(tokens / 1000);
     return {
       quantityRaw: tokens,
-      quantityBilled: Math.ceil(tokens / 1000),
+      quantityBilled,
+      quantityUnits: quantityBilled,
+      quantity: quantityBilled,
       unit,
     };
   }
@@ -102,6 +107,8 @@ export function measureTokensForModel(
   return {
     quantityRaw: tokens,
     quantityBilled: tokens,
+    quantityUnits: tokens,
+    quantity: tokens,
     unit,
   };
 }

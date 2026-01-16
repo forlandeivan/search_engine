@@ -346,6 +346,7 @@ function formatZodValidationError(error: z.ZodError, endpoint?: string): {
   };
 }
 import { callRagForSkillChat, SkillRagConfigurationError } from "./chat-rag";
+import { setRagPipelineImpl } from "./lib/rag-pipeline";
 import {
   fetchLlmCompletion,
   executeLlmCompletion,
@@ -5221,6 +5222,9 @@ function buildExcerpt(content: string | null | undefined, query: string, maxLeng
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Initialize RAG pipeline for modular routes
+  setRagPipelineImpl(runKnowledgeBaseRagPipeline);
+
   const httpDebug = process.env.DEBUG_HTTP === "1";
   if (httpDebug) {
     app.use((req, _res, next) => {
@@ -12927,6 +12931,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     },
   );
 
+  // ========================================================================
+  // MIGRATED TO: server/routes/chat.routes.ts
+  // ========================================================================
+  /* CHAT LLM ENDPOINT MIGRATED - START
   app.post("/api/chat/sessions/:chatId/messages/llm", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -13638,6 +13646,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  CHAT LLM ENDPOINT MIGRATED - END */
 
   // ========================================================================
   // NO-CODE ROUTES MIGRATED TO: server/routes/no-code.routes.ts
