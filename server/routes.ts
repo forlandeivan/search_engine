@@ -15351,6 +15351,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   TRANSCRIBE OPERATIONS MIGRATED - END */
 
+  // MIGRATED TO: server/routes/transcribe.routes.ts
+  /* TRANSCRIBE COMPLETE MIGRATED - START
   app.post("/api/chat/transcribe/complete/:operationId", requireAuth, async (req, res, next) => {
     const user = getAuthorizedUser(req, res);
     if (!user) {
@@ -15644,6 +15646,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
+  TRANSCRIBE COMPLETE MIGRATED - END */
 
   // MIGRATED TO: server/routes/transcribe.routes.ts
   /* TRANSCRIBE STATUS MIGRATED - START
