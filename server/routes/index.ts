@@ -6,8 +6,12 @@ import { createLogger } from '../lib/logger';
 import { authRouter, configureAuthRouter } from './auth.routes';
 import { userRouter } from './user.routes';
 import { workspaceRouter } from './workspace.routes';
-import { adminRouter } from './admin';
-import { vectorRouter } from './vector.routes';
+// TODO: Fix admin router imports before enabling
+// import { adminRouter } from './admin';
+// TODO: Fix vector router imports before enabling
+// import { vectorRouter } from './vector.routes';
+// TODO: Fix no-code router imports before enabling  
+// import { noCodeRouter } from './no-code.routes';
 
 const routerLogger = createLogger('router');
 
@@ -53,13 +57,20 @@ export function registerRouteModules(app: Express): void {
   app.use('/api/workspaces', workspaceRouter);
   routerLogger.info('Registered: /api/workspaces');
   
-  // Admin routes (requireAdmin middleware applied in routes.ts)
-  app.use('/api/admin', adminRouter);
-  routerLogger.info('Registered: /api/admin');
+  // Admin routes - temporarily disabled due to import issues
+  // TODO: Fix admin router imports before enabling
+  // app.use('/api/admin', adminRouter);
+  // routerLogger.info('Registered: /api/admin');
   
-  // Vector routes (Qdrant operations)
-  app.use('/api/vector', vectorRouter);
-  routerLogger.info('Registered: /api/vector');
+  // Vector routes - temporarily disabled due to import issues
+  // TODO: Fix vector router imports before enabling
+  // app.use('/api/vector', vectorRouter);
+  // routerLogger.info('Registered: /api/vector');
+  
+  // No-code routes - temporarily disabled due to import issues
+  // TODO: Fix no-code router imports before enabling
+  // app.use('/api/no-code', noCodeRouter);
+  // routerLogger.info('Registered: /api/no-code');
   
   // Route modules will be registered here as they are migrated
   // Example:

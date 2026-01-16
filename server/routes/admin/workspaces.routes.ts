@@ -22,7 +22,7 @@ import {
   mapFileStorageProvider,
 } from '../../file-storage-provider-service';
 import { workspacePlanService, WorkspacePlanServiceError } from '../../workspace-plan-service';
-import { creditsService, CreditsServiceError } from '../../credits-service';
+import { creditsService } from '../../credits-service';
 
 const logger = createLogger('admin-workspaces');
 
@@ -160,8 +160,8 @@ adminWorkspacesRouter.post('/:workspaceId/credits/adjust', asyncHandler(async (r
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid payload', details: error.issues });
     }
-    if (error instanceof CreditsServiceError) {
-      return res.status(error.status).json({ message: error.message });
+    if (error instanceof Error && 'status' in error) {
+      return res.status((error as any).status || 500).json({ message: error.message });
     }
     throw error;
   }
@@ -175,8 +175,8 @@ adminWorkspacesRouter.get('/:workspaceId/credits/adjustments/recent', asyncHandl
     const adjustments = await creditsService.getRecentAdjustments(req.params.workspaceId);
     res.json({ adjustments });
   } catch (error) {
-    if (error instanceof CreditsServiceError) {
-      return res.status(error.status).json({ message: error.message });
+    if (error instanceof Error && 'status' in error) {
+      return res.status((error as any).status || 500).json({ message: error.message });
     }
     throw error;
   }

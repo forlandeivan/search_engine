@@ -7639,7 +7639,21 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
   AUTH ROUTES MIGRATED - END */
 
-  app.use("/api", requireAuth);
+  // Apply requireAuth to all /api/* EXCEPT public endpoints
+  app.use("/api", (req, res, next) => {
+    // Skip auth for no-code callbacks and public endpoints
+    const fullPath = req.originalUrl || req.url;
+    const publicPaths = [
+      '/api/no-code/',
+      '/api/public/',
+      '/public/',
+      '/api/auth/', // auth endpoints handle their own auth
+    ];
+    if (publicPaths.some(path => fullPath.startsWith(path))) {
+      return next();
+    }
+    return requireAuth(req, res, next);
+  });
 
   const updateProfileSchema = z.object({
     firstName: z
@@ -8456,9 +8470,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   USER ROUTES MIGRATED - END */
 
   // ========================================================================
-  // ADMIN ROUTES MIGRATED TO: server/routes/admin/
+  // ADMIN ROUTES - TODO: migrate to server/routes/admin/ (import issues to fix)
   // ========================================================================
-  /* ADMIN ROUTES MIGRATED - START
   app.get("/api/admin/knowledge-base-indexing-policy", requireAdmin, async (_req, res, next) => {
     try {
       const policy = await knowledgeBaseIndexingPolicyService.get();
@@ -11046,12 +11059,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       next(error);
     }
   });
-  ADMIN ROUTES MIGRATED - END */
 
   // ========================================================================
-  // VECTOR ROUTES MIGRATED TO: server/routes/vector.routes.ts
+  // VECTOR ROUTES - TODO: migrate to server/routes/vector.routes.ts (import issues to fix)
   // ========================================================================
-  /* VECTOR ROUTES MIGRATED - START
   // Vector search endpoints
   const qdrantCollectionsResponseSchema = z
     .object({
@@ -11476,7 +11487,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
     }
   });
-  VECTOR ROUTES PART 1 MIGRATED - END */
 
   app.get("/api/skills", requireAuth, async (req, res, next) => {
     try {
@@ -13675,6 +13685,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
+  // ========================================================================
+  // NO-CODE ROUTES - TODO: migrate to server/routes/no-code.routes.ts (import issues to fix)
+  // ========================================================================
   app.post("/api/no-code/callback/transcripts", async (req, res, next) => {
     try {
       const payload = noCodeCallbackTranscriptCreateSchema.parse(req.body ?? {});
@@ -15657,7 +15670,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  /* VECTOR ROUTES PART 2 MIGRATED - START
   app.post("/api/vector/collections/:name/points", async (req, res) => {
     try {
       const { id: workspaceId } = getRequestWorkspace(req);
@@ -16324,7 +16336,6 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       });
     }
   });
-  VECTOR ROUTES PART 2 MIGRATED - END */
 
   // Sites management
 
