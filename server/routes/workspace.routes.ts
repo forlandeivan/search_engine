@@ -23,6 +23,14 @@ import { asyncHandler } from '../middleware/async-handler';
 import { workspaceMemberRoles, type PublicUser, type User } from '@shared/schema';
 import type { WorkspaceMemberWithUser } from '../storage';
 import {
+  getWorkspaceLlmUsageSummary,
+  getWorkspaceAsrUsageSummary,
+  getWorkspaceEmbeddingUsageSummary,
+  getWorkspaceStorageUsageSummary,
+  getWorkspaceObjectsUsageSummary,
+  getWorkspaceQdrantUsage,
+} from '../usage/usage-service';
+import {
   clearWorkspaceIcon,
   uploadWorkspaceIcon,
   workspaceIconUpload,
@@ -454,6 +462,87 @@ workspaceRouter.get('/:workspaceId/icon', asyncHandler(async (req, res) => {
     res.setHeader('Content-Type', icon.contentType);
   }
   icon.body.pipe(res);
+}));
+
+// ============================================================================
+// Usage Endpoints
+// ============================================================================
+
+/**
+ * GET /:workspaceId/usage/llm
+ * Get LLM usage summary for workspace
+ */
+workspaceRouter.get('/:workspaceId/usage/llm', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+  
+  const period = typeof req.query.period === 'string' ? req.query.period : undefined;
+  const summary = await getWorkspaceLlmUsageSummary(req.params.workspaceId, period);
+  res.json(summary);
+}));
+
+/**
+ * GET /:workspaceId/usage/asr
+ * Get ASR usage summary for workspace
+ */
+workspaceRouter.get('/:workspaceId/usage/asr', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+  
+  const period = typeof req.query.period === 'string' ? req.query.period : undefined;
+  const summary = await getWorkspaceAsrUsageSummary(req.params.workspaceId, period);
+  res.json(summary);
+}));
+
+/**
+ * GET /:workspaceId/usage/embeddings
+ * Get embeddings usage summary for workspace
+ */
+workspaceRouter.get('/:workspaceId/usage/embeddings', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+  
+  const period = typeof req.query.period === 'string' ? req.query.period : undefined;
+  const summary = await getWorkspaceEmbeddingUsageSummary(req.params.workspaceId, period);
+  res.json(summary);
+}));
+
+/**
+ * GET /:workspaceId/usage/storage
+ * Get storage usage summary for workspace
+ */
+workspaceRouter.get('/:workspaceId/usage/storage', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+  
+  const period = typeof req.query.period === 'string' ? req.query.period : undefined;
+  const summary = await getWorkspaceStorageUsageSummary(req.params.workspaceId, period);
+  res.json(summary);
+}));
+
+/**
+ * GET /:workspaceId/usage/objects
+ * Get objects usage summary for workspace
+ */
+workspaceRouter.get('/:workspaceId/usage/objects', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+  
+  const period = typeof req.query.period === 'string' ? req.query.period : undefined;
+  const summary = await getWorkspaceObjectsUsageSummary(req.params.workspaceId, period);
+  res.json(summary);
+}));
+
+/**
+ * GET /:workspaceId/usage/qdrant
+ * Get Qdrant usage for workspace
+ */
+workspaceRouter.get('/:workspaceId/usage/qdrant', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+  
+  const usage = await getWorkspaceQdrantUsage(req.params.workspaceId);
+  res.json(usage);
 }));
 
 export default workspaceRouter;

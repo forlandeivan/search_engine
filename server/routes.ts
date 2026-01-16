@@ -5251,124 +5251,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Register modular routes (migrated from this file)
   registerRouteModules(app);
 
-  app.get(
-    "/api/workspaces/:workspaceId/usage/llm",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
-    async (req, res, next) => {
-      const user = getAuthorizedUser(req, res);
-      if (!user) {
-        return;
-      }
-
-      try {
-        const period = typeof req.query.period === "string" ? req.query.period : undefined;
-        const summary = await getWorkspaceLlmUsageSummary(req.params.workspaceId, period);
-        res.json(summary);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  app.get(
-    "/api/workspaces/:workspaceId/usage/asr",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
-    async (req, res, next) => {
-      const user = getAuthorizedUser(req, res);
-      if (!user) {
-        return;
-      }
-
-      try {
-        const period = typeof req.query.period === "string" ? req.query.period : undefined;
-        const summary = await getWorkspaceAsrUsageSummary(req.params.workspaceId, period);
-        res.json(summary);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  app.get(
-    "/api/workspaces/:workspaceId/usage/embeddings",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
-    async (req, res, next) => {
-      const user = getAuthorizedUser(req, res);
-      if (!user) {
-        return;
-      }
-
-      try {
-        const period = typeof req.query.period === "string" ? req.query.period : undefined;
-        const summary = await getWorkspaceEmbeddingUsageSummary(req.params.workspaceId, period);
-        res.json(summary);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  app.get(
-    "/api/workspaces/:workspaceId/usage/storage",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
-    async (req, res, next) => {
-      const user = getAuthorizedUser(req, res);
-      if (!user) {
-        return;
-      }
-
-      try {
-        const period = typeof req.query.period === "string" ? req.query.period : undefined;
-        const summary = await getWorkspaceStorageUsageSummary(req.params.workspaceId, period);
-        res.json(summary);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  app.get(
-    "/api/workspaces/:workspaceId/usage/objects",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
-    async (req, res, next) => {
-      const user = getAuthorizedUser(req, res);
-      if (!user) {
-        return;
-      }
-
-      try {
-        const period = typeof req.query.period === "string" ? req.query.period : undefined;
-        const summary = await getWorkspaceObjectsUsageSummary(req.params.workspaceId, period);
-        res.json(summary);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  app.get(
-    "/api/workspaces/:workspaceId/usage/qdrant",
-    requireAuth,
-    ensureWorkspaceContextMiddleware({ requireExplicitWorkspaceId: true }),
-    async (req, res, next) => {
-      const user = getAuthorizedUser(req, res);
-      if (!user) {
-        return;
-      }
-
-      try {
-        const usage = await getWorkspaceQdrantUsage(req.params.workspaceId);
-        res.json(usage);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
+  // ========================================================================
+  // USAGE ROUTES MIGRATED TO: server/routes/workspace.routes.ts
+  // ========================================================================
+  /* USAGE ROUTES MIGRATED - START
+  app.get("/api/workspaces/:workspaceId/usage/llm", ...);
+  app.get("/api/workspaces/:workspaceId/usage/asr", ...);
+  app.get("/api/workspaces/:workspaceId/usage/embeddings", ...);
+  app.get("/api/workspaces/:workspaceId/usage/storage", ...);
+  app.get("/api/workspaces/:workspaceId/usage/objects", ...);
+  app.get("/api/workspaces/:workspaceId/usage/qdrant", ...);
+  USAGE ROUTES MIGRATED - END */
 
   app.get("/public/search/suggest", async (req, res) => {
     const parsed = knowledgeSuggestQuerySchema.safeParse({
