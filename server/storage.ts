@@ -5490,6 +5490,28 @@ export class DatabaseStorage implements IStorage {
     return row ?? null;
   }
 
+  /**
+   * Batch fetch knowledge bases by IDs (optimized for N+1 prevention).
+   * Returns a Map for efficient lookup.
+   */
+  async getKnowledgeBasesByIds(baseIds: string[]): Promise<Map<string, KnowledgeBaseRow>> {
+    if (baseIds.length === 0) {
+      return new Map();
+    }
+
+    const uniqueIds = [...new Set(baseIds)];
+    const rows = await this.db
+      .select()
+      .from(knowledgeBases)
+      .where(inArray(knowledgeBases.id, uniqueIds));
+
+    const result = new Map<string, KnowledgeBaseRow>();
+    for (const row of rows) {
+      result.set(row.id, row);
+    }
+    return result;
+  }
+
   private resolveSectionTitle(
     metadata: Record<string, unknown> | null,
     sectionPath: string[] | null | undefined,
@@ -8626,6 +8648,28 @@ export class DatabaseStorage implements IStorage {
     return this.getUser(id);
   }
 
+  /**
+   * Batch fetch users by IDs (optimized for N+1 prevention).
+   * Returns a Map for efficient lookup.
+   */
+  async getUsersByIds(userIds: string[]): Promise<Map<string, User>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+
+    const uniqueIds = [...new Set(userIds)];
+    const rows = await this.db
+      .select()
+      .from(users)
+      .where(inArray(users.id, uniqueIds));
+
+    const result = new Map<string, User>();
+    for (const row of rows) {
+      result.set(row.id, row);
+    }
+    return result;
+  }
+
   async getUserByEmail(email: string): Promise<User | undefined> {
     await this.ensureUserAuthColumns();
     const [user] = await this.db.select().from(users).where(eq(users.email, email));
@@ -8946,6 +8990,29 @@ export class DatabaseStorage implements IStorage {
     await ensureWorkspacesTable();
     const [workspace] = await this.db.select().from(workspaces).where(eq(workspaces.id, id));
     return workspace ?? undefined;
+  }
+
+  /**
+   * Batch fetch workspaces by IDs (optimized for N+1 prevention).
+   * Returns a Map for efficient lookup.
+   */
+  async getWorkspacesByIds(workspaceIds: string[]): Promise<Map<string, Workspace>> {
+    if (workspaceIds.length === 0) {
+      return new Map();
+    }
+
+    await ensureWorkspacesTable();
+    const uniqueIds = [...new Set(workspaceIds)];
+    const rows = await this.db
+      .select()
+      .from(workspaces)
+      .where(inArray(workspaces.id, uniqueIds));
+
+    const result = new Map<string, Workspace>();
+    for (const row of rows) {
+      result.set(row.id, row);
+    }
+    return result;
   }
 
   async updateWorkspaceIcon(
