@@ -415,7 +415,7 @@ workspaceRouter.post(
     const { workspaceId } = req.params;
     const membership = await storage.getWorkspaceMember(workspaceId, user.id);
     if (!membership || !isWorkspaceAdmin(membership.role)) {
-      return res.status(403).json({ message: 'forbidden' });
+      return res.status(403).json({ message: 'Доступ запрещён' });
     }
 
     if (!req.file) {
@@ -709,6 +709,28 @@ workspaceRouter.delete('/:workspaceId/actions/:actionId', asyncHandler(async (re
   const { workspaceId, actionId } = req.params;
   await actionsRepository.softDeleteWorkspaceAction(workspaceId, actionId);
   res.status(204).send();
+}));
+
+// ============================================================================
+// Skill Files Endpoints
+// ============================================================================
+
+/**
+ * GET /:workspaceId/skills/:skillId/files
+ * List skill files
+ */
+workspaceRouter.get('/:workspaceId/skills/:skillId/files', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId, skillId } = req.params;
+  const membership = await storage.getWorkspaceMember(workspaceId, user.id);
+  if (!membership) {
+    return res.status(403).json({ message: 'forbidden' });
+  }
+
+  const files = await storage.listSkillFiles(workspaceId, skillId);
+  res.json({ files });
 }));
 
 export default workspaceRouter;

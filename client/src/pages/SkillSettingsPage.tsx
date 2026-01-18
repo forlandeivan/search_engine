@@ -140,7 +140,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     enabled: Boolean(workspaceId),
     queryFn: async () => {
       if (!workspaceId) {
-        throw new Error("??????? ???????????? ?? ???????");
+        throw new Error("Рабочее пространство не указано");
       }
       const response = await apiRequest("GET", `/api/workspaces/${workspaceId}/plan`);
       return (await response.json()) as WorkspacePlanResponse;

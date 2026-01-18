@@ -67,6 +67,29 @@ test.describe("skill creation", () => {
     await saveSuccessScreenshot(page, testInfo);
 
     const createdSkillId = saveBody.skill.id as string;
+    
+    // Редактирование навыка
+    const newDescription = `Обновлённое описание ${Date.now()}`;
+    const newInstruction = `Обновлённая инструкция ${Date.now()}`;
+    
+    await page.getByTestId("skill-description-input").fill(newDescription);
+    await page.getByTestId("skill-instruction-textarea").fill(newInstruction);
+    
+    const updateResponsePromise = page.waitForResponse((response) => {
+      return response.url().includes("/api/skills/") && response.request().method() === "PUT";
+    });
+    await page.getByTestId("save-button").click();
+    const updateResponse = await updateResponsePromise;
+    expect(updateResponse.status()).toBe(200);
+    const updateBody = await updateResponse.json();
+    expect(updateBody.skill).toBeDefined();
+    
+    // Проверяем, что изменения сохранились
+    await page.reload();
+    await page.waitForSelector('[data-testid="skill-title"]', { timeout: 15_000 });
+    await expect(page.getByTestId("skill-description-input")).toHaveValue(newDescription);
+    await expect(page.getByTestId("skill-instruction-textarea")).toHaveValue(newInstruction);
+    
     await page.goto("/skills");
     const skillRow = page.getByTestId(`skill-row-${createdSkillId}`);
     await expect(skillRow).toBeVisible();
