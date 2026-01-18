@@ -4072,12 +4072,15 @@ async function runKnowledgeBaseRagPipeline(options: {
         try {
           const embeddingInputTokens = estimateTokens(normalizedQuery);
           try {
+            const embeddingModel = embeddingProvider.model 
+              ? await tryResolveModel(embeddingProvider.model, { expectedType: "EMBEDDINGS" })
+              : null;
             await ensureCreditsForEmbeddingPreflight(workspaceId, {
               consumptionUnit: "TOKENS_1K",
               modelKey: embeddingProvider.model ?? null,
-              id: null,
-              creditsPerUnit: (embeddingProvider as any).creditsPerUnit ?? 0,
-            } as any, embeddingInputTokens);
+              id: embeddingModel?.id ?? null,
+              creditsPerUnit: embeddingModel?.creditsPerUnit ?? 0,
+            }, embeddingInputTokens);
           } catch (error) {
             if (error instanceof InsufficientCreditsError) {
               throw new HttpError(error.status, error.message, error.details);
@@ -5172,9 +5175,12 @@ async function ensureCreditsForEmbeddingPreflight(
   modelInfo: ModelInfoForUsage | null,
   inputTokens: number,
 ) {
-  if (!workspaceId || !modelInfo) return;
+  if (!workspaceId || !modelInfo || !modelInfo.consumptionUnit) return;
   const estimate = estimateEmbeddingsPreflight(
-    { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
+    { 
+      consumptionUnit: modelInfo.consumptionUnit as "TOKENS_1K" | "MINUTES", 
+      creditsPerUnit: modelInfo.creditsPerUnit ?? 0 
+    },
     { inputTokens },
   );
   await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCreditsCents, {
@@ -5190,9 +5196,12 @@ async function ensureCreditsForAsrPreflight(
   modelInfo: ModelInfoForUsage | null,
   durationSeconds: number | null | undefined,
 ) {
-  if (!workspaceId || !modelInfo) return;
+  if (!workspaceId || !modelInfo || !modelInfo.consumptionUnit) return;
   const estimate = estimateAsrPreflight(
-    { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
+    { 
+      consumptionUnit: modelInfo.consumptionUnit as "TOKENS_1K" | "MINUTES", 
+      creditsPerUnit: modelInfo.creditsPerUnit ?? 0 
+    },
     { durationSeconds: durationSeconds ?? 0 },
   );
   await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCreditsCents, {
