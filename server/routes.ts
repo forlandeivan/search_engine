@@ -4301,7 +4301,7 @@ async function runKnowledgeBaseRagPipeline(options: {
         const formattedResults = aggregatedVectorResults.map(({ collection, record }) => ({
           collection,
           id: record.id ?? null,
-          score: normalizeVectorScore((record as any).score),
+          score: normalizeVectorScore(record.score),
           payload: (record.payload as Record<string, unknown> | undefined) ?? null,
         }));
 
@@ -4314,7 +4314,7 @@ async function runKnowledgeBaseRagPipeline(options: {
           ...aggregatedVectorResults.map(({ record }) => ({
             id: record.id ?? null,
             payload: (record.payload as Record<string, unknown> | undefined) ?? null,
-            score: normalizeVectorScore((record as any).score),
+            score: normalizeVectorScore(record.score),
             shard_key: (record as Record<string, unknown>).shard_key ?? null,
             order_value: (record as Record<string, unknown>).order_value ?? null,
           })),
@@ -4322,7 +4322,7 @@ async function runKnowledgeBaseRagPipeline(options: {
 
         for (const { record } of aggregatedVectorResults) {
           const payload = (record.payload as Record<string, unknown> | undefined) ?? null;
-          const rawScore = normalizeVectorScore((record as any).score);
+          const rawScore = normalizeVectorScore(record.score);
 
           const recordId =
             typeof record.id === "string"
@@ -4374,7 +4374,7 @@ async function runKnowledgeBaseRagPipeline(options: {
       const files = await storage.listSkillFiles(workspaceId, normalizedSkillId);
       const readyIds = new Set(
         files
-          .filter((entry) => (entry as any)?.processingStatus === "ready")
+          .filter((entry) => entry.processingStatus === "ready")
           .map((entry) => entry.id)
           .filter(Boolean),
       );
@@ -4518,7 +4518,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     for (const entry of bm25Sections) {
       const snippet = entry.snippet || buildSnippet(entry.text);
       // Получаем knowledgeBaseId из entry (если было добавлено в BM25 поиске)
-      const kbId = (entry as any).knowledgeBaseId;
+      const kbId = 'knowledgeBaseId' in entry ? (entry as typeof entry & { knowledgeBaseId?: string }).knowledgeBaseId : undefined;
       aggregated.set(entry.chunkId, {
         chunkId: entry.chunkId,
         documentId: entry.documentId,
