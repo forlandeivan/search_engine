@@ -127,6 +127,7 @@ import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
 import { tariffPlanService } from "./tariff-plan-service";
 import { OperationBlockedError, mapDecisionToPayload } from "./guards/errors";
+import { getCache, cacheKeys } from "./cache";
 import type {
   KnowledgeBaseAskAiRunDetail,
   KnowledgeBaseAskAiRunSummary,
@@ -276,14 +277,14 @@ function mapSkillFileIngestionJobRow(row: Record<string, unknown>): SkillFileIng
     workspaceId: getRowString(row, "workspace_id") || getRowString(row, "workspaceId"),
     skillId: getRowString(row, "skill_id") || getRowString(row, "skillId"),
     fileId: getRowString(row, "file_id") || getRowString(row, "fileId"),
-    fileVersion: parseRowNumber((row as any)?.file_version ?? (row as any)?.fileVersion ?? 1, 1),
+    fileVersion: parseRowNumber(row.file_version ?? row.fileVersion ?? 1, 1),
     status: (getRowString(row, "status") as SkillFileIngestionJob["status"]) || "pending",
-    attempts: parseRowNumber((row as any)?.attempts ?? 0, 0),
+    attempts: parseRowNumber(row.attempts ?? 0, 0),
     nextRetryAt: nextRetryCandidate ? parseRowDate(nextRetryCandidate) : null,
     lastError: getRowString(row, "last_error") || getRowString(row, "lastError") || null,
-    chunkCount: parseRowNumber((row as any)?.chunk_count ?? (row as any)?.chunkCount ?? null, 0) || null,
-    totalChars: parseRowNumber((row as any)?.total_chars ?? (row as any)?.totalChars ?? null, 0) || null,
-    totalTokens: parseRowNumber((row as any)?.total_tokens ?? (row as any)?.totalTokens ?? null, 0) || null,
+    chunkCount: parseRowNumber(row.chunk_count ?? row.chunkCount ?? null, 0) || null,
+    totalChars: parseRowNumber(row.total_chars ?? row.totalChars ?? null, 0) || null,
+    totalTokens: parseRowNumber(row.total_tokens ?? row.totalTokens ?? null, 0) || null,
     createdAt: parseRowDate(createdAtCandidate),
     updatedAt: parseRowDate(updatedAtCandidate),
   };
@@ -321,7 +322,7 @@ function buildChunkSearchVectorColumnStatement(ifNotExists: boolean): SQL {
   `;
 }
 
-async function hasSanitizedChunkSearchVector(dbInstance: any): Promise<boolean> {
+async function hasSanitizedChunkSearchVector(dbInstance: typeof db): Promise<boolean> {
   const result = await dbInstance.execute(sql`
     SELECT pg_get_expr(d.adbin, d.adrelid) AS expression
     FROM pg_attribute a
@@ -337,7 +338,7 @@ async function hasSanitizedChunkSearchVector(dbInstance: any): Promise<boolean> 
   return typeof expression === "string" && expression.includes("regexp_replace(unaccent");
 }
 
-async function ensureSanitizedChunkSearchVector(dbInstance: any): Promise<void> {
+async function ensureSanitizedChunkSearchVector(dbInstance: typeof db): Promise<void> {
   const hasSanitizedColumn = await hasSanitizedChunkSearchVector(dbInstance);
   if (!hasSanitizedColumn) {
     await dbInstance.execute(sql`
@@ -2598,7 +2599,7 @@ async function ensureBotActionsTable(): Promise<void> {
   ensuringBotActionsTable = null;
 }
 
-function mapBotAction(record: any): BotAction {
+function mapBotAction(record: Record<string, unknown>): BotAction {
   return {
     workspaceId: record.workspaceId ?? record.workspace_id,
     chatId: record.chatId ?? record.chat_id,
@@ -6340,6 +6341,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async listLlmProviders(workspaceId?: string): Promise<LlmProvider[]> {
+    const cache = getCache();
+    const cacheKey = cacheKeys.llmProviders(workspaceId);
+    
+    // Try cache first
+    const cached = await cache.get<LlmProvider[]>(cacheKey);
+    if (cached !== null) {
+      return cached;
+    }
+    
+    // Cache miss - fetch from DB
     await ensureLlmProvidersTable();
     let query = this.db.select().from(llmProviders);
     if (workspaceId) {
@@ -6350,7 +6361,12 @@ export class DatabaseStorage implements IStorage {
         )
       );
     }
-    return await query.orderBy(desc(llmProviders.createdAt));
+    const result = await query.orderBy(desc(llmProviders.createdAt));
+    
+    // Cache result (10 minutes TTL)
+    await cache.set(cacheKey, result, 10 * 60 * 1000);
+    
+    return result;
   }
 
   async getLlmProvider(id: string, workspaceId?: string): Promise<LlmProvider | undefined> {
@@ -6380,6 +6396,14 @@ export class DatabaseStorage implements IStorage {
   async createLlmProvider(provider: LlmProviderInsert): Promise<LlmProvider> {
     await ensureLlmProvidersTable();
     const [created] = await this.db.insert(llmProviders).values(provider).returning();
+    
+    // Invalidate LLM providers cache (both workspace-specific and global)
+    const cache = getCache();
+    await cache.del(cacheKeys.llmProviders(provider.workspaceId));
+    if (provider.isGlobal) {
+      await cache.del(cacheKeys.llmProviders(undefined));
+    }
+    
     return created;
   }
 
@@ -6426,17 +6450,43 @@ export class DatabaseStorage implements IStorage {
       .where(condition)
       .returning();
 
+    // Invalidate LLM providers cache (both workspace-specific and global)
+    if (updated) {
+      const cache = getCache();
+      await cache.del(cacheKeys.llmProviders(updated.workspaceId ?? undefined));
+      if (updated.isGlobal) {
+        await cache.del(cacheKeys.llmProviders(undefined));
+      }
+    }
+
     return updated ?? undefined;
   }
 
   async deleteLlmProvider(id: string, workspaceId?: string): Promise<boolean> {
     await ensureLlmProvidersTable();
+    
+    // Get provider info before deletion for cache invalidation
+    const [providerToDelete] = workspaceId
+      ? await this.db.select().from(llmProviders).where(and(eq(llmProviders.id, id), eq(llmProviders.workspaceId, workspaceId))).limit(1)
+      : await this.db.select().from(llmProviders).where(eq(llmProviders.id, id)).limit(1);
+    
     const condition = workspaceId
       ? and(eq(llmProviders.id, id), eq(llmProviders.workspaceId, workspaceId))
       : eq(llmProviders.id, id);
     const deleted = await this.db
       .delete(llmProviders)
-      .where(condition)
+      .where(condition);
+    
+    // Invalidate LLM providers cache (both workspace-specific and global)
+    if (providerToDelete) {
+      const cache = getCache();
+      await cache.del(cacheKeys.llmProviders(providerToDelete.workspaceId ?? undefined));
+      if (providerToDelete.isGlobal) {
+        await cache.del(cacheKeys.llmProviders(undefined));
+      }
+    }
+    
+    return deleted.length > 0;
       .returning({ id: llmProviders.id });
 
     return deleted.length > 0;
@@ -7038,7 +7088,7 @@ export class DatabaseStorage implements IStorage {
     limit?: number | null;
   }): Promise<BotAction[]> {
     await ensureBotActionsTable();
-    const conditions: any[] = [
+    const conditions: SQL[] = [
       eq(botActions.workspaceId, options.workspaceId),
       eq(botActions.chatId, options.chatId),
     ];
@@ -7046,14 +7096,14 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(botActions.status, options.status));
     }
 
-    const query = this.db
+    let query = this.db
       .select()
       .from(botActions)
       .where(and(...conditions))
       .orderBy(desc(botActions.updatedAt));
 
     if (options.limit && options.limit > 0) {
-      (query as any).limit(options.limit);
+      query = query.limit(options.limit);
     }
 
     const rows = await query;
@@ -7136,7 +7186,7 @@ export class DatabaseStorage implements IStorage {
     const [created] = await this.db
       .insert(chatMessages)
       .values({
-        messageType: (values as any).messageType ?? "text",
+        messageType: ("messageType" in values ? values.messageType : undefined) ?? "text",
         ...values,
       })
       .returning();
@@ -7152,7 +7202,7 @@ export class DatabaseStorage implements IStorage {
     }
     await ensureChatTables();
     const normalized = valuesList.map((values) => ({
-      messageType: (values as any).messageType ?? "text",
+      messageType: ("messageType" in values ? values.messageType : undefined) ?? "text",
       ...values,
     }));
     const created = await this.db
@@ -7203,8 +7253,8 @@ export class DatabaseStorage implements IStorage {
       const normalizedValues = values.map((entry) => ({
         ...entry,
         version: entry.version ?? 1,
-        processingStatus: (entry as any)?.processingStatus ?? "processing",
-        processingErrorMessage: (entry as any)?.processingErrorMessage ?? null,
+        processingStatus: ("processingStatus" in entry ? entry.processingStatus : undefined) ?? "processing",
+        processingErrorMessage: ("processingErrorMessage" in entry ? entry.processingErrorMessage : undefined) ?? null,
       }));
       const createdFiles = await tx.insert(skillFiles).values(normalizedValues).returning();
 
@@ -7247,7 +7297,7 @@ export class DatabaseStorage implements IStorage {
     },
   ): Promise<void> {
     await ensureSkillFilesTable();
-    const normalizedPatch: Partial<SkillFileInsert> = {};
+    const normalizedPatch: Partial<SkillFileInsert> & { processingStatus?: SkillFile["status"]; processingErrorMessage?: string | null } = {};
     if (patch.status) {
       normalizedPatch.status = patch.status;
     }
@@ -7255,10 +7305,10 @@ export class DatabaseStorage implements IStorage {
       normalizedPatch.errorMessage = patch.errorMessage;
     }
     if (patch.processingStatus) {
-      (normalizedPatch as any).processingStatus = patch.processingStatus;
+      normalizedPatch.processingStatus = patch.processingStatus;
     }
     if (patch.processingErrorMessage !== undefined) {
-      (normalizedPatch as any).processingErrorMessage = patch.processingErrorMessage;
+      normalizedPatch.processingErrorMessage = patch.processingErrorMessage;
     }
     if (Object.keys(normalizedPatch).length === 0) {
       return;
@@ -9021,9 +9071,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getWorkspace(id: string): Promise<Workspace | undefined> {
+    const cache = getCache();
+    const cacheKey = cacheKeys.workspaceSettings(id);
+    
+    // Try cache first
+    const cached = await cache.get<Workspace>(cacheKey);
+    if (cached !== null) {
+      return cached;
+    }
+    
+    // Cache miss - fetch from DB
     await ensureWorkspacesTable();
     const [workspace] = await this.db.select().from(workspaces).where(eq(workspaces.id, id));
-    return workspace ?? undefined;
+    const result = workspace ?? undefined;
+    
+    // Cache result (5 minutes TTL)
+    if (result) {
+      await cache.set(cacheKey, result, 5 * 60 * 1000);
+    }
+    
+    return result;
   }
 
   /**
@@ -9060,6 +9127,13 @@ export class DatabaseStorage implements IStorage {
       .set({ iconUrl, iconKey, updatedAt: new Date() })
       .where(eq(workspaces.id, workspaceId))
       .returning();
+    
+    // Invalidate workspace cache
+    if (updated) {
+      const cache = getCache();
+      await cache.del(cacheKeys.workspaceSettings(workspaceId));
+    }
+    
     return updated ?? undefined;
   }
 
@@ -9069,6 +9143,10 @@ export class DatabaseStorage implements IStorage {
       .update(workspaces)
       .set({ storageBucket: bucketName, updatedAt: new Date() })
       .where(eq(workspaces.id, workspaceId));
+    
+    // Invalidate workspace cache
+    const cache = getCache();
+    await cache.del(cacheKeys.workspaceSettings(workspaceId));
   }
 
   async isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
@@ -9121,7 +9199,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   private resolveWorkspaceVectorSize(provider: EmbeddingProvider): number {
-    const configured = parseVectorSizeValue((provider as any)?.qdrantConfig?.vectorSize);
+    const configured = parseVectorSizeValue(provider.qdrantConfig?.vectorSize);
     if (configured) {
       return configured;
     }
@@ -9361,18 +9439,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOrCreateUserWorkspaces(userId: string): Promise<WorkspaceWithRole[]> {
+    const cache = getCache();
+    const cacheKey = cacheKeys.userWorkspaces(userId);
+    
+    // Try cache first
+    const cached = await cache.get<WorkspaceWithRole[]>(cacheKey);
+    if (cached !== null) {
+      return cached;
+    }
+    
+    // Cache miss - fetch from DB
     let memberships = await this.listUserWorkspaces(userId);
     if (memberships.length > 0) {
+      // Cache result (2 minutes TTL)
+      await cache.set(cacheKey, memberships, 2 * 60 * 1000);
       return memberships;
     }
 
     const fullUser = await this.getUser(userId);
     if (!fullUser) {
+      // Cache empty result for shorter time (30 seconds)
+      await cache.set(cacheKey, memberships, 30 * 1000);
       return memberships;
     }
 
     await this.ensurePersonalWorkspace(fullUser);
     memberships = await this.listUserWorkspaces(userId);
+
+    // Cache result (2 minutes TTL)
+    await cache.set(cacheKey, memberships, 2 * 60 * 1000);
 
     return memberships;
   }
@@ -9444,6 +9539,11 @@ export class DatabaseStorage implements IStorage {
       .returning();
 
     this.invalidateWorkspaceMembershipCache(userId, workspaceId);
+    
+    // Invalidate user workspaces cache
+    const cache = getCache();
+    await cache.del(cacheKeys.userWorkspaces(userId));
+    
     if (member) {
       const period = getUsagePeriodForDate(member.createdAt ?? new Date());
       await adjustWorkspaceObjectCounters(workspaceId, { membersDelta: 1 }, period);
@@ -9466,6 +9566,11 @@ export class DatabaseStorage implements IStorage {
       .returning();
 
     this.invalidateWorkspaceMembershipCache(userId, workspaceId);
+    
+    // Invalidate user workspaces cache
+    const cache = getCache();
+    await cache.del(cacheKeys.userWorkspaces(userId));
+    
     return updated ?? undefined;
   }
 
@@ -9558,6 +9663,11 @@ export class DatabaseStorage implements IStorage {
 
     if (deleted.length > 0) {
       this.invalidateWorkspaceMembershipCache(userId, workspaceId);
+      
+      // Invalidate user workspaces cache
+      const cache = getCache();
+      await cache.del(cacheKeys.userWorkspaces(userId));
+      
       const period = getUsagePeriodForDate(new Date());
       await adjustWorkspaceObjectCounters(workspaceId, { membersDelta: -1 }, period);
     }

@@ -71,10 +71,10 @@ async function processJob(job: SkillFileIngestionJob): Promise<void> {
 
     const fileRecord = file.fileId ? await storage.getFile(file.fileId, file.workspaceId) : null;
     const skipNoCode =
-      skill.executionMode === "no_code" || (fileRecord as any)?.storageType === "external_provider";
+      skill.executionMode === "no_code" || fileRecord?.storageType === "external_provider";
     if (skipNoCode) {
       console.info(
-        `[${JOB_TYPE}] skip_no_code_ingestion file=${file.id} skill=${file.skillId} storage=${(fileRecord as any)?.storageType ?? "unknown"}`,
+        `[${JOB_TYPE}] skip_no_code_ingestion file=${file.id} skill=${file.skillId} storage=${fileRecord?.storageType ?? "unknown"}`,
       );
       await storage.markSkillFileIngestionJobDone(job.id, {
         chunkCount: 0,

@@ -292,7 +292,7 @@ const extractSentences = (html: string): { sentences: SentenceUnit[]; normalized
     });
   };
 
-  const traverse = (node: any) => {
+  const traverse = (node: { type?: string; data?: string; children?: unknown[] } | null | undefined) => {
     if (!node) {
       return;
     }

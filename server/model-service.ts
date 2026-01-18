@@ -13,6 +13,7 @@ import {
 } from "@shared/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { sanitizeLlmModelOptions } from "./llm-utils";
+import { getCache, cacheKeys } from "./cache";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -100,6 +101,21 @@ export async function listModels(opts?: {
   providerId?: string | null;
   providerType?: string | null;
 }): Promise<Model[]> {
+  // Only cache when not including inactive (common case)
+  const shouldCache = !opts?.includeInactive;
+  
+  if (shouldCache) {
+    const cache = getCache();
+    const cacheKey = cacheKeys.modelsCatalog(opts);
+    
+    // Try cache first
+    const cached = await cache.get<Model[]>(cacheKey);
+    if (cached !== null) {
+      return cached;
+    }
+  }
+  
+  // Cache miss or caching disabled - fetch from DB
   const clauses = [];
   if (!opts?.includeInactive) {
     clauses.push(eq(models.isActive, true));
@@ -114,11 +130,20 @@ export async function listModels(opts?: {
     clauses.push(eq(models.providerType, opts.providerType));
   }
   const where = clauses.length > 0 ? and(...clauses) : undefined;
-  return db
+  const result = await db
     .select()
     .from(models)
     .where(where ?? sql`true`)
     .orderBy(models.sortOrder, models.displayName);
+  
+  // Cache result (10 minutes TTL) only if caching was enabled
+  if (shouldCache) {
+    const cache = getCache();
+    const cacheKey = cacheKeys.modelsCatalog(opts);
+    await cache.set(cacheKey, result, 10 * 60 * 1000);
+  }
+  
+  return result;
 }
 
 export async function createModel(input: ModelInput): Promise<ModelInsert> {
@@ -142,12 +167,24 @@ export async function createModel(input: ModelInput): Promise<ModelInsert> {
       isActive,
       deletedAt: isActive ? null : new Date(),
       sortOrder: input.sortOrder ?? 0,
-      metadata: (input.metadata as any) ?? {},
+      metadata: input.metadata ?? {},
       providerId: provider.providerId,
       providerType: provider.providerType,
       providerModelKey: provider.providerModelKey,
     })
     .returning();
+  
+  // Invalidate models catalog cache (invalidate all possible cache keys)
+  const cache = getCache();
+  await cache.del(cacheKeys.modelsCatalog());
+  await cache.del(cacheKeys.modelsCatalog({ type: input.modelType }));
+  if (provider.providerId) {
+    await cache.del(cacheKeys.modelsCatalog({ providerId: provider.providerId }));
+  }
+  if (provider.providerType) {
+    await cache.del(cacheKeys.modelsCatalog({ providerType: provider.providerType }));
+  }
+  
   return row;
 }
 
@@ -175,7 +212,7 @@ export async function updateModel(
     values.deletedAt = input.isActive ? null : new Date();
   }
   if (input.sortOrder !== undefined) values.sortOrder = input.sortOrder;
-  if (input.metadata !== undefined) values.metadata = (input.metadata as any) ?? {};
+  if (input.metadata !== undefined) values.metadata = input.metadata ?? {};
   if (input.providerId !== undefined || input.providerModelKey !== undefined || input.providerType !== undefined) {
     values.providerId = provider.providerId;
     values.providerType = provider.providerType;
@@ -189,6 +226,22 @@ export async function updateModel(
   }
 
   const [row] = await db.update(models).set(values).where(eq(models.id, id)).returning();
+  
+  // Invalidate models catalog cache (invalidate all possible cache keys)
+  if (row) {
+    const cache = getCache();
+    await cache.del(cacheKeys.modelsCatalog());
+    if (row.modelType) {
+      await cache.del(cacheKeys.modelsCatalog({ type: row.modelType }));
+    }
+    if (row.providerId) {
+      await cache.del(cacheKeys.modelsCatalog({ providerId: row.providerId }));
+    }
+    if (row.providerType) {
+      await cache.del(cacheKeys.modelsCatalog({ providerType: row.providerType }));
+    }
+  }
+  
   return row ?? null;
 }
 

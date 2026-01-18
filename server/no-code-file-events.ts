@@ -56,14 +56,14 @@ export function buildFileEventPayload(opts: {
       filename: opts.file.name ?? null,
       mimeType: opts.file.mimeType ?? null,
       sizeBytes: opts.file.sizeBytes !== null && opts.file.sizeBytes !== undefined ? Number(opts.file.sizeBytes) : null,
-      providerId: (opts.file as any).providerId ?? null,
-      providerFileId: (opts.file as any).providerFileId ?? null,
+      providerId: ("providerId" in opts.file && typeof opts.file.providerId === "string" ? opts.file.providerId : null) ?? null,
+      providerFileId: ("providerFileId" in opts.file && typeof opts.file.providerFileId === "string" ? opts.file.providerFileId : null) ?? null,
     },
     workspaceId: opts.file.workspaceId,
     skillId: opts.file.skillId ?? null,
     chatId: opts.file.chatId ?? null,
     userId: opts.file.userId ?? null,
-    messageId: (opts.file as any).messageId ?? null,
+    messageId: ("messageId" in opts.file && typeof opts.file.messageId === "string" ? opts.file.messageId : null) ?? null,
   };
 }
 
@@ -102,7 +102,7 @@ export async function enqueueFileEventForSkill(opts: {
     skillId: opts.file.skillId ?? null,
     chatId: opts.file.chatId ?? null,
     userId: opts.file.userId ?? null,
-    messageId: (opts.file as any).messageId ?? null,
+    messageId: ("messageId" in opts.file && typeof opts.file.messageId === "string" ? opts.file.messageId : null) ?? null,
     targetUrl,
     authType: opts.skill.noCodeAuthType ?? "none",
     bearerToken: normalizedBearerToken,

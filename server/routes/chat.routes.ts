@@ -15,6 +15,7 @@ import { randomUUID } from 'crypto';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
+import { llmChatLimiter } from '../middleware/rate-limit';
 import {
   ChatServiceError,
   buildChatServiceErrorPayload,
@@ -271,7 +272,7 @@ type StepLogMeta = {
  * POST /sessions/:chatId/messages/llm
  * Send message to LLM and get response (supports streaming)
  */
-chatRouter.post('/sessions/:chatId/messages/llm', asyncHandler(async (req, res, next) => {
+chatRouter.post('/sessions/:chatId/messages/llm', llmChatLimiter, asyncHandler(async (req, res, next) => {
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 

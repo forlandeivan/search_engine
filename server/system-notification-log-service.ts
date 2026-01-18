@@ -103,7 +103,7 @@ export class SystemNotificationLogService {
     const result = await db.execute(
       sql.raw(`delete from "system_notification_logs" where "created_at" < '${thresholdIso}' returning "id"`),
     );
-    const rows = ((result as any)?.rows ?? []) as Array<{ id: string }>;
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Array<{ id: string }>;
     return rows.length;
   }
 

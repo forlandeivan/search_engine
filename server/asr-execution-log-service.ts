@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { db } from "./db";
+import type { JsonValue } from "./json-types";
 import type {
   AsrExecutionRecord,
   AsrExecutionStatus,
@@ -23,7 +24,7 @@ export interface AsrExecutionLogRepository {
 }
 
 export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository {
-  private mapRow(row: any): AsrExecutionRecord {
+  private mapRow(row: Record<string, unknown>): AsrExecutionRecord {
     return {
       id: row.id,
       createdAt: new Date(row.created_at),
@@ -84,8 +85,8 @@ export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository
   }
 
   async updateExecution(id: string, updates: Partial<AsrExecutionRecord>): Promise<void> {
-    const sets: any[] = [];
-    const addSet = (fragment: any) => sets.push(fragment);
+    const sets: SQL[] = [];
+    const addSet = (fragment: SQL) => sets.push(fragment);
 
     addSet(sql`updated_at = ${updates.updatedAt ? updates.updatedAt.toISOString() : new Date().toISOString()}`);
     if (updates.workspaceId !== undefined) addSet(sql`workspace_id = ${updates.workspaceId}`);
@@ -114,13 +115,15 @@ export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository
 
   async getExecutionById(id: string): Promise<AsrExecutionRecord | null> {
     const result = await db.execute(sql`SELECT * FROM asr_executions WHERE id = ${id} LIMIT 1`);
-    const row = (result as any)?.rows?.[0];
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    const row = rows[0];
     return row ? this.mapRow(row) : null;
   }
 
   async listExecutions(): Promise<AsrExecutionRecord[]> {
     const result = await db.execute(sql`SELECT * FROM asr_executions ORDER BY created_at DESC`);
-    return ((result as any)?.rows ?? []).map((row: any) => this.mapRow(row));
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    return rows.map((row) => this.mapRow(row));
   }
 }
 
@@ -209,7 +212,7 @@ export class AsrExecutionLogService {
       id: randomUUID(),
       timestamp: new Date().toISOString(),
       stage: event.stage,
-      details: event.details as any,
+      details: event.details as JsonValue | undefined,
     };
     const pipelineEvents = [...(execution.pipelineEvents ?? []), evt];
     const updates: Partial<AsrExecutionRecord> = {

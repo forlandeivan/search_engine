@@ -152,6 +152,11 @@ import {
   type AssistantActionType,
   type BotActionStatus,
   type TranscriptStatus,
+  type ModelType,
+  type ModelConsumptionUnit,
+  type ModelCostLevel,
+  type SkillFile,
+  type FileStorageProvider,
 } from "@shared/schema";
 type NoCodeFlowFailureReason = "NOT_CONFIGURED" | "TIMEOUT" | "UPSTREAM_ERROR";
 const NO_CODE_FLOW_MESSAGES: Record<NoCodeFlowFailureReason, string> = {
@@ -390,6 +395,7 @@ import {
   ModelInactiveError,
   ModelValidationError,
   ModelUnavailableError,
+  type ModelInput,
 } from "./model-service";
 import {
   ensureWorkspaceCreditAccount,
@@ -440,6 +446,7 @@ import {
   type UnicaChatConfigInsert,
   type ChatMessageMetadata,
   type ChatMessage,
+  type File,
   models,
   workspaceCreditLedger,
 } from "@shared/schema";
@@ -6640,7 +6647,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     chatId: logContext.chatId ?? null,
     userMessageId: null,
     source: "workspace_skill",
-    metadata: executionMetadata as any,
+    metadata: executionMetadata,
   });
   const executionId = execution?.id ?? null;
 
@@ -8616,9 +8623,12 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
   app.patch("/api/admin/indexing-rules", requireAdmin, async (req, res, next) => {
     try {
-      const chunkSizeProvided = typeof (req.body as any)?.chunkSize !== "undefined";
-      const topKProvided = typeof (req.body as any)?.topK !== "undefined";
-      const relevanceThresholdProvided = typeof (req.body as any)?.relevanceThreshold !== "undefined";
+      const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) 
+        ? req.body as Record<string, unknown>
+        : {};
+      const chunkSizeProvided = typeof body.chunkSize !== "undefined";
+      const topKProvided = typeof body.topK !== "undefined";
+      const relevanceThresholdProvided = typeof body.relevanceThreshold !== "undefined";
       const parsed = updateIndexingRulesSchema.safeParse(req.body);
       if (!parsed.success) {
         if (chunkSizeProvided) {
@@ -8628,7 +8638,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             field: "chunk_size",
           });
         }
-        const chunkOverlapProvided = typeof (req.body as any)?.chunkOverlap !== "undefined";
+        const chunkOverlapProvided = typeof body.chunkOverlap !== "undefined";
           if (chunkOverlapProvided) {
             return res.status(400).json({
               message: "Перекрытие должно быть неотрицательным и меньше размера чанка",
@@ -9115,7 +9125,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   app.get("/api/models", requireAuth, async (req, res) => {
-    const typeParam = typeof req.query?.type === "string" ? (req.query.type.toUpperCase() as any) : undefined;
+    const typeParam: ModelType | undefined = 
+      typeof req.query?.type === "string" && ["LLM", "EMBEDDINGS", "ASR"].includes(req.query.type.toUpperCase())
+        ? req.query.type.toUpperCase() as ModelType
+        : undefined;
     const modelsList = await listModels({
       includeInactive: false,
       type: typeParam,
@@ -9147,7 +9160,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       typeof _req.query?.providerType === "string" && _req.query.providerType.trim().length > 0
         ? _req.query.providerType.trim().toUpperCase()
         : undefined;
-    const modelsList = await listModels({ includeInactive: true, providerId, providerType: providerType as any });
+    const modelsList = await listModels({ includeInactive: true, providerId, providerType: providerType ?? null });
     res.json({
       models: modelsList.map((m) => ({
         ...m,
@@ -9175,7 +9188,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           ? req.query.modelType.trim().toUpperCase()
           : null;
 
-      const conditions: any[] = [eq(workspaceCreditLedger.entryType, "usage_charge")];
+      const conditions: Array<ReturnType<typeof eq> | ReturnType<typeof sql>> = [eq(workspaceCreditLedger.entryType, "usage_charge")];
       if (workspaceIdFilter) {
         conditions.push(eq(workspaceCreditLedger.workspaceId, workspaceIdFilter));
       }
@@ -9296,8 +9309,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             quantityUnits,
             quantityRaw,
             appliedCreditsPerUnit:
-              typeof (meta as any).appliedCreditsPerUnitCents === "number"
-                ? centsToCredits((meta as any).appliedCreditsPerUnitCents)
+              typeof meta.appliedCreditsPerUnitCents === "number"
+                ? centsToCredits(meta.appliedCreditsPerUnitCents)
                 : typeof meta.appliedCreditsPerUnit === "number"
                   ? meta.appliedCreditsPerUnit
                   : null,
@@ -9322,9 +9335,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         modelKey: String(req.body?.modelKey ?? "").trim(),
         displayName: String(req.body?.displayName ?? "").trim(),
         description: typeof req.body?.description === "string" ? req.body.description : null,
-        modelType: String(req.body?.modelType ?? "").toUpperCase() as any,
-        consumptionUnit: String(req.body?.consumptionUnit ?? "").toUpperCase() as any,
-        costLevel: String(req.body?.costLevel ?? "MEDIUM").toUpperCase() as any,
+        modelType: (["LLM", "EMBEDDINGS", "ASR"].includes(String(req.body?.modelType ?? "").toUpperCase()) 
+          ? String(req.body?.modelType ?? "").toUpperCase() 
+          : "LLM") as ModelType,
+        consumptionUnit: (["TOKENS_1K", "MINUTES"].includes(String(req.body?.consumptionUnit ?? "").toUpperCase())
+          ? String(req.body?.consumptionUnit ?? "").toUpperCase()
+          : "TOKENS_1K") as ModelConsumptionUnit,
+        costLevel: (["FREE", "LOW", "MEDIUM", "HIGH", "VERY_HIGH"].includes(String(req.body?.costLevel ?? "MEDIUM").toUpperCase())
+          ? String(req.body?.costLevel ?? "MEDIUM").toUpperCase()
+          : "MEDIUM") as ModelCostLevel,
         creditsPerUnit: creditsPerUnitCents,
         isActive: req.body?.isActive !== undefined ? Boolean(req.body.isActive) : true,
         sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : 0,
@@ -9351,8 +9370,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           creditsPerUnit: centsToCredits(created.creditsPerUnit ?? 0),
         },
       });
-    } catch (error: any) {
-      const message = typeof error?.message === "string" ? error.message : "Failed to create model";
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to create model";
       res.status(400).json({ message });
     }
   });
@@ -9397,7 +9416,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               ? null
               : undefined,
       };
-      const updated = await updateModel(id, payload as any);
+      const updated = await updateModel(id, payload as Partial<ModelInput>);
       if (!updated) {
         return res.status(404).json({ message: "Model not found" });
       }
@@ -9407,8 +9426,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           creditsPerUnit: centsToCredits(updated.creditsPerUnit ?? 0),
         },
       });
-    } catch (error: any) {
-      const message = typeof error?.message === "string" ? error.message : "Failed to update model";
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to update model";
       res.status(400).json({ message });
     }
   });
@@ -9454,8 +9473,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         },
         policy: summary.policy,
       });
-    } catch (error: any) {
-      const message = typeof error?.message === "string" ? error.message : "Failed to adjust credits";
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to adjust credits";
       if (message === "balance_cannot_be_negative") {
         return res.status(409).json({ message: "Корректировка приведёт к отрицательному балансу" });
       }
@@ -9640,7 +9659,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           updates.modelId = model.modelKey;
         } catch (error) {
           if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
-            return res.status((error as any)?.status ?? 400).json({ message: error.message, errorCode: (error as any)?.code });
+            return res.status(error.status ?? 400).json({ message: error.message, errorCode: error.code });
           }
           throw error;
         }
@@ -9696,7 +9715,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     }
   });
 
-  const mapFileStorageProvider = (provider: any) => ({
+  const mapFileStorageProvider = (provider: FileStorageProvider) => ({
     id: provider.id,
     name: provider.name,
     baseUrl: provider.baseUrl,
@@ -9705,7 +9724,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     isActive: provider.isActive,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
-    config: normalizeFileProviderConfig((provider as any).config ?? defaultProviderConfig),
+    config: normalizeFileProviderConfig(provider.config ?? defaultProviderConfig),
   });
 
   app.get("/api/file-storage/providers", requireAuth, async (req, res) => {
@@ -11274,11 +11293,11 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           contentType: item.mimeType ?? null,
           size: item.sizeBytes ?? null,
           status: item.status as "uploaded" | "error",
-          processingStatus: (item as any).processingStatus ?? null,
-          processingErrorMessage: (item as any).processingErrorMessage ?? null,
+          processingStatus: item.processingStatus ?? null,
+          processingErrorMessage: item.processingErrorMessage ?? null,
           errorMessage: item.errorMessage ?? null,
           version: item.version ?? 1,
-          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : (item.createdAt as any),
+          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : String(item.createdAt ?? ""),
         }));
 
         res.json({ files: response });
@@ -11588,7 +11607,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
               processingStatus: isNoCodeSkill ? "ready" : "processing",
             });
           } catch (error) {
-            const errObj = error as any;
+            const errObj = error && typeof error === "object" ? error as { Code?: unknown; code?: unknown; message?: unknown; name?: unknown } : null;
             const code = typeof errObj?.Code === "string" ? errObj.Code : typeof errObj?.code === "string" ? errObj.code : undefined;
             const rawMessage =
               typeof errObj?.message === "string" && errObj.message.trim().length > 0
@@ -11622,15 +11641,15 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
                 results[resultIndex] = {
                   ...results[resultIndex],
                   id: item.id,
-                  createdAt: item.createdAt?.toISOString?.() ?? (item.createdAt as any),
+                  createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : (typeof item.createdAt === "string" ? item.createdAt : String(item.createdAt ?? "")),
                   status: item.status as "uploaded" | "error",
                   errorMessage: item.errorMessage ?? undefined,
                   version: item.version ?? 1,
                   ingestionStatus: createIngestionJobs ? "pending" : undefined,
                   processingStatus:
-                    (item as any).processingStatus ??
+                    item.processingStatus ??
                     (createIngestionJobs ? "processing" : "ready"),
-                  processingErrorMessage: (item as any).processingErrorMessage ?? null,
+                  processingErrorMessage: item.processingErrorMessage ?? null,
                 };
               }
             });
@@ -11685,7 +11704,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
         const fileRecord = file.fileId ? await storage.getFile(file.fileId, workspaceId) : null;
         const isNoCodeSkill = skill.executionMode === "no_code";
-        const isExternalFile = (fileRecord as any)?.storageType === "external_provider";
+        const isExternalFile = fileRecord && typeof fileRecord === "object" && "storageType" in fileRecord && fileRecord.storageType === "external_provider";
 
         try {
           if (!isNoCodeSkill && !isExternalFile) {
@@ -11770,7 +11789,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             await deleteWorkspaceObject(workspaceId, file.storageKey);
           } else {
             console.info(
-              `[skill-files] skip physical delete for no-code file fileId=${fileId} skill=${skillId} storage=${(fileRecord as any)?.storageType ?? "unknown"}`,
+              `[skill-files] skip physical delete for no-code file fileId=${fileId} skill=${skillId} storage=${(fileRecord && typeof fileRecord === "object" && "storageType" in fileRecord ? String(fileRecord.storageType) : "unknown")}`,
             );
           }
         } catch (error) {
@@ -11941,7 +11960,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }
         const statusParam = typeof req.query.status === "string" ? req.query.status.trim() : "";
         const status: BotActionStatus | null =
-          statusParam && botActionStatuses.includes(statusParam as any)
+          statusParam && (["processing", "done", "error"] as const).includes(statusParam as "processing" | "done" | "error")
             ? (statusParam as BotActionStatus)
             : null;
 
@@ -12241,7 +12260,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(error.status).json(buildChatServiceErrorPayload(error));
       }
       if (error instanceof HttpError) {
-        return res.status(error.status).json({ message: error.message, ...(error as any)?.code ? { errorCode: (error as any).code } : {} });
+        return res.status(error.status).json({ message: error.message, ...(typeof (error as { code?: unknown }).code === "string" ? { errorCode: (error as { code: string }).code } : {}) });
       }
       next(error);
     }
@@ -12259,7 +12278,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       try {
         const workspaceCandidate = pickFirstString(
-          (req.body as any)?.workspaceId,
+          (req.body && typeof req.body === "object" && "workspaceId" in req.body && typeof (req.body as { workspaceId?: unknown }).workspaceId === "string" ? (req.body as { workspaceId: string }).workspaceId : undefined),
           req.query.workspaceId,
           req.query.workspace_id,
         );
@@ -12324,7 +12343,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           return res.status(error.status).json(buildChatServiceErrorPayload(error));
         }
         if (error instanceof HttpError) {
-          return res.status(error.status).json({ message: error.message, ...(error as any)?.code ? { errorCode: (error as any).code } : {} });
+          return res.status(error.status).json({ message: error.message, ...(typeof (error as { code?: unknown }).code === "string" ? { errorCode: (error as { code: string }).code } : {}) });
         }
         next(error);
       }
@@ -12348,7 +12367,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
       try {
         const workspaceCandidate = pickFirstString(
-          (req.body as any)?.workspaceId,
+          (req.body && typeof req.body === "object" && "workspaceId" in req.body && typeof (req.body as { workspaceId?: unknown }).workspaceId === "string" ? (req.body as { workspaceId: string }).workspaceId : undefined),
           req.query.workspaceId,
           req.query.workspace_id,
         );
@@ -12378,7 +12397,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           },
         };
 
-        let mapped: any;
+        let mapped: ReturnType<typeof mapMessage>;
 
         if (!isNoCodeSkill) {
           const storageKey = buildAttachmentKey(chat.id, filename);
@@ -12442,7 +12461,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
             metadata: {
               ...(enriched.metadata ?? {}),
               file: {
-                ...(enriched.metadata as any)?.file,
+                ...(enriched.metadata && typeof enriched.metadata === "object" && "file" in enriched.metadata && typeof enriched.metadata.file === "object" ? enriched.metadata.file as Record<string, unknown> : {}),
                 attachmentId: attachment.id,
                 fileId: fileRecord.id,
                 downloadUrl: presigned.url,
@@ -12531,8 +12550,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           uploaded.providerFileId ?? uploaded.objectKey ?? uploaded.externalUri ?? uploaded.id ?? filename;
         const providerFileId = uploaded.providerFileId ?? null;
         const providerDownloadUrl =
-          ((uploaded.metadata as any)?.providerUpload as any)?.downloadUrl ??
-          (uploaded as any)?.metadata?.providerUpload?.downloadUrl ??
+          (uploaded.metadata && typeof uploaded.metadata === "object" && "providerUpload" in uploaded.metadata && typeof uploaded.metadata.providerUpload === "object" && uploaded.metadata.providerUpload !== null && "downloadUrl" in uploaded.metadata.providerUpload ? (uploaded.metadata.providerUpload as { downloadUrl?: unknown }).downloadUrl : null) as string | null ??
+          null
           null;
 
         await storage.updateFile(uploaded.id, {
@@ -12578,7 +12597,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           metadata: {
             ...(enriched.metadata ?? {}),
             file: {
-              ...(enriched.metadata as any)?.file,
+                ...(enriched.metadata && typeof enriched.metadata === "object" && "file" in enriched.metadata && typeof enriched.metadata.file === "object" ? enriched.metadata.file as Record<string, unknown> : {}),
               attachmentId: attachment.id,
               fileId: uploaded.id,
               providerFileId,
@@ -12650,10 +12669,10 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         if (!chat || chat.workspaceId !== workspaceId || chat.userId !== user.id) {
           return res.status(404).json({ message: "Сообщение не найдено" });
         }
-        if ((message as any).messageType !== "file") {
+        if (!("messageType" in message) || message.messageType !== "file") {
           return res.status(400).json({ message: "У сообщения нет файла" });
         }
-        const fileMeta = (message.metadata as any)?.file;
+        const fileMeta = (message.metadata && typeof message.metadata === "object" && "file" in message.metadata ? message.metadata.file : undefined) as { storageKey?: string } | undefined;
         if (!fileMeta?.storageKey) {
           return res.status(404).json({ message: "Файл не найден" });
         }
@@ -13134,7 +13153,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
       const promptTokensEstimate = Math.ceil(totalPromptChars / 4);
       const maxOutputTokens = context.requestConfig.maxTokens ?? null;
       try {
-        await ensureCreditsForLlmPreflight(workspaceId, context.modelInfo as any, promptTokensEstimate, maxOutputTokens);
+        await ensureCreditsForLlmPreflight(workspaceId, context.modelInfo ? { consumptionUnit: context.modelInfo.consumptionUnit, creditsPerUnit: context.modelInfo.creditsPerUnit } : null, promptTokensEstimate, maxOutputTokens);
       } catch (error) {
         if (handlePreflightError(res, error)) return;
         throw error;
@@ -13711,7 +13730,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(error.status).json({ message: error.message, ...(error.code ? { errorCode: error.code } : {}) });
       }
       if (error instanceof HttpError) {
-        return res.status(error.status).json({ message: error.message, ...(error as any)?.code ? { errorCode: (error as any).code } : {} });
+        return res.status(error.status).json({ message: error.message, ...(typeof (error as { code?: unknown }).code === "string" ? { errorCode: (error as { code: string }).code } : {}) });
       }
       next(error);
     }
@@ -14796,7 +14815,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           });
 
           let fileRecordId: string | null = null;
-          let uploadedFile: any | null = null;
+          let uploadedFile: File | null = null;
           try {
             const fileRecord = await storage.createFile({
               workspaceId,
@@ -14876,8 +14895,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
           }
 
           const downloadUrl =
-            (uploadedFile?.metadata as any)?.providerUpload?.downloadUrl ??
-            (uploadedFile as any)?.metadata?.providerUpload?.downloadUrl ??
+            (uploadedFile?.metadata && typeof uploadedFile.metadata === "object" && "providerUpload" in uploadedFile.metadata && typeof uploadedFile.metadata.providerUpload === "object" && uploadedFile.metadata.providerUpload !== null && "downloadUrl" in uploadedFile.metadata.providerUpload ? (uploadedFile.metadata.providerUpload as { downloadUrl?: unknown }).downloadUrl : null) as string | null ??
+            null
             null;
           const normalizedDownloadUrl =
             typeof downloadUrl === "string" && downloadUrl.trim().length > 0 ? downloadUrl.trim() : null;
@@ -15135,7 +15154,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "ID операции не предоставлен" });
       }
 
-      const status = (await yandexSttAsyncService.getOperationStatus(user.id, operationId)) as any;
+      const status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
       res.json(status);
     } catch (error) {
       console.error(`[transcribe/operations] user=${user.id} error:`, error);
@@ -15162,7 +15181,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         return res.status(400).json({ message: "ID операции не предоставлен" });
       }
 
-      const status: any = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
+      const status = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
       
       if (status.status !== 'completed' || !status.text) {
         console.warn(
@@ -17083,7 +17102,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         workspaceId,
         baseId,
         actionId,
-        initialStage as any,
+        initialStage ?? undefined,
       );
       res.json(action);
     } catch (error) {
@@ -17108,8 +17127,8 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
 
     try {
       const action = await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
-        status: status as any,
-        stage: stage as any,
+        status: status ?? undefined,
+        stage: stage ?? undefined,
         displayText,
         payload,
       });
@@ -17277,7 +17296,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         }));
       } catch (error) {
         if (error instanceof IndexingRulesDomainError) {
-          return res.status((error as any).status ?? 400).json({
+          return res.status(error.status ?? 400).json({
             error: error.message,
             code: error.code,
             field: error.field ?? "embeddings_provider",
@@ -17625,9 +17644,9 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
         embeddingCreditsPerUnit = resolved.creditsPerUnit ?? null;
       } catch (error) {
         if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
-          const status = (error as any)?.status ?? 400;
+          const status = error.status ?? 400;
           markImmediateFailure(error.message, status);
-          return res.status(status).json({ message: error.message, errorCode: (error as any)?.code });
+          return res.status(status).json({ message: error.message, errorCode: error.code });
         }
         throw error;
       }
@@ -18281,7 +18300,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   httpServer.on("clientError", (err, socket) => {
     const message = err?.message ?? "";
     // Шум от keep-alive/простоя: Request timeout / ECONNRESET часто валятся, когда клиент закрывает соединение.
-    const code = (err as any)?.code;
+    const code = (err && typeof err === "object" && "code" in err && typeof err.code === "string" ? err.code : undefined) as string | undefined;
     const isNoise =
       message.toLowerCase().includes("request timeout") ||
       code === "ECONNRESET" ||

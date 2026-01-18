@@ -81,12 +81,13 @@ function buildTimeoutSignal(timeoutMs: number, external?: AbortSignal): AbortSig
   return controller.signal;
 }
 
-function extractProviderFileId(payload: any): string | null {
+function extractProviderFileId(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
-  if (typeof payload.provider_file_id === "string") return payload.provider_file_id;
-  if (typeof payload.providerFileId === "string") return payload.providerFileId;
-  if (typeof payload.fileUri === "string") return payload.fileUri;
-  if (typeof payload.fileId === "string") return payload.fileId;
+  const obj = payload as Record<string, unknown>;
+  if (typeof obj.provider_file_id === "string") return obj.provider_file_id;
+  if (typeof obj.providerFileId === "string") return obj.providerFileId;
+  if (typeof obj.fileUri === "string") return obj.fileUri;
+  if (typeof obj.fileId === "string") return obj.fileId;
   return null;
 }
 
@@ -171,7 +172,8 @@ export class FileStorageProviderClient {
     }
 
     const form = new FormData();
-    form.append(this.multipartFieldName, input.data as any, {
+    // FormData.append accepts Buffer | ReadableStream which matches input.data type
+    form.append(this.multipartFieldName, input.data, {
       filename: input.fileName,
       contentType: input.mimeType ?? undefined,
       knownLength: typeof input.sizeBytes === "number" ? input.sizeBytes : undefined,
@@ -219,11 +221,12 @@ export class FileStorageProviderClient {
         return await fetch(url, {
           method: this.uploadMethod,
           headers,
-          body: form as any,
+          body: form as unknown as BodyInit,
           signal: timeoutSignal,
         });
-      } catch (error: any) {
-        const isAbort = error?.name === "AbortError" || error?.message === "REQUEST_TIMEOUT";
+      } catch (error: unknown) {
+        const errorObj = error as { name?: string; message?: string };
+        const isAbort = errorObj?.name === "AbortError" || errorObj?.message === "REQUEST_TIMEOUT";
         const code = isAbort ? "TIMEOUT" : "NETWORK_ERROR";
         const retryable = !isAbort;
         const message = isAbort
@@ -295,7 +298,7 @@ export class FileStorageProviderClient {
       typeof this.responseFileIdPath === "string" && this.responseFileIdPath.trim().length > 0
         ? this.responseFileIdPath
             .split(".")
-            .reduce<any>((acc, key) => (acc && typeof acc === "object" ? (acc as any)[key] : undefined), payload) ??
+            .reduce<unknown>((acc, key) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined), payload) ??
           extractProviderFileId(payload)
         : extractProviderFileId(payload);
     if (!providerFileId) {

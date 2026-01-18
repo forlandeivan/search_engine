@@ -35,7 +35,7 @@ export function estimateLlmPreflight(model: Pick<Model, "consumptionUnit" | "cre
   const totalTokens = promptTokens + maxOutputTokens;
   const units = tokensToUnits(totalTokens);
   const price: PriceCalculationResult = calculatePriceForUsage(
-    { consumptionUnit: model.consumptionUnit, creditsPerUnit: model.creditsPerUnit } as any,
+    { consumptionUnit: model.consumptionUnit, creditsPerUnit: model.creditsPerUnit },
     { unit: "TOKENS_1K", quantityRaw: units.raw, quantityUnits: units.units },
   );
 
@@ -56,7 +56,7 @@ export function estimateEmbeddingsPreflight(
   const inputTokens = normalizeTokens(input.inputTokens);
   const units = tokensToUnits(inputTokens);
   const price: PriceCalculationResult = calculatePriceForUsage(
-    { consumptionUnit: model.consumptionUnit, creditsPerUnit: model.creditsPerUnit } as any,
+    { consumptionUnit: model.consumptionUnit, creditsPerUnit: model.creditsPerUnit },
     { unit: "TOKENS_1K", quantityRaw: units.raw, quantityUnits: units.units },
   );
 
@@ -77,7 +77,7 @@ export function estimateAsrPreflight(
   const duration = Math.max(0, Math.floor(input.durationSeconds ?? 0));
   const units = secondsToUnits(duration);
   const price: PriceCalculationResult = calculatePriceForUsage(
-    { consumptionUnit: model.consumptionUnit, creditsPerUnit: model.creditsPerUnit } as any,
+    { consumptionUnit: model.consumptionUnit, creditsPerUnit: model.creditsPerUnit },
     { unit: "MINUTES", quantityRaw: units.raw, quantityUnits: units.units },
   );
 

@@ -257,7 +257,7 @@ export async function deleteSkillFileVectors(params: {
     return { durationMs: null };
   }
 
-  const must: any[] = [
+  const must: Array<{ key: string; match: { value: string | number } }> = [
     { key: "workspace_id", match: { value: workspaceId } },
     { key: "skill_id", match: { value: skillId } },
     { key: "doc_id", match: { value: fileId } },

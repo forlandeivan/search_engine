@@ -58,7 +58,7 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
       throw err;
     });
 
-  const providerConfig = normalizeFileProviderConfig((provider as any).config ?? defaultProviderConfig);
+  const providerConfig = normalizeFileProviderConfig(provider.config ?? defaultProviderConfig);
   const client = createFileStorageProviderClient({
     baseUrl: provider.baseUrl,
     authType: provider.authType as "none" | "bearer",
@@ -135,14 +135,14 @@ export async function uploadFileToProvider(params: UploadParams): Promise<File> 
 
     if (error instanceof ProviderUploadError) {
       // Обертываем ProviderUploadError в FileUploadToProviderError с дополнительной информацией о провайдере
-      const providerName = (provider as any).name ?? null;
+      const providerName = provider.name ?? null;
       const enhancedDetails: Record<string, unknown> = {};
       if (providerName) {
         enhancedDetails.providerName = providerName;
       }
       throw new FileUploadToProviderError(error.message, error.status, enhancedDetails);
     }
-    const providerName = (provider as any).name ?? null;
+    const providerName = provider.name ?? null;
     const errorDetails: Record<string, unknown> = { cause: message };
     if (providerName) {
       errorDetails.providerName = providerName;

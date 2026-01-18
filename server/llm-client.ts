@@ -1131,7 +1131,7 @@ function isTokenExpiredError(error: unknown): boolean {
         errorMessage.toLowerCase().includes("unauthorized") ||
         errorMessage.toLowerCase().includes("401") ||
         errorMessage.toLowerCase().includes("403"))) ||
-    (error instanceof Error && "status" in error && ((error as any).status === 401 || (error as any).status === 403))
+    (error instanceof Error && "status" in error && typeof (error as { status?: number }).status === "number" && ((error as { status?: number }).status === 401 || (error as { status?: number }).status === 403))
   );
 }
 
@@ -1214,7 +1214,7 @@ export function fetchLlmCompletion(
 
   // Сохраняем streamIterator из оригинального promise, если он есть
   if (completionPromise.streamIterator) {
-    (wrappedPromise as any).streamIterator = completionPromise.streamIterator;
+    return Object.assign(wrappedPromise, { streamIterator: completionPromise.streamIterator }) as LlmCompletionPromise;
   }
 
   return wrappedPromise as LlmCompletionPromise;
@@ -1462,8 +1462,9 @@ export async function checkLlmProviderHealth(
         // Для health check достаточно проверить, что поток начался
         // Читаем первые байты, чтобы убедиться, что соединение работает
         try {
-          if (response.body) {
-            const reader = (response.body as any).getReader?.();
+          if (response.body && typeof response.body === "object") {
+            const body = response.body as { getReader?: () => { read: () => Promise<{ done: boolean; value?: unknown }>; cancel: () => Promise<void> } } | { cancel?: () => Promise<void> } | null };
+            const reader = typeof body.getReader === "function" ? body.getReader() : null;
             if (reader) {
               const chunk = await Promise.race([
                 reader.read(),
@@ -1476,9 +1477,11 @@ export async function checkLlmProviderHealth(
                   // Игнорируем ошибки при отмене
                 });
               }
-            } else {
+            } else if ("cancel" in body && typeof body.cancel === "function") {
               // Если нет getReader, просто отменяем body
-              (response.body as any).cancel?.();
+              body.cancel().catch(() => {
+                // Игнорируем ошибки при отмене
+              });
             }
           }
         } catch {
@@ -1530,13 +1533,4 @@ export async function checkLlmProviderHealth(
         responseTimeMs,
       };
     }
-  } catch (error) {
-    const responseTimeMs = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      available: false,
-      error: errorMessage,
-      responseTimeMs,
-    };
-  }
 }

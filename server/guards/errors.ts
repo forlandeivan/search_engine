@@ -42,7 +42,7 @@ export function mapDecisionToPayload(
     operationType: context?.operationType,
     workspaceId: context?.workspaceId,
     meta: context?.meta as Record<string, unknown> | undefined,
-    correlationId: context && "correlationId" in context ? (context as any).correlationId : undefined,
+    correlationId: context && typeof context === "object" && "correlationId" in context ? (context as Partial<OperationContext> & { correlationId?: string }).correlationId : undefined,
   };
 }
 

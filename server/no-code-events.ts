@@ -149,24 +149,25 @@ export function buildMessageCreatedEventPayload(args: {
       ? (args.message.metadata as Record<string, unknown>)
       : {};
   const sanitizedMetadata: Record<string, unknown> = { ...metadata };
-  const fileMeta = sanitizeFileMetadata((metadata as any).file);
+  const fileMetaRaw = "file" in metadata && typeof metadata.file === "object" ? metadata.file : null;
+  const fileMeta = sanitizeFileMetadata(fileMetaRaw);
   if (fileMeta) {
     sanitizedMetadata.file = fileMeta;
   } else if ("file" in sanitizedMetadata) {
-    delete (sanitizedMetadata as any).file;
+    delete sanitizedMetadata.file;
   }
   const file =
     fileMeta && typeof fileMeta === "object"
       ? {
-          attachmentId: (fileMeta as any).attachmentId ?? null,
-          fileId: (fileMeta as any).fileId ?? null,
-          filename: (fileMeta as any).filename ?? null,
-          mimeType: (fileMeta as any).mimeType ?? null,
-          sizeBytes: typeof (fileMeta as any).sizeBytes === "number" ? (fileMeta as any).sizeBytes : null,
-          downloadUrl: (fileMeta as any).downloadUrl ?? (fileMeta as any).providerDownloadUrl ?? `/api/chat/messages/${args.message.id}/file`,
-          expiresAt: (fileMeta as any).expiresAt ?? null,
-          uploadedByUserId: (fileMeta as any).uploadedByUserId ?? null,
-          providerFileId: (fileMeta as any).providerFileId ?? null,
+          attachmentId: ("attachmentId" in fileMeta && typeof fileMeta.attachmentId === "string" ? fileMeta.attachmentId : null),
+          fileId: ("fileId" in fileMeta && typeof fileMeta.fileId === "string" ? fileMeta.fileId : null),
+          filename: ("filename" in fileMeta && typeof fileMeta.filename === "string" ? fileMeta.filename : null),
+          mimeType: ("mimeType" in fileMeta && (typeof fileMeta.mimeType === "string" || fileMeta.mimeType === null) ? fileMeta.mimeType : null),
+          sizeBytes: ("sizeBytes" in fileMeta && typeof fileMeta.sizeBytes === "number" ? fileMeta.sizeBytes : null),
+          downloadUrl: (("downloadUrl" in fileMeta && typeof fileMeta.downloadUrl === "string" ? fileMeta.downloadUrl : null) ?? ("providerDownloadUrl" in fileMeta && typeof fileMeta.providerDownloadUrl === "string" ? fileMeta.providerDownloadUrl : null) ?? `/api/chat/messages/${args.message.id}/file`),
+          expiresAt: ("expiresAt" in fileMeta && (typeof fileMeta.expiresAt === "string" || fileMeta.expiresAt === null) ? fileMeta.expiresAt : null),
+          uploadedByUserId: ("uploadedByUserId" in fileMeta && (typeof fileMeta.uploadedByUserId === "string" || fileMeta.uploadedByUserId === null) ? fileMeta.uploadedByUserId : null),
+          providerFileId: ("providerFileId" in fileMeta && typeof fileMeta.providerFileId === "string" ? fileMeta.providerFileId : null),
         }
       : undefined;
 
@@ -180,7 +181,7 @@ export function buildMessageCreatedEventPayload(args: {
     skill: { id: args.skillId, executionMode: "no_code" },
     message: {
       id: args.message.id,
-      type: (args.message as any).messageType ?? (file ? "file" : "text"),
+      type: (typeof args.message === "object" && args.message !== null && "messageType" in args.message && typeof args.message.messageType === "string" ? args.message.messageType : null) ?? (file ? "file" : "text"),
       role: args.message.role,
       text: args.message.content,
       file,

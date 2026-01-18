@@ -352,7 +352,8 @@ class YandexSttAsyncService {
       throw new YandexSttAsyncConfigError("Не все учетные данные Object Storage настроены.");
     }
 
-    let asrModelKey = (provider as any).model ?? null;
+    const providerConfig = config && typeof config === "object" && !Array.isArray(config) ? config as Record<string, unknown> : {};
+    let asrModelKey = ("model" in providerConfig && typeof providerConfig.model === "string" ? providerConfig.model : null) ?? null;
     let asrModelId: string | null = null;
     let asrCreditsPerUnit: number | null = null;
     if (asrModelKey) {
@@ -405,7 +406,7 @@ class YandexSttAsyncService {
     // Preflight credits check
     try {
       const estimate = estimateAsrPreflight(
-        { consumptionUnit: "MINUTES", creditsPerUnit: asrCreditsPerUnit ?? 0 } as any,
+        { consumptionUnit: "MINUTES" as const, creditsPerUnit: asrCreditsPerUnit ?? 0 },
         { durationSeconds: audioDurationSeconds ?? 0 },
       );
       await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCreditsCents, {
@@ -717,11 +718,14 @@ class YandexSttAsyncService {
             if (alternatives.length === 0) return "";
             // Возьми альтернативу с наивысшей confidence или первую если confidence не задана
             const best = alternatives.reduce((best, alt) => {
-              const altConf = (alt as any).confidence ?? 0;
-              const bestConf = (best as any).confidence ?? 0;
+              const altObj = alt && typeof alt === "object" && !Array.isArray(alt) ? alt as Record<string, unknown> : {};
+              const bestObj = best && typeof best === "object" && !Array.isArray(best) ? best as Record<string, unknown> : {};
+              const altConf = typeof altObj.confidence === "number" ? altObj.confidence : 0;
+              const bestConf = typeof bestObj.confidence === "number" ? bestObj.confidence : 0;
               return altConf > bestConf ? alt : best;
             });
-            return best.text || "";
+            const bestResultObj = best && typeof best === "object" && !Array.isArray(best) ? best as Record<string, unknown> : {};
+            return (typeof bestResultObj.text === "string" ? bestResultObj.text : "") || "";
           })
           .filter(text => text.length > 0)
           .join(" ")
@@ -850,7 +854,7 @@ class YandexSttAsyncService {
                     price,
                     metadata: {
                       source: "asr_transcription",
-                      fileName: (cached as any).fileName ?? null,
+                      fileName: undefined,
                       provider: "yandex_speechkit",
                     },
                   });

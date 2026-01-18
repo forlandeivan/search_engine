@@ -192,7 +192,7 @@ export class TariffPlanService {
 
     const now = new Date();
 
-    await db.transaction(async (tx: any) => {
+    await db.transaction(async (tx: typeof db) => {
       const existing = await tx.select().from(tariffLimits).where(eq(tariffLimits.planId, planId));
       const existingMap = new Map<string, typeof tariffLimits.$inferSelect>(
         existing.map((l: typeof tariffLimits.$inferSelect) => [l.limitKey, l]),

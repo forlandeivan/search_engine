@@ -50,8 +50,8 @@ export class WorkspaceOperationGuard {
 
     const evaluated = this.evaluator.evaluate({
       context,
-      snapshot: (snapshot as any) ?? null,
-      rules: (rules as any) ?? [],
+      snapshot: snapshot ?? null,
+      rules: (Array.isArray(rules) ? rules : []) as typeof rules extends readonly unknown[] ? typeof rules : unknown[],
     });
 
     const logPayload = {
@@ -90,7 +90,7 @@ export class WorkspaceOperationGuard {
         message: "Guard blocking disabled (mode=DISABLED)",
       };
     } else if (this.blockingMode === "SOFT" && !evaluated.allowed) {
-      await logGuardBlockEvent(evaluated, context, snapshot as any, { isSoft: true });
+      await logGuardBlockEvent(evaluated, context, snapshot ?? null, { isSoft: true });
       finalDecision = {
         ...finalDecision,
         allowed: true,
@@ -102,7 +102,7 @@ export class WorkspaceOperationGuard {
         },
       };
     } else if (this.blockingMode === "HARD" && !evaluated.allowed) {
-      await logGuardBlockEvent(evaluated, context, snapshot as any, { isSoft: false });
+      await logGuardBlockEvent(evaluated, context, snapshot ?? null, { isSoft: false });
     }
 
     return finalDecision;

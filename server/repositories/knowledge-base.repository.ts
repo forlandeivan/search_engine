@@ -316,7 +316,7 @@ export const knowledgeBaseRepository = {
 
     const [created] = await db
       .insert(knowledgeBaseIndexingPolicy)
-      .values(updates as any)
+      .values(updates)
       .returning();
     return created ?? null;
   },

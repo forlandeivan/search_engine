@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { db } from "./db";
 import type { JsonValue } from "./json-types";
 import {
@@ -316,7 +316,7 @@ function cloneRecord<T>(value: T): T {
 }
 
 export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRepository {
-  private mapExecution(row: any): SkillExecutionRecord {
+  private mapExecution(row: Record<string, unknown>): SkillExecutionRecord {
     return {
       id: row.id,
       workspaceId: row.workspace_id,
@@ -333,7 +333,7 @@ export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRep
     };
   }
 
-  private mapStep(row: any): SkillExecutionStepRecord {
+  private mapStep(row: Record<string, unknown>): SkillExecutionStepRecord {
     return {
       id: row.id,
       executionId: row.execution_id,
@@ -373,8 +373,8 @@ export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRep
   }
 
   async updateExecution(id: string, updates: Partial<SkillExecutionRecord>): Promise<void> {
-    const fragments: any[] = [];
-    const add = (fragment: any) => fragments.push(fragment);
+    const fragments: SQL[] = [];
+    const add = (fragment: SQL) => fragments.push(fragment);
 
     if (updates.workspaceId !== undefined) add(sql`workspace_id = ${updates.workspaceId}`);
     if (updates.userId !== undefined) add(sql`user_id = ${updates.userId}`);
@@ -419,13 +419,14 @@ export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRep
 
   async listExecutions(): Promise<SkillExecutionRecord[]> {
     const result = await db.execute(sql`SELECT * FROM skill_executions ORDER BY started_at DESC`);
-    const rows = (result as any)?.rows ?? [];
-    return rows.map((row: any) => this.mapExecution(row));
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    return rows.map((row) => this.mapExecution(row));
   }
 
   async getExecutionById(id: string): Promise<SkillExecutionRecord | null> {
     const result = await db.execute(sql`SELECT * FROM skill_executions WHERE id = ${id} LIMIT 1`);
-    const row = (result as any)?.rows?.[0];
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    const row = rows[0];
     return row ? this.mapExecution(row) : null;
   }
 
@@ -433,8 +434,8 @@ export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRep
     const result = await db.execute(
       sql`SELECT * FROM skill_execution_steps WHERE execution_id = ${executionId} ORDER BY "order" ASC`,
     );
-    const rows = (result as any)?.rows ?? [];
-    return rows.map((row: any) => this.mapStep(row));
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    return rows.map((row) => this.mapStep(row));
   }
 
   async deleteExecutions(executionIds: readonly string[]): Promise<void> {

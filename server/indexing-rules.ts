@@ -285,7 +285,7 @@ export class IndexingRulesService {
 
       const topKIssue = parsed.error.issues.find((issue) => issue.path?.[0] === "topK");
       if (topKIssue) {
-        const isIntegerIssue = topKIssue.code === "invalid_type" && (topKIssue as any).expected === "integer";
+        const isIntegerIssue = topKIssue.code === "invalid_type" && "expected" in topKIssue && topKIssue.expected === "integer";
         throw new IndexingRulesDomainError(
           isIntegerIssue
             ? `Top K должно быть целым числом в диапазоне ${MIN_TOP_K}..${MAX_TOP_K}`

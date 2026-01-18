@@ -79,7 +79,7 @@ export async function grantSubscriptionCreditsOnEvent(
   let ledgerEntry: WorkspaceCreditLedgerEntry | undefined;
   let accountAfter: WorkspaceCreditAccount | null = null;
 
-  await db.transaction(async (tx: any) => {
+  await db.transaction(async (tx: typeof db) => {
     // ensure account row and lock
     await tx
       .insert(workspaceCreditAccounts)
@@ -112,8 +112,8 @@ export async function grantSubscriptionCreditsOnEvent(
             metadata: { reset: true, period },
           })
           .onConflictDoNothing();
-      } catch (error: any) {
-        const message = typeof error?.message === "string" ? error.message : "";
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : "";
         if (!message.toLowerCase().includes("workspace_credit_ledger_source_uq")) {
           throw error;
         }
@@ -150,8 +150,8 @@ export async function grantSubscriptionCreditsOnEvent(
           })
           .returning();
         ledgerEntry = inserted[0];
-      } catch (error: any) {
-        const message = typeof error?.message === "string" ? error.message : "";
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : "";
         if (!message.toLowerCase().includes("workspace_credit_ledger_source_uq")) {
           throw error;
         }
@@ -218,7 +218,7 @@ export async function getRecentManualAdjustments(
     .orderBy(sql`${workspaceCreditLedger.occurredAt} desc`)
     .limit(limit);
 
-  return rows.map((row: any) => ({
+  return rows.map((row) => ({
     id: row.id,
     amountDelta: centsToCredits(row.amountDelta ?? 0),
     reason: row.reason ?? null,
@@ -246,7 +246,7 @@ export async function applyManualCreditAdjustment(payload: ManualAdjustmentPaylo
 
   let accountAfter: WorkspaceCreditAccount | null = null;
 
-  await db.transaction(async (tx: any) => {
+  await db.transaction(async (tx: typeof db) => {
     await tx
       .insert(workspaceCreditAccounts)
       .values({ workspaceId })

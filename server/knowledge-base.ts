@@ -75,7 +75,8 @@ function buildKnowledgeCollectionName(baseId: string, workspaceId: string): stri
 }
 
 function isQdrantNotFoundError(error: unknown): boolean {
-  const status = (error as any)?.status ?? (error as any)?.response?.status ?? null;
+  const errorObj = error as { status?: number; response?: { status?: number } };
+  const status = errorObj?.status ?? errorObj?.response?.status ?? null;
   return status === 404;
 }
 

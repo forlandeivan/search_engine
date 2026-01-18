@@ -59,7 +59,7 @@ export async function reconcileWorkspaceObjectCounters(
 
   const previous: WorkspaceObjectCountersSnapshot = {
     skillsCount: Number(ensured.skillsCount ?? 0),
-    actionsCount: Number((ensured as any).actionsCount ?? 0),
+    actionsCount: Number(ensured.actionsCount ?? 0),
     knowledgeBasesCount: Number(ensured.knowledgeBasesCount ?? 0),
     membersCount: Number(ensured.membersCount ?? 0),
   };
@@ -84,7 +84,7 @@ export async function reconcileWorkspaceObjectCounters(
 
   const next: WorkspaceObjectCountersSnapshot = {
     skillsCount: Number(updatedUsage.skillsCount ?? 0),
-    actionsCount: Number((updatedUsage as any).actionsCount ?? 0),
+    actionsCount: Number(updatedUsage.actionsCount ?? 0),
     knowledgeBasesCount: Number(updatedUsage.knowledgeBasesCount ?? 0),
     membersCount: Number(updatedUsage.membersCount ?? 0),
   };

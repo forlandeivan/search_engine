@@ -143,7 +143,7 @@ class FileStorageProviderService {
     const nextConfig =
       parsed.config !== undefined
         ? normalizeFileProviderConfig(parsed.config)
-        : normalizeFileProviderConfig((existing as any).config ?? {});
+        : normalizeFileProviderConfig(existing.config ?? {});
     const provider = await storage.updateFileStorageProvider(id, {
       name: parsed.name?.trim(),
       baseUrl: parsed.baseUrl?.trim(),

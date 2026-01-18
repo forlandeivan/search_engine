@@ -42,7 +42,7 @@ function buildHeaders(event: FileEventOutbox): Record<string, string> {
 async function deliver(
   event: FileEventOutbox,
 ): Promise<{ ok: boolean; status: number; retryable: boolean; errorMessage?: string }> {
-  const rawUrl = (event as any).targetUrl ?? (event as any).target_url ?? null;
+  const rawUrl = event.targetUrl ?? null;
   const targetUrl = sanitizeTargetUrl(rawUrl);
   if (!targetUrl) {
     return { ok: false, status: 0, retryable: false, errorMessage: "Invalid URL" };

@@ -75,7 +75,7 @@ export async function runTranscriptActionCommon(payload: AutoActionRunPayload): 
     chatId: logContext.chatId ?? null,
     userMessageId: null,
     source: 'workspace_skill',
-    metadata: executionMetadata as any,
+    metadata: executionMetadata as Record<string, unknown>,
   });
   const executionId = execution?.id ?? null;
 

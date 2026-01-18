@@ -202,7 +202,7 @@ export function sanitizeHeadersForLog(headers: Headers): Record<string, string> 
 /**
  * Resolves operation ID from request headers
  */
-export function resolveOperationId(req: any): string | null {
+export function resolveOperationId(req: { headers?: Record<string, string | string[] | undefined> } | { headers?: { [key: string]: string | string[] | undefined } }): string | null {
   const headerKey =
     typeof req.headers['idempotency-key'] === 'string'
       ? req.headers['idempotency-key']

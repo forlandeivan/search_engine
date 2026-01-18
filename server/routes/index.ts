@@ -26,6 +26,7 @@ import { knowledgeCrawlRouter } from './knowledge-crawl.routes';
 import { metricsRouter } from './metrics.routes';
 import { metricsMiddleware } from '../monitoring/middleware';
 import { openapiRouter } from './openapi.routes';
+import { generalApiLimiter } from '../middleware/rate-limit';
 
 const routerLogger = createLogger('router');
 
@@ -59,6 +60,16 @@ export function registerRouteModules(app: Express): void {
   // Add metrics middleware (should be early in the chain)
   app.use(metricsMiddleware);
   routerLogger.info('Registered: metrics middleware');
+  
+  // Apply general API rate limiting to all /api routes (except health and metrics)
+  app.use('/api', (req, res, next) => {
+    // Skip rate limiting for health checks and metrics
+    if (req.path.startsWith('/health') || req.path.startsWith('/metrics')) {
+      return next();
+    }
+    return generalApiLimiter(req, res, next);
+  });
+  routerLogger.info('Registered: general API rate limiting');
   
   // Configure auth router with OAuth settings from app
   configureAuthRouter(app);

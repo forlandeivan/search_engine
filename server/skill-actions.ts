@@ -42,7 +42,8 @@ function mapSkillActionRow(row: SkillActionRow): SkillActionDto {
 
 async function getById(id: string): Promise<SkillActionDto | null> {
   const result = await db.execute(sql`SELECT * FROM "skill_actions" WHERE "id" = ${id} LIMIT 1`);
-  const row = (result as any)?.rows?.[0] as SkillActionRow | undefined;
+  const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as SkillActionRow[];
+  const row = rows[0];
   return row ? mapSkillActionRow(row) : null;
 }
 
@@ -50,7 +51,7 @@ async function listForSkill(skillId: string): Promise<SkillActionDto[]> {
   const result = await db.execute(
     sql`SELECT * FROM "skill_actions" WHERE "skill_id" = ${skillId} ORDER BY "created_at" DESC`,
   );
-  const rows = ((result as any)?.rows ?? []) as SkillActionRow[];
+  const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as SkillActionRow[];
   console.log("[skill-actions] listForSkill raw rows:", JSON.stringify(rows, null, 2));
   return rows.map(mapSkillActionRow);
 }
@@ -63,7 +64,8 @@ async function getForSkillAndAction(skillId: string, actionId: string): Promise<
       LIMIT 1
     `,
   );
-  const row = (result as any)?.rows?.[0] as SkillActionRow | undefined;
+  const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as SkillActionRow[];
+  const row = rows[0];
   return row ? mapSkillActionRow(row) : null;
 }
 
@@ -108,7 +110,8 @@ async function upsertForSkill(
     `,
   );
 
-  const row = (result as any)?.rows?.[0] as SkillActionRow | undefined;
+  const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as SkillActionRow[];
+  const row = rows[0];
   if (!row) {
     throw new Error("Failed to upsert skill action");
   }

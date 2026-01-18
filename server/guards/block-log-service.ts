@@ -4,6 +4,7 @@ import type { GuardDecision, OperationContext } from "./types";
 import type { UsageSnapshot } from "./usage-snapshot-provider";
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { mapDecisionToPayload } from "./errors";
+import type { JsonValue } from "../json-types";
 
 export type BlockLogFilters = {
   workspaceId?: string;
@@ -50,11 +51,14 @@ export async function logGuardBlockEvent(
         limitCurrent: payload.limitsHint?.current ?? null,
         limitValue: payload.limitsHint?.limit ?? null,
         limitUnit: payload.limitsHint?.unit ?? null,
-        expectedCost: context?.expectedCost ? (context.expectedCost as any) : null,
-        usageSnapshot: snapshot ? (snapshot as any) : null,
-        meta: context?.meta ? (context.meta as any) : null,
+        expectedCost: context?.expectedCost ? (context.expectedCost as JsonValue) : null,
+        usageSnapshot: snapshot ? (snapshot as JsonValue) : null,
+        meta: context?.meta ? (context.meta as JsonValue) : null,
         requestId:
-          options?.requestId ?? (context && "correlationId" in context ? (context as any).correlationId : null),
+          options?.requestId ??
+          (context && typeof context === "object" && "correlationId" in context
+            ? (context as Partial<OperationContext> & { correlationId?: string }).correlationId ?? null
+            : null),
         actorType: options?.actor?.actorType ?? null,
         actorId: options?.actor?.actorId ?? null,
         isSoft: Boolean(options?.isSoft),
@@ -116,7 +120,7 @@ export async function listGuardBlockEvents(
   ]);
 
   const total = Number(countRows[0]?.count ?? 0);
-  const items: GuardBlockEventWithWorkspace[] = rows.map((row: any) => ({
+  const items: GuardBlockEventWithWorkspace[] = rows.map((row) => ({
     ...row.event,
     workspaceName: row.workspaceName ?? null,
   }));

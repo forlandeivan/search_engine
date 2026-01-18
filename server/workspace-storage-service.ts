@@ -38,8 +38,9 @@ async function createBucketIfNeeded(bucketName: string): Promise<void> {
         Bucket: bucketName,
       }),
     );
-  } catch (error: any) {
-    const code = error?.name || error?.Code || error?.code;
+  } catch (error: unknown) {
+    const errorObj = error as { name?: string; Code?: string; code?: string };
+    const code = errorObj?.name || errorObj?.Code || errorObj?.code;
     if (code === "BucketAlreadyOwnedByYou" || code === "BucketAlreadyExists") {
       return;
     }
@@ -107,8 +108,9 @@ export async function getObject(
       body: response.Body as Readable,
       contentType: response.ContentType || undefined,
     };
-  } catch (error: any) {
-    const code = error?.name || error?.Code || error?.code;
+  } catch (error: unknown) {
+    const errorObj = error as { name?: string; Code?: string; code?: string };
+    const code = errorObj?.name || errorObj?.Code || errorObj?.code;
     if (code === "NoSuchKey" || code === "NotFound") {
       return null;
     }
@@ -126,8 +128,9 @@ export async function deleteObject(workspaceId: string, key: string): Promise<vo
         Key: key,
       }),
     );
-  } catch (error) {
-    const code = (error as any)?.name || (error as any)?.Code || (error as any)?.code;
+  } catch (error: unknown) {
+    const errorObj = error as { name?: string; Code?: string; code?: string };
+    const code = errorObj?.name || errorObj?.Code || errorObj?.code;
     if (code === "NoSuchKey" || code === "NotFound") {
       console.warn("[workspace-storage] deleteObject: object missing (idempotent)", { bucket, key });
       return;
@@ -158,8 +161,9 @@ async function getWorkspaceObjectSize(workspaceId: string, relativePath: string)
       }),
     );
     return typeof response.ContentLength === "number" ? response.ContentLength : null;
-  } catch (error: any) {
-    const code = error?.name || error?.Code || error?.code;
+  } catch (error: unknown) {
+    const errorObj = error as { name?: string; Code?: string; code?: string };
+    const code = errorObj?.name || errorObj?.Code || errorObj?.code;
     if (code === "NoSuchKey" || code === "NotFound") {
       return null;
     }

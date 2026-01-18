@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
+import { knowledgeRagLimiter } from '../middleware/rate-limit';
 import { resolvePublicCollectionRequest } from '../lib/public-collection-context';
 import { runKnowledgeBaseRagPipeline } from '../lib/rag-pipeline';
 import { sendSseEvent } from '../lib/chat-llm-helpers';
@@ -198,7 +199,7 @@ publicRouter.get('/embed/suggest', asyncHandler(async (req, res) => {
  * POST /rag/answer
  * RAG (Retrieval-Augmented Generation) endpoint for knowledge base Q&A
  */
-publicRouter.post('/rag/answer', asyncHandler(async (req, res) => {
+publicRouter.post('/rag/answer', knowledgeRagLimiter, asyncHandler(async (req, res) => {
   const parsed = knowledgeRagRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({

@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
+import { authLoginLimiter, authRegisterLimiter } from '../middleware/rate-limit';
 import { emailConfirmationTokenService, EmailConfirmationTokenError } from '../email-confirmation-token-service';
 import { registrationEmailService } from '../email-sender-registry';
 import { SmtpSendError } from '../smtp-email-sender';
@@ -239,7 +240,7 @@ authRouter.get('/yandex/callback', (req, res, next) => {
   })(req, res, next);
 });
 
-authRouter.post('/register', asyncHandler(async (req, res, next) => {
+authRouter.post('/register', authRegisterLimiter, asyncHandler(async (req, res, next) => {
   const neutralResponse = { message: 'If this email is not yet registered, a confirmation link has been sent.' };
   const emailRaw = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
   const passwordRaw = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -318,7 +319,7 @@ authRouter.post('/resend-confirmation', asyncHandler(async (req, res) => {
   return res.status(200).json({ message: 'A new confirmation link has been sent if the email is not yet confirmed.' });
 }));
 
-authRouter.post('/login', (req, res, next) => {
+authRouter.post('/login', authLoginLimiter, (req, res, next) => {
   passport.authenticate('local', (err: unknown, user: PublicUser | false, info?: { message?: string }) => {
     if (err) return next(err);
     if (!user) return res.status(401).json({ message: info?.message ?? 'Неверный email или пароль' });

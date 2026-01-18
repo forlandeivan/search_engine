@@ -215,8 +215,8 @@ export const mapChatSummary = (
   skillSystemKey: session.skillSystemKey ?? null,
   currentAssistantActionType: session.currentAssistantActionType ?? null,
   currentAssistantActionText: session.currentAssistantActionText ?? null,
-  currentAssistantActionTriggerMessageId: (session as any).currentAssistantActionTriggerMessageId ?? null,
-  currentAssistantActionUpdatedAt: (session as any).currentAssistantActionUpdatedAt ?? null,
+  currentAssistantActionTriggerMessageId: session.currentAssistantActionTriggerMessageId ?? null,
+  currentAssistantActionUpdatedAt: session.currentAssistantActionUpdatedAt ?? null,
   currentAssistantAction: mapAssistantAction(session),
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
@@ -261,11 +261,13 @@ export async function clearAssistantActionForChat(opts: {
 }
 
 // message может приходить как запись из БД или из временных локальных объектов; упрощаем тип для совместимости
-export const mapMessage = (message: any) => {
-  const metadata = message.metadata ?? {};
-  const type = (message as any).messageType ?? (message as any).type ?? "text";
-  const cardId = (message as any).cardId ?? (metadata as any)?.cardId ?? null;
-  const fileMeta = (metadata as any).file ?? null;
+export const mapMessage = (message: ChatMessage | Record<string, unknown>) => {
+  const metadata = (message.metadata && typeof message.metadata === "object" ? message.metadata : {}) as Record<string, unknown>;
+  const messageType = ("messageType" in message && typeof message.messageType === "string" ? message.messageType : null) ?? ("type" in message && typeof message.type === "string" ? message.type : null) ?? "text";
+  const type = messageType;
+  const cardId = ("cardId" in message && (typeof message.cardId === "string" || message.cardId === null) ? message.cardId : null) ?? ("cardId" in metadata && (typeof metadata.cardId === "string" || metadata.cardId === null) ? metadata.cardId : null);
+  const fileMetaRaw = "file" in metadata && typeof metadata.file === "object" ? metadata.file : null;
+  const fileMeta = fileMetaRaw && typeof fileMetaRaw === "object" && !Array.isArray(fileMetaRaw) ? fileMetaRaw : null;
   const file =
     type === "file"
       ? {
@@ -558,7 +560,8 @@ async function buildSkillRetrievalContext(options: {
     if (score !== null && score < threshold) {
       return false;
     }
-    const docId = typeof (item.payload as any)?.doc_id === "string" ? (item.payload as any).doc_id : null;
+    const payload = item.payload && typeof item.payload === "object" && !Array.isArray(item.payload) ? item.payload as Record<string, unknown> : null;
+    const docId = payload && "doc_id" in payload && typeof payload.doc_id === "string" ? payload.doc_id : null;
     if (docId && !readyFileIds.includes(docId)) {
       return false;
     }
@@ -571,7 +574,8 @@ async function buildSkillRetrievalContext(options: {
 
   const fragments: string[] = [];
   for (const entry of filtered.slice(0, rules.topK ?? 6)) {
-    const textCandidate = (entry.payload as any)?.chunk_text ?? (entry.payload as any)?.text ?? null;
+    const entryPayload = entry.payload && typeof entry.payload === "object" && !Array.isArray(entry.payload) ? entry.payload as Record<string, unknown> : null;
+    const textCandidate = (entryPayload && "chunk_text" in entryPayload && typeof entryPayload.chunk_text === "string" ? entryPayload.chunk_text : null) ?? (entryPayload && "text" in entryPayload && typeof entryPayload.text === "string" ? entryPayload.text : null) ?? null;
     if (typeof textCandidate === "string" && textCandidate.trim()) {
       fragments.push(textCandidate.trim());
     }
@@ -1185,7 +1189,7 @@ export async function addNoCodeSyncFinalResults(opts: {
     const message = await storage.createChatMessage({
       chatId: opts.chatId,
       role: result.role,
-      messageType: (result as any).messageType ?? "text",
+      messageType: ("messageType" in result && typeof result.messageType === "string" ? result.messageType : null) ?? "text",
       content,
       metadata,
     });
@@ -1365,10 +1369,10 @@ export async function setNoCodeAssistantAction(opts: {
     skillIsSystem: chat.skillIsSystem,
     skillSystemKey: chat.skillSystemKey,
     skillStatus: chat.skillStatus,
-  } as any);
+  } as ChatSession & { skillName: string | null; skillIsSystem?: boolean; skillSystemKey?: string | null; skillStatus?: string | null });
 }
 
-function mapBotActionRecord(action: any): BotAction {
+function mapBotActionRecord(action: Record<string, unknown>): BotAction {
   return {
     workspaceId: action.workspaceId ?? action.workspace_id,
     chatId: action.chatId ?? action.chat_id,

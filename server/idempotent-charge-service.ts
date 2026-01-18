@@ -106,7 +106,7 @@ export async function applyIdempotentUsageCharge(input: IdempotentChargeInput): 
   const occurredAt = input.occurredAt ?? new Date();
   const metadata = buildMetadata(input);
 
-  const result = await db.transaction(async (tx: any) => {
+  const result = await db.transaction(async (tx: typeof db) => {
     await tx
       .insert(workspaceCreditAccounts)
       .values({ workspaceId: input.workspaceId })

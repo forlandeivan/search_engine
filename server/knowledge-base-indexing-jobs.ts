@@ -408,7 +408,7 @@ async function updateIndexingActionProgress(workspaceId: string, baseId: string)
 }
 
 type DocumentIndexingLock = {
-  client: { query: (text: string, params?: unknown[]) => Promise<{ rows?: any[] }>; release: () => void } | null;
+  client: { query: (text: string, params?: unknown[]) => Promise<{ rows?: Record<string, unknown>[] }>; release: () => void } | null;
   workspaceId: string;
   documentId: string;
 };
@@ -417,12 +417,12 @@ async function tryAcquireDocumentIndexingLock(
   workspaceId: string,
   documentId: string,
 ): Promise<DocumentIndexingLock | null> {
-  if (!pool || typeof (pool as any).connect !== "function") {
+  if (!pool || !("connect" in pool) || typeof pool.connect !== "function") {
     workerLog(`Document lock skipped (pool unavailable) for document=${documentId}`);
     return { client: null, workspaceId, documentId };
   }
 
-  const client = await (pool as any).connect();
+  const client = await pool.connect();
   try {
     const result = await client.query(
       "SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked",

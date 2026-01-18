@@ -7,6 +7,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { NeonDatabase } from "drizzle-orm/neon-serverless";
 import ws from "ws";
 import * as schema from "@shared/schema";
+import { createLogger } from "./lib/logger";
 
 // ВАЖНО: все timestamps храним в UTC. Таймзона выставляется на уровне соединения.
 process.env.TZ = process.env.TZ || "UTC";
@@ -24,6 +25,18 @@ interface UnavailableDbProxy {
 let pool: DatabasePool = null;
 let db: Database | null = null;
 let lastDatabaseError: string | null = null;
+
+const dbLogger = createLogger('db');
+
+// SQL logging is controlled by LOG_SQL environment variable
+// In production, SQL queries are not logged by default to reduce overhead
+const shouldLogSql = process.env.LOG_SQL === 'true';
+
+const sqlLoggerConfig = shouldLogSql ? {
+  logQuery(query: string, params: unknown[]) {
+    dbLogger.debug({ sql: query, params }, 'SQL Query');
+  }
+} : false;
 
 function formatConnectionError(error: unknown): string {
   if (error instanceof Error) {
@@ -73,9 +86,11 @@ function tryConnectCustomPostgres(): void {
 
     const customPool = new PgPool({
       connectionString: databaseUrl,
-      connectionTimeoutMillis: 45_000,
-      idleTimeoutMillis: 60_000,
-      max: 20,
+      connectionTimeoutMillis: Number(process.env.PG_CONNECTION_TIMEOUT_MS) || 30_000,
+      idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS) || 30_000,
+      max: Number(process.env.PG_POOL_MAX) || 50,
+      min: Number(process.env.PG_POOL_MIN) || 5,
+      statement_timeout: 30_000,
       allowExitOnIdle: true,
     });
 
@@ -85,18 +100,15 @@ function tryConnectCustomPostgres(): void {
       });
     });
 
+    customPool.on("error", (err) => {
+      dbLogger.error({ err }, "Pool error");
+    });
+
     pool = customPool;
     db = pgDrizzle({ 
       client: customPool, 
       schema,
-      logger: {
-        logQuery(query: string, params: unknown[]) {
-          console.log('[SQL]', query);
-          if (params && params.length > 0) {
-            console.log('[SQL PARAMS]', params);
-          }
-        }
-      }
+      logger: sqlLoggerConfig,
     });
 
     console.log(`[db] ✅ Successfully configured custom PostgreSQL connection`);
@@ -141,9 +153,11 @@ function connectUsingPgPool(databaseUrl: string): void {
   try {
     const pgPool = new PgPool({
       connectionString: databaseUrl,
-      connectionTimeoutMillis: 45_000,
-      idleTimeoutMillis: 60_000,
-      max: 20,
+      connectionTimeoutMillis: Number(process.env.PG_CONNECTION_TIMEOUT_MS) || 30_000,
+      idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS) || 30_000,
+      max: Number(process.env.PG_POOL_MAX) || 50,
+      min: Number(process.env.PG_POOL_MIN) || 5,
+      statement_timeout: 30_000,
       allowExitOnIdle: true,
     });
 
@@ -151,20 +165,18 @@ function connectUsingPgPool(databaseUrl: string): void {
       client.query("SET TIME ZONE 'UTC'").catch((error) => {
         console.warn("[db] Failed to set timezone UTC for pgPool client:", error);
       });
+      dbLogger.debug({ total: pgPool.totalCount }, "Client connected");
+    });
+
+    pgPool.on("error", (err) => {
+      dbLogger.error({ err }, "Pool error");
     });
 
     pool = pgPool;
     db = pgDrizzle({ 
       client: pgPool, 
       schema,
-      logger: {
-        logQuery(query: string, params: unknown[]) {
-          console.log('[SQL]', query);
-          if (params && params.length > 0) {
-            console.log('[SQL PARAMS]', params);
-          }
-        }
-      }
+      logger: sqlLoggerConfig,
     });
 
     console.log(`[db] ✅ Using PostgreSQL connection string via node-postgres`);
@@ -202,14 +214,7 @@ function tryConnectDatabaseUrl(): void {
       db = neonDrizzle({ 
         client: pool, 
         schema,
-        logger: {
-          logQuery(query: string, params: unknown[]) {
-            console.log('[SQL]', query);
-            if (params && params.length > 0) {
-              console.log('[SQL PARAMS]', params);
-            }
-          }
-        }
+        logger: sqlLoggerConfig,
       });
       console.log(`[db] ✅ Using Neon/PostgreSQL connection string`);
       return;

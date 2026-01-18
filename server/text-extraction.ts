@@ -47,7 +47,7 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
     } else if (typeof chunk === "string") {
       chunks.push(Buffer.from(chunk));
     } else {
-      chunks.push(Buffer.from(chunk as any));
+      chunks.push(Buffer.from(chunk as Uint8Array | ArrayLike<number>));
     }
   }
   return Buffer.concat(chunks);
@@ -122,7 +122,7 @@ async function extractPdf(buffer: Buffer): Promise<string> {
     const page = await pdf.getPage(pageIndex);
     const textContent = await page.getTextContent();
     const pageText = textContent.items
-      .map((item: any) => (typeof item.str === "string" ? item.str : ""))
+      .map((item: { str?: string }) => (typeof item.str === "string" ? item.str : ""))
       .join(" ");
     if (pageText.trim()) {
       textChunks.push(pageText.trim());

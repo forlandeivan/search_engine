@@ -83,7 +83,7 @@ async function callEmbedding(
     }
 
     const raw = await response.text();
-    let parsed: any = null;
+    let parsed: Record<string, unknown> | null = null;
     try {
       parsed = JSON.parse(raw);
     } catch {

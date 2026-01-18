@@ -14,6 +14,6 @@ export function __getAsrExecutionRepositoryForTests() {
 
 export function __resetAsrExecutionsForTests() {
   if (asrExecutionRepository instanceof InMemoryAsrExecutionRepository) {
-    (asrExecutionRepository as any).executions = [];
+    (asrExecutionRepository as InMemoryAsrExecutionRepository & { executions: unknown[] }).executions = [];
   }
 }

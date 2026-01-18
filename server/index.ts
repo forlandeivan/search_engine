@@ -17,6 +17,7 @@ import { startFileEventOutboxWorker } from "./no-code-file-events-outbox";
 import { startBotActionWatchdog } from "./bot-action-watchdog";
 import { closePubSub } from "./realtime";
 import { cleanupChatSubscriptions } from "./chat-events";
+import { closeCache } from "./cache";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -381,6 +382,9 @@ function validateProductionSecrets(): void {
       // Cleanup chat subscriptions and PubSub
       cleanupChatSubscriptions();
       await closePubSub();
+
+      // Close cache connections
+      await closeCache();
 
       // Close database pool
       const { pool } = await import("./db");

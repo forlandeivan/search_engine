@@ -279,7 +279,7 @@ export async function adjustWorkspaceObjectCounters(
     updates.skillsCount = clampCounter(current, skillsDelta, "skills_count", workspaceId, target.periodCode);
   }
   if (actionsDelta !== 0) {
-    const current = Number((usage as any).actionsCount ?? 0);
+    const current = Number(usage.actionsCount ?? 0);
     updates.actionsCount = clampCounter(current, actionsDelta, "actions_count", workspaceId, target.periodCode);
   }
   if (knowledgeBasesDelta !== 0) {
@@ -350,7 +350,7 @@ export async function recordLlmUsageEvent(params: LlmUsageRecord): Promise<void>
   const occurredAt = params.occurredAt ?? new Date();
   const period = buildPeriod(params.period ?? getUsagePeriodForDate(occurredAt));
 
-  await db.transaction(async (tx: any) => {
+  await db.transaction(async (tx: typeof db) => {
     const inserted = await tx
       .insert(workspaceLlmUsageLedger)
       .values({
@@ -486,7 +486,7 @@ export async function getWorkspaceLlmUsageSummary(
       end: end.toISOString(),
     },
     totalTokens: Number(totalsRows[0]?.tokens ?? 0),
-    byModelTotal: byModelRows.map((row: any) => ({
+    byModelTotal: byModelRows.map((row) => ({
       provider: row.provider,
       model: row.model,
       modelId: row.modelId ?? null,
@@ -597,7 +597,7 @@ export async function getWorkspaceEmbeddingUsageSummary(
       end: end.toISOString(),
     },
     totalTokens: Number(totalsRows[0]?.tokens ?? 0),
-    byModelTotal: byModelRows.map((row: any) => ({
+    byModelTotal: byModelRows.map((row) => ({
       provider: row.provider,
       model: row.model,
       modelId: row.modelId ?? null,
@@ -712,14 +712,14 @@ export async function getWorkspaceAsrUsageSummary(
     },
     totalMinutes: secondsToMinutesRoundedUp(totalSeconds),
     totalSeconds,
-    byProviderModelTotal: byProviderModelRows.map((row: any) => ({
+    byProviderModelTotal: byProviderModelRows.map((row) => ({
       provider: row.provider ?? null,
       model: row.model ?? null,
       modelId: row.modelId ?? null,
       seconds: Number(row.durationSeconds),
       minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)),
     })),
-    timeseries: timeseriesRows.map((row: any) => ({
+    timeseries: timeseriesRows.map((row) => ({
       date: new Date(row.day).toISOString().slice(0, 10),
       seconds: Number(row.durationSeconds),
       minutes: secondsToMinutesRoundedUp(Number(row.durationSeconds)),
@@ -825,7 +825,7 @@ export async function getWorkspaceObjectsUsageSummary(
       end: end.toISOString(),
     },
     skillsCount: Number(counters.skillsCount ?? 0),
-    actionsCount: Number((counters as any).actionsCount ?? 0),
+    actionsCount: Number(counters.actionsCount ?? 0),
     knowledgeBasesCount: Number(counters.knowledgeBasesCount ?? 0),
     membersCount: Number(counters.membersCount ?? 0),
   };
@@ -986,7 +986,7 @@ export async function getWorkspaceUsageSnapshot(workspaceId: string): Promise<Us
     asrMinutesTotal: Number(usage.asrMinutesTotal ?? 0),
     storageBytesTotal: Number(usage.storageBytesTotal ?? 0),
     skillsCount: Number(usage.skillsCount ?? 0),
-    actionsCount: Number((usage as any).actionsCount ?? 0),
+    actionsCount: Number(usage.actionsCount ?? 0),
     knowledgeBasesCount: Number(usage.knowledgeBasesCount ?? 0),
     membersCount: Number(usage.membersCount ?? 0),
     qdrantCollectionsCount: Number(workspaceRow?.qdrantCollectionsCount ?? 0),
@@ -1027,7 +1027,7 @@ export async function recordAsrUsageEvent(params: AsrUsageRecord): Promise<void>
   const occurredAt = params.occurredAt ?? new Date();
   const period = buildPeriod(params.period ?? getUsagePeriodForDate(occurredAt));
 
-  await db.transaction(async (tx: any) => {
+  await db.transaction(async (tx: typeof db) => {
     const inserted = await tx
       .insert(workspaceAsrUsageLedger)
       .values({
@@ -1107,7 +1107,7 @@ export async function recordEmbeddingUsageEvent(params: EmbeddingUsageRecord): P
   const occurredAt = params.occurredAt ?? new Date();
   const period = buildPeriod(params.period ?? getUsagePeriodForDate(occurredAt));
 
-  await db.transaction(async (tx: any) => {
+  await db.transaction(async (tx: typeof db) => {
     const inserted = await tx
       .insert(workspaceEmbeddingUsageLedger)
       .values({

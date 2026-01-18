@@ -30,6 +30,7 @@ import { ensureModelAvailable, ModelValidationError, ModelUnavailableError } fro
 import { workspacePlanService } from "./workspace-plan-service";
 import { decryptSecret, encryptSecret } from "./secret-storage";
 import { indexingRulesService } from "./indexing-rules";
+import { getCache, cacheKeys } from "./cache";
 
 export class SkillServiceError extends Error {
   public status: number;
@@ -453,7 +454,7 @@ function mapSkillRow(
     responseFormatRaw === "text" || responseFormatRaw === "markdown" || responseFormatRaw === "html"
       ? responseFormatRaw
       : DEFAULT_RAG_CONFIG.llmResponseFormat;
-  const effectiveProvider = providerInfo?.effective ?? (row as any).effectiveFileStorageProvider ?? null;
+  const effectiveProvider = providerInfo?.effective ?? null;
   const authType = effectiveProvider?.authType ?? normalizeNoCodeAuthType(row.noCodeAuthType);
 
   // Если у навыка есть БЗ, но mode в БД "llm" - исправляем на "rag"
@@ -839,7 +840,7 @@ export async function createSkill(
       resolvedModelId = model.modelKey;
     } catch (error) {
       if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
-        throw new SkillServiceError(error.message, (error as any)?.status ?? 400);
+        throw new SkillServiceError(error.message, error.status ?? 400);
       }
       throw error;
     }
@@ -895,7 +896,13 @@ export async function createSkill(
     await adjustWorkspaceObjectCounters(workspaceId, { skillsDelta: 1 }, period);
   }
 
-  return mapSkillRow(inserted, knowledgeBaseIds, providerInfo);
+  const result = mapSkillRow(inserted, knowledgeBaseIds, providerInfo);
+  
+  // Cache the newly created skill (2 minutes TTL)
+  const cache = getCache();
+  await cache.set(cacheKeys.skill(workspaceId, inserted.id), result, 2 * 60 * 1000);
+  
+  return result;
 }
 
 export async function updateSkill(
@@ -1099,7 +1106,7 @@ export async function updateSkill(
         updates.modelId = model.modelKey;
       } catch (error) {
         if (error instanceof ModelValidationError || error instanceof ModelUnavailableError) {
-          throw new SkillServiceError(error.message, (error as any)?.status ?? 400);
+          throw new SkillServiceError(error.message, error.status ?? 400);
         }
         throw error;
       }
@@ -1155,7 +1162,14 @@ export async function updateSkill(
     selectedProviderId,
   });
 
-  return mapSkillRow(updatedRow, knowledgeBaseIds, providerInfo);
+  const result = mapSkillRow(updatedRow, knowledgeBaseIds, providerInfo);
+  
+  // Invalidate and update skill cache (2 minutes TTL)
+  const cache = getCache();
+  await cache.del(cacheKeys.skill(workspaceId, skillId));
+  await cache.set(cacheKeys.skill(workspaceId, skillId), result, 2 * 60 * 1000);
+
+  return result;
 }
 
 export async function archiveSkill(
@@ -1202,13 +1216,20 @@ export async function archiveSkill(
   const knowledgeBaseIds = await getSkillKnowledgeBaseIds(skillId, workspaceId);
   const providerInfo = await resolveSkillFileStorageProvider({
     workspaceId,
-    selectedProviderId: normalizeNullableString(updatedSkill.noCodeFileStorageProviderId),
+    selectedProviderId: normalizeNullableString(updatedSkill.noCodeFileStorageProviderId ?? null),
   });
   const period = getUsagePeriodForDate(updatedSkill.updatedAt ? new Date(updatedSkill.updatedAt) : new Date());
   await adjustWorkspaceObjectCounters(workspaceId, { skillsDelta: -1 }, period);
 
+  const resultSkill = mapSkillRow(updatedSkill, knowledgeBaseIds, providerInfo);
+  
+  // Invalidate and update skill cache (2 minutes TTL)
+  const cache = getCache();
+  await cache.del(cacheKeys.skill(workspaceId, skillId));
+  await cache.set(cacheKeys.skill(workspaceId, skillId), resultSkill, 2 * 60 * 1000);
+
   return {
-    skill: mapSkillRow(updatedSkill, knowledgeBaseIds, providerInfo),
+    skill: resultSkill,
     archivedChats: archivedChatsResult.length,
   };
 }
@@ -1219,6 +1240,16 @@ export async function getSkillById(
   workspaceId: string,
   skillId: string,
 ): Promise<SkillDto | null> {
+  const cache = getCache();
+  const cacheKey = cacheKeys.skill(workspaceId, skillId);
+  
+  // Try cache first
+  const cached = await cache.get<SkillDto>(cacheKey);
+  if (cached !== null) {
+    return cached;
+  }
+  
+  // Cache miss - fetch from DB
   const rows: SkillRow[] = await db
     .select()
     .from(skills)
@@ -1235,7 +1266,12 @@ export async function getSkillById(
     workspaceId,
     selectedProviderId: normalizeNullableString(row.noCodeFileStorageProviderId),
   });
-  return mapSkillRow(row, knowledgeBaseIds, providerInfo);
+  const result = mapSkillRow(row, knowledgeBaseIds, providerInfo);
+  
+  // Cache result (2 minutes TTL)
+  await cache.set(cacheKey, result, 2 * 60 * 1000);
+  
+  return result;
 }
 
 export async function getSkillBearerToken(opts: { workspaceId: string; skillId: string }): Promise<string | null> {
