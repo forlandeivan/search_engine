@@ -211,13 +211,13 @@ function MainRouter() {
         {(params) => <LazyRouteWrapper><KnowledgeBaseIndexingHistoryPage params={{ knowledgeBaseId: params.baseId }} /></LazyRouteWrapper>}
       </Route>
       <Route path="/knowledge/:knowledgeBaseId/node/:nodeId">
-        <LazyRouteWrapper><KnowledgeBasePage /></LazyRouteWrapper>
+        {(params) => <LazyRouteWrapper><KnowledgeBasePage params={params} /></LazyRouteWrapper>}
       </Route>
       <Route path="/knowledge/:knowledgeBaseId">
-        <LazyRouteWrapper><KnowledgeBasePage /></LazyRouteWrapper>
+        {(params) => <LazyRouteWrapper><KnowledgeBasePage params={params} /></LazyRouteWrapper>}
       </Route>
       <Route path="/knowledge">
-        <LazyRouteWrapper><KnowledgeBasePage /></LazyRouteWrapper>
+        <LazyRouteWrapper><KnowledgeBasePage params={undefined} /></LazyRouteWrapper>
       </Route>
       <Route path="/skills/new">
         <LazyRouteWrapper><SkillSettingsPage isNew /></LazyRouteWrapper>
