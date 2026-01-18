@@ -2065,11 +2065,24 @@ export async function deleteKnowledgeNode(
     throw new KnowledgeBaseError("База знаний не найдена", 404);
   }
 
-  const nodes = await fetchBaseNodes(baseId);
-  const node = nodes.find((candidate) => candidate.id === nodeId && candidate.workspaceId === workspaceId);
+  // Fetch node directly with workspaceId check to ensure it exists and belongs to workspace
+  const [node] = await db
+    .select()
+    .from(knowledgeNodes)
+    .where(
+      and(
+        eq(knowledgeNodes.id, nodeId),
+        eq(knowledgeNodes.baseId, baseId),
+        eq(knowledgeNodes.workspaceId, workspaceId),
+      ),
+    )
+    .limit(1);
+
   if (!node) {
     throw new KnowledgeBaseError("Элемент не найден", 404);
   }
+
+  const nodes = await fetchBaseNodes(baseId);
 
   const groups = groupNodesByParent(nodes);
   const toDeleteSet = collectDescendants(groups, nodeId, new Set<string>());

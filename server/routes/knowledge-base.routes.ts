@@ -100,7 +100,7 @@ const createFolderSchema = z.object({
 const createDocumentSchema = z.object({
   title: z.string().trim().min(1).max(255),
   content: z.string().optional(),
-  parentId: z.string().trim().min(1).optional(),
+  parentId: z.string().trim().min(1).nullable().optional(),
 });
 
 const updateNodeSchema = z.object({
