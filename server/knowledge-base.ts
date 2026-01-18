@@ -2066,7 +2066,7 @@ export async function deleteKnowledgeNode(
   }
 
   const nodes = await fetchBaseNodes(baseId);
-  const node = nodes.find((candidate) => candidate.id === nodeId);
+  const node = nodes.find((candidate) => candidate.id === nodeId && candidate.workspaceId === workspaceId);
   if (!node) {
     throw new KnowledgeBaseError("Элемент не найден", 404);
   }
