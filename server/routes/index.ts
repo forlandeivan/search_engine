@@ -26,6 +26,7 @@ import { knowledgeCrawlRouter } from './knowledge-crawl.routes';
 import { metricsRouter } from './metrics.routes';
 import { metricsMiddleware } from '../monitoring/middleware';
 import { openapiRouter } from './openapi.routes';
+import { embeddingRouter } from './embedding.routes';
 import { generalApiLimiter } from '../middleware/rate-limit';
 
 const routerLogger = createLogger('router');
@@ -110,7 +111,7 @@ export function registerRouteModules(app: Express): void {
   app.use('/api/skills', skillRouter);
   routerLogger.info('Registered: /api/skills');
 
-  // Knowledge base routes
+  // Knowledge base routes (must be registered BEFORE knowledgeCrawlRouter to handle /bases)
   app.use('/api/knowledge', knowledgeBaseRouter);
   routerLogger.info('Registered: /api/knowledge');
 
@@ -156,6 +157,10 @@ export function registerRouteModules(app: Express): void {
   app.use('/api/embed', embedRouter);
   routerLogger.info('Registered: /api/embed');
 
+  // Embedding services routes
+  app.use('/api/embedding', embeddingRouter);
+  routerLogger.info('Registered: /api/embedding');
+
   // Transcribe routes (speech-to-text operations)
   app.use('/api/chat/transcribe', transcribeRouter);
   routerLogger.info('Registered: /api/chat/transcribe');
@@ -167,10 +172,9 @@ export function registerRouteModules(app: Express): void {
   // Knowledge crawl routes
   app.use('/api/kb', knowledgeCrawlRouter);
   routerLogger.info('Registered: /api/kb (crawl)');
-
-  // Knowledge crawl routes for /api/knowledge/bases path
-  app.use('/api/knowledge/bases', knowledgeCrawlRouter);
-  routerLogger.info('Registered: /api/knowledge/bases (crawl documents)');
+  
+  // NOTE: knowledgeCrawlRouter is NOT registered on /api/knowledge/bases
+  // to avoid intercepting /api/knowledge/bases GET requests handled by knowledgeBaseRouter
   
   // Route modules will be registered here as they are migrated
   // Example:
