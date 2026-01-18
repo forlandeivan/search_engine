@@ -6665,7 +6665,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
   });
 
   const updateUnicaChatConfigSchema = z.object({
-    llmProviderConfigId: z.string().trim().min(1, "??????? ?????????? LLM"),
+    llmProviderConfigId: z.string().trim().min(1, "Укажите провайдера LLM"),
     modelId: z
       .string()
       .trim()
@@ -6684,7 +6684,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     skillId: z
       .string()
       .trim()
-      .min(1, "?????? ????")
+      .min(1, "Укажите навык")
       .optional(),
     title: z.string().trim().max(200).optional(),
   });

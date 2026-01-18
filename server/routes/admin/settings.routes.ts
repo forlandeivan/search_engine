@@ -108,7 +108,7 @@ adminSettingsRouter.post('/smtp/test', asyncHandler(async (req, res) => {
  */
 adminSettingsRouter.get('/indexing-rules', asyncHandler(async (_req, res) => {
   try {
-    const rules = await indexingRulesService.get();
+    const rules = await indexingRulesService.getIndexingRules();
     res.json(rules);
   } catch (error) {
     if (error instanceof IndexingRulesError) {
