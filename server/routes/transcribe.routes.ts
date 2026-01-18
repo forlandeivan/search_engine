@@ -7,12 +7,12 @@
  * - POST /api/chat/transcribe/complete/:operationId - Complete transcription and create message
  */
 
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { storage } from '../storage';
 import { yandexSttService } from '../yandex-stt-service';
-import { yandexSttAsyncService, YandexSttAsyncError } from '../yandex-stt-async-service';
+import { yandexSttAsyncService, YandexSttAsyncError, type TranscribeOperationStatus } from '../yandex-stt-async-service';
 import { asrExecutionLogService } from '../asr-execution-log-context';
 import { actionsRepository } from '../actions';
 import { skillActionsRepository } from '../skill-actions';
@@ -28,11 +28,11 @@ export const transcribeRouter = Router();
 // Helper Functions
 // ============================================================================
 
-function getSessionUser(req: any): PublicUser | null {
-  return req.user as PublicUser | null;
+function getSessionUser(req: Request): PublicUser | null {
+  return (req as Request & { user?: PublicUser }).user ?? null;
 }
 
-function getAuthorizedUser(req: any, res: Response): PublicUser | null {
+function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
   const user = getSessionUser(req);
   if (!user) {
     res.status(401).json({ message: 'Требуется авторизация' });
@@ -93,7 +93,7 @@ transcribeRouter.post('/complete/:operationId', asyncHandler(async (req, res) =>
     return res.status(400).json({ message: 'ID операции не предоставлен' });
   }
 
-  const status: any = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
+  const status: TranscribeOperationStatus = await yandexSttAsyncService.getOperationStatus(user.id, operationId);
   
   if (status.status !== 'completed' || !status.text) {
     logger.warn({ operationId, status: status.status, hasText: Boolean(status.text) }, 'Operation not ready');

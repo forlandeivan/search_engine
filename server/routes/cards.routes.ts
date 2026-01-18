@@ -5,7 +5,7 @@
  * - GET /api/cards/:cardId - Get card by ID
  */
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
@@ -97,7 +97,7 @@ cardsRouter.get('/:cardId', asyncHandler(async (req, res) => {
 }));
 
 // Error handler for this router
-cardsRouter.use((err: Error, req: any, res: Response, next: any) => {
+cardsRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof HttpError) {
     return res.status(err.status).json({ message: err.message });
   }

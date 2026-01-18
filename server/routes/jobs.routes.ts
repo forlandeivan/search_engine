@@ -31,11 +31,11 @@ export const jobsRouter = Router();
 // Helper Functions
 // ============================================================================
 
-function getSessionUser(req: any): PublicUser | null {
-  return req.user as PublicUser | null;
+function getSessionUser(req: Request): PublicUser | null {
+  return (req as Request & { user?: PublicUser }).user ?? null;
 }
 
-function getRequestWorkspace(req: any): { id: string } {
+function getRequestWorkspace(req: Request): { id: string } {
   const workspaceId = req.workspaceId ||
     req.workspaceContext?.workspaceId ||
     req.params.workspaceId ||
