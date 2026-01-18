@@ -21,6 +21,7 @@ import { registrationEmailService } from '../email-sender-registry';
 import { SmtpSendError } from '../smtp-email-sender';
 import { EmailValidationError } from '../email';
 import type { PublicUser, User } from '@shared/schema';
+import { ensureWorkspaceContext, buildSessionResponse as buildAuthSessionResponse } from '../auth';
 
 const authLogger = createLogger('auth');
 
@@ -133,50 +134,6 @@ async function sendRegistrationEmailWithRetry(
   return { success: false, attempts: maxAttempts, lastError };
 }
 
-interface WorkspaceContext {
-  workspaceId: string;
-  workspaceName: string;
-  role: string;
-}
-
-interface SessionResponse {
-  user: PublicUser;
-  workspace?: { active?: { id: string; name: string }; available?: Array<{ id: string; name: string }> };
-  activeWorkspaceId?: string | null;
-}
-
-async function buildSessionResponse(user: PublicUser, context?: WorkspaceContext | null): Promise<SessionResponse> {
-  const workspaces = await storage.getOrCreateUserWorkspaces(user.id);
-  const available = workspaces.map((w) => ({ id: w.id, name: w.name }));
-  return {
-    user,
-    workspace: { active: context ? { id: context.workspaceId, name: context.workspaceName } : undefined, available },
-  };
-}
-
-async function ensureWorkspaceContext(req: Request, user: PublicUser): Promise<WorkspaceContext | null> {
-  const sessionWorkspaceId = req.session?.workspaceId || req.session?.activeWorkspaceId;
-  if (sessionWorkspaceId) {
-    const membership = await storage.getWorkspaceMember(sessionWorkspaceId, user.id);
-    if (membership) {
-      const workspace = await storage.getWorkspace(sessionWorkspaceId);
-      if (workspace) {
-        return { workspaceId: workspace.id, workspaceName: workspace.name, role: membership.role };
-      }
-    }
-  }
-  const workspaces = await storage.getOrCreateUserWorkspaces(user.id);
-  if (workspaces.length > 0) {
-    const first = workspaces[0];
-    const membership = await storage.getWorkspaceMember(first.id, user.id);
-    if (req.session) {
-      req.session.workspaceId = first.id;
-      req.session.activeWorkspaceId = first.id;
-    }
-    return { workspaceId: first.id, workspaceName: first.name, role: membership?.role || 'member' };
-  }
-  return null;
-}
 
 // ============================================================================
 // Routes
@@ -200,7 +157,7 @@ authRouter.get('/session', asyncHandler(async (req, res) => {
   if (updatedUser) req.user = safeUser;
   const context = await ensureWorkspaceContext(req, safeUser);
   const activeWorkspaceId = req.session?.activeWorkspaceId ?? req.session?.workspaceId ?? null;
-  const sessionResponse = await buildSessionResponse(safeUser, context);
+  const sessionResponse = buildAuthSessionResponse(safeUser, context);
   res.json({ ...sessionResponse, activeWorkspaceId });
 }));
 
@@ -292,7 +249,7 @@ authRouter.post('/verify-email', asyncHandler(async (req, res, next) => {
       const finalUser = fullUser ? toPublicUser(fullUser) : safeUser;
       req.user = finalUser;
       const context = await ensureWorkspaceContext(req, finalUser);
-      const sessionResponse = await buildSessionResponse(finalUser, context);
+      const sessionResponse = buildAuthSessionResponse(finalUser, context);
       res.json(sessionResponse);
     })();
   });
@@ -333,7 +290,7 @@ authRouter.post('/login', authLoginLimiter, (req, res, next) => {
         const safeUser = fullUser ? toPublicUser(fullUser) : user;
         req.user = safeUser;
         const context = await ensureWorkspaceContext(req, safeUser);
-        const sessionResponse = await buildSessionResponse(safeUser, context);
+        const sessionResponse = buildAuthSessionResponse(safeUser, context);
         res.json(sessionResponse);
       })();
     });
