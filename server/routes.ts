@@ -4763,8 +4763,10 @@ async function runKnowledgeBaseRagPipeline(options: {
           runStatus = "error";
           runErrorMessage = error.message;
           await finalizeRunLog();
-          const httpError = new HttpError((error as any)?.status ?? 400, error.message);
-          (httpError as any).code = (error as any)?.code;
+          const httpError = new HttpError(error.status ?? 400, error.message);
+          if (error.code) {
+            (httpError as HttpError & { code?: string }).code = error.code;
+          }
           throw httpError;
         }
         throw error;
@@ -4784,8 +4786,10 @@ async function runKnowledgeBaseRagPipeline(options: {
           runStatus = "error";
           runErrorMessage = error.message;
           await finalizeRunLog();
-          const httpError = new HttpError((error as any)?.status ?? 400, error.message);
-          (httpError as any).code = (error as any)?.code;
+          const httpError = new HttpError(error.status ?? 400, error.message);
+          if (error.code) {
+            (httpError as HttpError & { code?: string }).code = error.code;
+          }
           throw httpError;
         }
         throw error;
@@ -5103,10 +5107,13 @@ function calculatePriceSnapshot(
   modelInfo: ModelInfoForUsage | null | undefined,
   measurement: UsageMeasurement | null,
 ) {
-  if (!modelInfo || !measurement) return null;
+  if (!modelInfo || !measurement || !modelInfo.consumptionUnit) return null;
   try {
     const price = calculatePriceForUsage(
-      { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
+      { 
+        consumptionUnit: modelInfo.consumptionUnit as "TOKENS_1K" | "MINUTES", 
+        creditsPerUnit: modelInfo.creditsPerUnit ?? 0 
+      },
       measurement,
     );
     return price;
@@ -5141,11 +5148,14 @@ function resolveOperationId(req: Request): string | null {
     typeof req.headers["idempotency-key"] === "string"
       ? req.headers["idempotency-key"]
       : typeof req.headers["Idempotency-Key" as keyof typeof req.headers] === "string"
-        ? (req.headers as any)["Idempotency-Key"]
+        ? (req.headers["Idempotency-Key" as keyof typeof req.headers] as string)
         : null;
+  const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) 
+    ? req.body as Record<string, unknown>
+    : null;
   const bodyKey =
-    req.body && typeof (req.body as any).operationId === "string" && (req.body as any).operationId.trim().length > 0
-      ? (req.body as any).operationId.trim()
+    body && typeof body.operationId === "string" && body.operationId.trim().length > 0
+      ? body.operationId.trim()
       : null;
   const resolved = (headerKey || bodyKey || "").trim();
   return resolved || null;
@@ -5159,7 +5169,10 @@ async function ensureCreditsForLlmPreflight(
 ) {
   if (!workspaceId || !modelInfo) return;
   const estimate = estimateLlmPreflight(
-    { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
+    { 
+      consumptionUnit: modelInfo.consumptionUnit as "TOKENS_1K" | "MINUTES", 
+      creditsPerUnit: modelInfo.creditsPerUnit ?? 0 
+    },
     { promptTokens, maxOutputTokens },
   );
   await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCreditsCents, {
