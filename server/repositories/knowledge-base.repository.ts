@@ -169,7 +169,7 @@ export const knowledgeBaseRepository = {
       return [];
     }
 
-    const selectFields: Record<string, unknown> = {
+    const baseFields = {
       id: knowledgeDocumentChunkItems.id,
       documentId: knowledgeDocumentChunkItems.documentId,
       chunkSetId: knowledgeDocumentChunkItems.chunkSetId,
@@ -179,20 +179,24 @@ export const knowledgeBaseRepository = {
       createdAt: knowledgeDocumentChunkItems.createdAt,
     };
 
-    if (options?.includeContent !== false) {
-      selectFields.text = knowledgeDocumentChunkItems.text;
-    }
+    const rows = options?.includeContent !== false
+      ? await db
+          .select({
+            ...baseFields,
+            text: knowledgeDocumentChunkItems.text,
+          })
+          .from(knowledgeDocumentChunkItems)
+          .where(inArray(knowledgeDocumentChunkItems.id, chunkIds))
+      : await db
+          .select(baseFields)
+          .from(knowledgeDocumentChunkItems)
+          .where(inArray(knowledgeDocumentChunkItems.id, chunkIds));
 
-    const rows = await db
-      .select(selectFields as any)
-      .from(knowledgeDocumentChunkItems)
-      .where(inArray(knowledgeDocumentChunkItems.id, chunkIds));
-
-    return rows.map((row: any) => ({
+    return rows.map((row): KnowledgeChunk => ({
       id: row.id,
       documentId: row.documentId,
       chunkSetId: row.chunkSetId,
-      content: row.text || '',
+      content: ('text' in row && typeof row.text === 'string' ? row.text : ''),
       heading: row.sectionPath?.[0] ?? null,
       startOffset: row.charStart ?? null,
       endOffset: row.charEnd ?? null,

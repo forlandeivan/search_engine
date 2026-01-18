@@ -16,6 +16,7 @@ import { estimateLlmPreflight } from '../preflight-estimator';
 import { calculatePriceForUsage } from '../price-calculator';
 import type { LlmStreamEvent } from '../llm-client';
 import type { UsageMeasurement } from '../consumption-meter';
+import type { Model, ModelConsumptionUnit } from '@shared/schema';
 
 // ============================================================================
 // Types
@@ -72,12 +73,19 @@ export function calculatePriceSnapshot(
   modelInfo: ModelInfoForUsage | null | undefined,
   measurement: UsageMeasurement | null,
 ): ReturnType<typeof calculatePriceForUsage> | null {
-  if (!modelInfo || !measurement) return null;
+  if (!modelInfo || !measurement || !modelInfo.consumptionUnit) return null;
+  
+  // Validate consumptionUnit is a valid ModelConsumptionUnit
+  if (modelInfo.consumptionUnit !== "TOKENS_1K" && modelInfo.consumptionUnit !== "MINUTES") {
+    return null;
+  }
+  
   try {
-    const price = calculatePriceForUsage(
-      { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
-      measurement,
-    );
+    const model: Pick<Model, "consumptionUnit" | "creditsPerUnit"> = {
+      consumptionUnit: modelInfo.consumptionUnit as ModelConsumptionUnit,
+      creditsPerUnit: modelInfo.creditsPerUnit ?? 0,
+    };
+    const price = calculatePriceForUsage(model, measurement);
     return price;
   } catch (error) {
     console.warn(`[pricing] failed to calculate price for model ${modelInfo.modelKey ?? modelInfo.id ?? 'unknown'}`, error);
@@ -118,11 +126,18 @@ export async function ensureCreditsForLlmPreflight(
   promptTokens: number,
   maxOutputTokens: number | null | undefined,
 ): Promise<void> {
-  if (!workspaceId || !modelInfo) return;
-  const estimate = estimateLlmPreflight(
-    { consumptionUnit: modelInfo.consumptionUnit, creditsPerUnit: modelInfo.creditsPerUnit ?? 0 } as any,
-    { promptTokens, maxOutputTokens },
-  );
+  if (!workspaceId || !modelInfo || !modelInfo.consumptionUnit) return;
+  
+  // Validate consumptionUnit is a valid ModelConsumptionUnit
+  if (modelInfo.consumptionUnit !== "TOKENS_1K" && modelInfo.consumptionUnit !== "MINUTES") {
+    return;
+  }
+  
+  const model: Pick<Model, "consumptionUnit" | "creditsPerUnit"> = {
+    consumptionUnit: modelInfo.consumptionUnit as ModelConsumptionUnit,
+    creditsPerUnit: modelInfo.creditsPerUnit ?? 0,
+  };
+  const estimate = estimateLlmPreflight(model, { promptTokens, maxOutputTokens });
   await assertSufficientWorkspaceCredits(workspaceId, estimate.estimatedCreditsCents, {
     modelId: modelInfo.id ?? null,
     modelKey: modelInfo.modelKey ?? null,

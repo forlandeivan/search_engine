@@ -411,6 +411,8 @@ function sanitizeWorkspaceNameCandidate(source: string): string {
 }
 
 async function normalizeKnowledgeBaseWorkspaces(): Promise<void> {
+  if (!db) return;
+  
   try {
     await db.execute(sql`
       UPDATE "knowledge_nodes" AS kn

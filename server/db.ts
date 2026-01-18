@@ -262,4 +262,8 @@ if (!db) {
 }
 
 // Export db - it's always initialized at this point (either real connection or proxy)
-export { pool, db, isDatabaseConfigured };
+// Using non-null assertion since db is guaranteed to be initialized above
+const dbExport: Database = db!;
+export { pool };
+export { dbExport as db };
+export { isDatabaseConfigured };

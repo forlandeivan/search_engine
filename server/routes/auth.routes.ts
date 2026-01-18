@@ -154,7 +154,7 @@ async function buildSessionResponse(user: PublicUser, context?: WorkspaceContext
 }
 
 async function ensureWorkspaceContext(req: Request, user: PublicUser): Promise<WorkspaceContext | null> {
-  const sessionWorkspaceId = (req.session as any)?.workspaceId || (req.session as any)?.activeWorkspaceId;
+  const sessionWorkspaceId = req.session?.workspaceId || req.session?.activeWorkspaceId;
   if (sessionWorkspaceId) {
     const membership = await storage.getWorkspaceMember(sessionWorkspaceId, user.id);
     if (membership) {
@@ -169,8 +169,8 @@ async function ensureWorkspaceContext(req: Request, user: PublicUser): Promise<W
     const first = workspaces[0];
     const membership = await storage.getWorkspaceMember(first.id, user.id);
     if (req.session) {
-      (req.session as any).workspaceId = first.id;
-      (req.session as any).activeWorkspaceId = first.id;
+      req.session.workspaceId = first.id;
+      req.session.activeWorkspaceId = first.id;
     }
     return { workspaceId: first.id, workspaceName: first.name, role: membership?.role || 'member' };
   }
