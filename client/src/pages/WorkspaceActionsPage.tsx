@@ -72,7 +72,7 @@ export default function WorkspaceActionsPage({ params }: WorkspaceActionsPagePro
     staleTime: 0,
   });
 
-  const workspaceId = params?.workspaceId ?? sessionQuery.data?.workspace.active.id ?? null;
+  const workspaceId = params?.workspaceId ?? sessionQuery.data?.workspace?.active?.id ?? null;
 
   const actionsQuery = useQuery({
     queryKey: ["/api/workspaces", workspaceId, "actions"],

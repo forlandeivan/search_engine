@@ -66,15 +66,19 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
   );
 
   const { data: knowledgeBases } = useQuery<KnowledgeBaseSummary[]>({
-    queryKey: ["knowledge-bases"],
+    queryKey: ["knowledge-bases", workspaceId],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/knowledge/bases");
-      return (await res.json()) as KnowledgeBaseSummary[];
+      const data = await res.json();
+      // Проверяем что ответ - массив, иначе возвращаем пустой массив
+      return Array.isArray(data) ? data : [];
     },
+    // Не делаем запрос пока нет workspaceId
+    enabled: Boolean(workspaceId),
   });
 
   useEffect(() => {
-    if (!knowledgeBases) {
+    if (!knowledgeBases || !Array.isArray(knowledgeBases)) {
       return;
     }
 

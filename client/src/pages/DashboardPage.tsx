@@ -49,7 +49,8 @@ export default function DashboardPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [creationMode, setCreationMode] = useState<KnowledgeBaseSourceType>("blank");
   const { data: session } = useQuery<SessionResponse>({ queryKey: ["/api/auth/session"] });
-  const workspaceId = session?.workspace.active.id ?? session?.activeWorkspaceId ?? null;
+  // Безопасный доступ к workspaceId с проверкой всех уровней
+  const workspaceId = session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
 
   useEffect(() => {
     const cleared = clearLegacyKnowledgeBaseStorageOnce();

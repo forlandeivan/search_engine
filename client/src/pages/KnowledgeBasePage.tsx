@@ -558,8 +558,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => (llmProvidersResponse?.providers ?? []).filter((provider) => provider.isActive),
     [llmProvidersResponse?.providers],
   );
-  const workspaceId = session?.workspace.active.id ?? null;
-  const workspaceRole = session?.workspace.active.role ?? null;
+  const workspaceId = session?.workspace?.active?.id ?? null;
+  const workspaceRole = session?.workspace?.active?.role ?? null;
   const canManageKnowledgeBase = workspaceRole === "owner" || workspaceRole === "manager";
   const { data: vectorCollectionsResponse, isLoading: isVectorCollectionsLoading } =
     useQuery<VectorCollectionsResponse>({

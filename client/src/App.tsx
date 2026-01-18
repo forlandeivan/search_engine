@@ -1,5 +1,5 @@
 import { Switch, Route, Link, useLocation } from "wouter";
-import { useEffect, Suspense, lazy } from "react";
+import { useEffect, Suspense, lazy, useState, Component, type ReactNode, type ErrorInfo } from "react";
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -15,6 +15,60 @@ import { useToast } from "@/hooks/use-toast";
 import type { PublicUser } from "@shared/schema";
 import type { SessionResponse, WorkspaceState } from "@/types/session";
 import type { CSSProperties } from "react";
+
+// ErrorBoundary для перехвата ошибок рендеринга и предотвращения белого экрана
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallback?: ReactNode;
+  onError?: (error: Error, errorInfo: ErrorInfo) => void;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error("ErrorBoundary caught error:", error, errorInfo);
+    this.props.onError?.(error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6">
+          <h1 className="text-xl font-semibold text-destructive">Произошла ошибка</h1>
+          <p className="text-muted-foreground text-center max-w-md">
+            {this.state.error?.message || "Неизвестная ошибка приложения"}
+          </p>
+          <Button
+            onClick={() => {
+              // Очищаем кэш React Query и перезагружаем
+              queryClient.clear();
+              window.location.reload();
+            }}
+          >
+            Перезагрузить
+          </Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Core pages (loaded eagerly)
 import DashboardPage from "@/pages/DashboardPage";
@@ -353,13 +407,24 @@ function MainAppShell({ user, workspace }: { user: PublicUser; workspace: Worksp
 
 function AppContent() {
   const [location, setLocation] = useLocation();
+  // Флаг для отслеживания первого рендера - при первом рендере ВСЕГДА ждём fetch
+  const [initialFetchDone, setInitialFetchDone] = useState(false);
+  
   const sessionQuery = useQuery({
     queryKey: ["/api/auth/session"],
     queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
     staleTime: 1000 * 60 * 5, // 5 минут - не обновляем сессию слишком часто
     refetchOnWindowFocus: false, // Не обновляем при фокусе окна
     refetchOnMount: 'always', // Всегда проверяем сессию при монтировании (важно после logout/login)
+    retry: false, // Не ретраим неудачные запросы сессии - сразу показываем AuthPage
   });
+
+  // Отмечаем что первый fetch завершён (успешно или с ошибкой)
+  useEffect(() => {
+    if (!sessionQuery.isFetching && !initialFetchDone) {
+      setInitialFetchDone(true);
+    }
+  }, [sessionQuery.isFetching, initialFetchDone]);
 
   const session = sessionQuery.data;
 
@@ -370,14 +435,15 @@ function AppContent() {
     }
   }, [session?.user, location, setLocation]);
 
-  // Показываем LoadingScreen пока загружается или обновляется сессия
-  // Важно: проверяем isLoading ИЛИ (isFetching без данных) - это покрывает случай после перезагрузки сервера
-  if (sessionQuery.isLoading || (sessionQuery.isFetching && !sessionQuery.data)) {
+  // При первом рендере ВСЕГДА ждём завершения fetch - не доверяем кэшу
+  // Это решает проблему белого экрана когда в кэше старая/невалидная сессия
+  if (!initialFetchDone || sessionQuery.isLoading) {
     return <LoadingScreen />;
   }
 
-  // Показываем AuthPage только если точно нет сессии И не идёт загрузка
-  if (!session || !session.user) {
+  // Если произошла ошибка при загрузке сессии - показываем AuthPage
+  if (sessionQuery.error) {
+    console.error("Session query error:", sessionQuery.error);
     return (
       <Switch>
         <Route path="/auth/verify-email">
@@ -389,20 +455,44 @@ function AppContent() {
       </Switch>
     );
   }
+
+  // Показываем AuthPage только если точно нет сессии
+  // Дополнительно проверяем workspace.active - если его нет, сессия невалидна
+  if (!session || !session.user || !session.workspace?.active) {
+    return (
+      <Switch>
+        <Route path="/auth/verify-email">
+          <VerifyEmailPage />
+        </Route>
+        <Route>
+          <AuthPage />
+        </Route>
+      </Switch>
+    );
+  }
+
   const { user, workspace } = session;
 
   // Генерируем ключ на основе userId для принудительного перемонтирования при смене пользователя
   const appKey = session.user.id || 'no-user';
 
   return (
-    <Switch key={appKey}>
-      <Route path={/^\/admin(?:\/.*)?$/i}>
-        {user.role === "admin" ? <AdminAppShell user={user} workspace={workspace} /> : <UnauthorizedPage />}
-      </Route>
-      <Route>
-        <MainAppShell user={user} workspace={workspace} />
-      </Route>
-    </Switch>
+    <ErrorBoundary
+      onError={(error) => {
+        console.error("App render error, clearing cache:", error);
+        // При ошибке рендеринга очищаем кэш сессии
+        queryClient.removeQueries({ queryKey: ["/api/auth/session"] });
+      }}
+    >
+      <Switch key={appKey}>
+        <Route path={/^\/admin(?:\/.*)?$/i}>
+          {user.role === "admin" ? <AdminAppShell user={user} workspace={workspace} /> : <UnauthorizedPage />}
+        </Route>
+        <Route>
+          <MainAppShell user={user} workspace={workspace} />
+        </Route>
+      </Switch>
+    </ErrorBoundary>
   );
 }
 

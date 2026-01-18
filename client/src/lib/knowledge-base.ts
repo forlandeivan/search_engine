@@ -888,6 +888,12 @@ const mergeKnowledgeBaseSummary = (
 export const syncKnowledgeBaseStorageFromSummaries = (
   summaries: KnowledgeBaseSummary[],
 ): KnowledgeBaseStorage => {
+  // Защита от невалидных данных
+  if (!Array.isArray(summaries)) {
+    console.warn('syncKnowledgeBaseStorageFromSummaries: summaries is not an array', summaries);
+    return readKnowledgeBaseStorage();
+  }
+
   const currentState = readKnowledgeBaseStorage();
   const previousById = new Map(currentState.knowledgeBases.map((base) => [base.id, base]));
 

@@ -1650,7 +1650,7 @@ export default function SkillsPage() {
   const { data: session } = useQuery<SessionResponse>({
     queryKey: ["/api/auth/session"],
   });
-  const workspaceId = session?.workspace.active.id ?? session?.activeWorkspaceId ?? null;
+  const workspaceId = session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
   const {
     skills,
     isLoading: isSkillsLoading,

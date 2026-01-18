@@ -38,9 +38,9 @@ function useWorkspaceInfo(workspaceId?: string | null) {
     queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
     staleTime: 60 * 1000,
     select: (data) =>
-      data?.workspace.active && workspaceId && data.workspace.active.id === workspaceId
+      data?.workspace?.active && workspaceId && data.workspace.active.id === workspaceId
         ? data.workspace.active
-        : data?.workspace.active,
+        : data?.workspace?.active,
   });
 }
 
