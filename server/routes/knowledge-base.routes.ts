@@ -486,8 +486,8 @@ knowledgeBaseRouter.delete('/bases/:baseId/nodes/:nodeId', asyncHandler(async (r
     return res.status(404).json({ message: 'База знаний не найдена' });
   }
   
-  await deleteKnowledgeNode(baseId, nodeId, workspaceId);
-  res.status(204).send();
+  const result = await deleteKnowledgeNode(baseId, nodeId, workspaceId);
+  res.status(200).json(result);
 }));
 
 /**
