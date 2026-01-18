@@ -815,7 +815,7 @@ export const knowledgeBaseIndexingActionSchema = z.object({
   status: z.enum(knowledgeBaseIndexingActionStatuses),
   stage: z.enum(indexingStages),
   displayText: z.string().nullable().optional(),
-  payload: z.record(z.any()).nullable().optional(),
+  payload: z.record(z.string(), z.any()).nullable().optional(),
   userId: z.string().nullable().optional(),
   createdAt: z.string().datetime().nullable().optional(),
   updatedAt: z.string().datetime().nullable().optional(),
@@ -1196,7 +1196,7 @@ export const embeddingRequestConfigSchema = z
     modelField: z.string().trim().min(1, "Укажите ключ модели").default("model"),
     batchField: z.string().trim().min(1).optional(),
     additionalBodyFields: z
-      .record(z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.any()), z.record(z.any())]))
+      .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.any()), z.record(z.string(), z.any())]))
       .default({}),
   })
   .default({ inputField: "input", modelField: "model", additionalBodyFields: {} });
@@ -1220,7 +1220,7 @@ export const qdrantIntegrationConfigSchema = z.object({
     .min(1, "Укажите коллекцию Qdrant")
     .optional(),
   vectorFieldName: z.string().trim().min(1).optional(),
-  payloadFields: z.record(z.string()).default({}),
+  payloadFields: z.record(z.string(), z.string()).default({}),
   vectorSize: z
     .union([z.number().int().positive(), z.string().trim().min(1)])
     .optional(),
@@ -1256,7 +1256,7 @@ export const llmRequestConfigSchema = z
     presencePenalty: z.number().min(-2).max(2).optional(),
     frequencyPenalty: z.number().min(-2).max(2).optional(),
     additionalBodyFields: z
-      .record(z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.any()), z.record(z.any())]))
+      .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.any()), z.record(z.string(), z.any())]))
       .default({}),
   })
   .default({ messagesField: "messages", modelField: "model", temperature: 0.2, additionalBodyFields: {} });
@@ -1727,7 +1727,7 @@ export const botActionSchema = z.object({
   actionType: z.string().min(1), // допускаем произвольный тип, фронт обрабатывает через displayText/fallback
   status: z.enum(botActionStatuses),
   displayText: z.string().nullable().optional(),
-  payload: z.record(z.any()).nullable().optional(),
+  payload: z.record(z.string(), z.any()).nullable().optional(),
   createdAt: z.string().datetime().nullable().optional(),
   updatedAt: z.string().datetime().nullable().optional(),
 });
@@ -2201,12 +2201,12 @@ export const insertEmbeddingProviderSchema = createInsertSchema(embeddingProvide
     model: z.string().trim().min(1, "Укажите модель"),
     allowSelfSignedCertificate: z.boolean().default(false),
     maxTokensPerVectorization: z
-      .number({ invalid_type_error: "Введите максимальное количество токенов" })
+      .number({ error: "Введите максимальное количество токенов" })
       .int("Значение должно быть целым")
       .positive("Значение должно быть больше нуля")
       .max(100000, "Значение слишком большое")
       .optional(),
-    requestHeaders: z.record(z.string()).default({}),
+    requestHeaders: z.record(z.string(), z.string()).default({}),
     requestConfig: z
       .any()
       .optional()
@@ -2248,14 +2248,14 @@ export const updateEmbeddingProviderSchema = z
     model: z.string().trim().min(1, "Укажите модель").optional(),
     allowSelfSignedCertificate: z.boolean().optional(),
     maxTokensPerVectorization: z
-      .number({ invalid_type_error: "Введите максимальное количество токенов" })
+      .number({ error: "Введите максимальное количество токенов" })
       .int("Значение должно быть целым")
       .positive("Значение должно быть больше нуля")
       .max(100000, "Значение слишком большое")
       .nullable()
       .optional(),
-    requestHeaders: z.record(z.string()).optional(),
-    qdrantConfig: z.record(z.any()).optional(),
+    requestHeaders: z.record(z.string(), z.string()).optional(),
+    qdrantConfig: z.record(z.string(), z.any()).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нет данных для обновления",
@@ -2306,7 +2306,7 @@ export const insertLlmProviderSchema = createInsertSchema(llmProviders)
           : undefined,
       ),
     allowSelfSignedCertificate: z.boolean().default(false),
-    requestHeaders: z.record(z.string()).default({}),
+    requestHeaders: z.record(z.string(), z.string()).default({}),
     requestConfig: z
       .any()
       .optional()
@@ -2474,9 +2474,9 @@ export const updateLlmProviderSchema = z
           : undefined,
       ),
     allowSelfSignedCertificate: z.boolean().optional(),
-    requestHeaders: z.record(z.string()).optional(),
-    requestConfig: z.record(z.any()).optional(),
-    responseConfig: z.record(z.any()).optional(),
+    requestHeaders: z.record(z.string(), z.string()).optional(),
+    requestConfig: z.record(z.string(), z.any()).optional(),
+    responseConfig: z.record(z.string(), z.any()).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нет данных для обновления",

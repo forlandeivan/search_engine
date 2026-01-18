@@ -7,7 +7,7 @@ export const MAX_CHUNK_SIZE = 8_000;
 export const collectionSchemaFieldSchema = z.object({
   name: z.string().trim().min(1, "Название поля обязательно"),
   type: z.enum(collectionFieldTypes, {
-    errorMap: () => ({ message: "Недопустимый тип поля" }),
+    error: "Недопустимый тип поля",
   }),
   isArray: z.boolean(),
   template: z.string(),
