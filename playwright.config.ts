@@ -82,7 +82,7 @@ export default defineConfig({
   webServer: {
     command: "npm run dev",
     url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: true, // Всегда использовать существующий сервер если он запущен
     env: {
       ...process.env,
       MOCK_LLM_RESPONSES: "1",

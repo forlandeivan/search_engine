@@ -552,16 +552,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   }, []);
 
   const bases = Array.isArray(basesQuery.data) ? basesQuery.data : [];
-  
-  // DEBUG: логирование для отладки проблемы с базами
-  console.log('[KnowledgeBasePage] basesQuery:', {
-    data: basesQuery.data,
-    isLoading: basesQuery.isLoading,
-    isError: basesQuery.isError,
-    error: basesQuery.error,
-    workspaceId,
-    bases,
-  });
   const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
     queryKey: ["/api/embedding/services"],
   });
@@ -1035,28 +1025,18 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   }, [selectedBase?.id, resetSuggest]);
 
   useEffect(() => {
-    console.log('[KnowledgeBasePage] redirect useEffect:', {
-      basesLength: bases.length,
-      knowledgeBaseId,
-      firstBaseId: bases[0]?.id,
-    });
-    
     if (!bases.length) {
-      console.log('[KnowledgeBasePage] no bases, skipping redirect');
       return;
     }
 
     if (knowledgeBaseId) {
       const exists = bases.some((base) => base.id === knowledgeBaseId);
-      console.log('[KnowledgeBasePage] knowledgeBaseId exists:', exists);
       if (!exists) {
-        console.log('[KnowledgeBasePage] redirecting to first base (current not found)');
         setLocation(`/knowledge/${bases[0]?.id}`);
       }
       return;
     }
 
-    console.log('[KnowledgeBasePage] no knowledgeBaseId, redirecting to first base:', bases[0]?.id);
     setLocation(`/knowledge/${bases[0]?.id}`);
   }, [bases, knowledgeBaseId, setLocation]);
 
@@ -1132,7 +1112,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       if (!baseId) {
         throw new Error("База знаний не выбрана");
       }
-      const res = await apiRequest("GET", `/api/knowledge/bases/${baseId}/nodes/${nodeKey}`);
+      const res = await apiRequest("GET", `/api/knowledge/bases/${baseId}/nodes/${nodeKey}`, undefined, undefined, workspaceId ? { workspaceId } : undefined);
       return (await res.json()) as KnowledgeBaseNodeDetail;
     },
   });
@@ -2064,7 +2044,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 Изменяйте уровни вложенности документов и подразделов через выпадающий список.
               </p>
             </div>
-            {detail.children.length === 0 ? (
+            {(!detail.children || detail.children.length === 0) ? (
               <p className="text-sm text-muted-foreground">
                 В этом подразделе пока нет документов. Используйте кнопку «Новый документ», чтобы добавить материалы.
               </p>
@@ -2559,11 +2539,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               disabled={Boolean(
                 startIndexingMutation.isPending ||
                   indexingButtonDisabledReason ||
-                  detail.rootNodes.length === 0,
+                  !detail.rootNodes || detail.rootNodes.length === 0,
               )}
               title={
                 indexingButtonDisabledReason ??
-                (detail.rootNodes.length === 0 ? "Нет документов для индексации" : undefined)
+                ((!detail.rootNodes || detail.rootNodes.length === 0) ? "Нет документов для индексации" : undefined)
               }
               onClick={handleStartIndexing}
             >
@@ -2574,7 +2554,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               )}
               Индексировать
             </Button>
-            {(indexingButtonDisabledReason || detail.rootNodes.length === 0) && (
+            {(indexingButtonDisabledReason || !detail.rootNodes || detail.rootNodes.length === 0) && (
               <span className="text-xs text-muted-foreground">
                 {indexingButtonDisabledReason ?? "Нет документов для индексации"}
               </span>
@@ -2739,14 +2719,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         <Separator />
         <div>
           <h3 className="text-sm font-semibold mb-2">Структура базы</h3>
-          {detail.rootNodes.length === 0 ? (
+          {(!detail.rootNodes || detail.rootNodes.length === 0) ? (
             <p className="text-sm text-muted-foreground">
               В базе ещё нет документов. Нажмите «Новый документ», чтобы создать первый материал.
             </p>
           ) : (
             <TreeMenu
               baseId={detail.id}
-              nodes={detail.rootNodes}
+              nodes={detail.rootNodes ?? []}
               activeNodeId={selectedNodeId}
               expandedNodes={expandedNodeIds}
               onToggle={handleToggleNode}
@@ -3053,14 +3033,14 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                 Выберите базу знаний, чтобы увидеть структуру документов.
               </p>
             )
-          ) : selectedBase.rootNodes.length === 0 ? (
+          ) : (!selectedBase.rootNodes || selectedBase.rootNodes.length === 0) ? (
             <p className="text-sm text-muted-foreground">
               В этой базе ещё нет документов.
             </p>
           ) : (
             <TreeMenu
               baseId={selectedBase.id}
-              nodes={selectedBase.rootNodes}
+              nodes={selectedBase.rootNodes ?? []}
               activeNodeId={selectedNodeId}
               expandedNodes={expandedNodeIds}
               onToggle={handleToggleNode}

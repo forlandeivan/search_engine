@@ -137,7 +137,19 @@ knowledgeBaseRouter.get('/bases/:baseId/nodes/:nodeId', asyncHandler(async (req,
   if (!user) return;
 
   const { id: workspaceId } = getRequestWorkspace(req);
-  const node = await getKnowledgeNodeDetail(workspaceId, req.params.baseId, req.params.nodeId);
+  const baseId = req.params.baseId;
+  
+  // Проверяем существует ли база и к какому workspace она принадлежит
+  const baseCheck = await storage.getKnowledgeBase(baseId);
+  logger.info({ 
+    baseId, 
+    workspaceId,
+    baseExists: !!baseCheck,
+    baseWorkspaceId: baseCheck?.workspaceId,
+    matches: baseCheck?.workspaceId === workspaceId
+  }, 'Getting node detail - base check');
+  
+  const node = await getKnowledgeNodeDetail(baseId, req.params.nodeId, workspaceId);
   
   if (!node) {
     return res.status(404).json({ message: 'Узел не найден' });
@@ -228,9 +240,33 @@ knowledgeBaseRouter.get('/bases/:baseId/indexing/summary', asyncHandler(async (r
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const { id: workspaceId } = getRequestWorkspace(req);
-  const summary = await getKnowledgeBaseIndexingSummary(workspaceId, req.params.baseId);
-  res.json(summary);
+  try {
+    const { id: workspaceId } = getRequestWorkspace(req);
+    const baseId = req.params.baseId;
+    
+    // Проверяем существует ли база и к какому workspace она принадлежит
+    const baseCheck = await storage.getKnowledgeBase(baseId);
+    logger.info({ 
+      baseId, 
+      workspaceId,
+      baseExists: !!baseCheck,
+      baseWorkspaceId: baseCheck?.workspaceId,
+      matches: baseCheck?.workspaceId === workspaceId
+    }, 'Getting indexing summary - base check');
+    
+    const summary = await getKnowledgeBaseIndexingSummary(baseId, workspaceId);
+    res.json(summary);
+  } catch (error) {
+    const baseCheck = await storage.getKnowledgeBase(req.params.baseId).catch(() => null);
+    logger.error({ 
+      error: error instanceof Error ? error.message : String(error),
+      baseId: req.params.baseId, 
+      workspaceId: req.headers["x-workspace-id"],
+      baseExists: !!baseCheck,
+      baseWorkspaceId: baseCheck?.workspaceId,
+    }, 'Error getting indexing summary');
+    throw error;
+  }
 }));
 
 /**

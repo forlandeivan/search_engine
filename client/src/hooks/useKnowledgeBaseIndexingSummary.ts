@@ -1,4 +1,4 @@
-﻿import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { KnowledgeBaseIndexingSummary } from "@shared/knowledge-base";
 
@@ -14,7 +14,7 @@ export function useKnowledgeBaseIndexingSummary(
         return null;
       }
 
-      const res = await apiRequest("GET", `/api/knowledge/bases/${baseId}/indexing/summary`);
+      const res = await apiRequest("GET", `/api/knowledge/bases/${baseId}/indexing/summary`, undefined, undefined, { workspaceId });
       if (!res.ok) {
         if (res.status === 404) {
           return null;
