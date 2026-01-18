@@ -358,6 +358,7 @@ function AppContent() {
     queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
     staleTime: 1000 * 60 * 5, // 5 минут - не обновляем сессию слишком часто
     refetchOnWindowFocus: false, // Не обновляем при фокусе окна
+    refetchOnMount: 'always', // Всегда проверяем сессию при монтировании (важно после logout/login)
   });
 
   const session = sessionQuery.data;
@@ -382,10 +383,9 @@ function AppContent() {
     }
   }, [session?.user, location, setLocation]);
 
-  // Показываем LoadingScreen только при первой загрузке (isLoading)
-  // isFetching не проверяем, чтобы не блокировать UI при background refetch
-  if (sessionQuery.isLoading) {
-    console.log('[App] Loading session...');
+  // Показываем LoadingScreen при первой загрузке ИЛИ при refetch после invalidate (важно для login после logout)
+  if (sessionQuery.isLoading || (sessionQuery.isFetching && sessionQuery.data === undefined)) {
+    console.log('[App] Loading or fetching session (initial load)...');
     return <LoadingScreen />;
   }
 

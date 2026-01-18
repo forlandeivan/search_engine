@@ -109,7 +109,15 @@ export default function AuthPage() {
       loginForm.reset();
       setUnconfirmedEmail(null);
       setResendMessage(null);
+      
+      // Полностью удаляем старые данные сессии из кеша перед invalidate
+      queryClient.removeQueries({ queryKey: ["/api/auth/session"] });
+      
+      // Принудительно обновляем сессию
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/session"] });
+      
+      // Ждем пока session query обновится
+      await queryClient.refetchQueries({ queryKey: ["/api/auth/session"] });
     },
     onError: (error: Error & { status?: number; code?: string }) => {
       if (error.status === 403 && error.code === "email_not_confirmed") {
