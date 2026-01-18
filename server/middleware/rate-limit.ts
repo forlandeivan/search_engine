@@ -12,12 +12,12 @@ const logger = createLogger('rate-limit');
 
 /**
  * General API rate limiter
- * Limit: 100 requests per 15 minutes
+ * Limit: 100000 requests per 15 minutes (increased 1000x for development)
  * Disabled in test mode (CI environment variable set)
  */
 export const generalApiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 100000, // Limit each IP to 100000 requests per windowMs (1000x increase)
   skip: () => !!process.env.CI, // Skip rate limiting in CI/test environment
   message: {
     error: 'Превышен лимит запросов. Попробуйте позже.',
@@ -40,12 +40,12 @@ export const generalApiLimiter = rateLimit({
 
 /**
  * Authentication endpoint rate limiter
- * Limit: 5 requests per 15 minutes (brute-force protection)
+ * Limit: 5000 requests per 15 minutes (increased 1000x for development)
  * Disabled in test mode (CI environment variable set)
  */
 export const authLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit each IP to 5 login requests per windowMs
+  max: 5000, // Limit each IP to 5000 login requests per windowMs (1000x increase)
   skip: () => !!process.env.CI, // Skip rate limiting in CI/test environment
   message: {
     error: 'Слишком много попыток входа. Попробуйте через 15 минут.',
@@ -68,12 +68,12 @@ export const authLoginLimiter = rateLimit({
 
 /**
  * Registration endpoint rate limiter
- * Limit: 3 requests per hour (spam protection)
+ * Limit: 3000 requests per hour (increased 1000x for development)
  * Disabled in test mode (CI environment variable set)
  */
 export const authRegisterLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3, // Limit each IP to 3 registration requests per hour
+  max: 3000, // Limit each IP to 3000 registration requests per hour (1000x increase)
   skip: () => !!process.env.CI, // Skip rate limiting in CI/test environment
   message: {
     error: 'Превышен лимит регистраций. Попробуйте через час.',
@@ -95,11 +95,11 @@ export const authRegisterLimiter = rateLimit({
 
 /**
  * LLM/chat endpoint rate limiter
- * Limit: 20 requests per minute (protect LLM resources)
+ * Limit: 20000 requests per minute (increased 1000x for development)
  */
 export const llmChatLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 20, // Limit each IP to 20 LLM requests per minute
+  max: 20000, // Limit each IP to 20000 LLM requests per minute (1000x increase)
   message: {
     error: 'Превышен лимит запросов к LLM. Подождите немного.',
     retryAfter: '1 минута',
@@ -121,11 +121,11 @@ export const llmChatLimiter = rateLimit({
 
 /**
  * Knowledge base RAG endpoint rate limiter
- * Limit: 10 requests per minute (protect RAG resources)
+ * Limit: 10000 requests per minute (increased 1000x for development)
  */
 export const knowledgeRagLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 10, // Limit each IP to 10 RAG requests per minute
+  max: 10000, // Limit each IP to 10000 RAG requests per minute (1000x increase)
   message: {
     error: 'Превышен лимит запросов к базе знаний. Подождите немного.',
     retryAfter: '1 минута',
