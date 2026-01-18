@@ -104,7 +104,7 @@ const createSkillSchema = z.object({
 });
 
 const ragConfigInputSchema = z.object({
-  mode: z.enum(['rag']).optional(),
+  mode: z.enum(['all_collections', 'selected_collections']).optional(),
   collectionIds: z.array(z.string().min(1)).optional(),
   topK: z.number().int().min(1).max(50).nullable().optional(),
   minScore: z.number().min(0).max(1).nullable().optional(),
