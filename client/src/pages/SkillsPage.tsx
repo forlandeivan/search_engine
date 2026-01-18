@@ -1635,8 +1635,10 @@ export function SkillFormContent({
 async function fetchKnowledgeBases(workspaceId: string): Promise<KnowledgeBaseSummary[]> {
   const response = await apiRequest("GET", "/api/knowledge/bases", undefined, undefined, { workspaceId });
   const data = await response.json();
-  // Проверяем что ответ - массив
-  return Array.isArray(data) ? data : [];
+  // Поддержка обоих форматов: массив или { bases: [...] }
+  if (Array.isArray(data)) return data;
+  if (data?.bases && Array.isArray(data.bases)) return data.bases;
+  return [];
 }
 
 export default function SkillsPage() {

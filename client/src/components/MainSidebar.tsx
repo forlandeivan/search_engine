@@ -70,8 +70,10 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/knowledge/bases");
       const data = await res.json();
-      // Проверяем что ответ - массив, иначе возвращаем пустой массив
-      return Array.isArray(data) ? data : [];
+      // Поддержка обоих форматов: массив или { bases: [...] }
+      if (Array.isArray(data)) return data;
+      if (data?.bases && Array.isArray(data.bases)) return data.bases;
+      return [];
     },
     // Не делаем запрос пока нет workspaceId
     enabled: Boolean(workspaceId),

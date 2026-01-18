@@ -85,14 +85,25 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
 }
 
 function getRequestWorkspace(req: Request): { id: string } {
+  // Check header first (most common from frontend)
+  const headerWorkspaceRaw = req.headers["x-workspace-id"];
+  const headerWorkspaceId = Array.isArray(headerWorkspaceRaw)
+    ? headerWorkspaceRaw[0]
+    : typeof headerWorkspaceRaw === "string"
+      ? headerWorkspaceRaw.trim()
+      : undefined;
+
   const workspaceId = req.workspaceId ||
+    req.workspaceContext?.workspaceId ||
+    headerWorkspaceId ||
     req.params.workspaceId ||
+    req.query.workspaceId ||
     req.session?.workspaceId ||
     req.session?.activeWorkspaceId;
   if (!workspaceId) {
     throw new Error('Workspace not found in request');
   }
-  return { id: workspaceId };
+  return { id: String(workspaceId) };
 }
 
 function pickFirstString(...values: unknown[]): string | undefined {

@@ -503,19 +503,25 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     }));
   };
 
-  const basesQuery = useQuery({
-    queryKey: ["knowledge-bases"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/knowledge/bases");
-      const data = await res.json();
-      // Проверяем что ответ - массив
-      return Array.isArray(data) ? data : [];
-    },
-  });
-
   const { data: session } = useQuery<SessionResponse>({
     queryKey: ["/api/auth/session"],
     staleTime: 0,
+  });
+  
+  const workspaceId = session?.workspace?.active?.id ?? null;
+  const workspaceRole = session?.workspace?.active?.role ?? null;
+
+  const basesQuery = useQuery({
+    queryKey: ["knowledge-bases", workspaceId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/knowledge/bases");
+      const data = await res.json();
+      // Поддержка обоих форматов: массив или { bases: [...] }
+      if (Array.isArray(data)) return data;
+      if (data?.bases && Array.isArray(data.bases)) return data.bases;
+      return [];
+    },
+    enabled: Boolean(workspaceId),
   });
 
   useEffect(() => {
@@ -546,6 +552,16 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   }, []);
 
   const bases = Array.isArray(basesQuery.data) ? basesQuery.data : [];
+  
+  // DEBUG: логирование для отладки проблемы с базами
+  console.log('[KnowledgeBasePage] basesQuery:', {
+    data: basesQuery.data,
+    isLoading: basesQuery.isLoading,
+    isError: basesQuery.isError,
+    error: basesQuery.error,
+    workspaceId,
+    bases,
+  });
   const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
     queryKey: ["/api/embedding/services"],
   });
@@ -560,8 +576,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     () => (llmProvidersResponse?.providers ?? []).filter((provider) => provider.isActive),
     [llmProvidersResponse?.providers],
   );
-  const workspaceId = session?.workspace?.active?.id ?? null;
-  const workspaceRole = session?.workspace?.active?.role ?? null;
   const canManageKnowledgeBase = workspaceRole === "owner" || workspaceRole === "manager";
   const { data: vectorCollectionsResponse, isLoading: isVectorCollectionsLoading } =
     useQuery<VectorCollectionsResponse>({
@@ -1021,18 +1035,28 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   }, [selectedBase?.id, resetSuggest]);
 
   useEffect(() => {
+    console.log('[KnowledgeBasePage] redirect useEffect:', {
+      basesLength: bases.length,
+      knowledgeBaseId,
+      firstBaseId: bases[0]?.id,
+    });
+    
     if (!bases.length) {
+      console.log('[KnowledgeBasePage] no bases, skipping redirect');
       return;
     }
 
     if (knowledgeBaseId) {
       const exists = bases.some((base) => base.id === knowledgeBaseId);
+      console.log('[KnowledgeBasePage] knowledgeBaseId exists:', exists);
       if (!exists) {
+        console.log('[KnowledgeBasePage] redirecting to first base (current not found)');
         setLocation(`/knowledge/${bases[0]?.id}`);
       }
       return;
     }
 
+    console.log('[KnowledgeBasePage] no knowledgeBaseId, redirecting to first base:', bases[0]?.id);
     setLocation(`/knowledge/${bases[0]?.id}`);
   }, [bases, knowledgeBaseId, setLocation]);
 

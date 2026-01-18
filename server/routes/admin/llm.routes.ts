@@ -62,11 +62,22 @@ function getSessionUser(req: Request): PublicUser | null {
 }
 
 function getRequestWorkspace(req: Request): { id: string } | null {
+  // Check header first (most common from frontend)
+  const headerWorkspaceRaw = req.headers["x-workspace-id"];
+  const headerWorkspaceId = Array.isArray(headerWorkspaceRaw)
+    ? headerWorkspaceRaw[0]
+    : typeof headerWorkspaceRaw === "string"
+      ? headerWorkspaceRaw.trim()
+      : undefined;
+
   const workspaceId = req.workspaceId ||
+    req.workspaceContext?.workspaceId ||
+    headerWorkspaceId ||
     req.params.workspaceId ||
+    req.query.workspaceId ||
     req.session?.workspaceId ||
     req.session?.activeWorkspaceId;
-  return workspaceId ? { id: workspaceId } : null;
+  return workspaceId ? { id: String(workspaceId) } : null;
 }
 
 // ============================================================================

@@ -111,7 +111,8 @@ knowledgeBaseRouter.get('/bases', asyncHandler(async (req, res) => {
 
   const { id: workspaceId } = getRequestWorkspace(req);
   const bases = await listKnowledgeBases(workspaceId);
-  res.json({ bases });
+  // Возвращаем просто массив, как ожидает фронтенд
+  res.json(bases);
 }));
 
 /**

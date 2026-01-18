@@ -46,15 +46,25 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
 }
 
 function getRequestWorkspace(req: Request): { id: string; role?: string } {
+  // Check header first (most common from frontend)
+  const headerWorkspaceRaw = req.headers["x-workspace-id"];
+  const headerWorkspaceId = Array.isArray(headerWorkspaceRaw)
+    ? headerWorkspaceRaw[0]
+    : typeof headerWorkspaceRaw === "string"
+      ? headerWorkspaceRaw.trim()
+      : undefined;
+
   const workspaceId = req.workspaceId ||
     req.workspaceContext?.workspaceId ||
+    headerWorkspaceId ||
     req.params.workspaceId ||
+    req.query.workspaceId ||
     req.session?.workspaceId ||
     req.session?.activeWorkspaceId;
   if (!workspaceId) {
     throw new Error('Workspace not found in request');
   }
-  return { id: workspaceId, role: req.workspaceRole || req.session?.workspaceRole };
+  return { id: String(workspaceId), role: req.workspaceRole || req.session?.workspaceRole };
 }
 
 function isWorkspaceAdmin(role?: string): boolean {
