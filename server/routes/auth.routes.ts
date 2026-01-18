@@ -146,7 +146,7 @@ interface SessionResponse {
 }
 
 async function buildSessionResponse(user: PublicUser, context?: WorkspaceContext | null): Promise<SessionResponse> {
-  const workspaces = await storage.getUserWorkspaces(user.id);
+  const workspaces = await storage.getOrCreateUserWorkspaces(user.id);
   const available = workspaces.map((w) => ({ id: w.id, name: w.name }));
   return {
     user,
@@ -159,13 +159,13 @@ async function ensureWorkspaceContext(req: Request, user: PublicUser): Promise<W
   if (sessionWorkspaceId) {
     const membership = await storage.getWorkspaceMember(sessionWorkspaceId, user.id);
     if (membership) {
-      const workspace = await storage.getWorkspaceById(sessionWorkspaceId);
+      const workspace = await storage.getWorkspace(sessionWorkspaceId);
       if (workspace) {
         return { workspaceId: workspace.id, workspaceName: workspace.name, role: membership.role };
       }
     }
   }
-  const workspaces = await storage.getUserWorkspaces(user.id);
+  const workspaces = await storage.getOrCreateUserWorkspaces(user.id);
   if (workspaces.length > 0) {
     const first = workspaces[0];
     const membership = await storage.getWorkspaceMember(first.id, user.id);
