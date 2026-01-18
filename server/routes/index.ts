@@ -27,6 +27,8 @@ import { metricsRouter } from './metrics.routes';
 import { metricsMiddleware } from '../monitoring/middleware';
 import { openapiRouter } from './openapi.routes';
 import { embeddingRouter } from './embedding.routes';
+import { modelsRouter } from './models.routes';
+import { llmRouter } from './llm.routes';
 import { generalApiLimiter } from '../middleware/rate-limit';
 
 const routerLogger = createLogger('router');
@@ -160,6 +162,14 @@ export function registerRouteModules(app: Express): void {
   // Embedding services routes
   app.use('/api/embedding', embeddingRouter);
   routerLogger.info('Registered: /api/embedding');
+
+  // Models routes (public models catalog)
+  app.use('/api/models', modelsRouter);
+  routerLogger.info('Registered: /api/models');
+
+  // LLM providers routes
+  app.use('/api/llm', llmRouter);
+  routerLogger.info('Registered: /api/llm');
 
   // Transcribe routes (speech-to-text operations)
   app.use('/api/chat/transcribe', transcribeRouter);

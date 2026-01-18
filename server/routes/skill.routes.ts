@@ -53,12 +53,13 @@ function getRequestWorkspace(req: Request): { id: string } {
   const workspaceId = req.workspaceId ||
     req.workspaceContext?.workspaceId ||
     req.params.workspaceId ||
+    req.query.workspaceId ||
     req.session?.workspaceId ||
     req.session?.activeWorkspaceId;
   if (!workspaceId) {
     throw new Error('Workspace not found in request');
   }
-  return { id: workspaceId };
+  return { id: String(workspaceId) };
 }
 
 function pickFirstString(...values: unknown[]): string | undefined {
