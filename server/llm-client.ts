@@ -1463,7 +1463,14 @@ export async function checkLlmProviderHealth(
         // Читаем первые байты, чтобы убедиться, что соединение работает
         try {
           if (response.body && typeof response.body === "object") {
-            const body = response.body as { getReader?: () => { read: () => Promise<{ done: boolean; value?: unknown }>; cancel: () => Promise<void> } } | { cancel?: () => Promise<void> } | null };
+            const body = response.body as {
+              getReader?: () => {
+                read: () => Promise<{ done: boolean; value?: unknown }>;
+                cancel: () => Promise<void>;
+              };
+            } | {
+              cancel?: () => Promise<void>;
+            } | null;
             const reader = typeof body.getReader === "function" ? body.getReader() : null;
             if (reader) {
               const chunk = await Promise.race([
@@ -1484,7 +1491,7 @@ export async function checkLlmProviderHealth(
               });
             }
           }
-        } catch {
+        } catch (_error) {
           // Если не удалось прочитать поток, это не критично для health check
           // Главное - проверили content-type
         }
@@ -1492,7 +1499,7 @@ export async function checkLlmProviderHealth(
         // Для не-потоковых ответов проверяем, что получили валидный JSON
         try {
           await response.json();
-        } catch {
+        } catch (_error) {
           return {
             available: false,
             error: "Провайдер вернул невалидный JSON",
@@ -1533,4 +1540,13 @@ export async function checkLlmProviderHealth(
         responseTimeMs,
       };
     }
+  } catch (error) {
+    const responseTimeMs = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      available: false,
+      error: `Не удалось выполнить проверку провайдера: ${errorMessage}`,
+      responseTimeMs,
+    };
+  }
 }

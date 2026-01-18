@@ -6475,7 +6475,8 @@ export class DatabaseStorage implements IStorage {
       : eq(llmProviders.id, id);
     const deleted = await this.db
       .delete(llmProviders)
-      .where(condition);
+      .where(condition)
+      .returning({ id: llmProviders.id });
     
     // Invalidate LLM providers cache (both workspace-specific and global)
     if (providerToDelete) {
@@ -6486,9 +6487,6 @@ export class DatabaseStorage implements IStorage {
       }
     }
     
-    return deleted.length > 0;
-      .returning({ id: llmProviders.id });
-
     return deleted.length > 0;
   }
 
