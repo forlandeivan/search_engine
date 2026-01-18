@@ -2,11 +2,15 @@
  * Chat Routes Module
  * 
  * Handles chat session operations:
+ * - GET /api/chat/sessions - List chat sessions
  * - POST /api/chat/sessions - Create chat session
  * - PATCH /api/chat/sessions/:chatId - Rename chat
  * - DELETE /api/chat/sessions/:chatId - Delete chat
  * - GET /api/chat/sessions/:chatId/messages - Get messages
  * - POST /api/chat/sessions/:chatId/messages/llm - Send message to LLM
+ * - GET /api/chat/actions - List bot actions
+ * - POST /api/chat/actions/start - Start bot action
+ * - POST /api/chat/actions/update - Update bot action status
  */
 
 import { Router, type Request, Response, NextFunction } from 'express';
@@ -31,6 +35,8 @@ import {
   mapChatSummary,
   buildChatLlmContext,
   buildChatCompletionRequestBody,
+  upsertBotActionForChat,
+  listBotActionsForChat,
 } from '../chat-service';
 import { scheduleChatTitleGenerationIfNeeded } from '../chat-title-jobs';
 import { getSkillById, createUnicaChatSkillForWorkspace, UNICA_CHAT_SYSTEM_KEY } from '../skills';
@@ -246,6 +252,83 @@ chatRouter.get('/sessions/:chatId/messages', asyncHandler(async (req, res) => {
   res.json({ messages: messages.map(mapMessage) });
 }));
 
+/**
+ * GET /actions
+ * List bot actions for chat
+ */
+chatRouter.get('/actions', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const workspaceCandidate = pickFirstString(req.query.workspaceId, req.query.workspace_id);
+  const workspaceId = resolveWorkspaceIdForRequest(req, workspaceCandidate as string | null);
+  const chatId = pickFirstString(req.query.chatId, req.query.chat_id);
+  
+  if (!chatId) {
+    return res.status(400).json({ message: 'chatId is required' });
+  }
+
+  const statusParam = pickFirstString(req.query.status);
+  const status = statusParam === 'processing' || statusParam === 'done' || statusParam === 'error' ? statusParam : 'processing';
+  
+  const actions = await listBotActionsForChat({
+    workspaceId,
+    chatId,
+    userId: user.id,
+    status,
+  });
+  
+  res.json({ actions });
+}));
+
+/**
+ * POST /actions/start
+ * Start bot action
+ */
+chatRouter.post('/actions/start', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const payload = startBotActionSchema.parse(req.body ?? {});
+  
+  const action = await upsertBotActionForChat({
+    workspaceId: payload.workspaceId,
+    chatId: payload.chatId,
+    actionId: payload.actionId,
+    actionType: payload.actionType,
+    status: 'processing',
+    displayText: payload.displayText,
+    payload: payload.payload ?? null,
+    userId: user.id,
+  });
+  
+  res.json({ action });
+}));
+
+/**
+ * POST /actions/update
+ * Update bot action status
+ */
+chatRouter.post('/actions/update', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const payload = updateBotActionSchema.parse(req.body ?? {});
+  
+  const action = await upsertBotActionForChat({
+    workspaceId: payload.workspaceId,
+    chatId: payload.chatId,
+    actionId: payload.actionId,
+    actionType: payload.actionType,
+    status: payload.status,
+    displayText: payload.displayText,
+    payload: payload.payload ?? null,
+    userId: user.id,
+  });
+  
+  res.json({ action });
+}));
+
 // ============================================================================
 // Validation Schemas
 // ============================================================================
@@ -254,6 +337,25 @@ const createChatMessageSchema = z.object({
   content: z.string().trim().min(1, 'Сообщение не может быть пустым'),
   workspaceId: z.string().optional(),
   stream: z.boolean().optional(),
+});
+
+const startBotActionSchema = z.object({
+  workspaceId: z.string().trim().min(1),
+  chatId: z.string().trim().min(1),
+  actionId: z.string().trim().min(1),
+  actionType: z.string().trim().min(1),
+  displayText: z.string().trim().optional(),
+  payload: z.record(z.unknown()).optional(),
+});
+
+const updateBotActionSchema = z.object({
+  workspaceId: z.string().trim().min(1),
+  chatId: z.string().trim().min(1),
+  actionId: z.string().trim().min(1),
+  actionType: z.string().trim().min(1),
+  status: z.enum(['processing', 'done', 'error']),
+  displayText: z.string().trim().optional(),
+  payload: z.record(z.unknown()).optional().nullable(),
 });
 
 // ============================================================================

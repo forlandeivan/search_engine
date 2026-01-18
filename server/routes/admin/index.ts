@@ -18,6 +18,8 @@
 
 import { Router } from 'express';
 import { createLogger } from '../../lib/logger';
+import { asyncHandler } from '../../middleware/async-handler';
+import { TARIFF_LIMIT_CATALOG } from '../../tariff-limit-catalog';
 
 // Import sub-routers
 import { adminUsersRouter } from './users.routes';
@@ -54,6 +56,11 @@ adminRouter.use('/', adminSettingsRouter); // /indexing-rules, /unica-chat
 // Tariffs and billing
 adminRouter.use('/tariffs', adminTariffsRouter);
 adminRouter.use('/billing', adminTariffsRouter); // /billing/info
+
+// Tariff limit catalog (separate route for backward compatibility)
+adminRouter.get('/tariff-limit-catalog', asyncHandler(async (_req, res) => {
+  res.json(TARIFF_LIMIT_CATALOG);
+}));
 
 // LLM and embeddings
 adminRouter.use('/', adminLlmRouter); // /models, /llm-*, /embeddings/*, /knowledge-base-indexing-policy

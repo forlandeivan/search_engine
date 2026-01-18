@@ -3,13 +3,15 @@
  * 
  * Handles LLM providers:
  * - GET /api/llm/providers - List LLM providers
+ * - PUT /api/llm/providers/:providerId - Update LLM provider
  */
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import { z } from 'zod';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { storage } from '../storage';
-import type { PublicUser } from '@shared/schema';
+import { updateLlmProviderSchema, type PublicUser } from '@shared/schema';
 
 const logger = createLogger('llm');
 
@@ -73,3 +75,74 @@ llmRouter.get('/providers', asyncHandler(async (req, res) => {
 
   res.json({ providers: publicProviders });
 }));
+
+/**
+ * PUT /providers/:providerId
+ * Update LLM provider configuration
+ */
+llmRouter.put('/providers/:providerId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const providerId = req.params.providerId;
+  
+  // Check header first (most common from frontend)
+  const headerWorkspaceRaw = req.headers["x-workspace-id"];
+  const headerWorkspaceId = Array.isArray(headerWorkspaceRaw)
+    ? headerWorkspaceRaw[0]
+    : typeof headerWorkspaceRaw === "string"
+      ? headerWorkspaceRaw.trim()
+      : undefined;
+
+  const workspaceId = req.workspaceId ||
+    req.workspaceContext?.workspaceId ||
+    headerWorkspaceId ||
+    req.query.workspaceId ||
+    req.params.workspaceId ||
+    req.session?.workspaceId ||
+    req.session?.activeWorkspaceId;
+
+  const payload = updateLlmProviderSchema.parse(req.body ?? {});
+  
+  // Trim and sanitize arrays
+  const updates: Parameters<typeof storage.updateLlmProvider>[1] = {};
+  
+  if (payload.model !== undefined) {
+    updates.model = payload.model.trim();
+  }
+  
+  if (payload.availableModels !== undefined) {
+    updates.availableModels = payload.availableModels.map(m => ({
+      label: m.label.trim(),
+      value: m.value.trim(),
+    }));
+  }
+  
+  if (payload.name !== undefined) updates.name = payload.name;
+  if (payload.description !== undefined) updates.description = payload.description;
+  if (payload.isActive !== undefined) updates.isActive = payload.isActive;
+  if (payload.isGlobal !== undefined) updates.isGlobal = payload.isGlobal;
+  if (payload.tokenUrl !== undefined) updates.tokenUrl = payload.tokenUrl;
+  if (payload.completionUrl !== undefined) updates.completionUrl = payload.completionUrl;
+  if (payload.authorizationKey !== undefined) updates.authorizationKey = payload.authorizationKey;
+  if (payload.scope !== undefined) updates.scope = payload.scope;
+  if (payload.requestHeaders !== undefined) updates.requestHeaders = payload.requestHeaders;
+  if (payload.requestConfig !== undefined) updates.requestConfig = payload.requestConfig;
+  if (payload.responseConfig !== undefined) updates.responseConfig = payload.responseConfig;
+  
+  const provider = await storage.updateLlmProvider(providerId, updates, workspaceId);
+  
+  if (!provider) {
+    return res.status(404).json({ message: 'Provider not found' });
+  }
+  
+  res.json({ provider });
+}));
+
+// Error handler for this router
+llmRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof z.ZodError) {
+    return res.status(400).json({ message: 'Неверные данные', details: err.issues });
+  }
+  next(err);
+});
