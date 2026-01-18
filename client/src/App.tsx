@@ -140,10 +140,18 @@ function MainRouter() {
   return (
     <Switch>
       <Route path="/workspaces/:workspaceId/chat/:chatId">
-        <LazyRouteWrapper><ChatPage /></LazyRouteWrapper>
+        {(params) => (
+          <LazyRouteWrapper>
+            <ChatPage params={params} />
+          </LazyRouteWrapper>
+        )}
       </Route>
       <Route path="/workspaces/:workspaceId/chat">
-        <LazyRouteWrapper><ChatPage /></LazyRouteWrapper>
+        {(params) => (
+          <LazyRouteWrapper>
+            <ChatPage params={params} />
+          </LazyRouteWrapper>
+        )}
       </Route>
       <Route path="/knowledge/:baseId/indexing/history">
         {(params) => <LazyRouteWrapper><KnowledgeBaseIndexingHistoryPage params={{ knowledgeBaseId: params.baseId }} /></LazyRouteWrapper>}

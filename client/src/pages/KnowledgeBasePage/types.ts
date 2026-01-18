@@ -87,7 +87,7 @@ export type QuickSearchTriggerProps = {
 };
 
 // Badge variants
-export type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "success" | "warning";
+export type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
 
 // Status labels
 export const DOCUMENT_STATUS_LABELS: Record<string, string> = {
@@ -121,12 +121,12 @@ export const INDEXING_STATUS_DESCRIPTIONS: Record<KnowledgeBaseIndexStatus, stri
 };
 
 export const INDEXING_STATUS_BADGE_VARIANTS: Record<KnowledgeBaseIndexStatus, BadgeVariant> = {
-  not_indexed: "secondary",
+  not_indexed: "outline",
   indexing: "outline",
-  up_to_date: "success",
-  outdated: "warning",
+  up_to_date: "secondary",
+  outdated: "outline",
   error: "destructive",
-  partial: "warning",
+  partial: "outline",
 };
 
 export const INDEXING_CHANGE_STATUS_LABELS: Record<KnowledgeDocumentIndexStatus, string> = {
@@ -138,9 +138,9 @@ export const INDEXING_CHANGE_STATUS_LABELS: Record<KnowledgeDocumentIndexStatus,
 };
 
 export const INDEXING_CHANGE_BADGE_VARIANTS: Record<KnowledgeDocumentIndexStatus, BadgeVariant> = {
-  not_indexed: "secondary",
-  up_to_date: "success",
-  outdated: "warning",
+  not_indexed: "outline",
+  up_to_date: "secondary",
+  outdated: "outline",
   indexing: "outline",
   error: "destructive",
 };

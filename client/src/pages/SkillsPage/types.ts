@@ -50,6 +50,19 @@ export type SkillActionsPreviewProps = {
   canEdit?: boolean;
 };
 
+export type LlmSelectionOption = {
+  key: string;
+  label: string;
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelDisplayName: string;
+  costLevel: "FREE" | "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH";
+  providerIsActive: boolean;
+  disabled: boolean;
+  catalogModel?: unknown | null;
+};
+
 export type SkillFormProps = {
   knowledgeBases: KnowledgeBaseSummary[];
   embeddingProviders: PublicEmbeddingProvider[];
@@ -60,18 +73,7 @@ export type SkillFormProps = {
   fileStorageProvidersError?: unknown;
   hasSkillFiles?: boolean;
   isSkillFilesReady?: boolean;
-  llmOptions: Array<{
-    key: string;
-    label: string;
-    providerId: string;
-    providerName: string;
-    modelId: string;
-    modelDisplayName: string;
-    costLevel: "FREE" | "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH";
-    providerIsActive: boolean;
-    disabled: boolean;
-    catalogModel?: unknown | null;
-  }>;
+  llmOptions: LlmSelectionOption[];
   onSubmit: (values: unknown) => void | Promise<void>;
   isSubmitting: boolean;
   skill?: Skill | null;

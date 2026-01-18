@@ -27,7 +27,7 @@ function formatUser(userName: string | null, userEmail: string | null): string {
 }
 
 function formatStatus(status: IndexingLogResponse["summary"]["status"]): string {
-  const statusMap: Record<IndexingLogResponse["summary"]["status"], string> = {
+  const statusMap: Record<string, string> = {
     processing: "Выполняется",
     done: "Завершено",
     error: "Ошибка",
@@ -38,7 +38,11 @@ function formatStatus(status: IndexingLogResponse["summary"]["status"]): string 
 function formatStage(stage: IndexingLogResponse["summary"]["stage"]): string {
   const stageMap: Record<IndexingLogResponse["summary"]["stage"], string> = {
     initializing: "Инициализация",
-    processing: "Обработка",
+    creating_collection: "Создание коллекции",
+    chunking: "Чанкинг",
+    vectorizing: "Векторизация",
+    uploading: "Загрузка",
+    verifying: "Проверка",
     completed: "Завершено",
     error: "Ошибка",
   };
@@ -61,6 +65,7 @@ function formatStageName(stage: string): string {
     creating_collection: "Создание коллекции",
     chunking: "Чанкинг",
     vectorizing: "Векторизация",
+    uploading: "Загрузка",
     verifying: "Проверка",
     completed: "Завершено",
     error: "Ошибка",

@@ -74,6 +74,7 @@ import {
   GENERATIVE_TYPING_INTERVAL_MS,
   searchModeOptions,
   filterOperatorOptions,
+  filterOperatorSymbols,
   statusLabels,
   statusIndicatorVariants,
 } from './VectorCollectionDetailPage/constants';

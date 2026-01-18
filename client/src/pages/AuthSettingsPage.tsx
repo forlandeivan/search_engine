@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { zodResolver } from "@/lib/zod-resolver";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, Loader2, RefreshCw, AlertTriangle, CheckCircle2, CircleDashed } from "lucide-react";
 

@@ -1,4 +1,4 @@
-﻿import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
+import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import { createServer, type Server } from "http";
 import { registerRouteModules } from "./routes/index";
 import fetch, {

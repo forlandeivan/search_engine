@@ -136,7 +136,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     enabled: Boolean(workspaceId),
     queryFn: async () => {
       if (!workspaceId) {
-        throw new Error("Рабочее пространство не выбрано");
+        throw new Error("??????? ???????????? ?? ???????");
       }
       const response = await apiRequest("GET", `/api/workspaces/${workspaceId}/plan`);
       return (await response.json()) as WorkspacePlanResponse;
@@ -218,7 +218,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     for (const provider of llmProviders) {
       const models = byProvider[provider.id] ?? [];
       for (const model of models) {
-        const labelText = `${provider.name} · ${model.displayName}`;
+        const labelText = `${provider.name} ? ${model.displayName}`;
         options.push({
           key: buildLlmKey(provider.id, model.key),
           label: labelText,
@@ -241,13 +241,13 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
   const { generateCallbackToken, isGenerating: isGeneratingCallbackToken } = useGenerateCallbackToken({
     workspaceId,
     onSuccess: () => {
-      toast({ title: "API-токен обновлён" });
+      toast({ title: "API-????? ????????" });
     },
   });
   const { createSkill, isCreating } = useCreateSkill({
     workspaceId,
     onSuccess: (created) => {
-      toast({ title: "Навык создан" });
+      toast({ title: "????? ??????" });
       navigate(`/skills/${created.id}/edit`);
     },
   });
@@ -258,40 +258,29 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     const resolvedModel = catalogByKey.get(modelId) ?? null;
     if (!resolvedModel) {
       toast({
-        title: "Не удалось сохранить",
-        description: "Модель не найдена в каталоге или отключена",
+        title: "?? ??????? ?????????",
+        description: "?????? ?? ??????? ? ???????? ??? ?????????",
         variant: "destructive",
       });
-      throw new Error("Модель не найдена в каталоге или отключена");
+      throw new Error("?????? ?? ??????? ? ???????? ??? ?????????");
     }
     if (values.onTranscriptionMode === "auto_action" && !values.onTranscriptionAutoActionId?.trim()) {
       toast({
-        title: "Заполните действие",
-        description: "Выберите действие для авто-запуска после транскрипции",
+        title: "????????? ????????",
+        description: "???????? ???????? ??? ????-??????? ????? ????????????",
         variant: "destructive",
       });
-      throw new Error("Не выбрано действие для авто-запуска");
+      throw new Error("?? ??????? ???????? ??? ????-???????");
     }
     if (!allowNoCodeFlow && values.executionMode === "no_code") {
       toast({
-        title: "No-code недоступен",
-        description: "Доступно на премиум-тарифе.",
+        title: "No-code ??????????",
+        description: "???????? ?? ???????-??????.",
         variant: "destructive",
       });
       return false;
     }
 
-    const parseIntegerOrDefault = (candidate: string | undefined, fallback: number) => {
-      if (!candidate) return fallback;
-      const parsed = Number.parseInt(candidate, 10);
-      return Number.isFinite(parsed) ? parsed : fallback;
-    };
-    const parseScoreOrDefault = (candidate: string | undefined, fallback: number) => {
-      if (!candidate) return fallback;
-      const parsed = Number.parseFloat(candidate);
-      if (!Number.isFinite(parsed)) return fallback;
-      return Math.min(1, Math.max(0, Number(parsed.toFixed(3))));
-    };
     const parseTemperatureOrNull = (candidate: string | undefined) => {
       if (!candidate) return null;
       const parsed = Number.parseFloat(candidate);
@@ -306,17 +295,37 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     };
 
     const isNoCodeMode = values.executionMode === "no_code";
-    const ragTopK = Math.max(1, parseIntegerOrDefault(values.ragTopK, 5));
-    const ragMinScore = parseScoreOrDefault(values.ragMinScore, 0.7);
-    const sanitizedMaxTokens = values.ragMaxContextTokens?.trim();
-    let ragMaxContextTokens: number | null = null;
-    if (sanitizedMaxTokens) {
-      const parsed = Number.parseInt(sanitizedMaxTokens, 10);
-      ragMaxContextTokens = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-    }
     const hasRagSources = !isNoCodeMode && (values.knowledgeBaseIds.length > 0 || hasSkillFiles);
     const llmTemperature = parseTemperatureOrNull(values.llmTemperature);
     const llmMaxTokens = parseMaxTokensOrNull(values.llmMaxTokens);
+    const baseRagConfig = currentSkill?.ragConfig ?? {
+      mode: "all_collections" as const,
+      collectionIds: [],
+      topK: 5,
+      minScore: 0.7,
+      maxContextTokens: null,
+      showSources: true,
+      bm25Weight: null,
+      bm25Limit: null,
+      vectorWeight: null,
+      vectorLimit: null,
+      embeddingProviderId: null,
+      llmTemperature: null,
+      llmMaxTokens: null,
+      llmResponseFormat: null,
+    };
+    const ragConfig = {
+      ...baseRagConfig,
+      mode: baseRagConfig.mode ?? "all_collections",
+      collectionIds: baseRagConfig.collectionIds ?? [],
+      topK: Number.isFinite(baseRagConfig.topK) ? baseRagConfig.topK : 5,
+      minScore: Number.isFinite(baseRagConfig.minScore) ? baseRagConfig.minScore : 0.7,
+      maxContextTokens: baseRagConfig.maxContextTokens ?? null,
+      showSources: baseRagConfig.showSources ?? true,
+      llmTemperature,
+      llmMaxTokens,
+      llmResponseFormat: baseRagConfig.llmResponseFormat ?? null,
+    };
     const autoActionId =
       values.onTranscriptionMode === "auto_action" && values.onTranscriptionAutoActionId
         ? values.onTranscriptionAutoActionId.trim() || null
@@ -338,24 +347,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       mode: isNoCodeMode ? "llm" : hasRagSources ? "rag" : "llm",
       llmProviderConfigId: providerId,
       modelId: resolvedModel.key,
-      ragConfig: isNoCodeMode
-        ? undefined
-        : {
-            mode: "all_collections",
-            collectionIds: [],
-            topK: null,
-            minScore: null,
-            maxContextTokens: null,
-            showSources: null,
-            embeddingProviderId: null,
-            bm25Weight: null,
-            bm25Limit: null,
-            vectorWeight: null,
-            vectorLimit: null,
-            llmTemperature,
-            llmMaxTokens,
-            llmResponseFormat: null,
-          },
+      ragConfig: isNoCodeMode ? undefined : ragConfig,
       transcriptionFlowMode: values.transcriptionFlowMode,
       onTranscriptionMode: values.onTranscriptionMode,
       onTranscriptionAutoActionId: autoActionId,
@@ -376,14 +368,14 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
         return true;
       } else if (currentSkill) {
         await updateSkill({ skillId: currentSkill.id, payload });
-        toast({ title: "Сохранено" });
+        toast({ title: "?????????" });
         return true;
       }
       return false;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Неизвестная ошибка";
+      const message = err instanceof Error ? err.message : "??????????? ??????";
       toast({
-        title: "Не удалось сохранить навык",
+        title: "?? ??????? ????????? ?????",
         description: message,
         variant: "destructive",
       });
@@ -415,7 +407,7 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
     return Icon ? <Icon className="h-5 w-5" /> : null;
   };
 
-  const skillName = currentSkill?.name?.trim() || (isNew ? "Новый навык" : "Навык");
+  const skillName = currentSkill?.name?.trim() || (isNew ? "????? ?????" : "?????");
   const canEditSkillFiles = Boolean(!isNew && currentSkill && !currentSkill.isSystem);
 
   const ensureNoCodeMode = useCallback(async () => {
@@ -433,14 +425,14 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
           <div className="flex items-start gap-3">
             <Button variant="ghost" size="sm" onClick={goBack} className="shrink-0">
               <ArrowLeft className="h-4 w-4 mr-1" />
-              Назад
+              ?????
             </Button>
             <div className="flex flex-col gap-1">
               <Breadcrumb className="text-sm text-muted-foreground">
                 <BreadcrumbList>
                   <BreadcrumbItem>
                     <BreadcrumbLink asChild>
-                      <Link href="/skills">Навыки</Link>
+                      <Link href="/skills">??????</Link>
                     </BreadcrumbLink>
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
@@ -449,12 +441,12 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>
-                    <BreadcrumbPage>Настройки</BreadcrumbPage>
+                    <BreadcrumbPage>?????????</BreadcrumbPage>
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>
               <h1 className="text-base font-semibold" data-testid="skill-title">
-                Настройки навыка
+                ????????? ??????
               </h1>
             </div>
           </div>
@@ -464,17 +456,17 @@ export default function SkillSettingsPage({ skillId, isNew = false }: SkillSetti
       <div className="mx-auto w-full max-w-6xl px-6">
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Загружаем данные...
+            <Loader2 className="h-4 w-4 animate-spin" /> ????????? ??????...
           </div>
         ) : error ? (
           <Alert variant="destructive">
-            <AlertTitle>Не удалось загрузить данные</AlertTitle>
+            <AlertTitle>?? ??????? ????????? ??????</AlertTitle>
             <AlertDescription>{(error as Error).message}</AlertDescription>
           </Alert>
         ) : !isNew && !currentSkill ? (
           <Alert variant="destructive">
-            <AlertTitle>Навык не найден</AlertTitle>
-            <AlertDescription>Проверьте ссылку и попробуйте снова.</AlertDescription>
+            <AlertTitle>????? ?? ??????</AlertTitle>
+            <AlertDescription>????????? ?????? ? ?????????? ?????.</AlertDescription>
           </Alert>
         ) : (
           <>
@@ -600,19 +592,19 @@ export function SkillFilesSection({
 
   const validateFiles = (files: File[]): { valid: File[]; error?: string } => {
     if (files.length > 10) {
-      return { valid: [], error: "За один раз можно загрузить до 10 файлов" };
+      return { valid: [], error: "?? ???? ??? ????? ????????? ?? 10 ??????" };
     }
     const allowedExt = [".pdf", ".docx", ".doc", ".txt"];
     const oversized = files.find((file) => file.size > 512 * 1024 * 1024);
     if (oversized) {
-      return { valid: [], error: "Файл слишком большой (максимум 512MB)" };
+      return { valid: [], error: "???? ??????? ??????? (???????? 512MB)" };
     }
     const unsupported = files.find((file) => {
       const ext = file.name ? file.name.toLowerCase().slice(file.name.lastIndexOf(".")) : "";
       return !allowedExt.includes(ext);
     });
     if (unsupported) {
-      return { valid: [], error: "Формат не поддерживается. Загрузите PDF, DOC, DOCX или TXT." };
+      return { valid: [], error: "?????? ?? ??????????????. ????????? PDF, DOC, DOCX ??? TXT." };
     }
     return { valid: files };
   };
@@ -620,15 +612,15 @@ export function SkillFilesSection({
   const handleFiles = async (files: File[]) => {
     if (!workspaceId || !skillId) {
       toast({
-        title: "Недоступно",
-        description: "Не удалось определить рабочее пространство или навык.",
+        title: "??????????",
+        description: "?? ??????? ?????????? ??????? ???????????? ??? ?????.",
         variant: "destructive",
       });
       return;
     }
     const { valid, error } = validateFiles(files);
     if (error) {
-      toast({ title: "Не удалось загрузить файлы", description: error, variant: "destructive" });
+      toast({ title: "?? ??????? ????????? ?????", description: error, variant: "destructive" });
       return;
     }
     if (valid.length === 0) return;
@@ -651,7 +643,7 @@ export function SkillFilesSection({
           name: fromApi?.name || pending.name,
           size: fromApi?.size ?? pending.size,
           status: fromApi?.status || "uploaded",
-          error: fromApi?.status === "error" ? fromApi.errorMessage || "Не удалось загрузить файл" : undefined,
+          error: fromApi?.status === "error" ? fromApi.errorMessage || "?? ??????? ????????? ????" : undefined,
         };
       });
       const persisted = (response?.files ?? [])
@@ -668,16 +660,19 @@ export function SkillFilesSection({
       if (persisted.length > 0) {
         setPersistedFiles((prev) => mergeFiles(prev, persisted));
       }
-      setUploads((prev) => [...prev.filter((item) => !pendingIds.includes(item.id)), ...updated]);
-      toast({ title: "Файлы загружены" });
+      setUploads((prev) => [
+        ...prev.filter((item) => !item.id || !pendingIds.includes(item.id)),
+        ...updated,
+      ]);
+      toast({ title: "????? ?????????" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось загрузить файлы";
+      const message = error instanceof Error ? error.message : "?? ??????? ????????? ?????";
       setUploads((prev) =>
         prev.map((item) =>
-          pendingIds.includes(item.id) ? { ...item, status: "error", error: message } : item,
+          item.id && pendingIds.includes(item.id) ? { ...item, status: "error", error: message } : item,
         ),
       );
-      toast({ title: "Ошибка загрузки", description: message, variant: "destructive" });
+      toast({ title: "?????? ????????", description: message, variant: "destructive" });
     } finally {
       setIsUploading(false);
       if (workspaceId && skillId) {
@@ -712,10 +707,10 @@ export function SkillFilesSection({
     try {
       await apiRequest("DELETE", `/api/workspaces/${workspaceId}/skills/${skillId}/files/${fileId}`);
       setPersistedFiles((prev) => prev.filter((item) => item.id !== fileId));
-      toast({ title: "Файл удалён" });
+      toast({ title: "???? ??????" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Не удалось удалить файл";
-      toast({ title: "Ошибка удаления", description: message, variant: "destructive" });
+      const message = error instanceof Error ? error.message : "?? ??????? ??????? ????";
+      toast({ title: "?????? ????????", description: message, variant: "destructive" });
     }
     setPendingDeleteId(null);
   };
@@ -723,8 +718,8 @@ export function SkillFilesSection({
   return (
     <Card data-testid="skill-files-section">
       <CardHeader>
-        <CardTitle>Файлы навыка</CardTitle>
-        <CardDescription>Загрузите документы (PDF/DOCX/TXT), чтобы навык отвечал по ним.</CardDescription>
+        <CardTitle>????? ??????</CardTitle>
+        <CardDescription>????????? ????????? (PDF/DOCX/TXT), ????? ????? ??????? ?? ???.</CardDescription>
       </CardHeader>
       <CardContent>
         <div
@@ -748,14 +743,14 @@ export function SkillFilesSection({
                 <UploadCloud className="h-5 w-5 text-muted-foreground" />
               </div>
               <div className="space-y-1">
-                <p className="text-sm font-medium">Перетащите файлы сюда или нажмите “Загрузить”.</p>
-                <p className="text-sm text-muted-foreground">Поддерживаются PDF, DOCX, TXT. До 10 файлов за раз.</p>
+                <p className="text-sm font-medium">?????????? ????? ???? ??? ??????? ???????????.</p>
+                <p className="text-sm text-muted-foreground">?????????????? PDF, DOCX, TXT. ?? 10 ?????? ?? ???.</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <Button type="button" onClick={triggerFileDialog} data-testid="skill-files-upload" disabled={isUploading}>
                 {isUploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                Загрузить файлы
+                ????????? ?????
               </Button>
               <input
                 ref={fileInputRef}
@@ -770,9 +765,9 @@ export function SkillFilesSection({
           </div>
 
           {skillFilesQuery.isLoading ? (
-            <div className="text-sm text-muted-foreground">Загружаем список файлов…</div>
+            <div className="text-sm text-muted-foreground">????????? ?????? ???????</div>
           ) : skillFilesQuery.isError ? (
-            <div className="text-sm text-destructive">Не удалось загрузить список файлов</div>
+            <div className="text-sm text-destructive">?? ??????? ????????? ?????? ??????</div>
           ) : combinedFiles.length > 0 ? (
             <div className="space-y-2">
               {combinedFiles.map((item) => (
@@ -796,10 +791,10 @@ export function SkillFilesSection({
                       variant={item.status === "error" ? "destructive" : item.status === "uploading" ? "outline" : "default"}
                     >
                       {item.status === "uploading"
-                        ? "Загружается"
+                        ? "???????????"
                         : item.status === "error"
-                          ? "Ошибка"
-                          : "Загружен"}
+                          ? "??????"
+                          : "????????"}
                     </Badge>
                     {item.status !== "uploading" && item.id ? (
                       <Button
@@ -808,7 +803,7 @@ export function SkillFilesSection({
                         onClick={() => setPendingDeleteId(item.id ?? null)}
                         data-testid={`skill-file-delete-${item.id}`}
                       >
-                        Удалить
+                        ???????
                       </Button>
                     ) : null}
                   </div>
@@ -816,21 +811,21 @@ export function SkillFilesSection({
               ))}
             </div>
           ) : (
-            <div className="text-sm text-muted-foreground">Файлов пока нет</div>
+            <div className="text-sm text-muted-foreground">?????? ???? ???</div>
           )}
         </div>
       </CardContent>
       <AlertDialog open={Boolean(pendingDeleteId)} onOpenChange={(open) => !open && setPendingDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Удалить файл?</AlertDialogTitle>
+            <AlertDialogTitle>??????? ?????</AlertDialogTitle>
             <AlertDialogDescription>
-              Файл будет удалён из навыка и перестанет использоваться в ответах. Действие нельзя отменить.
+              ???? ????? ?????? ?? ?????? ? ?????????? ?????????????? ? ???????. ???????? ?????? ????????.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isUploading} onClick={() => setPendingDeleteId(null)}>
-              Отмена
+              ??????
             </AlertDialogCancel>
             <AlertDialogAction
               disabled={isUploading}
@@ -838,7 +833,7 @@ export function SkillFilesSection({
                 void handleDeleteConfirmed(pendingDeleteId ?? undefined);
               }}
             >
-              Удалить
+              ???????
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

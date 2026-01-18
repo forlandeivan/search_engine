@@ -49,7 +49,7 @@ import {
   type UnicaChatConfig,
 } from "@shared/schema";
 
-const requestHeadersSchema = z.record(z.string());
+const requestHeadersSchema = z.record(z.string(), z.string());
 
 const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -484,7 +484,7 @@ export default function LlmProvidersPage() {
     formattedRequestHeaders: string;
   } {
     const values = form.getValues();
-    const requestHeaders = parseJsonField(
+    const requestHeaders = parseJsonField<Record<string, string>>(
       values.requestHeaders,
       requestHeadersSchema,
       "requestHeaders",

@@ -58,7 +58,7 @@ import {
 } from "@shared/schema";
 import { useModels, type PublicModel } from "@/hooks/useModels";
 
-const requestHeadersSchema = z.record(z.string());
+const requestHeadersSchema = z.record(z.string(), z.string());
 
 const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
 
