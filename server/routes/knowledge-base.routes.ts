@@ -441,8 +441,25 @@ knowledgeBaseRouter.delete('/bases/:baseId/nodes/:nodeId', asyncHandler(async (r
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
+  const { baseId, nodeId } = req.params;
   const { id: workspaceId } = getRequestWorkspace(req);
-  await deleteKnowledgeNode(workspaceId, req.params.baseId, req.params.nodeId);
+  
+  // Check base exists and belongs to workspace
+  const baseCheck = await storage.getKnowledgeBase(baseId);
+  logger.info({ 
+    baseId, 
+    nodeId,
+    workspaceId,
+    baseExists: !!baseCheck,
+    baseWorkspaceId: baseCheck?.workspaceId,
+    matches: baseCheck?.workspaceId === workspaceId
+  }, 'Deleting node - base check');
+  
+  if (!baseCheck || baseCheck.workspaceId !== workspaceId) {
+    return res.status(404).json({ message: 'База знаний не найдена' });
+  }
+  
+  await deleteKnowledgeNode(baseId, nodeId, workspaceId);
   res.status(204).send();
 }));
 
