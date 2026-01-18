@@ -91,7 +91,7 @@ const createFolderSchema = z.object({
 });
 
 const createDocumentSchema = z.object({
-  name: z.string().trim().min(1).max(255),
+  title: z.string().trim().min(1).max(255),
   content: z.string().optional(),
   parentId: z.string().trim().min(1).optional(),
 });
@@ -250,11 +250,10 @@ knowledgeBaseRouter.post('/bases/:baseId/documents', asyncHandler(async (req, re
   const payload = createDocumentSchema.parse(req.body);
   const { id: workspaceId } = getRequestWorkspace(req);
   
-  const document = await createKnowledgeDocument(workspaceId, req.params.baseId, {
-    name: payload.name,
+  const document = await createKnowledgeDocument(req.params.baseId, workspaceId, {
+    title: payload.title,
     content: payload.content,
     parentId: payload.parentId,
-    createdByUserId: user.id,
   });
   
   res.status(201).json({ document });
@@ -344,14 +343,42 @@ knowledgeBaseRouter.patch('/bases/:baseId/nodes/:nodeId', asyncHandler(async (re
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const payload = updateNodeSchema.parse(req.body);
+  const { baseId, nodeId } = req.params;
   const { id: workspaceId } = getRequestWorkspace(req);
   
+  // Check base exists and belongs to workspace
+  const baseCheck = await storage.getKnowledgeBase(baseId);
+  logger.info({ 
+    baseId, 
+    nodeId,
+    workspaceId,
+    baseExists: !!baseCheck,
+    baseWorkspaceId: baseCheck?.workspaceId,
+    matches: baseCheck?.workspaceId === workspaceId
+  }, 'Updating node - base check');
+  
+  if (!baseCheck || baseCheck.workspaceId !== workspaceId) {
+    return res.status(404).json({ message: 'База знаний не найдена' });
+  }
+
+  const parsed = updateNodeSchema.parse(req.body);
+  
+  // Map updateNodeSchema to UpdateKnowledgeDocumentPayload
+  const payload: { title: string; content?: string } = {
+    title: parsed.title ?? parsed.name ?? '',
+    content: parsed.content,
+  };
+  
+  if (!payload.title) {
+    return res.status(400).json({ message: 'Укажите название документа' });
+  }
+  
   const node = await updateKnowledgeDocument(
-    workspaceId, 
-    req.params.baseId, 
-    req.params.nodeId, 
-    payload
+    baseId,
+    nodeId,
+    workspaceId,
+    payload,
+    user.id
   );
   
   res.json({ node });
@@ -365,14 +392,42 @@ knowledgeBaseRouter.patch('/bases/:baseId/documents/:nodeId', asyncHandler(async
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const payload = updateNodeSchema.parse(req.body);
+  const { baseId, nodeId } = req.params;
   const { id: workspaceId } = getRequestWorkspace(req);
   
+  // Check base exists and belongs to workspace
+  const baseCheck = await storage.getKnowledgeBase(baseId);
+  logger.info({ 
+    baseId, 
+    nodeId,
+    workspaceId,
+    baseExists: !!baseCheck,
+    baseWorkspaceId: baseCheck?.workspaceId,
+    matches: baseCheck?.workspaceId === workspaceId
+  }, 'Updating document - base check');
+  
+  if (!baseCheck || baseCheck.workspaceId !== workspaceId) {
+    return res.status(404).json({ message: 'База знаний не найдена' });
+  }
+
+  const parsed = updateNodeSchema.parse(req.body);
+  
+  // Map updateNodeSchema to UpdateKnowledgeDocumentPayload
+  const payload: { title: string; content?: string } = {
+    title: parsed.title ?? parsed.name ?? '',
+    content: parsed.content,
+  };
+  
+  if (!payload.title) {
+    return res.status(400).json({ message: 'Укажите название документа' });
+  }
+  
   const node = await updateKnowledgeDocument(
-    workspaceId, 
-    req.params.baseId, 
-    req.params.nodeId, 
-    payload
+    baseId,
+    nodeId,
+    workspaceId,
+    payload,
+    user.id
   );
   
   res.json(node);
