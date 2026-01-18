@@ -146,11 +146,21 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
-      retry: false,
+      staleTime: 60 * 1000, // 1 minute by default
+      gcTime: 5 * 60 * 1000, // 5 minutes in cache (previously cacheTime)
+      retry: 1, // Allow 1 retry for transient errors
     },
     mutations: {
       retry: false,
     },
   },
 });
+
+// Specific staleTime options for different query types
+export const queryOptions = {
+  chatMessages: { staleTime: 10 * 1000 },     // 10 seconds
+  chatList: { staleTime: 30 * 1000 },         // 30 seconds
+  workspaceSettings: { staleTime: 5 * 60 * 1000 }, // 5 minutes
+  skillsList: { staleTime: 2 * 60 * 1000 },   // 2 minutes
+  modelsCatalog: { staleTime: 10 * 60 * 1000 }, // 10 minutes
+};
