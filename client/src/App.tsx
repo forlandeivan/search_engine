@@ -1,5 +1,5 @@
 import { Switch, Route, Link, useLocation } from "wouter";
-import { useEffect } from "react";
+import { useEffect, Suspense, lazy } from "react";
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -9,84 +9,120 @@ import AdminSidebar from "@/components/AdminSidebar";
 import MainSidebar from "@/components/MainSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
 import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
-import ApiDocsPage from "@/pages/ApiDocsPage";
-import VectorCollectionsPage from "@/pages/VectorCollectionsPage";
-import VectorCollectionDetailPage from "@/pages/VectorCollectionDetailPage";
-import VectorStorageSettingsPage from "@/pages/VectorStorageSettingsPage";
-import EmbeddingServicesPage from "@/pages/EmbeddingServicesPage";
-import LlmProvidersPage from "@/pages/LlmProvidersPage";
-import LlmExecutionsPage from "@/pages/LlmExecutionsPage";
-import AsrExecutionsPage from "@/pages/AsrExecutionsPage";
-import TtsSttProvidersPage from "@/pages/TtsSttProvidersPage";
-import SpeechProviderDetailsPage from "@/pages/SpeechProviderDetailsPage";
-import AuthSettingsPage from "@/pages/AuthSettingsPage";
-import AdminBillingPage from "@/pages/AdminBillingPage";
-import KnowledgeBasePage from "@/pages/KnowledgeBasePage";
-import DashboardPage from "@/pages/DashboardPage";
-import AdminUsersPage from "@/pages/AdminUsersPage";
-import AdminWorkspacesPage from "@/pages/AdminWorkspacesPage";
-import AdminModelsPage from "@/pages/AdminModelsPage";
-import AdminUsageChargesPage from "@/pages/AdminUsageChargesPage";
-import GuardBlockEventsPage from "@/pages/GuardBlockEventsPage";
-import SkillsPage from "@/pages/SkillsPage";
-import ChatPage from "@/pages/ChatPage";
-import FileStorageProvidersPage from "@/pages/FileStorageProvidersPage";
-import FileStorageProviderDetailsPage from "@/pages/FileStorageProviderDetailsPage";
-import NotFound from "@/pages/not-found";
-import AuthPage from "@/pages/AuthPage";
-import VerifyEmailPage from "@/pages/VerifyEmailPage";
-import ProfilePage from "@/pages/ProfilePage";
-import WorkspaceActionsPage from "@/pages/WorkspaceActionsPage";
-import SmtpSettingsPage from "@/pages/SmtpSettingsPage";
-import WorkspaceSettingsPage from "@/pages/WorkspaceSettingsPage";
-import WorkspaceCreditsHistoryPage from "@/pages/WorkspaceCreditsHistoryPage";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import type { PublicUser } from "@shared/schema";
 import type { SessionResponse, WorkspaceState } from "@/types/session";
 import type { CSSProperties } from "react";
-import SkillSettingsPage from "@/pages/SkillSettingsPage";
-import ActionSettingsPage from "@/pages/ActionSettingsPage";
-import AdminIndexingRulesPage from "@/pages/AdminIndexingRulesPage";
-import KnowledgeBaseIndexingHistoryPage from "@/pages/KnowledgeBaseIndexingHistoryPage";
+
+// Core pages (loaded eagerly)
+import DashboardPage from "@/pages/DashboardPage";
+import AuthPage from "@/pages/AuthPage";
+import VerifyEmailPage from "@/pages/VerifyEmailPage";
+import NotFound from "@/pages/not-found";
+import ProfilePage from "@/pages/ProfilePage";
+
+// Lazy loaded pages - Admin routes
+const ApiDocsPage = lazy(() => import("@/pages/ApiDocsPage"));
+const VectorCollectionsPage = lazy(() => import("@/pages/VectorCollectionsPage"));
+const VectorCollectionDetailPage = lazy(() => import("@/pages/VectorCollectionDetailPage"));
+const VectorStorageSettingsPage = lazy(() => import("@/pages/VectorStorageSettingsPage"));
+const EmbeddingServicesPage = lazy(() => import("@/pages/EmbeddingServicesPage"));
+const LlmProvidersPage = lazy(() => import("@/pages/LlmProvidersPage"));
+const LlmExecutionsPage = lazy(() => import("@/pages/LlmExecutionsPage"));
+const AsrExecutionsPage = lazy(() => import("@/pages/AsrExecutionsPage"));
+const TtsSttProvidersPage = lazy(() => import("@/pages/TtsSttProvidersPage"));
+const SpeechProviderDetailsPage = lazy(() => import("@/pages/SpeechProviderDetailsPage"));
+const AuthSettingsPage = lazy(() => import("@/pages/AuthSettingsPage"));
+const AdminBillingPage = lazy(() => import("@/pages/AdminBillingPage"));
+const AdminUsersPage = lazy(() => import("@/pages/AdminUsersPage"));
+const AdminWorkspacesPage = lazy(() => import("@/pages/AdminWorkspacesPage"));
+const AdminModelsPage = lazy(() => import("@/pages/AdminModelsPage"));
+const AdminUsageChargesPage = lazy(() => import("@/pages/AdminUsageChargesPage"));
+const GuardBlockEventsPage = lazy(() => import("@/pages/GuardBlockEventsPage"));
+const FileStorageProvidersPage = lazy(() => import("@/pages/FileStorageProvidersPage"));
+const FileStorageProviderDetailsPage = lazy(() => import("@/pages/FileStorageProviderDetailsPage"));
+const SmtpSettingsPage = lazy(() => import("@/pages/SmtpSettingsPage"));
+const AdminIndexingRulesPage = lazy(() => import("@/pages/AdminIndexingRulesPage"));
+
+// Lazy loaded pages - Main routes
+const KnowledgeBasePage = lazy(() => import("@/pages/KnowledgeBasePage"));
+const SkillsPage = lazy(() => import("@/pages/SkillsPage"));
+const ChatPage = lazy(() => import("@/pages/ChatPage"));
+const WorkspaceActionsPage = lazy(() => import("@/pages/WorkspaceActionsPage"));
+const WorkspaceSettingsPage = lazy(() => import("@/pages/WorkspaceSettingsPage"));
+const WorkspaceCreditsHistoryPage = lazy(() => import("@/pages/WorkspaceCreditsHistoryPage"));
+const SkillSettingsPage = lazy(() => import("@/pages/SkillSettingsPage"));
+const ActionSettingsPage = lazy(() => import("@/pages/ActionSettingsPage"));
+const KnowledgeBaseIndexingHistoryPage = lazy(() => import("@/pages/KnowledgeBaseIndexingHistoryPage"));
 
 function AdminRouter() {
   return (
     <Switch>
-      <Route path="/admin/workspaces" component={AdminWorkspacesPage} />
-      <Route path="/admin/auth" component={AuthSettingsPage} />
-      <Route path="/admin/embeddings" component={EmbeddingServicesPage} />
+      <Route path="/admin/workspaces">
+        <LazyRouteWrapper><AdminWorkspacesPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/auth">
+        <LazyRouteWrapper><AuthSettingsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/embeddings">
+        <LazyRouteWrapper><EmbeddingServicesPage /></LazyRouteWrapper>
+      </Route>
       <Route path="/admin/llm-executions/:executionId">
-        {(params) => <LlmExecutionsPage selectedExecutionId={params.executionId} />}
+        {(params) => <LazyRouteWrapper><LlmExecutionsPage selectedExecutionId={params.executionId} /></LazyRouteWrapper>}
       </Route>
       <Route path="/admin/llm-executions">
-        <LlmExecutionsPage />
+        <LazyRouteWrapper><LlmExecutionsPage /></LazyRouteWrapper>
       </Route>
       <Route path="/admin/asr-executions/:executionId">
-        {(params) => <AsrExecutionsPage key={params.executionId} />}
+        {(params) => <LazyRouteWrapper><AsrExecutionsPage key={params.executionId} /></LazyRouteWrapper>}
       </Route>
       <Route path="/admin/asr-executions">
-        <AsrExecutionsPage />
+        <LazyRouteWrapper><AsrExecutionsPage /></LazyRouteWrapper>
       </Route>
-      <Route path="/admin/llm" component={LlmProvidersPage} />
+      <Route path="/admin/llm">
+        <LazyRouteWrapper><LlmProvidersPage /></LazyRouteWrapper>
+      </Route>
       <Route path="/admin/file-storage/providers/:providerId">
-        {(params) => <FileStorageProviderDetailsPage providerId={params.providerId} />}
+        {(params) => <LazyRouteWrapper><FileStorageProviderDetailsPage providerId={params.providerId} /></LazyRouteWrapper>}
       </Route>
-      <Route path="/admin/file-storage" component={FileStorageProvidersPage} />
-      <Route path="/admin/guard-blocks" component={GuardBlockEventsPage} />
+      <Route path="/admin/file-storage">
+        <LazyRouteWrapper><FileStorageProvidersPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/guard-blocks">
+        <LazyRouteWrapper><GuardBlockEventsPage /></LazyRouteWrapper>
+      </Route>
       <Route path="/admin/tts-stt/providers/:providerId">
-        {(params) => <SpeechProviderDetailsPage providerId={params.providerId} />}
+        {(params) => <LazyRouteWrapper><SpeechProviderDetailsPage providerId={params.providerId} /></LazyRouteWrapper>}
       </Route>
-      <Route path="/admin/tts-stt" component={TtsSttProvidersPage} />
-      <Route path="/admin/models" component={AdminModelsPage} />
-      <Route path="/admin/usage-charges" component={AdminUsageChargesPage} />
-      <Route path="/admin/billing" component={AdminBillingPage} />
-      <Route path="/admin/indexing-rules" component={AdminIndexingRulesPage} />
-      <Route path="/admin/settings/smtp" component={SmtpSettingsPage} />
-      <Route path="/admin/storage" component={VectorStorageSettingsPage} />
-      <Route path="/admin/users" component={AdminUsersPage} />
-      <Route path="/admin" component={AdminWorkspacesPage} />
+      <Route path="/admin/tts-stt">
+        <LazyRouteWrapper><TtsSttProvidersPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/models">
+        <LazyRouteWrapper><AdminModelsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/usage-charges">
+        <LazyRouteWrapper><AdminUsageChargesPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/billing">
+        <LazyRouteWrapper><AdminBillingPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/indexing-rules">
+        <LazyRouteWrapper><AdminIndexingRulesPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/settings/smtp">
+        <LazyRouteWrapper><SmtpSettingsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/storage">
+        <LazyRouteWrapper><VectorStorageSettingsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin/users">
+        <LazyRouteWrapper><AdminUsersPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/admin">
+        <LazyRouteWrapper><AdminWorkspacesPage /></LazyRouteWrapper>
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
@@ -103,39 +139,69 @@ function MainRouter() {
 
   return (
     <Switch>
-      <Route path="/workspaces/:workspaceId/chat/:chatId" component={ChatPage} />
-      <Route path="/workspaces/:workspaceId/chat" component={ChatPage} />
-      <Route path="/knowledge/:baseId/indexing/history">
-        {(params) => <KnowledgeBaseIndexingHistoryPage params={{ knowledgeBaseId: params.baseId }} />}
+      <Route path="/workspaces/:workspaceId/chat/:chatId">
+        <LazyRouteWrapper><ChatPage /></LazyRouteWrapper>
       </Route>
-      <Route path="/knowledge/:knowledgeBaseId/node/:nodeId" component={KnowledgeBasePage} />
-      <Route path="/knowledge/:knowledgeBaseId" component={KnowledgeBasePage} />
-      <Route path="/knowledge" component={KnowledgeBasePage} />
+      <Route path="/workspaces/:workspaceId/chat">
+        <LazyRouteWrapper><ChatPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/knowledge/:baseId/indexing/history">
+        {(params) => <LazyRouteWrapper><KnowledgeBaseIndexingHistoryPage params={{ knowledgeBaseId: params.baseId }} /></LazyRouteWrapper>}
+      </Route>
+      <Route path="/knowledge/:knowledgeBaseId/node/:nodeId">
+        <LazyRouteWrapper><KnowledgeBasePage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/knowledge/:knowledgeBaseId">
+        <LazyRouteWrapper><KnowledgeBasePage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/knowledge">
+        <LazyRouteWrapper><KnowledgeBasePage /></LazyRouteWrapper>
+      </Route>
       <Route path="/skills/new">
-        <SkillSettingsPage isNew />
+        <LazyRouteWrapper><SkillSettingsPage isNew /></LazyRouteWrapper>
       </Route>
       <Route path="/skills/:skillId/actions/:actionId/edit">
-        {(params) => <ActionSettingsPage actionId={params.actionId} skillId={params.skillId} />}
+        {(params) => <LazyRouteWrapper><ActionSettingsPage actionId={params.actionId} skillId={params.skillId} /></LazyRouteWrapper>}
       </Route>
       <Route path="/skills/:skillId/edit">
-        {(params) => <SkillSettingsPage skillId={params.skillId} />}
+        {(params) => <LazyRouteWrapper><SkillSettingsPage skillId={params.skillId} /></LazyRouteWrapper>}
       </Route>
-      <Route path="/skills" component={SkillsPage} />
-      <Route path="/workspaces/:workspaceId/actions" component={WorkspaceActionsPage} />
-      <Route path="/workspaces/actions" component={WorkspaceActionsPage} />
-      <Route path="/workspaces/:workspaceId/credits/history" component={WorkspaceCreditsHistoryPage} />
-      <Route path="/workspaces/credits/history" component={WorkspaceCreditsHistoryPage} />
-      <Route path="/workspaces/:workspaceId/settings" component={WorkspaceSettingsPage} />
-      <Route path="/workspaces/settings" component={WorkspaceSettingsPage} />
+      <Route path="/skills">
+        <LazyRouteWrapper><SkillsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/workspaces/:workspaceId/actions">
+        <LazyRouteWrapper><WorkspaceActionsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/workspaces/actions">
+        <LazyRouteWrapper><WorkspaceActionsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/workspaces/:workspaceId/credits/history">
+        <LazyRouteWrapper><WorkspaceCreditsHistoryPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/workspaces/credits/history">
+        <LazyRouteWrapper><WorkspaceCreditsHistoryPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/workspaces/:workspaceId/settings">
+        <LazyRouteWrapper><WorkspaceSettingsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/workspaces/settings">
+        <LazyRouteWrapper><WorkspaceSettingsPage /></LazyRouteWrapper>
+      </Route>
       <Route path="/workspaces/:workspaceId/members">
         {(params) => <Redirect to={`/workspaces/${params.workspaceId}/settings?tab=members`} />}
       </Route>
       <Route path="/workspaces/members">
         <Redirect to="/workspaces/settings?tab=members" />
       </Route>
-      <Route path="/vector/collections/:name" component={VectorCollectionDetailPage} />
-      <Route path="/vector/collections" component={VectorCollectionsPage} />
-      <Route path="/integrations/api" component={ApiDocsPage} />
+      <Route path="/vector/collections/:name">
+        <LazyRouteWrapper><VectorCollectionDetailPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/vector/collections">
+        <LazyRouteWrapper><VectorCollectionsPage /></LazyRouteWrapper>
+      </Route>
+      <Route path="/integrations/api">
+        <LazyRouteWrapper><ApiDocsPage /></LazyRouteWrapper>
+      </Route>
       <Route path="/profile" component={ProfilePage} />
       <Route path="/" component={DashboardPage} />
       <Route component={NotFound} />
@@ -161,6 +227,10 @@ function LoadingScreen() {
       <p className="text-sm">Загрузка...</p>
     </div>
   );
+}
+
+function LazyRouteWrapper({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<LoadingScreen />}>{children}</Suspense>;
 }
 
 function HeaderUserArea({ user }: { user: PublicUser }) {
