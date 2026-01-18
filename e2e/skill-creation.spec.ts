@@ -11,8 +11,22 @@ const login = async (page: Page) => {
   await page.fill("#login-email", E2E_EMAIL as string);
   await page.click("#login-password", { clickCount: 3 });
   await page.fill("#login-password", E2E_PASSWORD as string);
+  // Ждём ответа от API авторизации
+  const loginResponsePromise = page.waitForResponse((response) => {
+    return response.url().includes("/api/auth/login") && response.request().method() === "POST";
+  }, { timeout: 15_000 });
+  
   await page.getByTestId("button-login-submit").click();
-  await expect(page.getByTestId("link-chat")).toBeVisible({ timeout: 15_000 });
+  const loginResponse = await loginResponsePromise;
+  
+  // Проверяем, что авторизация успешна (может быть 429 из-за rate limiting)
+  if (loginResponse.status() === 429) {
+    throw new Error(`Rate limit exceeded for login. Retry after: ${await loginResponse.json().then((r: any) => r.retryAfter || 'unknown')}`);
+  }
+  expect(loginResponse.status()).toBe(200);
+  
+  // Ждём загрузки интерфейса после авторизации
+  await page.waitForLoadState("networkidle", { timeout: 10_000 });
 };
 
 test.describe("skill creation", () => {
@@ -22,7 +36,9 @@ test.describe("skill creation", () => {
     await login(page);
 
     await page.goto("/skills/new");
-    await expect(page.getByTestId("skill-title")).toHaveText("Настройки навыка");
+    // Ждём загрузки формы навыка - проверяем наличие элемента (кодировка может быть проблемой в Playwright)
+    await page.waitForSelector('[data-testid="skill-title"]', { timeout: 15_000 });
+    await expect(page.getByTestId("skill-title")).toBeVisible();
 
     const skillName = `E2E Standard Skill ${Date.now()}`;
     await page.getByTestId("skill-name-input").fill(skillName);

@@ -13,10 +13,12 @@ const logger = createLogger('rate-limit');
 /**
  * General API rate limiter
  * Limit: 100 requests per 15 minutes
+ * Disabled in test mode (CI environment variable set)
  */
 export const generalApiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // Limit each IP to 100 requests per windowMs
+  skip: () => !!process.env.CI, // Skip rate limiting in CI/test environment
   message: {
     error: 'Превышен лимит запросов. Попробуйте позже.',
     retryAfter: '15 минут',
@@ -39,10 +41,12 @@ export const generalApiLimiter = rateLimit({
 /**
  * Authentication endpoint rate limiter
  * Limit: 5 requests per 15 minutes (brute-force protection)
+ * Disabled in test mode (CI environment variable set)
  */
 export const authLoginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // Limit each IP to 5 login requests per windowMs
+  skip: () => !!process.env.CI, // Skip rate limiting in CI/test environment
   message: {
     error: 'Слишком много попыток входа. Попробуйте через 15 минут.',
     retryAfter: '15 минут',
@@ -65,10 +69,12 @@ export const authLoginLimiter = rateLimit({
 /**
  * Registration endpoint rate limiter
  * Limit: 3 requests per hour (spam protection)
+ * Disabled in test mode (CI environment variable set)
  */
 export const authRegisterLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 3, // Limit each IP to 3 registration requests per hour
+  skip: () => !!process.env.CI, // Skip rate limiting in CI/test environment
   message: {
     error: 'Превышен лимит регистраций. Попробуйте через час.',
     retryAfter: '1 час',

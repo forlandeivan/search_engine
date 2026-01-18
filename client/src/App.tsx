@@ -352,24 +352,39 @@ function AppContent() {
   const sessionQuery = useQuery({
     queryKey: ["/api/auth/session"],
     queryFn: getQueryFn<SessionResponse>({ on401: "returnNull" }),
-    staleTime: 0,
+    staleTime: 1000 * 60 * 5, // 5 минут - не обновляем сессию слишком часто
+    refetchOnWindowFocus: false, // Не обновляем при фокусе окна
   });
 
   const session = sessionQuery.data;
 
+  // Логирование для отладки
+  useEffect(() => {
+    console.log('[App] Session query state:', {
+      isLoading: sessionQuery.isLoading,
+      isError: sessionQuery.isError,
+      hasSession: !!session,
+      hasUser: !!session?.user,
+      location,
+    });
+  }, [sessionQuery.isLoading, sessionQuery.isError, session, location]);
+
   // Если уже авторизованы, но находитесь на /auth/*, отправляем на главную.
   useEffect(() => {
     if (session?.user && location.startsWith("/auth")) {
+      console.log('[App] Redirecting from auth to /');
       setLocation("/");
     }
   }, [session?.user, location, setLocation]);
 
   if (sessionQuery.isLoading) {
+    console.log('[App] Loading session...');
     return <LoadingScreen />;
   }
 
-  // Если уже авторизованы, но находитесь на /auth/*, отправляем на главную.
+  // Если нет сессии или нет пользователя - показываем Auth
   if (!session || !session.user) {
+    console.log('[App] No session, showing auth page');
     return (
       <Switch>
         <Route path="/auth/verify-email">
@@ -382,6 +397,7 @@ function AppContent() {
     );
   }
 
+  console.log('[App] Rendering main app with user:', session.user.email);
   const { user, workspace } = session;
 
   return (
