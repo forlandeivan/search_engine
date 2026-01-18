@@ -142,7 +142,7 @@ async function ensureWorkspaceContext(
   req: Request,
   user: PublicUser
 ): Promise<WorkspaceContext | null> {
-  const sessionWorkspaceId = (req.session as any)?.workspaceId || (req.session as any)?.activeWorkspaceId;
+  const sessionWorkspaceId = req.session?.workspaceId || req.session?.activeWorkspaceId;
   if (sessionWorkspaceId) {
     const membership = await storage.getWorkspaceMember(sessionWorkspaceId, user.id);
     if (membership) {
@@ -157,8 +157,8 @@ async function ensureWorkspaceContext(
     const first = workspaces[0];
     const membership = await storage.getWorkspaceMember(first.id, user.id);
     if (req.session) {
-      (req.session as any).workspaceId = first.id;
-      (req.session as any).activeWorkspaceId = first.id;
+      req.session.workspaceId = first.id;
+      req.session.activeWorkspaceId = first.id;
     }
     return { workspaceId: first.id, workspaceName: first.name, role: membership?.role || 'member' };
   }
@@ -172,10 +172,10 @@ function buildSessionResponse(user: PublicUser, context: WorkspaceContext | null
 }
 
 function getRequestWorkspace(req: Request): { id: string } {
-  const workspaceId = (req as any).workspaceId || 
+  const workspaceId = req.workspaceId || 
                       req.params.workspaceId || 
-                      (req.session as any)?.workspaceId ||
-                      (req.session as any)?.activeWorkspaceId;
+                      req.session?.workspaceId ||
+                      req.session?.activeWorkspaceId;
   if (!workspaceId) {
     throw new Error('Workspace not found in request');
   }

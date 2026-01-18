@@ -14,7 +14,7 @@
  * - POST /api/vector/collections/:name/search - Vector search
  */
 
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
@@ -93,8 +93,8 @@ export const vectorRouter = Router();
 // Helper Functions
 // ============================================================================
 
-function getAuthorizedUser(req: any, res: Response): PublicUser | null {
-  const user = req.user as PublicUser | undefined;
+function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
+  const user = (req as Request & { user?: PublicUser }).user;
   if (!user) {
     res.status(401).json({ error: 'Требуется авторизация' });
     return null;
@@ -102,8 +102,8 @@ function getAuthorizedUser(req: any, res: Response): PublicUser | null {
   return user;
 }
 
-function getSessionUser(req: any): PublicUser | null {
-  return req.user as PublicUser | null;
+function getSessionUser(req: Request): PublicUser | null {
+  return (req as Request & { user?: PublicUser }).user ?? null;
 }
 
 function getErrorDetails(error: unknown): string {
@@ -111,7 +111,7 @@ function getErrorDetails(error: unknown): string {
   return String(error);
 }
 
-function getRequestWorkspace(req: any): { id: string } {
+function getRequestWorkspace(req: Request): { id: string } {
   const workspaceId = req.workspaceId ||
     req.params.workspaceId ||
     req.session?.workspaceId ||
@@ -826,12 +826,12 @@ vectorRouter.post('/collections/:name/search/text', asyncHandler(async (req, res
     };
 
     if (body.offset !== undefined) searchPayload.offset = body.offset;
-    if (body.filter !== undefined) searchPayload.filter = body.filter as any;
-    if (body.params !== undefined) searchPayload.params = body.params as any;
-    if (body.withPayload !== undefined) searchPayload.with_payload = body.withPayload as any;
-    if (body.withVector !== undefined) searchPayload.with_vector = body.withVector as any;
+    if (body.filter !== undefined) searchPayload.filter = body.filter as Schemas['Filter'];
+    if (body.params !== undefined) searchPayload.params = body.params as Schemas['SearchParams'];
+    if (body.withPayload !== undefined) searchPayload.with_payload = body.withPayload as Schemas['WithPayloadInterface'];
+    if (body.withVector !== undefined) searchPayload.with_vector = body.withVector as Schemas['WithVectorInterface'];
     if (body.scoreThreshold !== undefined) searchPayload.score_threshold = body.scoreThreshold;
-    if (body.shardKey !== undefined) searchPayload.shard_key = body.shardKey as any;
+    if (body.shardKey !== undefined) searchPayload.shard_key = body.shardKey as Schemas['ShardKeySelector'];
     if (body.consistency !== undefined) searchPayload.consistency = body.consistency;
     if (body.timeout !== undefined) searchPayload.timeout = body.timeout;
 

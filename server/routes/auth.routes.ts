@@ -198,7 +198,7 @@ authRouter.get('/session', asyncHandler(async (req, res) => {
   const safeUser = updatedUser ? toPublicUser(updatedUser) : user;
   if (updatedUser) req.user = safeUser;
   const context = await ensureWorkspaceContext(req, safeUser);
-  const activeWorkspaceId = (req.session as any)?.activeWorkspaceId ?? (req.session as any)?.workspaceId ?? null;
+  const activeWorkspaceId = req.session?.activeWorkspaceId ?? req.session?.workspaceId ?? null;
   const sessionResponse = await buildSessionResponse(safeUser, context);
   res.json({ ...sessionResponse, activeWorkspaceId });
 }));
@@ -206,15 +206,15 @@ authRouter.get('/session', asyncHandler(async (req, res) => {
 authRouter.get('/google', (req, res, next) => {
   if (!isGoogleAuthEnabled()) return res.status(404).json({ message: 'Авторизация через Google недоступна' });
   const redirectTo = sanitizeRedirectPath(typeof req.query.redirect === 'string' ? req.query.redirect : undefined);
-  if (req.session) (req.session as any).oauthRedirectTo = redirectTo;
+  if (req.session) req.session.oauthRedirectTo = redirectTo;
   passport.authenticate('google', { scope: ['profile', 'email'], prompt: 'select_account' })(req, res, next);
 });
 
 authRouter.get('/google/callback', (req, res, next) => {
   if (!isGoogleAuthEnabled()) return res.status(404).json({ message: 'Авторизация через Google недоступна' });
   passport.authenticate('google', (err: unknown, user: PublicUser | false) => {
-    const redirectTo = sanitizeRedirectPath((req.session as any)?.oauthRedirectTo ?? '/');
-    if (req.session) delete (req.session as any).oauthRedirectTo;
+    const redirectTo = sanitizeRedirectPath(req.session?.oauthRedirectTo ?? '/');
+    if (req.session) delete req.session.oauthRedirectTo;
     if (err) { authLogger.error({ err }, 'Google OAuth error'); return res.redirect(appendAuthErrorParam(redirectTo, 'google')); }
     if (!user) return res.redirect(appendAuthErrorParam(redirectTo, 'google'));
     req.logIn(user, (loginError) => { if (loginError) return next(loginError); res.redirect(redirectTo); });
@@ -224,15 +224,15 @@ authRouter.get('/google/callback', (req, res, next) => {
 authRouter.get('/yandex', (req, res, next) => {
   if (!isYandexAuthEnabled()) return res.status(404).json({ message: 'Авторизация через Yandex недоступна' });
   const redirectTo = sanitizeRedirectPath(typeof req.query.redirect === 'string' ? req.query.redirect : undefined);
-  if (req.session) (req.session as any).oauthRedirectTo = redirectTo;
+  if (req.session) req.session.oauthRedirectTo = redirectTo;
   passport.authenticate('yandex', { scope: ['login:info', 'login:email'] })(req, res, next);
 });
 
 authRouter.get('/yandex/callback', (req, res, next) => {
   if (!isYandexAuthEnabled()) return res.status(404).json({ message: 'Авторизация через Yandex недоступна' });
   passport.authenticate('yandex', (err: unknown, user: PublicUser | false) => {
-    const redirectTo = sanitizeRedirectPath((req.session as any)?.oauthRedirectTo ?? '/');
-    if (req.session) delete (req.session as any).oauthRedirectTo;
+    const redirectTo = sanitizeRedirectPath(req.session?.oauthRedirectTo ?? '/');
+    if (req.session) delete req.session.oauthRedirectTo;
     if (err) { authLogger.error({ err }, 'Yandex OAuth error'); return res.redirect(appendAuthErrorParam(redirectTo, 'yandex')); }
     if (!user) return res.redirect(appendAuthErrorParam(redirectTo, 'yandex'));
     req.logIn(user, (loginError) => { if (loginError) return next(loginError); res.redirect(redirectTo); });
@@ -342,7 +342,7 @@ authRouter.post('/login', (req, res, next) => {
 authRouter.post('/logout', (req, res, next) => {
   req.logout((error) => {
     if (error) return next(error);
-    if (req.session) delete (req.session as any).workspaceId;
+    if (req.session) delete req.session.workspaceId;
     res.json({ success: true });
   });
 });

@@ -274,11 +274,12 @@ function validateProductionSecrets(): void {
     res.status(404).json({ error: "API endpoint not found" });
   });
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-    const errorCode = typeof err?.code === "string" && err.code.trim().length > 0 ? err.code : undefined;
-    const details = err?.details !== undefined ? err.details : undefined;
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    const httpError = err && typeof err === 'object' ? err as { status?: number; statusCode?: number; message?: string; code?: string; details?: unknown } : null;
+    const status = httpError?.status ?? httpError?.statusCode ?? 500;
+    const message = httpError?.message ?? (err instanceof Error ? err.message : "Internal Server Error");
+    const errorCode = typeof httpError?.code === "string" && httpError.code.trim().length > 0 ? httpError.code : undefined;
+    const details = httpError?.details !== undefined ? httpError.details : undefined;
 
     const errorDetails = err instanceof Error && err.stack ? err.stack : String(err);
     log(`Unhandled error ${status}: ${errorDetails}`);
