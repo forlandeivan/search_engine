@@ -45,3 +45,8 @@ qdrant-data/
 # Local dev run logs
 dev-run.log
 dev.log
+
+# Temporary scripts
+tmp-*.cjs
+tmp-*.js
+_*.py
