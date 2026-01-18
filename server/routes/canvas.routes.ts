@@ -10,7 +10,7 @@
  * - POST /api/canvas-documents/:id/duplicate - Duplicate canvas document
  */
 
-import { Router, type Response, type NextFunction } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
@@ -25,11 +25,11 @@ export const canvasRouter = Router();
 // Helper Functions
 // ============================================================================
 
-function getSessionUser(req: any): PublicUser | null {
-  return req.user as PublicUser | null;
+function getSessionUser(req: Request): PublicUser | null {
+  return (req as Request & { user?: PublicUser }).user ?? null;
 }
 
-function getAuthorizedUser(req: any, res: Response): PublicUser | null {
+function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
   const user = getSessionUser(req);
   if (!user) {
     res.status(401).json({ message: 'Требуется авторизация' });
@@ -240,7 +240,7 @@ canvasRouter.post('/canvas-documents/:id/duplicate', asyncHandler(async (req, re
 }));
 
 // Error handler for this router
-canvasRouter.use((err: Error, req: any, res: Response, next: NextFunction) => {
+canvasRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof z.ZodError) {
     return res.status(400).json({ message: 'Некорректные данные', details: err.issues });
   }

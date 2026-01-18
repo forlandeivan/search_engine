@@ -11,7 +11,7 @@
  * - GET /api/admin/workspaces/:workspaceId/credits/adjustments/recent
  */
 
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { storage } from '../../storage';
 import { createLogger } from '../../lib/logger';
@@ -26,13 +26,14 @@ import {
   getRecentManualAdjustments,
   getWorkspaceCreditAccount 
 } from '../../credits-service';
+import type { FileStorageProvider, PublicUser } from '@shared/schema';
 
 const logger = createLogger('admin-workspaces');
 
 /**
  * Map file storage provider to public response format
  */
-function mapFileStorageProvider(provider: any) {
+function mapFileStorageProvider(provider: FileStorageProvider) {
   return {
     id: provider.id,
     name: provider.name,
@@ -175,7 +176,7 @@ adminWorkspacesRouter.put('/:workspaceId/plan', asyncHandler(async (req, res) =>
 adminWorkspacesRouter.post('/:workspaceId/credits/adjust', asyncHandler(async (req, res) => {
   try {
     const parsed = adjustCreditsSchema.parse(req.body);
-    const adminId = (req.user as any)?.id;
+    const adminId = (req as Request & { user?: PublicUser }).user?.id ?? null;
     const result = await applyManualCreditAdjustment({
       workspaceId: req.params.workspaceId,
       amountDelta: parsed.amount,

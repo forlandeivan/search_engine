@@ -17,7 +17,7 @@
  * - PATCH /api/admin/knowledge-base-indexing-policy
  */
 
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { storage } from '../../storage';
 import { createLogger } from '../../lib/logger';
@@ -57,11 +57,11 @@ export const adminLlmRouter = Router();
 // Helper Functions
 // ============================================================================
 
-function getSessionUser(req: any): PublicUser | null {
-  return req.user as PublicUser | null;
+function getSessionUser(req: Request): PublicUser | null {
+  return (req as Request & { user?: PublicUser }).user ?? null;
 }
 
-function getRequestWorkspace(req: any): { id: string } | null {
+function getRequestWorkspace(req: Request): { id: string } | null {
   const workspaceId = req.workspaceId ||
     req.params.workspaceId ||
     req.session?.workspaceId ||
@@ -93,7 +93,7 @@ adminLlmRouter.post('/models', asyncHandler(async (req, res) => {
       return res.status(400).json({ message: 'Invalid model data', details: error.issues });
     }
     if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
-      return res.status((error as any).status || 400).json({ message: error.message, code: (error as any).code });
+      return res.status(error.status || 400).json({ message: error.message, code: error.code });
     }
     throw error;
   }
@@ -111,7 +111,7 @@ adminLlmRouter.put('/models/:id', asyncHandler(async (req, res) => {
       return res.status(400).json({ message: 'Invalid model data', details: error.issues });
     }
     if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
-      return res.status((error as any).status || 400).json({ message: error.message, code: (error as any).code });
+      return res.status(error.status || 400).json({ message: error.message, code: error.code });
     }
     throw error;
   }

@@ -9,12 +9,12 @@
  * - GET /api/knowledge/bases/:baseId/indexing/actions/:actionId/logs - Get action logs
  */
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { knowledgeBaseIndexingActionsService } from '../knowledge-base-indexing-actions';
-import type { IndexingStage } from '@shared/schema';
+import type { IndexingStage, KnowledgeBaseIndexingActionStatus } from '@shared/schema';
 import {
   KnowledgeBaseError,
   getKnowledgeBaseIndexingChanges,
@@ -103,8 +103,8 @@ knowledgeIndexingRouter.post('/bases/:baseId/indexing/actions/update', asyncHand
   }
 
   const action = await knowledgeBaseIndexingActionsService.update(workspaceId, baseId, actionId, {
-    status: status as any,
-    stage: stage as any,
+    status: status as KnowledgeBaseIndexingActionStatus | undefined,
+    stage: stage as IndexingStage | undefined,
     displayText,
     payload,
   });
@@ -283,7 +283,7 @@ knowledgeIndexingRouter.get('/bases/:baseId/indexing/changes', asyncHandler(asyn
 }));
 
 // Error handler for this router
-knowledgeIndexingRouter.use((err: Error, req: any, res: Response, next: any) => {
+knowledgeIndexingRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof KnowledgeBaseError) {
     return res.status(err.status).json({ error: err.message });
   }

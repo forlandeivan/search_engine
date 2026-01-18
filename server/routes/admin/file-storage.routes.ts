@@ -17,13 +17,14 @@ import {
   fileStorageProviderService,
   FileStorageProviderServiceError,
 } from '../../file-storage-provider-service';
+import type { FileStorageProvider } from '@shared/schema';
 
 const logger = createLogger('admin-file-storage');
 
 /**
  * Map file storage provider to public response format
  */
-function mapFileStorageProvider(provider: any) {
+function mapFileStorageProvider(provider: FileStorageProvider) {
   return {
     id: provider.id,
     name: provider.name,
