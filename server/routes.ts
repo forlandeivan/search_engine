@@ -7532,7 +7532,7 @@ async function runTranscriptActionCommon(payload: AutoActionRunPayload): Promise
     .string()
     .trim()
     .transform((val) => val.toUpperCase())
-    .refine((val) => assistantActionTypes.includes(val as any), { message: "Недопустимый actionType" });
+    .refine((val): val is AssistantActionType => assistantActionTypes.includes(val as AssistantActionType), { message: "Недопустимый actionType" });
 
   const displayTextSchema = z
     .string()
