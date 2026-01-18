@@ -473,6 +473,6 @@ export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRep
   async deleteExecutions(executionIds: readonly string[]): Promise<void> {
     if (!executionIds || executionIds.length === 0) return;
     const idsLiteral = `{${executionIds.map((id) => `"${id}"`).join(",")}}`;
-    await db.execute(sql`DELETE FROM skill_executions WHERE id = ANY(${idsLiteral}::text[])`);
+    await db.execute(sql`DELETE FROM skill_executions WHERE id = ANY(${idsLiteral}::uuid[])`);
   }
 }
