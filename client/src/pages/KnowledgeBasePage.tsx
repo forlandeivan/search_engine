@@ -507,7 +507,9 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     queryKey: ["knowledge-bases"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/knowledge/bases");
-      return (await res.json()) as KnowledgeBaseSummary[];
+      const data = await res.json();
+      // Проверяем что ответ - массив
+      return Array.isArray(data) ? data : [];
     },
   });
 
@@ -517,7 +519,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
   });
 
   useEffect(() => {
-    if (!basesQuery.data) {
+    if (!basesQuery.data || !Array.isArray(basesQuery.data)) {
       return;
     }
 
@@ -543,7 +545,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     };
   }, []);
 
-  const bases = basesQuery.data ?? [];
+  const bases = Array.isArray(basesQuery.data) ? basesQuery.data : [];
   const { data: embeddingServices } = useQuery<{ providers: PublicEmbeddingProvider[] }>({
     queryKey: ["/api/embedding/services"],
   });
