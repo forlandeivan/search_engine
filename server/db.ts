@@ -1,8 +1,10 @@
 import "./load-env";
 import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
-import { Pool as PgPool } from "pg";
+import { Pool as PgPool, PoolClient } from "pg";
 import { drizzle as neonDrizzle } from "drizzle-orm/neon-serverless";
 import { drizzle as pgDrizzle } from "drizzle-orm/node-postgres";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { NeonDatabase } from "drizzle-orm/neon-serverless";
 import ws from "ws";
 import * as schema from "@shared/schema";
 
@@ -12,8 +14,15 @@ process.env.PGTZ = process.env.PGTZ || "UTC";
 
 neonConfig.webSocketConstructor = ws;
 
-let pool: any = null;
-let db: any = null;
+type Database = NodePgDatabase<typeof schema> | NeonDatabase<typeof schema> | UnavailableDbProxy;
+type DatabasePool = PgPool | NeonPool | null;
+
+interface UnavailableDbProxy {
+  [key: string]: never;
+}
+
+let pool: DatabasePool = null;
+let db: Database | null = null;
 let lastDatabaseError: string | null = null;
 
 function formatConnectionError(error: unknown): string {
@@ -24,17 +33,17 @@ function formatConnectionError(error: unknown): string {
   return typeof error === "string" ? error : JSON.stringify(error);
 }
 
-function createUnavailableDbProxy(message: string) {
-  const handler: ProxyHandler<any> = {
+function createUnavailableDbProxy(message: string): UnavailableDbProxy {
+  const handler: ProxyHandler<UnavailableDbProxy> = {
     get() {
-      return new Proxy(() => {}, handler);
+      return new Proxy({} as UnavailableDbProxy, handler);
     },
     apply() {
       throw new Error(message);
     },
   };
 
-  return new Proxy(() => {}, handler);
+  return new Proxy({} as UnavailableDbProxy, handler);
 }
 
 function hasCustomPostgresConfig(): boolean {
@@ -70,7 +79,7 @@ function tryConnectCustomPostgres(): void {
       allowExitOnIdle: true,
     });
 
-    customPool.on("connect", (client: any) => {
+    customPool.on("connect", (client: PoolClient) => {
       client.query("SET TIME ZONE 'UTC'").catch((error: unknown) => {
         console.warn("[db] Failed to set timezone UTC for custom pool client:", error);
       });
@@ -183,10 +192,12 @@ function tryConnectDatabaseUrl(): void {
   if (isLikelyNeonConnection(databaseUrl)) {
     try {
       pool = new NeonPool({ connectionString: databaseUrl });
-      pool.on("connect", (client: any) => {
-        client.query("SET TIME ZONE 'UTC'").catch((error: unknown) => {
-          console.warn("[db] Failed to set timezone UTC for Neon client:", error);
-        });
+      pool.on("connect", (client) => {
+        if (client && typeof client === 'object' && 'query' in client) {
+          (client as { query: (query: string) => Promise<unknown> }).query("SET TIME ZONE 'UTC'").catch((error: unknown) => {
+            console.warn("[db] Failed to set timezone UTC for Neon client:", error);
+          });
+        }
       });
       db = neonDrizzle({ 
         client: pool, 
@@ -239,10 +250,16 @@ if (!pool || !db) {
   console.error(`[db] ⚠️ База данных недоступна: ${message}`);
   db = createUnavailableDbProxy(
     `База данных недоступна: ${message}. Проверьте переменные окружения или подключение к PostgreSQL`,
-  );
+  ) as Database;
   pool = null;
 }
 
 const isDatabaseConfigured = Boolean(pool);
 
+// Ensure db is always initialized before export
+if (!db) {
+  db = createUnavailableDbProxy("Database not initialized") as Database;
+}
+
+// Export db - it's always initialized at this point (either real connection or proxy)
 export { pool, db, isDatabaseConfigured };

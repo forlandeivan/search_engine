@@ -557,18 +557,26 @@ import { getLlmPromptDebugConfig, isLlmPromptDebugEnabled, setLlmPromptDebugEnab
 import { getRecommendedAitunnelModels } from "./llm-providers/aitunnel-models";
 import { parseBuffer as parseAudioBuffer } from "music-metadata";
 
+import { getErrorCode, getSyscall, type NodeErrorLike } from "./types/errors";
+
 // Глобальная страховка: не валим процесс на write EOF и подобные сетевые ошибки.
-process.on("uncaughtException", (err: any) => {
-  if (err?.code === "EOF" && err?.syscall === "write") {
-    console.warn("[process] swallowed write EOF:", err);
-    return;
+process.on("uncaughtException", (err: unknown) => {
+  if (err && typeof err === 'object') {
+    const nodeErr = err as NodeErrorLike;
+    if (getErrorCode(nodeErr) === "EOF" && getSyscall(nodeErr) === "write") {
+      console.warn("[process] swallowed write EOF:", err);
+      return;
+    }
   }
   console.error("[process] uncaughtException:", err);
 });
-process.on("unhandledRejection", (reason: any) => {
-  if (reason?.code === "EOF" && reason?.syscall === "write") {
-    console.warn("[process] swallowed write EOF (promise):", reason);
-    return;
+process.on("unhandledRejection", (reason: unknown) => {
+  if (reason && typeof reason === 'object') {
+    const nodeErr = reason as NodeErrorLike;
+    if (getErrorCode(nodeErr) === "EOF" && getSyscall(nodeErr) === "write") {
+      console.warn("[process] swallowed write EOF (promise):", reason);
+      return;
+    }
   }
   console.error("[process] unhandledRejection:", reason);
 });

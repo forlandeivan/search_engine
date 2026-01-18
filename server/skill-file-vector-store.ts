@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 import { EmbeddingProvider } from "@shared/schema";
 import { getQdrantClient } from "./qdrant";
 import { storage } from "./storage";
+import { getHttpStatus, getErrorCode, type QdrantApiError } from "./types/errors";
 import {
   buildSkillFileChunkPayload,
   buildSkillFileVectorFilter,
@@ -82,7 +83,7 @@ function buildVectorPayload(vector: number[], _vectorFieldName?: string | null |
 }
 
 function isRetryableVectorError(error: unknown): boolean {
-  const nodeCode = (error as any)?.code;
+  const nodeCode = getErrorCode(error);
   if (typeof nodeCode === "string") {
     const retryableCodes = ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "EPIPE"];
     if (retryableCodes.includes(nodeCode)) {
@@ -90,12 +91,7 @@ function isRetryableVectorError(error: unknown): boolean {
     }
   }
 
-  const status =
-    typeof (error as any)?.status === "number"
-      ? (error as any).status
-      : typeof (error as any)?.response?.status === "number"
-        ? (error as any).response.status
-        : null;
+  const status = getHttpStatus(error);
   if (typeof status === "number") {
     return status >= 500 || status === 429 || status === 408;
   }
@@ -104,12 +100,7 @@ function isRetryableVectorError(error: unknown): boolean {
 }
 
 function isQdrantNotFoundError(error: unknown): boolean {
-  const status =
-    typeof (error as any)?.status === "number"
-      ? (error as any).status
-      : typeof (error as any)?.response?.status === "number"
-        ? (error as any).response.status
-        : null;
+  const status = getHttpStatus(error);
   return status === 404;
 }
 

@@ -12,8 +12,8 @@ import type {
   LlmRequestConfig,
   Model,
   AssistantActionType,
-  type BotAction,
-  type BotActionStatus,
+  BotAction,
+  BotActionStatus,
 } from "@shared/schema";
 import { botActionStatuses, botActionTypes } from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
@@ -34,6 +34,7 @@ import {
 import { indexingRulesService, resolveEmbeddingProviderForWorkspace } from "./indexing-rules";
 import { searchSkillFileVectors } from "./skill-file-vector-store";
 import { embedTextWithProvider } from "./skill-file-embeddings";
+import { getHttpStatus, getErrorCode } from "./types/errors";
 import type { SyncFinalResult } from "./no-code-events";
 
 export class ChatServiceError extends Error {
@@ -165,29 +166,31 @@ const describeError = (error: unknown) => {
 const mapModelErrorToChatError = (error: unknown): ChatServiceError | null => {
   if (error instanceof ModelValidationError || error instanceof ModelUnavailableError || error instanceof ModelInactiveError) {
     const status =
-      (error as any)?.status ??
+      getHttpStatus(error) ??
       (error instanceof ModelUnavailableError ? 404 : 400);
-    return new ChatServiceError(error.message, status, (error as any)?.code);
+    return new ChatServiceError(error.message, status, getErrorCode(error));
   }
   return null;
 };
 
 const mapAssistantAction = (session: ChatSession): ChatSummary["currentAssistantAction"] => {
-  const rawType = (session as any).currentAssistantActionType as AssistantActionType | null | undefined;
+  const rawType = session.currentAssistantActionType;
   if (!rawType) {
     return null;
   }
 
   const normalizedType = rawType.toUpperCase() as AssistantActionType;
+  const updatedAtValue = session.currentAssistantActionUpdatedAt;
+  
   return {
     type: normalizedType,
-    text: (session as any).currentAssistantActionText ?? null,
-    triggerMessageId: (session as any).currentAssistantActionTriggerMessageId ?? null,
+    text: session.currentAssistantActionText ?? null,
+    triggerMessageId: session.currentAssistantActionTriggerMessageId ?? null,
     updatedAt:
-      (session as any).currentAssistantActionUpdatedAt instanceof Date
-        ? (session as any).currentAssistantActionUpdatedAt.toISOString()
-        : (session as any).currentAssistantActionUpdatedAt
-          ? new Date((session as any).currentAssistantActionUpdatedAt).toISOString()
+      updatedAtValue instanceof Date
+        ? updatedAtValue.toISOString()
+        : updatedAtValue
+          ? new Date(updatedAtValue).toISOString()
           : null,
   };
 };
@@ -207,11 +210,11 @@ export const mapChatSummary = (
   status: session.status,
   title: session.title,
   skillName: session.skillName,
-  skillStatus: (session as any).skillStatus ?? null,
+  skillStatus: session.skillStatus ?? null,
   skillIsSystem: Boolean(session.skillIsSystem),
   skillSystemKey: session.skillSystemKey ?? null,
-  currentAssistantActionType: (session as any).currentAssistantActionType ?? null,
-  currentAssistantActionText: (session as any).currentAssistantActionText ?? null,
+  currentAssistantActionType: session.currentAssistantActionType ?? null,
+  currentAssistantActionText: session.currentAssistantActionText ?? null,
   currentAssistantActionTriggerMessageId: (session as any).currentAssistantActionTriggerMessageId ?? null,
   currentAssistantActionUpdatedAt: (session as any).currentAssistantActionUpdatedAt ?? null,
   currentAssistantAction: mapAssistantAction(session),

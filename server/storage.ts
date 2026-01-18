@@ -121,6 +121,7 @@ import { createUnicaChatSkillForWorkspace } from "./skills";
 import { and, asc, desc, eq, ilike, inArray, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import { randomBytes, createHash } from "crypto";
 import { isPgError, swallowPgError } from "./pg-utils";
+import { getHttpStatus, getErrorCode, type QdrantApiError } from "./types/errors";
 import { adjustWorkspaceObjectCounters } from "./usage/usage-service";
 import { getUsagePeriodForDate } from "./usage/usage-types";
 import { workspaceOperationGuard } from "./guards/workspace-operation-guard";
@@ -210,17 +211,17 @@ function parseVectorSizeValue(value: unknown): number | null {
 }
 
 function isQdrantNotFoundError(error: unknown): boolean {
-  const status = (error as any)?.status ?? (error as any)?.response?.status ?? null;
+  const status = getHttpStatus(error);
   return status === 404;
 }
 
 function isQdrantAlreadyExistsError(error: unknown): boolean {
-  const status = (error as any)?.status ?? (error as any)?.response?.status ?? null;
+  const status = getHttpStatus(error);
   return status === 409;
 }
 
 function isQdrantRetryableError(error: unknown): boolean {
-  const code = (error as any)?.code;
+  const code = getErrorCode(error);
   if (typeof code === "string") {
     const retryableCodes = ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "EAI_AGAIN"];
     if (retryableCodes.includes(code)) {
@@ -228,13 +229,15 @@ function isQdrantRetryableError(error: unknown): boolean {
     }
   }
 
-  const status = (error as any)?.status ?? (error as any)?.response?.status ?? null;
+  const status = getHttpStatus(error);
   if (typeof status === "number") {
     return status >= 500 || status === 429 || status === 408;
   }
 
   return true;
 }
+
+// Import moved to top of file - duplicate import removed
 
 function parseRowDate(value: unknown): Date {
   if (value instanceof Date) {
@@ -251,11 +254,21 @@ function parseRowDate(value: unknown): Date {
   return new Date();
 }
 
+function getRowDate(row: Record<string, unknown>, ...keys: string[]): Date | null {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== null && value !== undefined) {
+      return parseRowDate(value);
+    }
+  }
+  return null;
+}
+
 function mapSkillFileIngestionJobRow(row: Record<string, unknown>): SkillFileIngestionJob {
   const jobType = getRowString(row, "job_type") || getRowString(row, "jobType") || "skill_file_ingestion";
-  const nextRetryCandidate = (row as any)?.next_retry_at ?? (row as any)?.nextRetryAt;
-  const createdAtCandidate = (row as any)?.created_at ?? (row as any)?.createdAt;
-  const updatedAtCandidate = (row as any)?.updated_at ?? (row as any)?.updatedAt;
+  const nextRetryCandidate = getRowDate(row, "next_retry_at", "nextRetryAt");
+  const createdAtCandidate = getRowDate(row, "created_at", "createdAt");
+  const updatedAtCandidate = getRowDate(row, "updated_at", "updatedAt");
 
   return {
     id: getRowString(row, "id"),
