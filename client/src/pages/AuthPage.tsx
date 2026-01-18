@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@/lib/zod-resolver";
 import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -70,6 +71,7 @@ export default function AuthPage() {
   const [resendCooldown, setResendCooldown] = useState<number>(0);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
 
   const providersQuery = useQuery<AuthProvidersResponse>({
     queryKey: ["/api/auth/providers"],
@@ -118,6 +120,9 @@ export default function AuthPage() {
       
       // Ждем пока session query обновится
       await queryClient.refetchQueries({ queryKey: ["/api/auth/session"] });
+      
+      // Редиректим на главную страницу после успешного логина
+      setLocation("/");
     },
     onError: (error: Error & { status?: number; code?: string }) => {
       if (error.status === 403 && error.code === "email_not_confirmed") {

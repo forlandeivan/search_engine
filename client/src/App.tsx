@@ -363,35 +363,21 @@ function AppContent() {
 
   const session = sessionQuery.data;
 
-  // Логирование для отладки
-  useEffect(() => {
-    console.log('[App] Session query state:', {
-      isLoading: sessionQuery.isLoading,
-      isFetching: sessionQuery.isFetching,
-      isError: sessionQuery.isError,
-      hasSession: !!session,
-      hasUser: !!session?.user,
-      location,
-    });
-  }, [sessionQuery.isLoading, sessionQuery.isFetching, sessionQuery.isError, session, location]);
-
   // Если уже авторизованы, но находитесь на /auth/*, отправляем на главную.
   useEffect(() => {
     if (session?.user && location.startsWith("/auth")) {
-      console.log('[App] Redirecting from auth to /');
       setLocation("/");
     }
   }, [session?.user, location, setLocation]);
 
-  // Показываем LoadingScreen при первой загрузке ИЛИ при refetch после invalidate (важно для login после logout)
-  if (sessionQuery.isLoading || (sessionQuery.isFetching && sessionQuery.data === undefined)) {
-    console.log('[App] Loading or fetching session (initial load)...');
+  // Показываем LoadingScreen пока загружается или обновляется сессия
+  // Важно: проверяем isLoading ИЛИ (isFetching без данных) - это покрывает случай после перезагрузки сервера
+  if (sessionQuery.isLoading || (sessionQuery.isFetching && !sessionQuery.data)) {
     return <LoadingScreen />;
   }
 
   // Показываем AuthPage только если точно нет сессии И не идёт загрузка
   if (!session || !session.user) {
-    console.log('[App] No session, showing auth page');
     return (
       <Switch>
         <Route path="/auth/verify-email">
@@ -403,8 +389,6 @@ function AppContent() {
       </Switch>
     );
   }
-
-  console.log('[App] Rendering main app with user:', session.user.email);
   const { user, workspace } = session;
 
   // Генерируем ключ на основе userId для принудительного перемонтирования при смене пользователя
