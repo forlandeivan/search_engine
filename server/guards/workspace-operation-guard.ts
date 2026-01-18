@@ -2,12 +2,14 @@ import {
   OPERATION_TYPES,
   type GuardBlockingMode,
   type GuardDecision,
+  type LimitRule,
   type OperationContext,
 } from "./types";
 import { logGuardBlockEvent } from "./block-log-service";
 import { tariffLimitRulesProvider } from "./limit-rules-provider";
 import { defaultUsageSnapshotProvider } from "./usage-snapshot-provider";
 import { limitEvaluator } from "./limit-evaluator";
+import type { UsageSnapshot } from "./usage-snapshot-provider";
 
 const resolveBlockingMode = (): GuardBlockingMode => {
   const raw = (process.env.GUARD_BLOCKING_MODE || "").toUpperCase().trim();
@@ -27,7 +29,7 @@ export class WorkspaceOperationGuard {
     const { workspaceId, operationType, expectedCost } = context;
     const isKnownOperation = OPERATION_TYPES.includes(operationType);
 
-    let snapshot: unknown = null;
+    let snapshot: UsageSnapshot | null = null;
     try {
       snapshot = await this.usageProvider.getSnapshot(workspaceId);
     } catch (error) {
@@ -37,7 +39,7 @@ export class WorkspaceOperationGuard {
       );
     }
 
-    let rules: unknown = [];
+    let rules: LimitRule[] = [];
     try {
       rules = await this.rulesProvider.getRules(workspaceId, context);
     } catch (error) {
@@ -50,8 +52,8 @@ export class WorkspaceOperationGuard {
 
     const evaluated = this.evaluator.evaluate({
       context,
-      snapshot: snapshot ?? null,
-      rules: (Array.isArray(rules) ? rules : []) as typeof rules extends readonly unknown[] ? typeof rules : unknown[],
+      snapshot,
+      rules,
     });
 
     const logPayload = {

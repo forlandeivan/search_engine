@@ -209,7 +209,7 @@ export async function adjustWorkspaceStorageUsageBytes(
 
   const currentBytes = Number(usage.storageBytesTotal ?? 0);
   const nextBytes = currentBytes + deltaBytes;
-  const clampedBytes = nextBytes < 0 ? 0 : nextBytes;
+  const clampedBytes = Math.max(0, Math.trunc(nextBytes));
   if (nextBytes < 0) {
     console.warn(
       `[usage] storage bytes would become negative for workspace ${workspaceId} in period ${target.periodCode}; clamping to 0`,
@@ -219,7 +219,7 @@ export async function adjustWorkspaceStorageUsageBytes(
   const [updated] = await db
     .update(workspaceUsageMonth)
     .set({
-      storageBytesTotal: clampedBytes,
+      storageBytesTotal: BigInt(clampedBytes),
       updatedAt: sql`CURRENT_TIMESTAMP`,
     })
     .where(and(eq(workspaceUsageMonth.workspaceId, workspaceId), eq(workspaceUsageMonth.periodCode, target.periodCode)))
@@ -839,7 +839,7 @@ export async function updateWorkspaceQdrantUsage(
     workspaceId,
     collectionsCount: Math.max(0, Number(values.collectionsCount ?? 0)),
     pointsCount: Math.max(0, Number(values.pointsCount ?? 0)),
-    storageBytes: Math.max(0, Number(values.storageBytes ?? 0)),
+    storageBytes: Math.max(0, Math.trunc(Number(values.storageBytes ?? 0))),
   };
 
   const [updated] = await db
@@ -847,7 +847,7 @@ export async function updateWorkspaceQdrantUsage(
     .set({
       qdrantCollectionsCount: normalized.collectionsCount,
       qdrantPointsCount: normalized.pointsCount,
-      qdrantStorageBytes: normalized.storageBytes,
+      qdrantStorageBytes: BigInt(normalized.storageBytes),
       updatedAt: sql`CURRENT_TIMESTAMP`,
     })
     .where(eq(workspaces.id, workspaceId))
