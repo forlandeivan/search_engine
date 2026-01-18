@@ -23,6 +23,7 @@ import { asyncHandler } from '../middleware/async-handler';
 import { workspaceMemberRoles, type PublicUser, type User, actionTargets, actionPlacements, actionInputTypes, actionOutputModes, type ActionPlacement } from '@shared/schema';
 import type { WorkspaceMemberWithUser } from '../storage';
 import { actionsRepository } from '../actions';
+import { workspacePlanService } from '../workspace-plan-service';
 import {
   getWorkspaceLlmUsageSummary,
   getWorkspaceAsrUsageSummary,
@@ -463,6 +464,28 @@ workspaceRouter.get('/:workspaceId/icon', asyncHandler(async (req, res) => {
     res.setHeader('Content-Type', icon.contentType);
   }
   icon.body.pipe(res);
+}));
+
+// ============================================================================
+// Plan Endpoints
+// ============================================================================
+
+/**
+ * GET /:workspaceId/plan
+ * Get workspace plan
+ */
+workspaceRouter.get('/:workspaceId/plan', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId } = req.params;
+  const membership = await storage.getWorkspaceMember(workspaceId, user.id);
+  if (!membership) {
+    return res.status(403).json({ message: 'forbidden' });
+  }
+
+  const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
+  res.json(plan);
 }));
 
 // ============================================================================

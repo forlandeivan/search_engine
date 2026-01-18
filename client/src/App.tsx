@@ -250,13 +250,17 @@ function HeaderUserArea({ user }: { user: PublicUser }) {
       await apiRequest("POST", "/api/auth/logout");
     },
     onSuccess: async () => {
-      queryClient.setQueryData(["/api/auth/session"], null);
+      // Полностью удаляем session query из кеша (не устанавливаем null)
+      queryClient.removeQueries({ queryKey: ["/api/auth/session"] });
+      
+      // Удаляем все остальные queries
       queryClient.removeQueries({
         predicate: (query) => {
           const [key] = query.queryKey as [unknown, ...unknown[]];
           return key !== "/api/auth/session";
         },
       });
+      
       toast({ title: "Вы вышли из системы" });
     },
     onError: (error: Error) => {
@@ -362,12 +366,13 @@ function AppContent() {
   useEffect(() => {
     console.log('[App] Session query state:', {
       isLoading: sessionQuery.isLoading,
+      isFetching: sessionQuery.isFetching,
       isError: sessionQuery.isError,
       hasSession: !!session,
       hasUser: !!session?.user,
       location,
     });
-  }, [sessionQuery.isLoading, sessionQuery.isError, session, location]);
+  }, [sessionQuery.isLoading, sessionQuery.isFetching, sessionQuery.isError, session, location]);
 
   // Если уже авторизованы, но находитесь на /auth/*, отправляем на главную.
   useEffect(() => {
@@ -377,12 +382,14 @@ function AppContent() {
     }
   }, [session?.user, location, setLocation]);
 
+  // Показываем LoadingScreen только при первой загрузке (isLoading)
+  // isFetching не проверяем, чтобы не блокировать UI при background refetch
   if (sessionQuery.isLoading) {
     console.log('[App] Loading session...');
     return <LoadingScreen />;
   }
 
-  // Если нет сессии или нет пользователя - показываем Auth
+  // Показываем AuthPage только если точно нет сессии И не идёт загрузка
   if (!session || !session.user) {
     console.log('[App] No session, showing auth page');
     return (
@@ -400,8 +407,11 @@ function AppContent() {
   console.log('[App] Rendering main app with user:', session.user.email);
   const { user, workspace } = session;
 
+  // Генерируем ключ на основе userId для принудительного перемонтирования при смене пользователя
+  const appKey = session.user.id || 'no-user';
+
   return (
-    <Switch>
+    <Switch key={appKey}>
       <Route path={/^\/admin(?:\/.*)?$/i}>
         {user.role === "admin" ? <AdminAppShell user={user} workspace={workspace} /> : <UnauthorizedPage />}
       </Route>
