@@ -6,7 +6,9 @@ import { isRagSkill, isUnicaChatSkill } from "./skill-type";
 import type {
   ChatSession,
   ChatMessage,
+  ChatMessageMetadata,
   ChatMessageRole,
+  ChatMessageType,
   ChatStatus,
   LlmProvider,
   LlmRequestConfig,
@@ -15,7 +17,7 @@ import type {
   BotAction,
   BotActionStatus,
 } from "@shared/schema";
-import { botActionStatuses, botActionTypes } from "@shared/schema";
+import { botActionStatuses, botActionTypes, chatMessageTypes } from "@shared/schema";
 import { mergeLlmRequestConfig } from "./search/utils";
 import { sanitizeLlmModelOptions } from "./llm-utils";
 import { skillExecutionLogService } from "./skill-execution-log-context";
@@ -64,6 +66,14 @@ export function buildChatServiceErrorPayload(error: ChatServiceError): Record<st
   }
   return payload;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const toChatMessageType = (value: unknown): ChatMessageType =>
+  typeof value === "string" && chatMessageTypes.includes(value as ChatMessageType)
+    ? (value as ChatMessageType)
+    : "text";
 
 export type ChatSummary = {
   id: string;
@@ -262,22 +272,56 @@ export async function clearAssistantActionForChat(opts: {
 
 // message может приходить как запись из БД или из временных локальных объектов; упрощаем тип для совместимости
 export const mapMessage = (message: ChatMessage | Record<string, unknown>) => {
-  const metadata = (message.metadata && typeof message.metadata === "object" ? message.metadata : {}) as Record<string, unknown>;
-  const messageType = ("messageType" in message && typeof message.messageType === "string" ? message.messageType : null) ?? ("type" in message && typeof message.type === "string" ? message.type : null) ?? "text";
-  const type = messageType;
-  const cardId = ("cardId" in message && (typeof message.cardId === "string" || message.cardId === null) ? message.cardId : null) ?? ("cardId" in metadata && (typeof metadata.cardId === "string" || metadata.cardId === null) ? metadata.cardId : null);
-  const fileMetaRaw = "file" in metadata && typeof metadata.file === "object" ? metadata.file : null;
-  const fileMeta = fileMetaRaw && typeof fileMetaRaw === "object" && !Array.isArray(fileMetaRaw) ? fileMetaRaw : null;
+  const messageRecord = message as Record<string, unknown>;
+  const rawMetadata = isRecord(messageRecord.metadata) ? messageRecord.metadata : {};
+  const metadata = rawMetadata as ChatMessageMetadata;
+  const messageTypeCandidate =
+    typeof messageRecord.messageType === "string"
+      ? messageRecord.messageType
+      : typeof messageRecord.type === "string"
+        ? messageRecord.type
+        : null;
+  const type = toChatMessageType(messageTypeCandidate);
+  const cardIdCandidate = messageRecord.cardId;
+  const metaCardIdCandidate = (rawMetadata as Record<string, unknown>).cardId;
+  const cardId =
+    typeof cardIdCandidate === "string" || cardIdCandidate === null
+      ? (cardIdCandidate as string | null)
+      : typeof metaCardIdCandidate === "string" || metaCardIdCandidate === null
+        ? (metaCardIdCandidate as string | null)
+        : null;
+  const fileMetaRecord = isRecord((rawMetadata as Record<string, unknown>).file)
+    ? ((rawMetadata as Record<string, unknown>).file as Record<string, unknown>)
+    : undefined;
+  const fileMeta = fileMetaRecord as ChatMessageMetadata["file"] | undefined;
+  const messageId = typeof messageRecord.id === "string" ? messageRecord.id : "";
+  const filenameFallback = typeof messageRecord.content === "string" ? messageRecord.content : "";
+  const downloadUrl =
+    typeof fileMetaRecord?.downloadUrl === "string"
+      ? fileMetaRecord.downloadUrl
+      : `/api/chat/messages/${messageId}/file`;
+  const expiresAtValue = fileMetaRecord?.expiresAt;
+  const expiresAt =
+    expiresAtValue instanceof Date
+      ? expiresAtValue.toISOString()
+      : typeof expiresAtValue === "string"
+        ? expiresAtValue
+        : null;
+  const createdAtValue = messageRecord.createdAt;
+  const createdAt =
+    createdAtValue instanceof Date || typeof createdAtValue === "string" || typeof createdAtValue === "number"
+      ? new Date(createdAtValue).toISOString()
+      : new Date().toISOString();
   const file =
     type === "file"
       ? {
-          attachmentId: fileMeta?.attachmentId ?? null,
-          filename: fileMeta?.filename ?? message.content,
+          attachmentId: typeof fileMeta?.attachmentId === "string" ? fileMeta.attachmentId : null,
+          filename: typeof fileMeta?.filename === "string" ? fileMeta.filename : filenameFallback,
           mimeType: fileMeta?.mimeType ?? null,
           sizeBytes: typeof fileMeta?.sizeBytes === "number" ? fileMeta.sizeBytes : null,
-          uploadedByUserId: fileMeta?.uploadedByUserId ?? null,
-          downloadUrl: fileMeta?.downloadUrl ?? `/api/chat/messages/${message.id}/file`,
-          expiresAt: fileMeta?.expiresAt ?? null,
+          uploadedByUserId: typeof fileMeta?.uploadedByUserId === "string" ? fileMeta.uploadedByUserId : null,
+          downloadUrl,
+          expiresAt,
         }
       : undefined;
 
@@ -288,10 +332,10 @@ export const mapMessage = (message: ChatMessage | Record<string, unknown>) => {
     type,
     cardId,
     content: message.content,
-    metadata,
+    metadata: rawMetadata,
     file,
     // Всегда возвращаем ISO в UTC; отображение в UI — локальное время браузера.
-    createdAt: new Date(message.createdAt ?? Date.now()).toISOString(),
+    createdAt,
   };
 };
 
@@ -1186,10 +1230,15 @@ export async function addNoCodeSyncFinalResults(opts: {
       metadata.triggerMessageId = triggerMessageId;
     }
 
+    const messageType = toChatMessageType(
+      typeof (result as Record<string, unknown>).messageType === "string"
+        ? (result as Record<string, unknown>).messageType
+        : null,
+    );
     const message = await storage.createChatMessage({
       chatId: opts.chatId,
       role: result.role,
-      messageType: ("messageType" in result && typeof result.messageType === "string" ? result.messageType : null) ?? "text",
+      messageType,
       content,
       metadata,
     });
@@ -1372,28 +1421,6 @@ export async function setNoCodeAssistantAction(opts: {
   } as ChatSession & { skillName: string | null; skillIsSystem?: boolean; skillSystemKey?: string | null; skillStatus?: string | null });
 }
 
-function mapBotActionRecord(action: Record<string, unknown>): BotAction {
-  return {
-    workspaceId: action.workspaceId ?? action.workspace_id,
-    chatId: action.chatId ?? action.chat_id,
-    actionId: action.actionId ?? action.action_id,
-    actionType: action.actionType ?? action.action_type,
-    status: (action.status ?? "processing") as BotActionStatus,
-    displayText: action.displayText ?? action.display_text ?? null,
-    payload: action.payload ?? null,
-    createdAt: action.startedAt
-      ? (action.startedAt instanceof Date ? action.startedAt.toISOString() : new Date(action.startedAt).toISOString())
-      : action.started_at
-        ? new Date(action.started_at).toISOString()
-        : null,
-    updatedAt: action.updatedAt
-      ? (action.updatedAt instanceof Date ? action.updatedAt.toISOString() : new Date(action.updatedAt).toISOString())
-      : action.updated_at
-        ? new Date(action.updated_at).toISOString()
-        : null,
-  };
-}
-
 export async function upsertBotActionForChat(opts: {
   workspaceId: string;
   chatId: string;
@@ -1487,7 +1514,7 @@ export async function upsertBotActionForChat(opts: {
     throw new ChatServiceError("Не удалось сохранить действие", 500);
   }
 
-  const mapped = mapBotActionRecord(finalState);
+  const mapped = finalState;
 
   // Only publish if state actually changed
   const shouldPublish = shouldPublishBotActionEvent(currentState, mapped, transitionResult);
@@ -1520,5 +1547,5 @@ export async function listBotActionsForChat(opts: {
     status: opts.status ?? null,
     limit: opts.limit ?? null,
   });
-  return actions.map(mapBotActionRecord);
+  return actions;
 }

@@ -112,6 +112,7 @@ import {
   type FileStorageProviderInsert,
   type WorkspaceMemberRole,
   type BotAction,
+  type BotActionRecord,
   type BotActionStatus,
 } from "@shared/schema";
 import { DEFAULT_INDEXING_RULES } from "@shared/indexing-rules";
@@ -138,6 +139,7 @@ import { getQdrantClient } from "./qdrant";
 let globalUserAuthSchemaReady = false;
 
 type KnowledgeBaseRow = typeof knowledgeBases.$inferSelect;
+type BotActionInsert = typeof botActions.$inferInsert;
 
 export type WorkspaceMembershipStatus = "active" | "invited" | "removed" | "blocked";
 export type WorkspaceMembership = WorkspaceMember & { status: WorkspaceMembershipStatus };
@@ -2599,25 +2601,63 @@ async function ensureBotActionsTable(): Promise<void> {
   ensuringBotActionsTable = null;
 }
 
-function mapBotAction(record: Record<string, unknown>): BotAction {
+type BotActionRow = Partial<BotActionRecord> & {
+  workspace_id?: string | null;
+  chat_id?: string | null;
+  action_id?: string | null;
+  action_type?: string | null;
+  display_text?: string | null;
+  payload?: Record<string, unknown> | null;
+  started_at?: Date | string | null;
+  updated_at?: Date | string | null;
+};
+
+const toIsoString = (value: unknown): string | null => {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+  return null;
+};
+
+function mapBotAction(record: BotActionRow): BotAction {
+  const workspaceId =
+    typeof record.workspaceId === "string"
+      ? record.workspaceId
+      : typeof record.workspace_id === "string"
+        ? record.workspace_id
+        : "";
+  const chatId =
+    typeof record.chatId === "string"
+      ? record.chatId
+      : typeof record.chat_id === "string"
+        ? record.chat_id
+        : "";
+  const actionId =
+    typeof record.actionId === "string"
+      ? record.actionId
+      : typeof record.action_id === "string"
+        ? record.action_id
+        : "";
+  const actionType =
+    typeof record.actionType === "string"
+      ? record.actionType
+      : typeof record.action_type === "string"
+        ? record.action_type
+        : "";
   return {
-    workspaceId: record.workspaceId ?? record.workspace_id,
-    chatId: record.chatId ?? record.chat_id,
-    actionId: record.actionId ?? record.action_id,
-    actionType: record.actionType ?? record.action_type,
+    workspaceId,
+    chatId,
+    actionId,
+    actionType,
     status: (record.status ?? "processing") as BotActionStatus,
     displayText: record.displayText ?? record.display_text ?? null,
     payload: record.payload ?? null,
-    createdAt: record.startedAt
-      ? new Date(record.startedAt).toISOString()
-      : record.started_at
-        ? new Date(record.started_at).toISOString()
-        : null,
-    updatedAt: record.updatedAt
-      ? new Date(record.updatedAt).toISOString()
-      : record.updated_at
-        ? new Date(record.updated_at).toISOString()
-        : null,
+    createdAt: toIsoString(record.startedAt ?? record.started_at),
+    updatedAt: toIsoString(record.updatedAt ?? record.updated_at),
   };
 }
 
@@ -5075,10 +5115,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllSites(workspaceId?: string): Promise<Site[]> {
-    let query = this.db.select().from(sites);
-    if (workspaceId) {
-      query = query.where(eq(sites.workspaceId, workspaceId));
-    }
+    const query = workspaceId
+      ? this.db.select().from(sites).where(eq(sites.workspaceId, workspaceId))
+      : this.db.select().from(sites);
     return await query.orderBy(desc(sites.createdAt));
   }
 
@@ -6270,15 +6309,11 @@ export class DatabaseStorage implements IStorage {
 
   async listEmbeddingProviders(workspaceId?: string): Promise<EmbeddingProvider[]> {
     await ensureEmbeddingProvidersTable();
-    let query = this.db.select().from(embeddingProviders);
-    if (workspaceId) {
-      query = query.where(
-        or(
-          eq(embeddingProviders.workspaceId, workspaceId),
-          eq(embeddingProviders.isGlobal, true)
+    const query = workspaceId
+      ? this.db.select().from(embeddingProviders).where(
+          or(eq(embeddingProviders.workspaceId, workspaceId), eq(embeddingProviders.isGlobal, true)),
         )
-      );
-    }
+      : this.db.select().from(embeddingProviders);
     return await query.orderBy(desc(embeddingProviders.createdAt));
   }
 
@@ -6352,15 +6387,11 @@ export class DatabaseStorage implements IStorage {
     
     // Cache miss - fetch from DB
     await ensureLlmProvidersTable();
-    let query = this.db.select().from(llmProviders);
-    if (workspaceId) {
-      query = query.where(
-        or(
-          eq(llmProviders.workspaceId, workspaceId),
-          eq(llmProviders.isGlobal, true)
+    const query = workspaceId
+      ? this.db.select().from(llmProviders).where(
+          or(eq(llmProviders.workspaceId, workspaceId), eq(llmProviders.isGlobal, true)),
         )
-      );
-    }
+      : this.db.select().from(llmProviders);
     const result = await query.orderBy(desc(llmProviders.createdAt));
     
     // Cache result (10 minutes TTL)
@@ -7032,7 +7063,7 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-    const insertValues: Record<string, unknown> = {
+    const insertValues: BotActionInsert = {
       workspaceId: values.workspaceId,
       chatId: values.chatId,
       actionId: values.actionId,
@@ -7094,17 +7125,14 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(botActions.status, options.status));
     }
 
-    let query = this.db
+    const query = this.db
       .select()
       .from(botActions)
       .where(and(...conditions))
       .orderBy(desc(botActions.updatedAt));
 
-    if (options.limit && options.limit > 0) {
-      query = query.limit(options.limit);
-    }
-
-    const rows = await query;
+    const rows =
+      options.limit && options.limit > 0 ? await query.limit(options.limit) : await query;
     return rows.map(mapBotAction);
   }
 
@@ -8583,7 +8611,7 @@ export class DatabaseStorage implements IStorage {
       .update(canvasDocuments)
       .set({ deletedAt: sql`CURRENT_TIMESTAMP` })
       .where(eq(canvasDocuments.id, id));
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   async setDefaultCanvasDocument(chatId: string, documentId: string): Promise<void> {
@@ -9204,10 +9232,6 @@ export class DatabaseStorage implements IStorage {
 
     if (provider.providerType === "gigachat") {
       return GIGACHAT_EMBEDDING_VECTOR_SIZE;
-    }
-
-    if (provider.providerType === "openai") {
-      return 1536;
     }
 
     throw new WorkspaceVectorInitError(

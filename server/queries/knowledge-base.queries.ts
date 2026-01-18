@@ -22,7 +22,7 @@ import { db } from '../db';
 export const getKnowledgeBaseByIdPrepared = db
   .select()
   .from(knowledgeBases)
-  .where(eq(knowledgeBases.id, db.placeholder('knowledgeBaseId')))
+  .where(eq(knowledgeBases.id, sql.placeholder('knowledgeBaseId')))
   .limit(1)
   .prepare('get_knowledge_base_by_id');
 
@@ -33,7 +33,7 @@ export const getKnowledgeBaseByIdPrepared = db
 export const listKnowledgeBasesByWorkspacePrepared = db
   .select()
   .from(knowledgeBases)
-  .where(eq(knowledgeBases.workspaceId, db.placeholder('workspaceId')))
+  .where(eq(knowledgeBases.workspaceId, sql.placeholder('workspaceId')))
   .orderBy(desc(knowledgeBases.createdAt))
   .prepare('list_knowledge_bases_by_workspace');
 
@@ -44,7 +44,7 @@ export const listKnowledgeBasesByWorkspacePrepared = db
 export const getKnowledgeBaseSearchSettingsPrepared = db
   .select()
   .from(knowledgeBaseSearchSettings)
-  .where(eq(knowledgeBaseSearchSettings.knowledgeBaseId, db.placeholder('knowledgeBaseId')))
+  .where(eq(knowledgeBaseSearchSettings.knowledgeBaseId, sql.placeholder('knowledgeBaseId')))
   .limit(1)
   .prepare('get_knowledge_base_search_settings');
 
@@ -55,7 +55,7 @@ export const getKnowledgeBaseSearchSettingsPrepared = db
 export const listKnowledgeNodesPrepared = db
   .select()
   .from(knowledgeNodes)
-  .where(eq(knowledgeNodes.baseId, db.placeholder('knowledgeBaseId')))
+  .where(eq(knowledgeNodes.baseId, sql.placeholder('knowledgeBaseId')))
   .orderBy(asc(knowledgeNodes.position), desc(knowledgeNodes.createdAt))
   .prepare('list_knowledge_nodes');
 
@@ -66,7 +66,7 @@ export const listKnowledgeNodesPrepared = db
 export const countKnowledgeNodesPrepared = db
   .select({ count: sql<number>`COUNT(*)` })
   .from(knowledgeNodes)
-  .where(eq(knowledgeNodes.baseId, db.placeholder('knowledgeBaseId')))
+  .where(eq(knowledgeNodes.baseId, sql.placeholder('knowledgeBaseId')))
   .prepare('count_knowledge_nodes');
 
 /**
@@ -77,7 +77,7 @@ export const countKnowledgeChunksPrepared = db
   .select({ count: sql<number>`COUNT(*)` })
   .from(knowledgeDocumentChunkItems)
   .innerJoin(knowledgeDocuments, eq(knowledgeDocumentChunkItems.documentId, knowledgeDocuments.id))
-  .where(eq(knowledgeDocuments.baseId, db.placeholder('knowledgeBaseId')))
+  .where(eq(knowledgeDocuments.baseId, sql.placeholder('knowledgeBaseId')))
   .prepare('count_knowledge_chunks');
 
 // Type-safe execution helpers

@@ -5,7 +5,7 @@
  * These are compiled once and reused for better performance.
  */
 
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, sql } from 'drizzle-orm';
 import { workspaces, workspaceMembers, users } from '@shared/schema';
 import { db } from '../db';
 
@@ -16,7 +16,7 @@ import { db } from '../db';
 export const getWorkspaceByIdPrepared = db
   .select()
   .from(workspaces)
-  .where(eq(workspaces.id, db.placeholder('workspaceId')))
+  .where(eq(workspaces.id, sql.placeholder('workspaceId')))
   .limit(1)
   .prepare('get_workspace_by_id');
 
@@ -33,8 +33,8 @@ export const getWorkspaceMembershipPrepared = db
   .from(workspaceMembers)
   .where(
     and(
-      eq(workspaceMembers.userId, db.placeholder('userId')),
-      eq(workspaceMembers.workspaceId, db.placeholder('workspaceId')),
+      eq(workspaceMembers.userId, sql.placeholder('userId')),
+      eq(workspaceMembers.workspaceId, sql.placeholder('workspaceId')),
     ),
   )
   .limit(1)
@@ -49,8 +49,8 @@ export const isWorkspaceMemberPrepared = db
   .from(workspaceMembers)
   .where(
     and(
-      eq(workspaceMembers.workspaceId, db.placeholder('workspaceId')),
-      eq(workspaceMembers.userId, db.placeholder('userId')),
+      eq(workspaceMembers.workspaceId, sql.placeholder('workspaceId')),
+      eq(workspaceMembers.userId, sql.placeholder('userId')),
     ),
   )
   .limit(1)
@@ -67,7 +67,7 @@ export const listUserWorkspacesPrepared = db
   })
   .from(workspaceMembers)
   .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-  .where(eq(workspaceMembers.userId, db.placeholder('userId')))
+  .where(eq(workspaceMembers.userId, sql.placeholder('userId')))
   .orderBy(desc(workspaces.createdAt))
   .prepare('list_user_workspaces');
 
@@ -82,7 +82,7 @@ export const listWorkspaceMembersPrepared = db
   })
   .from(workspaceMembers)
   .innerJoin(users, eq(workspaceMembers.userId, users.id))
-  .where(eq(workspaceMembers.workspaceId, db.placeholder('workspaceId')))
+  .where(eq(workspaceMembers.workspaceId, sql.placeholder('workspaceId')))
   .orderBy(desc(workspaceMembers.createdAt))
   .prepare('list_workspace_members');
 

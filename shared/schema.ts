@@ -1007,10 +1007,7 @@ export const knowledgeDocuments = pgTable(
       .notNull()
       .default("draft"),
     currentVersionId: varchar("current_version_id"),
-    currentRevisionId: varchar("current_revision_id").references(
-      () => knowledgeDocumentIndexRevisions.id,
-      { onDelete: "set null" },
-    ),
+    currentRevisionId: varchar("current_revision_id"),
     sourceUrl: text("source_url"),
     contentHash: text("content_hash"),
     language: text("language"),
@@ -1069,9 +1066,7 @@ export const knowledgeDocumentChunkSets = pgTable(
     versionId: varchar("version_id")
       .notNull()
       .references(() => knowledgeDocumentVersions.id, { onDelete: "cascade" }),
-    revisionId: varchar("revision_id").references(() => knowledgeDocumentIndexRevisions.id, {
-      onDelete: "set null",
-    }),
+    revisionId: varchar("revision_id"),
     documentHash: text("document_hash"),
     maxTokens: integer("max_tokens"),
     maxChars: integer("max_chars"),

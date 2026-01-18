@@ -5,7 +5,7 @@
  * These are compiled once and reused for better performance.
  */
 
-import { eq, desc, and, isNull } from 'drizzle-orm';
+import { eq, desc, and, isNull, sql } from 'drizzle-orm';
 import { users, personalApiTokens } from '@shared/schema';
 import { db } from '../db';
 
@@ -16,7 +16,7 @@ import { db } from '../db';
 export const getUserByIdPrepared = db
   .select()
   .from(users)
-  .where(eq(users.id, db.placeholder('userId')))
+  .where(eq(users.id, sql.placeholder('userId')))
   .limit(1)
   .prepare('get_user_by_id');
 
@@ -27,7 +27,7 @@ export const getUserByIdPrepared = db
 export const getUserByEmailPrepared = db
   .select()
   .from(users)
-  .where(eq(users.email, db.placeholder('email')))
+  .where(eq(users.email, sql.placeholder('email')))
   .limit(1)
   .prepare('get_user_by_email');
 
@@ -38,7 +38,7 @@ export const getUserByEmailPrepared = db
 export const getUserByGoogleIdPrepared = db
   .select()
   .from(users)
-  .where(eq(users.googleId, db.placeholder('googleId')))
+  .where(eq(users.googleId, sql.placeholder('googleId')))
   .limit(1)
   .prepare('get_user_by_google_id');
 
@@ -49,7 +49,7 @@ export const getUserByGoogleIdPrepared = db
 export const getUserByYandexIdPrepared = db
   .select()
   .from(users)
-  .where(eq(users.yandexId, db.placeholder('yandexId')))
+  .where(eq(users.yandexId, sql.placeholder('yandexId')))
   .limit(1)
   .prepare('get_user_by_yandex_id');
 
@@ -63,7 +63,7 @@ export const getUserByApiTokenPrepared = db
   .innerJoin(users, eq(personalApiTokens.userId, users.id))
   .where(
     and(
-      eq(personalApiTokens.tokenHash, db.placeholder('tokenHash')),
+      eq(personalApiTokens.tokenHash, sql.placeholder('tokenHash')),
       isNull(personalApiTokens.revokedAt),
     ),
   )

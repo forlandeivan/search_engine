@@ -25,7 +25,7 @@ export const getChatSessionByIdPrepared = db
   .innerJoin(skills, eq(chatSessions.skillId, skills.id))
   .where(
     and(
-      eq(chatSessions.id, db.placeholder('chatId')),
+      eq(chatSessions.id, sql.placeholder('chatId')),
       isNull(chatSessions.deletedAt),
     ),
   )
@@ -39,7 +39,7 @@ export const getChatSessionByIdPrepared = db
 export const listChatMessagesPrepared = db
   .select()
   .from(chatMessages)
-  .where(eq(chatMessages.chatId, db.placeholder('chatId')))
+  .where(eq(chatMessages.chatId, sql.placeholder('chatId')))
   .orderBy(chatMessages.createdAt)
   .prepare('list_chat_messages');
 
@@ -50,7 +50,7 @@ export const listChatMessagesPrepared = db
 export const countChatMessagesPrepared = db
   .select({ count: sql<number>`COUNT(*)` })
   .from(chatMessages)
-  .where(eq(chatMessages.chatId, db.placeholder('chatId')))
+  .where(eq(chatMessages.chatId, sql.placeholder('chatId')))
   .prepare('count_chat_messages');
 
 /**
@@ -60,7 +60,7 @@ export const countChatMessagesPrepared = db
 export const getChatMessageByIdPrepared = db
   .select()
   .from(chatMessages)
-  .where(eq(chatMessages.id, db.placeholder('messageId')))
+  .where(eq(chatMessages.id, sql.placeholder('messageId')))
   .limit(1)
   .prepare('get_chat_message_by_id');
 
@@ -71,7 +71,7 @@ export const getChatMessageByIdPrepared = db
 export const getChatCardByIdPrepared = db
   .select()
   .from(chatCards)
-  .where(eq(chatCards.id, db.placeholder('cardId')))
+  .where(eq(chatCards.id, sql.placeholder('cardId')))
   .limit(1)
   .prepare('get_chat_card_by_id');
 

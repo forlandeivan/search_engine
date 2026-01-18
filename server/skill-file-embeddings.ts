@@ -120,9 +120,19 @@ async function callEmbedding(
       throw new EmbeddingError("Сервис эмбеддингов вернул пустой вектор", false);
     }
 
+    const usage = parsed && typeof parsed.usage === "object" && parsed.usage !== null
+      ? (parsed.usage as Record<string, unknown>)
+      : null;
+    const totalTokens =
+      typeof usage?.total_tokens === "number"
+        ? usage.total_tokens
+        : typeof usage?.input_tokens === "number"
+          ? usage.input_tokens
+          : null;
+
     return {
       vector: vectorCandidate as number[],
-      usageTokens: parsed?.usage?.total_tokens ?? parsed?.usage?.input_tokens ?? null,
+      usageTokens: totalTokens,
     };
   }
 

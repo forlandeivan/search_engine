@@ -23,30 +23,60 @@ export interface AsrExecutionLogRepository {
   listExecutions(): Promise<AsrExecutionRecord[]>;
 }
 
+type AsrExecutionRow = {
+  id: string;
+  created_at: string | Date;
+  updated_at: string | Date;
+  workspace_id: string | null;
+  skill_id: string | null;
+  chat_id: string | null;
+  user_message_id: string | null;
+  transcript_message_id: string | null;
+  transcript_id: string | null;
+  provider: string | null;
+  mode: string | null;
+  status: AsrExecutionStatus;
+  language: string | null;
+  file_name: string | null;
+  file_size_bytes: number | string | null;
+  duration_ms: number | string | null;
+  started_at: string | Date | null;
+  finished_at: string | Date | null;
+  error_code: string | null;
+  error_message: string | null;
+  pipeline_events: AsrExecutionEvent[] | string | null;
+};
+
 export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository {
   private mapRow(row: Record<string, unknown>): AsrExecutionRecord {
+    const data = row as AsrExecutionRow;
+    const pipelineEvents = Array.isArray(data.pipeline_events)
+      ? data.pipeline_events
+      : typeof data.pipeline_events === "string"
+        ? (JSON.parse(data.pipeline_events) as AsrExecutionEvent[])
+        : [];
     return {
-      id: row.id,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
-      workspaceId: row.workspace_id,
-      skillId: row.skill_id,
-      chatId: row.chat_id,
-      userMessageId: row.user_message_id,
-      transcriptMessageId: row.transcript_message_id,
-      transcriptId: row.transcript_id,
-      provider: row.provider,
-      mode: row.mode,
-      status: row.status,
-      language: row.language,
-      fileName: row.file_name,
-      fileSizeBytes: row.file_size_bytes !== null ? Number(row.file_size_bytes) : null,
-      durationMs: row.duration_ms !== null ? Number(row.duration_ms) : null,
-      startedAt: row.started_at ? new Date(row.started_at) : null,
-      finishedAt: row.finished_at ? new Date(row.finished_at) : null,
-      errorCode: row.error_code,
-      errorMessage: row.error_message,
-      pipelineEvents: Array.isArray(row.pipeline_events) ? row.pipeline_events : row.pipeline_events ? row.pipeline_events : [],
+      id: data.id,
+      createdAt: new Date(data.created_at),
+      updatedAt: new Date(data.updated_at),
+      workspaceId: data.workspace_id,
+      skillId: data.skill_id,
+      chatId: data.chat_id,
+      userMessageId: data.user_message_id,
+      transcriptMessageId: data.transcript_message_id,
+      transcriptId: data.transcript_id,
+      provider: data.provider,
+      mode: data.mode,
+      status: data.status,
+      language: data.language,
+      fileName: data.file_name,
+      fileSizeBytes: data.file_size_bytes !== null ? Number(data.file_size_bytes) : null,
+      durationMs: data.duration_ms !== null ? Number(data.duration_ms) : null,
+      startedAt: data.started_at ? new Date(data.started_at) : null,
+      finishedAt: data.finished_at ? new Date(data.finished_at) : null,
+      errorCode: data.error_code,
+      errorMessage: data.error_message,
+      pipelineEvents,
     };
   }
 
@@ -115,20 +145,24 @@ export class DatabaseAsrExecutionRepository implements AsrExecutionLogRepository
 
   async getExecutionById(id: string): Promise<AsrExecutionRecord | null> {
     const result = await db.execute(sql`SELECT * FROM asr_executions WHERE id = ${id} LIMIT 1`);
-    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as AsrExecutionRow[];
     const row = rows[0];
     return row ? this.mapRow(row) : null;
   }
 
   async listExecutions(): Promise<AsrExecutionRecord[]> {
     const result = await db.execute(sql`SELECT * FROM asr_executions ORDER BY created_at DESC`);
-    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as AsrExecutionRow[];
     return rows.map((row) => this.mapRow(row));
   }
 }
 
 export class InMemoryAsrExecutionRepository implements AsrExecutionLogRepository {
   private executions: AsrExecutionRecord[] = [];
+
+  reset(): void {
+    this.executions = [];
+  }
 
   async createExecution(record: AsrExecutionRecord): Promise<void> {
     this.executions.push(record);

@@ -5,7 +5,7 @@
  * These are compiled once and reused for better performance.
  */
 
-import { eq, desc, and, asc } from 'drizzle-orm';
+import { eq, desc, and, asc, sql } from 'drizzle-orm';
 import { skills, skillFiles } from '@shared/schema';
 import { db } from '../db';
 
@@ -16,7 +16,7 @@ import { db } from '../db';
 export const getSkillByIdPrepared = db
   .select()
   .from(skills)
-  .where(eq(skills.id, db.placeholder('skillId')))
+  .where(eq(skills.id, sql.placeholder('skillId')))
   .limit(1)
   .prepare('get_skill_by_id');
 
@@ -27,7 +27,7 @@ export const getSkillByIdPrepared = db
 export const listSkillsByWorkspacePrepared = db
   .select()
   .from(skills)
-  .where(eq(skills.workspaceId, db.placeholder('workspaceId')))
+  .where(eq(skills.workspaceId, sql.placeholder('workspaceId')))
   .orderBy(desc(skills.createdAt))
   .prepare('list_skills_by_workspace');
 
@@ -59,7 +59,7 @@ export const getSkillWithRagConfigPrepared = db
     collectionName: skills.collectionName,
   })
   .from(skills)
-  .where(eq(skills.id, db.placeholder('skillId')))
+  .where(eq(skills.id, sql.placeholder('skillId')))
   .limit(1)
   .prepare('get_skill_with_rag_config');
 
@@ -70,7 +70,7 @@ export const getSkillWithRagConfigPrepared = db
 export const listSkillFilesPrepared = db
   .select()
   .from(skillFiles)
-  .where(eq(skillFiles.skillId, db.placeholder('skillId')))
+  .where(eq(skillFiles.skillId, sql.placeholder('skillId')))
   .orderBy(asc(skillFiles.createdAt))
   .prepare('list_skill_files');
 
@@ -83,8 +83,8 @@ export const getSkillFileByIdPrepared = db
   .from(skillFiles)
   .where(
     and(
-      eq(skillFiles.id, db.placeholder('fileId')),
-      eq(skillFiles.skillId, db.placeholder('skillId')),
+      eq(skillFiles.id, sql.placeholder('fileId')),
+      eq(skillFiles.skillId, sql.placeholder('skillId')),
     ),
   )
   .limit(1)

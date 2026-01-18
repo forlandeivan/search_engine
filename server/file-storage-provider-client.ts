@@ -1,4 +1,4 @@
-import fetch, { type Response } from "node-fetch";
+import fetch, { type BodyInit, type Response } from "node-fetch";
 import FormData from "form-data";
 import { randomUUID } from "crypto";
 import { buildPathFromTemplate } from "./file-storage-path";
@@ -237,7 +237,13 @@ export class FileStorageProviderClient {
           isAbort ? 504 : 502,
           code,
           retryable,
-          { error: error?.message, requestId, url, providerBaseUrl: this.baseUrl, attempt },
+          {
+            error: errorObj?.message ?? String(error),
+            requestId,
+            url,
+            providerBaseUrl: this.baseUrl,
+            attempt,
+          },
         );
       }
     };
@@ -294,12 +300,19 @@ export class FileStorageProviderClient {
       );
     }
 
-    const providerFileId =
+    const pathValue =
       typeof this.responseFileIdPath === "string" && this.responseFileIdPath.trim().length > 0
         ? this.responseFileIdPath
             .split(".")
-            .reduce<unknown>((acc, key) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined), payload) ??
-          extractProviderFileId(payload)
+            .reduce<unknown>(
+              (acc, key) =>
+                acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined,
+              payload,
+            )
+        : null;
+    const providerFileId =
+      typeof pathValue === "string" && pathValue.trim().length > 0
+        ? pathValue
         : extractProviderFileId(payload);
     if (!providerFileId) {
       throw new ProviderUploadError(

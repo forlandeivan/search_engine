@@ -23,6 +23,36 @@ export interface SkillExecutionLogRepository {
   deleteExecutions(executionIds: readonly string[]): Promise<void>;
 }
 
+type SkillExecutionRow = {
+  id: string;
+  workspace_id: string;
+  user_id: string | null;
+  skill_id: string;
+  chat_id: string | null;
+  user_message_id: string | null;
+  source: SkillExecutionSource;
+  status: SkillExecutionStatus;
+  has_step_errors: boolean | number | null;
+  started_at: string | Date;
+  finished_at: string | Date | null;
+  metadata: JsonValue | null;
+};
+
+type SkillExecutionStepRow = {
+  id: string;
+  execution_id: string;
+  order: number | string;
+  type: SkillExecutionStepType;
+  status: SkillExecutionStepStatus;
+  started_at: string | Date;
+  finished_at: string | Date | null;
+  input_payload: JsonValue | null;
+  output_payload: JsonValue | null;
+  error_code: string | null;
+  error_message: string | null;
+  diagnostic_info: string | null;
+};
+
 export type SkillExecutionStartContext = {
   workspaceId: string;
   skillId: string;
@@ -317,36 +347,38 @@ function cloneRecord<T>(value: T): T {
 
 export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRepository {
   private mapExecution(row: Record<string, unknown>): SkillExecutionRecord {
+    const data = row as SkillExecutionRow;
     return {
-      id: row.id,
-      workspaceId: row.workspace_id,
-      userId: row.user_id,
-      skillId: row.skill_id,
-      chatId: row.chat_id,
-      userMessageId: row.user_message_id,
-      source: row.source,
-      status: row.status,
-      hasStepErrors: row.has_step_errors ?? false,
-      startedAt: new Date(row.started_at),
-      finishedAt: row.finished_at ? new Date(row.finished_at) : null,
-      metadata: row.metadata ?? undefined,
+      id: data.id,
+      workspaceId: data.workspace_id,
+      userId: data.user_id,
+      skillId: data.skill_id,
+      chatId: data.chat_id,
+      userMessageId: data.user_message_id,
+      source: data.source,
+      status: data.status,
+      hasStepErrors: Boolean(data.has_step_errors),
+      startedAt: new Date(data.started_at),
+      finishedAt: data.finished_at ? new Date(data.finished_at) : null,
+      metadata: data.metadata ?? undefined,
     };
   }
 
   private mapStep(row: Record<string, unknown>): SkillExecutionStepRecord {
+    const data = row as SkillExecutionStepRow;
     return {
-      id: row.id,
-      executionId: row.execution_id,
-      order: Number(row.order),
-      type: row.type,
-      status: row.status,
-      startedAt: new Date(row.started_at),
-      finishedAt: row.finished_at ? new Date(row.finished_at) : null,
-      inputPayload: row.input_payload ?? undefined,
-      outputPayload: row.output_payload ?? undefined,
-      errorCode: row.error_code ?? null,
-      errorMessage: row.error_message ?? null,
-      diagnosticInfo: row.diagnostic_info ?? null,
+      id: data.id,
+      executionId: data.execution_id,
+      order: Number(data.order),
+      type: data.type,
+      status: data.status,
+      startedAt: new Date(data.started_at),
+      finishedAt: data.finished_at ? new Date(data.finished_at) : null,
+      inputPayload: (data.input_payload ?? null) as JsonValue,
+      outputPayload: (data.output_payload ?? null) as JsonValue,
+      errorCode: data.error_code ?? undefined,
+      errorMessage: data.error_message ?? undefined,
+      diagnosticInfo: data.diagnostic_info ?? undefined,
     };
   }
 
@@ -419,13 +451,13 @@ export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRep
 
   async listExecutions(): Promise<SkillExecutionRecord[]> {
     const result = await db.execute(sql`SELECT * FROM skill_executions ORDER BY started_at DESC`);
-    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as SkillExecutionRow[];
     return rows.map((row) => this.mapExecution(row));
   }
 
   async getExecutionById(id: string): Promise<SkillExecutionRecord | null> {
     const result = await db.execute(sql`SELECT * FROM skill_executions WHERE id = ${id} LIMIT 1`);
-    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as SkillExecutionRow[];
     const row = rows[0];
     return row ? this.mapExecution(row) : null;
   }
@@ -434,7 +466,7 @@ export class DatabaseSkillExecutionLogRepository implements SkillExecutionLogRep
     const result = await db.execute(
       sql`SELECT * FROM skill_execution_steps WHERE execution_id = ${executionId} ORDER BY "order" ASC`,
     );
-    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as Record<string, unknown>[];
+    const rows = (result && typeof result === "object" && "rows" in result && Array.isArray(result.rows) ? result.rows : []) as SkillExecutionStepRow[];
     return rows.map((row) => this.mapStep(row));
   }
 
