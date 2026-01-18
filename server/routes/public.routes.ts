@@ -16,6 +16,7 @@ import { runKnowledgeBaseRagPipeline } from '../lib/rag-pipeline';
 import { sendSseEvent } from '../lib/chat-llm-helpers';
 import { HttpError } from '../lib/errors';
 import { QdrantConfigurationError } from '../qdrant';
+import { tariffPlanService } from '../tariff-plan-service';
 
 // Validation schemas
 const knowledgeSuggestQuerySchema = z.object({
@@ -115,6 +116,15 @@ publicRouter.get('/search/suggest', asyncHandler(async (req, res) => {
       total_ms: Number(duration.toFixed(2)),
     },
   });
+}));
+
+/**
+ * GET /tariffs
+ * List available tariff plans (public endpoint)
+ */
+publicRouter.get('/tariffs', asyncHandler(async (_req, res) => {
+  const tariffs = await tariffPlanService.listAll();
+  res.json({ tariffs });
 }));
 
 /**

@@ -2,12 +2,14 @@
  * Transcribe Routes Module
  * 
  * Handles speech-to-text transcription operations:
+ * - POST /api/chat/transcribe - Start transcription with audio file
  * - GET /api/chat/transcribe/operations/:operationId - Get transcription operation status
  * - GET /api/chat/transcribe/status - Check transcription service health
  * - POST /api/chat/transcribe/complete/:operationId - Complete transcription and create message
  */
 
 import { Router, type Request, type Response } from 'express';
+import multer from 'multer';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { storage } from '../storage';
@@ -44,6 +46,74 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
 // ============================================================================
 // Routes
 // ============================================================================
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
+});
+
+/**
+ * POST /
+ * Start transcription with audio file
+ */
+transcribeRouter.post('/', upload.single('audio'), asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ message: 'Аудио файл не предоставлен' });
+  }
+
+  const chatId = typeof req.body.chatId === 'string' ? req.body.chatId.trim() : null;
+  const operationId = typeof req.body.operationId === 'string' ? req.body.operationId.trim() : null;
+  const transcriptId = typeof req.body.transcriptId === 'string' ? req.body.transcriptId.trim() : null;
+  const executionId = typeof req.body.executionId === 'string' ? req.body.executionId.trim() : null;
+
+  if (!chatId) {
+    return res.status(400).json({ message: 'Chat ID обязателен' });
+  }
+
+  if (!operationId) {
+    return res.status(400).json({ message: 'Operation ID обязателен' });
+  }
+
+  const chat = await storage.getChatSessionById(chatId);
+  if (!chat || chat.userId !== user.id) {
+    return res.status(404).json({ message: 'Чат не найден или недоступен' });
+  }
+
+  const workspaceId = chat.workspaceId;
+
+  try {
+    const result = await yandexSttAsyncService.startAsyncTranscription({
+      audioBuffer: file.buffer,
+      mimeType: file.mimetype || 'audio/wav',
+      userId: user.id,
+      workspaceId,
+      originalFileName: file.originalname || 'audio.wav',
+      chatId,
+      transcriptId: transcriptId || null,
+      executionId: executionId || null,
+    });
+
+    res.json({
+      status: 'uploaded',
+      operationId: result.operationId,
+      message: 'Аудио файл загружен и отправлен на транскрибацию',
+    });
+  } catch (error) {
+    if (error instanceof YandexSttAsyncError) {
+      return res.status(error.status).json({
+        message: error.message,
+        code: error.code,
+      });
+    }
+
+    logger.error({ userId: user.id, chatId, operationId, error }, 'Error starting transcription');
+    throw error;
+  }
+}));
 
 /**
  * GET /operations/:operationId

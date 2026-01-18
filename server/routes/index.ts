@@ -134,7 +134,8 @@ export function registerRouteModules(app: Express): void {
   // Public routes (no auth required)
   app.use('/api/public', publicRouter);
   app.use('/public', publicRouter);  // Legacy path without /api prefix
-  routerLogger.info('Registered: /api/public, /public');
+  app.use('/api/tariffs', publicRouter);  // Public tariffs endpoint
+  routerLogger.info('Registered: /api/public, /public, /api/tariffs');
 
   // Jobs routes (crawling, indexing background tasks)
   app.use('/api/jobs', jobsRouter);

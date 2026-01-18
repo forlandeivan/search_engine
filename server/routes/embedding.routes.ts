@@ -6,10 +6,12 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import { z } from 'zod';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { listEmbeddingProvidersWithStatus } from '../embedding-provider-registry';
-import type { PublicUser } from '@shared/schema';
+import { fetchAccessToken } from '../llm-access-token';
+import type { PublicUser, EmbeddingProvider } from '@shared/schema';
 
 const logger = createLogger('embedding');
 
@@ -66,4 +68,167 @@ embeddingRouter.get('/services', asyncHandler(async (req, res) => {
   const workspaceId = getRequestWorkspace(req);
   const providers = await listEmbeddingProvidersWithStatus(workspaceId);
   res.json({ providers });
+}));
+
+/**
+ * POST /services/test-credentials
+ * Test embedding provider credentials
+ */
+embeddingRouter.post('/services/test-credentials', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const testSchema = z.object({
+    tokenUrl: z.string().trim().url("Некорректный URL для получения токена"),
+    embeddingsUrl: z.string().trim().url("Некорректный URL сервиса эмбеддингов"),
+    authorizationKey: z.string().trim().min(1, "Укажите Authorization key"),
+    scope: z.string().trim().min(1, "Укажите OAuth scope"),
+    model: z.string().trim().min(1, "Укажите модель эмбеддингов"),
+    allowSelfSignedCertificate: z.boolean().default(false),
+    requestHeaders: z.record(z.string()).default({}),
+  });
+
+  const payload = testSchema.parse(req.body);
+  const TEST_EMBEDDING_TEXT = "привет!";
+
+  const steps: Array<{
+    stage: string;
+    status: 'success' | 'error';
+    detail?: string;
+  }> = [];
+
+  try {
+    // Step 1: Fetch access token
+    steps.push({ stage: 'token-request', status: 'success' });
+    const provider: EmbeddingProvider = {
+      id: 'test',
+      name: 'Test Provider',
+      providerType: 'custom',
+      tokenUrl: payload.tokenUrl,
+      embeddingsUrl: payload.embeddingsUrl,
+      authorizationKey: payload.authorizationKey,
+      scope: payload.scope,
+      model: payload.model,
+      allowSelfSignedCertificate: payload.allowSelfSignedCertificate,
+      requestHeaders: payload.requestHeaders,
+      isActive: true,
+      workspaceId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    let accessToken: string;
+    try {
+      accessToken = await fetchAccessToken(provider);
+      steps.push({ stage: 'token-received', status: 'success' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      steps.push({ stage: 'token-received', status: 'error', detail: message });
+      return res.status(400).json({
+        message: 'Не удалось получить токен доступа',
+        steps,
+      });
+    }
+
+    // Step 2: Test embedding request
+    steps.push({ stage: 'embedding-request', status: 'success' });
+    const embeddingHeaders = new Headers();
+    embeddingHeaders.set("Content-Type", "application/json");
+    embeddingHeaders.set("Accept", "application/json");
+
+    for (const [key, value] of Object.entries(payload.requestHeaders)) {
+      embeddingHeaders.set(key, value);
+    }
+
+    if (!embeddingHeaders.has("Authorization")) {
+      embeddingHeaders.set("Authorization", `Bearer ${accessToken}`);
+    }
+
+    const embeddingBody = {
+      model: payload.model,
+      input: [TEST_EMBEDDING_TEXT],
+      encoding_format: "float",
+    };
+
+    try {
+      const fetchOptions: RequestInit = {
+        method: "POST",
+        headers: embeddingHeaders,
+        body: JSON.stringify(embeddingBody),
+      };
+
+      if (payload.allowSelfSignedCertificate) {
+        (fetchOptions as any).agent = undefined; // For Node.js fetch
+      }
+
+      const embeddingResponse = await fetch(payload.embeddingsUrl, fetchOptions);
+      const rawBody = await embeddingResponse.text();
+      const parsedBody = JSON.parse(rawBody);
+
+      if (!embeddingResponse.ok) {
+        let message = `Сервис вернул статус ${embeddingResponse.status}`;
+        if (parsedBody && typeof parsedBody === "object") {
+          const body = parsedBody as Record<string, unknown>;
+          if (typeof body.error_description === "string") {
+            message = body.error_description;
+          } else if (typeof body.message === "string") {
+            message = body.message;
+          }
+        }
+        steps.push({ stage: 'embedding-received', status: 'error', detail: message });
+        return res.status(400).json({
+          message: 'Не удалось получить вектор эмбеддингов',
+          steps,
+        });
+      }
+
+      const data = parsedBody.data;
+      if (!Array.isArray(data) || data.length === 0) {
+        steps.push({ stage: 'embedding-received', status: 'error', detail: 'Сервис не вернул данные' });
+        return res.status(400).json({
+          message: 'Сервис эмбеддингов не вернул данные',
+          steps,
+        });
+      }
+
+      const firstEntry = data[0];
+      const entryRecord = firstEntry as Record<string, unknown>;
+      const vector = entryRecord.embedding ?? entryRecord.vector;
+      
+      if (!Array.isArray(vector) || vector.length === 0) {
+        steps.push({ stage: 'embedding-received', status: 'error', detail: 'Сервис не вернул числовой вектор' });
+        return res.status(400).json({
+          message: 'Сервис эмбеддингов не вернул числовой вектор',
+          steps,
+        });
+      }
+
+      steps.push({
+        stage: 'embedding-received',
+        status: 'success',
+        detail: `Получен вектор размерностью ${vector.length}`,
+      });
+
+      res.json({
+        message: 'Авторизация подтверждена',
+        steps,
+        vectorSize: vector.length,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      steps.push({ stage: 'embedding-received', status: 'error', detail: message });
+      return res.status(400).json({
+        message: 'Не удалось получить вектор эмбеддингов',
+        steps,
+      });
+    }
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        message: 'Некорректные данные',
+        details: error.errors,
+      });
+    }
+    throw error;
+  }
 }));

@@ -733,4 +733,51 @@ workspaceRouter.get('/:workspaceId/skills/:skillId/files', asyncHandler(async (r
   res.json({ files });
 }));
 
+/**
+ * DELETE /:workspaceId/skills/:skillId/files/:fileId
+ * Delete skill file
+ */
+workspaceRouter.delete('/:workspaceId/skills/:skillId/files/:fileId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId, skillId, fileId } = req.params;
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership) {
+    return res.status(403).json({ message: 'Доступ запрещён' });
+  }
+
+  const deleted = await storage.deleteSkillFile(fileId, workspaceId, skillId);
+  if (!deleted) {
+    return res.status(404).json({ message: 'Файл не найден' });
+  }
+
+  res.status(204).send();
+}));
+
+/**
+ * GET /:workspaceId/credits
+ * Get workspace credits balance
+ */
+workspaceRouter.get('/:workspaceId/credits', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId } = req.params;
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership) {
+    return res.status(403).json({ message: 'Доступ запрещён' });
+  }
+
+  const workspace = await storage.getWorkspace(workspaceId);
+  if (!workspace) {
+    return res.status(404).json({ message: 'Рабочее пространство не найдено' });
+  }
+
+  res.json({
+    credits: workspace.credits ?? 0,
+    workspaceId: workspace.id,
+  });
+}));
+
 export default workspaceRouter;

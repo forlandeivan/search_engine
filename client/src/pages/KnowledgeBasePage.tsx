@@ -1113,7 +1113,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
         throw new Error("База знаний не выбрана");
       }
       const res = await apiRequest("GET", `/api/knowledge/bases/${baseId}/nodes/${nodeKey}`, undefined, undefined, workspaceId ? { workspaceId } : undefined);
-      return (await res.json()) as KnowledgeBaseNodeDetail;
+      const data = (await res.json()) as { node: KnowledgeBaseNodeDetail };
+      return data.node;
     },
   });
 

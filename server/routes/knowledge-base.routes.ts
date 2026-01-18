@@ -31,6 +31,11 @@ import {
   startKnowledgeBaseIndexing,
   KnowledgeBaseError,
 } from '../knowledge-base';
+import { crawlKnowledgeDocumentPage } from '../kb-crawler';
+import {
+  previewKnowledgeDocumentChunks,
+  createKnowledgeDocumentChunkSet,
+} from '../knowledge-chunks';
 import type { PublicUser } from '@shared/schema';
 
 const logger = createLogger('knowledge-base');
@@ -95,7 +100,64 @@ const updateNodeSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   content: z.string().optional(),
   parentId: z.string().trim().min(1).nullable().optional(),
+  title: z.string().trim().min(1).max(255).optional(),
 });
+
+const createCrawledKnowledgeDocumentSchema = z.object({
+  url: z.string().trim().min(1, 'Укажите ссылку на страницу').refine((value) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }, 'Укажите корректный URL страницы'),
+  selectors: z.object({
+    title: z.string().trim().min(1).optional(),
+    content: z.string().trim().min(1).optional(),
+  }).partial().optional(),
+  language: z.string().trim().min(1).optional(),
+  version: z.string().trim().min(1).optional(),
+  auth: z.object({
+    headers: z.record(z.string()).optional(),
+  }).partial().optional(),
+  parentId: z.string().trim().min(1).nullable().optional(),
+});
+
+const knowledgeDocumentChunkConfigSchema = z
+  .object({
+    maxTokens: z.number().int().min(50).max(4_000).optional(),
+    maxChars: z.number().int().min(200).max(20_000).optional(),
+    overlapTokens: z.number().int().min(0).max(4_000).optional(),
+    overlapChars: z.number().int().min(0).max(20_000).optional(),
+    splitByPages: z.boolean().optional(),
+    respectHeadings: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.maxTokens && !value.maxChars) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maxTokens"],
+        message: "Укажите ограничение по токенам или символам",
+      });
+    }
+
+    if (value.overlapTokens && value.maxTokens && value.overlapTokens >= value.maxTokens) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["overlapTokens"],
+        message: "Перехлёст по токенам должен быть меньше лимита",
+      });
+    }
+
+    if (value.overlapChars && value.maxChars && value.overlapChars >= value.maxChars) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["overlapChars"],
+        message: "Перехлёст по символам должен быть меньше лимита",
+      });
+    }
+  });
 
 // ============================================================================
 // Routes
@@ -199,6 +261,82 @@ knowledgeBaseRouter.post('/bases/:baseId/documents', asyncHandler(async (req, re
 }));
 
 /**
+ * POST /bases/:baseId/documents/crawl
+ * Crawl a single document page and add to knowledge base
+ */
+knowledgeBaseRouter.post('/bases/:baseId/documents/crawl', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const payload = createCrawledKnowledgeDocumentSchema.parse(req.body);
+  const parentId = payload.parentId ?? null;
+  const { id: workspaceId } = getRequestWorkspace(req);
+
+  const selectors = payload.selectors
+    ? {
+        title: payload.selectors.title?.trim() || null,
+        content: payload.selectors.content?.trim() || null,
+      }
+    : null;
+  
+  const authHeaders = payload.auth?.headers
+    ? Object.fromEntries(
+        Object.entries(payload.auth.headers)
+          .map(([key, value]) => [key.trim(), value.trim()])
+          .filter(([key, value]) => key.length > 0 && value.length > 0),
+      )
+    : undefined;
+
+  const result = await crawlKnowledgeDocumentPage(workspaceId, baseId, {
+    url: payload.url,
+    parentId,
+    selectors,
+    language: payload.language?.trim() || null,
+    version: payload.version?.trim() || null,
+    auth: authHeaders ? { headers: authHeaders } : null,
+  });
+
+  res.status(201).json(result);
+}));
+
+/**
+ * POST /bases/:baseId/documents/:nodeId/chunks/preview
+ * Preview document chunks with given config
+ */
+knowledgeBaseRouter.post('/bases/:baseId/documents/:nodeId/chunks/preview', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId, nodeId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  
+  const config = knowledgeDocumentChunkConfigSchema.parse(req.body?.config ?? {});
+  
+  const preview = await previewKnowledgeDocumentChunks(baseId, nodeId, workspaceId, config);
+  
+  res.json(preview);
+}));
+
+/**
+ * POST /bases/:baseId/documents/:nodeId/chunks
+ * Create document chunks with given config
+ */
+knowledgeBaseRouter.post('/bases/:baseId/documents/:nodeId/chunks', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId, nodeId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+  
+  const config = knowledgeDocumentChunkConfigSchema.parse(req.body?.config ?? {});
+  
+  const chunkSet = await createKnowledgeDocumentChunkSet(baseId, nodeId, workspaceId, config);
+  
+  res.json(chunkSet);
+}));
+
+/**
  * PATCH /bases/:baseId/nodes/:nodeId
  * Update node
  */
@@ -217,6 +355,27 @@ knowledgeBaseRouter.patch('/bases/:baseId/nodes/:nodeId', asyncHandler(async (re
   );
   
   res.json({ node });
+}));
+
+/**
+ * PATCH /bases/:baseId/documents/:nodeId
+ * Update document (alias for /nodes/:nodeId)
+ */
+knowledgeBaseRouter.patch('/bases/:baseId/documents/:nodeId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const payload = updateNodeSchema.parse(req.body);
+  const { id: workspaceId } = getRequestWorkspace(req);
+  
+  const node = await updateKnowledgeDocument(
+    workspaceId, 
+    req.params.baseId, 
+    req.params.nodeId, 
+    payload
+  );
+  
+  res.json(node);
 }));
 
 /**
