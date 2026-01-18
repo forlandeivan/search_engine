@@ -1,0 +1,1112 @@
+[
+  {
+    "method": "GET",
+    "path": "/available",
+    "file": "actions.routes.ts",
+    "line": 43
+  },
+  {
+    "method": "GET",
+    "path": "/google",
+    "file": "admin\\auth-providers.routes.ts",
+    "line": 44
+  },
+  {
+    "method": "PUT",
+    "path": "/google",
+    "file": "admin\\auth-providers.routes.ts",
+    "line": 57
+  },
+  {
+    "method": "GET",
+    "path": "/yandex",
+    "file": "admin\\auth-providers.routes.ts",
+    "line": 84
+  },
+  {
+    "method": "PUT",
+    "path": "/yandex",
+    "file": "admin\\auth-providers.routes.ts",
+    "line": 97
+  },
+  {
+    "method": "GET",
+    "path": "/providers",
+    "file": "admin\\file-storage.routes.ts",
+    "line": 49
+  },
+  {
+    "method": "GET",
+    "path": "/providers/:id",
+    "file": "admin\\file-storage.routes.ts",
+    "line": 57
+  },
+  {
+    "method": "POST",
+    "path": "/providers",
+    "file": "admin\\file-storage.routes.ts",
+    "line": 75
+  },
+  {
+    "method": "PATCH",
+    "path": "/providers/:id",
+    "file": "admin\\file-storage.routes.ts",
+    "line": 93
+  },
+  {
+    "method": "DELETE",
+    "path": "/providers/:id",
+    "file": "admin\\file-storage.routes.ts",
+    "line": 111
+  },
+  {
+    "method": "GET",
+    "path": "/models",
+    "file": "admin\\llm.routes.ts",
+    "line": 79
+  },
+  {
+    "method": "POST",
+    "path": "/models",
+    "file": "admin\\llm.routes.ts",
+    "line": 87
+  },
+  {
+    "method": "PUT",
+    "path": "/models/:id",
+    "file": "admin\\llm.routes.ts",
+    "line": 105
+  },
+  {
+    "method": "GET",
+    "path": "/llm-debug",
+    "file": "admin\\llm.routes.ts",
+    "line": 126
+  },
+  {
+    "method": "POST",
+    "path": "/llm-debug",
+    "file": "admin\\llm.routes.ts",
+    "line": 133
+  },
+  {
+    "method": "GET",
+    "path": "/llm-executions",
+    "file": "admin\\llm.routes.ts",
+    "line": 149
+  },
+  {
+    "method": "GET",
+    "path": "/llm-executions/:id",
+    "file": "admin\\llm.routes.ts",
+    "line": 159
+  },
+  {
+    "method": "GET",
+    "path": "/embeddings/providers",
+    "file": "admin\\llm.routes.ts",
+    "line": 170
+  },
+  {
+    "method": "GET",
+    "path": "/embeddings/providers/:providerId/models",
+    "file": "admin\\llm.routes.ts",
+    "line": 178
+  },
+  {
+    "method": "GET",
+    "path": "/knowledge-base-indexing-policy",
+    "file": "admin\\llm.routes.ts",
+    "line": 189
+  },
+  {
+    "method": "PUT",
+    "path": "/knowledge-base-indexing-policy",
+    "file": "admin\\llm.routes.ts",
+    "line": 197
+  },
+  {
+    "method": "PATCH",
+    "path": "/knowledge-base-indexing-policy",
+    "file": "admin\\llm.routes.ts",
+    "line": 234
+  },
+  {
+    "method": "GET",
+    "path": "/guard-blocks",
+    "file": "admin\\monitoring.routes.ts",
+    "line": 28
+  },
+  {
+    "method": "GET",
+    "path": "/usage/charges",
+    "file": "admin\\monitoring.routes.ts",
+    "line": 38
+  },
+  {
+    "method": "GET",
+    "path": "/system-notifications/logs",
+    "file": "admin\\monitoring.routes.ts",
+    "line": 49
+  },
+  {
+    "method": "GET",
+    "path": "/system-notifications/logs/:id",
+    "file": "admin\\monitoring.routes.ts",
+    "line": 59
+  },
+  {
+    "method": "GET",
+    "path": "/smtp",
+    "file": "admin\\settings.routes.ts",
+    "line": 53
+  },
+  {
+    "method": "PUT",
+    "path": "/smtp",
+    "file": "admin\\settings.routes.ts",
+    "line": 71
+  },
+  {
+    "method": "POST",
+    "path": "/smtp/test",
+    "file": "admin\\settings.routes.ts",
+    "line": 90
+  },
+  {
+    "method": "GET",
+    "path": "/indexing-rules",
+    "file": "admin\\settings.routes.ts",
+    "line": 109
+  },
+  {
+    "method": "PUT",
+    "path": "/indexing-rules",
+    "file": "admin\\settings.routes.ts",
+    "line": 124
+  },
+  {
+    "method": "PATCH",
+    "path": "/indexing-rules",
+    "file": "admin\\settings.routes.ts",
+    "line": 142
+  },
+  {
+    "method": "GET",
+    "path": "/unica-chat",
+    "file": "admin\\settings.routes.ts",
+    "line": 160
+  },
+  {
+    "method": "PUT",
+    "path": "/unica-chat",
+    "file": "admin\\settings.routes.ts",
+    "line": 168
+  },
+  {
+    "method": "GET",
+    "path": "/billing/info",
+    "file": "admin\\tariffs.routes.ts",
+    "line": 43
+  },
+  {
+    "method": "GET",
+    "path": "/",
+    "file": "admin\\tariffs.routes.ts",
+    "line": 50
+  },
+  {
+    "method": "GET",
+    "path": "/:planId",
+    "file": "admin\\tariffs.routes.ts",
+    "line": 58
+  },
+  {
+    "method": "PUT",
+    "path": "/:planId",
+    "file": "admin\\tariffs.routes.ts",
+    "line": 79
+  },
+  {
+    "method": "PUT",
+    "path": "/:planId/limits",
+    "file": "admin\\tariffs.routes.ts",
+    "line": 101
+  },
+  {
+    "method": "GET",
+    "path": "/limit-catalog",
+    "file": "admin\\tariffs.routes.ts",
+    "line": 122
+  },
+  {
+    "method": "GET",
+    "path": "/providers",
+    "file": "admin\\tts-stt.routes.ts",
+    "line": 32
+  },
+  {
+    "method": "GET",
+    "path": "/providers/:id",
+    "file": "admin\\tts-stt.routes.ts",
+    "line": 47
+  },
+  {
+    "method": "GET",
+    "path": "/providers/:id/secrets",
+    "file": "admin\\tts-stt.routes.ts",
+    "line": 65
+  },
+  {
+    "method": "PATCH",
+    "path": "/providers/:id",
+    "file": "admin\\tts-stt.routes.ts",
+    "line": 80
+  },
+  {
+    "method": "POST",
+    "path": "/providers/:id/test-iam-token",
+    "file": "admin\\tts-stt.routes.ts",
+    "line": 98
+  },
+  {
+    "method": "GET",
+    "path": "/asr-executions",
+    "file": "admin\\tts-stt.routes.ts",
+    "line": 113
+  },
+  {
+    "method": "GET",
+    "path": "/asr-executions/:id",
+    "file": "admin\\tts-stt.routes.ts",
+    "line": 123
+  },
+  {
+    "method": "GET",
+    "path": "/",
+    "file": "admin\\users.routes.ts",
+    "line": 58
+  },
+  {
+    "method": "PATCH",
+    "path": "/:userId/role",
+    "file": "admin\\users.routes.ts",
+    "line": 67
+  },
+  {
+    "method": "POST",
+    "path": "/:userId/activate",
+    "file": "admin\\users.routes.ts",
+    "line": 94
+  },
+  {
+    "method": "GET",
+    "path": "/",
+    "file": "admin\\workspaces.routes.ts",
+    "line": 76
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/default-file-storage-provider",
+    "file": "admin\\workspaces.routes.ts",
+    "line": 97
+  },
+  {
+    "method": "PUT",
+    "path": "/:workspaceId/default-file-storage-provider",
+    "file": "admin\\workspaces.routes.ts",
+    "line": 113
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/plan",
+    "file": "admin\\workspaces.routes.ts",
+    "line": 134
+  },
+  {
+    "method": "PUT",
+    "path": "/:workspaceId/plan",
+    "file": "admin\\workspaces.routes.ts",
+    "line": 153
+  },
+  {
+    "method": "POST",
+    "path": "/:workspaceId/credits/adjust",
+    "file": "admin\\workspaces.routes.ts",
+    "line": 176
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/credits/adjustments/recent",
+    "file": "admin\\workspaces.routes.ts",
+    "line": 204
+  },
+  {
+    "method": "GET",
+    "path": "googleAuthConfigured",
+    "file": "auth.routes.ts",
+    "line": 40
+  },
+  {
+    "method": "GET",
+    "path": "yandexAuthConfigured",
+    "file": "auth.routes.ts",
+    "line": 41
+  },
+  {
+    "method": "GET",
+    "path": "/providers",
+    "file": "auth.routes.ts",
+    "line": 142
+  },
+  {
+    "method": "GET",
+    "path": "/session",
+    "file": "auth.routes.ts",
+    "line": 152
+  },
+  {
+    "method": "GET",
+    "path": "/google",
+    "file": "auth.routes.ts",
+    "line": 164
+  },
+  {
+    "method": "GET",
+    "path": "/google/callback",
+    "file": "auth.routes.ts",
+    "line": 171
+  },
+  {
+    "method": "GET",
+    "path": "/yandex",
+    "file": "auth.routes.ts",
+    "line": 182
+  },
+  {
+    "method": "GET",
+    "path": "/yandex/callback",
+    "file": "auth.routes.ts",
+    "line": 189
+  },
+  {
+    "method": "POST",
+    "path": "/register",
+    "file": "auth.routes.ts",
+    "line": 200
+  },
+  {
+    "method": "POST",
+    "path": "/verify-email",
+    "file": "auth.routes.ts",
+    "line": 233
+  },
+  {
+    "method": "POST",
+    "path": "/resend-confirmation",
+    "file": "auth.routes.ts",
+    "line": 258
+  },
+  {
+    "method": "POST",
+    "path": "/login",
+    "file": "auth.routes.ts",
+    "line": 279
+  },
+  {
+    "method": "POST",
+    "path": "/logout",
+    "file": "auth.routes.ts",
+    "line": 300
+  },
+  {
+    "method": "GET",
+    "path": "/chats/:chatId/canvas-documents",
+    "file": "canvas.routes.ts",
+    "line": 70
+  },
+  {
+    "method": "GET",
+    "path": "/transcripts/:transcriptId/canvas-documents",
+    "file": "canvas.routes.ts",
+    "line": 93
+  },
+  {
+    "method": "POST",
+    "path": "/canvas-documents",
+    "file": "canvas.routes.ts",
+    "line": 116
+  },
+  {
+    "method": "PATCH",
+    "path": "/canvas-documents/:id",
+    "file": "canvas.routes.ts",
+    "line": 162
+  },
+  {
+    "method": "DELETE",
+    "path": "/canvas-documents/:id",
+    "file": "canvas.routes.ts",
+    "line": 195
+  },
+  {
+    "method": "POST",
+    "path": "/canvas-documents/:id/duplicate",
+    "file": "canvas.routes.ts",
+    "line": 218
+  },
+  {
+    "method": "GET",
+    "path": "/:cardId",
+    "file": "cards.routes.ts",
+    "line": 79
+  },
+  {
+    "method": "GET",
+    "path": "/sessions",
+    "file": "chat.routes.ts",
+    "line": 143
+  },
+  {
+    "method": "POST",
+    "path": "/sessions",
+    "file": "chat.routes.ts",
+    "line": 158
+  },
+  {
+    "method": "PATCH",
+    "path": "/sessions/:chatId",
+    "file": "chat.routes.ts",
+    "line": 198
+  },
+  {
+    "method": "DELETE",
+    "path": "/sessions/:chatId",
+    "file": "chat.routes.ts",
+    "line": 213
+  },
+  {
+    "method": "GET",
+    "path": "/sessions/:chatId/messages",
+    "file": "chat.routes.ts",
+    "line": 228
+  },
+  {
+    "method": "POST",
+    "path": "/sessions/:chatId/messages/llm",
+    "file": "chat.routes.ts",
+    "line": 275
+  },
+  {
+    "method": "POST",
+    "path": "/keys",
+    "file": "embed.routes.ts",
+    "line": 88
+  },
+  {
+    "method": "GET",
+    "path": "/keys/:id/domains",
+    "file": "embed.routes.ts",
+    "line": 124
+  },
+  {
+    "method": "POST",
+    "path": "/keys/:id/domains",
+    "file": "embed.routes.ts",
+    "line": 143
+  },
+  {
+    "method": "DELETE",
+    "path": "/keys/:id/domains/:domainId",
+    "file": "embed.routes.ts",
+    "line": 179
+  },
+  {
+    "method": "GET",
+    "path": "/vector",
+    "file": "health.routes.ts",
+    "line": 79
+  },
+  {
+    "method": "GET",
+    "path": "/pubsub",
+    "file": "health.routes.ts",
+    "line": 146
+  },
+  {
+    "method": "GET",
+    "path": "/db",
+    "file": "health.routes.ts",
+    "line": 173
+  },
+  {
+    "method": "GET",
+    "path": "/:jobId",
+    "file": "jobs.routes.ts",
+    "line": 58
+  },
+  {
+    "method": "POST",
+    "path": "/:jobId/pause",
+    "file": "jobs.routes.ts",
+    "line": 71
+  },
+  {
+    "method": "POST",
+    "path": "/:jobId/resume",
+    "file": "jobs.routes.ts",
+    "line": 84
+  },
+  {
+    "method": "POST",
+    "path": "/:jobId/cancel",
+    "file": "jobs.routes.ts",
+    "line": 97
+  },
+  {
+    "method": "POST",
+    "path": "/:jobId/retry",
+    "file": "jobs.routes.ts",
+    "line": 110
+  },
+  {
+    "method": "GET",
+    "path": "/:jobId/sse",
+    "file": "jobs.routes.ts",
+    "line": 130
+  },
+  {
+    "method": "GET",
+    "path": "/bases",
+    "file": "knowledge-base.routes.ts",
+    "line": 98
+  },
+  {
+    "method": "DELETE",
+    "path": "/bases/:baseId",
+    "file": "knowledge-base.routes.ts",
+    "line": 111
+  },
+  {
+    "method": "GET",
+    "path": "/bases/:baseId/nodes/:nodeId",
+    "file": "knowledge-base.routes.ts",
+    "line": 124
+  },
+  {
+    "method": "POST",
+    "path": "/bases/:baseId/folders",
+    "file": "knowledge-base.routes.ts",
+    "line": 142
+  },
+  {
+    "method": "POST",
+    "path": "/bases/:baseId/documents",
+    "file": "knowledge-base.routes.ts",
+    "line": 161
+  },
+  {
+    "method": "PATCH",
+    "path": "/bases/:baseId/nodes/:nodeId",
+    "file": "knowledge-base.routes.ts",
+    "line": 182
+  },
+  {
+    "method": "DELETE",
+    "path": "/bases/:baseId/nodes/:nodeId",
+    "file": "knowledge-base.routes.ts",
+    "line": 203
+  },
+  {
+    "method": "GET",
+    "path": "/bases/:baseId/indexing/summary",
+    "file": "knowledge-base.routes.ts",
+    "line": 216
+  },
+  {
+    "method": "POST",
+    "path": "/bases/:baseId/index",
+    "file": "knowledge-base.routes.ts",
+    "line": 229
+  },
+  {
+    "method": "GET",
+    "path": "/bases/:baseId/rag/config/latest",
+    "file": "knowledge-base.routes.ts",
+    "line": 244
+  },
+  {
+    "method": "GET",
+    "path": "/bases/:baseId/ask-ai/runs",
+    "file": "knowledge-base.routes.ts",
+    "line": 273
+  },
+  {
+    "method": "GET",
+    "path": "/bases/:baseId/ask-ai/runs/:runId",
+    "file": "knowledge-base.routes.ts",
+    "line": 304
+  },
+  {
+    "method": "POST",
+    "path": "/",
+    "file": "knowledge-crawl.routes.ts",
+    "line": 169
+  },
+  {
+    "method": "POST",
+    "path": "/:baseId/crawl",
+    "file": "knowledge-crawl.routes.ts",
+    "line": 196
+  },
+  {
+    "method": "GET",
+    "path": "/:baseId/crawl/active",
+    "file": "knowledge-crawl.routes.ts",
+    "line": 224
+  },
+  {
+    "method": "POST",
+    "path": "/:baseId/documents/crawl",
+    "file": "knowledge-crawl.routes.ts",
+    "line": 282
+  },
+  {
+    "method": "POST",
+    "path": "/bases/:baseId/indexing/actions/start",
+    "file": "knowledge-indexing.routes.ts",
+    "line": 66
+  },
+  {
+    "method": "POST",
+    "path": "/bases/:baseId/indexing/actions/update",
+    "file": "knowledge-indexing.routes.ts",
+    "line": 87
+  },
+  {
+    "method": "GET",
+    "path": "/bases/:baseId/indexing/actions/status",
+    "file": "knowledge-indexing.routes.ts",
+    "line": 122
+  },
+  {
+    "method": "GET",
+    "path": "/bases/:baseId/indexing/actions/history",
+    "file": "knowledge-indexing.routes.ts",
+    "line": 147
+  },
+  {
+    "method": "GET",
+    "path": "/bases/:baseId/indexing/actions/:actionId/logs",
+    "file": "knowledge-indexing.routes.ts",
+    "line": 181
+  },
+  {
+    "method": "POST",
+    "path": "/bases/:baseId/indexing/reset",
+    "file": "knowledge-indexing.routes.ts",
+    "line": 210
+  },
+  {
+    "method": "GET",
+    "path": "/bases/:baseId/indexing/changes",
+    "file": "knowledge-indexing.routes.ts",
+    "line": 244
+  },
+  {
+    "method": "GET",
+    "path": "/",
+    "file": "metrics.routes.ts",
+    "line": 16
+  },
+  {
+    "method": "POST",
+    "path": "/callback/transcripts",
+    "file": "no-code.routes.ts",
+    "line": 141
+  },
+  {
+    "method": "PATCH",
+    "path": "/callback/transcripts/:transcriptId",
+    "file": "no-code.routes.ts",
+    "line": 189
+  },
+  {
+    "method": "POST",
+    "path": "/callback/messages",
+    "file": "no-code.routes.ts",
+    "line": 242
+  },
+  {
+    "method": "POST",
+    "path": "/callback/stream",
+    "file": "no-code.routes.ts",
+    "line": 325
+  },
+  {
+    "method": "POST",
+    "path": "/callback/assistant-action",
+    "file": "no-code.routes.ts",
+    "line": 364
+  },
+  {
+    "method": "POST",
+    "path": "/callback/actions/start",
+    "file": "no-code.routes.ts",
+    "line": 403
+  },
+  {
+    "method": "POST",
+    "path": "/callback/actions/update",
+    "file": "no-code.routes.ts",
+    "line": 436
+  },
+  {
+    "method": "GET",
+    "path": "/json",
+    "file": "openapi.routes.ts",
+    "line": 27
+  },
+  {
+    "method": "GET",
+    "path": "/",
+    "file": "openapi.routes.ts",
+    "line": 42
+  },
+  {
+    "method": "GET",
+    "path": "/search/suggest",
+    "file": "public.routes.ts",
+    "line": 54
+  },
+  {
+    "method": "GET",
+    "path": "/embed/suggest",
+    "file": "public.routes.ts",
+    "line": 124
+  },
+  {
+    "method": "POST",
+    "path": "/rag/answer",
+    "file": "public.routes.ts",
+    "line": 202
+  },
+  {
+    "method": "GET",
+    "path": "/",
+    "file": "skill.routes.ts",
+    "line": 114
+  },
+  {
+    "method": "POST",
+    "path": "/",
+    "file": "skill.routes.ts",
+    "line": 129
+  },
+  {
+    "method": "PUT",
+    "path": "/:skillId",
+    "file": "skill.routes.ts",
+    "line": 144
+  },
+  {
+    "method": "DELETE",
+    "path": "/:skillId",
+    "file": "skill.routes.ts",
+    "line": 164
+  },
+  {
+    "method": "GET",
+    "path": "/:skillId",
+    "file": "skill.routes.ts",
+    "line": 183
+  },
+  {
+    "method": "GET",
+    "path": "/:skillId/actions",
+    "file": "skill.routes.ts",
+    "line": 202
+  },
+  {
+    "method": "PUT",
+    "path": "/:skillId/actions/:actionId",
+    "file": "skill.routes.ts",
+    "line": 249
+  },
+  {
+    "method": "POST",
+    "path": "/:skillId/no-code/callback-token",
+    "file": "skill.routes.ts",
+    "line": 318
+  },
+  {
+    "method": "GET",
+    "path": "/operations/:operationId",
+    "file": "transcribe.routes.ts",
+    "line": 52
+  },
+  {
+    "method": "GET",
+    "path": "/status",
+    "file": "transcribe.routes.ts",
+    "line": 78
+  },
+  {
+    "method": "POST",
+    "path": "/complete/:operationId",
+    "file": "transcribe.routes.ts",
+    "line": 87
+  },
+  {
+    "method": "GET",
+    "path": "/me",
+    "file": "user.routes.ts",
+    "line": 170
+  },
+  {
+    "method": "PATCH",
+    "path": "/me",
+    "file": "user.routes.ts",
+    "line": 189
+  },
+  {
+    "method": "POST",
+    "path": "/me/password",
+    "file": "user.routes.ts",
+    "line": 230
+  },
+  {
+    "method": "GET",
+    "path": "/me/api-tokens",
+    "file": "user.routes.ts",
+    "line": 277
+  },
+  {
+    "method": "POST",
+    "path": "/me/api-tokens",
+    "file": "user.routes.ts",
+    "line": 291
+  },
+  {
+    "method": "POST",
+    "path": "/me/api-token",
+    "file": "user.routes.ts",
+    "line": 329
+  },
+  {
+    "method": "POST",
+    "path": "/me/api-tokens/:tokenId/revoke",
+    "file": "user.routes.ts",
+    "line": 368
+  },
+  {
+    "method": "GET",
+    "path": "/collections",
+    "file": "vector.routes.ts",
+    "line": 248
+  },
+  {
+    "method": "GET",
+    "path": "/collections/:name",
+    "file": "vector.routes.ts",
+    "line": 349
+  },
+  {
+    "method": "GET",
+    "path": "/collections/:name/points",
+    "file": "vector.routes.ts",
+    "line": 395
+  },
+  {
+    "method": "POST",
+    "path": "/collections/:name/scroll",
+    "file": "vector.routes.ts",
+    "line": 450
+  },
+  {
+    "method": "POST",
+    "path": "/collections",
+    "file": "vector.routes.ts",
+    "line": 496
+  },
+  {
+    "method": "DELETE",
+    "path": "/collections/:name",
+    "file": "vector.routes.ts",
+    "line": 540
+  },
+  {
+    "method": "POST",
+    "path": "/collections/:name/points",
+    "file": "vector.routes.ts",
+    "line": 574
+  },
+  {
+    "method": "POST",
+    "path": "/collections/:name/search",
+    "file": "vector.routes.ts",
+    "line": 663
+  },
+  {
+    "method": "POST",
+    "path": "/collections/:name/search/text",
+    "file": "vector.routes.ts",
+    "line": 754
+  },
+  {
+    "method": "POST",
+    "path": "/collections/:name/search/generative",
+    "file": "vector.routes.ts",
+    "line": 893
+  },
+  {
+    "method": "POST",
+    "path": "/documents/vector-records",
+    "file": "vector.routes.ts",
+    "line": 1148
+  },
+  {
+    "method": "GET",
+    "path": "/documents/vectorize/jobs/:jobId",
+    "file": "vector.routes.ts",
+    "line": 1221
+  },
+  {
+    "method": "POST",
+    "path": "/documents/vectorize",
+    "file": "vector.routes.ts",
+    "line": 1246
+  },
+  {
+    "method": "GET",
+    "path": "prefer",
+    "file": "vector.routes.ts",
+    "line": 1252
+  },
+  {
+    "method": "POST",
+    "path": "/send-json",
+    "file": "webhook.routes.ts",
+    "line": 33
+  },
+  {
+    "method": "GET",
+    "path": "/",
+    "file": "workspace.routes.ts",
+    "line": 194
+  },
+  {
+    "method": "POST",
+    "path": "/switch",
+    "file": "workspace.routes.ts",
+    "line": 212
+  },
+  {
+    "method": "GET",
+    "path": "/members",
+    "file": "workspace.routes.ts",
+    "line": 260
+  },
+  {
+    "method": "POST",
+    "path": "/members",
+    "file": "workspace.routes.ts",
+    "line": 273
+  },
+  {
+    "method": "PATCH",
+    "path": "/members/:memberId",
+    "file": "workspace.routes.ts",
+    "line": 308
+  },
+  {
+    "method": "DELETE",
+    "path": "/members/:memberId",
+    "file": "workspace.routes.ts",
+    "line": 341
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/me",
+    "file": "workspace.routes.ts",
+    "line": 375
+  },
+  {
+    "method": "DELETE",
+    "path": "/:workspaceId/icon",
+    "file": "workspace.routes.ts",
+    "line": 430
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/icon",
+    "file": "workspace.routes.ts",
+    "line": 448
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/plan",
+    "file": "workspace.routes.ts",
+    "line": 477
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/usage/llm",
+    "file": "workspace.routes.ts",
+    "line": 499
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/usage/asr",
+    "file": "workspace.routes.ts",
+    "line": 512
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/usage/embeddings",
+    "file": "workspace.routes.ts",
+    "line": 525
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/usage/storage",
+    "file": "workspace.routes.ts",
+    "line": 538
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/usage/objects",
+    "file": "workspace.routes.ts",
+    "line": 551
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/usage/qdrant",
+    "file": "workspace.routes.ts",
+    "line": 564
+  },
+  {
+    "method": "GET",
+    "path": "/:workspaceId/actions",
+    "file": "workspace.routes.ts",
+    "line": 580
+  },
+  {
+    "method": "POST",
+    "path": "/:workspaceId/actions",
+    "file": "workspace.routes.ts",
+    "line": 597
+  },
+  {
+    "method": "PATCH",
+    "path": "/:workspaceId/actions/:actionId",
+    "file": "workspace.routes.ts",
+    "line": 654
+  },
+  {
+    "method": "DELETE",
+    "path": "/:workspaceId/actions/:actionId",
+    "file": "workspace.routes.ts",
+    "line": 694
+  }
+]
