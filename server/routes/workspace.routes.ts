@@ -227,12 +227,12 @@ workspaceRouter.post('/switch', asyncHandler(async (req, res) => {
     }
 
     if (req.session) {
-      (req.session as any).activeWorkspaceId = workspaceId;
-      (req.session as any).workspaceId = workspaceId;
+      req.session.activeWorkspaceId = workspaceId;
+      req.session.workspaceId = workspaceId;
     }
 
-    (req as any).workspaceId = workspaceId;
-    (req as any).workspaceRole = membership.role;
+    req.workspaceId = workspaceId;
+    req.workspaceRole = membership.role;
 
     res.json({
       workspaceId,

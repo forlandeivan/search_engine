@@ -1034,12 +1034,12 @@ vectorRouter.post('/collections/:name/search/generative', asyncHandler(async (re
   };
 
   if (body.offset !== undefined) searchPayload.offset = body.offset;
-  if (body.filter !== undefined) searchPayload.filter = body.filter as any;
-  if (body.params !== undefined) searchPayload.params = body.params as any;
-  searchPayload.with_payload = (body.withPayload ?? true) as any;
-  if (body.withVector !== undefined) searchPayload.with_vector = body.withVector as any;
-  if (body.scoreThreshold !== undefined) searchPayload.score_threshold = body.scoreThreshold;
-  if (body.shardKey !== undefined) searchPayload.shard_key = body.shardKey as any;
+    if (body.filter !== undefined) searchPayload.filter = body.filter as Schemas['Filter'];
+    if (body.params !== undefined) searchPayload.params = body.params as Schemas['SearchParams'];
+    searchPayload.with_payload = (body.withPayload ?? true) as Schemas['WithPayloadInterface'];
+    if (body.withVector !== undefined) searchPayload.with_vector = body.withVector as Schemas['WithVectorInterface'];
+    if (body.scoreThreshold !== undefined) searchPayload.score_threshold = body.scoreThreshold;
+    if (body.shardKey !== undefined) searchPayload.shard_key = body.shardKey as Schemas['ShardKeySelector'];
   if (body.consistency !== undefined) searchPayload.consistency = body.consistency;
   if (body.timeout !== undefined) searchPayload.timeout = body.timeout;
 
@@ -1277,7 +1277,7 @@ vectorRouter.post('/documents/vectorize', asyncHandler(async (req, res) => {
       }));
     } catch (err) {
       if (err instanceof IndexingRulesDomainError) {
-        return res.status((err as any).status ?? 400).json({
+        return res.status(err.status ?? 400).json({
           error: err.message,
           code: err.code,
           field: err.field ?? 'embeddings_provider',
