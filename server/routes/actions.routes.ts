@@ -5,7 +5,7 @@
  * - GET /api/actions/available - List available system actions
  */
 
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import { actionsRepository } from '../actions';
@@ -19,11 +19,11 @@ export const actionsRouter = Router();
 // Helper Functions
 // ============================================================================
 
-function getSessionUser(req: any): PublicUser | null {
-  return req.user as PublicUser | null;
+function getSessionUser(req: Request): PublicUser | null {
+  return (req as Request & { user?: PublicUser }).user ?? null;
 }
 
-function getAuthorizedUser(req: any, res: Response): PublicUser | null {
+function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
   const user = getSessionUser(req);
   if (!user) {
     res.status(401).json({ message: 'Требуется авторизация' });

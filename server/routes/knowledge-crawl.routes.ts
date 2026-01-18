@@ -7,7 +7,7 @@
  * - GET /api/kb/:baseId/crawl/active - Get active crawl status
  */
 
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
@@ -32,11 +32,11 @@ export const knowledgeCrawlRouter = Router();
 // Helper Functions
 // ============================================================================
 
-function getSessionUser(req: any): PublicUser | null {
-  return req.user as PublicUser | null;
+function getSessionUser(req: Request): PublicUser | null {
+  return (req as Request & { user?: PublicUser }).user ?? null;
 }
 
-function getAuthorizedUser(req: any, res: Response): PublicUser | null {
+function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
   const user = getSessionUser(req);
   if (!user) {
     res.status(401).json({ message: 'Требуется авторизация' });
@@ -45,7 +45,7 @@ function getAuthorizedUser(req: any, res: Response): PublicUser | null {
   return user;
 }
 
-function getRequestWorkspace(req: any): { id: string; role?: string } {
+function getRequestWorkspace(req: Request): { id: string; role?: string } {
   const workspaceId = req.workspaceId ||
     req.workspaceContext?.workspaceId ||
     req.params.workspaceId ||
@@ -316,7 +316,7 @@ knowledgeCrawlRouter.post('/:baseId/documents/crawl', asyncHandler(async (req, r
 }));
 
 // Error handler for this router
-knowledgeCrawlRouter.use((err: Error, req: any, res: Response, next: any) => {
+knowledgeCrawlRouter.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof z.ZodError) {
     const issue = err.issues.at(0);
     const message = issue?.message ?? 'Некорректные данные';

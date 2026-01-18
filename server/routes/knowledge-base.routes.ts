@@ -41,11 +41,11 @@ export const knowledgeBaseRouter = Router();
 // Helper Functions
 // ============================================================================
 
-function getSessionUser(req: any): PublicUser | null {
-  return req.user as PublicUser | null;
+function getSessionUser(req: Request): PublicUser | null {
+  return (req as Request & { user?: PublicUser }).user ?? null;
 }
 
-function getAuthorizedUser(req: any, res: Response): PublicUser | null {
+function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
   const user = getSessionUser(req);
   if (!user) {
     res.status(401).json({ message: 'Требуется авторизация' });
@@ -54,7 +54,7 @@ function getAuthorizedUser(req: any, res: Response): PublicUser | null {
   return user;
 }
 
-function getRequestWorkspace(req: any): { id: string } {
+function getRequestWorkspace(req: Request): { id: string } {
   const workspaceId = req.workspaceId ||
     req.workspaceContext?.workspaceId ||
     req.params.workspaceId ||
