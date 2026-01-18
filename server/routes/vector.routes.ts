@@ -1485,9 +1485,9 @@ vectorRouter.post('/documents/vectorize', asyncHandler(async (req, res) => {
       embeddingCreditsPerUnit = resolved.creditsPerUnit ?? null;
     } catch (err) {
       if (err instanceof ModelValidationError || err instanceof ModelUnavailableError || err instanceof ModelInactiveError) {
-        const status = (err as any)?.status ?? 400;
+        const status = err.status ?? 400;
         markImmediateFailure(err.message, status);
-        return res.status(status).json({ message: err.message, errorCode: (err as any)?.code });
+        return res.status(status).json({ message: err.message, errorCode: err.code });
       }
       throw err;
     }
