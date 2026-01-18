@@ -44,9 +44,18 @@ llmRouter.get('/providers', asyncHandler(async (req, res) => {
   const user = getAuthorizedUser(req, res);
   if (!user) return;
 
-  const workspaceId = req.query.workspaceId ||
-    req.workspaceId ||
+  // Check header first (most common from frontend)
+  const headerWorkspaceRaw = req.headers["x-workspace-id"];
+  const headerWorkspaceId = Array.isArray(headerWorkspaceRaw)
+    ? headerWorkspaceRaw[0]
+    : typeof headerWorkspaceRaw === "string"
+      ? headerWorkspaceRaw.trim()
+      : undefined;
+
+  const workspaceId = req.workspaceId ||
     req.workspaceContext?.workspaceId ||
+    headerWorkspaceId ||
+    req.query.workspaceId ||
     req.params.workspaceId ||
     req.session?.workspaceId ||
     req.session?.activeWorkspaceId;

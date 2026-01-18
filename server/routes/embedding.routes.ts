@@ -34,8 +34,17 @@ function getAuthorizedUser(req: Request, res: Response): PublicUser | null {
 }
 
 function getRequestWorkspace(req: Request): string | undefined {
+  // Check header first (most common from frontend)
+  const headerWorkspaceRaw = req.headers["x-workspace-id"];
+  const headerWorkspaceId = Array.isArray(headerWorkspaceRaw)
+    ? headerWorkspaceRaw[0]
+    : typeof headerWorkspaceRaw === "string"
+      ? headerWorkspaceRaw.trim()
+      : undefined;
+
   return req.workspaceId ||
     req.workspaceContext?.workspaceId ||
+    headerWorkspaceId ||
     req.params.workspaceId ||
     req.query.workspaceId ||
     req.session?.workspaceId ||
