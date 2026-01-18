@@ -10,6 +10,8 @@ import { Router } from 'express';
 import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { getQdrantClient } from '../qdrant';
+import { getPubSubHealth } from '../realtime';
+import { getChatSubscriptionStats as getChatStats } from '../chat-events';
 
 const logger = createLogger('health');
 
@@ -133,6 +135,33 @@ healthRouter.get('/vector', async (_req, res) => {
       errorDetails,
       errorName,
       errorCode,
+    });
+  }
+});
+
+/**
+ * GET /pubsub
+ * PubSub health check for multi-instance scaling
+ */
+healthRouter.get('/pubsub', async (_req, res) => {
+  try {
+    const pubsubHealth = await getPubSubHealth();
+    const chatStats = getChatStats();
+    
+    return res.json({
+      status: pubsubHealth.healthy ? 'ok' : 'degraded',
+      provider: pubsubHealth.provider,
+      healthy: pubsubHealth.healthy,
+      stats: pubsubHealth.stats,
+      chatSubscriptions: chatStats,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error({ error }, 'PubSub health check failed');
+    return res.status(500).json({
+      status: 'error',
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString(),
     });
   }
 });

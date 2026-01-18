@@ -15,6 +15,8 @@ import { startSkillFileIngestionWorker } from "./skill-file-ingestion-jobs";
 import { startKnowledgeBaseIndexingWorker } from "./knowledge-base-indexing-jobs";
 import { startFileEventOutboxWorker } from "./no-code-file-events-outbox";
 import { startBotActionWatchdog } from "./bot-action-watchdog";
+import { closePubSub } from "./realtime";
+import { cleanupChatSubscriptions } from "./chat-events";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -374,6 +376,10 @@ function validateProductionSecrets(): void {
           else resolve();
         });
       });
+
+      // Cleanup chat subscriptions and PubSub
+      cleanupChatSubscriptions();
+      await closePubSub();
 
       // Close database pool
       const { pool } = await import("./db");
