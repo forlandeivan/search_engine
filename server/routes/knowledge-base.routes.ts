@@ -536,9 +536,8 @@ knowledgeBaseRouter.post('/bases/:baseId/index', asyncHandler(async (req, res) =
   if (!user) return;
 
   const { id: workspaceId } = getRequestWorkspace(req);
-  const result = await startKnowledgeBaseIndexing(workspaceId, req.params.baseId, {
-    triggeredByUserId: user.id,
-  });
+  const mode = (req.query.mode === "changed" ? "changed" : "full") as "full" | "changed";
+  const result = await startKnowledgeBaseIndexing(req.params.baseId, workspaceId, mode, user.id);
   res.json(result);
 }));
 
