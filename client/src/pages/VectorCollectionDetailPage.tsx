@@ -45,460 +45,50 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { PublicEmbeddingProvider, PublicLlmProvider } from "@shared/schema";
 import { useModels, type PublicModel } from "@/hooks/useModels";
 
-interface VectorCollectionDetail {
-  name: string;
-  status: string;
-  optimizerStatus?: string | { error: string };
-  pointsCount: number;
-  vectorsCount: number | null;
-  segmentsCount: number | null;
-  vectorSize: number | null;
-  distance: string | null;
-  config?: Record<string, unknown> | null;
-}
-
-type CollectionPoint = {
-  id: string | number;
-  payload: Record<string, unknown> | null;
-  shard_key?: unknown;
-  order_value?: unknown;
-  score?: number;
-  [key: string]: unknown;
-};
-
-interface CollectionPointsResponse {
-  points: CollectionPoint[];
-  nextPageOffset: string | number | null;
-}
-
-const POINTS_PAGE_SIZE = 24;
-
-const SEARCH_SETTINGS_STORAGE_KEY = "vector-collection-search-settings";
-
-const DEFAULT_TOP_K = 5;
-const DEFAULT_GENERATIVE_CONTEXT_LIMIT = 5;
-const DEFAULT_SEMANTIC_WITH_PAYLOAD = true;
-const DEFAULT_SEMANTIC_WITH_VECTOR = false;
-const GENERATIVE_TYPING_INTERVAL_MS = 18;
-
-const clampTopK = (value: number) => {
-  if (!Number.isFinite(value)) {
-    return 1;
-  }
-
-  const rounded = Math.round(value);
-  return Math.min(100, Math.max(1, rounded));
-};
-
-const GenerativeLoadingDots = () => {
-  return (
-    <span className="flex items-center gap-1 text-primary" aria-hidden>
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" style={{ animationDelay: "0ms" }} />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" style={{ animationDelay: "150ms" }} />
-      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" style={{ animationDelay: "300ms" }} />
-    </span>
-  );
-};
-
-const GenerativeLoadingState = () => {
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/40 p-3"
-    >
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10">
-          <Sparkles className="h-4 w-4 text-primary" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold text-foreground">Генерируем ответ...</span>
-          <span className="text-xs text-muted-foreground">Запрос отправлен в LLM, подождите немного.</span>
-        </div>
-      </div>
-      <GenerativeLoadingDots />
-    </div>
-  );
-};
-
-type SearchMode = "semantic" | "filter" | "vector" | "generative";
-
-const searchModeOptions: Array<{ value: SearchMode; label: string; icon: LucideIcon }> = [
-  { value: "semantic", label: "Текст", icon: Search },
-  { value: "generative", label: "LLM", icon: Sparkles },
-  { value: "filter", label: "Фильтр", icon: Filter },
-  { value: "vector", label: "Вектор", icon: Maximize2 },
-];
-
-type FilterOperator = "eq" | "neq" | "contains" | "gt" | "gte" | "lt" | "lte";
-
-type FilterCombineMode = "and" | "or";
-
-interface FilterCondition {
-  id: string;
-  field: string;
-  operator: FilterOperator;
-  value: string;
-}
-
-type LlmModelSelectionOption = {
-  key: string;
-  provider: PublicLlmProvider;
-  model: { label: string; value: string };
-};
-
-interface ActiveSearchState {
-  mode: SearchMode;
-  description: string;
-  results: CollectionPoint[];
-  scores: Record<string, number>;
-  vectorLength?: number;
-  usageTokens?: number | null;
-  providerName?: string;
-  llmProviderName?: string;
-  llmModelLabel?: string;
-  llmUsageTokens?: number | null;
-  answer?: string;
-  queryVectorPreview?: string;
-  limit: number;
-  withPayload?: unknown;
-  withVector?: unknown;
-  filterPayload?: Record<string, unknown> | null;
-  nextPageOffset?: string | number | null;
-  contextLimit?: number;
-}
-
-interface SearchSettingsStorage {
-  semantic?: {
-    topK?: number;
-    providerId?: string | null;
-    withPayload?: boolean;
-    withVector?: boolean;
-  };
-  generative?: {
-    topK?: number;
-    contextLimit?: number;
-    embeddingProviderId?: string | null;
-    llmProviderId?: string | null;
-    llmModel?: string | null;
-  };
-}
-
-interface TextSearchResponse {
-  results: Array<{
-    id: string | number;
-    payload?: Record<string, unknown> | null;
-    vector?: number[] | Record<string, unknown> | null;
-    score?: number;
-    shard_key?: unknown;
-    order_value?: unknown;
-    version?: unknown;
-  }>;
-  queryVector?: number[];
-  vectorLength?: number;
-  usageTokens?: number | null;
-  provider?: { id: string; name: string };
-}
-
-interface GenerativeSearchResponse {
-  answer: string;
-  usage?: {
-    embeddingTokens: number | null;
-    llmTokens: number | null;
-  };
-  provider: { id: string; name: string; model?: string; modelLabel?: string };
-  embeddingProvider: { id: string; name: string };
-  context: Array<{
-    id: string | number;
-    payload: Record<string, unknown> | null;
-    score?: number | null;
-    shard_key?: unknown;
-    order_value?: unknown;
-  }>;
-  queryVector?: number[];
-  vectorLength?: number;
-}
-
-type GenerativeStreamMetadata = {
-  context?: GenerativeSearchResponse["context"];
-  usage?: GenerativeSearchResponse["usage"];
-  provider?: GenerativeSearchResponse["provider"];
-  embeddingProvider?: GenerativeSearchResponse["embeddingProvider"];
-  queryVector?: number[];
-  vectorLength?: number;
-  limit?: number;
-  contextLimit?: number;
-};
-
-type GenerativeStreamToken = {
-  delta?: string;
-  text?: string;
-};
-
-type GenerativeStreamCompletion = {
-  answer?: string;
-  usage?: GenerativeSearchResponse["usage"];
-};
-
-type GenerativeStreamError = {
-  message?: string;
-};
-
-const filterOperatorOptions: Array<{ value: FilterOperator; label: string }> = [
-  { value: "eq", label: "Равно" },
-  { value: "neq", label: "Не равно" },
-  { value: "contains", label: "Содержит" },
-  { value: "gt", label: ">" },
-  { value: "gte", label: "≥" },
-  { value: "lt", label: "<" },
-  { value: "lte", label: "≤" },
-];
-
-const filterOperatorSymbols: Record<FilterOperator, string> = {
-  eq: "=",
-  neq: "≠",
-  contains: "∋",
-  gt: ">",
-  gte: "≥",
-  lt: "<",
-  lte: "≤",
-};
-
-const excludedPointKeys = new Set(["id", "payload", "vector", "shard_key", "order_value", "score"]);
-
-function generateConditionId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return `condition-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function collectNestedFields(
-  source: Record<string, unknown>,
-  prefix: string,
-  accumulator: Set<string>,
-) {
-  Object.entries(source).forEach(([key, value]) => {
-    const path = prefix ? `${prefix}.${key}` : key;
-    accumulator.add(path);
-
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      collectNestedFields(value as Record<string, unknown>, path, accumulator);
-    }
-  });
-}
-
-function getAvailableFieldPaths(points: CollectionPoint[]): string[] {
-  const fields = new Set<string>();
-
-  points.forEach((point) => {
-    if (point.payload) {
-      collectNestedFields(point.payload, "", fields);
-    }
-
-    Object.entries(point).forEach(([key, value]) => {
-      if (excludedPointKeys.has(key) || value === undefined || value === null) {
-        return;
-      }
-
-      fields.add(key);
-    });
-  });
-
-  return Array.from(fields).sort((a, b) => a.localeCompare(b, "ru"));
-}
-
-function parseFilterPrimitive(rawValue: string): string | number | boolean {
-  const trimmed = rawValue.trim();
-
-  if (!trimmed) {
-    return "";
-  }
-
-  if (/^(true|false)$/i.test(trimmed)) {
-    return trimmed.toLowerCase() === "true";
-  }
-
-  const numeric = Number(trimmed);
-  if (!Number.isNaN(numeric)) {
-    return numeric;
-  }
-
-  return trimmed;
-}
-
-function buildFilterPayload(
-  conditions: FilterCondition[],
-  combineMode: FilterCombineMode,
-): Record<string, unknown> {
-  const meaningfulConditions = conditions.filter((condition) => condition.field.trim().length > 0);
-
-  if (meaningfulConditions.length === 0) {
-    throw new Error("Добавьте хотя бы одно условие фильтра.");
-  }
-
-  const positive: Array<Record<string, unknown>> = [];
-  const negative: Array<Record<string, unknown>> = [];
-
-  for (const condition of meaningfulConditions) {
-    const field = condition.field.trim();
-    const value = condition.value.trim();
-
-    switch (condition.operator) {
-      case "eq": {
-        const parsedValue = parseFilterPrimitive(value);
-        positive.push({ key: field, match: { value: parsedValue } });
-        break;
-      }
-      case "neq": {
-        const parsedValue = parseFilterPrimitive(value);
-        negative.push({ key: field, match: { value: parsedValue } });
-        break;
-      }
-      case "contains": {
-        if (!value) {
-          throw new Error("Укажите значение для оператора 'Содержит'.");
-        }
-        positive.push({ key: field, match: { text: value } });
-        break;
-      }
-      case "gt":
-      case "gte":
-      case "lt":
-      case "lte": {
-        const parsedNumber = Number(value);
-        if (Number.isNaN(parsedNumber)) {
-          throw new Error("Для сравнений укажите числовое значение.");
-        }
-
-        const rangeKey = condition.operator === "gt"
-          ? "gt"
-          : condition.operator === "gte"
-            ? "gte"
-            : condition.operator === "lt"
-              ? "lt"
-              : "lte";
-
-        positive.push({ key: field, range: { [rangeKey]: parsedNumber } });
-        break;
-      }
-      default:
-        throw new Error("Неизвестный оператор фильтра.");
-    }
-  }
-
-  const filter: Record<string, unknown> = {};
-
-  if (combineMode === "and" && positive.length > 0) {
-    filter.must = positive;
-  }
-
-  if (combineMode === "or" && positive.length > 0) {
-    filter.should = positive;
-    filter.min_should = { conditions: positive, min_count: 1 };
-  }
-
-  if (negative.length > 0) {
-    filter.must_not = negative;
-  }
-
-  if (!filter.must && !filter.should && !filter.must_not) {
-    throw new Error("Не удалось построить фильтр. Проверьте условия.");
-  }
-
-  return filter;
-}
-
-function describeFilterConditions(conditions: FilterCondition[], combineMode: FilterCombineMode): string {
-  const meaningful = conditions.filter((condition) => condition.field.trim().length > 0);
-
-  if (meaningful.length === 0) {
-    return "Фильтр не задан";
-  }
-
-  const separator = combineMode === "and" ? " ∧ " : " ∨ ";
-
-  return meaningful
-    .map((condition) => {
-      const valuePart = condition.value.trim() ? condition.value.trim() : "∅";
-      return `${condition.field} ${filterOperatorSymbols[condition.operator]} ${valuePart}`;
-    })
-    .join(separator);
-}
-
-function parseVectorInput(raw: string): number[] {
-  const tokens = raw
-    .split(/[\s,]+/u)
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  if (tokens.length === 0) {
-    throw new Error("Введите значения вектора через пробел или запятую.");
-  }
-
-  const vector: number[] = [];
-
-  for (const token of tokens) {
-    const parsed = Number(token);
-    if (!Number.isFinite(parsed)) {
-      throw new Error(`Некорректное значение вектора: "${token}".`);
-    }
-    vector.push(parsed);
-  }
-
-  return vector;
-}
-
-function formatVectorPreview(vector: number[]): string {
-  if (vector.length === 0) {
-    return "—";
-  }
-
-  const preview = vector.slice(0, 6).map((value) => value.toFixed(3)).join(", ");
-  return vector.length > 6 ? `${preview}, …` : preview;
-}
-
-function resolveProviderVectorSize(provider: PublicEmbeddingProvider | undefined): number | null {
-  if (!provider) {
-    return null;
-  }
-
-  const candidate = provider.qdrantConfig?.vectorSize;
-
-  if (typeof candidate === "number" && Number.isFinite(candidate)) {
-    return candidate;
-  }
-
-  if (typeof candidate === "string" && candidate.trim()) {
-    const parsed = Number.parseInt(candidate, 10);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-const statusLabels: Record<string, string> = {
-  green: "Готова",
-  yellow: "Оптимизируется",
-  red: "Ошибка",
-};
-
-const statusIndicatorVariants: Record<string, string> = {
-  green: "bg-emerald-500",
-  yellow: "bg-amber-500",
-  red: "bg-red-500",
-};
-
-function formatNumber(value: number | null | undefined) {
-  if (value === null || value === undefined) {
-    return "—";
-  }
-
-  return new Intl.NumberFormat("ru-RU").format(value);
-}
+// Import from decomposed modules
+import type {
+  VectorCollectionDetail,
+  CollectionPoint,
+  CollectionPointsResponse,
+  SearchMode,
+  FilterOperator,
+  FilterCombineMode,
+  FilterCondition,
+  LlmModelSelectionOption,
+  ActiveSearchState,
+  SearchSettingsStorage,
+  TextSearchResponse,
+  GenerativeSearchResponse,
+  GenerativeStreamMetadata,
+  GenerativeStreamToken,
+  GenerativeStreamCompletion,
+  GenerativeStreamError,
+} from './VectorCollectionDetailPage/types';
+import {
+  POINTS_PAGE_SIZE,
+  SEARCH_SETTINGS_STORAGE_KEY,
+  DEFAULT_TOP_K,
+  DEFAULT_GENERATIVE_CONTEXT_LIMIT,
+  DEFAULT_SEMANTIC_WITH_PAYLOAD,
+  DEFAULT_SEMANTIC_WITH_VECTOR,
+  GENERATIVE_TYPING_INTERVAL_MS,
+  searchModeOptions,
+  filterOperatorOptions,
+  statusLabels,
+  statusIndicatorVariants,
+} from './VectorCollectionDetailPage/constants';
+import {
+  generateConditionId,
+  getAvailableFieldPaths,
+  buildFilterPayload,
+  describeFilterConditions,
+  parseVectorInput,
+  formatVectorPreview,
+  resolveProviderVectorSize,
+  clampTopK,
+  formatNumber,
+} from './VectorCollectionDetailPage/utils';
+import { GenerativeLoadingState } from './VectorCollectionDetailPage/components';
 
 export default function VectorCollectionDetailPage() {
   const [match, params] = useRoute("/vector/collections/:name");

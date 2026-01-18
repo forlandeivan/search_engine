@@ -85,131 +85,35 @@ import type { Skill } from "@/types/skill";
 import type { SessionResponse } from "@/types/session";
 import type { FileStorageProviderSummary } from "@/types/file-storage-providers";
 
-const ICON_OPTIONS = SKILL_ICON_OPTIONS;
+// Import from decomposed modules
+import { ICON_OPTIONS, WORKSPACE_DEFAULT_PROVIDER_VALUE } from './SkillsPage/constants';
+import {
+  skillFormSchema,
+  defaultFormValues,
+  buildLlmKey,
+  catalogModelMap,
+  type SkillFormValues,
+} from './SkillsPage/utils';
+import type {
+  LlmSelectionOption,
+  KnowledgeBaseMultiSelectProps,
+  SkillActionConfigItem,
+  SkillActionRowState,
+  SkillSettingsTab,
+} from './SkillsPage/types';
+import {
+  KnowledgeBaseMultiSelect,
+  InfoTooltipIcon,
+  SkillActionsPreview,
+  ActionsPreviewForNewSkill,
+  IconPicker,
+} from './SkillsPage/components';
 
-export const WORKSPACE_DEFAULT_PROVIDER_VALUE = "__workspace_default";
+export type SkillSettingsTab = "main" | "transcription" | "actions";
 
-export const skillFormSchema = z.object({
-  name: z.string().trim().min(1, "Название обязательно").max(200, "Не более 200 символов"),
-  description: z
-    .string()
-    .max(4000, "Не более 4000 символов")
-    .optional()
-    .or(z.literal("")),
-  executionMode: z.enum(["standard", "no_code"]).default("standard"),
-  mode: z.enum(["rag", "llm"]).default("rag"),
-  knowledgeBaseIds: z.array(z.string()).default([]),
-  llmKey: z.string().min(1, "Выберите конфиг LLM"),
-  llmTemperature: z.string().optional().or(z.literal("")),
-  llmMaxTokens: z.string().optional().or(z.literal("")),
-  systemPrompt: z
-    .string()
-    .max(20000, "Не более 20000 символов")
-    .optional()
-    .or(z.literal("")),
-  icon: z.string().optional().or(z.literal("")),
-  transcriptionFlowMode: z.enum(["standard", "no_code"]).default("standard"),
-  onTranscriptionMode: z.enum(["raw_only", "auto_action"]),
-  onTranscriptionAutoActionId: z.string().optional().or(z.literal("")),
-  noCodeEndpointUrl: z
-    .string()
-    .url({ message: "Некорректный URL" })
-    .optional()
-    .or(z.literal(""))
-    .refine(
-      (value) =>
-        value === undefined ||
-        value === "" ||
-        value.startsWith("http://") ||
-        value.startsWith("https://"),
-      { message: "Разрешены только http/https URL" },
-    ),
-  noCodeAuthType: z.enum(["none", "bearer"]).default("none"),
-  noCodeBearerToken: z.string().optional().or(z.literal("")),
-  noCodeBearerTokenAction: z.enum(["keep", "replace", "clear"]).default("replace"),
-  noCodeFileStorageProviderId: z.string().optional().or(z.literal("")).nullable(),
-});
-
-
-
-
-export const buildLlmKey = (providerId: string, modelId: string) => `${providerId}::${modelId}`;
-export const catalogModelMap = (models: PublicModel[]) => new Map(models.map((m) => [m.key, m]));
-const costLevelLabel: Record<PublicModel["costLevel"], string> = {
-  FREE: "Free",
-  LOW: "Low",
-  MEDIUM: "Medium",
-  HIGH: "High",
-  VERY_HIGH: "Very high",
-};
-
-export const defaultFormValues = {
-  name: "",
-  description: "",
-  executionMode: "standard" as "standard" | "no_code",
-  mode: "llm" as "rag" | "llm",
-  knowledgeBaseIds: [] as string[],
-  llmKey: "",
-  llmTemperature: "",
-  llmMaxTokens: "",
-  systemPrompt: "",
-  icon: "",
-  transcriptionFlowMode: "standard" as "standard" | "no_code",
-  onTranscriptionMode: "raw_only" as "raw_only" | "auto_action",
-  onTranscriptionAutoActionId: "",
-  noCodeEndpointUrl: "",
-  noCodeFileStorageProviderId: WORKSPACE_DEFAULT_PROVIDER_VALUE,
-  noCodeAuthType: "none" as "none" | "bearer",
-  noCodeBearerToken: "",
-  noCodeBearerTokenAction: "replace" as "keep" | "replace" | "clear",
-};
-
-export type SkillFormValues = z.infer<typeof skillFormSchema>;
-
-export type LlmSelectionOption = {
-  key: string;
-  label: string;
-  providerId: string;
-  providerName: string;
-  modelId: string; // provider's model key (must match catalog key)
-  modelDisplayName: string;
-  costLevel: PublicModel["costLevel"];
-  providerIsActive: boolean;
-  disabled: boolean;
-  catalogModel?: PublicModel | null;
-};
-
-type KnowledgeBaseMultiSelectProps = {
-  value: string[];
-  onChange: (next: string[]) => void;
-  knowledgeBases: KnowledgeBaseSummary[];
-  disabled?: boolean;
-  embeddingProviderName?: string | null;
-};
-
-type SkillActionConfigItem = {
-  action: ActionDto;
-  skillAction: SkillActionDto | null;
-  ui: {
-    effectiveLabel: string;
-    editable: boolean;
-  };
-};
-
-type SkillActionRowState = {
-  action: ActionDto;
-  skillAction: SkillActionDto | null;
-  ui: {
-    effectiveLabel: string;
-    editable: boolean;
-  };
-  enabled: boolean;
-  enabledPlacements: string[];
-  labelOverride: string | null;
-  saving: boolean;
-  editing: boolean;
-  draftLabel: string;
-};
+// Re-export for backward compatibility
+export { skillFormSchema, buildLlmKey, catalogModelMap, defaultFormValues, WORKSPACE_DEFAULT_PROVIDER_VALUE };
+export type { SkillFormValues };
 
 function SkillActionsInline({ skillId }: { skillId: string }) {
   const { data, isLoading, isError } = useQuery<SkillActionConfigItem[]>({
