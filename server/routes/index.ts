@@ -29,6 +29,7 @@ import { openapiRouter } from './openapi.routes';
 import { embeddingRouter } from './embedding.routes';
 import { modelsRouter } from './models.routes';
 import { llmRouter } from './llm.routes';
+import { fileStorageRouter } from './file-storage.routes';
 import { generalApiLimiter } from '../middleware/rate-limit';
 
 const routerLogger = createLogger('router');
@@ -170,6 +171,10 @@ export function registerRouteModules(app: Express): void {
   // LLM providers routes
   app.use('/api/llm', llmRouter);
   routerLogger.info('Registered: /api/llm');
+
+  // File storage providers routes
+  app.use('/api/file-storage', fileStorageRouter);
+  routerLogger.info('Registered: /api/file-storage');
 
   // Transcribe routes (speech-to-text operations)
   app.use('/api/chat/transcribe', transcribeRouter);

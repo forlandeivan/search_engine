@@ -145,7 +145,7 @@ async function ensureWorkspaceContext(
 ): Promise<WorkspaceContext | null> {
   const sessionWorkspaceId = req.session?.workspaceId || req.session?.activeWorkspaceId;
   if (sessionWorkspaceId) {
-    const membership = await storage.getWorkspaceMember(sessionWorkspaceId, user.id);
+    const membership = await storage.getWorkspaceMember(user.id, sessionWorkspaceId);
     if (membership) {
       const workspace = await storage.getWorkspace(sessionWorkspaceId);
       if (workspace) {
@@ -156,7 +156,7 @@ async function ensureWorkspaceContext(
   const workspaces = await storage.getOrCreateUserWorkspaces(user.id);
   if (workspaces.length > 0) {
     const first = workspaces[0];
-    const membership = await storage.getWorkspaceMember(first.id, user.id);
+    const membership = await storage.getWorkspaceMember(user.id, first.id);
     if (req.session) {
       req.session.workspaceId = first.id;
       req.session.activeWorkspaceId = first.id;
@@ -388,9 +388,9 @@ workspaceRouter.get('/:workspaceId/me', asyncHandler(async (req, res) => {
   if (!user) return;
 
   const { workspaceId } = req.params;
-  const membership = await storage.getWorkspaceMember(workspaceId, user.id);
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
   if (!membership) {
-    return res.status(403).json({ message: 'You do not have access to this workspace' });
+    return res.status(403).json({ message: 'Нет доступа к этому рабочему пространству' });
   }
 
   res.json({
@@ -413,7 +413,7 @@ workspaceRouter.post(
     if (!user) return;
 
     const { workspaceId } = req.params;
-    const membership = await storage.getWorkspaceMember(workspaceId, user.id);
+    const membership = await storage.getWorkspaceMember(user.id, workspaceId);
     if (!membership || !isWorkspaceAdmin(membership.role)) {
       return res.status(403).json({ message: 'Доступ запрещён' });
     }
@@ -443,9 +443,9 @@ workspaceRouter.delete('/:workspaceId/icon', asyncHandler(async (req, res) => {
   if (!user) return;
 
   const { workspaceId } = req.params;
-  const membership = await storage.getWorkspaceMember(workspaceId, user.id);
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
   if (!membership || !isWorkspaceAdmin(membership.role)) {
-    return res.status(403).json({ message: 'forbidden' });
+    return res.status(403).json({ message: 'Доступ запрещён' });
   }
 
   await clearWorkspaceIcon(workspaceId);
@@ -461,9 +461,9 @@ workspaceRouter.get('/:workspaceId/icon', asyncHandler(async (req, res) => {
   if (!user) return;
 
   const { workspaceId } = req.params;
-  const membership = await storage.getWorkspaceMember(workspaceId, user.id);
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
   if (!membership) {
-    return res.status(403).json({ message: 'forbidden' });
+    return res.status(403).json({ message: 'Доступ запрещён' });
   }
 
   const icon = await getWorkspaceIcon(workspaceId);
@@ -490,9 +490,9 @@ workspaceRouter.get('/:workspaceId/plan', asyncHandler(async (req, res) => {
   if (!user) return;
 
   const { workspaceId } = req.params;
-  const membership = await storage.getWorkspaceMember(workspaceId, user.id);
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
   if (!membership) {
-    return res.status(403).json({ message: 'forbidden' });
+    return res.status(403).json({ message: 'Доступ запрещён' });
   }
 
   const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
@@ -724,9 +724,9 @@ workspaceRouter.get('/:workspaceId/skills/:skillId/files', asyncHandler(async (r
   if (!user) return;
 
   const { workspaceId, skillId } = req.params;
-  const membership = await storage.getWorkspaceMember(workspaceId, user.id);
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
   if (!membership) {
-    return res.status(403).json({ message: 'forbidden' });
+    return res.status(403).json({ message: 'Доступ запрещён' });
   }
 
   const files = await storage.listSkillFiles(workspaceId, skillId);
