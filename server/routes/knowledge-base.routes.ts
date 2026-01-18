@@ -3,7 +3,7 @@
  * 
  * Handles knowledge base operations:
  * - GET /api/knowledge/bases - List knowledge bases
- * - POST /api/knowledge/bases - Create knowledge base (handled in routes.ts)
+ * - POST /api/knowledge/bases - Create knowledge base
  * - DELETE /api/knowledge/bases/:baseId - Delete knowledge base
  * - GET /api/knowledge/bases/:baseId/nodes/:nodeId - Get node detail
  * - POST /api/knowledge/bases/:baseId/folders - Create folder
@@ -21,6 +21,7 @@ import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import {
   listKnowledgeBases,
+  createKnowledgeBase,
   deleteKnowledgeBase,
   getKnowledgeNodeDetail,
   createKnowledgeFolder,
@@ -84,6 +85,12 @@ function getRequestWorkspace(req: Request): { id: string } {
 // ============================================================================
 // Validation Schemas
 // ============================================================================
+
+const createKnowledgeBaseSchema = z.object({
+  id: z.string().trim().min(1).max(191).optional(),
+  name: z.string().trim().min(1, "Укажите название базы знаний").max(200),
+  description: z.string().trim().max(2000).optional(),
+});
 
 const createFolderSchema = z.object({
   name: z.string().trim().min(1).max(255),
@@ -175,6 +182,26 @@ knowledgeBaseRouter.get('/bases', asyncHandler(async (req, res) => {
   const bases = await listKnowledgeBases(workspaceId);
   // Возвращаем просто массив, как ожидает фронтенд
   res.json(bases);
+}));
+
+/**
+ * POST /bases
+ * Create knowledge base
+ */
+knowledgeBaseRouter.post('/bases', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const payload = createKnowledgeBaseSchema.parse(req.body);
+  const { id: workspaceId } = getRequestWorkspace(req);
+  
+  const base = await createKnowledgeBase(workspaceId, {
+    id: payload.id,
+    name: payload.name,
+    description: payload.description,
+  });
+  
+  res.status(201).json(base);
 }));
 
 /**
