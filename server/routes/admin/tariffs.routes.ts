@@ -85,8 +85,11 @@ adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid data', details: error.issues });
     }
-    if (error instanceof Error && 'status' in error) {
-      return res.status((error as any).status || 500).json({ message: error.message });
+    if (error instanceof Error) {
+      const httpError = error as Error & { status?: number };
+      if (httpError.status !== undefined) {
+        return res.status(httpError.status).json({ message: error.message });
+      }
     }
     throw error;
   }
@@ -103,8 +106,11 @@ adminTariffsRouter.put('/:planId/limits', asyncHandler(async (req, res) => {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid limits', details: error.issues });
     }
-    if (error instanceof Error && 'status' in error) {
-      return res.status((error as any).status || 500).json({ message: error.message });
+    if (error instanceof Error) {
+      const httpError = error as Error & { status?: number };
+      if (httpError.status !== undefined) {
+        return res.status(httpError.status).json({ message: error.message });
+      }
     }
     throw error;
   }

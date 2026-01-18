@@ -188,8 +188,11 @@ adminWorkspacesRouter.post('/:workspaceId/credits/adjust', asyncHandler(async (r
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: 'Invalid payload', details: error.issues });
     }
-    if (error instanceof Error && 'status' in error) {
-      return res.status((error as any).status || 500).json({ message: error.message });
+    if (error instanceof Error) {
+      const httpError = error as Error & { status?: number };
+      if (httpError.status !== undefined) {
+        return res.status(httpError.status).json({ message: error.message });
+      }
     }
     throw error;
   }
@@ -203,8 +206,11 @@ adminWorkspacesRouter.get('/:workspaceId/credits/adjustments/recent', asyncHandl
     const adjustments = await getRecentManualAdjustments(req.params.workspaceId);
     res.json({ adjustments });
   } catch (error) {
-    if (error instanceof Error && 'status' in error) {
-      return res.status((error as any).status || 500).json({ message: error.message });
+    if (error instanceof Error) {
+      const httpError = error as Error & { status?: number };
+      if (httpError.status !== undefined) {
+        return res.status(httpError.status).json({ message: error.message });
+      }
     }
     throw error;
   }
