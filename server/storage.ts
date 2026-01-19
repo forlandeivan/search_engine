@@ -46,6 +46,11 @@ import {
   knowledgeDocumentIndexRevisions,
   knowledgeDocumentIndexState,
   knowledgeBaseIndexState,
+  workspaceLlmUsageLedger,
+  asrExecutions,
+  guardBlockEvents,
+  workspaceCreditLedger,
+  systemNotificationLogs,
   type KnowledgeBaseIndexingJob,
   type KnowledgeBaseIndexingJobInsert,
   type KnowledgeBaseIndexingPolicy,
@@ -8795,43 +8800,143 @@ export class DatabaseStorage implements IStorage {
   }
 
   async listLlmExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }> {
-    // Placeholder implementation - LLM executions logging not yet implemented
-    return { executions: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Get total count
+    const [countResult] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(workspaceLlmUsageLedger);
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const executions = await this.db
+      .select()
+      .from(workspaceLlmUsageLedger)
+      .orderBy(desc(workspaceLlmUsageLedger.occurredAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    
+    return { executions, total, page: opts.page, pageSize: opts.pageSize };
   }
 
   async getLlmExecution(id: string): Promise<any | null> {
-    // Placeholder implementation - LLM executions logging not yet implemented
-    return null;
+    const [execution] = await this.db
+      .select()
+      .from(workspaceLlmUsageLedger)
+      .where(eq(workspaceLlmUsageLedger.id, id))
+      .limit(1);
+    return execution ?? null;
   }
 
   async listAsrExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }> {
-    // Placeholder implementation - ASR executions logging not yet implemented
-    return { executions: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Get total count
+    const [countResult] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(asrExecutions);
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const executions = await this.db
+      .select()
+      .from(asrExecutions)
+      .orderBy(desc(asrExecutions.createdAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    
+    return { executions, total, page: opts.page, pageSize: opts.pageSize };
   }
 
   async getAsrExecution(id: string): Promise<any | null> {
-    // Placeholder implementation - ASR executions logging not yet implemented
-    return null;
+    const [execution] = await this.db
+      .select()
+      .from(asrExecutions)
+      .where(eq(asrExecutions.id, id))
+      .limit(1);
+    return execution ?? null;
   }
 
   async listGuardBlocks(opts: { page: number; pageSize: number }): Promise<{ blocks: any[]; total: number; page: number; pageSize: number }> {
-    // Placeholder implementation - guard blocks logging not yet implemented
-    return { blocks: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Get total count
+    const [countResult] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(guardBlockEvents);
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const blocks = await this.db
+      .select()
+      .from(guardBlockEvents)
+      .orderBy(desc(guardBlockEvents.createdAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    
+    return { blocks, total, page: opts.page, pageSize: opts.pageSize };
   }
 
   async listCharges(opts: { page: number; pageSize: number; workspaceId?: string }): Promise<{ charges: any[]; total: number; page: number; pageSize: number }> {
-    // Placeholder implementation - usage charges not yet implemented
-    return { charges: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Build where condition
+    const whereCondition = opts.workspaceId 
+      ? eq(workspaceCreditLedger.workspaceId, opts.workspaceId)
+      : undefined;
+    
+    // Get total count
+    const countQuery = this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(workspaceCreditLedger);
+    if (whereCondition) {
+      countQuery.where(whereCondition);
+    }
+    const [countResult] = await countQuery;
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const chargesQuery = this.db
+      .select()
+      .from(workspaceCreditLedger)
+      .orderBy(desc(workspaceCreditLedger.occurredAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    if (whereCondition) {
+      chargesQuery.where(whereCondition);
+    }
+    const charges = await chargesQuery;
+    
+    return { charges, total, page: opts.page, pageSize: opts.pageSize };
   }
 
   async listSystemNotificationLogs(opts: { page: number; pageSize: number }): Promise<{ logs: any[]; total: number; page: number; pageSize: number }> {
-    // Placeholder implementation - system notification logs not yet implemented
-    return { logs: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+    const offset = (opts.page - 1) * opts.pageSize;
+    
+    // Get total count
+    const [countResult] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(systemNotificationLogs);
+    const total = Number(countResult?.count ?? 0);
+    
+    // Get paginated data
+    const logs = await this.db
+      .select()
+      .from(systemNotificationLogs)
+      .orderBy(desc(systemNotificationLogs.createdAt))
+      .limit(opts.pageSize)
+      .offset(offset);
+    
+    return { logs, total, page: opts.page, pageSize: opts.pageSize };
   }
 
   async getSystemNotificationLog(id: string): Promise<any | null> {
-    // Placeholder implementation - system notification logs not yet implemented
-    return null;
+    const [log] = await this.db
+      .select()
+      .from(systemNotificationLogs)
+      .where(eq(systemNotificationLogs.id, id))
+      .limit(1);
+    return log ?? null;
   }
 
   async getUser(id: string): Promise<User | undefined> {
