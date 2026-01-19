@@ -1,6 +1,5 @@
 import { Readable } from "stream";
 import { createInterface } from "readline";
-import { parser, streamArray } from "stream-json";
 import type { MappingConfig, HierarchyConfig, ImportRecordError, ErrorType } from "@shared/json-import";
 import { createKnowledgeDocument, createKnowledgeFolder } from "../knowledge-base";
 import { getObject } from "../workspace-storage-service";
@@ -414,6 +413,14 @@ export async function processJsonArrayStream(
   s3Stream: Readable,
   context: ImportContext,
 ): Promise<{ totalRecords: number; createdDocuments: number; skippedRecords: number; errorRecords: number }> {
+  // Динамический импорт для CommonJS модуля
+  const streamJson = await import("stream-json");
+  const streamArrayModule = await import("stream-json/streamers/StreamArray.js");
+  // При динамическом импорте CommonJS модуля экспорты находятся в default
+  const streamJsonMod = streamJson.default || streamJson;
+  const streamArrayMod = streamArrayModule.default || streamArrayModule;
+  const parser = streamJsonMod.parser;
+  const streamArray = streamArrayMod.streamArray;
   const pipeline = s3Stream.pipe(parser()).pipe(streamArray());
 
   const deduplicator = new ImportDeduplicator();

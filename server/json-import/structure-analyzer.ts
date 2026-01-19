@@ -1,6 +1,5 @@
 import { Readable } from "stream";
 import { createInterface } from "readline";
-import { parser, streamArray } from "stream-json";
 import { getObject } from "../workspace-storage-service";
 
 export type FileFormat = "json_array" | "jsonl";
@@ -328,6 +327,14 @@ async function analyzeJsonArrayStructure(
   options: AnalyzerOptions,
   fileSize: number,
 ): Promise<StructureAnalysis> {
+  // Динамический импорт для CommonJS модуля
+  const streamJson = await import("stream-json");
+  const streamArrayModule = await import("stream-json/streamers/StreamArray.js");
+  // При динамическом импорте CommonJS модуля экспорты находятся в default
+  const streamJsonMod = streamJson.default || streamJson;
+  const streamArrayMod = streamArrayModule.default || streamArrayModule;
+  const parser = streamJsonMod.parser;
+  const streamArray = streamArrayMod.streamArray;
   const pipeline = stream.pipe(parser()).pipe(streamArray());
 
   const fieldStats = new Map<
