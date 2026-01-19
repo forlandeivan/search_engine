@@ -1,15 +1,15 @@
 console.log("[App.tsx] Starting imports...");
 
-import { Switch, Route, Link, useLocation } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 console.log("[App.tsx] wouter loaded");
 
 import { useEffect, Suspense, lazy, useState, Component, type ReactNode, type ErrorInfo } from "react";
 console.log("[App.tsx] react loaded");
 
-import { QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 console.log("[App.tsx] react-query loaded");
 
-import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
+import { queryClient, getQueryFn } from "./lib/queryClient";
 console.log("[App.tsx] queryClient loaded");
 
 import { Toaster } from "@/components/ui/toaster";
@@ -27,11 +27,6 @@ console.log("[App.tsx] AdminSidebar loaded");
 import MainSidebar from "@/components/MainSidebar";
 console.log("[App.tsx] MainSidebar loaded");
 
-import ThemeToggle from "@/components/ThemeToggle";
-console.log("[App.tsx] ThemeToggle loaded");
-
-import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
-console.log("[App.tsx] WorkspaceSwitcher loaded");
 
 import { Loader2 } from "lucide-react";
 console.log("[App.tsx] lucide-react loaded");
@@ -39,12 +34,9 @@ console.log("[App.tsx] lucide-react loaded");
 import { Button } from "@/components/ui/button";
 console.log("[App.tsx] Button loaded");
 
-import { useToast } from "@/hooks/use-toast";
-console.log("[App.tsx] useToast loaded");
 
 import type { PublicUser } from "@shared/schema";
 import type { SessionResponse, WorkspaceState } from "@/types/session";
-import type { CSSProperties } from "react";
 console.log("[App.tsx] All imports complete");
 
 // ErrorBoundary для перехвата ошибок рендеринга и предотвращения белого экрана
@@ -326,74 +318,15 @@ function LazyRouteWrapper({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<LoadingScreen />}>{children}</Suspense>;
 }
 
-function HeaderUserArea({ user }: { user: PublicUser }) {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  const logoutMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", "/api/auth/logout");
-    },
-    onSuccess: async () => {
-      // Полностью удаляем session query из кеша (не устанавливаем null)
-      queryClient.removeQueries({ queryKey: ["/api/auth/session"] });
-      
-      // Удаляем все остальные queries
-      queryClient.removeQueries({
-        predicate: (query) => {
-          const [key] = query.queryKey as [unknown, ...unknown[]];
-          return key !== "/api/auth/session";
-        },
-      });
-      
-      toast({ title: "Вы вышли из системы" });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Не удалось выйти",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  return (
-    <div className="flex items-center gap-2">
-      <Button asChild variant="ghost" size="sm" data-testid="button-open-profile">
-        <Link href="/profile">Профиль</Link>
-      </Button>
-      <ThemeToggle />
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() => logoutMutation.mutate()}
-        disabled={logoutMutation.isPending}
-      >
-        {logoutMutation.isPending ? "Выходим..." : "Выйти"}
-      </Button>
-    </div>
-  );
-}
-
 function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
-  const style = {
-    // Ширина сайдбара: на десктопе до ~330px, на средних экранах ужимается (clamp)
-    "--sidebar-width": "clamp(240px, 25vw, 330px)",
-    "--sidebar-width-icon": "48px",
-  } as CSSProperties;
-
   return (
-    <SidebarProvider style={style}>
+    <SidebarProvider>
       <div className="flex h-screen w-full">
-        <AdminSidebar user={user} />
-        <div className="flex min-w-0 flex-col flex-1">
-          <header className="flex items-center justify-between p-2 border-b gap-2">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <WorkspaceSwitcher workspace={workspace} />
-            </div>
-            <HeaderUserArea user={user} />
-          </header>
+        <AdminSidebar user={user} workspace={workspace} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex h-12 items-center px-2 md:hidden">
+            <SidebarTrigger data-testid="button-sidebar-toggle" />
+          </div>
           <main className="app-main flex-1 min-h-0 overflow-auto">
             <AdminRouter />
           </main>
@@ -404,29 +337,14 @@ function AdminAppShell({ user, workspace }: { user: PublicUser; workspace: Works
 }
 
 function MainAppShell({ user, workspace }: { user: PublicUser; workspace: WorkspaceState }) {
-  const style = {
-    // Ширина сайдбара: на десктопе до ~330px, на средних экранах ужимается (clamp)
-    "--sidebar-width": "clamp(240px, 25vw, 330px)",
-    "--sidebar-width-icon": "48px",
-  } as CSSProperties;
-
   return (
-    <SidebarProvider style={style}>
+    <SidebarProvider>
       <div className="flex h-screen w-full">
-        <MainSidebar
-          showAdminLink={user.role === "admin"}
-          user={user}
-          workspaceId={workspace.active?.id}
-          iconUrl={workspace.active?.iconUrl}
-        />
-        <div className="flex min-w-0 flex-col flex-1">
-          <header className="flex items-center justify-between p-2 border-b gap-2">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <WorkspaceSwitcher workspace={workspace} />
-            </div>
-            <HeaderUserArea user={user} />
-          </header>
+        <MainSidebar showAdminLink={user.role === "admin"} user={user} workspace={workspace} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex h-12 items-center px-2 md:hidden">
+            <SidebarTrigger data-testid="button-sidebar-toggle" />
+          </div>
           <main className="app-main flex-1 min-h-0 overflow-auto">
             <MainRouter />
           </main>

@@ -21,7 +21,7 @@
 - Border: 220 13% 20% (Dark border)
 
 ### Typography
-- **Primary Font**: Inter (via Google Fonts CDN)
+- **Primary Font**: Geist
 - **Headings**: Font weight 600-700, sizes from text-lg to text-3xl
 - **Body**: Font weight 400, text-sm to text-base
 - **Code/URLs**: Mono font family for technical displays

@@ -4,32 +4,33 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarHeader,
   SidebarRail,
-  SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
 import {
   BookOpen,
   Boxes,
   Brain,
-  Shield,
-  Zap,
-  Users,
   LayoutDashboard,
-  Sparkles,
   MessageCircle,
   PanelLeft,
   PanelRight,
+  Shield,
+  Sparkles,
+  Users,
+  Zap,
 } from "lucide-react";
 import type { PublicUser } from "@shared/schema";
+import type { WorkspaceState } from "@/types/session";
 import {
   KNOWLEDGE_BASE_EVENT,
   readKnowledgeBaseStorage,
@@ -37,15 +38,14 @@ import {
 } from "@/lib/knowledge-base";
 import { apiRequest } from "@/lib/queryClient";
 import type { KnowledgeBaseSummary } from "@shared/knowledge-base";
-import { UserAvatar } from "@/components/UserAvatar";
-import { WorkspaceIcon } from "@/components/WorkspaceIcon";
+import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
+import SidebarUserMenu from "@/components/SidebarUserMenu";
 
 interface SidebarItem {
   title: string;
   url: string;
   icon: React.ComponentType<{ className?: string }>;
   badge?: string;
-  badgeVariant?: "default" | "secondary" | "destructive" | "outline";
   locked?: boolean;
   testId?: string;
 }
@@ -53,29 +53,30 @@ interface SidebarItem {
 interface MainSidebarProps {
   showAdminLink?: boolean;
   user: PublicUser;
-  workspaceId?: string;
-  iconUrl?: string | null;
+  workspace: WorkspaceState;
 }
 
-export default function MainSidebar({ showAdminLink = false, user, workspaceId, iconUrl }: MainSidebarProps) {
+export default function MainSidebar({ showAdminLink = false, user, workspace }: MainSidebarProps) {
   const [location] = useLocation();
   const { state, toggleSidebar } = useSidebar();
-  const isCollapsed = state === "collapsed";
   const [knowledgeBaseCount, setKnowledgeBaseCount] = useState(
     () => readKnowledgeBaseStorage().knowledgeBases.length
   );
+
+  const workspaceId = workspace.active?.id;
+  const chatUrl = workspaceId ? `/workspaces/${workspaceId}/chat` : "/chat";
+  const actionsUrl = workspaceId ? `/workspaces/${workspaceId}/actions` : "/workspaces/actions";
+  const workspaceSettingsUrl = workspaceId ? `/workspaces/${workspaceId}/settings` : "/workspaces/settings";
 
   const { data: knowledgeBases } = useQuery<KnowledgeBaseSummary[]>({
     queryKey: ["knowledge-bases", workspaceId],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/knowledge/bases");
       const data = await res.json();
-      // Поддержка обоих форматов: массив или { bases: [...] }
       if (Array.isArray(data)) return data;
       if (data?.bases && Array.isArray(data.bases)) return data.bases;
       return [];
     },
-    // Не делаем запрос пока нет workspaceId
     enabled: Boolean(workspaceId),
   });
 
@@ -114,8 +115,21 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
       .replace(/\s+/g, "-")
       .replace(/ё/g, "е")}`;
 
-  const chatUrl = workspaceId ? `/workspaces/${workspaceId}/chat` : "/chat";
-  const actionsUrl = workspaceId ? `/workspaces/${workspaceId}/actions` : "/workspaces/actions";
+  const settingsItems: SidebarItem[] = [
+    {
+      title: "Рабочее пространство",
+      url: workspaceSettingsUrl,
+      icon: Users,
+    },
+  ];
+
+  if (showAdminLink) {
+    settingsItems.push({
+      title: "Администрирование",
+      url: "/admin/workspaces",
+      icon: Shield,
+    });
+  }
 
   const sections: Array<{ label: string; items: SidebarItem[] }> = [
     {
@@ -131,7 +145,6 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
           url: "/knowledge",
           icon: Brain,
           badge: knowledgeBaseCount.toString(),
-          badgeVariant: "secondary",
         },
         {
           title: "Навыки",
@@ -165,249 +178,82 @@ export default function MainSidebar({ showAdminLink = false, user, workspaceId, 
         },
       ],
     },
-  ];
-
-  const workspaceSettingsUrl = workspaceId ? `/workspaces/${workspaceId}/settings` : "/workspaces/settings";
-
-  const footerItems: SidebarItem[] = [
     {
-      title: "Рабочее пространство",
-      url: workspaceSettingsUrl,
-      icon: Users,
+      label: "Настройки",
+      items: settingsItems,
     },
   ];
 
-  if (showAdminLink) {
-    footerItems.push({
-      title: "Администрирование",
-      url: "/admin/workspaces",
-      icon: Shield,
-    });
-  }
-
-  const renderMenuItem = (item: SidebarItem) => {
-    const isActive = isItemActive(item);
-    const testId = item.testId ?? (item.url === chatUrl ? "link-chat" : getTestId(item));
-
-    const collapsedTooltip = item.locked
-      ? {
-          children: (
-            <div className="space-y-1">
-              <p className="text-sm font-medium leading-none">{item.title}</p>
-              <p className="text-xs text-muted-foreground">Доступно в платной версии</p>
-            </div>
-          ),
-        }
-      : item.title;
-
-    const iconElement = (
-      <item.icon
-        className={cn(
-          "h-6 w-6 shrink-0",
-          isActive ? "text-[#0f5a90]" : "text-slate-500"
-        )}
-      />
-    );
-
-    const labelElement = !isCollapsed && (
-      <span
-        className={cn(
-          "flex-1 truncate text-base font-medium",
-          isActive ? "text-[#0f5a90]" : "text-slate-800 dark:text-slate-200"
-        )}
-      >
-        {item.title}
-      </span>
-    );
-
-    const badgeElement = !isCollapsed && item.badge && !item.locked && (
-      <div className="flex h-6 items-center justify-center rounded bg-[rgba(15,90,144,0.11)] px-2">
-        <span className="text-[11px] font-medium text-slate-800 dark:text-slate-200">
-          {item.badge}
-        </span>
-      </div>
-    );
-
-    const proElement = !isCollapsed && item.locked && (
-      <Badge variant="outline" className="ml-auto text-xs border-dashed text-muted-foreground">
-        PRO
-      </Badge>
-    );
-
-    if (item.locked) {
-      return (
-        <SidebarMenuButton
-          className={cn(
-            "h-12 gap-3 rounded-lg px-3 py-3 opacity-60 cursor-not-allowed",
-            isCollapsed ? "justify-center" : "justify-start"
-          )}
-          disabled
-          tooltip={isCollapsed ? collapsedTooltip : "Доступно в платной версии"}
-          data-testid={testId}
-        >
-          {iconElement}
-          {labelElement}
-          {proElement}
-        </SidebarMenuButton>
-      );
-    }
-
-    return (
-      <SidebarMenuButton
-        asChild
-        isActive={isActive}
-        className={cn(
-          "h-12 gap-3 rounded-lg px-3 py-3 transition-colors",
-          isCollapsed ? "justify-center" : "justify-start",
-          isActive
-            ? "bg-[rgba(15,90,144,0.11)] hover:bg-[rgba(15,90,144,0.15)]"
-            : "hover:bg-slate-200/60 dark:hover:bg-slate-700/40"
-        )}
-        tooltip={isCollapsed ? collapsedTooltip : undefined}
-        data-testid={testId}
-      >
-        <Link
-          href={item.url}
-          className={cn(
-            "flex w-full items-center gap-2",
-            isCollapsed && "justify-center gap-0"
-          )}
-        >
-          {iconElement}
-          {labelElement}
-          {badgeElement}
-        </Link>
-      </SidebarMenuButton>
-    );
-  };
-
   return (
-    <Sidebar
-      collapsible="icon"
-      className="border-r border-black/[0.03] bg-slate-100 dark:border-white/[0.05] dark:bg-slate-900"
-    >
-      <SidebarRail />
-
-      {/* Logo Section */}
-      <SidebarHeader
-        className={cn(
-          "h-20 shrink-0 border-b-0 px-2 py-3",
-          isCollapsed ? "items-center justify-center" : "items-center"
-        )}
-      >
-        {isCollapsed ? (
-          <WorkspaceIcon iconUrl={iconUrl} size={38} testId="icon-judicial-emblem" />
-        ) : (
-          <div className="flex w-full items-center gap-2 px-1">
-            <WorkspaceIcon iconUrl={iconUrl} size={38} testId="icon-judicial-emblem-expanded" />
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-base font-bold text-slate-800 dark:text-slate-100">AI KMS</span>
-            </div>
-          </div>
-        )}
+    <Sidebar collapsible="icon">
+      <SidebarHeader>
+        <WorkspaceSwitcher workspace={workspace} />
       </SidebarHeader>
 
-      {/* Main Navigation */}
-      <SidebarContent className="px-1">
-        {sections.map((section, sectionIndex) => (
-          <SidebarGroup key={section.label} className="px-1 py-0">
-            {/* Section Divider */}
-            {!isCollapsed ? (
-              <div className="flex h-[18px] items-center px-2">
-                <span className="text-[11px] font-light tracking-[-0.26px] text-black/30 dark:text-white/40">
-                  {section.label}
-                </span>
-              </div>
-            ) : (
-              <div className="my-1 h-px w-full bg-gradient-to-r from-transparent via-slate-300 to-transparent dark:via-slate-700" />
-            )}
-
+      <SidebarContent>
+        {sections.map((section) => (
+          <SidebarGroup key={section.label}>
+            <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu className="gap-0">
-                {section.items.map((item) => (
-                  <SidebarMenuItem key={item.title} className="p-1">
-                    {renderMenuItem(item)}
-                  </SidebarMenuItem>
-                ))}
+              <SidebarMenu>
+                {section.items.map((item) => {
+                  const isActive = isItemActive(item);
+                  const testId = item.testId ?? (item.url === chatUrl ? "link-chat" : getTestId(item));
+                  const buttonContent = (
+                    <>
+                      <item.icon />
+                      <span>{item.title}</span>
+                    </>
+                  );
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      {item.locked ? (
+                        <SidebarMenuButton
+                          disabled
+                          tooltip="Доступно в платной версии"
+                          data-testid={testId}
+                        >
+                          {buttonContent}
+                        </SidebarMenuButton>
+                      ) : (
+                        <SidebarMenuButton
+                          asChild
+                          isActive={isActive}
+                          tooltip={item.title}
+                          data-testid={testId}
+                        >
+                          <Link href={item.url}>{buttonContent}</Link>
+                        </SidebarMenuButton>
+                      )}
+                      {item.locked ? <SidebarMenuBadge>PRO</SidebarMenuBadge> : null}
+                      {!item.locked && item.badge ? (
+                        <SidebarMenuBadge>{item.badge}</SidebarMenuBadge>
+                      ) : null}
+                    </SidebarMenuItem>
+                  );
+                })}
               </SidebarMenu>
             </SidebarGroupContent>
-
-            {/* Spacer between sections */}
-            {sectionIndex < sections.length - 1 && <div className="h-3" />}
           </SidebarGroup>
         ))}
       </SidebarContent>
 
-      {/* Footer with User Profile */}
-      <SidebarFooter className="mt-auto border-t border-black/[0.03] px-2 py-2 dark:border-white/[0.05]">
-        {/* Workspace & Admin shortcuts */}
-        <SidebarMenu className="mb-2 gap-0">
-          {footerItems.map((item) => (
-            <SidebarMenuItem key={item.title} className="p-1">
-              {renderMenuItem(item)}
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
-
-        {/* User Profile */}
+      <SidebarFooter>
+        <SidebarUserMenu user={user} />
         <SidebarMenu>
-          <SidebarMenuItem className="p-1">
+          <SidebarMenuItem>
             <SidebarMenuButton
-              asChild
-              isActive={location === "/profile"}
-              className={cn(
-                "h-10 gap-2 rounded-md p-1 transition-colors",
-                isCollapsed ? "justify-center" : "justify-start",
-                location === "/profile"
-                  ? "bg-[rgba(15,90,144,0.11)]"
-                  : "hover:bg-slate-200/60 dark:hover:bg-slate-700/40"
-              )}
-              tooltip={isCollapsed ? user.fullName : undefined}
-              data-testid="link-profile"
+              onClick={toggleSidebar}
+              tooltip={state === "expanded" ? "Свернуть меню" : "Развернуть меню"}
+              data-testid="button-sidebar-toggle"
             >
-              <Link
-                href="/profile"
-                className={cn(
-                  "flex w-full items-center gap-2",
-                  isCollapsed && "justify-center gap-0"
-                )}
-              >
-                <UserAvatar
-                  user={user}
-                  size="sm"
-                  className="h-8 w-8 shrink-0"
-                />
-                {!isCollapsed && (
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate text-[13px] font-medium text-slate-800 dark:text-slate-200">
-                      {user.fullName}
-                    </span>
-                    <span className="truncate text-[11px] font-light text-slate-500">
-                      {user.email}
-                    </span>
-                  </div>
-                )}
-              </Link>
+              {state === "expanded" ? <PanelLeft /> : <PanelRight />}
+              <span>{state === "expanded" ? "Свернуть меню" : "Развернуть меню"}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-
-        {/* Toggle Button */}
-        <div className="flex h-8 items-center justify-center">
-          <button
-            onClick={toggleSidebar}
-            className="flex h-[18px] w-[18px] items-center justify-center text-slate-500 transition-colors hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            aria-label={isCollapsed ? "Развернуть меню" : "Свернуть меню"}
-            data-testid="button-toggle-sidebar"
-          >
-            {isCollapsed ? (
-              <PanelRight className="h-[18px] w-[18px]" />
-            ) : (
-              <PanelLeft className="h-[18px] w-[18px]" />
-            )}
-          </button>
-        </div>
       </SidebarFooter>
+      <SidebarRail />
     </Sidebar>
   );
 }
