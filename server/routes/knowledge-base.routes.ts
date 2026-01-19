@@ -39,6 +39,11 @@ import {
   createKnowledgeDocumentChunkSet,
 } from '../knowledge-chunks';
 import type { PublicUser } from '@shared/schema';
+import type {
+  CreateJsonImportRequest,
+  CreateJsonImportResponse,
+  GetJsonImportStatusResponse,
+} from '@shared/json-import';
 
 const logger = createLogger('knowledge-base');
 
@@ -643,6 +648,136 @@ knowledgeBaseRouter.get('/bases/:baseId/ask-ai/runs/:runId', asyncHandler(async 
   }
 
   res.json(run);
+}));
+
+/**
+ * POST /bases/:baseId/json-import
+ * Create JSON/JSONL import job
+ */
+const createJsonImportSchema = z.object({
+  fileKey: z.string().min(1, "Укажите ключ файла"),
+  fileName: z.string().min(1, "Укажите имя файла"),
+  fileSize: z.number().int().positive("Размер файла должен быть положительным"),
+  mappingConfig: z.object({
+    fields: z.array(z.object({
+      sourcePath: z.string(),
+      role: z.enum(["id", "title", "content", "content_html", "content_md", "metadata", "skip"]),
+      priority: z.number().optional(),
+    })),
+    contentJoinSeparator: z.string().optional(),
+    titleFallback: z.enum(["first_line", "content_excerpt", "filename"]).optional(),
+    deduplication: z.object({
+      mode: z.enum(["skip", "allow_all"]),
+    }).optional(),
+  }),
+  hierarchyConfig: z.object({
+    mode: z.enum(["flat", "grouped"]),
+    groupByField: z.string().optional(),
+    emptyValueStrategy: z.enum(["folder_uncategorized", "root", "skip"]).optional(),
+    uncategorizedFolderName: z.string().optional(),
+    rootFolderName: z.string().optional(),
+  }),
+});
+
+knowledgeBaseRouter.post('/bases/:baseId/json-import', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { baseId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+
+  const base = await storage.getKnowledgeBase(baseId);
+  if (!base || base.workspaceId !== workspaceId) {
+    return res.status(404).json({ error: 'База знаний не найдена' });
+  }
+
+  const payload = createJsonImportSchema.parse(req.body);
+
+  // Определяем формат файла по расширению
+  const fileFormat = payload.fileName.toLowerCase().endsWith('.jsonl') ? 'jsonl' : 'json';
+
+  const job = await storage.createJsonImportJob({
+    workspaceId,
+    baseId,
+    status: 'pending',
+    mappingConfig: payload.mappingConfig as Record<string, unknown>,
+    hierarchyConfig: payload.hierarchyConfig as Record<string, unknown>,
+    sourceFileKey: payload.fileKey,
+    sourceFileName: payload.fileName,
+    sourceFileSize: payload.fileSize,
+    sourceFileFormat: fileFormat,
+  });
+
+  if (!job) {
+    return res.status(500).json({ error: 'Не удалось создать задачу импорта' });
+  }
+
+  const response: CreateJsonImportResponse = {
+    jobId: job.id,
+    status: 'pending',
+  };
+
+  res.status(201).json(response);
+}));
+
+/**
+ * GET /json-import/:jobId
+ * Get JSON import job status
+ */
+knowledgeBaseRouter.get('/json-import/:jobId', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { jobId } = req.params;
+  const { id: workspaceId } = getRequestWorkspace(req);
+
+  const job = await storage.getJsonImportJob(jobId, workspaceId);
+  if (!job) {
+    return res.status(404).json({ error: 'Задача импорта не найдена' });
+  }
+
+  const base = await storage.getKnowledgeBase(job.baseId);
+  if (!base) {
+    return res.status(404).json({ error: 'База знаний не найдена' });
+  }
+
+  const totalRecords = job.totalRecords || 0;
+  const percent = totalRecords > 0
+    ? Math.round((job.processedRecords / totalRecords) * 100)
+    : 0;
+
+  const durationSeconds = job.finishedAt && job.startedAt
+    ? Math.round((job.finishedAt.getTime() - job.startedAt.getTime()) / 1000)
+    : null;
+
+  const recentErrors = Array.isArray(job.errorLog)
+    ? (job.errorLog as unknown[]).slice(-10) as GetJsonImportStatusResponse['recentErrors']
+    : [];
+
+  const response: GetJsonImportStatusResponse = {
+    jobId: job.id,
+    baseId: job.baseId,
+    baseName: base.name,
+    status: job.status,
+    progress: {
+      totalRecords,
+      processedRecords: job.processedRecords,
+      createdDocuments: job.createdDocuments,
+      skippedRecords: job.skippedRecords,
+      errorRecords: job.errorRecords,
+      percent,
+    },
+    timing: {
+      createdAt: job.createdAt.toISOString(),
+      startedAt: job.startedAt?.toISOString() ?? null,
+      finishedAt: job.finishedAt?.toISOString() ?? null,
+      durationSeconds,
+    },
+    recentErrors,
+    hasMoreErrors: (job.errorLog as unknown[]).length > 10,
+  };
+
+  res.json(response);
 }));
 
 // Error handler for this router

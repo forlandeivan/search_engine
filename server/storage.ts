@@ -46,6 +46,7 @@ import {
   knowledgeDocumentIndexRevisions,
   knowledgeDocumentIndexState,
   knowledgeBaseIndexState,
+  jsonImportJobs,
   workspaceLlmUsageLedger,
   asrExecutions,
   guardBlockEvents,
@@ -53,6 +54,8 @@ import {
   systemNotificationLogs,
   type KnowledgeBaseIndexingJob,
   type KnowledgeBaseIndexingJobInsert,
+  type JsonImportJob,
+  type JsonImportJobInsert,
   type KnowledgeBaseIndexingPolicy,
   type KnowledgeBaseIndexingActionRecord,
   type KnowledgeBaseIndexingActionInsert,
@@ -1215,6 +1218,33 @@ export interface IStorage {
   getKnowledgeBaseIndexingPolicy(): Promise<KnowledgeBaseIndexingPolicy | null>;
   updateKnowledgeBaseIndexingPolicy(policy: Partial<KnowledgeBaseIndexingPolicy>): Promise<KnowledgeBaseIndexingPolicy>;
 
+  // JSON import jobs
+  createJsonImportJob(value: JsonImportJobInsert): Promise<JsonImportJob | null>;
+  getJsonImportJob(jobId: string, workspaceId: string): Promise<JsonImportJob | undefined>;
+  claimNextJsonImportJob(now?: Date): Promise<JsonImportJob | null>;
+  updateJsonImportJobProgress(
+    jobId: string,
+    progress: {
+      processedRecords?: number;
+      createdDocuments?: number;
+      skippedRecords?: number;
+      errorRecords?: number;
+    },
+  ): Promise<void>;
+  appendJsonImportJobErrors(jobId: string, errors: unknown[]): Promise<void>;
+  markJsonImportJobDone(
+    jobId: string,
+    status: "completed" | "completed_with_errors",
+    finalStats?: {
+      processedRecords?: number;
+      createdDocuments?: number;
+      skippedRecords?: number;
+      errorRecords?: number;
+    },
+  ): Promise<void>;
+  rescheduleJsonImportJob(jobId: string, nextRetryAt: Date, errorMessage?: string | null): Promise<void>;
+  failJsonImportJob(jobId: string, errorMessage?: string | null): Promise<void>;
+
   // Knowledge document indexing revisions
   createKnowledgeDocumentIndexRevision(
     value: KnowledgeDocumentIndexRevisionInsert,
@@ -2051,6 +2081,9 @@ async function ensureSkillFileIngestionJobsTable(): Promise<void> {
 let knowledgeBaseIndexingJobsTableEnsured = false;
 let ensuringKnowledgeBaseIndexingJobsTable: Promise<void> | null = null;
 
+let jsonImportJobsTableEnsured = false;
+let ensuringJsonImportJobsTable: Promise<void> | null = null;
+
 async function ensureKnowledgeBaseIndexingJobsTable(): Promise<void> {
   if (knowledgeBaseIndexingJobsTableEnsured) {
     return;
@@ -2143,6 +2176,34 @@ async function ensureKnowledgeBaseIndexingJobsTable(): Promise<void> {
 
   await ensuringKnowledgeBaseIndexingJobsTable;
   ensuringKnowledgeBaseIndexingJobsTable = null;
+}
+
+async function ensureJsonImportJobsTable(): Promise<void> {
+  if (jsonImportJobsTableEnsured) {
+    return;
+  }
+  if (ensuringJsonImportJobsTable) {
+    await ensuringJsonImportJobsTable;
+    return;
+  }
+
+  ensuringJsonImportJobsTable = (async () => {
+    await ensureKnowledgeBaseTables();
+    await ensureWorkspacesTable();
+
+    // Таблица создаётся через миграцию, просто проверяем существование
+    await db.execute(sql`
+      SELECT 1 FROM "json_import_jobs" LIMIT 1
+    `).catch(() => {
+      // Таблица не существует, но миграция должна её создать
+      console.warn("[ensureJsonImportJobsTable] Table json_import_jobs not found. Run migration 0118_json_import_jobs.sql");
+    });
+
+    jsonImportJobsTableEnsured = true;
+  })();
+
+  await ensuringJsonImportJobsTable;
+  ensuringJsonImportJobsTable = null;
 }
 
 let knowledgeBaseIndexingPolicyTableEnsured = false;
@@ -7801,6 +7862,177 @@ export class DatabaseStorage implements IStorage {
         updatedAt: now,
       })
       .where(eq(knowledgeBaseIndexingJobs.id, jobId));
+  }
+
+  // JSON import jobs
+  async createJsonImportJob(value: JsonImportJobInsert): Promise<JsonImportJob | null> {
+    await ensureJsonImportJobsTable();
+    const now = new Date();
+    const [created] = await this.db
+      .insert(jsonImportJobs)
+      .values({
+        ...value,
+        status: value.status ?? "pending",
+        createdAt: value.createdAt ?? now,
+        updatedAt: now,
+      })
+      .returning();
+    return created ?? null;
+  }
+
+  async getJsonImportJob(jobId: string, workspaceId: string): Promise<JsonImportJob | undefined> {
+    await ensureJsonImportJobsTable();
+    const [row] = await this.db
+      .select()
+      .from(jsonImportJobs)
+      .where(and(eq(jsonImportJobs.id, jobId), eq(jsonImportJobs.workspaceId, workspaceId)))
+      .limit(1);
+    return row;
+  }
+
+  async claimNextJsonImportJob(now: Date = new Date()): Promise<JsonImportJob | null> {
+    await ensureJsonImportJobsTable();
+    const result = await this.db.execute(sql`
+      UPDATE "json_import_jobs" AS jobs
+      SET
+        "status" = 'processing',
+        "attempts" = jobs."attempts" + 1,
+        "started_at" = CASE WHEN jobs."started_at" IS NULL THEN ${now} ELSE jobs."started_at" END,
+        "updated_at" = ${now}
+      WHERE jobs."id" = (
+        SELECT id
+        FROM "json_import_jobs"
+        WHERE "status" = 'pending'
+          AND ("next_retry_at" IS NULL OR "next_retry_at" <= ${now})
+        ORDER BY "created_at"
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *
+    `);
+
+    const row = (result.rows ?? [])[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      return null;
+    }
+
+    return {
+      id: String(row.id),
+      workspaceId: String(row.workspace_id),
+      baseId: String(row.base_id),
+      status: String(row.status) as JsonImportJob["status"],
+      mappingConfig: (row.mapping_config ?? {}) as Record<string, unknown>,
+      hierarchyConfig: (row.hierarchy_config ?? {}) as Record<string, unknown>,
+      totalRecords: Number(row.total_records ?? 0),
+      processedRecords: Number(row.processed_records ?? 0),
+      createdDocuments: Number(row.created_documents ?? 0),
+      skippedRecords: Number(row.skipped_records ?? 0),
+      errorRecords: Number(row.error_records ?? 0),
+      sourceFileKey: String(row.source_file_key),
+      sourceFileName: String(row.source_file_name),
+      sourceFileSize: Number(row.source_file_size ?? 0),
+      sourceFileFormat: String(row.source_file_format) as "json" | "jsonl",
+      attempts: Number(row.attempts ?? 0),
+      nextRetryAt: row.next_retry_at ? new Date(String(row.next_retry_at)) : null,
+      lastError: row.last_error ? String(row.last_error) : null,
+      errorLog: (row.error_log ?? []) as unknown[],
+      createdAt: new Date(String(row.created_at)),
+      startedAt: row.started_at ? new Date(String(row.started_at)) : null,
+      finishedAt: row.finished_at ? new Date(String(row.finished_at)) : null,
+      updatedAt: new Date(String(row.updated_at)),
+    };
+  }
+
+  async updateJsonImportJobProgress(
+    jobId: string,
+    progress: {
+      processedRecords?: number;
+      createdDocuments?: number;
+      skippedRecords?: number;
+      errorRecords?: number;
+    },
+  ): Promise<void> {
+    await ensureJsonImportJobsTable();
+    const now = new Date();
+    await this.db
+      .update(jsonImportJobs)
+      .set({
+        processedRecords: progress.processedRecords,
+        createdDocuments: progress.createdDocuments,
+        skippedRecords: progress.skippedRecords,
+        errorRecords: progress.errorRecords,
+        updatedAt: now,
+      })
+      .where(eq(jsonImportJobs.id, jobId));
+  }
+
+  async appendJsonImportJobErrors(jobId: string, errors: unknown[]): Promise<void> {
+    await ensureJsonImportJobsTable();
+    await this.db.execute(sql`
+      UPDATE "json_import_jobs"
+      SET "error_log" = "error_log" || ${JSON.stringify(errors)}::jsonb,
+          "updated_at" = CURRENT_TIMESTAMP
+      WHERE "id" = ${jobId}
+    `);
+  }
+
+  async markJsonImportJobDone(
+    jobId: string,
+    status: "completed" | "completed_with_errors",
+    finalStats?: {
+      processedRecords?: number;
+      createdDocuments?: number;
+      skippedRecords?: number;
+      errorRecords?: number;
+    },
+  ): Promise<void> {
+    await ensureJsonImportJobsTable();
+    const now = new Date();
+    await this.db
+      .update(jsonImportJobs)
+      .set({
+        status,
+        finishedAt: now,
+        processedRecords: finalStats?.processedRecords,
+        createdDocuments: finalStats?.createdDocuments,
+        skippedRecords: finalStats?.skippedRecords,
+        errorRecords: finalStats?.errorRecords,
+        updatedAt: now,
+      })
+      .where(eq(jsonImportJobs.id, jobId));
+  }
+
+  async rescheduleJsonImportJob(
+    jobId: string,
+    nextRetryAt: Date,
+    errorMessage?: string | null,
+  ): Promise<void> {
+    await ensureJsonImportJobsTable();
+    const now = new Date();
+    await this.db
+      .update(jsonImportJobs)
+      .set({
+        status: "pending",
+        nextRetryAt,
+        lastError: errorMessage?.trim() || null,
+        updatedAt: now,
+      })
+      .where(eq(jsonImportJobs.id, jobId));
+  }
+
+  async failJsonImportJob(jobId: string, errorMessage?: string | null): Promise<void> {
+    await ensureJsonImportJobsTable();
+    const now = new Date();
+    await this.db
+      .update(jsonImportJobs)
+      .set({
+        status: "failed",
+        finishedAt: now,
+        nextRetryAt: null,
+        lastError: errorMessage?.trim() || null,
+        updatedAt: now,
+      })
+      .where(eq(jsonImportJobs.id, jobId));
   }
 
   async countKnowledgeBaseIndexingJobs(

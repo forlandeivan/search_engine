@@ -15,6 +15,7 @@ import { startSkillFileIngestionWorker } from "./skill-file-ingestion-jobs";
 import { startKnowledgeBaseIndexingWorker } from "./knowledge-base-indexing-jobs";
 import { startFileEventOutboxWorker } from "./no-code-file-events-outbox";
 import { startBotActionWatchdog } from "./bot-action-watchdog";
+import { startJsonImportWorker } from "./json-import-jobs";
 import { closePubSub } from "./realtime";
 import { cleanupChatSubscriptions } from "./chat-events";
 import { closeCache } from "./cache";
@@ -195,6 +196,7 @@ const skillFileIngestionWorker = startSkillFileIngestionWorker();
 const knowledgeBaseIndexingWorker = startKnowledgeBaseIndexingWorker();
 const fileEventOutboxWorker = startFileEventOutboxWorker();
 const botActionWatchdog = startBotActionWatchdog();
+const jsonImportWorker = startJsonImportWorker();
 
 app.use((req, res, next) => {
   const start = Date.now();
