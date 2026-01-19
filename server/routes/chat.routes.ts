@@ -54,6 +54,7 @@ import { skillExecutionLogService } from '../skill-execution-log-context';
 import type { SkillExecutionStartContext } from '../skill-execution-log-service';
 import { SKILL_EXECUTION_STATUS, SKILL_EXECUTION_STEP_STATUS, type SkillExecutionStepType, type SkillExecutionStepStatus, type SkillExecutionStatus } from '../skill-execution-log';
 import { getNoCodeConnectionInternal, scheduleNoCodeEventDelivery, buildMessageCreatedEventPayload } from '../no-code-events';
+import { onChatEvent, offChatEvent, type ChatEventPayload } from '../chat-events';
 import { centsToCredits } from '@shared/credits';
 import {
   createNoCodeFlowError,
@@ -250,6 +251,40 @@ chatRouter.get('/sessions/:chatId/messages', asyncHandler(async (req, res) => {
   const messages = await getChatMessages(req.params.chatId, workspaceId, user.id);
   
   res.json({ messages: messages.map(mapMessage) });
+}));
+
+/**
+ * GET /sessions/:chatId/events
+ * Subscribe to chat events (SSE)
+ */
+chatRouter.get('/sessions/:chatId/events', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const chatId = req.params.chatId;
+  await getChatById(chatId, workspaceId, user.id);
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  const flushHeaders = (res as Response & { flushHeaders?: () => void }).flushHeaders;
+  if (typeof flushHeaders === 'function') {
+    flushHeaders.call(res);
+  }
+
+  const listener = (payload: ChatEventPayload) => {
+    sendSseEvent(res, 'message', payload);
+  };
+
+  onChatEvent(chatId, listener);
+
+  req.on('close', () => {
+    offChatEvent(chatId, listener);
+    res.end();
+  });
 }));
 
 /**
