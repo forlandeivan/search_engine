@@ -25,16 +25,6 @@ export function useActiveIndexingActions(workspaceId: string | null) {
       return data.actions;
     },
     enabled: Boolean(workspaceId),
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      // Если есть активные индексации (processing или paused), опрашиваем каждые 2 секунды
-      if (data && data.length > 0) {
-        const hasActive = data.some(
-          (action) => action.status === "processing" || action.status === "paused",
-        );
-        return hasActive ? 2000 : false;
-      }
-      return false;
-    },
+    refetchInterval: 2000, // Опрашиваем каждые 2 секунды, если есть workspaceId
   });
 }

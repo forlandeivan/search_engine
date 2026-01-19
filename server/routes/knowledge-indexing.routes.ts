@@ -261,21 +261,34 @@ knowledgeIndexingRouter.get('/indexing/active', asyncHandler(async (req, res) =>
   // Получаем все базы знаний workspace
   const bases = await storage.getKnowledgeBases(workspaceId);
   
+  logger.info({ workspaceId, baseCount: bases.length }, 'Fetching active indexing actions');
+  
   // Для каждой базы получаем последний action
   const activeActions = await Promise.all(
     bases.map(async (base) => {
       const action = await knowledgeBaseIndexingActionsService.getLatest(workspaceId, base.id);
-      if (action && (action.status === "processing" || action.status === "paused")) {
-        return {
-          ...action,
-          baseName: base.name ?? "Без названия",
-        };
+      if (action) {
+        logger.debug({ 
+          baseId: base.id, 
+          baseName: base.name, 
+          actionId: action.actionId, 
+          status: action.status 
+        }, 'Found action for base');
+        
+        if (action.status === "processing" || action.status === "paused") {
+          return {
+            ...action,
+            baseName: base.name ?? "Без названия",
+          };
+        }
       }
       return null;
     }),
   );
 
   const filtered = activeActions.filter((action): action is NonNullable<typeof action> => action !== null);
+  
+  logger.info({ workspaceId, activeCount: filtered.length }, 'Returning active indexing actions');
   
   res.json({ actions: filtered });
 }));

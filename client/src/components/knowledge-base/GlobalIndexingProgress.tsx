@@ -9,8 +9,15 @@ import { cn } from "@/lib/utils";
 const STORAGE_KEY = "global_indexing_progress_minimized";
 
 export function GlobalIndexingProgress({ workspaceId }: { workspaceId: string | null }) {
-  const { data: actions = [], isLoading } = useActiveIndexingActions(workspaceId);
+  const { data: actions = [], isLoading, error } = useActiveIndexingActions(workspaceId);
   const [minimized, setMinimized] = useState<Set<string>>(new Set());
+
+  // Временное логирование для диагностики
+  useEffect(() => {
+    if (workspaceId) {
+      console.log("[GlobalIndexingProgress] workspaceId:", workspaceId, "isLoading:", isLoading, "actions:", actions, "error:", error);
+    }
+  }, [workspaceId, isLoading, actions, error]);
 
   // Восстанавливаем состояние минимизации из localStorage
   useEffect(() => {
@@ -74,8 +81,9 @@ export function GlobalIndexingProgress({ workspaceId }: { workspaceId: string | 
     }
   }, [actions, minimized]);
 
-  if (isLoading || actions.length === 0) {
-    return null;
+  // Не показываем виджет только если загрузка завершена и нет активных действий
+  if (isLoading) {
+    return null; // Показываем только после первой загрузки
   }
 
   const activeActions = actions.filter(
