@@ -1,27 +1,23 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2 } from "lucide-react";
+import { ChevronsUpDown } from "lucide-react";
 import { useLocation } from "wouter";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Badge } from "@/components/ui/badge";
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "@/components/ui/sidebar";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { WorkspaceState, SessionResponse } from "@/types/session";
-import type { WorkspaceMemberRole } from "@shared/schema";
-import { WorkspaceIcon } from "@/components/WorkspaceIcon";
-
-const roleLabels: Record<WorkspaceMemberRole, string> = {
-  owner: "Владелец",
-  manager: "Менеджер",
-  user: "Пользователь",
-};
+import type { SessionResponse, WorkspaceState } from "@/types/session";
+import defaultWorkspaceIcon from "/branding/logo.svg";
 
 interface WorkspaceSwitcherProps {
   workspace: WorkspaceState;
@@ -31,11 +27,11 @@ export default function WorkspaceSwitcher({ workspace }: WorkspaceSwitcherProps)
   const queryClient = useQueryClient();
   const [location, navigate] = useLocation();
   const { toast } = useToast();
+  const { isMobile } = useSidebar();
 
   type SwitchWorkspaceResponse = {
     workspaceId: string;
     status: string;
-    role?: WorkspaceMemberRole;
     name?: string | null;
   };
 
@@ -70,7 +66,7 @@ export default function WorkspaceSwitcher({ workspace }: WorkspaceSwitcherProps)
       });
       toast({
         title: "Рабочее пространство переключено",
-        description: `Текущее пространство — ${(data.name ?? "") || nextWorkspaceId}`,
+        description: `Текущее пространство - ${(data.name ?? "") || nextWorkspaceId}`,
       });
       const currentWorkspaceId = workspace.active.id;
       if (currentWorkspaceId && location.includes(currentWorkspaceId)) {
@@ -94,55 +90,59 @@ export default function WorkspaceSwitcher({ workspace }: WorkspaceSwitcherProps)
   };
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="flex items-center gap-2 font-medium"
-          disabled={switchWorkspaceMutation.isPending}
-        >
-          {switchWorkspaceMutation.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Check className="h-4 w-4 opacity-0" />
-          )}
-          <span className="max-w-[160px] truncate" title={workspace.active.name}>
-            {workspace.active.name}
-          </span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[220px]">
-        <DropdownMenuLabel>Рабочие пространства</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {workspace.memberships.map((membership) => {
-          const isActive = membership.id === workspace.active.id;
-          return (
-            <DropdownMenuItem
-              key={membership.id}
-              onSelect={(event) => {
-                event.preventDefault();
-                handleSelect(membership.id);
-              }}
-              className="flex items-center justify-between gap-2"
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuButton
+              size="lg"
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground group-data-[collapsible=icon]:justify-center"
+              disabled={switchWorkspaceMutation.isPending}
             >
-              <div className="flex min-w-0 flex-col">
-                <span className={`truncate ${isActive ? "font-semibold" : ""}`}>
-                  {membership.name}
-                </span>
-                <span className="text-xs text-muted-foreground">{membership.plan}</span>
+              <img
+                src={workspace.active.iconUrl || defaultWorkspaceIcon}
+                alt={workspace.active.name}
+                className="size-8 shrink-0 rounded-lg object-cover"
+                onError={(event) => {
+                  event.currentTarget.src = defaultWorkspaceIcon;
+                }}
+              />
+              <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
+                <span className="truncate font-medium">{workspace.active.name}</span>
+                <span className="truncate text-xs">{workspace.active.plan}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <WorkspaceIcon iconUrl={membership.iconUrl} size={24} />
-                <Badge variant={isActive ? "default" : "secondary"}>
-                  {roleLabels[membership.role]}
-                </Badge>
-                {isActive ? <Check className="h-4 w-4" /> : null}
-              </div>
-            </DropdownMenuItem>
-          );
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
+              <ChevronsUpDown className="ml-auto group-data-[collapsible=icon]:hidden" />
+            </SidebarMenuButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+            align="start"
+            side={isMobile ? "bottom" : "right"}
+            sideOffset={4}
+          >
+            <DropdownMenuLabel className="text-muted-foreground text-xs">
+              Рабочие пространства
+            </DropdownMenuLabel>
+            {workspace.memberships.map((membership) => (
+              <DropdownMenuItem
+                key={membership.id}
+                onClick={() => handleSelect(membership.id)}
+                className="gap-2 p-2"
+              >
+                <img
+                  src={membership.iconUrl || defaultWorkspaceIcon}
+                  alt={membership.name}
+                  className="size-6 shrink-0 rounded-md object-cover"
+                  onError={(event) => {
+                    event.currentTarget.src = defaultWorkspaceIcon;
+                  }}
+                />
+                {membership.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarMenuItem>
+    </SidebarMenu>
   );
 }
