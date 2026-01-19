@@ -1058,13 +1058,32 @@ export interface IStorage {
   ): Promise<FileStorageProvider | undefined>;
   deleteFileStorageProvider(id: string): Promise<boolean>;
 
+  // OAuth configuration
+  getOAuthConfig(provider: 'google' | 'yandex'): Promise<{ clientId: string; clientSecret: string; enabled: boolean } | null>;
+  setOAuthConfig(provider: 'google' | 'yandex', config: { clientId: string; clientSecret: string; enabled: boolean }): Promise<void>;
+
   // Unica Chat configuration
   getUnicaChatConfig(): Promise<UnicaChatConfig>;
+  setUnicaChatConfig(config: Partial<UnicaChatConfigInsert>): Promise<UnicaChatConfig>;
   updateUnicaChatConfig(
     updates: Partial<
       Pick<UnicaChatConfigInsert, "llmProviderConfigId" | "modelId" | "systemPrompt" | "temperature" | "topP" | "maxTokens">
     >,
   ): Promise<UnicaChatConfig>;
+
+  // LLM executions (admin monitoring)
+  listLlmExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }>;
+  getLlmExecution(id: string): Promise<any | null>;
+
+  // ASR executions (admin monitoring)
+  listAsrExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }>;
+  getAsrExecution(id: string): Promise<any | null>;
+
+  // Monitoring (admin)
+  listGuardBlocks(opts: { page: number; pageSize: number }): Promise<{ blocks: any[]; total: number; page: number; pageSize: number }>;
+  listCharges(opts: { page: number; pageSize: number; workspaceId?: string }): Promise<{ charges: any[]; total: number; page: number; pageSize: number }>;
+  listSystemNotificationLogs(opts: { page: number; pageSize: number }): Promise<{ logs: any[]; total: number; page: number; pageSize: number }>;
+  getSystemNotificationLog(id: string): Promise<any | null>;
 
   // Knowledge base RAG telemetry
   recordKnowledgeBaseRagRequest(entry: {
@@ -8746,6 +8765,73 @@ export class DatabaseStorage implements IStorage {
       .returning();
 
     return inserted;
+  }
+
+  async setUnicaChatConfig(config: Partial<UnicaChatConfigInsert>): Promise<UnicaChatConfig> {
+    return this.updateUnicaChatConfig(config as any);
+  }
+
+  async getOAuthConfig(provider: 'google' | 'yandex'): Promise<{ clientId: string; clientSecret: string; enabled: boolean } | null> {
+    // OAuth config stored in environment variables for now
+    // This is a placeholder for future DB-backed config
+    if (provider === 'google') {
+      const clientId = process.env.GOOGLE_CLIENT_ID || '';
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+      const enabled = Boolean(clientId && clientSecret);
+      return clientId || clientSecret ? { clientId, clientSecret, enabled } : null;
+    } else if (provider === 'yandex') {
+      const clientId = process.env.YANDEX_CLIENT_ID || '';
+      const clientSecret = process.env.YANDEX_CLIENT_SECRET || '';
+      const enabled = Boolean(clientId && clientSecret);
+      return clientId || clientSecret ? { clientId, clientSecret, enabled } : null;
+    }
+    return null;
+  }
+
+  async setOAuthConfig(provider: 'google' | 'yandex', config: { clientId: string; clientSecret: string; enabled: boolean }): Promise<void> {
+    // OAuth config stored in environment variables for now
+    // This is a placeholder - in production, this should update a config table or restart with new env vars
+    console.warn(`[storage] setOAuthConfig called for ${provider}, but config is read from environment variables. Restart server with updated .env to apply changes.`);
+  }
+
+  async listLlmExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }> {
+    // Placeholder implementation - LLM executions logging not yet implemented
+    return { executions: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async getLlmExecution(id: string): Promise<any | null> {
+    // Placeholder implementation - LLM executions logging not yet implemented
+    return null;
+  }
+
+  async listAsrExecutions(opts: { page: number; pageSize: number }): Promise<{ executions: any[]; total: number; page: number; pageSize: number }> {
+    // Placeholder implementation - ASR executions logging not yet implemented
+    return { executions: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async getAsrExecution(id: string): Promise<any | null> {
+    // Placeholder implementation - ASR executions logging not yet implemented
+    return null;
+  }
+
+  async listGuardBlocks(opts: { page: number; pageSize: number }): Promise<{ blocks: any[]; total: number; page: number; pageSize: number }> {
+    // Placeholder implementation - guard blocks logging not yet implemented
+    return { blocks: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async listCharges(opts: { page: number; pageSize: number; workspaceId?: string }): Promise<{ charges: any[]; total: number; page: number; pageSize: number }> {
+    // Placeholder implementation - usage charges not yet implemented
+    return { charges: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async listSystemNotificationLogs(opts: { page: number; pageSize: number }): Promise<{ logs: any[]; total: number; page: number; pageSize: number }> {
+    // Placeholder implementation - system notification logs not yet implemented
+    return { logs: [], total: 0, page: opts.page, pageSize: opts.pageSize };
+  }
+
+  async getSystemNotificationLog(id: string): Promise<any | null> {
+    // Placeholder implementation - system notification logs not yet implemented
+    return null;
   }
 
   async getUser(id: string): Promise<User | undefined> {
