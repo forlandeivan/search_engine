@@ -1,7 +1,8 @@
 import type { JsonImportJob } from "@shared/schema";
 import { storage } from "./storage";
 import { deleteJsonImportFile } from "./workspace-storage-service";
-import type { MappingConfig, HierarchyConfig } from "@shared/json-import";
+import type { MappingConfig, HierarchyConfig, ImportRecordError } from "@shared/json-import";
+import { processJsonImport } from "./json-import/streaming-processor";
 
 const POLL_INTERVAL_MS = 5_000;
 const BASE_RETRY_DELAY_MS = 30_000;
@@ -23,13 +24,54 @@ async function processJob(job: JsonImportJob): Promise<void> {
   console.log(`[${JOB_TYPE}] Processing job ${job.id} for base ${job.baseId}`);
 
   try {
-    // TODO: US-6 - Реализовать потоковую обработку JSON/JSONL
-    // Пока что просто помечаем как completed для тестирования инфраструктуры
-    await storage.markJsonImportJobDone(job.id, "completed", {
-      processedRecords: 0,
-      createdDocuments: 0,
-      skippedRecords: 0,
-      errorRecords: 0,
+    // claimNextJsonImportJob уже обновил статус на processing
+    const mappingConfig = job.mappingConfig as MappingConfig;
+    const hierarchyConfig = job.hierarchyConfig as HierarchyConfig;
+
+    const errors: ImportRecordError[] = [];
+    let firstProgressUpdate = true;
+
+    // Обрабатываем импорт
+    const result = await processJsonImport(
+      job.workspaceId,
+      job.sourceFileKey,
+      job.sourceFileFormat,
+      {
+        baseId: job.baseId,
+        workspaceId: job.workspaceId,
+        mappingConfig,
+        hierarchyConfig,
+      },
+      async (stats) => {
+        // Обновляем прогресс в БД
+        await storage.updateJsonImportJobProgress(job.id, {
+          totalRecords: firstProgressUpdate ? stats.processedRecords : undefined,
+          processedRecords: stats.processedRecords,
+          createdDocuments: stats.createdDocuments,
+          skippedRecords: stats.skippedRecords,
+          errorRecords: stats.errorRecords,
+        });
+        firstProgressUpdate = false;
+      },
+      (error) => {
+        // Собираем ошибки
+        errors.push(error);
+      },
+    );
+
+    // Добавляем ошибки в лог
+    if (errors.length > 0) {
+      await storage.appendJsonImportJobErrors(job.id, errors);
+    }
+
+    // Определяем финальный статус
+    const finalStatus = result.errorRecords > 0 ? "completed_with_errors" : "completed";
+
+    await storage.markJsonImportJobDone(job.id, finalStatus, {
+      processedRecords: result.totalRecords,
+      createdDocuments: result.createdDocuments,
+      skippedRecords: result.skippedRecords,
+      errorRecords: result.errorRecords,
     });
 
     // Delete source file after successful import
@@ -43,7 +85,9 @@ async function processJob(job: JsonImportJob): Promise<void> {
       );
     }
 
-    console.log(`[${JOB_TYPE}] Job ${job.id} completed`);
+    console.log(
+      `[${JOB_TYPE}] Job ${job.id} completed: ${result.createdDocuments} documents created, ${result.errorRecords} errors`,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const delayMs = computeRetryDelayMs(job.attempts ?? 1);

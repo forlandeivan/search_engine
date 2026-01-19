@@ -50,6 +50,7 @@ import {
   completeJsonImportMultipartUpload,
   abortJsonImportMultipartUpload,
 } from '../workspace-storage-service';
+import { analyzeJsonStructure } from '../json-import/structure-analyzer';
 
 const logger = createLogger('knowledge-base');
 
@@ -847,6 +848,67 @@ knowledgeBaseRouter.post('/bases/:baseId/json-import', asyncHandler(async (req, 
   };
 
   res.status(201).json(response);
+}));
+
+/**
+ * POST /json-import/preview
+ * Preview JSON/JSONL file structure
+ */
+const previewJsonImportSchema = z.object({
+  fileKey: z.string().min(1, "Укажите ключ файла"),
+  sampleSize: z.number().int().min(10).max(1000).optional(),
+});
+
+knowledgeBaseRouter.post('/json-import/preview', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { id: workspaceId } = getRequestWorkspace(req);
+  const payload = previewJsonImportSchema.parse(req.body);
+
+  try {
+    const analysis = await analyzeJsonStructure(workspaceId, payload.fileKey, {
+      sampleSize: payload.sampleSize ?? 100,
+    });
+
+    res.json(analysis);
+  } catch (error) {
+    logger.error('[json-import-preview] Ошибка анализа структуры', {
+      workspaceId,
+      fileKey: payload.fileKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    if (error instanceof Error) {
+      if (error.message.includes("File not found")) {
+        res.status(404).json({
+          error: "Файл не найден",
+          code: "FILE_NOT_FOUND",
+        });
+        return;
+      }
+      if (error.message.includes("Неизвестный формат")) {
+        res.status(400).json({
+          error: error.message,
+          code: "INVALID_FORMAT",
+        });
+        return;
+      }
+      if (error.message.includes("парсинга") || error.message.includes("parse")) {
+        res.status(400).json({
+          error: error.message,
+          code: "PARSE_ERROR",
+        });
+        return;
+      }
+    }
+
+    res.status(500).json({
+      error: "Не удалось проанализировать файл",
+      code: "UNKNOWN_ERROR",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
 }));
 
 /**

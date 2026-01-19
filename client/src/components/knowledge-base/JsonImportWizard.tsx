@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -15,8 +15,10 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useJsonImportUpload } from "@/hooks/useJsonImportUpload";
-import { Loader2, FileJson, X } from "lucide-react";
+import { Loader2, FileJson, X, ChevronRight, ChevronLeft } from "lucide-react";
 import type { CreateJsonImportRequest } from "@shared/json-import";
+import { StructurePreview } from "./json-import/StructurePreview";
+import type { StructureAnalysis, PreviewError } from "@/lib/json-import-types";
 
 interface JsonImportWizardProps {
   open: boolean;
@@ -38,6 +40,10 @@ export function JsonImportWizard({
   const [uploadedFileKey, setUploadedFileKey] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<"upload" | "preview" | "mapping">("upload");
+  const [structureAnalysis, setStructureAnalysis] = useState<StructureAnalysis | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [previewError, setPreviewError] = useState<PreviewError | null>(null);
   const { uploadFile, uploadProgress, isUploading, error: uploadError, abort } = useJsonImportUpload(workspaceId);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -71,6 +77,8 @@ export function JsonImportWizard({
     try {
       const result = await uploadFile(file);
       setUploadedFileKey(result.fileKey);
+      // После загрузки автоматически анализируем структуру
+      await analyzeStructure(result.fileKey);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Не удалось загрузить файл";
       setError(message);
@@ -79,6 +87,67 @@ export function JsonImportWizard({
         title: "Ошибка загрузки",
         description: message,
       });
+    }
+  };
+
+  const analyzeStructure = async (fileKey: string) => {
+    setIsAnalyzing(true);
+    setPreviewError(null);
+    setError(null);
+
+    try {
+      const response = await apiRequest(
+        "POST",
+        "/api/knowledge/json-import/preview",
+        { fileKey, sampleSize: 100 },
+        undefined,
+        { workspaceId },
+      );
+
+      if (!response.ok) {
+        const errorData = (await response.json()) as PreviewError;
+        setPreviewError(errorData);
+        toast({
+          variant: "destructive",
+          title: "Ошибка анализа",
+          description: errorData.error,
+        });
+        return;
+      }
+
+      const analysis = (await response.json()) as StructureAnalysis;
+      setStructureAnalysis(analysis);
+      setCurrentStep("preview");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Не удалось проанализировать файл";
+      setPreviewError({
+        error: message,
+        code: "PARSE_ERROR",
+      });
+      toast({
+        variant: "destructive",
+        title: "Ошибка анализа",
+        description: message,
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleNext = () => {
+    if (currentStep === "upload" && uploadedFileKey && structureAnalysis) {
+      setCurrentStep("preview");
+    } else if (currentStep === "preview") {
+      // TODO: US-4 - Переход к маппингу
+      setCurrentStep("mapping");
+    }
+  };
+
+  const handleBack = () => {
+    if (currentStep === "preview") {
+      setCurrentStep("upload");
+    } else if (currentStep === "mapping") {
+      setCurrentStep("preview");
     }
   };
 
@@ -92,9 +161,8 @@ export function JsonImportWizard({
     setError(null);
 
     try {
-      // TODO: US-3 - Preview структуры
-      // TODO: US-4 - Маппинг полей
-      // TODO: US-5 - Настройка иерархии
+      // TODO: US-4 - Маппинг полей (из UI)
+      // TODO: US-5 - Настройка иерархии (из UI)
       
       // Временная заглушка для тестирования инфраструктуры
       const mappingConfig = {
@@ -155,6 +223,9 @@ export function JsonImportWizard({
       setFile(null);
       setUploadedFileKey(null);
       setError(null);
+      setCurrentStep("upload");
+      setStructureAnalysis(null);
+      setPreviewError(null);
       onOpenChange(false);
     }
   };
@@ -173,13 +244,9 @@ export function JsonImportWizard({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          <Alert>
-            <AlertDescription>
-              В MVP доступна базовая функциональность. Полный мастер с предпросмотром и настройкой маппинга будет добавлен в следующих версиях.
-            </AlertDescription>
-          </Alert>
-
-          <div className="space-y-2">
+          {currentStep === "upload" && (
+            <>
+              <div className="space-y-2">
             <Label htmlFor="json-import-file">Файл JSON/JSONL</Label>
             <Input
               id="json-import-file"
@@ -240,25 +307,83 @@ export function JsonImportWizard({
               <AlertDescription>{error || uploadError}</AlertDescription>
             </Alert>
           )}
+            </>
+          )}
+
+          {currentStep === "preview" && (
+            <div className="space-y-4">
+              {isAnalyzing ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                  <span>Анализ структуры файла...</span>
+                </div>
+              ) : previewError ? (
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    <div>
+                      <p className="font-medium">{previewError.error}</p>
+                      {previewError.details && (
+                        <p className="text-sm mt-1">{previewError.details}</p>
+                      )}
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              ) : structureAnalysis ? (
+                <StructurePreview analysis={structureAnalysis} />
+              ) : null}
+            </div>
+          )}
+
+          {currentStep === "mapping" && (
+            <Alert>
+              <AlertDescription>
+                Настройка маппинга полей будет доступна в следующей версии (US-4).
+              </AlertDescription>
+            </Alert>
+          )}
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isSubmitting || isUploading}>
-            {isUploading ? "Отмена" : "Закрыть"}
-          </Button>
-          <Button
-            onClick={handleStartImport}
-            disabled={isSubmitting || isUploading || !uploadedFileKey}
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Запускаем...
-              </>
-            ) : (
-              "Запустить импорт"
-            )}
-          </Button>
+          <div className="flex items-center justify-between w-full">
+            <Button variant="outline" onClick={handleClose} disabled={isSubmitting || isUploading}>
+              {isUploading ? "Отмена" : "Закрыть"}
+            </Button>
+            <div className="flex gap-2">
+              {currentStep !== "upload" && (
+                <Button variant="outline" onClick={handleBack} disabled={isSubmitting || isUploading}>
+                  <ChevronLeft className="mr-2 h-4 w-4" />
+                  Назад
+                </Button>
+              )}
+              {currentStep === "upload" && uploadedFileKey && structureAnalysis && (
+                <Button onClick={handleNext} disabled={isSubmitting || isUploading || isAnalyzing}>
+                  Далее
+                  <ChevronRight className="ml-2 h-4 w-4" />
+                </Button>
+              )}
+              {currentStep === "preview" && (
+                <Button onClick={handleNext} disabled={isSubmitting || isUploading || !structureAnalysis}>
+                  Далее
+                  <ChevronRight className="ml-2 h-4 w-4" />
+                </Button>
+              )}
+              {currentStep === "mapping" && (
+                <Button
+                  onClick={handleStartImport}
+                  disabled={isSubmitting || isUploading || !uploadedFileKey}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Запускаем...
+                    </>
+                  ) : (
+                    "Запустить импорт"
+                  )}
+                </Button>
+              )}
+            </div>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

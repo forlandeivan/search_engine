@@ -7946,6 +7946,7 @@ export class DatabaseStorage implements IStorage {
   async updateJsonImportJobProgress(
     jobId: string,
     progress: {
+      totalRecords?: number;
       processedRecords?: number;
       createdDocuments?: number;
       skippedRecords?: number;
@@ -7954,15 +7955,29 @@ export class DatabaseStorage implements IStorage {
   ): Promise<void> {
     await ensureJsonImportJobsTable();
     const now = new Date();
+    const updates: Record<string, unknown> = {
+      updatedAt: now,
+    };
+    
+    if (progress.totalRecords !== undefined) {
+      updates.totalRecords = progress.totalRecords;
+    }
+    if (progress.processedRecords !== undefined) {
+      updates.processedRecords = progress.processedRecords;
+    }
+    if (progress.createdDocuments !== undefined) {
+      updates.createdDocuments = progress.createdDocuments;
+    }
+    if (progress.skippedRecords !== undefined) {
+      updates.skippedRecords = progress.skippedRecords;
+    }
+    if (progress.errorRecords !== undefined) {
+      updates.errorRecords = progress.errorRecords;
+    }
+    
     await this.db
       .update(jsonImportJobs)
-      .set({
-        processedRecords: progress.processedRecords,
-        createdDocuments: progress.createdDocuments,
-        skippedRecords: progress.skippedRecords,
-        errorRecords: progress.errorRecords,
-        updatedAt: now,
-      })
+      .set(updates)
       .where(eq(jsonImportJobs.id, jobId));
   }
 
