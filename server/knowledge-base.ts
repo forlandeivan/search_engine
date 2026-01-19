@@ -849,8 +849,25 @@ export async function deleteKnowledgeBase(
     );
   }
 
+  // Проверяем, существует ли база в этом workspace
   const base = await fetchBase(baseId, workspaceId);
   if (!base) {
+    // Проверяем, существует ли база вообще (может быть в другом workspace)
+    const [anyBase] = await db
+      .select({ id: knowledgeBases.id, workspaceId: knowledgeBases.workspaceId })
+      .from(knowledgeBases)
+      .where(eq(knowledgeBases.id, baseId))
+      .limit(1);
+    
+    if (anyBase) {
+      // База существует, но в другом workspace
+      throw new KnowledgeBaseError(
+        "База знаний не найдена в вашем рабочем пространстве",
+        404,
+      );
+    }
+    
+    // База не существует вообще
     throw new KnowledgeBaseError("База знаний не найдена", 404);
   }
 

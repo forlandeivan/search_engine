@@ -230,8 +230,36 @@ knowledgeBaseRouter.delete('/bases/:baseId', asyncHandler(async (req, res) => {
   if (!user) return;
 
   const { id: workspaceId } = getRequestWorkspace(req);
-  const payload = deleteKnowledgeBaseSchema.parse(req.body);
-  await deleteKnowledgeBase(workspaceId, req.params.baseId, payload);
+  const baseId = req.params.baseId;
+  
+  logger.info({ 
+    baseId, 
+    workspaceId,
+    body: req.body,
+    hasBody: req.body !== undefined,
+    contentType: req.headers['content-type'],
+  });
+
+  let payload;
+  try {
+    payload = deleteKnowledgeBaseSchema.parse(req.body ?? {});
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      logger.error({ 
+        error: error.errors,
+        baseId,
+        workspaceId,
+        body: req.body,
+      });
+      return res.status(400).json({ 
+        message: error.errors[0]?.message ?? "Неверные данные запроса",
+        errors: error.errors,
+      });
+    }
+    throw error;
+  }
+  
+  await deleteKnowledgeBase(workspaceId, baseId, payload);
   res.status(204).send();
 }));
 
