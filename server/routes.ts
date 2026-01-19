@@ -2421,6 +2421,12 @@ function buildKnowledgeCollectionName(
   return `kb_${baseSlug}_ws_${workspaceSlug}`;
 }
 
+function buildKnowledgeCollectionNameFromIds(baseId: string, workspaceId: string): string {
+  const baseSlug = sanitizeCollectionName(baseId);
+  const workspaceSlug = sanitizeCollectionName(workspaceId);
+  return `kb_${baseSlug}_ws_${workspaceSlug}`;
+}
+
 function removeUndefinedDeep<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => removeUndefinedDeep(item)) as unknown as T;
@@ -3751,6 +3757,7 @@ async function runKnowledgeBaseRagPipeline(options: {
     payload: Record<string, unknown> | null;
   }> = [];
   const sanitizedVectorResults: SanitizedVectorSearchResult[] = [];
+  const aggregatedVectorResults: Array<{ collection: string; record: Record<string, unknown> }> = [];
   let vectorCollectionsToSearch: string[] = [];
 
   let llmProviderId = body.llm.provider?.trim() || null;
@@ -3927,6 +3934,22 @@ async function runKnowledgeBaseRagPipeline(options: {
 
     vectorCollection =
       vectorCollectionsToSearch.length > 0 ? vectorCollectionsToSearch.join(", ") : null;
+
+    if (normalizedSkillId && vectorCollectionsToSearch.length > 0) {
+      const expectedCollections = knowledgeBaseIds.map((kbId) =>
+        buildKnowledgeCollectionNameFromIds(kbId, workspaceId),
+      );
+      const collectionsToRegister = vectorCollectionsToSearch.filter((collection) =>
+        expectedCollections.includes(collection),
+      );
+      if (collectionsToRegister.length > 0) {
+        await Promise.all(
+          collectionsToRegister.map((collection) =>
+            storage.upsertCollectionWorkspace(collection, workspaceId),
+          ),
+        );
+      }
+    }
 
     vectorConfigured = Boolean(vectorCollectionsToSearch.length > 0 && embeddingProviderId);
     if (normalizedSkillId && vectorCollectionsToSearch.length === 0 && embeddingProviderId) {
@@ -4151,8 +4174,6 @@ async function runKnowledgeBaseRagPipeline(options: {
         );
 
         let lastVectorResponseStatus = 200;
-        const aggregatedVectorResults: Array<{ collection: string; record: Record<string, unknown> }> = [];
-
         // Если есть явно указанная коллекция базы знаний (не skill files), используем её
         // Иначе, если есть skillId и нет явной коллекции, ищем в skill files
         const hasExplicitKnowledgeBaseCollection = vectorCollectionsToSearch.length > 0 && 

@@ -11,7 +11,6 @@
 
 import { Router, type Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { storage } from '../storage';
 import { createLogger } from '../lib/logger';
 import { asyncHandler } from '../middleware/async-handler';
 import {
@@ -27,6 +26,7 @@ import { actionsRepository } from '../actions';
 import { skillActionsRepository } from '../skill-actions';
 import type { PublicUser } from '@shared/schema';
 import type { ActionPlacement } from '@shared/schema';
+import { createSkillSchema, updateSkillSchema } from '@shared/skills';
 
 const logger = createLogger('skill');
 
@@ -88,49 +88,6 @@ function resolveWorkspaceIdForRequest(req: Request, explicitId: string | null | 
 }
 
 const actionPlacements: ActionPlacement[] = ['inline', 'context_menu', 'side_panel', 'transcript_menu', 'transcript_block'];
-
-// ============================================================================
-// Validation Schemas
-// ============================================================================
-
-const createSkillSchema = z.object({
-  name: z.string().trim().min(1).max(255),
-  description: z.string().trim().max(2000).nullable().optional(),
-  type: z.enum(['LLM_SKILL', 'RAG_SKILL']).optional(),
-  modelId: z.string().trim().min(1).optional(),
-  systemPrompt: z.string().trim().max(10000).optional(),
-  temperature: z.number().min(0).max(2).optional(),
-  maxTokens: z.number().int().min(1).max(100000).optional(),
-});
-
-const ragConfigInputSchema = z.object({
-  mode: z.enum(['all_collections', 'selected_collections']).optional(),
-  collectionIds: z.array(z.string().min(1)).optional(),
-  topK: z.number().int().min(1).max(50).nullable().optional(),
-  minScore: z.number().min(0).max(1).nullable().optional(),
-  maxContextTokens: z.number().int().min(500).max(20000).nullable().optional(),
-  showSources: z.boolean().nullable().optional(),
-  bm25Weight: z.number().min(0).max(1).nullable().optional(),
-  bm25Limit: z.number().int().min(1).max(50).nullable().optional(),
-  vectorWeight: z.number().min(0).max(1).nullable().optional(),
-  vectorLimit: z.number().int().min(1).max(50).nullable().optional(),
-  embeddingProviderId: z.string().max(255).nullable().optional(),
-  llmTemperature: z.number().min(0).max(2).nullable().optional(),
-  llmMaxTokens: z.number().int().min(16).max(4096).nullable().optional(),
-  llmResponseFormat: z.enum(["text", "markdown", "html"]).nullable().optional(),
-});
-
-const updateSkillSchema = z.object({
-  name: z.string().trim().min(1).max(255).optional(),
-  description: z.string().trim().max(2000).nullable().optional(),
-  modelId: z.string().trim().min(1).optional(),
-  systemPrompt: z.string().trim().max(10000).optional(),
-  temperature: z.number().min(0).max(2).optional(),
-  maxTokens: z.number().int().min(1).max(100000).optional(),
-  status: z.enum(['active', 'archived']).optional(),
-  knowledgeBaseIds: z.array(z.string().min(1)).optional(),
-  ragConfig: ragConfigInputSchema.optional(),
-});
 
 // ============================================================================
 // Routes
