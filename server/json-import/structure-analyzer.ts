@@ -1,6 +1,8 @@
 import { Readable } from "stream";
 import { createInterface } from "readline";
-import { getObject } from "../workspace-storage-service";
+import { getObject, ensureWorkspaceBucketExists } from "../workspace-storage-service";
+import { HeadObjectCommand } from "@aws-sdk/client-s3";
+import { minioClient } from "../minio-client";
 
 export type FileFormat = "json_array" | "jsonl";
 
@@ -458,13 +460,28 @@ export async function analyzeJsonStructure(
 ): Promise<StructureAnalysis> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
 
+  // Получаем размер файла через HeadObjectCommand
+  let fileSize = 0;
+  try {
+    const bucket = await ensureWorkspaceBucketExists(workspaceId);
+    const minioClient = getMinioClient();
+    const headResponse = await minioClient.send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: fileKey,
+      }),
+    );
+    fileSize = typeof headResponse.ContentLength === "number" ? headResponse.ContentLength : 0;
+  } catch (error) {
+    // Если не удалось получить размер, продолжаем с 0
+    console.warn(`[structure-analyzer] Failed to get file size for ${fileKey}:`, error instanceof Error ? error.message : String(error));
+  }
+
   // Получаем файл из S3 для определения формата
   const formatFileObject = await getObject(workspaceId, fileKey);
   if (!formatFileObject || !formatFileObject.body) {
     throw new Error(`File not found: ${fileKey}`);
   }
-
-  const fileSize = formatFileObject.contentLength ?? 0;
 
   // Определяем формат
   let format: FileFormat;
