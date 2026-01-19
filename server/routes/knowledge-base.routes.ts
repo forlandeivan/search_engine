@@ -26,6 +26,7 @@ import {
   getKnowledgeNodeDetail,
   createKnowledgeFolder,
   createKnowledgeDocument,
+  updateKnowledgeNodeParent,
   updateKnowledgeDocument,
   deleteKnowledgeNode,
   getKnowledgeBaseIndexingSummary,
@@ -388,26 +389,45 @@ knowledgeBaseRouter.patch('/bases/:baseId/nodes/:nodeId', asyncHandler(async (re
     return res.status(404).json({ message: 'База знаний не найдена' });
   }
 
-  const parsed = updateNodeSchema.parse(req.body);
-  
-  // Map updateNodeSchema to UpdateKnowledgeDocumentPayload
+  const parsed = updateNodeSchema.parse(req.body ?? {});
+
+  const hasParentChange = parsed.parentId !== undefined;
+  const hasDocumentUpdate =
+    typeof parsed.title === "string" ||
+    typeof parsed.name === "string" ||
+    typeof parsed.content === "string";
+
+  if (hasParentChange) {
+    await updateKnowledgeNodeParent(
+      baseId,
+      nodeId,
+      { parentId: parsed.parentId ?? null },
+      workspaceId,
+    );
+  }
+
+  if (!hasDocumentUpdate) {
+    const node = await getKnowledgeNodeDetail(baseId, nodeId, workspaceId);
+    return res.json({ node });
+  }
+
   const payload: { title: string; content?: string } = {
-    title: parsed.title ?? parsed.name ?? '',
+    title: parsed.title ?? parsed.name ?? "",
     content: parsed.content,
   };
-  
+
   if (!payload.title) {
     return res.status(400).json({ message: 'Укажите название документа' });
   }
-  
+
   const node = await updateKnowledgeDocument(
     baseId,
     nodeId,
     workspaceId,
     payload,
-    user.id
+    user.id,
   );
-  
+
   res.json({ node });
 }));
 
