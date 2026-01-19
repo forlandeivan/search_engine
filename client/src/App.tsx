@@ -35,8 +35,6 @@ import { Button } from "@/components/ui/button";
 console.log("[App.tsx] Button loaded");
 
 
-import { GlobalIndexingProgress } from "@/components/knowledge-base/GlobalIndexingProgress";
-console.log("[App.tsx] GlobalIndexingProgress loaded");
 
 import type { PublicUser } from "@shared/schema";
 import type { SessionResponse, WorkspaceState } from "@/types/session";
@@ -446,7 +444,6 @@ function AppContent() {
           <MainAppShell user={user} workspace={workspace} />
         </Route>
       </Switch>
-      <GlobalIndexingProgress workspaceId={workspaceId} />
     </ErrorBoundary>
   );
 }

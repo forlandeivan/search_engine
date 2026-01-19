@@ -2535,21 +2535,25 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
                   <div className="flex-1 min-w-0">
                     <Progress
                       value={
-                        typeof activeIndexingActionForBase.payload?.progressPercent === "number"
-                          ? activeIndexingActionForBase.payload.progressPercent
-                          : activeIndexingActionForBase.payload?.totalDocuments && activeIndexingActionForBase.payload?.processedDocuments
-                            ? Math.round((activeIndexingActionForBase.payload.processedDocuments / activeIndexingActionForBase.payload.totalDocuments) * 100)
-                            : 0
+                        (() => {
+                          const processedDocuments = activeIndexingActionForBase.payload?.processedDocuments ?? 0;
+                          const totalDocumentsInBase = indexingSummary?.totalDocuments ?? 0;
+                          return totalDocumentsInBase > 0
+                            ? Math.round((processedDocuments / totalDocumentsInBase) * 100)
+                            : 0;
+                        })()
                       }
                       className="h-1.5"
                     />
                   </div>
                   <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {typeof activeIndexingActionForBase.payload?.progressPercent === "number"
-                      ? `${activeIndexingActionForBase.payload.progressPercent}%`
-                      : activeIndexingActionForBase.payload?.totalDocuments && activeIndexingActionForBase.payload?.processedDocuments
-                        ? `${Math.round((activeIndexingActionForBase.payload.processedDocuments / activeIndexingActionForBase.payload.totalDocuments) * 100)}%`
-                        : "0%"}
+                    {(() => {
+                      const processedDocuments = activeIndexingActionForBase.payload?.processedDocuments ?? 0;
+                      const totalDocumentsInBase = indexingSummary?.totalDocuments ?? 0;
+                      return totalDocumentsInBase > 0
+                        ? `${Math.round((processedDocuments / totalDocumentsInBase) * 100)}%`
+                        : "0%";
+                    })()}
                   </span>
                 </div>
                 <button

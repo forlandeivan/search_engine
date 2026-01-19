@@ -69,6 +69,7 @@ type IndexingHistoryPanelProps = {
   onViewLog?: (actionId: string) => void;
   activeAction?: KnowledgeBaseIndexingAction & { baseName: string; userName?: string | null; userEmail?: string | null };
   baseId?: string;
+  totalDocumentsInBase?: number | null;
 };
 
 export function IndexingHistoryPanel({
@@ -79,6 +80,7 @@ export function IndexingHistoryPanel({
   onViewLog,
   activeAction,
   baseId,
+  totalDocumentsInBase,
 }: IndexingHistoryPanelProps) {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   
@@ -108,12 +110,12 @@ export function IndexingHistoryPanel({
   const isProcessing = activeAction?.status === "processing";
   const isPaused = activeAction?.status === "paused";
   
-  const progressPercent =
-    activeAction && typeof activeAction.payload?.progressPercent === "number"
-      ? activeAction.payload.progressPercent
-      : activeItem && activeItem.totalDocuments > 0
-        ? Math.round((activeItem.processedDocuments / activeItem.totalDocuments) * 100)
-        : 0;
+  // Рассчитываем процент от общего количества документов в базе, а не только от текущей индексации
+  const processedDocuments = activeAction?.payload?.processedDocuments ?? 0;
+  const totalDocuments = totalDocumentsInBase ?? activeItem?.totalDocuments ?? 0;
+  const progressPercent = totalDocuments > 0
+    ? Math.round((processedDocuments / totalDocuments) * 100)
+    : 0;
   if (isLoading) {
     return (
       <div className="space-y-2">

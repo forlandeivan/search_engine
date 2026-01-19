@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { IndexingHistoryPanel } from "@/components/knowledge-base/IndexingHistoryPanel";
 import { IndexingLogDialog } from "@/components/knowledge-base/IndexingLogDialog";
 import { useKnowledgeBaseIndexingHistory } from "@/hooks/useKnowledgeBaseIndexingHistory";
+import { useKnowledgeBaseIndexingSummary } from "@/hooks/useKnowledgeBaseIndexingSummary";
 import { useActiveIndexingActions } from "@/hooks/useActiveIndexingActions";
 import { useQuery } from "@tanstack/react-query";
 import type { SessionResponse } from "@/types/session";
@@ -33,6 +34,7 @@ export default function KnowledgeBaseIndexingHistoryPage({ params }: KnowledgeBa
   const workspaceId = session?.workspace?.active?.id ?? session?.activeWorkspaceId ?? null;
 
   const { data, isLoading, isError, error } = useKnowledgeBaseIndexingHistory(baseId, 25);
+  const { data: indexingSummary } = useKnowledgeBaseIndexingSummary(workspaceId, baseId);
   const { data: activeActions = [] } = useActiveIndexingActions(workspaceId);
   const activeActionForBase = baseId
     ? activeActions.find((action) => action.baseId === baseId)
@@ -86,6 +88,7 @@ export default function KnowledgeBaseIndexingHistoryPage({ params }: KnowledgeBa
             onViewLog={handleViewLog}
             activeAction={activeActionForBase}
             baseId={baseId ?? undefined}
+            totalDocumentsInBase={indexingSummary?.totalDocuments ?? null}
           />
         </CardContent>
       </Card>
