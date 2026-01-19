@@ -23,7 +23,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: (id) => {
-          // Vendor chunks - separate large dependencies
+          // Only split vendor chunks - let Vite handle page splitting automatically
+          // to avoid circular dependency issues with manual page chunks
           if (id.includes('node_modules')) {
             // CRITICAL: All React-dependent libraries MUST be in the same chunk
             // to ensure React is loaded and initialized before any library tries to use it.
@@ -47,42 +48,7 @@ export default defineConfig({
             // Other vendor libraries
             return 'vendor';
           }
-          // Admin pages chunk
-          if (id.includes('/pages/') && (
-            id.includes('Admin') ||
-            id.includes('LlmProviders') ||
-            id.includes('EmbeddingServices') ||
-            id.includes('VectorStorage') ||
-            id.includes('FileStorage') ||
-            id.includes('TtsStt') ||
-            id.includes('SpeechProvider') ||
-            id.includes('AsrExecutions') ||
-            id.includes('LlmExecutions') ||
-            id.includes('GuardBlock') ||
-            id.includes('SmtpSettings') ||
-            id.includes('AuthSettings') ||
-            id.includes('ApiDocs')
-          )) {
-            return 'pages-admin';
-          }
-          // Main pages chunk (chat, knowledge base, skills)
-          if (id.includes('/pages/') && (
-            id.includes('ChatPage') ||
-            id.includes('KnowledgeBase') ||
-            id.includes('SkillsPage') ||
-            id.includes('SkillSettings') ||
-            id.includes('ActionSettings')
-          )) {
-            return 'pages-main';
-          }
-          // Workspace and settings pages
-          if (id.includes('/pages/') && (
-            id.includes('Workspace') ||
-            id.includes('VectorCollection') ||
-            id.includes('VectorCollections')
-          )) {
-            return 'pages-workspace';
-          }
+          // Let Vite handle page chunks automatically
         },
       },
     },
