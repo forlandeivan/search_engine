@@ -36,11 +36,35 @@ export async function setupVite(app: Express, server: Server) {
         process.exit(1);
       },
     },
-    server: serverOptions,
+    server: {
+      ...(viteConfig.server || {}),
+      ...serverOptions,
+      fs: {
+        ...(viteConfig.server?.fs || {}),
+        strict: false,
+        allow: [
+          ...(viteConfig.server?.fs?.allow || []),
+          "C:/Users/frol_/search_engine",
+          "c:/Users/frol_/search_engine",
+          path.resolve(import.meta.dirname, ".."),
+          path.resolve(import.meta.dirname, "..", "client"),
+          path.resolve(import.meta.dirname, "..", "client", "src"),
+        ],
+      },
+    },
     appType: "custom",
   });
 
+  app.use((req, res, next) => {
+    // Логируем все запросы к файлам для отладки
+    if (req.originalUrl.includes('/src/pages/ChatPage') || req.originalUrl.includes('@fs')) {
+      log(`[VITE DEBUG] Request: ${req.method} ${req.originalUrl}`, 'vite');
+    }
+    next();
+  });
+  
   app.use(vite.middlewares);
+  
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
 
@@ -61,6 +85,7 @@ export async function setupVite(app: Express, server: Server) {
       const page = await vite.transformIndexHtml(url, template);
       res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).end(page);
     } catch (e) {
+      log(`[VITE ERROR] ${(e as Error).message}`, 'vite');
       vite.ssrFixStacktrace(e as Error);
       next(e);
     }

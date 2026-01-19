@@ -109,10 +109,10 @@ adminTariffsRouter.get('/:planId', asyncHandler(async (req, res) => {
 adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
   try {
     const planId = req.params.planId;
-    logger.info(`[PUT /:planId] Received request for planId: ${planId}`, { body: req.body });
+    logger.info({ planId, body: req.body }, `[PUT /:planId] Received request`);
     
     const parsed = updateTariffSchema.parse(req.body);
-    logger.info(`[PUT /:planId] Parsed data:`, parsed);
+    logger.info({ parsed }, `[PUT /:planId] Parsed data`);
     
     // Check if plan exists
     const existing = await tariffPlanService.getPlanById(planId);
@@ -128,11 +128,11 @@ adminTariffsRouter.put('/:planId', asyncHandler(async (req, res) => {
             ? Math.round(parseFloat(parsed.includedCreditsAmount)) 
             : Math.round(parsed.includedCreditsAmount))
         : undefined;
-      logger.info(`[PUT /:planId] Updating credits/noCode:`, { 
+      logger.info({ 
         amountCents, 
         period: parsed.includedCreditsPeriod, 
         noCodeFlowEnabled: parsed.noCodeFlowEnabled 
-      });
+      }, `[PUT /:planId] Updating credits/noCode`);
       await tariffPlanService.updatePlanCredits(planId, {
         amountCents: amountCents ?? undefined,
         period: parsed.includedCreditsPeriod ?? undefined,

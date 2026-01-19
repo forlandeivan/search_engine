@@ -94,9 +94,12 @@ export default defineConfig({
   },
   server: {
     fs: {
-      strict: true,
-      deny: ["**/.*"],
-      allow: [path.resolve(__dirname)],
+      strict: false,
+      allow: [
+        path.resolve(__dirname),
+        path.resolve(__dirname, "client"),
+        path.resolve(__dirname, "client", "src"),
+      ],
     },
   },
 });
