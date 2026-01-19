@@ -19,6 +19,7 @@ import {
   KnowledgeBaseError,
   getKnowledgeBaseIndexingChanges,
   resetKnowledgeBaseIndex,
+  listKnowledgeBases,
 } from '../knowledge-base';
 import { deleteIndexedDataForAction } from '../knowledge-base-indexing-cleanup';
 import type { PublicUser } from '@shared/schema';
@@ -259,7 +260,7 @@ knowledgeIndexingRouter.get('/indexing/active', asyncHandler(async (req, res) =>
   const { id: workspaceId } = getRequestWorkspace(req);
 
   // Получаем все базы знаний workspace
-  const bases = await storage.getKnowledgeBases(workspaceId);
+  const bases = await listKnowledgeBases(workspaceId);
   
   logger.info({ workspaceId, baseCount: bases.length }, 'Fetching active indexing actions');
   
