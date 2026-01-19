@@ -10,6 +10,7 @@ import {
   AlertCircle,
   ShieldCheck,
   Copy,
+  Trash2,
 } from "lucide-react";
 
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -414,6 +415,44 @@ export default function EmbeddingServicesPage() {
     },
   });
 
+  const deleteProviderMutation = useMutation<void, Error, string>({
+    mutationFn: async (providerId) => {
+      const response = await apiRequest("DELETE", `/api/admin/embeddings/providers/${providerId}`);
+      
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { message?: string; details?: any } | null;
+        throw new Error(body?.message ?? "Не удалось удалить провайдера");
+      }
+    },
+    onSuccess: (_, providerId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/embedding/services"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/embeddings/providers"] });
+      queryClient.setQueryData<ProvidersResponse>(["/api/embedding/services"], (previous) => {
+        if (!previous) return previous;
+        return {
+          providers: (previous.providers ?? []).filter(p => p.id !== providerId),
+        };
+      });
+      
+      // Сбрасываем выбор, если удалили текущий провайдер
+      if (selectedProviderId === providerId) {
+        setSelectedProviderId(null);
+      }
+      
+      toast({
+        title: "Провайдер удалён",
+        description: "Сервис эмбеддингов успешно удалён из системы.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Не удалось удалить провайдера",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const parseJsonField = <T,>(
     value: string,
     schema: z.ZodType<T>,
@@ -582,6 +621,16 @@ export default function EmbeddingServicesPage() {
       });
     }
   });
+
+  const handleDelete = () => {
+    if (!selectedProvider) return;
+    
+    if (!confirm(`Вы уверены, что хотите удалить провайдера эмбеддингов "${selectedProvider.name}"?\n\nЭто действие нельзя отменить. Провайдер можно удалить только если к нему не привязаны активные модели в каталоге.`)) {
+      return;
+    }
+    
+    deleteProviderMutation.mutate(selectedProvider.id);
+  };
 
   const testCredentialsMutation = useMutation<TestCredentialsResult, TestCredentialsError>({
     mutationFn: async () => {
@@ -1082,7 +1131,7 @@ export default function EmbeddingServicesPage() {
         )}
       />
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center gap-2 justify-end">
         <Button type="submit" disabled={isSubmitPending}>
           {isSubmitPending ? (
             <>
@@ -1094,6 +1143,27 @@ export default function EmbeddingServicesPage() {
             "Сохранить изменения"
           )}
         </Button>
+        
+        {!isCreating && selectedProvider && (
+          <Button 
+            type="button" 
+            variant="destructive" 
+            onClick={handleDelete}
+            disabled={deleteProviderMutation.isPending}
+          >
+            {deleteProviderMutation.isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Удаление...
+              </>
+            ) : (
+              <>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Удалить провайдера
+              </>
+            )}
+          </Button>
+        )}
       </div>
     </form>
   );
