@@ -112,7 +112,8 @@ import { useResetKnowledgeBaseIndexing } from "@/hooks/useResetKnowledgeBaseInde
 import { useKnowledgeBaseIndexingStatus } from "@/hooks/useKnowledgeBaseIndexingStatus";
 import { useKnowledgeBaseIndexingSummary } from "@/hooks/useKnowledgeBaseIndexingSummary";
 import { useKnowledgeBaseIndexingChanges } from "@/hooks/useKnowledgeBaseIndexingChanges";
-import { KnowledgeBaseIndexingProgressToast } from "@/components/knowledge-base/KnowledgeBaseIndexingProgressToast";
+import { useActiveIndexingActions } from "@/hooks/useActiveIndexingActions";
+import { Progress } from "@/components/ui/progress";
 import type {
   KnowledgeBaseSummary,
   KnowledgeBaseTreeNode,
@@ -165,11 +166,6 @@ import {
   TERMINAL_CRAWL_STATUSES,
   DOCUMENT_STATUS_LABELS,
   DOCUMENT_SOURCE_LABELS,
-  INDEXING_STATUS_LABELS,
-  INDEXING_STATUS_DESCRIPTIONS,
-  INDEXING_STATUS_BADGE_VARIANTS,
-  INDEXING_CHANGE_STATUS_LABELS,
-  INDEXING_CHANGE_BADGE_VARIANTS,
 } from "./KnowledgeBasePage/constants";
 import {
   buildSearchSettingsFromResolved,
@@ -607,6 +603,10 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     indexingActionId,
     { enabled: Boolean(workspaceId && selectedBase?.id && indexingActionId) },
   );
+  const { data: activeIndexingActions = [] } = useActiveIndexingActions(workspaceId);
+  const activeIndexingActionForBase = selectedBase?.id
+    ? activeIndexingActions.find((action) => action.baseId === selectedBase.id)
+    : undefined;
   const searchSettingsQueryKey = useMemo(
     () =>
       selectedBase
@@ -2470,38 +2470,8 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
 
   const indexingSummary = indexingSummaryQuery.data ?? null;
   const indexingStatus = indexingSummary?.status ?? null;
-  const totalIndexedDocuments = indexingSummary?.totalDocuments ?? null;
-  const outdatedDocuments = indexingSummary?.outdatedDocuments ?? null;
-  const errorDocuments = indexingSummary?.errorDocuments ?? null;
-  const indexingDocuments = indexingSummary?.indexingDocuments ?? 0;
-  const hasIndexingDocuments = indexingSummary ? (totalIndexedDocuments ?? 0) > 0 : null;
-  const hasIndexingChanges =
-    indexingSummary ? (outdatedDocuments ?? 0) > 0 || (errorDocuments ?? 0) > 0 : false;
+  const hasIndexingDocuments = indexingSummary ? (indexingSummary.totalDocuments ?? 0) > 0 : null;
   const isIndexingInProgress = indexingStatus === "indexing";
-  const indexingStatusLabel =
-    indexingSummaryQuery.isPending && !indexingSummary
-      ? "Загрузка"
-      : indexingStatus
-      ? INDEXING_STATUS_LABELS[indexingStatus]
-      : "Статус недоступен";
-  const indexingStatusBadgeVariant = indexingStatus
-    ? INDEXING_STATUS_BADGE_VARIANTS[indexingStatus]
-    : "outline";
-  const indexingStatusDescription = (() => {
-    if (indexingSummaryQuery.isError) {
-      return "Не удалось загрузить состояние индексации. Попробуйте обновить страницу.";
-    }
-    if (!indexingSummary) {
-      return "Загружаем статус индексации...";
-    }
-    if (!hasIndexingDocuments) {
-      return "В базе пока нет документов для индексации.";
-    }
-    if (isIndexingInProgress && indexingDocuments > 0) {
-      return `Индексация выполняется: ${indexingDocuments} в работе.`;
-    }
-    return INDEXING_STATUS_DESCRIPTIONS[indexingSummary.status];
-  })();
   const indexingButtonDisabledReason = (() => {
     if (!indexingSummary) {
       if (indexingSummaryQuery.isError) {
@@ -2515,16 +2485,11 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
     if (isIndexingInProgress) {
       return "Индексация выполняется";
     }
-    if (indexingStatus === "up_to_date" && !hasIndexingChanges) {
+    if (indexingStatus === "up_to_date") {
       return "База актуальна";
     }
     return null;
   })();
-  const formatIndexingCount = (value: number | null | undefined) =>
-    typeof value === "number" ? value : "—";
-  const indexingChanges = indexingChangesQuery.data ?? null;
-  const indexingChangeItems = indexingChanges?.items ?? [];
-  const indexingChangesTotal = indexingChanges?.total ?? 0;
 
   const renderOverview = (detail: Extract<KnowledgeBaseNodeDetail, { type: "base" }>) => (
     <Card>
@@ -2564,7 +2529,44 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
               )}
               Индексировать
             </Button>
-            {(indexingButtonDisabledReason || !detail.rootNodes || detail.rootNodes.length === 0) && (
+            {activeIndexingActionForBase && (
+              <div className="flex flex-col gap-1.5 w-full sm:w-auto mt-1">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <Progress
+                      value={
+                        typeof activeIndexingActionForBase.payload?.progressPercent === "number"
+                          ? activeIndexingActionForBase.payload.progressPercent
+                          : activeIndexingActionForBase.payload?.totalDocuments && activeIndexingActionForBase.payload?.processedDocuments
+                            ? Math.round((activeIndexingActionForBase.payload.processedDocuments / activeIndexingActionForBase.payload.totalDocuments) * 100)
+                            : 0
+                      }
+                      className="h-1.5"
+                    />
+                  </div>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {typeof activeIndexingActionForBase.payload?.progressPercent === "number"
+                      ? `${activeIndexingActionForBase.payload.progressPercent}%`
+                      : activeIndexingActionForBase.payload?.totalDocuments && activeIndexingActionForBase.payload?.processedDocuments
+                        ? `${Math.round((activeIndexingActionForBase.payload.processedDocuments / activeIndexingActionForBase.payload.totalDocuments) * 100)}%`
+                        : "0%"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLocation(`/knowledge/${detail.id}/indexing/history`)}
+                  className="text-xs text-muted-foreground hover:text-foreground underline cursor-pointer text-left"
+                >
+                  {activeIndexingActionForBase.status === "processing" && "Индексация выполняется"}
+                  {activeIndexingActionForBase.status === "paused" && "Индексация на паузе"}
+                  {activeIndexingActionForBase.status === "canceled" && "Индексация отменена"}
+                  {activeIndexingActionForBase.status === "done" && "Индексация завершена"}
+                  {activeIndexingActionForBase.status === "error" && "Ошибка индексации"}
+                  {" • Перейти в историю"}
+                </button>
+              </div>
+            )}
+            {!activeIndexingActionForBase && (indexingButtonDisabledReason || !detail.rootNodes || detail.rootNodes.length === 0) && (
               <span className="text-xs text-muted-foreground">
                 {indexingButtonDisabledReason ?? "Нет документов для индексации"}
               </span>
@@ -2630,102 +2632,6 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">{detail.description}</p>
-        <Separator />
-        <div className="rounded-md border bg-muted/40 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold">Состояние индексации</h3>
-                <Badge variant={indexingStatusBadgeVariant}>{indexingStatusLabel}</Badge>
-              </div>
-              <p className="text-sm text-muted-foreground">{indexingStatusDescription}</p>
-            </div>
-            <div className="flex flex-col gap-2 sm:items-end">
-              {hasIndexingChanges && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setIsIndexingChangesOpen((open) => !open)}
-                  disabled={indexingSummaryQuery.isPending || indexingSummaryQuery.isError}
-                >
-                  {isIndexingChangesOpen ? "Скрыть изменения" : "Показать изменения"}
-                  <ChevronDown
-                    className={cn(
-                      "ml-2 h-4 w-4 transition-transform",
-                      isIndexingChangesOpen && "rotate-180",
-                    )}
-                  />
-                </Button>
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setLocation(`/knowledge/${knowledgeBaseId}/indexing/history`)}
-                disabled={!knowledgeBaseId}
-              >
-                <History className="mr-2 h-4 w-4" />
-                История индексаций
-              </Button>
-            </div>
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <div className="rounded-md border bg-background p-3">
-              <p className="text-xs text-muted-foreground">Изменения</p>
-              <p className="text-lg font-semibold">{formatIndexingCount(outdatedDocuments)}</p>
-            </div>
-            <div className="rounded-md border bg-background p-3">
-              <p className="text-xs text-muted-foreground">Ошибки</p>
-              <p className="text-lg font-semibold">{formatIndexingCount(errorDocuments)}</p>
-            </div>
-            <div className="rounded-md border bg-background p-3">
-              <p className="text-xs text-muted-foreground">Всего документов</p>
-              <p className="text-lg font-semibold">{formatIndexingCount(totalIndexedDocuments)}</p>
-            </div>
-          </div>
-          {isIndexingChangesOpen && (
-            <div className="mt-3 space-y-2 border-t pt-3">
-              {indexingChangesQuery.isPending ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Загружаем изменения...
-                </div>
-              ) : indexingChangesQuery.isError ? (
-                <p className="text-sm text-destructive">
-                  Не удалось загрузить список изменений. Попробуйте позже.
-                </p>
-              ) : indexingChangeItems.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Изменений не найдено.</p>
-              ) : (
-                <div className="space-y-2">
-                  <ul className="space-y-2">
-                    {indexingChangeItems.map((item) => (
-                      <li
-                        key={item.documentId}
-                        className="flex flex-col gap-2 rounded-md border bg-background px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-medium truncate">{item.title}</p>
-                          <p className="text-xs text-muted-foreground">
-                            Обновлено {formatDateTime(item.updatedAt)}
-                          </p>
-                        </div>
-                        <Badge variant={INDEXING_CHANGE_BADGE_VARIANTS[item.status]}>
-                          {INDEXING_CHANGE_STATUS_LABELS[item.status]}
-                        </Badge>
-                      </li>
-                    ))}
-                  </ul>
-                  {indexingChangesTotal > indexingChangeItems.length && (
-                    <p className="text-xs text-muted-foreground">
-                      Показаны первые {indexingChangeItems.length} из {indexingChangesTotal}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
         <Separator />
         <div>
           <h3 className="text-sm font-semibold mb-2">Структура базы</h3>
@@ -2802,22 +2708,7 @@ export default function KnowledgeBasePage({ params }: KnowledgeBasePageProps = {
       detailContent = renderOverview(detail);
     }
 
-    return (
-      <>
-        <KnowledgeBaseIndexingProgressToast
-          action={indexingStatusQuery.data ?? null}
-          onComplete={() => {
-            setIndexingActionId(null);
-            void indexingStatusQuery.refetch();
-            void indexingSummaryQuery.refetch();
-            if (isIndexingChangesOpen) {
-              void indexingChangesQuery.refetch();
-            }
-          }}
-        />
-        {detailContent}
-      </>
-    );
+    return detailContent;
 
     const baseName = selectedBase?.name ?? "База знаний";
     const searchPlaceholder = selectedBase?.name
