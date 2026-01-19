@@ -3,6 +3,9 @@ import { tariffLimits, tariffPlans, type TariffLimit, type TariffPlan } from "@s
 import { eq } from "drizzle-orm";
 import { asc } from "drizzle-orm";
 import { LIMIT_KEYS } from "./guards/types";
+import { createLogger } from "./lib/logger";
+
+const logger = createLogger('tariff-plan-service');
 
 export type TariffPlanLimitsMap = Record<
   string,
@@ -253,6 +256,12 @@ export class TariffPlanService {
       throw new Error("Tariff plan not found");
     }
 
+    logger.info({ payload }, "[updatePlanCredits] Received payload");
+    logger.info({
+      includedCreditsAmount: plan.includedCreditsAmount,
+      noCodeFlowEnabled: plan.noCodeFlowEnabled,
+    }, "[updatePlanCredits] Existing plan values");
+
     const amount =
       payload.amountCents === undefined
         ? Number(plan.includedCreditsAmount ?? 0)
@@ -262,9 +271,15 @@ export class TariffPlanService {
         ? this.normalizeCreditsPeriod(plan.includedCreditsPeriod ?? "monthly")
         : this.normalizeCreditsPeriod(payload.period ?? "monthly");
     const noCodeFlowEnabled =
-      payload.noCodeFlowEnabled === undefined || payload.noCodeFlowEnabled === null
+      payload.noCodeFlowEnabled === undefined
         ? Boolean(plan.noCodeFlowEnabled)
         : Boolean(payload.noCodeFlowEnabled);
+
+    logger.info({
+      amount,
+      period,
+      noCodeFlowEnabled,
+    }, "[updatePlanCredits] Calculated values");
 
     const [updated] = await db
       .update(tariffPlans)
@@ -280,6 +295,10 @@ export class TariffPlanService {
     if (!updated) {
       throw new Error("Failed to update tariff plan credits");
     }
+    logger.info({
+      includedCreditsAmount: updated.includedCreditsAmount,
+      noCodeFlowEnabled: updated.noCodeFlowEnabled,
+    }, "[updatePlanCredits] Updated plan values");
     return updated;
   }
 }

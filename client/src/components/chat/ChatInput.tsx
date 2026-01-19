@@ -162,16 +162,6 @@ export default function ChatInput({
           },
         });
 
-        if (response.status === 409) {
-          // В No-code режиме сервер сообщает 409 — переключаемся на прямую отправку файла.
-          if (onSendFile) {
-            await onSendFile(file);
-          }
-          setAttachedFile(null);
-          setPendingTranscribe(null);
-          return null;
-        }
-
         try {
           await throwIfResNotOk(response);
         } catch (error) {
@@ -185,6 +175,47 @@ export default function ChatInput({
         }
 
         const result = await response.json();
+
+        // Check if skill is in no-code mode - use file upload flow
+        if (result.status === "no_code_required") {
+          // В No-code режиме загружаем файл и ждём отправки пользователем.
+          // Загружаем файл на сервер (без отправки события)
+          const uploadFormData = new FormData();
+          uploadFormData.append("file", file);
+
+          const uploadResponse = await fetch(
+            `/api/chat/sessions/${targetChatId}/messages/file`,
+            {
+              method: "POST",
+              credentials: "include",
+              body: uploadFormData,
+            },
+          );
+
+          if (!uploadResponse.ok) {
+            const errorData = await uploadResponse.json().catch(() => ({}));
+            toast({
+              title: "Не удалось загрузить файл",
+              description: errorData.message || "Ошибка загрузки",
+              variant: "destructive",
+            });
+            return null;
+          }
+
+          const uploadResult = await uploadResponse.json();
+          
+          // Устанавливаем pendingTranscribe с информацией о загруженном файле
+          const payload: TranscribePayload = {
+            operationId: null,
+            status: "uploaded",
+            fileName: file.name,
+            chatId: targetChatId,
+            audioMessage: uploadResult.message,
+            fileId: uploadResult.fileId ?? null,
+          };
+          setPendingTranscribe(payload);
+          return payload;
+        }
 
         if (result.status === "uploaded") {
           const payload: TranscribePayload = {

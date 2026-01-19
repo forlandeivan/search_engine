@@ -253,6 +253,7 @@ export default function AdminBillingPage() {
     setIsSaving(true);
     try {
       const creditsAmountCents = tryParseCreditsToCents(creditsAmount);
+      console.log("[AdminBillingPage] tryParseCreditsToCents result:", { input: creditsAmount, output: creditsAmountCents });
       if (creditsAmountCents === null || creditsAmountCents < 0) {
         toast({ variant: "destructive", title: "Ошибка", description: "Укажите корректное число кредитов (>= 0)" });
         setIsSaving(false);
@@ -264,7 +265,7 @@ export default function AdminBillingPage() {
         includedCreditsPeriod: "monthly",
         noCodeFlowEnabled,
       };
-      console.log("[AdminBillingPage] Sending PUT request:", { url: `/api/admin/tariffs/${selectedPlanId}`, payload });
+      console.log("[AdminBillingPage] Sending PUT request:", { url: `/api/admin/tariffs/${selectedPlanId}`, payload, noCodeFlowEnabled });
       
       try {
         const response = await apiRequest("PUT", `/api/admin/tariffs/${selectedPlanId}`, payload);

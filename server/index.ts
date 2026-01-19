@@ -82,6 +82,14 @@ const bodySizeLimitDescription = formatBodySizeLimit(bodySizeLimitSetting);
 app.use(express.json({ limit: bodySizeLimitSetting }));
 app.use(express.urlencoded({ extended: false, limit: bodySizeLimitSetting }));
 
+// Request logging middleware
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/api/admin/tariffs')) {
+    console.log(`[REQUEST] ${req.method} ${req.url}`, JSON.stringify(req.body));
+  }
+  next();
+});
+
 type PayloadTooLargeError = Error & {
   type?: string;
   status?: number;
