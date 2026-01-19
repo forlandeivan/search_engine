@@ -126,7 +126,7 @@ publicRouter.get('/search/suggest', asyncHandler(async (req, res) => {
  * List available tariff plans (public endpoint)
  */
 tariffsPublicRouter.get('/', asyncHandler(async (_req, res) => {
-  const tariffs = await tariffPlanService.listAll();
+  const tariffs = await tariffPlanService.getActivePlans();
   res.json({ tariffs });
 }));
 

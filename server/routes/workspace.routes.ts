@@ -23,7 +23,7 @@ import { asyncHandler } from '../middleware/async-handler';
 import { workspaceMemberRoles, type PublicUser, type User, actionTargets, actionPlacements, actionInputTypes, actionOutputModes, type ActionPlacement } from '@shared/schema';
 import type { WorkspaceMemberWithUser } from '../storage';
 import { actionsRepository } from '../actions';
-import { workspacePlanService } from '../workspace-plan-service';
+import { workspacePlanService, PlanDowngradeNotAllowedError } from '../workspace-plan-service';
 import { getWorkspaceCreditSummary } from '../credit-summary-service';
 import {
   getWorkspaceLlmUsageSummary,
@@ -498,6 +498,48 @@ workspaceRouter.get('/:workspaceId/plan', asyncHandler(async (req, res) => {
 
   const plan = await workspacePlanService.getWorkspacePlan(workspaceId);
   res.json({ plan });
+}));
+
+/**
+ * PUT /:workspaceId/plan
+ * Update workspace plan
+ */
+workspaceRouter.put('/:workspaceId/plan', asyncHandler(async (req, res) => {
+  const user = getAuthorizedUser(req, res);
+  if (!user) return;
+
+  const { workspaceId } = req.params;
+  const membership = await storage.getWorkspaceMember(user.id, workspaceId);
+  if (!membership) {
+    return res.status(403).json({ message: 'Доступ запрещён' });
+  }
+
+  // Проверяем, что пользователь имеет право менять тариф (обычно только owner или admin)
+  if (membership.role !== 'owner' && membership.role !== 'admin') {
+    return res.status(403).json({ message: 'Только владелец или администратор могут менять тариф' });
+  }
+
+  const { planCode } = req.body;
+  if (!planCode || typeof planCode !== 'string') {
+    return res.status(400).json({ message: 'Необходимо указать planCode' });
+  }
+
+  try {
+    const plan = await workspacePlanService.updateWorkspacePlan(workspaceId, planCode);
+    res.json({ plan });
+  } catch (error) {
+    if (error instanceof PlanDowngradeNotAllowedError) {
+      return res.status(400).json({ 
+        message: error.message,
+        code: error.code,
+        violations: error.violations,
+      });
+    }
+    if (error instanceof Error) {
+      return res.status(400).json({ message: error.message });
+    }
+    throw error;
+  }
 }));
 
 // ============================================================================
